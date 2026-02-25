@@ -28,7 +28,7 @@ cat .trellis/workflow.md  # Development process, conventions, and quick start gu
 ### Step 2: Get Current Status `[AI]`
 
 ```bash
-./.trellis/scripts/get-context.sh
+python3 ./.trellis/scripts/get_context.py
 ```
 
 This returns:
@@ -38,9 +38,9 @@ This returns:
 - Active tasks
 - Journal file status
 
-### Step 3: Read Project Guidelines `[AI]`
+### Step 3: Read Project Code-Spec Index `[AI]`
 
-Based on the upcoming task, read appropriate spec docs:
+Based on the upcoming task, read appropriate code-spec docs:
 
 **For Frontend Work**:
 ```bash
@@ -61,7 +61,7 @@ cat .trellis/spec/guides/cross-layer-thinking-guide.md
 ### Step 4: Check Active Tasks `[AI]`
 
 ```bash
-./.trellis/scripts/task.sh list
+python3 ./.trellis/scripts/task.py list
 ```
 
 If continuing previous work, review the task file.
@@ -90,7 +90,7 @@ Ready for your task. What would you like to work on?
 
 ### For Simple Tasks
 
-1. Read relevant guidelines based on task type `[AI]`
+1. Read relevant code-spec docs based on task type `[AI]`
 2. Implement the task directly `[AI]`
 3. Remind user to run `/trellis-finish-work` before committing `[USER]`
 
@@ -99,12 +99,28 @@ Ready for your task. What would you like to work on?
 #### Step 1: Create Task `[AI]`
 
 ```bash
-./.trellis/scripts/task.sh create "<title>" --slug <name>
+python3 ./.trellis/scripts/task.py create "<title>" --slug <name>
 ```
+
+#### Step 1.5: Code-Spec Depth Requirement (CRITICAL) `[AI]`
+
+If the task touches infra or cross-layer contracts, do not start implementation until code-spec depth is defined.
+
+Trigger this requirement when the change includes any of:
+- New or changed command/API signatures
+- Database schema or migration changes
+- Infra integrations (storage, queue, cache, secrets, env contracts)
+- Cross-layer payload transformations
+
+Must-have before implementation:
+- [ ] Target code-spec files to update are identified
+- [ ] Concrete contract is defined (signature, fields, env keys)
+- [ ] Validation and error matrix is defined
+- [ ] At least one Good/Base/Bad case is defined
 
 #### Step 2: Implement and Verify `[AI]`
 
-1. Read relevant spec docs
+1. Read relevant code-spec docs
 2. Implement the task
 3. Run lint and type checks
 
@@ -116,7 +132,7 @@ Ready for your task. What would you like to work on?
 4. Remind user to run `/trellis-record-session` `[USER]`
 5. Archive task `[AI]`:
    ```bash
-   ./.trellis/scripts/task.sh archive <task-name>
+   python3 ./.trellis/scripts/task.py archive <task-name>
    ```
 
 ---
@@ -142,10 +158,33 @@ The following slash commands are for users (not AI):
 
 | Script | Purpose |
 |--------|---------|
-| `task.sh create "<title>" [--slug <name>]` | Create task directory |
-| `task.sh list` | List active tasks |
-| `task.sh archive <name>` | Archive task |
-| `get-context.sh` | Get session context |
+| `python3 ./.trellis/scripts/task.py create "<title>" [--slug <name>]` | Create task directory |
+| `python3 ./.trellis/scripts/task.py list` | List active tasks |
+| `python3 ./.trellis/scripts/task.py archive <name>` | Archive task |
+| `python3 ./.trellis/scripts/get_context.py` | Get session context |
+
+---
+
+## Platform Detection
+
+Trellis auto-detects your platform based on config directories. For Cursor users, ensure detection works correctly:
+
+| Condition | Detected Platform |
+|-----------|-------------------|
+| Only `.cursor/` exists | `cursor` ✅ |
+| Both `.cursor/` and `.claude/` exist | `claude` (default) |
+
+If auto-detection fails, set manually:
+
+```bash
+export TRELLIS_PLATFORM=cursor
+```
+
+Or prefix commands:
+
+```bash
+TRELLIS_PLATFORM=cursor python3 ./.trellis/scripts/task.py list
+```
 
 ---
 

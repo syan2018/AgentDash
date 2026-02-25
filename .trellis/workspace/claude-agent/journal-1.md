@@ -61,3 +61,85 @@
 - 集成 Agent Client Protocol 类型定义
 - 实现 Task 执行容器（Agent 进程管理）
 - 完善看板拖拽交互和视图筛选
+
+## Session 2: 迁移 ABCCraft UI 到 AgentDashboard
+
+**Date**: 2026-02-25
+**Task**: 迁移 ABCCraft UI 到 AgentDashboard
+
+### Summary
+
+完成前端 UI 从 ABCCraft 到 AgentDashboard 的迁移，剔除 DAG 依赖，建立 Story/Task 两层扁平结构。
+
+### Main Changes
+
+| 模块 | 变更说明 |
+|------|---------|
+| 类型层 | CraftTask→Story, AgentTask→Task，移除 DAG 相关类型（AgentTaskDependency 等） |
+| 组件迁移 | WorkspaceLayout, StoryListView, StoryDrawer, TaskDrawer |
+| ACP 组件 | ContentBlock, ToolCall, Plan, ConfirmationRequest |
+| 主题系统 | CSS 变量 + useTheme hook，支持浅色/深色/系统 |
+| 状态管理 | storyStore 适配新类型，字段映射 snake_case→camelCase |
+| 删除旧组件 | KanbanBoard, StoryCard, AppLayout, Header, Sidebar |
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `163ec3e` | feat(frontend): 迁移 ABCCraft UI 到 AgentDashboard，剔除 DAG 依赖 |
+
+### Testing
+
+- [OK] `pnpm lint` 零错误
+- [OK] `pnpm build` 编译通过（52 modules, 217KB JS）
+- [OK] 浏览器验证：Story 列表按状态分组、中文正确显示
+- [OK] Story Drawer 三个 Tab（上下文/任务列表/验收）功能正常
+- [OK] 主题切换（浅色/深色/系统）正常
+- [OK] 无 DAG/ReactFlow/dagre 残留引用
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 完善 Task Drawer 执行日志渲染
+- 实现 Story/Task 的创建和编辑功能
+- 对接 Agent 执行引擎
+
+## Session 3: 新增 Mock 数据脚本 + 中文修复
+
+**Date**: 2026-02-25
+**Task**: 新增 Mock 数据脚本 + 中文修复
+
+### Summary
+
+新增 `scripts/seed-mock-data.py` 统一维护 mock 数据，直接操作 SQLite 避免 PowerShell HTTP 编码问题，修复中文乱码。
+
+### Main Changes
+
+| 模块 | 变更说明 |
+|------|---------|
+| scripts/seed-mock-data.py | 新增 Python 脚本，生成 5 个 Story + 11 个 Task 的 mock 数据 |
+| 数据修复 | 通过 `--clean` 清空旧乱码数据，重新生成正确中文数据 |
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| (待提交) | 包含在 Session 2 的 commit `163ec3e` 中 |
+
+### Testing
+
+- [OK] `python scripts/seed-mock-data.py --clean` 执行成功
+- [OK] sqlite3 验证中文数据正确
+- [OK] 浏览器验证所有中文标题、描述正确显示
+- [OK] Story Drawer 上下文 Tab 显示 context items 正确
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

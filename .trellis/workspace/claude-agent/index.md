@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 5
 - **Last Active**: 2026-02-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~123 | Active |
+| `journal-1.md` | ~232 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 5 | 2026-02-25 | executor integration layer | - |
+| 4 | 2026-02-25 | migrate acp rendering | - |
 | 3 | 2026-02-25 | 新增 Mock 数据脚本 + 中文修复 | `163ec3e` |
 | 2 | 2026-02-25 | 迁移 ABCCraft UI 到 AgentDashboard | `163ec3e` |
 | 1 | 2026-02-25 | 项目初始化：前后端骨架搭建与联调验证 | - |

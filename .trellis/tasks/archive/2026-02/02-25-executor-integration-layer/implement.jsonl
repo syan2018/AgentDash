@@ -1,0 +1,9 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/api-module.md", "reason": "API module conventions"}
+{"file": ".trellis/spec/backend/quality.md", "reason": "Code quality requirements"}
+{"file": "third_party/vibe-kanban/crates/executors/src/lib.rs", "reason": "vibe-kanban executors 入口模块，需要复用"}
+{"file": "third_party/vibe-kanban/crates/executors/src/executors/mod.rs", "reason": "核心执行器 trait 定义"}
+{"file": "third_party/vibe-kanban/crates/executors/src/logs/mod.rs", "reason": "NormalizedEntry 类型定义"}
+{"file": "frontend/src/features/acp-session/model/types.ts", "reason": "前端 ACP 类型定义"}

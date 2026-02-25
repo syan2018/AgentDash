@@ -188,3 +188,45 @@
 - 对接真实 Agent 会话数据验证渲染效果
 - 添加消息审批交互流程
 
+
+## Session 5: executor integration layer
+
+**Date**: 2026-02-25
+**Task**: executor integration layer
+
+### Summary
+
+实现 Rust 后端执行集成层，复用 vibe-kanban executors，将执行日志转换为 ACP SessionNotification 并通过 WebSocket 流推送给前端；同时补齐前端 execute 消息发送与最小服务封装。
+
+### Main Changes
+
+﻿| ?? | ?? |
+|---|---|
+| ?? | ?? crates/agentdash-api/src/executor/ ???????? 	hird_party/vibe-kanban/crates/executors ?? ACP SessionNotification ? |
+| ?? | ?? NormalizedEntry -> SessionNotification??????????/?????? |
+| API | ?? POST /api/sessions/{id}/prompt + GET /api/acp/sessions/{id}/stream?WebSocket? |
+| ?? | ?? rontend/src/services/executor.ts??? useAcpStream ??? WS open ??? 	ype=execute |
+| third_party ?? | ?? vibe-kanban executors??? codex_core ????slash ?????????+ ?? Duration::from_mins const ??? |
+
+**??**
+- cargo check --workspace ?
+- pnpm --filter frontend lint ?
+- pnpm run frontend:check ?
+- pnpm --filter frontend build ?
+- pnpm run backend:check ?
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

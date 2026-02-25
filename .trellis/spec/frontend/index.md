@@ -36,4 +36,11 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 
 ---
 
-**Language**: All documentation should be written in **English**.
+## 语言要求
+
+> **必须使用中文**
+
+- 所有与用户的交流必须使用中文
+- 所有文档更新必须使用中文
+- 代码注释必须使用中文
+- 提交信息必须使用中文

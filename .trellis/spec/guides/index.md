@@ -76,4 +76,15 @@ Found a new "didn't think of that" moment? Add it to the relevant guide.
 
 ---
 
-**Core Principle**: 30 minutes of thinking saves 3 hours of debugging.
+## 语言要求
+
+> **必须使用中文**
+
+- 所有与用户的交流必须使用中文
+- 所有文档更新必须使用中文
+- 代码注释必须使用中文
+- 提交信息必须使用中文
+
+---
+
+**核心原则**: 30 分钟的思考可以节省 3 小时的调试时间。

@@ -1,0 +1,32 @@
+# Rust
+/target/
+Cargo.lock
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# SQLite 数据库文件
+*.db
+*.db-shm
+*.db-wal
+
+# Trellis 开发者身份（个人配置）
+.trellis/.developer
+.trellis/workspace/*/

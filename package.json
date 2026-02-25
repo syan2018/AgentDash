@@ -1,0 +1,25 @@
+{
+  "name": "agentdash",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentDashboard — 统一看板系统，管理多设备、多项目中 AI Agent 的协同工作",
+  "packageManager": "pnpm@10.18.2",
+  "scripts": {
+    "dev": "pnpm run full",
+    "full": "concurrently -k -n backend,frontend -c blue,green \"pnpm run backend:dev\" \"pnpm run frontend:dev\"",
+    "frontend:dev": "pnpm --filter frontend dev",
+    "frontend:build": "pnpm --filter frontend build",
+    "frontend:check": "pnpm --filter frontend exec tsc --noEmit",
+    "backend:dev": "cargo run --bin agentdash-server",
+    "backend:build": "cargo build --release",
+    "backend:check": "cargo check",
+    "check": "cargo check",
+    "clean": "cargo clean && rimraf frontend/dist"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

@@ -1,0 +1,11 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/components.md", "reason": "Component conventions"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件开发规范"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全规范"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Hook开发规范"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/shared/types/logs.ts", "reason": "当前日志类型定义"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/shared/hooks/useConversationHistory/types.ts", "reason": "会话历史类型定义"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/shared/lib/streamJsonPatchEntries.ts", "reason": "WebSocket流实现参考"}
+{"file": "third_party/agent-client-protocol/schema/schema.unstable.json", "reason": "ACP协议Schema定义"}

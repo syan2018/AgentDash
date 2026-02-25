@@ -143,3 +143,48 @@
 ### Next Steps
 
 - None - task complete
+
+## Session 4: 接入 @agentclientprotocol/sdk 实现 ACP 会话渲染
+
+**Date**: 2026-02-25
+**Task**: 迁移前端绘制组件到 ACP 协议
+
+### Summary
+
+安装 `@agentclientprotocol/sdk` v0.14.1 npm 包，将前端 `acp-session` 模块的所有类型定义和组件对齐到 SDK 实际导出的类型结构。完成 model 层（types, useAcpStream, useAcpSession）和 UI 层（AcpSessionEntry, AcpToolCallCard, AcpMessageCard, AcpPlanCard, AcpSessionList）的完整实现。
+
+### Main Changes
+
+| 模块 | 变更说明 |
+|------|---------|
+| package.json | 添加 `@agentclientprotocol/sdk: ^0.14.1` 依赖 |
+| model/types.ts | 从 SDK 导出 35+ 核心类型，定义前端扩展类型（AcpDisplayEntry, AcpToolCallState, AggregatedEntryGroup 等） |
+| model/useAcpStream.ts | WebSocket 流管理 Hook，处理 SessionNotification，支持消息块合并和工具调用状态跟踪 |
+| model/useAcpSession.ts | 会话管理 Hook，支持工具调用/思考/文件编辑三种聚合模式 |
+| ui/AcpSessionEntry.tsx | 条目渲染分发组件，处理单条目和聚合组 |
+| ui/AcpToolCallCard.tsx | 工具调用卡片，对齐 ToolCallContent 联合类型（content/diff/terminal） |
+| ui/AcpPlanCard.tsx | 计划卡片，对齐 PlanEntry 类型（content/priority/status） |
+| ui/AcpSessionList.tsx | 会话列表容器，支持自动滚动、连接状态、空/加载/错误状态 |
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8444aa4` | feat(frontend): 接入 @agentclientprotocol/sdk 实现 ACP 会话渲染组件 |
+
+### Testing
+
+- [OK] `tsc -b --noEmit` TypeScript 类型检查零错误
+- [OK] `eslint` lint 检查零错误
+- [OK] `vite build` 构建成功（52 modules, 217KB JS）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 后端提供 ACP 格式的 WebSocket 端点
+- 对接真实 Agent 会话数据验证渲染效果
+- 添加消息审批交互流程
+

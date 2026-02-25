@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./.trellis/scripts)",
+      "Bash(npm run lint)",
+      "Bash(npm run build)"
+    ]
+  }
+}

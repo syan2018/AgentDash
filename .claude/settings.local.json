@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./.trellis/scripts/get-context.sh:*)"
+      "Bash(./.trellis/scripts/get-context.sh:*)",
+      "Bash(git add -A)",
+      "Bash(git commit:*)"
     ]
   }
 }

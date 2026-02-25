@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/components.md", "reason": "Component conventions"}
+{"file": ".trellis/spec/project-overview.md", "reason": "项目总览 - 核心概念定义"}
+{"file": "references/ABCCraft/src/frontend/src/types/index.ts", "reason": "ABCCraft 原始类型定义参考"}
+{"file": "references/ABCCraft/src/frontend/src/features/board/board-list-view.tsx", "reason": "ABCCraft 列表视图参考"}
+{"file": "references/ABCCraft/src/frontend/src/index.css", "reason": "ABCCraft 主题样式参考"}

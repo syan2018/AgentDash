@@ -17,7 +17,7 @@ license = "MIT"
 tokio = { version = "1.0", features = ["full"] }
 
 # Web 框架
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "ws"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # 序列化
@@ -43,3 +43,17 @@ futures = "0.3"
 # 工作区内部 crate 互相引用
 agentdash-state = { path = "crates/agentdash-state" }
 agentdash-coordinator = { path = "crates/agentdash-coordinator" }
+
+# ACP 协议 (官方 SDK)
+agent-client-protocol = { version = "0.9.4", features = ["unstable"] }
+
+# vibe-kanban executors
+executors = { path = "third_party/vibe-kanban/crates/executors" }
+
+[patch.crates-io]
+# 说明：
+# - vibe-kanban 的 `executors` 会通过 `codex-core` 依赖 `tokio-tungstenite/proxy` feature。
+# - crates.io 的 `tokio-tungstenite` 不提供该 feature，因此会导致依赖解析失败。
+# - 这里将其替换为 OpenAI 的维护分支（包含 `proxy` feature），无需修改 vibe-kanban 子模块源码。
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

@@ -30,3 +30,6 @@ Thumbs.db
 # Trellis 开发者身份（个人配置）
 .trellis/.developer
 .trellis/workspace/*/
+
+# 执行会话持久化（运行时产物）
+.agentdash/

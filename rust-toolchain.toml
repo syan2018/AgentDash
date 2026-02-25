@@ -1,0 +1,7 @@
+[toolchain]
+# codex-core/codex-network-proxy 目前会引入依赖（如 rama-*）要求 rustc >= 1.91。
+# 为保证在当前工作区（含 vibe-kanban executors）可稳定构建，这里显式使用 nightly。
+channel = "nightly"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+

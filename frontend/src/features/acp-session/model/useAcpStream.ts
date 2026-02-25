@@ -13,11 +13,13 @@ import type {
   ToolCallUpdate,
 } from "@agentclientprotocol/sdk";
 import type { AcpDisplayEntry, AcpToolCallState } from "./types";
+import type { PromptSessionRequest } from "../../../services/executor";
 
 export interface UseAcpStreamOptions {
   sessionId: string;
   endpoint?: string;
   initialEntries?: AcpDisplayEntry[];
+  executeRequest?: PromptSessionRequest;
   onEntry?: (entry: AcpDisplayEntry) => void;
   onConnectionChange?: (connected: boolean) => void;
   onError?: (error: Error) => void;
@@ -38,7 +40,7 @@ function generateId(): string {
 }
 
 export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
-  const { sessionId, endpoint, initialEntries = [], onEntry, onConnectionChange, onError } = options;
+  const { sessionId, endpoint, initialEntries = [], executeRequest, onEntry, onConnectionChange, onError } = options;
 
   const [entries, setEntries] = useState<AcpDisplayEntry[]>(initialEntries);
   const [toolStates, setToolStates] = useState<Map<string, AcpToolCallState>>(new Map());
@@ -188,6 +190,15 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
         setIsConnected(true);
         setIsLoading(false);
         onConnectionChange?.(true);
+
+        if (executeRequest) {
+          try {
+            ws.send(JSON.stringify({ type: "execute", ...executeRequest }));
+          } catch (err) {
+            console.error("Failed to send execute request:", err);
+            onError?.(new Error("Failed to send execute request"));
+          }
+        }
       });
 
       ws.addEventListener("message", (event) => {
@@ -216,7 +227,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       setIsLoading(false);
       onError?.(connectError);
     }
-  }, [sessionId, endpoint, processUpdate, onConnectionChange, onError]);
+  }, [sessionId, endpoint, processUpdate, onConnectionChange, onError, executeRequest]);
 
   const close = useCallback(() => {
     if (reconnectTimeoutRef.current) {

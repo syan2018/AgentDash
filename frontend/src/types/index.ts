@@ -1,52 +1,124 @@
-/** Story 状态 */
 export type StoryStatus =
-  | 'created'
-  | 'context_ready'
-  | 'decomposed'
-  | 'executing'
-  | 'completed'
-  | 'failed';
+  | "draft"
+  | "ready"
+  | "running"
+  | "review"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
-/** Task 状态 */
 export type TaskStatus =
-  | 'pending'
-  | 'assigned'
-  | 'running'
-  | 'awaiting_verification'
-  | 'completed'
-  | 'failed';
+  | "pending"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "cancelled";
 
-/** 后端类型 */
-export type BackendType = 'local' | 'remote';
+export type AgentType = "session" | "planner" | "worker" | "reviewer" | "researcher";
+export type BackendType = "local" | "remote";
 
-/** Story — 用户价值单元 */
+export interface ContextItem {
+  id: string;
+  sourceKind: "spec" | "skill" | "preset" | "content" | "practice" | "agent_output";
+  reference: string;
+  reason: string;
+  displayName?: string;
+  summary?: string;
+}
+
+export interface Context {
+  id?: string;
+  name?: string;
+  description?: string;
+  items?: ContextItem[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentBinding {
+  agentType: AgentType;
+  agentPid?: string | null;
+  workspacePath?: string | null;
+}
+
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string }
+  | { type: "resource_link"; uri: string; name: string; description?: string; mimeType?: string; size?: number }
+  | { type: "resource"; resource: { uri: string; mimeType?: string; text?: string } };
+
+export interface ToolCall {
+  title: string;
+  kind:
+    | "read"
+    | "edit"
+    | "delete"
+    | "move"
+    | "search"
+    | "execute"
+    | "think"
+    | "fetch"
+    | "switch_mode"
+    | "other";
+  status?: "pending" | "in_progress" | "completed" | "failed";
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}
+
+export interface PlanEntry {
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface ConfirmationRequest {
+  stagedTaskId: string;
+  title: string;
+  description?: string;
+  requestKind: string;
+  createdAt: string;
+  projectId?: string;
+}
+
+export type SessionUpdate =
+  | { type: "content"; blocks: ContentBlock[] }
+  | { type: "tool_call"; toolCall: ToolCall }
+  | { type: "plan"; entries: PlanEntry[] }
+  | { type: "confirmation_request"; request: ConfirmationRequest };
+
+export type Artifact =
+  | { type: "text"; title?: string; content: string }
+  | { type: "json"; title?: string; data: unknown }
+  | { type: "content_block"; title?: string; blocks: ContentBlock[] };
+
 export interface Story {
   id: string;
-  backend_id: string;
+  backendId: string;
   title: string;
-  description: string;
+  description?: string;
   status: StoryStatus;
-  context: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
+  context: Context;
+  taskIds: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
-/** Task — 执行容器 */
 export interface Task {
   id: string;
-  story_id: string;
+  storyId: string;
   title: string;
-  description: string;
+  description?: string;
+  agentType: AgentType;
   status: TaskStatus;
-  agent_type: string | null;
-  agent_pid: string | null;
-  workspace_path: string | null;
-  artifacts: unknown[];
-  created_at: string;
-  updated_at: string;
+  context: Context;
+  agentBinding: AgentBinding | null;
+  artifacts: Artifact[];
+  executionTrace: SessionUpdate[];
+  createdAt: string;
+  updatedAt: string;
 }
 
-/** 后端连接配置 */
 export interface BackendConfig {
   id: string;
   name: string;
@@ -56,7 +128,6 @@ export interface BackendConfig {
   backend_type: BackendType;
 }
 
-/** 视图配置 */
 export interface ViewConfig {
   id: string;
   name: string;
@@ -65,7 +136,6 @@ export interface ViewConfig {
   sort_by: string | null;
 }
 
-/** 状态变更事件 */
 export interface StateChange {
   id: number;
   entity_id: string;
@@ -75,8 +145,7 @@ export interface StateChange {
   created_at: string;
 }
 
-/** 流式事件 */
 export type StreamEvent =
-  | { type: 'Connected'; data: { last_event_id: number } }
-  | { type: 'StateChanged'; data: StateChange }
-  | { type: 'Heartbeat'; data: { timestamp: number } };
+  | { type: "Connected"; data: { last_event_id: number } }
+  | { type: "StateChanged"; data: StateChange }
+  | { type: "Heartbeat"; data: { timestamp: number } };

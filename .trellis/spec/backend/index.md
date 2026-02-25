@@ -1,12 +1,15 @@
-# 后端开发指南
+# Backend Development Guidelines
 
-> AgentDashboard 后端开发规范。**开始编码前必须阅读项目总览。**
+> Best practices for backend development in this project.
 
 ---
 
-## 项目总览
+## Overview
 
-**首先阅读：** [`../project-overview.md`](../project-overview.md)
+<!-- PROJECT-SPECIFIC-START: Backend Overview -->
+> **AgentDashboard 后端开发规范。**
+
+### 项目总览
 
 后端服务负责以下核心职责：
 - 维护 Story 和 Task 的状态存储（模块02 State）
@@ -18,7 +21,7 @@
 
 ---
 
-## 核心数据实体
+### 核心数据实体
 
 后端需要管理的核心实体（详见 `docs/modules/02-state.md`）：
 
@@ -55,23 +58,21 @@ StateChange {
   timestamp: timestamp
 }
 ```
+<!-- PROJECT-SPECIFIC-END -->
+
+This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
 
 ---
 
-## 必读文档
+## Guidelines Index
 
-1. [**技术选型**](../tech-stack.md) - 前后端技术栈决策记录
-2. [**项目总览**](../project-overview.md) - 核心概念和架构
-
-## 规范文档索引
-
-| 指南 | 描述 | 状态 |
-|------|------|------|
-| [目录结构](./directory-structure.md) | 模块组织和文件布局 | 待完善 |
-| [数据库指南](./database-guidelines.md) | ORM模式、查询、迁移 | 待完善 |
-| [错误处理](./error-handling.md) | 错误类型、处理策略 | 待完善 |
-| [质量规范](./quality-guidelines.md) | 代码标准、禁止模式 | 待完善 |
-| [日志规范](./logging-guidelines.md) | 结构化日志、日志级别 | 待完善 |
+| Guide | Description | Status |
+|-------|-------------|--------|
+| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
+| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
+| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
+| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
+| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 
 ---
 
@@ -85,6 +86,9 @@ For each guideline file:
 4. Add **common mistakes** your team has made
 
 The goal is to help AI assistants and new team members understand how YOUR project works.
+
+<!-- PROJECT-SPECIFIC-START: Design Constraints -->
+---
 
 ## 设计约束（编码前必读）
 
@@ -119,3 +123,8 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 - 所有文档更新必须使用中文
 - 代码注释必须使用中文
 - 提交信息必须使用中文
+<!-- PROJECT-SPECIFIC-END -->
+
+---
+
+**Language**: All documentation should be written in **English**.

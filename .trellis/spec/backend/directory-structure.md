@@ -1,20 +1,46 @@
-# 后端目录结构
+# Directory Structure
 
-> AgentDashboard 后端代码的组织方式。
-> **注意：当前为概念阶段，技术栈未定，目录结构仅为参考设计。**
+> How backend code is organized in this project.
 
 ---
 
-## 设计原则
+## Overview
+
+<!--
+Document your project's backend directory structure here.
+
+Questions to answer:
+- How are modules/packages organized?
+- Where does business logic live?
+- Where are API endpoints defined?
+- How are utilities and helpers organized?
+-->
+
+<!-- PROJECT-SPECIFIC-START: AgentDashboard Backend Structure -->
+> **AgentDashboard 后端代码的组织方式。**
+> **注意：当前为概念阶段，技术栈未定，目录结构仅为参考设计。**
+
+### 设计原则
 
 按照项目的**策略可插拔**原则，目录结构应体现模块边界：
 - 每个模块独立目录，模块间通过接口交互
 - 接口定义与实现分离
 - 策略（Strategy）作为可替换组件
+<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-## 建议目录布局（参考设计）
+## Directory Layout
+
+```
+<!-- Replace with your actual structure -->
+src/
+├── ...
+└── ...
+```
+
+<!-- PROJECT-SPECIFIC-START: Directory Tree -->
+### 建议目录布局（参考设计）
 
 ```
 backend/
@@ -51,11 +77,15 @@ backend/
 └── config/                # 配置
     └── index              # 应用配置
 ```
+<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-## 模块组织原则
+## Module Organization
 
+<!-- How should new features/modules be organized? -->
+
+<!-- PROJECT-SPECIFIC-START: Module Guidelines -->
 ### 每个模块的标准结构
 
 ```
@@ -79,21 +109,31 @@ api → orchestration → state
 ```
 
 > **禁止跨层依赖：** api层不能直接访问 state 层内部实现
+<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-## 命名规范
+## Naming Conventions
 
+<!-- File and folder naming rules -->
+
+<!-- PROJECT-SPECIFIC-START: Naming Rules -->
 > **注意：技术栈确定后，根据所选语言的约定调整命名规范。**
 
 - **模块目录**：小写短横线（kebab-case），如 `state-manager/`
 - **接口文件**：描述性名称，如 `StateManager`, `ConnectionManager`
 - **策略实现**：`<技术>-<功能>`，如 `sqlite-state-store`, `worktree-workspace`
 - **实体类型**：PascalCase，如 `Story`, `Task`, `StateChange`
+<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-## 当前状态
+## Examples
+
+<!-- Link to well-organized modules as examples -->
+
+<!-- PROJECT-SPECIFIC-START: Current Status -->
+### 当前状态
 
 > 技术栈未确定，上述为概念性目录设计。
 > 确定技术栈后，在此文件更新实际目录结构。
@@ -103,3 +143,4 @@ api → orchestration → state
 - [ ] 框架选择
 - [ ] 存储方案（影响 state 模块目录结构）
 - [ ] 构建工具和项目结构约定
+<!-- PROJECT-SPECIFIC-END -->

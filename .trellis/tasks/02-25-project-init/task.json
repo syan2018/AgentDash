@@ -1,0 +1,47 @@
+{
+  "id": "project-init",
+  "name": "project-init",
+  "title": "项目初始化：中控层架构与骨架搭建",
+  "description": "完成AgentDashboard的技术选型与初始化，包括引入Coordinator（中控层）、配置vibe-kanban子模块、定义Agent Client Protocol规范的RPC/Streaming协议，以及搭建支持Resume（状态恢复）的最小原型。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "global",
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": null,
+  "createdAt": "2026-02-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {"phase": 1, "action": "配置Monorepo结构与third_party子模块"},
+    {"phase": 2, "action": "实现Coordinator与State核心Crate"},
+    {"phase": 3, "action": "定义RPC/NDJSON通信协议与Resume机制"},
+    {"phase": 4, "action": "前端多后端看板原型"},
+    {"phase": 5, "action": "更新Spec与验证流程"}
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {"id": "1", "title": "创建Monorepo基础结构（third_party）", "priority": "P0", "status": "pending"},
+    {"id": "2", "title": "实现Coordinator模块（后端管理与视图存储）", "priority": "P1", "status": "pending"},
+    {"id": "3", "title": "实现State模块（Story/Task模型与SQLite）", "priority": "P1", "status": "pending"},
+    {"id": "4", "title": "后端基础API路由（RPC + NDJSON Streaming）", "priority": "P1", "status": "pending"},
+    {"id": "5", "title": "实现Resume恢复机制（基于ID的增量同步）", "priority": "P1", "status": "pending"},
+    {"id": "6", "title": "前端项目初始化（多后端Store管理）", "priority": "P1", "status": "pending"},
+    {"id": "7", "title": "集成Agent Client Protocol类型定义", "priority": "P2", "status": "pending"},
+    {"id": "8", "title": "更新Spec与worktree.yaml（实际项目命令）", "priority": "P1", "status": "pending"}
+  ],
+  "relatedFiles": [
+    ".trellis/spec/project-overview.md",
+    ".trellis/spec/tech-stack.md",
+    ".trellis/tasks/02-25-project-init/prd.md",
+    "third_party/vibe-kanban",
+    "crates/agentdash-coordinator",
+    "crates/agentdash-state",
+    ".trellis/worktree.yaml"
+  ],
+  "notes": "关键改进：1) 引入Coordinator解耦视图与数据 2) 采用RPC+NDJSON组合支持Resume机制 3) 统一Agent Client Protocol交换标准"
+}

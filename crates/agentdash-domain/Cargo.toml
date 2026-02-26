@@ -1,0 +1,13 @@
+[package]
+name = "agentdash-domain"
+description = "AgentDash 领域层 — 纯实体、值对象、Repository 接口与领域事件"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"

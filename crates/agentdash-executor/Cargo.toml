@@ -1,0 +1,25 @@
+[package]
+name = "agentdash-executor"
+description = "AgentDash 执行器层 — AgentConnector trait、ExecutorHub、连接器实现"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentdash-domain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# ACP 协议与执行器复用层
+agent-client-protocol = { workspace = true }
+executors = { workspace = true }
+workspace_utils = { path = "../../third_party/vibe-kanban/crates/utils", package = "utils" }
+json-patch = "2.0"

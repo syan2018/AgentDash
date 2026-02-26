@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/agentdash-coordinator",
-    "crates/agentdash-state",
+    "crates/agentdash-domain",
+    "crates/agentdash-infrastructure",
+    "crates/agentdash-executor",
     "crates/agentdash-api",
 ]
 exclude = ["third_party"]
@@ -41,8 +42,9 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 futures = "0.3"
 
 # 工作区内部 crate 互相引用
-agentdash-state = { path = "crates/agentdash-state" }
-agentdash-coordinator = { path = "crates/agentdash-coordinator" }
+agentdash-domain = { path = "crates/agentdash-domain" }
+agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
+agentdash-executor = { path = "crates/agentdash-executor" }
 
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.9.4", features = ["unstable"] }

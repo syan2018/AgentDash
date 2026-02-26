@@ -40,42 +40,61 @@ src/
 ```
 
 <!-- PROJECT-SPECIFIC-START: Directory Tree -->
-### 建议目录布局（参考设计）
+### 实际目录布局（Rust / Axum）
 
 ```
-backend/
-├── modules/               # 核心模块（对应 docs/modules/）
-│   ├── state/             # 模块02：状态管理
-│   │   ├── interfaces/    # 接口定义（StateManager等）
-│   │   ├── entities/      # 数据实体（Story, Task, StateChange）
-│   │   └── strategies/    # 存储策略（文件/数据库等）
-│   ├── connection/        # 模块01：连接管理
-│   │   ├── interfaces/    # ConnectionManager接口
-│   │   └── strategies/    # 连接策略
-│   ├── workspace/         # 模块03：工作空间管理
-│   │   ├── interfaces/    # WorkspaceManager接口
-│   │   └── strategies/    # 隔离策略（worktree/container/vm）
-│   ├── execution/         # 模块05：执行调度
-│   │   ├── interfaces/    # ExecutionManager接口
-│   │   └── agents/        # Agent适配器（Claude/Codex/Gemini）
-│   ├── orchestration/     # 模块04：编排引擎
-│   │   ├── interfaces/    # OrchestrationStrategy接口
-│   │   └── strategies/    # 编排策略（规则/AgentPM/手动/混合）
-│   ├── injection/         # 模块06：信息注入
-│   │   ├── interfaces/    # Injector接口
-│   │   └── sources/       # 注入源处理器
-│   └── validation/        # 模块07：验证机制
-│       ├── interfaces/    # Validator接口
-│       └── rules/         # 验证规则实现
-├── api/                   # API层（对外接口）
-│   ├── routes/            # 路由定义
-│   └── handlers/          # 请求处理器
-├── shared/                # 共享工具
-│   ├── types/             # 共享类型定义
-│   ├── errors/            # 错误类型
-│   └── utils/             # 工具函数
-└── config/                # 配置
-    └── index              # 应用配置
+crates/
+├── agentdash-api/src/           # HTTP API 服务器（主入口）
+│   ├── main.rs                  # Axum 启动入口
+│   ├── app_state.rs             # AppState（store, coordinator, executor_hub, connector）
+│   ├── routes.rs                # 路由注册（所有 /api/* 路由）
+│   ├── rpc.rs                   # ApiError 统一错误处理
+│   ├── stream.rs                # 全局事件流（SSE + NDJSON）
+│   ├── routes/                  # 路由处理函数
+│   │   ├── health.rs
+│   │   ├── backends.rs
+│   │   ├── stories.rs
+│   │   ├── acp_sessions.rs      # ACP 会话流（SSE/NDJSON/WS）
+│   │   └── discovery.rs         # 执行器发现 API
+│   └── executor/                # 执行层
+│       ├── mod.rs               # 导出 AgentConnector, ExecutorHub 等
+│       ├── connector.rs         # AgentConnector trait + ConnectorType + ConnectorCapabilities
+│       ├── hub.rs               # ExecutorHub（会话管理 + 广播）
+│       ├── adapters/
+│       │   └── normalized_to_acp.rs  # vibe-kanban 日志 → ACP 通知转换
+│       └── connectors/
+│           ├── mod.rs
+│           ├── vibe_kanban.rs   # 本地执行器连接器（LocalExecutor）
+│           └── remote_acp.rs    # 远程 ACP 后端连接器（骨架）
+├── agentdash-state/             # 状态存储（Story, Task, StateChange）
+└── agentdash-coordinator/       # 后端/连接管理
+```
+
+### 关键 API 端点
+
+| 路径 | 方法 | 说明 |
+|------|------|------|
+| `/api/agents/discovery` | GET | 执行器发现（返回连接器信息、执行器列表、权限策略） |
+| `/api/sessions/{id}/prompt` | POST | 启动 ACP 会话执行 |
+| `/api/sessions/{id}/cancel` | POST | 取消会话 |
+| `/api/acp/sessions/{id}/stream` | GET | ACP 会话流（SSE） |
+| `/api/acp/sessions/{id}/stream/ndjson` | GET | ACP 会话流（NDJSON） |
+| `/api/events/stream` | GET | 全局事件流（SSE） |
+
+### 连接器架构
+
+```
+AgentConnector trait
+├── connector_id()          → &str
+├── connector_type()        → ConnectorType (LocalExecutor | RemoteAcpBackend)
+├── capabilities()          → ConnectorCapabilities
+├── get_preset_configs()    → Vec<PresetConfig>
+├── prompt()                → ExecutionStream
+└── cancel()                → ()
+
+实现：
+├── VibeKanbanExecutorsConnector  → LocalExecutor（通过 vibe-kanban executors crate）
+└── RemoteAcpConnector            → RemoteAcpBackend（骨架，待实现）
 ```
 <!-- PROJECT-SPECIFIC-END -->
 

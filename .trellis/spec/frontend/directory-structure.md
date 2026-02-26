@@ -41,43 +41,64 @@ src/
 ```
 
 <!-- PROJECT-SPECIFIC-START: Directory Tree -->
-### 建议目录布局（参考设计）
+### 实际目录布局（React + TypeScript + Vite + Tailwind v4）
 
 ```
-frontend/
-├── features/              # 功能模块（对应后端模块）
-│   ├── connection/        # 连接管理（模块01）
-│   │   ├── components/    # 连接配置、状态显示组件
-│   │   ├── hooks/         # useConnection, useBackendStatus
-│   │   └── store/         # 连接状态管理
-│   ├── dashboard/         # 主看板（Story展示）
-│   │   ├── components/    # StoryCard, TaskBadge等
-│   │   ├── hooks/         # useStories, useStoryStatus
-│   │   └── store/         # 看板状态（含多后端隔离）
-│   ├── story/             # Story详情和管理
-│   │   ├── components/    # StoryDetail, ContextEditor
-│   │   ├── hooks/         # useStory, useStoryTasks
-│   │   └── store/
-│   ├── task/              # Task详情和执行状态
-│   │   ├── components/    # TaskDetail, AgentOutput（流式）
-│   │   ├── hooks/         # useTask, useTaskOutput
-│   │   └── store/
-│   └── view/              # 视图组织（模块08）
-│       ├── kanban/        # 看板视图组件
-│       ├── list/          # 列表视图组件
-│       └── tree/          # 树状视图组件
-├── shared/                # 共享组件和工具
-│   ├── components/        # 通用UI组件
-│   ├── hooks/             # 通用Hook
-│   ├── types/             # 共享类型定义（Story, Task等）
-│   └── utils/             # 工具函数
-├── api/                   # API调用层
-│   ├── client/            # HTTP/SSE客户端
-│   └── endpoints/         # 各模块API调用封装
-└── app/                   # 应用入口
-    ├── routes/            # 路由配置
-    └── config/            # 应用配置
+frontend/src/
+├── api/                         # API 调用层
+│   ├── client.ts
+│   ├── eventStream.ts           # SSE 事件流（Dashboard 用）
+│   ├── origin.ts                # API_ORIGIN / buildApiPath
+│   └── streamRegistry.ts        # 流连接追踪（HMR 安全）
+├── components/                  # 共享 UI 组件
+│   ├── acp/                     # ACP 协议可视化组件
+│   ├── layout/                  # 布局组件（WorkspaceLayout）
+│   └── ui/                      # 通用 UI（StatusBadge, ThemeToggle）
+├── features/                    # 功能模块（FSD 风格：model/ + ui/）
+│   ├── acp-session/             # ACP 会话流展示
+│   │   ├── model/               # types, useAcpStream, useAcpSession, streamTransport
+│   │   └── ui/                  # AcpSessionEntry, AcpMessageCard, AcpToolCallCard...
+│   ├── executor-selector/       # 执行器/模型选择器（新增）
+│   │   ├── model/               # types, useExecutorDiscovery, useExecutorConfig
+│   │   └── ui/                  # ExecutorSelector（下拉选择器 + 高级选项）
+│   ├── story/                   # Story 卡片/抽屉/列表视图
+│   └── task/                    # Task 卡片/抽屉/列表
+├── hooks/                       # 全局 hooks
+├── pages/                       # 页面组件
+│   ├── DashboardPage.tsx
+│   └── SessionPage.tsx          # 集成 ExecutorSelector + ACP 会话流
+├── services/                    # 服务层
+│   └── executor.ts              # ExecutorConfig 类型 + promptSession API
+├── stores/                      # 全局 Zustand stores
+├── styles/                      # Tailwind v4 主题变量（HSL 色系）
+├── types/
+├── App.tsx
+└── main.tsx
 ```
+
+### Feature 模块标准结构（FSD 风格）
+
+```
+features/<feature-name>/
+├── index.ts              # 公共 API 导出
+├── model/                # 数据层：types, hooks, transport
+│   ├── index.ts
+│   ├── types.ts
+│   └── use*.ts           # React hooks
+└── ui/                   # 展示层：组件
+    ├── index.ts
+    └── *.tsx             # React 组件
+```
+
+### executor-selector 模块
+
+提供执行器发现（从后端 GET /api/agents/discovery 获取）、
+配置管理（localStorage 持久化）、最近使用追踪（LRU 最多 8 条）。
+
+| Hook | 职责 |
+|------|------|
+| `useExecutorDiscovery` | 获取可用执行器列表 + 连接器能力 |
+| `useExecutorConfig` | 管理选择状态 + 持久化 + 最近使用追踪 |
 <!-- PROJECT-SPECIFIC-END -->
 
 ---

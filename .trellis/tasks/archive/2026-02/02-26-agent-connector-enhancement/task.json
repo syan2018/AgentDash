@@ -2,10 +2,11 @@
   "id": "02-26-agent-connector-enhancement",
   "title": "参考 vibe-kanban 完善 Agent 连接器，支持灵活模型/模式选择和快速切换",
   "slug": "agent-connector-enhancement",
-  "status": "planning",
+  "status": "completed",
   "priority": "P2",
   "created_at": "2026-02-26T00:00:00Z",
   "updated_at": "2026-02-26T00:00:00Z",
   "assigned_to": "claude-agent",
-  "dev_type": "fullstack"
+  "dev_type": "fullstack",
+  "completedAt": "2026-02-26"
 }

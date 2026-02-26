@@ -12,8 +12,10 @@ import type {
   ToolCall,
   ToolCallUpdate,
 } from "@agentclientprotocol/sdk";
+import { buildApiPath } from "../../../api/origin";
 import type { AcpDisplayEntry, AcpToolCallState } from "./types";
 import type { PromptSessionRequest } from "../../../services/executor";
+import { createAcpStreamTransport, type AcpStreamTransport } from "./streamTransport";
 
 export interface UseAcpStreamOptions {
   sessionId: string;
@@ -66,10 +68,6 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-function buildStreamUrl(sessionId: string, endpoint?: string): string {
-  return endpoint ?? `/api/acp/sessions/${encodeURIComponent(sessionId)}/stream`;
-}
-
 export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const {
     sessionId,
@@ -89,7 +87,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const [error, setError] = useState<Error | null>(null);
   const [connectKey, setConnectKey] = useState(0);
 
-  const esRef = useRef<EventSource | null>(null);
+  const transportRef = useRef<AcpStreamTransport | null>(null);
   const mountedRef = useRef(true);
   const pendingNotificationsRef = useRef<SessionNotification[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -266,7 +264,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   }, [flushPending]);
 
   const sendCancel = useCallback(() => {
-    void fetch(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+    void fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/cancel`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     }).catch((e) => {
@@ -277,8 +275,8 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   }, [sessionId]);
 
   /**
-   * sessionId/endpoint 变化时：关闭旧连接 → 重置状态 → 建立新连接（SSE）
-   * 断线重连：由浏览器 EventSource 自动处理，服务端通过 Last-Event-ID 跳过已发送历史
+   * sessionId/endpoint 变化时：关闭旧连接 → 重置状态 → 建立新连接（transport）
+   * transport 默认优先 NDJSON(fetch streaming)，失败后自动降级到 SSE
    */
   useEffect(() => {
     mountedRef.current = true;
@@ -290,40 +288,47 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     setError(null);
     setIsConnected(false);
 
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
+    if (transportRef.current) {
+      transportRef.current.close();
+      transportRef.current = null;
     }
 
-    const url = buildStreamUrl(sessionId, endpoint);
-    const es = new EventSource(url);
-    esRef.current = es;
-
-    es.onopen = () => {
-      if (!mountedRef.current) return;
-      setIsConnected(true);
-      setIsLoading(false);
-      setError(null);
-      callbackRefs.current.onConnectionChange?.(true);
-    };
-
-    es.onmessage = (event) => {
-      try {
-        const notification: SessionNotification = JSON.parse(event.data);
+    transportRef.current = createAcpStreamTransport({
+      sessionId,
+      endpoint,
+      onNotification: (notification) => {
+        if (!mountedRef.current) return;
         enqueueNotification(notification);
-      } catch (err) {
-        console.error("Failed to parse ACP message:", err);
-        callbackRefs.current.onError?.(new Error("解析 ACP 消息失败"));
-      }
-    };
+      },
+      onLifecycleChange: (lifecycle) => {
+        if (!mountedRef.current) return;
 
-    es.onerror = () => {
-      if (!mountedRef.current) return;
-      // EventSource 会自动重试，这里只反映状态，不把瞬时断线当致命错误
-      setIsConnected(false);
-      setIsLoading(true);
-      callbackRefs.current.onConnectionChange?.(false);
-    };
+        if (lifecycle === "connected") {
+          setIsConnected(true);
+          setIsLoading(false);
+          setError(null);
+          callbackRefs.current.onConnectionChange?.(true);
+          return;
+        }
+
+        if (lifecycle === "connecting" || lifecycle === "reconnecting") {
+          setIsConnected(false);
+          setIsLoading(true);
+          callbackRefs.current.onConnectionChange?.(false);
+          return;
+        }
+
+        if (lifecycle === "closed") {
+          setIsConnected(false);
+          callbackRefs.current.onConnectionChange?.(false);
+        }
+      },
+      onError: (transportError) => {
+        if (!mountedRef.current) return;
+        setError(transportError);
+        callbackRefs.current.onError?.(transportError);
+      },
+    });
 
     return () => {
       mountedRef.current = false;
@@ -333,26 +338,27 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       }
       pendingNotificationsRef.current = [];
 
-      if (esRef.current) {
-        esRef.current.close();
-        esRef.current = null;
+      if (transportRef.current) {
+        transportRef.current.close();
+        transportRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, endpoint, connectKey]);
+  }, [sessionId, endpoint, connectKey, enqueueNotification]);
 
   const close = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
+    if (transportRef.current) {
+      transportRef.current.close();
+      transportRef.current = null;
     }
     setIsConnected(false);
+    setIsLoading(false);
   }, []);
 
   const reconnect = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
+    if (transportRef.current) {
+      transportRef.current.close();
+      transportRef.current = null;
     }
     setEntries([]);
     setToolStates(new Map());

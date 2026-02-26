@@ -26,10 +26,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/cancel", post(acp_sessions::cancel_session))
         // ACP 会话流（Streaming HTTP / SSE）
         .route("/acp/sessions/{id}/stream", get(acp_sessions::acp_session_stream_sse))
+        .route("/acp/sessions/{id}/stream/ndjson", get(acp_sessions::acp_session_stream_ndjson))
         // 兼容：旧版 WebSocket 流
         .route("/acp/sessions/{id}/ws", get(acp_sessions::acp_session_ws))
-        // NDJSON 事件流
+        // 全局事件流（SSE + NDJSON）
         .route("/events/stream", get(stream::event_stream))
+        .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         // Resume: 获取指定 ID 之后的变更
         .route("/events/since/{since_id}", get(stream::get_events_since));
 

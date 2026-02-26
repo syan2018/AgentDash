@@ -1,9 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
+    body::{Body, Bytes},
     Json,
     extract::{
         Path,
+        Query,
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
@@ -15,6 +18,7 @@ use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use futures::stream::Stream;
 use std::convert::Infallible;
+use tokio::time::MissedTickBehavior;
 
 use crate::{
     app_state::AppState,
@@ -22,11 +26,18 @@ use crate::{
     rpc::ApiError,
 };
 
+const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WsClientMessage {
     Execute { #[serde(flatten)] req: PromptSessionRequest },
     Cancel,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NdjsonStreamQuery {
+    pub since_id: Option<u64>,
 }
 
 pub async fn prompt_session(
@@ -71,8 +82,21 @@ pub async fn acp_session_stream_sse(
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
 
+    tracing::info!(
+        session_id = %session_id,
+        last_event_id = last_event_id,
+        "ACP 会话流连接建立（SSE）"
+    );
+
     let (history, mut rx) = state.executor_hub.subscribe_with_history(&session_id).await;
     let start_index = std::cmp::min(last_event_id as usize, history.len());
+    let replayed = history.len().saturating_sub(start_index);
+    tracing::info!(
+        session_id = %session_id,
+        replayed_count = replayed,
+        history_total = history.len(),
+        "ACP 会话流历史补发完成（SSE）"
+    );
 
     let stream = async_stream::stream! {
         // 历史回放（带 id，支持浏览器自动 resume）
@@ -93,13 +117,136 @@ pub async fn acp_session_stream_sse(
                         yield Ok(Event::default().id(seq.to_string()).data(json));
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        lagged = n,
+                        "ACP 会话流订阅落后，部分消息被跳过（SSE）"
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        last_seq = seq,
+                        "ACP 会话流连接关闭：广播通道关闭（SSE）"
+                    );
+                    break;
+                }
             }
         }
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// ACP 会话流（Fetch Streaming / NDJSON）
+///
+/// Resume：
+/// - 优先读取 `x-stream-since-id` 请求头
+/// - 兼容读取 query `since_id`
+pub async fn acp_session_stream_ndjson(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<NdjsonStreamQuery>,
+) -> impl IntoResponse {
+    let resume_from = parse_ndjson_resume_from(&headers, query.since_id);
+    tracing::info!(
+        session_id = %session_id,
+        resume_from = resume_from,
+        "ACP 会话流连接建立（NDJSON）"
+    );
+
+    let (history, mut rx) = state.executor_hub.subscribe_with_history(&session_id).await;
+    let start_index = std::cmp::min(resume_from as usize, history.len());
+    let replayed = history.len().saturating_sub(start_index);
+    tracing::info!(
+        session_id = %session_id,
+        replayed_count = replayed,
+        history_total = history.len(),
+        "ACP 会话流历史补发完成（NDJSON）"
+    );
+
+    let stream = async_stream::stream! {
+        let mut seq = history.len() as u64;
+        if let Some(line) = to_ndjson_line(&serde_json::json!({
+            "type": "connected",
+            "last_event_id": seq,
+        })) {
+            yield Ok::<Bytes, Infallible>(line);
+        }
+
+        for (i, n) in history.iter().enumerate().skip(start_index) {
+            let id = (i as u64) + 1;
+            if let Some(line) = to_ndjson_line(&serde_json::json!({
+                "type": "notification",
+                "id": id,
+                "notification": n,
+            })) {
+                yield Ok::<Bytes, Infallible>(line);
+            }
+        }
+
+        let mut heartbeat_tick = tokio::time::interval(ACP_HEARTBEAT_INTERVAL);
+        heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                next = rx.recv() => {
+                    match next {
+                        Ok(n) => {
+                            seq += 1;
+                            if let Some(line) = to_ndjson_line(&serde_json::json!({
+                                "type": "notification",
+                                "id": seq,
+                                "notification": n,
+                            })) {
+                                yield Ok::<Bytes, Infallible>(line);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                lagged = n,
+                                "ACP 会话流订阅落后，部分消息被跳过（NDJSON）"
+                            );
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::info!(
+                                session_id = %session_id,
+                                last_seq = seq,
+                                "ACP 会话流连接关闭：广播通道关闭（NDJSON）"
+                            );
+                            break;
+                        }
+                    }
+                }
+                _ = heartbeat_tick.tick() => {
+                    if let Some(line) = to_ndjson_line(&serde_json::json!({
+                        "type": "heartbeat",
+                        "timestamp": chrono::Utc::now().timestamp_millis(),
+                    })) {
+                        yield Ok::<Bytes, Infallible>(line);
+                    }
+                }
+            }
+        }
+    };
+
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/x-ndjson; charset=utf-8",
+            ),
+            (axum::http::header::CACHE_CONTROL, "no-cache, no-transform"),
+            (axum::http::header::CONNECTION, "keep-alive"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        Body::from_stream(stream),
+    )
 }
 
 /// 兼容：旧版 WebSocket 流
@@ -168,5 +315,27 @@ async fn handle_ws(state: Arc<AppState>, session_id: String, socket: WebSocket) 
 
     send_task.abort();
     let _ = send_task.await;
+}
+
+fn parse_ndjson_resume_from(headers: &HeaderMap, query_since_id: Option<u64>) -> u64 {
+    headers
+        .get("x-stream-since-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .or(query_since_id)
+        .unwrap_or(0)
+}
+
+fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {
+    match serde_json::to_vec(value) {
+        Ok(mut bytes) => {
+            bytes.push(b'\n');
+            Some(Bytes::from(bytes))
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "序列化 ACP NDJSON 消息失败");
+            None
+        }
+    }
 }
 

@@ -13,14 +13,23 @@ interface WorkspaceLayoutProps {
 
 export function WorkspaceLayout({ children, activeView, onChangeView }: WorkspaceLayoutProps) {
   const { backends, currentBackendId, selectBackend } = useCoordinatorStore();
-  const { connected } = useEventStore();
+  const { connectionState } = useEventStore();
+
+  const streamStatusLabel =
+    connectionState === "connected"
+      ? "事件流已连接"
+      : connectionState === "reconnecting"
+        ? "事件流重连中…"
+        : connectionState === "connecting"
+          ? "事件流连接中…"
+          : "事件流未连接";
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <aside className="flex h-full w-64 flex-col border-r border-border bg-card">
         <div className="border-b border-border px-4 py-3">
           <h1 className="text-lg font-semibold tracking-tight text-foreground">AgentDashboard</h1>
-          <p className="mt-1 text-xs text-muted-foreground">{connected ? "事件流已连接" : "事件流未连接"}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{streamStatusLabel}</p>
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">

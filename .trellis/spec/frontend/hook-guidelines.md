@@ -103,9 +103,9 @@ export function useX(options: UseXOptions): UseXResult {
 
 ---
 
-## SSE Hook 规范
+## 流式 Hook 规范（SSE + Fetch NDJSON）
 
-参考 `useAcpStream` 实现（使用 EventSource）：
+参考 `useAcpStream` + `streamTransport` 实现（fetch 优先，sse 回退）：
 
 ```ts
 export interface UseStreamOptions {
@@ -125,22 +125,44 @@ export interface UseStreamResult {
 }
 
 export function useAcpStream(options: UseStreamOptions): UseStreamResult {
-  // 1. 使用 EventSource 建立 SSE 连接
-  // 2. 消息聚合（chunk 合并）
-  // 3. EventSource 自动重连（通过 Last-Event-ID）
-  // 4. 清理逻辑（组件卸载时关闭 EventSource）
+  // 1. 默认使用 FetchNdjsonTransport（支持 header + 自定义重连）
+  // 2. NDJSON 首次连接失败时自动回退 EventSourceTransport
+  // 3. 统一通过 transport 生命周期更新 isConnected/isLoading
+  // 4. 清理逻辑统一走 streamRegistry（组件卸载 + HMR dispose）
 }
 ```
 
-### SSE Hook 必备功能
+### 流式 Hook 必备功能
 
 - [ ] 连接状态追踪 (`isConnected`)
-- [ ] 使用 `EventSource` API（浏览器原生 SSE 客户端）
-- [ ] 支持 `Last-Event-ID` 实现断线续传
+- [ ] 提供 transport 抽象，业务层不直接依赖 `EventSource`
+- [ ] NDJSON transport 支持 `x-stream-since-id` 续传
+- [ ] SSE transport 支持 `Last-Event-ID` 续传
+- [ ] NDJSON 首次失败自动降级到 SSE
 - [ ] 消息缓冲与批量刷新（避免频繁重渲染）
 - [ ] 错误处理（区分连接错误和解析错误）
-- [ ] 清理函数（useEffect 返回时关闭 EventSource）
+- [ ] 清理函数（useEffect 返回时关闭 transport）
+- [ ] HMR dispose 时统一关闭所有流连接（防止连接累积）
 - [ ] 手动重连方法（重新创建 EventSource 实例）
+
+### 环境变量约定
+
+- `VITE_API_ORIGIN`（可选）：
+  - 未设置：前端请求走相对路径（通常通过 Vite proxy 到后端）
+  - 设置后：请求直接拼接为 `${VITE_API_ORIGIN}/api/...`，用于绕过 dev proxy
+
+### NDJSON Envelope 契约（前端消费）
+
+- `connected`：
+  - 字段：`last_event_id: number`
+- `notification`：
+  - 字段：`id: number`, `notification: SessionNotification`
+- `heartbeat`：
+  - 字段：`timestamp: number`
+
+前端必须：
+- 对未知 `type` 安全忽略（不抛异常中断流）
+- 仅当 `type=notification` 且 payload 满足 `SessionNotification` 结构时入队
 
 ---
 

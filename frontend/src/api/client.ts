@@ -1,10 +1,10 @@
-const API_BASE = '/api';
+import { buildApiPath } from './origin';
 
 async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE}${path}`;
+  const url = buildApiPath(path);
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...options.headers as Record<string, string> },
     ...options,

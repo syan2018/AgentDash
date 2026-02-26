@@ -1,3 +1,5 @@
+import { buildApiPath } from "../api/origin";
+
 export type ExecutorProfile = string;
 
 export type PermissionPolicy = "plan" | "supervised" | "auto";
@@ -19,7 +21,7 @@ export interface PromptSessionRequest {
 }
 
 export async function promptSession(sessionId: string, req: PromptSessionRequest): Promise<void> {
-  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/prompt`, {
+  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/prompt`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),

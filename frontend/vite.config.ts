@@ -2,6 +2,12 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+function getProxyErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const withCode = error as { code?: unknown }
+  return typeof withCode.code === 'string' ? withCode.code : undefined
+}
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -18,7 +24,7 @@ export default defineConfig({
           // 用我们自己的 handler 替换掉 Vite 默认的 error 日志（ECONNRESET 在 HMR/刷新时很常见）
           proxy.removeAllListeners('error')
           proxy.on('error', (err, _req, res) => {
-            const code = (err as any)?.code as string | undefined
+            const code = getProxyErrorCode(err)
             if (code === 'ECONNRESET' || code === 'EPIPE') return
 
             if (res && !res.headersSent) {
@@ -32,10 +38,13 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
         ws: true,
+        // /api 下含 SSE/NDJSON 长连接（例如 acp session stream），统一关闭超时
+        timeout: 0,
+        proxyTimeout: 0,
         configure: (proxy) => {
           proxy.removeAllListeners('error')
           proxy.on('error', (err, _req, res) => {
-            const code = (err as any)?.code as string | undefined
+            const code = getProxyErrorCode(err)
             if (code === 'ECONNRESET' || code === 'EPIPE') return
 
             if (res && !res.headersSent) {

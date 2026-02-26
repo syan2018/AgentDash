@@ -1,0 +1,41 @@
+{
+  "id": "frontend-agent-session-mvp",
+  "name": "frontend-agent-session-mvp",
+  "title": "前端实现 Agent 连接与 ACP 会话绘制（Session 视图 MVP）",
+  "description": "参考 ABCCraft 的 SessionView 交互与 vibe-kanban 的 WS 流连接模式，在 AgentDashboard 前端完成 Agent 会话连接、发送 Prompt 与 ACP 绘制的 MVP 集成。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-02-26",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": ""
+}

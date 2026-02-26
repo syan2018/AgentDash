@@ -1,0 +1,6 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": "frontend/src/features/acp-session/model/useAcpStream.ts", "reason": "检查 WS 连接实现是否健壮（重连/错误处理/资源释放）"}
+{"file": "frontend/src/services/executor.ts", "reason": "检查 Prompt 请求契约与错误处理"}
+{"file": "crates/agentdash-api/src/routes/acp_sessions.rs", "reason": "检查前端消息协议与后端一致（execute/cancel/历史回放）"}

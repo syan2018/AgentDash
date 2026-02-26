@@ -1,0 +1,13 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/components.md", "reason": "Component conventions"}
+{"file": "frontend/src/features/acp-session/model/useAcpStream.ts", "reason": "ACP WebSocket 连接/消息聚合的现有实现"}
+{"file": "frontend/src/features/acp-session/ui/AcpSessionList.tsx", "reason": "ACP 会话列表的渲染入口（状态/重连 UI）"}
+{"file": "frontend/src/services/executor.ts", "reason": "发送 Prompt 的现有 API（/api/sessions/:id/prompt）"}
+{"file": "frontend/src/components/layout/workspace-layout.tsx", "reason": "现有侧边栏结构（后端连接选择），后续扩展导航"}
+{"file": "crates/agentdash-api/src/routes/acp_sessions.rs", "reason": "Acp 会话 WS/HTTP 契约：execute/cancel/历史回放"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/shared/hooks/useJsonPatchWsStream.ts", "reason": "vibe-kanban 的 WS 连接/指数退避重连/finished 处理参考"}
+{"file": "references/ABCCraft/docs/frontend-design-notes.md", "reason": "ABCCraft 的 Session（对话创建）交互与视图切换参考"}
+{"file": "references/ABCCraft/src/frontend/src/features/session/session-view.tsx", "reason": "ABCCraft SessionView 组件实现参考（聊天区+侧栏+连接器选择）"}
+{"file": "references/ABCCraft/src/frontend/src/features/session/hooks/use-session-stream.ts", "reason": "ABCCraft 流式发送/Chunk 合并/ToolCall & ConfirmationRequest 处理参考"}

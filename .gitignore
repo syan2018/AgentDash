@@ -33,3 +33,5 @@ Thumbs.db
 
 # 执行会话持久化（运行时产物）
 .agentdash/
+
+__pycache__/

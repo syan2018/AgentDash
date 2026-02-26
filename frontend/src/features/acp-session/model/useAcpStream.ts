@@ -1,8 +1,8 @@
 /**
  * ACP 会话流管理 Hook
  *
- * 处理 WebSocket 连接和 SessionNotification 消息流
- * 支持消息聚合和工具调用状态跟踪
+ * 处理 Streaming HTTP（SSE）连接和 SessionNotification 消息流
+ * 支持消息聚合、工具调用状态跟踪、批处理刷新与去重合并
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -33,28 +33,72 @@ export interface UseAcpStreamResult {
   error: Error | null;
   reconnect: () => void;
   close: () => void;
+  sendCancel: () => void;
+}
+
+const FLUSH_INTERVAL_MS = 50;
+
+function mergeStreamChunk(previous: string, incoming: string): string {
+  if (!incoming) return previous;
+  if (!previous) return incoming;
+  if (incoming === previous) return previous;
+
+  // 子串/超串保护：一些 provider 会重复发送“相同片段但位置不同”的快照
+  if (previous.includes(incoming)) return previous;
+  if (incoming.includes(previous)) return incoming;
+
+  // 有些 provider 会发送“完整快照”chunk
+  if (incoming.startsWith(previous)) return incoming;
+  // 有些 provider 会重复发送尾部 chunk
+  if (previous.endsWith(incoming)) return previous;
+
+  // 通过 overlap 合并，避免边界重复
+  const maxOverlap = Math.min(previous.length, incoming.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (previous.slice(-size) === incoming.slice(0, size)) {
+      return `${previous}${incoming.slice(size)}`;
+    }
+  }
+  return `${previous}${incoming}`;
 }
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+function buildStreamUrl(sessionId: string, endpoint?: string): string {
+  return endpoint ?? `/api/acp/sessions/${encodeURIComponent(sessionId)}/stream`;
+}
+
 export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
-  const { sessionId, endpoint, initialEntries = [], executeRequest, onEntry, onConnectionChange, onError } = options;
+  const {
+    sessionId,
+    endpoint,
+    initialEntries = [],
+    // executeRequest：SSE 为单向流，不支持在同一连接上发送 execute（由上层 HTTP prompt 触发）
+    // 保留该字段是为了兼容未来可能的 transport 切换
+    onEntry,
+    onConnectionChange,
+    onError,
+  } = options;
 
   const [entries, setEntries] = useState<AcpDisplayEntry[]>(initialEntries);
   const [toolStates, setToolStates] = useState<Map<string, AcpToolCallState>>(new Map());
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [connectKey, setConnectKey] = useState(0);
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const entriesRef = useRef<AcpDisplayEntry[]>(initialEntries);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const mountedRef = useRef(true);
+  const pendingNotificationsRef = useRef<SessionNotification[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toolStatesRef = useRef<Map<string, AcpToolCallState>>(new Map());
 
+  const callbackRefs = useRef({ onEntry, onConnectionChange, onError });
   useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
+    callbackRefs.current = { onEntry, onConnectionChange, onError };
+  }, [onEntry, onConnectionChange, onError]);
 
   const handleToolCall = useCallback((update: SessionUpdate & { sessionUpdate: "tool_call" }) => {
     const toolCall: ToolCall = {
@@ -69,16 +113,15 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       _meta: update._meta,
     };
 
-    setToolStates((prev) => {
-      const next = new Map(prev);
-      next.set(update.toolCallId, {
-        toolCallId: update.toolCallId,
-        call: toolCall,
-        updates: [],
-        status: update.status ?? "pending",
-      });
-      return next;
+    const next = new Map(toolStatesRef.current);
+    next.set(update.toolCallId, {
+      toolCallId: update.toolCallId,
+      call: toolCall,
+      updates: [],
+      status: update.status ?? "pending",
     });
+    toolStatesRef.current = next;
+    setToolStates(next);
 
     return toolCall;
   }, []);
@@ -96,29 +139,26 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       _meta: update._meta,
     };
 
-    setToolStates((prev) => {
-      const next = new Map(prev);
-      const existing = next.get(update.toolCallId);
-      if (existing) {
-        const updatedState: AcpToolCallState = {
-          ...existing,
-          updates: [...existing.updates, toolUpdate],
-          status: update.status ?? existing.status,
-        };
-
-        if (update.status === "completed" || update.status === "failed") {
-          updatedState.finalResult = update.rawOutput;
-        }
-
-        next.set(update.toolCallId, updatedState);
+    const next = new Map(toolStatesRef.current);
+    const existing = next.get(update.toolCallId);
+    if (existing) {
+      const updatedState: AcpToolCallState = {
+        ...existing,
+        updates: [...existing.updates, toolUpdate],
+        status: update.status ?? existing.status,
+      };
+      if (update.status === "completed" || update.status === "failed") {
+        updatedState.finalResult = update.rawOutput;
       }
-      return next;
-    });
+      next.set(update.toolCallId, updatedState);
+      toolStatesRef.current = next;
+      setToolStates(next);
+    }
 
     return toolUpdate;
   }, []);
 
-  const processUpdate = useCallback((notification: SessionNotification) => {
+  const applyNotification = useCallback((prev: AcpDisplayEntry[], notification: SessionNotification) => {
     const { update } = notification;
     const newEntry: AcpDisplayEntry = {
       id: generateId(),
@@ -132,143 +172,196 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     if (update.sessionUpdate === "tool_call") {
       handleToolCall(update);
       newEntry.isPendingApproval = update.status === "pending";
+      return [...prev, newEntry];
     }
 
     if (update.sessionUpdate === "tool_call_update") {
       handleToolCallUpdate(update);
       newEntry.isPendingApproval = update.status === "pending";
+      return [...prev, newEntry];
     }
 
-    const lastEntry = entriesRef.current[entriesRef.current.length - 1];
-    const canMergeChunks = lastEntry && (
-      (lastEntry.update.sessionUpdate === "agent_message_chunk" && update.sessionUpdate === "agent_message_chunk") ||
-      (lastEntry.update.sessionUpdate === "user_message_chunk" && update.sessionUpdate === "user_message_chunk") ||
-      (lastEntry.update.sessionUpdate === "agent_thought_chunk" && update.sessionUpdate === "agent_thought_chunk")
-    );
+    const isChunkUpdate =
+      update.sessionUpdate === "agent_message_chunk" ||
+      update.sessionUpdate === "user_message_chunk" ||
+      update.sessionUpdate === "agent_thought_chunk";
 
-    if (canMergeChunks) {
-      setEntries((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last) {
-          const lastContent = last.update as { content: { type: string; text?: string } };
-          const newContent = update as { content: { type: string; text?: string } };
-          if (lastContent.content.type === "text" && newContent.content.type === "text") {
-            last.update = {
-              ...last.update,
-              content: {
-                type: "text" as const,
-                text: (lastContent.content.text ?? "") + (newContent.content.text ?? ""),
-              },
-            } as SessionUpdate;
-          }
-        }
-        return next;
-      });
-    } else {
-      setEntries((prev) => [...prev, newEntry]);
-      onEntry?.(newEntry);
-    }
-  }, [handleToolCall, handleToolCallUpdate, onEntry]);
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      return;
+    if (!isChunkUpdate) {
+      return [...prev, newEntry];
     }
 
+    // turn 边界：用最近一次 user_message_chunk 切分，避免跨 turn 合并 agent chunk
+    let lastUserIndex = -1;
+    for (let i = prev.length - 1; i >= 0; i -= 1) {
+      if (prev[i]?.update.sessionUpdate === "user_message_chunk") {
+        lastUserIndex = i;
+        break;
+      }
+    }
+
+    let targetIndex = -1;
+    const scanStart = prev.length - 1;
+    const scanEndExclusive =
+      update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk"
+        ? Math.max(lastUserIndex, -1)
+        : -1;
+
+    for (let i = scanStart; i > scanEndExclusive; i -= 1) {
+      if (prev[i]?.update.sessionUpdate === update.sessionUpdate) {
+        targetIndex = i;
+        break;
+      }
+    }
+
+    if (targetIndex === -1) {
+      return [...prev, newEntry];
+    }
+
+    const target = prev[targetIndex]!;
+    const targetUpdateAny = target.update as unknown as { content?: { type?: string; text?: string } };
+    const newUpdateAny = update as unknown as { content?: { type?: string; text?: string } };
+    if (targetUpdateAny.content?.type !== "text" || newUpdateAny.content?.type !== "text") {
+      return [...prev, newEntry];
+    }
+
+    const previousText = targetUpdateAny.content.text ?? "";
+    const incomingText = newUpdateAny.content.text ?? "";
+    const mergedText = mergeStreamChunk(previousText, incomingText);
+
+    // 重要：如果合并后文本不变，不触发 state 更新，避免“卡死/不停刷新”的表现
+    if (mergedText === previousText) {
+      return prev;
+    }
+
+    const mergedUpdate: SessionUpdate = {
+      ...target.update,
+      content: { type: "text" as const, text: mergedText },
+    } as SessionUpdate;
+
+    const next = [...prev];
+    next[targetIndex] = { ...target, update: mergedUpdate, isStreaming: true };
+    return next;
+  }, [handleToolCall, handleToolCallUpdate]);
+
+  const flushPending = useCallback(() => {
+    flushTimerRef.current = null;
+    if (!mountedRef.current) return;
+    const pending = pendingNotificationsRef.current;
+    if (pending.length === 0) return;
+    pendingNotificationsRef.current = [];
+
+    setEntries((prev) => {
+      let next = prev;
+      for (const n of pending) {
+        next = applyNotification(next, n);
+      }
+      return next;
+    });
+  }, [applyNotification]);
+
+  const enqueueNotification = useCallback((notification: SessionNotification) => {
+    pendingNotificationsRef.current.push(notification);
+    if (flushTimerRef.current) return;
+    flushTimerRef.current = setTimeout(flushPending, FLUSH_INTERVAL_MS);
+  }, [flushPending]);
+
+  const sendCancel = useCallback(() => {
+    void fetch(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    }).catch((e) => {
+      const err = e instanceof Error ? e : new Error("取消执行失败");
+      setError(err);
+      callbackRefs.current.onError?.(err);
+    });
+  }, [sessionId]);
+
+  /**
+   * sessionId/endpoint 变化时：关闭旧连接 → 重置状态 → 建立新连接（SSE）
+   * 断线重连：由浏览器 EventSource 自动处理，服务端通过 Last-Event-ID 跳过已发送历史
+   */
+  useEffect(() => {
+    mountedRef.current = true;
+
+    setEntries(initialEntries);
+    setToolStates(new Map());
+    toolStatesRef.current = new Map();
     setIsLoading(true);
     setError(null);
+    setIsConnected(false);
 
-    const wsUrl = endpoint ?? `/api/acp/sessions/${sessionId}/stream`;
-    const url = wsUrl.replace(/^http/, "ws");
-
-    try {
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-
-      ws.addEventListener("open", () => {
-        setIsConnected(true);
-        setIsLoading(false);
-        onConnectionChange?.(true);
-
-        if (executeRequest) {
-          try {
-            ws.send(JSON.stringify({ type: "execute", ...executeRequest }));
-          } catch (err) {
-            console.error("Failed to send execute request:", err);
-            onError?.(new Error("Failed to send execute request"));
-          }
-        }
-      });
-
-      ws.addEventListener("message", (event) => {
-        try {
-          const notification: SessionNotification = JSON.parse(event.data);
-          processUpdate(notification);
-        } catch (err) {
-          console.error("Failed to parse ACP message:", err);
-          onError?.(new Error("Failed to parse ACP message"));
-        }
-      });
-
-      ws.addEventListener("close", () => {
-        setIsConnected(false);
-        onConnectionChange?.(false);
-      });
-
-      ws.addEventListener("error", () => {
-        const wsError = new Error("WebSocket error");
-        setError(wsError);
-        onError?.(wsError);
-      });
-    } catch (err) {
-      const connectError = err instanceof Error ? err : new Error("Failed to connect");
-      setError(connectError);
-      setIsLoading(false);
-      onError?.(connectError);
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
     }
-  }, [sessionId, endpoint, processUpdate, onConnectionChange, onError, executeRequest]);
+
+    const url = buildStreamUrl(sessionId, endpoint);
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    es.onopen = () => {
+      if (!mountedRef.current) return;
+      setIsConnected(true);
+      setIsLoading(false);
+      setError(null);
+      callbackRefs.current.onConnectionChange?.(true);
+    };
+
+    es.onmessage = (event) => {
+      try {
+        const notification: SessionNotification = JSON.parse(event.data);
+        enqueueNotification(notification);
+      } catch (err) {
+        console.error("Failed to parse ACP message:", err);
+        callbackRefs.current.onError?.(new Error("解析 ACP 消息失败"));
+      }
+    };
+
+    es.onerror = () => {
+      if (!mountedRef.current) return;
+      // EventSource 会自动重试，这里只反映状态，不把瞬时断线当致命错误
+      setIsConnected(false);
+      setIsLoading(true);
+      callbackRefs.current.onConnectionChange?.(false);
+    };
+
+    return () => {
+      mountedRef.current = false;
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      pendingNotificationsRef.current = [];
+
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, endpoint, connectKey]);
 
   const close = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
     }
-
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-
     setIsConnected(false);
   }, []);
 
   const reconnect = useCallback(() => {
-    close();
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
     setEntries([]);
     setToolStates(new Map());
-    connect();
-  }, [close, connect]);
-
-  const hasConnectedRef = useRef(false);
-
-  useEffect(() => {
-    if (!hasConnectedRef.current) {
-      hasConnectedRef.current = true;
-      const frameId = requestAnimationFrame(() => {
-        connect();
-      });
-
-      return () => {
-        cancelAnimationFrame(frameId);
-        close();
-      };
-    }
-
-    return () => {
-      close();
-    };
-  }, [connect, close]);
+    toolStatesRef.current = new Map();
+    setError(null);
+    setIsLoading(true);
+    setIsConnected(false);
+    setConnectKey((k) => k + 1);
+  }, []);
 
   return {
     entries,
@@ -278,6 +371,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     error,
     reconnect,
     close,
+    sendCancel,
   };
 }
 

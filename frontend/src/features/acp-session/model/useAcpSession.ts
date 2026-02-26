@@ -29,7 +29,7 @@ export interface UseAcpSessionResult {
   error: Error | null;
   reconnect: () => void;
   close: () => void;
-  clearEntries: () => void;
+  sendCancel: () => void;
 }
 
 function getToolAggregationType(update: SessionUpdate): ToolAggregationType | null {
@@ -189,6 +189,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     error,
     reconnect,
     close,
+    sendCancel,
   } = useAcpStream({
     sessionId,
     endpoint,
@@ -202,10 +203,6 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     return aggregateEntries(entries);
   }, [entries, enableAggregation]);
 
-  const clearEntries = useCallback(() => {
-    window.location.reload();
-  }, []);
-
   return {
     displayItems,
     rawEntries: entries,
@@ -214,7 +211,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     error,
     reconnect,
     close,
-    clearEntries,
+    sendCancel,
   };
 }
 

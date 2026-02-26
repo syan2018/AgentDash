@@ -40,34 +40,82 @@ src/
 ```
 
 <!-- PROJECT-SPECIFIC-START: Directory Tree -->
-### 实际目录布局（Rust / Axum）
+### 实际目录布局（Rust / Axum）— 整洁架构分层
+
+**架构原则**：依赖方向 外层 → 内层（Interface → Application → Domain）
 
 ```
 crates/
-├── agentdash-api/src/           # HTTP API 服务器（主入口）
-│   ├── main.rs                  # Axum 启动入口
-│   ├── app_state.rs             # AppState（store, coordinator, executor_hub, connector）
-│   ├── routes.rs                # 路由注册（所有 /api/* 路由）
-│   ├── rpc.rs                   # ApiError 统一错误处理
-│   ├── stream.rs                # 全局事件流（SSE + NDJSON）
-│   ├── routes/                  # 路由处理函数
-│   │   ├── health.rs
-│   │   ├── backends.rs
-│   │   ├── stories.rs
-│   │   ├── acp_sessions.rs      # ACP 会话流（SSE/NDJSON/WS）
-│   │   └── discovery.rs         # 执行器发现 API
-│   └── executor/                # 执行层
-│       ├── mod.rs               # 导出 AgentConnector, ExecutorHub 等
-│       ├── connector.rs         # AgentConnector trait + ConnectorType + ConnectorCapabilities
-│       ├── hub.rs               # ExecutorHub（会话管理 + 广播）
+├── agentdash-api/               # Interface Layer (HTTP)
+│   └── src/
+│       ├── main.rs              # Axum 启动入口
+│       ├── app_state.rs         # 依赖注入配置（Arc<dyn Repository>）
+│       ├── routes.rs            # 路由注册
+│       ├── rpc.rs               # ApiError 统一错误处理
+│       ├── stream.rs            # 全局事件流（SSE + NDJSON）
+│       └── routes/              # 路由处理函数（只处理 HTTP）
+│           ├── health.rs
+│           ├── backends.rs
+│           ├── stories.rs
+│           ├── acp_sessions.rs
+│           └── discovery.rs
+│
+├── agentdash-application/       # Application Layer (用例编排) — 规划中
+│   └── src/
+│       ├── lib.rs
+│       ├── use_cases/           # 用例实现
+│       │   ├── story/
+│       │   │   ├── create_story.rs
+│       │   │   └── decompose_story.rs
+│       │   └── task/
+│       │       └── create_task.rs
+│       └── services/            # 应用服务
+│           └── story_service.rs
+│
+├── agentdash-domain/            # Domain Layer (核心业务)
+│   └── src/
+│       ├── lib.rs
+│       ├── common/
+│       │   ├── error.rs         # DomainError
+│       │   └── events.rs        # 领域事件 trait
+│       ├── story/
+│       │   ├── entity.rs        # Story 实体（含业务方法）
+│       │   ├── repository.rs    # StoryRepository trait (Port)
+│       │   └── value_objects.rs # StoryStatus, StoryId, etc.
+│       ├── task/
+│       │   ├── entity.rs
+│       │   ├── repository.rs
+│       │   └── value_objects.rs
+│       └── backend/
+│           ├── entity.rs
+│           └── repository.rs
+│
+├── agentdash-infrastructure/    # Infrastructure Layer (技术实现)
+│   └── src/
+│       ├── lib.rs
+│       └── persistence/
+│           └── sqlite/
+│               ├── mod.rs
+│               ├── story_repository.rs    # impl StoryRepository
+│               ├── task_repository.rs     # impl TaskRepository
+│               └── backend_repository.rs  # impl BackendRepository
+│
+├── agentdash-executor/          # Infrastructure Layer (Connectors)
+│   └── src/
+│       ├── lib.rs
+│       ├── connector.rs         # AgentConnector trait (Port)
+│       ├── hub.rs               # ExecutorHub
 │       ├── adapters/
-│       │   └── normalized_to_acp.rs  # vibe-kanban 日志 → ACP 通知转换
+│       │   └── normalized_to_acp.rs
 │       └── connectors/
 │           ├── mod.rs
-│           ├── vibe_kanban.rs   # 本地执行器连接器（LocalExecutor）
-│           └── remote_acp.rs    # 远程 ACP 后端连接器（骨架）
-├── agentdash-state/             # 状态存储（Story, Task, StateChange）
-└── agentdash-coordinator/       # 后端/连接管理
+│           ├── vibe_kanban.rs
+│           └── remote_acp.rs
+│
+└── agentdash-coordinator/       # ⚠️ 遗留，待整合到 infrastructure
+    └── src/
+        ├── config.rs
+        └── manager.rs           # CoordinatorManager（直接操作数据库）
 ```
 
 ### 关键 API 端点
@@ -105,29 +153,92 @@ AgentConnector trait
 <!-- How should new features/modules be organized? -->
 
 <!-- PROJECT-SPECIFIC-START: Module Guidelines -->
-### 每个模块的标准结构
+### 整洁架构分层约定
+
+**核心原则**：依赖方向始终向内，外层依赖内层。
 
 ```
-modules/<module-name>/
-├── interfaces/         # 接口/类型定义（稳定，不轻易改变）
-│   └── index          # 导出接口
-├── strategies/         # 可替换策略实现
-│   ├── <strategy-a>/
-│   └── <strategy-b>/
-└── index               # 模块入口，注册策略
+Interface Layer (agentdash-api)
+    ↓ depends on
+Application Layer (agentdash-application) — 当前嵌入在 api 中
+    ↓ depends on
+Domain Layer (agentdash-domain)
+    ↑ implemented by
+Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 ```
 
-### 模块依赖方向
+#### 分层职责
 
-```
-api → orchestration → state
-                   ↓       ↓
-              injection  execution → workspace
-                              ↓
-                          validation
+| 分层 | Crate | 职责 | 允许依赖 | 状态 |
+|------|-------|------|----------|------|
+| **Interface** | `agentdash-api` | HTTP路由、DTO、中间件 | application, domain | ✅ 已创建 |
+| **Application** | `agentdash-application` | 用例编排、事务管理、应用服务 | domain | ⏳ 规划中 |
+| **Domain** | `agentdash-domain` | 实体、值对象、Repository接口、领域事件 | 无外部库（仅async-trait等基础库） | ✅ 已创建 |
+| **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor` | Repository实现、外部API、消息队列 | domain | ✅ 已创建 |
+
+> **注意**：Application 层目前嵌入在 `agentdash-api` 中（简单业务逻辑直接写在路由中）。当业务逻辑复杂后，**必须**提取到独立的 `agentdash-application` crate 中。
+
+#### Repository 模式约定
+
+**领域层定义接口（Port）**：
+```rust
+// agentdash-domain/src/story/repository.rs
+#[async_trait]
+pub trait StoryRepository: Send + Sync {
+    async fn create(&self, story: &Story) -> Result<(), DomainError>;
+    async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError>;
+}
 ```
 
-> **禁止跨层依赖：** api层不能直接访问 state 层内部实现
+**基础设施层实现（Adapter）**：
+```rust
+// agentdash-infrastructure/src/persistence/sqlite/story_repository.rs
+pub struct SqliteStoryRepository { pool: SqlitePool }
+
+#[async_trait]
+impl StoryRepository for SqliteStoryRepository {
+    async fn create(&self, story: &Story) -> Result<(), DomainError> { ... }
+}
+```
+
+**依赖注入配置**：
+```rust
+// agentdash-api/src/app_state.rs
+pub struct AppState {
+    pub story_repo: Arc<dyn StoryRepository>,     // trait 对象
+    pub task_repo: Arc<dyn TaskRepository>,
+    pub backend_repo: Arc<dyn BackendRepository>,
+}
+```
+
+#### 添加新模块的步骤
+
+1. **Domain Layer**：
+   ```
+   agentdash-domain/src/<module>/
+   ├── entity.rs          # 实体（业务行为方法）
+   ├── repository.rs      # Repository trait
+   ├── value_objects.rs   # 值对象
+   └── events.rs          # 领域事件
+   ```
+
+2. **Infrastructure Layer**：
+   ```
+   agentdash-infrastructure/src/persistence/sqlite/
+   └── <module>_repository.rs   # impl Repository trait
+   ```
+
+3. **Interface Layer**（当前方式，简单业务）：
+   - 在 `app_state.rs` 添加 `Arc<dyn Repository>`
+   - 在 `routes/` 添加路由处理函数
+
+4. **Application Layer**（复杂业务时）：
+   - 创建 `agentdash-application/src/use_cases/<module>/`
+   - 实现 `CreateXxxUseCase`, `UpdateXxxUseCase` 等
+   - 路由改为调用 Use Case，而非直接操作 Repository
+
+> **禁止跨层依赖**：API 层不能直接访问 Repository 的具体实现
+> **Application 层规划**：当前简单业务逻辑直接写在路由中。当业务复杂时，必须提取到独立的 `agentdash-application` crate。
 <!-- PROJECT-SPECIFIC-END -->
 
 ---
@@ -137,12 +248,31 @@ api → orchestration → state
 <!-- File and folder naming rules -->
 
 <!-- PROJECT-SPECIFIC-START: Naming Rules -->
-> **注意：技术栈确定后，根据所选语言的约定调整命名规范。**
+### Crate 命名
 
-- **模块目录**：小写短横线（kebab-case），如 `state-manager/`
-- **接口文件**：描述性名称，如 `StateManager`, `ConnectionManager`
-- **策略实现**：`<技术>-<功能>`，如 `sqlite-state-store`, `worktree-workspace`
-- **实体类型**：PascalCase，如 `Story`, `Task`, `StateChange`
+- **领域层**：`agentdash-domain` — 核心业务
+- **基础设施层**：`agentdash-infrastructure` — 技术实现
+- **执行器层**：`agentdash-executor` — 连接器实现
+- **接口层**：`agentdash-api` — HTTP API
+
+### 文件命名
+
+- **实体**：PascalCase，如 `Story`, `Task`, `BackendConfig`
+- **Repository trait**：`<Entity>Repository`，如 `StoryRepository`
+- **Repository 实现**：`<技术><Entity>Repository`，如 `SqliteStoryRepository`
+- **值对象**：PascalCase 描述性名称，如 `StoryStatus`, `StoryId`
+
+### 目录命名
+
+```
+agentdash-domain/src/<entity>/           # 小写，单数
+├── entity.rs                          # 实体定义
+├── repository.rs                      # Repository trait
+└── value_objects.rs                   # 值对象
+
+agentdash-infrastructure/src/persistence/<db_type>/  # 如 sqlite/
+└── <entity>_repository.rs                         # 如 story_repository.rs
+```
 <!-- PROJECT-SPECIFIC-END -->
 
 ---
@@ -152,14 +282,33 @@ api → orchestration → state
 <!-- Link to well-organized modules as examples -->
 
 <!-- PROJECT-SPECIFIC-START: Current Status -->
-### 当前状态
+### 架构演进记录
 
-> 技术栈未确定，上述为概念性目录设计。
-> 确定技术栈后，在此文件更新实际目录结构。
+**2026-02-26: 整洁架构重构完成**
 
-**需要讨论决定：**
-- [ ] 后端语言选择（Node.js / Python / Go / Rust / ...）
-- [ ] 框架选择
-- [ ] 存储方案（影响 state 模块目录结构）
-- [ ] 构建工具和项目结构约定
+从混合分层迁移到整洁架构：
+
+| 旧架构 | 新架构 | 状态 |
+|--------|--------|------|
+| `agentdash-state` | `agentdash-domain` + `agentdash-infrastructure` | ✅ 已迁移 |
+| `agentdash-coordinator` | （待整合到 infrastructure）| ⏭️ 遗留 |
+| `agentdash-api/executor/` | `agentdash-executor` | ✅ 已提取 |
+
+**关键变更**：
+1. 引入 `agentdash-domain` crate，包含实体和 Repository traits
+2. 引入 `agentdash-infrastructure` crate，实现 Repository 接口
+3. 使用 `Arc<dyn Repository>` 在 AppState 中进行依赖注入
+4. 废弃 `agentdash-state` crate（删除 9 个文件，541 行）
+
+**依赖方向验证**：
+```
+cargo check --workspace  ✅ 通过
+cargo test --workspace   ✅ 通过
+```
+
+**后续优化**：
+- [ ] 创建 `agentdash-application` crate — 当业务逻辑复杂时提取 Use Case
+- [ ] 整合 `agentdash-coordinator` 到 `agentdash-infrastructure`
+- [ ] 补充领域层单元测试
+- [ ] 修复 minor clippy 警告
 <!-- PROJECT-SPECIFIC-END -->

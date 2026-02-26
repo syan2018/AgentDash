@@ -48,7 +48,7 @@ Agent完成 → ExecutionManager.reportCompletion(taskId)
          → ValidationManager.validate(taskId, rules)
          → [验证通过] OrchestrationEngine.checkStoryProgress(storyId)
          → [所有Task完成] StateManager.updateStory(storyId, {status: 'validating'})
-         → WebSocket推送 → 前端更新Story状态显示
+         → SSE推送 → 前端更新Story状态显示
 ```
 <!-- PROJECT-SPECIFIC-END -->
 

@@ -1,0 +1,19 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/index.md", "reason": "项目规范索引（共享约束、必读顺序）"}
+{"file": ".trellis/spec/communication.md", "reason": "沟通规范（中文要求、文档规范）"}
+{"file": ".trellis/spec/tech-stack.md", "reason": "技术选型（前后端能力边界、演进路线）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层改造前的契约/数据流检查清单"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "避免重复实现（SSE/Fetch stream 抽象复用）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发规范总览"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Hook 规范（流式连接、重连、清理）"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全（StreamEvent/Notification 的边界定义）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量规范（禁止模式、可维护性）"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端开发规范总览"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理规范（流式端点错误矩阵）"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志规范（断流/重连/背压观测）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量规范（边界清晰、可测试）"}
+{"file": "crates/agentdash-api/src/routes/acp_sessions.rs", "reason": "SSE + Last-Event-ID + 历史回放的现有范例（可复用到全局事件流/NDJSON）"}
+{"file": "crates/agentdash-api/src/stream.rs", "reason": "全局事件流现状（需要补 event id / resume）"}
+{"file": "frontend/src/api/eventStream.ts", "reason": "前端全局事件流客户端（后续抽象 transport）"}
+{"file": "frontend/src/features/acp-session/model/useAcpStream.ts", "reason": "ACP 会话流消费逻辑（后续可切换 fetch streaming）"}
+{"file": "frontend/vite.config.ts", "reason": "开发期 proxy/超时策略（SSE/WS 断流与 ECONNRESET 关联）"}

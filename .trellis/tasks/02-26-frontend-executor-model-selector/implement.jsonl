@@ -1,0 +1,14 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend directory structure"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend code quality requirements"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Frontend component conventions"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Frontend hook conventions"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend code quality requirements"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/shared/hooks/useExecutorDiscovery.ts", "reason": "参考：执行器发现 Hook 实现"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/shared/hooks/useExecutorConfig.ts", "reason": "参考：执行器配置管理 Hook"}
+{"file": "third_party/vibe-kanban/packages/ui/src/components/ModelSelectorPopover.tsx", "reason": "参考：模型选择器 UI 组件"}
+{"file": "third_party/vibe-kanban/packages/ui/src/components/ModelList.tsx", "reason": "参考：模型列表组件"}
+{"file": "frontend/src/pages/SessionPage.tsx", "reason": "需要修改：集成 ModelSelector"}
+{"file": "frontend/src/services/executor.ts", "reason": "参考：执行器服务 API"}

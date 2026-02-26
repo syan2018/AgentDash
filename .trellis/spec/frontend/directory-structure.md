@@ -72,7 +72,7 @@ frontend/
 │   ├── types/             # 共享类型定义（Story, Task等）
 │   └── utils/             # 工具函数
 ├── api/                   # API调用层
-│   ├── client/            # HTTP/WebSocket客户端
+│   ├── client/            # HTTP/SSE客户端
 │   └── endpoints/         # 各模块API调用封装
 └── app/                   # 应用入口
     ├── routes/            # 路由配置
@@ -148,6 +148,6 @@ interface Task {
 **需要讨论决定：**
 - [ ] 前端框架（React / Vue / Svelte / ...）
 - [ ] 状态管理方案（Redux / Zustand / Pinia / ...）
-- [ ] 实时通信方案（WebSocket / SSE / ...）
+- [x] 实时通信方案（SSE - Server-Sent Events）
 - [ ] UI组件库选型
 <!-- PROJECT-SPECIFIC-END -->

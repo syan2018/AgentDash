@@ -3,7 +3,10 @@
     "allow": [
       "Bash(./.trellis/scripts)",
       "Bash(npm run lint)",
-      "Bash(npm run build)"
+      "Bash(npm run build)",
+      "Bash(python3 ./.trellis/scripts/get_context.py)",
+      "Bash(python ./.trellis/scripts/get_context.py)",
+      "Bash(python ./.trellis/scripts/task.py)"
     ]
   }
 }

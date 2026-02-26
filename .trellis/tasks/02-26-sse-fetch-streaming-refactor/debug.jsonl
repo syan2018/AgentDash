@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/index.md", "reason": "项目规范索引（共享约束、必读顺序）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层问题排查清单（格式/契约/断线重连）"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}

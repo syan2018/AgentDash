@@ -1,0 +1,41 @@
+{
+  "id": "frontend-executor-model-selector",
+  "name": "frontend-executor-model-selector",
+  "title": "实现执行器/模型选择器（前后端联动）",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "fullstack",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-02-26",
+  "completedAt": null,
+  "branch": "feature/frontend-executor-model-selector",
+  "base_branch": "main",
+  "worktree_path": "D:\\ABCTools_Dev\\trellis-worktrees\\feature\\frontend-executor-model-selector",
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": ""
+}

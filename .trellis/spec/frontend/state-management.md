@@ -6,46 +6,72 @@
 
 ## Overview
 
-<!--
-Document your project's state management conventions here.
+使用 **Zustand** 进行全局状态管理，React useState/useReducer 处理本地状态。
 
-Questions to answer:
-- What state management solution do you use?
-- How is local vs global state decided?
-- How do you handle server state?
-- What are the patterns for derived state?
--->
+- **本地状态**: 组件内 useState，如 `isOpen`, `selectedTab`
+- **Feature 状态**: Feature model 目录下的 Hooks，如 `useAcpSession`
+- **全局状态**: `stores/` 目录下的 Zustand Store，如 `useStoryStore`
+- **服务端缓存**: Store + API，如 `tasksByStoryId`
 
-(To be filled by the team)
+派生状态使用 `useMemo` 计算，不存储在状态中。参考 `features/acp-session/model/useAcpSession.ts` 中的 `displayItems` 聚合逻辑。
 
 ---
 
 ## State Categories
 
-<!-- Local state, global state, server state, URL state -->
-
-(To be filled by the team)
+| 类型 | 存放位置 | 示例 |
+|------|----------|------|
+| 本地 UI 状态 | 组件内 useState | `isOpen`, `selectedTab` |
+| Feature 状态 | Feature model | `entries`, `isConnected` |
+| 全局应用状态 | stores/ | `stories`, `backends` |
+| 服务端缓存 | Store + API | `tasksByStoryId` |
 
 ---
 
 ## When to Use Global State
 
-<!-- Criteria for promoting state to global -->
+将状态提升到全局 Store 的条件：
 
-(To be filled by the team)
+1. **跨组件共享**: 多个不相关组件需要访问同一份数据
+2. **跨页面持久**: 路由切换后仍需保持的状态
+3. **服务端缓存**: 从 API 获取的数据需要缓存
+
+示例：
+- `stories` - 多个页面展示 Story 列表
+- `backends` - 全局后端连接配置
+- `tasksByStoryId` - 缓存避免重复请求
 
 ---
 
 ## Server State
 
-<!-- How server data is cached and synchronized -->
+服务端数据使用 Zustand Store 缓存：
 
-(To be filled by the team)
+```ts
+// stores/storyStore.ts
+fetchStories: async (backendId) => {
+  set({ isLoading: true });
+  try {
+    const response = await api.get(`/stories?backend_id=${backendId}`);
+    set({ stories: response.map(mapStory), isLoading: false });
+  } catch (e) {
+    set({ error: (e as Error).message, isLoading: false });
+  }
+}
+```
+
+- 使用 `isLoading` 追踪加载状态
+- API 响应通过 `mapStory` 等函数映射到前端类型
+- 错误信息存储在 `error` 字段
 
 ---
 
 ## Common Mistakes
 
-<!-- State management mistakes your team has made -->
-
-(To be filled by the team)
+| 错误 | 正确做法 |
+|------|----------|
+| 在多个 Store 存储同一份数据 | 单一 Store 存储，其他使用 selector |
+| 存储可计算数据 | 使用 useMemo 计算，如 `displayItems` |
+| 直接修改状态 | 始终通过 set 更新 |
+| Store 过于庞大 | 按 Feature 拆分 Store |
+| 忘记 reset 状态 | 提供 reset action 清理状态 |

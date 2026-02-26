@@ -22,9 +22,9 @@ use tokio::time::MissedTickBehavior;
 
 use crate::{
     app_state::AppState,
-    executor::PromptSessionRequest,
     rpc::ApiError,
 };
+use agentdash_executor::PromptSessionRequest;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -68,9 +68,6 @@ pub async fn cancel_session(
 }
 
 /// ACP 会话流（Streaming HTTP / SSE）
-///
-/// - 首次连接：先发送历史（jsonl），再持续发送新增通知
-/// - 断线重连：浏览器会携带 `Last-Event-ID`，服务端会跳过已发送的历史，避免重复回放
 pub async fn acp_session_stream_sse(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -99,7 +96,6 @@ pub async fn acp_session_stream_sse(
     );
 
     let stream = async_stream::stream! {
-        // 历史回放（带 id，支持浏览器自动 resume）
         for (i, n) in history.iter().enumerate().skip(start_index) {
             let id = (i as u64) + 1;
             if let Ok(json) = serde_json::to_string(n) {
@@ -107,7 +103,6 @@ pub async fn acp_session_stream_sse(
             }
         }
 
-        // 实时推送（继续递增 id）
         let mut seq = history.len() as u64;
         loop {
             match rx.recv().await {
@@ -141,10 +136,6 @@ pub async fn acp_session_stream_sse(
 }
 
 /// ACP 会话流（Fetch Streaming / NDJSON）
-///
-/// Resume：
-/// - 优先读取 `x-stream-since-id` 请求头
-/// - 兼容读取 query `since_id`
 pub async fn acp_session_stream_ndjson(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -287,7 +278,6 @@ async fn handle_ws(state: Arc<AppState>, session_id: String, socket: WebSocket) 
         }
     });
 
-    // Optional: allow starting execution via WS message.
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
             Message::Text(text) => {
@@ -338,4 +328,3 @@ fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {
         }
     }
 }
-

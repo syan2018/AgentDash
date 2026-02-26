@@ -11,8 +11,8 @@ use futures::stream::Stream;
 use serde::Serialize;
 use tokio::time::MissedTickBehavior;
 
-use agentdash_state::events::StreamEvent;
-use agentdash_state::models::StateChange;
+use agentdash_domain::common::events::StreamEvent;
+use agentdash_domain::story::StateChange;
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -22,8 +22,6 @@ const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const STREAM_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
 /// 全局事件流（SSE）
-///
-/// 支持 `Last-Event-ID`：断线重连时先补发缺失事件，再进入实时轮询。
 pub async fn event_stream(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -38,7 +36,6 @@ pub async fn event_stream(
         let mut cursor = resume_from;
         let mut replayed = 0usize;
 
-        // 先补发缺失事件（Resume）
         match load_state_changes_since(&state, cursor).await {
             Ok(changes) => {
                 for change in changes {
@@ -54,8 +51,7 @@ pub async fn event_stream(
             }
         }
 
-        // 再发送 Connected（包含当前游标），便于客户端显式感知恢复成功
-        let latest_event_id = state.store.latest_event_id().await.unwrap_or(cursor);
+        let latest_event_id = state.story_repo.latest_event_id().await.unwrap_or(cursor);
         cursor = cursor.max(latest_event_id);
         if let Some(event) = build_sse_event(&StreamEvent::Connected { last_event_id: cursor }, Some(cursor)) {
             yield Ok(event);
@@ -104,9 +100,6 @@ pub async fn event_stream(
 }
 
 /// 全局事件流（NDJSON）
-///
-/// - Content-Type: application/x-ndjson
-/// - Resume: 使用 `Last-Event-ID`
 pub async fn event_stream_ndjson(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -136,7 +129,7 @@ pub async fn event_stream_ndjson(
             }
         }
 
-        let latest_event_id = state.store.latest_event_id().await.unwrap_or(cursor);
+        let latest_event_id = state.story_repo.latest_event_id().await.unwrap_or(cursor);
         cursor = cursor.max(latest_event_id);
         if let Some(line) = to_ndjson_line(&StreamEvent::Connected { last_event_id: cursor }) {
             yield Ok::<Bytes, std::convert::Infallible>(line);
@@ -195,14 +188,12 @@ pub async fn event_stream_ndjson(
     )
 }
 
-/// Resume 端点 — 获取指定 ID 之后的状态变更
-///
-/// 客户端在断连重连后，使用最后收到的 event_id 请求增量数据。
+/// Resume 端点
 pub async fn get_events_since(
     State(state): State<Arc<AppState>>,
     Path(since_id): Path<i64>,
 ) -> Result<Json<Vec<StateChange>>, ApiError> {
-    let changes = state.store.get_changes_since(since_id, 1000).await?;
+    let changes = state.story_repo.get_changes_since(since_id, 1000).await?;
     Ok(Json(changes))
 }
 
@@ -247,12 +238,12 @@ fn to_ndjson_line<T: Serialize>(value: &T) -> Option<Bytes> {
 async fn load_state_changes_since(
     state: &Arc<AppState>,
     since_id: i64,
-) -> Result<Vec<StateChange>, agentdash_state::StateError> {
+) -> Result<Vec<StateChange>, agentdash_domain::DomainError> {
     let mut cursor = since_id;
     let mut all = Vec::new();
 
     loop {
-        let batch = state.store.get_changes_since(cursor, STREAM_BATCH_LIMIT).await?;
+        let batch = state.story_repo.get_changes_since(cursor, STREAM_BATCH_LIMIT).await?;
         if batch.is_empty() {
             break;
         }

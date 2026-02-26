@@ -5,7 +5,8 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_state::models::{Story, Task};
+use agentdash_domain::story::Story;
+use agentdash_domain::task::Task;
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -26,7 +27,7 @@ pub async fn list_stories(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListStoriesQuery>,
 ) -> Result<Json<Vec<Story>>, ApiError> {
-    let stories = state.store.list_stories(&query.backend_id).await?;
+    let stories = state.story_repo.list_by_backend(&query.backend_id).await?;
     Ok(Json(stories))
 }
 
@@ -39,7 +40,7 @@ pub async fn create_story(
         req.title,
         req.description.unwrap_or_default(),
     );
-    state.store.create_story(&story).await?;
+    state.story_repo.create(&story).await?;
     Ok(Json(story))
 }
 
@@ -48,6 +49,6 @@ pub async fn list_tasks(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
     let story_id = Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
-    let tasks = state.store.list_tasks(story_id).await?;
+    let tasks = state.task_repo.list_by_story(story_id).await?;
     Ok(Json(tasks))
 }

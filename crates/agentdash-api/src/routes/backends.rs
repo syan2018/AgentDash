@@ -4,8 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::Deserialize;
 
-use agentdash_coordinator::{BackendConfig};
-use agentdash_coordinator::config::BackendType;
+use agentdash_domain::backend::{BackendConfig, BackendType};
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -22,7 +21,7 @@ pub struct CreateBackendRequest {
 pub async fn list_backends(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<BackendConfig>>, ApiError> {
-    let backends = state.coordinator.list_backends().await?;
+    let backends = state.backend_repo.list_backends().await?;
     Ok(Json(backends))
 }
 
@@ -30,7 +29,7 @@ pub async fn get_backend(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<BackendConfig>, ApiError> {
-    let backend = state.coordinator.get_backend(&id).await?;
+    let backend = state.backend_repo.get_backend(&id).await?;
     Ok(Json(backend))
 }
 
@@ -49,7 +48,7 @@ pub async fn add_backend(
             _ => BackendType::Local,
         },
     };
-    state.coordinator.add_backend(&config).await?;
+    state.backend_repo.add_backend(&config).await?;
     Ok(Json(config))
 }
 
@@ -57,6 +56,6 @@ pub async fn remove_backend(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state.coordinator.remove_backend(&id).await?;
+    state.backend_repo.remove_backend(&id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }

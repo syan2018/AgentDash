@@ -11,24 +11,17 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 
-use crate::{app_state::AppState, executor::AgentConnector};
+use crate::app_state::AppState;
+use agentdash_executor::AgentConnector;
 
 #[derive(Debug, Deserialize)]
 pub struct DiscoveredOptionsQuery {
-    /// 执行器 ID（例如 "CLAUDE_CODE"）
     pub executor: String,
-    /// 可选变体（例如 "DEFAULT" / "PLAN"）
     pub variant: Option<String>,
-    /// 可选工作目录（相对 workspace 根目录）
     pub working_dir: Option<String>,
 }
 
 /// WebSocket：执行器发现选项流（JSON Patch）
-///
-/// 对齐 vibe-kanban 消息格式：
-/// - { "Ready": true }
-/// - { "JsonPatch": [ ... RFC6902 ops ... ] }
-/// - { "finished": true }
 pub async fn discovered_options_ws(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -41,7 +34,6 @@ pub async fn discovered_options_ws(
 async fn handle_ws(connector: Arc<dyn AgentConnector>, q: DiscoveredOptionsQuery, socket: WebSocket) {
     let (mut sender, mut receiver) = socket.split();
 
-    // Drain inbound messages to detect close (client may close without sending anything).
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if matches!(msg, Message::Close(_)) {
@@ -91,4 +83,3 @@ async fn handle_ws(connector: Arc<dyn AgentConnector>, q: DiscoveredOptionsQuery
 
     recv_task.abort();
 }
-

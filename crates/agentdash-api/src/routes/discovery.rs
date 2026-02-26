@@ -5,9 +5,9 @@ use serde::Serialize;
 
 use crate::{
     app_state::AppState,
-    executor::connector::{ConnectorCapabilities, ConnectorType, ExecutorInfo as ConnectorExecutorInfo},
     rpc::ApiError,
 };
+use agentdash_executor::connector::{ConnectorCapabilities, ConnectorType, ExecutorInfo as ConnectorExecutorInfo};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecutorInfoResponse {

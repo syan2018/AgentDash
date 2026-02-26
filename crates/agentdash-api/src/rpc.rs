@@ -36,24 +36,16 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<agentdash_state::StateError> for ApiError {
-    fn from(err: agentdash_state::StateError) -> Self {
+impl From<agentdash_domain::DomainError> for ApiError {
+    fn from(err: agentdash_domain::DomainError) -> Self {
         match &err {
-            agentdash_state::StateError::NotFound { .. } => {
+            agentdash_domain::DomainError::NotFound { .. } => {
                 ApiError::NotFound(err.to_string())
             }
-            _ => ApiError::Internal(err.to_string()),
-        }
-    }
-}
-
-impl From<agentdash_coordinator::CoordinatorError> for ApiError {
-    fn from(err: agentdash_coordinator::CoordinatorError) -> Self {
-        match &err {
-            agentdash_coordinator::CoordinatorError::BackendNotFound(_) => {
-                ApiError::NotFound(err.to_string())
+            agentdash_domain::DomainError::InvalidTransition { .. } => {
+                ApiError::BadRequest(err.to_string())
             }
-            agentdash_coordinator::CoordinatorError::InvalidConfig(_) => {
+            agentdash_domain::DomainError::InvalidConfig(_) => {
                 ApiError::BadRequest(err.to_string())
             }
             _ => ApiError::Internal(err.to_string()),

@@ -5,7 +5,6 @@ use sqlx::sqlite::SqlitePoolOptions;
 use tracing_subscriber::EnvFilter;
 
 mod app_state;
-mod executor;
 mod routes;
 mod rpc;
 mod stream;

@@ -297,3 +297,35 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: 完成SSE稳定化与Fetch Streaming改造
+
+**Date**: 2026-02-26
+**Task**: 完成SSE稳定化与Fetch Streaming改造
+
+### Summary
+
+后端新增全局/ACP NDJSON流与resume契约，前端引入transport抽象与HMR连接注册，完成跨层spec更新并归档任务。
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3068c27` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

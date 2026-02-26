@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-02-25
+- **Total Sessions**: 7
+- **Last Active**: 2026-02-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~232 | Active |
+| `journal-1.md` | ~300 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 7 | 2026-02-26 | ACP 会话 SSE + Session MVP | `7ce50ce`, `d569e34` |
+| 6 | 2026-02-26 | ACP 会话 SSE + Session MVP | `7ce50ce`, `d569e34` |
 | 5 | 2026-02-25 | executor integration layer | - |
 | 4 | 2026-02-25 | migrate acp rendering | - |
 | 3 | 2026-02-25 | 新增 Mock 数据脚本 + 中文修复 | `163ec3e` |

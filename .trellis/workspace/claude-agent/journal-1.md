@@ -230,3 +230,70 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: ACP 会话 SSE + Session MVP
+
+**Date**: 2026-02-26
+**Task**: ACP 会话 SSE + Session MVP
+
+### Summary
+
+后端新增 ACP 会话 SSE 流与 cancel API，前端 SessionPage 接入 EventSource 并优化流式合并/批处理刷新以避免重复与卡顿；完成 lint/build/cargo test 并提交。
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ce50ce` | (see git log) |
+| `d569e34` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 7: ACP 会话 SSE + Session MVP
+
+**Date**: 2026-02-26
+**Task**: ACP 会话 SSE + Session MVP
+
+### Summary
+
+后端新增 ACP 会话 SSE 流与 cancel API，前端 SessionPage 接入 EventSource 并优化流式合并/批处理刷新以避免重复与卡顿；完成 lint/build/cargo test 并提交。
+
+### Main Changes
+
+﻿
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ce50ce` | (see git log) |
+| `d569e34` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

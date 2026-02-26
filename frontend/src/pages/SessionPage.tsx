@@ -3,6 +3,12 @@ import { useAcpSession, AcpSessionEntry } from "../features/acp-session";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../features/acp-session/model/types";
 import type { AcpDisplayItem } from "../features/acp-session/model/types";
 import { promptSession, type ExecutorConfig } from "../services/executor";
+import {
+  useExecutorDiscovery,
+  useExecutorConfig,
+  useExecutorDiscoveredOptions,
+  ExecutorSelector,
+} from "../features/executor-selector";
 
 function generateSessionId(): string {
   const random = Math.random().toString(36).slice(2, 10);
@@ -55,17 +61,21 @@ export function SessionPage() {
   const [hasSentOnce, setHasSentOnce] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  const [executor, setExecutor] = useState("");
-  const [modelId, setModelId] = useState("");
+  const discovery = useExecutorDiscovery();
+  const execConfig = useExecutorConfig();
+  const discovered = useExecutorDiscoveredOptions(execConfig.executor, execConfig.variant);
+
   const executorConfig: ExecutorConfig | undefined = useMemo(() => {
-    const trimmedExecutor = executor.trim();
-    const trimmedModelId = modelId.trim();
+    const trimmedExecutor = execConfig.executor.trim();
     if (!trimmedExecutor) return undefined;
     return {
       executor: trimmedExecutor,
-      modelId: trimmedModelId || undefined,
+      variant: execConfig.variant.trim() || undefined,
+      model_id: execConfig.modelId.trim() || undefined,
+      reasoning_id: execConfig.reasoningId.trim() || undefined,
+      permission_policy: (execConfig.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     };
-  }, [executor, modelId]);
+  }, [execConfig.executor, execConfig.variant, execConfig.modelId, execConfig.reasoningId, execConfig.permissionPolicy]);
 
   const {
     displayItems,
@@ -119,13 +129,14 @@ export function SessionPage() {
 
     try {
       await promptSession(nextSessionId, { prompt: trimmed, executorConfig });
+      execConfig.recordUsage();
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
       setPrompt(trimmed);
     } finally {
       setIsSending(false);
     }
-  }, [prompt, isSending, executorConfig]);
+  }, [prompt, isSending, executorConfig, execConfig]);
 
   const handleCancel = useCallback(() => {
     sendCancel();
@@ -242,27 +253,27 @@ export function SessionPage() {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <label className="md:col-span-1">
-                <span className="mb-1 block text-xs font-medium text-muted-foreground">执行器（executor）</span>
-                <input
-                  value={executor}
-                  onChange={(e) => setExecutor(e.target.value)}
-                  placeholder="例如：claude_code"
-                  className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none ring-ring focus:ring-1"
-                />
-              </label>
-              <label className="md:col-span-1">
-                <span className="mb-1 block text-xs font-medium text-muted-foreground">模型（modelId，可选）</span>
-                <input
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                  placeholder="例如：gpt-4.1 / claude-3.7-sonnet ..."
-                  className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none ring-ring focus:ring-1"
-                />
-              </label>
-              <div className="md:col-span-1" />
-            </div>
+            <ExecutorSelector
+              executors={discovery.executors}
+              isLoading={discovery.isLoading}
+              error={discovery.error}
+              discoveredOptions={discovered.options}
+              discoveredError={discovered.error}
+              isDiscoveredLoading={Boolean(execConfig.executor.trim()) && !discovered.isInitialized}
+              onDiscoveredReconnect={discovered.reconnect}
+              executor={execConfig.executor}
+              variant={execConfig.variant}
+              modelId={execConfig.modelId}
+              reasoningId={execConfig.reasoningId}
+              permissionPolicy={execConfig.permissionPolicy}
+              onExecutorChange={execConfig.setExecutor}
+              onVariantChange={execConfig.setVariant}
+              onModelIdChange={execConfig.setModelId}
+              onReasoningIdChange={execConfig.setReasoningId}
+              onPermissionPolicyChange={execConfig.setPermissionPolicy}
+              onReset={execConfig.reset}
+              onRefetch={discovery.refetch}
+            />
 
             <div className="mt-3 flex gap-2">
               <textarea

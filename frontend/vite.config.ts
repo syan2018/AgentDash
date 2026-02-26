@@ -25,12 +25,22 @@ export default defineConfig({
           proxy.removeAllListeners('error')
           proxy.on('error', (err, _req, res) => {
             const code = getProxyErrorCode(err)
-            if (code === 'ECONNRESET' || code === 'EPIPE') return
+            // 后端启动/编译期间 ECONNREFUSED 很常见，不应导致 dev server 退出
+            if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNREFUSED') return
 
-            if (res && !res.headersSent) {
-              res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
+            // res 在某些错误分支可能不是 Node 的 ServerResponse（例如是 Socket），需要守卫
+            const anyRes = res as unknown as {
+              headersSent?: boolean
+              writeHead?: (statusCode: number, headers: Record<string, string>) => void
+              end?: (chunk?: string) => void
+              destroy?: () => void
+            } | null
+
+            if (anyRes?.writeHead && !anyRes.headersSent) {
+              anyRes.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
             }
-            res?.end('Vite proxy error')
+            if (anyRes?.end) anyRes.end('Vite proxy error')
+            else anyRes?.destroy?.()
           })
         },
       },
@@ -45,12 +55,20 @@ export default defineConfig({
           proxy.removeAllListeners('error')
           proxy.on('error', (err, _req, res) => {
             const code = getProxyErrorCode(err)
-            if (code === 'ECONNRESET' || code === 'EPIPE') return
+            if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNREFUSED') return
 
-            if (res && !res.headersSent) {
-              res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
+            const anyRes = res as unknown as {
+              headersSent?: boolean
+              writeHead?: (statusCode: number, headers: Record<string, string>) => void
+              end?: (chunk?: string) => void
+              destroy?: () => void
+            } | null
+
+            if (anyRes?.writeHead && !anyRes.headersSent) {
+              anyRes.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
             }
-            res?.end('Vite proxy error')
+            if (anyRes?.end) anyRes.end('Vite proxy error')
+            else anyRes?.destroy?.()
           })
         },
       },

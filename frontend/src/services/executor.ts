@@ -2,15 +2,16 @@ import { buildApiPath } from "../api/origin";
 
 export type ExecutorProfile = string;
 
-export type PermissionPolicy = "plan" | "supervised" | "auto";
+export type PermissionPolicy = "AUTO" | "SUPERVISED" | "PLAN";
 
 export interface ExecutorConfig {
   executor: ExecutorProfile;
   variant?: string;
-  modelId?: string;
-  agentId?: string;
-  reasoningId?: string;
-  permissionPolicy?: PermissionPolicy;
+  // 对齐 vibe-kanban / executors::profile::ExecutorConfig（Rust 侧使用 snake_case 字段）
+  model_id?: string;
+  agent_id?: string;
+  reasoning_id?: string;
+  permission_policy?: PermissionPolicy;
 }
 
 export interface PromptSessionRequest {

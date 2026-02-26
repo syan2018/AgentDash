@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 use agentdash_coordinator::CoordinatorManager;
 use agentdash_state::StateStore;
 
-use crate::executor::ExecutorHub;
+use crate::executor::{AgentConnector, ExecutorHub};
 use crate::executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
 
 /// 全局应用状态
@@ -16,6 +16,8 @@ pub struct AppState {
     pub store: StateStore,
     pub coordinator: CoordinatorManager,
     pub executor_hub: ExecutorHub,
+    /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
+    pub connector: Arc<dyn AgentConnector>,
 }
 
 impl AppState {
@@ -27,13 +29,15 @@ impl AppState {
         coordinator.initialize().await?;
 
         let workspace_root = std::env::current_dir()?;
-        let connector = Arc::new(VibeKanbanExecutorsConnector::new(workspace_root.clone()));
-        let executor_hub = ExecutorHub::new(workspace_root, connector);
+        let connector: Arc<dyn AgentConnector> =
+            Arc::new(VibeKanbanExecutorsConnector::new(workspace_root.clone()));
+        let executor_hub = ExecutorHub::new(workspace_root, connector.clone());
 
         Ok(Self {
             store,
             coordinator,
             executor_hub,
+            connector,
         })
     }
 }

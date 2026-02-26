@@ -2,6 +2,8 @@ pub mod backends;
 pub mod stories;
 pub mod health;
 pub mod acp_sessions;
+pub mod discovery;
+pub mod discovered_options;
 
 use std::sync::Arc;
 
@@ -33,7 +35,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/events/stream", get(stream::event_stream))
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         // Resume: 获取指定 ID 之后的变更
-        .route("/events/since/{since_id}", get(stream::get_events_since));
+        .route("/events/since/{since_id}", get(stream::get_events_since))
+        // 执行器发现
+        .route("/agents/discovery", get(discovery::get_discovery))
+        // 发现选项流（对齐 vibe-kanban：JSON Patch over WebSocket）
+        .route(
+            "/agents/discovered-options/ws",
+            get(discovered_options::discovered_options_ws),
+        );
 
     Router::new()
         .nest("/api", api)

@@ -5,6 +5,7 @@ use std::{
 };
 
 use agent_client_protocol::{SessionId, SessionNotification};
+use futures::stream::BoxStream;
 use futures::StreamExt;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
@@ -21,12 +22,30 @@ use executors::{
 
 use crate::executor::{
     adapters::normalized_to_acp::NormalizedToAcpConverter,
-    connector::{AgentConnector, ConnectorError, ExecutionContext, ExecutionStream},
+    connector::{
+        AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutorInfo,
+        ExecutionContext, ExecutionStream,
+    },
 };
 
 pub struct VibeKanbanExecutorsConnector {
     workspace_root: PathBuf,
     cancel_by_session: Arc<Mutex<HashMap<String, executors::executors::CancellationToken>>>,
+}
+
+fn humanize_executor_id(id: &str) -> String {
+    id.split('_')
+        .filter(|s| !s.is_empty())
+        .map(|part| {
+            let lower = part.to_ascii_lowercase();
+            let mut chars = lower.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl VibeKanbanExecutorsConnector {
@@ -42,6 +61,83 @@ impl VibeKanbanExecutorsConnector {
 impl AgentConnector for VibeKanbanExecutorsConnector {
     fn connector_id(&self) -> &'static str {
         "vibe-kanban-executors"
+    }
+
+    fn connector_type(&self) -> ConnectorType {
+        ConnectorType::LocalExecutor
+    }
+
+    fn capabilities(&self) -> ConnectorCapabilities {
+        ConnectorCapabilities {
+            supports_cancel: true,
+            supports_discovery: true,
+            supports_variants: true,
+            supports_model_override: true,
+            supports_permission_policy: true,
+        }
+    }
+
+    fn list_executors(&self) -> Vec<ExecutorInfo> {
+        let configs = ExecutorConfigs::get_cached();
+        let mut out: Vec<ExecutorInfo> = configs
+            .executors
+            .iter()
+            .map(|(&agent, profile)| {
+                let id = agent.to_string();
+                let available = profile
+                    .get_default()
+                    .map(|a| a.get_availability_info().is_available())
+                    .unwrap_or(false);
+
+                let mut variants: Vec<String> = profile.configurations.keys().cloned().collect();
+                variants.sort();
+
+                ExecutorInfo {
+                    id: id.clone(),
+                    // 不在 API 层硬编码映射，展示名由连接器决定；这里使用通用的 humanize 规则
+                    name: humanize_executor_id(&id),
+                    variants,
+                    available,
+                }
+            })
+            .collect();
+
+        out.sort_by(|a, b| b.available.cmp(&a.available).then(a.name.cmp(&b.name)));
+        out
+    }
+
+    async fn discover_options_stream(
+        &self,
+        executor: &str,
+        variant: Option<&str>,
+        working_dir: Option<PathBuf>,
+    ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        use std::str::FromStr as _;
+
+        let base = executors::executors::BaseCodingAgent::from_str(executor)
+            .map_err(|_| ConnectorError::InvalidConfig(format!("未知执行器: {executor}")))?;
+
+        let v = variant
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .filter(|s| !s.eq_ignore_ascii_case("DEFAULT"))
+            .map(|s| s.to_string());
+
+        let profile_id = executors::profile::ExecutorProfileId {
+            executor: base,
+            variant: v,
+        };
+
+        let agent = ExecutorConfigs::get_cached()
+            .get_coding_agent(&profile_id)
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(format!("找不到执行器 profile: {profile_id}"))
+            })?;
+
+        let wd = working_dir.unwrap_or_else(|| self.workspace_root.clone());
+        agent.discover_options(Some(&wd), Some(&self.workspace_root))
+            .await
+            .map_err(|e| ConnectorError::Runtime(format!("discover_options 失败: {e}")))
     }
 
     async fn prompt(

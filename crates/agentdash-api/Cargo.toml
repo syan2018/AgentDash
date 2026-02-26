@@ -33,3 +33,4 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 agent-client-protocol = { workspace = true }
 executors = { workspace = true }
 workspace_utils = { path = "../../third_party/vibe-kanban/crates/utils", package = "utils" }
+json-patch = "2.0"

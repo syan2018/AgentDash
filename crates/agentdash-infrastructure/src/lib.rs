@@ -1,5 +1,7 @@
 pub mod persistence;
 
+pub use persistence::sqlite::SqliteProjectRepository;
+pub use persistence::sqlite::SqliteWorkspaceRepository;
 pub use persistence::sqlite::SqliteStoryRepository;
 pub use persistence::sqlite::SqliteTaskRepository;
 pub use persistence::sqlite::SqliteBackendRepository;

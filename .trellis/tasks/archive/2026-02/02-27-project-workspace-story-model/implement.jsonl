@@ -1,0 +1,9 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/api-module.md", "reason": "API module conventions"}
+{"file": ".trellis/spec/backend/quality.md", "reason": "Code quality requirements"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Repository trait 定义规范，必须遵循"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "整洁架构分层规范"}
+{"file": "crates/agentdash-domain/src/story/entity.rs", "reason": "现有 Story 实体参考"}
+{"file": "crates/agentdash-domain/src/task/entity.rs", "reason": "现有 Task 实体参考"}

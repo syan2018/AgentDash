@@ -18,17 +18,50 @@ Repository 模式将数据访问逻辑从领域逻辑中分离：
 ### Repository Trait 定义（Domain Layer）
 
 ```rust
-// agentdash-domain/src/story/repository.rs
-use async_trait::async_trait;
-use crate::common::error::DomainError;
-use super::entity::Story;
+// agentdash-domain/src/project/repository.rs
+#[async_trait]
+pub trait ProjectRepository: Send + Sync {
+    async fn create(&self, project: &Project) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<Project>, DomainError>;
+    async fn list_all(&self) -> Result<Vec<Project>, DomainError>;
+    async fn update(&self, project: &Project) -> Result<(), DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
+}
 
+// agentdash-domain/src/workspace/repository.rs
+#[async_trait]
+pub trait WorkspaceRepository: Send + Sync {
+    async fn create(&self, workspace: &Workspace) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<Workspace>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Workspace>, DomainError>;
+    async fn update(&self, workspace: &Workspace) -> Result<(), DomainError>;
+    async fn update_status(&self, id: Uuid, status: WorkspaceStatus) -> Result<(), DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
+}
+
+// agentdash-domain/src/story/repository.rs
 #[async_trait]
 pub trait StoryRepository: Send + Sync {
     async fn create(&self, story: &Story) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<Story>, DomainError>;
     async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Story>, DomainError>;
+    async fn update(&self, story: &Story) -> Result<(), DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
     async fn get_changes_since(&self, since_id: i64, limit: i64) -> Result<Vec<StateChange>, DomainError>;
     async fn latest_event_id(&self) -> Result<i64, DomainError>;
+}
+
+// agentdash-domain/src/task/repository.rs
+#[async_trait]
+pub trait TaskRepository: Send + Sync {
+    async fn create(&self, task: &Task) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<Task>, DomainError>;
+    async fn list_by_story(&self, story_id: Uuid) -> Result<Vec<Task>, DomainError>;
+    async fn list_by_workspace(&self, workspace_id: Uuid) -> Result<Vec<Task>, DomainError>;
+    async fn update(&self, task: &Task) -> Result<(), DomainError>;
+    async fn update_status(&self, id: Uuid, status: TaskStatus) -> Result<(), DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 ```
 
@@ -72,25 +105,25 @@ impl StoryRepository for SqliteStoryRepository {
 
 ```rust
 // agentdash-api/src/app_state.rs
-use std::sync::Arc;
-use agentdash_domain::story::StoryRepository;
-use agentdash_domain::task::TaskRepository;
-use agentdash_infrastructure::{SqliteStoryRepository, SqliteTaskRepository};
-
 pub struct AppState {
+    pub project_repo: Arc<dyn ProjectRepository>,
+    pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
+    pub backend_repo: Arc<dyn BackendRepository>,
+    pub executor_hub: ExecutorHub,
+    pub connector: Arc<dyn AgentConnector>,
 }
 
 impl AppState {
     pub async fn new(pool: SqlitePool) -> Result<Self> {
-        let story_repo = Arc::new(SqliteStoryRepository::new(pool.clone()));
-        story_repo.initialize().await?;
-
-        let task_repo = Arc::new(SqliteTaskRepository::new(pool));
-        task_repo.initialize().await?;
-
-        Ok(Self { story_repo, task_repo })
+        // 按依赖顺序初始化：projects → workspaces → stories → tasks
+        let project_repo = Arc::new(SqliteProjectRepository::new(pool.clone()));
+        project_repo.initialize().await?;
+        let workspace_repo = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
+        workspace_repo.initialize().await?;
+        // ... 其他 repo ...
+        Ok(Self { project_repo, workspace_repo, story_repo, task_repo, backend_repo, executor_hub, connector })
     }
 }
 ```

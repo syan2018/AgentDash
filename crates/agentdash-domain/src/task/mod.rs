@@ -4,4 +4,4 @@ mod value_objects;
 
 pub use entity::Task;
 pub use repository::TaskRepository;
-pub use value_objects::TaskStatus;
+pub use value_objects::{TaskStatus, AgentBinding, Artifact, ArtifactType};

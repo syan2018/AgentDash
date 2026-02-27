@@ -23,40 +23,56 @@
 
 ### 核心数据实体
 
-后端需要管理的核心实体（详见 `docs/modules/02-state.md`）：
+后端需要管理的核心实体，遵循 Project → Workspace → Story → Task 的领域层次：
 
 ```
+Project {
+  id: Uuid
+  name: String
+  description: String
+  backend_id: String          // 默认后端
+  config: ProjectConfig       // Agent 预设、默认 Workspace 等
+  created_at / updated_at
+}
+
+Workspace {
+  id: Uuid
+  project_id: Uuid            // 所属项目
+  name: String
+  container_ref: String       // 物理路径
+  workspace_type: GitWorktree | Static | Ephemeral
+  status: Pending | Preparing | Ready | Active | Archived | Error
+  git_config: Option<GitConfig>
+  created_at / updated_at
+}
+
 Story {
-  id: string
-  title: string
-  context: Context          // 设计信息、规范文档引用等
+  id: Uuid
+  project_id: Uuid            // 所属项目
+  backend_id: String          // 执行后端
+  title: String
+  context: StoryContext        // PRD、规范引用、资源清单
   status: StoryStatus
-  taskIds: string[]         // 包含的Task列表
-  createdAt: timestamp
-  updatedAt: timestamp
+  created_at / updated_at
 }
 
 Task {
-  id: string
-  storyId: string           // 归属的Story
-  context: Context          // 从Story继承 + 特定注入
+  id: Uuid
+  story_id: Uuid              // 归属的 Story
+  workspace_id: Option<Uuid>  // 关联的 Workspace（外键）
   status: TaskStatus
-  agentBinding: AgentBinding | null
-  artifacts: Artifact[]     // 执行产物
-  createdAt: timestamp
-  updatedAt: timestamp
+  agent_binding: AgentBinding  // 结构化 Agent 绑定
+  artifacts: Vec<Artifact>    // 执行产物
+  created_at / updated_at
 }
+```
 
-StateChange {
-  id: string
-  entityType: "story" | "task"
-  entityId: string
-  field: string
-  from: any
-  to: any
-  reason: string            // 变更原因（必填）
-  timestamp: timestamp
-}
+**实体关系**：
+```
+Project (1) → (*) Workspace
+Project (1) → (*) Story
+Story (1)   → (*) Task
+Workspace (1) ← (*) Task（多 Task 可共享同一 Workspace）
 ```
 <!-- PROJECT-SPECIFIC-END -->
 

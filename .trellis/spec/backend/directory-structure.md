@@ -55,10 +55,13 @@ crates/
 │       ├── stream.rs            # 全局事件流（SSE + NDJSON）
 │       └── routes/              # 路由处理函数（只处理 HTTP）
 │           ├── health.rs
+│           ├── projects.rs       # Project CRUD
+│           ├── workspaces.rs     # Workspace CRUD + 状态管理
 │           ├── backends.rs
 │           ├── stories.rs
 │           ├── acp_sessions.rs
-│           └── discovery.rs
+│           ├── discovery.rs
+│           └── discovered_options.rs
 │
 ├── agentdash-application/       # Application Layer (用例编排) — 规划中
 │   └── src/
@@ -78,14 +81,22 @@ crates/
 │       ├── common/
 │       │   ├── error.rs         # DomainError
 │       │   └── events.rs        # 领域事件 trait
+│       ├── project/
+│       │   ├── entity.rs        # Project 实体（项目容器）
+│       │   ├── repository.rs    # ProjectRepository trait
+│       │   └── value_objects.rs # ProjectConfig, AgentPreset
+│       ├── workspace/
+│       │   ├── entity.rs        # Workspace 实体（物理工作空间）
+│       │   ├── repository.rs    # WorkspaceRepository trait
+│       │   └── value_objects.rs # WorkspaceType, WorkspaceStatus, GitConfig
 │       ├── story/
-│       │   ├── entity.rs        # Story 实体（含业务方法）
+│       │   ├── entity.rs        # Story 实体（含 project_id）
 │       │   ├── repository.rs    # StoryRepository trait (Port)
-│       │   └── value_objects.rs # StoryStatus, StoryId, etc.
+│       │   └── value_objects.rs # StoryStatus, StoryContext, StateChange
 │       ├── task/
-│       │   ├── entity.rs
-│       │   ├── repository.rs
-│       │   └── value_objects.rs
+│       │   ├── entity.rs        # Task 实体（含 workspace_id, AgentBinding）
+│       │   ├── repository.rs    # TaskRepository trait（完整 CRUD）
+│       │   └── value_objects.rs # TaskStatus, AgentBinding, Artifact
 │       └── backend/
 │           ├── entity.rs
 │           └── repository.rs
@@ -96,6 +107,8 @@ crates/
 │       └── persistence/
 │           └── sqlite/
 │               ├── mod.rs
+│               ├── project_repository.rs   # impl ProjectRepository
+│               ├── workspace_repository.rs # impl WorkspaceRepository
 │               ├── story_repository.rs    # impl StoryRepository
 │               ├── task_repository.rs     # impl TaskRepository
 │               └── backend_repository.rs  # impl BackendRepository
@@ -122,7 +135,15 @@ crates/
 
 | 路径 | 方法 | 说明 |
 |------|------|------|
-| `/api/agents/discovery` | GET | 执行器发现（返回连接器信息、执行器列表、权限策略） |
+| `/api/projects` | GET/POST | 项目列表 / 创建项目 |
+| `/api/projects/{id}` | GET/PUT/DELETE | 项目详情（含 workspaces+stories）/ 更新 / 删除 |
+| `/api/projects/{project_id}/workspaces` | GET/POST | Workspace 列表 / 创建 |
+| `/api/workspaces/{id}` | GET/DELETE | Workspace 详情 / 删除 |
+| `/api/workspaces/{id}/status` | PATCH | 更新 Workspace 状态 |
+| `/api/stories` | GET/POST | Story 列表（支持 project_id / backend_id 查询）/ 创建 |
+| `/api/stories/{id}` | GET | Story 详情 |
+| `/api/stories/{id}/tasks` | GET | Story 下的 Task 列表 |
+| `/api/agents/discovery` | GET | 执行器发现 |
 | `/api/sessions/{id}/prompt` | POST | 启动 ACP 会话执行 |
 | `/api/sessions/{id}/cancel` | POST | 取消会话 |
 | `/api/acp/sessions/{id}/stream` | GET | ACP 会话流（SSE） |
@@ -205,9 +226,13 @@ impl StoryRepository for SqliteStoryRepository {
 ```rust
 // agentdash-api/src/app_state.rs
 pub struct AppState {
-    pub story_repo: Arc<dyn StoryRepository>,     // trait 对象
+    pub project_repo: Arc<dyn ProjectRepository>,
+    pub workspace_repo: Arc<dyn WorkspaceRepository>,
+    pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
+    pub executor_hub: ExecutorHub,
+    pub connector: Arc<dyn AgentConnector>,
 }
 ```
 
@@ -311,4 +336,26 @@ cargo test --workspace   ✅ 通过
 - [ ] 整合 `agentdash-coordinator` 到 `agentdash-infrastructure`
 - [ ] 补充领域层单元测试
 - [ ] 修复 minor clippy 警告
+
+**2026-02-27: Project/Workspace/Story 领域模型重构**
+
+引入完整的 Project → Workspace → Story → Task 领域模型层次：
+
+| 变更 | 说明 | 状态 |
+|------|------|------|
+| 新增 `project` 模块 | 项目容器，管理 Story/Workspace/Agent 预设 | ✅ 已完成 |
+| 新增 `workspace` 模块 | 物理工作空间，支持 GitWorktree/Static/Ephemeral | ✅ 已完成 |
+| 扩展 `Story` | 添加 `project_id`，`context` 改为结构化 `StoryContext` | ✅ 已完成 |
+| 扩展 `Task` | `workspace_path` → `workspace_id`，`agent_binding` 结构化 | ✅ 已完成 |
+| 扩展 Repository 接口 | Story/Task 支持完整 CRUD | ✅ 已完成 |
+| API 路由 | 新增 Project/Workspace 端点 | ✅ 已完成 |
+| Mock 数据脚本 | 适配新模型，包含 Project/Workspace 数据 | ✅ 已完成 |
+
+**实体关系**：
+```
+Project (1) → (*) Workspace
+Project (1) → (*) Story
+Story (1)   → (*) Task
+Workspace (1) ← (*) Task
+```
 <!-- PROJECT-SPECIFIC-END -->

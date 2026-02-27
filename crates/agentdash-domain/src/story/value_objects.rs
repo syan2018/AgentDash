@@ -15,6 +15,27 @@ pub enum StoryStatus {
     Failed,
 }
 
+/// 结构化 Story 上下文
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StoryContext {
+    /// PRD 文档内容或路径
+    pub prd_doc: Option<String>,
+    /// 规范文档引用列表
+    #[serde(default)]
+    pub spec_refs: Vec<String>,
+    /// 资源清单
+    #[serde(default)]
+    pub resource_list: Vec<Resource>,
+}
+
+/// 资源引用
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Resource {
+    pub name: String,
+    pub uri: String,
+    pub resource_type: String,
+}
+
 /// 状态变更类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

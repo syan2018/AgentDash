@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { applyPatch } from "fast-json-patch";
+import type { Operation } from "fast-json-patch";
 import { buildApiPath } from "../../../api/origin";
 import type {
   ExecutorDiscoveryStreamState,
@@ -39,13 +40,6 @@ type ServerMessage =
   | { JsonPatch: unknown }
   | { finished: boolean }
   | { Error: string };
-
-type JsonPatchOp = {
-  op: "add" | "remove" | "replace" | "move" | "copy" | "test";
-  path: string;
-  value?: unknown;
-  from?: string;
-};
 
 /**
  * 对齐 vibe-kanban：通过 WebSocket 接收 JsonPatch 增量更新 discovered options。
@@ -102,7 +96,8 @@ export function useExecutorDiscoveredOptions(
           return;
         }
         if ("JsonPatch" in msg) {
-          const patch = msg.JsonPatch as JsonPatchOp[];
+          if (!Array.isArray(msg.JsonPatch)) return;
+          const patch = msg.JsonPatch as Operation[];
           const next = structuredClone(stateRef.current);
           // 注意：fast-json-patch 在 mutateDocument=false 时不会修改入参，需要使用返回的 newDocument
           const result = applyPatch(next, patch, true, false);

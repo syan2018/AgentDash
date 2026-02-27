@@ -61,8 +61,10 @@ class EventSourceTransport implements AcpStreamTransport {
   private closed = false;
   private hadConnected = false;
   private unregister: (() => void) | null = null;
+  private readonly options: AcpStreamTransportOptions;
 
-  constructor(private readonly options: AcpStreamTransportOptions) {
+  constructor(options: AcpStreamTransportOptions) {
+    this.options = options;
     this.unregister = registerStreamConnection({
       close: () => this.close(),
     });
@@ -121,8 +123,10 @@ class FetchNdjsonTransport implements AcpStreamTransport {
   private sinceId = 0;
   private hadConnected = false;
   private unregister: (() => void) | null = null;
+  private readonly options: FetchNdjsonTransportOptions;
 
-  constructor(private readonly options: FetchNdjsonTransportOptions) {
+  constructor(options: FetchNdjsonTransportOptions) {
+    this.options = options;
     this.unregister = registerStreamConnection({
       close: () => this.close(),
     });
@@ -289,8 +293,10 @@ class FetchNdjsonTransport implements AcpStreamTransport {
 class FallbackTransport implements AcpStreamTransport {
   private closed = false;
   private current: AcpStreamTransport;
+  private readonly options: AcpStreamTransportOptions;
 
-  constructor(private readonly options: AcpStreamTransportOptions) {
+  constructor(options: AcpStreamTransportOptions) {
+    this.options = options;
     if (this.preferSseOnly()) {
       this.current = new EventSourceTransport(options);
       return;

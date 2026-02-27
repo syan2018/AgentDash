@@ -1,0 +1,15 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/api-module.md", "reason": "API module conventions"}
+{"file": ".trellis/spec/backend/quality.md", "reason": "Code quality requirements"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/components.md", "reason": "Component conventions"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端 Store 分层与服务端缓存约束"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端类型与映射约束"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "后端 Repository 与路由分层约束"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据契约与错误矩阵"}
+{"file": "frontend/src/stores/storyStore.ts", "reason": "Story/Task store 现有映射与请求模式"}
+{"file": "frontend/src/features/workspace/workspace-list.tsx", "reason": "现有 Workspace 创建与路径选择 UI 参考"}
+{"file": "crates/agentdash-api/src/routes/stories.rs", "reason": "新增 Story 下 Task 创建路由的落点"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/pages/kanban/KanbanIssuePanelContainer.tsx", "reason": "参考看板项创建的表单与提交流程"}

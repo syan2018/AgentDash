@@ -1,0 +1,12 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查 Store 设计是否符合规范"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查类型安全与映射"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查后端分层和依赖方向"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层契约一致性"}
+{"file": "frontend/src/stores/storyStore.ts", "reason": "检查 story/task store 兼容性"}
+{"file": "frontend/src/features/workspace/workspace-list.tsx", "reason": "检查 Workspace UI 行为回归"}
+{"file": "crates/agentdash-api/src/routes/stories.rs", "reason": "检查 Task 创建接口与参数校验"}
+{"file": "third_party/vibe-kanban/packages/web-core/src/pages/kanban/KanbanIssuePanelContainer.tsx", "reason": "检查创建流程对齐参考逻辑"}

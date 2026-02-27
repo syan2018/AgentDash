@@ -120,6 +120,21 @@ pub async fn delete_project(
     let project_id = Uuid::parse_str(&id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
+    // 先删除 Project 下的 Task/Story/Workspace，再删除 Project 本身，避免外键约束失败
+    let stories = state.story_repo.list_by_project(project_id).await?;
+    for story in stories {
+        let tasks = state.task_repo.list_by_story(story.id).await?;
+        for task in tasks {
+            state.task_repo.delete(task.id).await?;
+        }
+        state.story_repo.delete(story.id).await?;
+    }
+
+    let workspaces = state.workspace_repo.list_by_project(project_id).await?;
+    for workspace in workspaces {
+        state.workspace_repo.delete(workspace.id).await?;
+    }
+
     state.project_repo.delete(project_id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }

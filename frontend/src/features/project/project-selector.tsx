@@ -198,7 +198,11 @@ function ProjectDetailDrawer({
       setFormError("请输入完整项目名后再删除");
       return;
     }
-    await deleteProject(project.id);
+    const deleted = await deleteProject(project.id);
+    if (!deleted) {
+      setFormError("删除失败，请查看错误信息后重试");
+      return;
+    }
     setIsDeleteConfirmOpen(false);
     onClose();
   };

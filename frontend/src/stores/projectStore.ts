@@ -13,7 +13,7 @@ interface ProjectState {
   updateProject: (id: string, payload: { name?: string; description?: string; backend_id?: string; config?: ProjectConfig }) => Promise<Project | null>;
   updateProjectConfig: (id: string, config: ProjectConfig) => Promise<Project | null>;
   selectProject: (id: string | null) => void;
-  deleteProject: (id: string) => Promise<void>;
+  deleteProject: (id: string) => Promise<boolean>;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -87,12 +87,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   deleteProject: async (id) => {
     try {
       await api.delete(`/projects/${id}`);
-      set((s) => ({
-        projects: s.projects.filter((p) => p.id !== id),
-        currentProjectId: s.currentProjectId === id ? null : s.currentProjectId,
-      }));
+      set((s) => {
+        const remaining = s.projects.filter((p) => p.id !== id);
+        const nextCurrentProjectId =
+          s.currentProjectId === id ? (remaining[0]?.id ?? null) : s.currentProjectId;
+        return {
+          projects: remaining,
+          currentProjectId: nextCurrentProjectId,
+          error: null,
+        };
+      });
+      return true;
     } catch (e) {
       set({ error: (e as Error).message });
+      return false;
     }
   },
 }));

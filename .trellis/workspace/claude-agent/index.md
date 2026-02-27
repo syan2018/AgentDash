@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
-- **Last Active**: 2026-02-26
+- **Total Sessions**: 12
+- **Last Active**: 2026-02-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~332 | Active |
+| `journal-1.md` | ~490 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 12 | 2026-02-27 | 前端适配 Project/Workspace 领域模型 | `026cf37` |
+| 11 | 2026-02-27 | Project/Workspace/Story/Task 领域模型重构 | `026cf37` |
+| 10 | 2026-02-27 | Project/Workspace/Story/Task 领域模型重构 | `026cf37` |
+| 9 | 2026-02-27 | Project/Workspace/Story/Task 领域模型重构 | `026cf37` |
 | 8 | 2026-02-26 | 完成SSE稳定化与Fetch Streaming改造 | `3068c27` |
 | 7 | 2026-02-26 | ACP 会话 SSE + Session MVP | `7ce50ce`, `d569e34` |
 | 6 | 2026-02-26 | ACP 会话 SSE + Session MVP | `7ce50ce`, `d569e34` |

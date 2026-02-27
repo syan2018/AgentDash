@@ -23,7 +23,7 @@ export function StoryCard({ story, taskCount, onClick }: StoryCardProps) {
       </div>
       <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
         <span>{taskCount} 个任务</span>
-        <span>{new Date(story.updatedAt).toLocaleDateString("zh-CN")}</span>
+        <span>{new Date(story.updated_at).toLocaleDateString("zh-CN")}</span>
       </div>
     </button>
   );

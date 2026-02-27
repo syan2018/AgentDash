@@ -13,26 +13,54 @@ interface StoryDrawerProps {
 type DrawerTab = "context" | "tasks" | "review";
 
 function ContextPanel({ story }: { story: Story }) {
-  const items = story.context.items ?? [];
+  const ctx = story.context;
+  const hasContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
+
   return (
-    <div className="space-y-3 p-6">
+    <div className="space-y-4 p-6">
       <h4 className="text-sm font-medium text-foreground">上下文</h4>
-      {items.length === 0 ? (
+
+      {!hasContent ? (
         <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
           暂无上下文条目
         </p>
       ) : (
-        items.map((item) => (
-          <div key={item.id} className="rounded-md border border-border bg-card p-3">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="rounded bg-secondary px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
-                {item.sourceKind}
-              </span>
-              <p className="text-sm font-medium text-foreground">{item.displayName ?? item.reference}</p>
+        <>
+          {ctx.prd_doc && (
+            <div className="rounded-md border border-border bg-card p-3">
+              <p className="mb-1 text-xs font-medium text-muted-foreground">PRD 文档</p>
+              <pre className="whitespace-pre-wrap text-sm text-foreground">{ctx.prd_doc}</pre>
             </div>
-            <p className="text-sm text-muted-foreground">{item.summary ?? item.reason}</p>
-          </div>
-        ))
+          )}
+
+          {ctx.spec_refs.length > 0 && (
+            <div className="rounded-md border border-border bg-card p-3">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">规格引用</p>
+              <ul className="space-y-1">
+                {ctx.spec_refs.map((ref, i) => (
+                  <li key={i} className="text-sm text-foreground">
+                    <span className="mr-2 text-muted-foreground">·</span>{ref}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {ctx.resource_list.length > 0 && (
+            <div className="rounded-md border border-border bg-card p-3">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">资源列表</p>
+              {ctx.resource_list.map((res, i) => (
+                <div key={i} className="mb-1 flex items-center gap-2">
+                  <span className="rounded bg-secondary px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
+                    {res.resource_type}
+                  </span>
+                  <span className="text-sm text-foreground">{res.name}</span>
+                  <span className="text-xs text-muted-foreground">{res.uri}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -69,7 +97,7 @@ export function StoryDrawer({ story, tasks, onClose, onOpenTask }: StoryDrawerPr
   const sortedTasks = useMemo(
     () =>
       [...tasks].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
       ),
     [tasks],
   );

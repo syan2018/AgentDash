@@ -41,12 +41,12 @@ src/
 ```
 
 <!-- PROJECT-SPECIFIC-START: Directory Tree -->
-### 实际目录布局（React + TypeScript + Vite + Tailwind v4）
+### 实际目录布局（React 19 + TypeScript + Vite 7 + Tailwind v4）
 
 ```
 frontend/src/
 ├── api/                         # API 调用层
-│   ├── client.ts
+│   ├── client.ts                # 统一 HTTP 客户端（GET/POST/PUT/PATCH/DELETE）
 │   ├── eventStream.ts           # SSE 事件流（Dashboard 用）
 │   ├── origin.ts                # API_ORIGIN / buildApiPath
 │   └── streamRegistry.ts        # 流连接追踪（HMR 安全）
@@ -58,20 +58,30 @@ frontend/src/
 │   ├── acp-session/             # ACP 会话流展示
 │   │   ├── model/               # types, useAcpStream, useAcpSession, streamTransport
 │   │   └── ui/                  # AcpSessionEntry, AcpMessageCard, AcpToolCallCard...
-│   ├── executor-selector/       # 执行器/模型选择器（新增）
+│   ├── executor-selector/       # 执行器/模型选择器
 │   │   ├── model/               # types, useExecutorDiscovery, useExecutorConfig
 │   │   └── ui/                  # ExecutorSelector（下拉选择器 + 高级选项）
+│   ├── project/                 # 项目管理（新增 v0.2）
+│   │   └── project-selector.tsx # 项目选择器 + 创建表单
+│   ├── workspace/               # 工作空间管理（新增 v0.2）
+│   │   └── workspace-list.tsx   # 工作空间列表 + 创建面板
 │   ├── story/                   # Story 卡片/抽屉/列表视图
 │   └── task/                    # Task 卡片/抽屉/列表
 ├── hooks/                       # 全局 hooks
 ├── pages/                       # 页面组件
-│   ├── DashboardPage.tsx
+│   ├── DashboardPage.tsx        # Project 驱动的看板页
 │   └── SessionPage.tsx          # 集成 ExecutorSelector + ACP 会话流
 ├── services/                    # 服务层
 │   └── executor.ts              # ExecutorConfig 类型 + promptSession API
 ├── stores/                      # 全局 Zustand stores
+│   ├── coordinatorStore.ts      # 后端连接管理
+│   ├── projectStore.ts          # Project CRUD + 选择（新增 v0.2）
+│   ├── workspaceStore.ts        # Workspace CRUD + 状态管理（新增 v0.2）
+│   ├── storyStore.ts            # Story/Task 数据（重构 v0.2）
+│   └── eventStore.ts            # SSE 事件流状态
 ├── styles/                      # Tailwind v4 主题变量（HSL 色系）
 ├── types/
+│   └── index.ts                 # 全局类型（Project/Workspace/Story/Task 等）
 ├── App.tsx
 └── main.tsx
 ```
@@ -110,32 +120,62 @@ features/<feature-name>/
 <!-- PROJECT-SPECIFIC-START: Key Types -->
 ### 关键类型定义
 
-前端需要与后端共享以下核心类型（详见 `docs/modules/02-state.md`）：
+前端类型与后端 Rust 实体完全对齐，使用 **snake_case** 字段名直接映射：
 
 ```typescript
-// 以下为概念性类型定义，技术栈确定后调整
+// types/index.ts — 核心领域类型
 
-type StoryStatus = 'created' | 'context_injected' | 'decomposed'
-  | 'orchestrating' | 'validating' | 'completed' | 'failed'
+interface Project {
+  id: string;
+  name: string;
+  description: string;
+  backend_id: string;
+  config: ProjectConfig;
+  created_at: string;
+  updated_at: string;
+}
 
-type TaskStatus = 'pending' | 'assigned' | 'running'
-  | 'validating' | 'completed' | 'failed'
+interface Workspace {
+  id: string;
+  project_id: string;
+  name: string;
+  container_ref: string;          // 物理目录路径
+  workspace_type: WorkspaceType;  // "git_worktree" | "static" | "ephemeral"
+  status: WorkspaceStatus;        // "pending" | "preparing" | "ready" | "active" | "archived" | "error"
+  git_config?: GitConfig | null;
+  created_at: string;
+  updated_at: string;
+}
 
 interface Story {
-  id: string
-  title: string
-  status: StoryStatus
-  taskIds: string[]
-  // context 详情按需加载
+  id: string;
+  project_id: string;
+  backend_id: string;
+  title: string;
+  description?: string;
+  status: StoryStatus;
+  context: StoryContext;           // { prd_doc, spec_refs[], resource_list[] }
+  created_at: string;
+  updated_at: string;
 }
 
 interface Task {
-  id: string
-  storyId: string
-  status: TaskStatus
-  agentBinding: AgentBinding | null
+  id: string;
+  story_id: string;
+  workspace_id?: string | null;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  agent_binding: AgentBinding;    // { agent_type, agent_pid, preset_name }
+  artifacts: Artifact[];
+  created_at: string;
+  updated_at: string;
 }
 ```
+
+> **设计决策**：前端类型直接使用 snake_case 与后端对齐，不做 camelCase 转换。
+> 原因：减少映射层复杂度，避免序列化/反序列化不一致。Store 中的 `mapStory`/`mapTask`
+> 函数仅做状态值归一化（后端旧状态名 → 前端展示状态名），不做字段名转换。
 <!-- PROJECT-SPECIFIC-END -->
 
 ---
@@ -163,12 +203,32 @@ interface Task {
 <!-- PROJECT-SPECIFIC-START: Current Status -->
 ### 当前状态
 
-> 技术栈未确定，上述为概念性目录设计。
-> 确定技术栈后，在此文件更新实际目录结构。
+> 技术栈已确定，v0.2 领域模型适配完成。
 
-**需要讨论决定：**
-- [ ] 前端框架（React / Vue / Svelte / ...）
-- [ ] 状态管理方案（Redux / Zustand / Pinia / ...）
-- [x] 实时通信方案（SSE - Server-Sent Events）
-- [ ] UI组件库选型
+**技术栈决策：**
+- [x] 前端框架：React 19
+- [x] 状态管理：Zustand
+- [x] 实时通信：SSE (Server-Sent Events)
+- [x] 构建工具：Vite 7
+- [x] 样式方案：Tailwind CSS v4
+- [ ] UI 组件库选型（当前使用自定义组件）
+
+### 架构演进记录
+
+#### v0.2 — Project/Workspace 领域模型适配
+
+**变更范围**：
+- 新增 `projectStore`、`workspaceStore` Zustand Store
+- 重构 `storyStore`：从 `backendId` 驱动改为 `projectId` 驱动
+- 新增 `features/project/`、`features/workspace/` 模块
+- 重写 `types/index.ts`：新增 Project/Workspace 类型，Story/Task 类型对齐后端
+- 更新 `api/client.ts`：新增 PUT/PATCH/DELETE 方法
+- 更新 `workspace-layout.tsx`：侧边栏加入项目选择器和工作空间列表
+- 更新 `DashboardPage.tsx`：从 backendId 切换到 projectId 驱动
+- 更新所有 Story/Task 组件：适配新字段结构
+
+**设计决策**：
+- 类型字段使用 snake_case 直接映射后端，不做 camelCase 转换
+- Store 中的映射函数仅做状态值归一化，不做字段名转换
+- Workspace 数据按 projectId 隔离存储（`workspacesByProjectId`）
 <!-- PROJECT-SPECIFIC-END -->

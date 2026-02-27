@@ -1,3 +1,5 @@
+// ─── 基础枚举 ─────────────────────────────────────────
+
 export type StoryStatus =
   | "draft"
   | "ready"
@@ -16,37 +18,113 @@ export type TaskStatus =
   | "skipped"
   | "cancelled";
 
-export type AgentType = "session" | "planner" | "worker" | "reviewer" | "researcher";
 export type BackendType = "local" | "remote";
+export type WorkspaceType = "git_worktree" | "static" | "ephemeral";
+export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "archived" | "error";
 
-export interface ContextItem {
+// ─── Project ──────────────────────────────────────────
+
+export interface AgentPreset {
+  name: string;
+  agent_type: string;
+  config: Record<string, unknown>;
+}
+
+export interface ProjectConfig {
+  default_agent_type?: string | null;
+  default_workspace_id?: string | null;
+  agent_presets: AgentPreset[];
+}
+
+export interface Project {
   id: string;
-  sourceKind: "spec" | "skill" | "preset" | "content" | "practice" | "agent_output";
-  reference: string;
-  reason: string;
-  displayName?: string;
-  summary?: string;
+  name: string;
+  description: string;
+  backend_id: string;
+  config: ProjectConfig;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface Context {
-  id?: string;
-  name?: string;
-  description?: string;
-  items?: ContextItem[];
-  metadata?: Record<string, unknown>;
+// ─── Workspace ────────────────────────────────────────
+
+export interface GitConfig {
+  source_repo: string;
+  branch: string;
+  commit_hash?: string | null;
 }
+
+export interface Workspace {
+  id: string;
+  project_id: string;
+  name: string;
+  container_ref: string;
+  workspace_type: WorkspaceType;
+  status: WorkspaceStatus;
+  git_config?: GitConfig | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Story ────────────────────────────────────────────
+
+export interface ResourceRef {
+  name: string;
+  uri: string;
+  resource_type: string;
+}
+
+export interface StoryContext {
+  prd_doc?: string | null;
+  spec_refs: string[];
+  resource_list: ResourceRef[];
+}
+
+export interface Story {
+  id: string;
+  project_id: string;
+  backend_id: string;
+  title: string;
+  description?: string;
+  status: StoryStatus;
+  context: StoryContext;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Task ─────────────────────────────────────────────
 
 export interface AgentBinding {
-  agentType: AgentType;
-  agentPid?: string | null;
-  workspacePath?: string | null;
+  agent_type?: string | null;
+  agent_pid?: string | null;
+  preset_name?: string | null;
 }
+
+export interface Task {
+  id: string;
+  story_id: string;
+  workspace_id?: string | null;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  agent_binding: AgentBinding;
+  artifacts: Artifact[];
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Artifact / ACP 展示类型 ──────────────────────────
 
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
   | { type: "resource_link"; uri: string; name: string; description?: string; mimeType?: string; size?: number }
   | { type: "resource"; resource: { uri: string; mimeType?: string; text?: string } };
+
+export type Artifact =
+  | { type: "text"; title?: string; content: string }
+  | { type: "json"; title?: string; data: unknown }
+  | { type: "content_block"; title?: string; blocks: ContentBlock[] };
 
 export interface ToolCall {
   title: string;
@@ -87,37 +165,7 @@ export type SessionUpdate =
   | { type: "plan"; entries: PlanEntry[] }
   | { type: "confirmation_request"; request: ConfirmationRequest };
 
-export type Artifact =
-  | { type: "text"; title?: string; content: string }
-  | { type: "json"; title?: string; data: unknown }
-  | { type: "content_block"; title?: string; blocks: ContentBlock[] };
-
-export interface Story {
-  id: string;
-  backendId: string;
-  title: string;
-  description?: string;
-  status: StoryStatus;
-  context: Context;
-  taskIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Task {
-  id: string;
-  storyId: string;
-  title: string;
-  description?: string;
-  agentType: AgentType;
-  status: TaskStatus;
-  context: Context;
-  agentBinding: AgentBinding | null;
-  artifacts: Artifact[];
-  executionTrace: SessionUpdate[];
-  createdAt: string;
-  updatedAt: string;
-}
+// ─── Backend ──────────────────────────────────────────
 
 export interface BackendConfig {
   id: string;
@@ -135,6 +183,8 @@ export interface ViewConfig {
   filters: Record<string, unknown>;
   sort_by: string | null;
 }
+
+// ─── SSE 事件 ──────────────────────────────────────────
 
 export interface StateChange {
   id: number;

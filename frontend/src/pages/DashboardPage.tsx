@@ -1,27 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Story, Task } from "../types";
-import { useCoordinatorStore } from "../stores/coordinatorStore";
+import { useProjectStore } from "../stores/projectStore";
 import { useStoryStore } from "../stores/storyStore";
 import { StoryListView } from "../features/story/story-list-view";
 import { StoryDrawer } from "../features/story/story-drawer";
 import { TaskDrawer } from "../features/task/task-drawer";
 
 export function DashboardPage() {
-  const { currentBackendId } = useCoordinatorStore();
-  const { stories, tasksByStoryId, isLoading, error, fetchStories, fetchTasks } = useStoryStore();
+  const { currentProjectId, projects } = useProjectStore();
+  const { stories, tasksByStoryId, isLoading, error, fetchStoriesByProject, fetchTasks } = useStoryStore();
 
   const [openedStory, setOpenedStory] = useState<Story | null>(null);
   const [openedTask, setOpenedTask] = useState<Task | null>(null);
 
+  const currentProject = projects.find((p) => p.id === currentProjectId);
+
   useEffect(() => {
-    if (!currentBackendId) return;
-    void fetchStories(currentBackendId);
-  }, [currentBackendId, fetchStories]);
+    if (!currentProjectId) return;
+    void fetchStoriesByProject(currentProjectId);
+  }, [currentProjectId, fetchStoriesByProject]);
 
   const taskCountByStoryId = useMemo(() => {
     const result: Record<string, number> = {};
     stories.forEach((story) => {
-      result[story.id] = tasksByStoryId[story.id]?.length ?? story.taskIds.length;
+      result[story.id] = tasksByStoryId[story.id]?.length ?? 0;
     });
     return result;
   }, [stories, tasksByStoryId]);
@@ -40,12 +42,12 @@ export function DashboardPage() {
     setOpenedTask(task);
   };
 
-  if (!currentBackendId) {
+  if (!currentProjectId) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-foreground">请选择后端连接</h2>
-          <p className="mt-2 text-sm text-muted-foreground">选择后端后可查看 Story 与 Task 执行状态</p>
+          <h2 className="text-xl font-semibold text-foreground">请选择或创建项目</h2>
+          <p className="mt-2 text-sm text-muted-foreground">在左侧面板选择一个项目，或创建新项目开始使用</p>
         </div>
       </div>
     );
@@ -70,6 +72,8 @@ export function DashboardPage() {
         stories={stories}
         taskCountByStoryId={taskCountByStoryId}
         onOpenStory={(story) => void handleOpenStory(story)}
+        projectId={currentProjectId}
+        backendId={currentProject?.backend_id ?? ""}
       />
       <StoryDrawer
         story={openedStory}

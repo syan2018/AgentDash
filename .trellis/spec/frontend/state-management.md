@@ -21,10 +21,10 @@
 
 | 类型 | 存放位置 | 示例 |
 |------|----------|------|
-| 本地 UI 状态 | 组件内 useState | `isOpen`, `selectedTab` |
+| 本地 UI 状态 | 组件内 useState | `isOpen`, `selectedTab`, `showCreate` |
 | Feature 状态 | Feature model | `entries`, `isConnected` |
-| 全局应用状态 | stores/ | `stories`, `backends` |
-| 服务端缓存 | Store + API | `tasksByStoryId` |
+| 全局应用状态 | stores/ | `projects`, `backends`, `currentProjectId` |
+| 服务端缓存 | Store + API | `tasksByStoryId`, `workspacesByProjectId` |
 
 ---
 
@@ -37,7 +37,9 @@
 3. **服务端缓存**: 从 API 获取的数据需要缓存
 
 示例：
-- `stories` - 多个页面展示 Story 列表
+- `projects` + `currentProjectId` - 全局项目选择
+- `workspacesByProjectId` - 按项目缓存工作空间
+- `stories` - 当前项目的 Story 列表
 - `backends` - 全局后端连接配置
 - `tasksByStoryId` - 缓存避免重复请求
 
@@ -48,20 +50,45 @@
 服务端数据使用 Zustand Store 缓存：
 
 ```ts
-// stores/storyStore.ts
-fetchStories: async (backendId) => {
-  set({ isLoading: true });
+// stores/storyStore.ts — 按 projectId 获取 Story
+fetchStoriesByProject: async (projectId) => {
+  set({ isLoading: true, error: null });
   try {
-    const response = await api.get(`/stories?backend_id=${backendId}`);
-    set({ stories: response.map(mapStory), isLoading: false });
+    const response = await api.get(`/stories?project_id=${projectId}`);
+    const stories = response.map(mapStory);
+    set({ stories, isLoading: false });
+  } catch (e) {
+    set({ error: (e as Error).message, isLoading: false });
+  }
+}
+
+// stores/workspaceStore.ts — 按 projectId 缓存 Workspace
+fetchWorkspaces: async (projectId) => {
+  set({ isLoading: true, error: null });
+  try {
+    const workspaces = await api.get(`/projects/${projectId}/workspaces`);
+    set((s) => ({
+      workspacesByProjectId: { ...s.workspacesByProjectId, [projectId]: workspaces },
+      isLoading: false,
+    }));
   } catch (e) {
     set({ error: (e as Error).message, isLoading: false });
   }
 }
 ```
 
+### Store 清单
+
+| Store | 职责 | 关键状态 |
+|-------|------|----------|
+| `projectStore` | Project CRUD + 选择 | `projects`, `currentProjectId` |
+| `workspaceStore` | Workspace CRUD + 状态管理 | `workspacesByProjectId` |
+| `storyStore` | Story/Task 数据 | `stories`, `tasksByStoryId` |
+| `coordinatorStore` | 后端连接管理 | `backends`, `currentBackendId` |
+| `eventStore` | SSE 事件流 | `connectionState`, `lastEventId` |
+
 - 使用 `isLoading` 追踪加载状态
-- API 响应通过 `mapStory` 等函数映射到前端类型
+- API 响应通过 `mapStory`/`mapTask` 等函数做状态值归一化
 - 错误信息存储在 `error` 字段
 
 ---

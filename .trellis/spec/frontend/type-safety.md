@@ -93,36 +93,52 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
 
 ## API 类型映射
 
-后端返回 snake_case，前端使用 camelCase：
+> **设计决策（v0.2）**：前端类型直接使用 **snake_case** 与后端对齐，不做 camelCase 转换。
+> 原因：减少映射层复杂度，避免序列化/反序列化不一致。
 
 ```ts
-// 后端返回
-interface BackendStory {
-  id: string;
-  title: string;
-  created_at: string;  // snake_case
-  task_ids: string[];  // snake_case
-}
-
-// 前端类型
+// 前端类型直接使用 snake_case（与后端 Rust 实体一致）
 interface Story {
   id: string;
+  project_id: string;     // snake_case，与后端一致
+  backend_id: string;
   title: string;
-  createdAt: string;   // camelCase
-  taskIds: string[];   // camelCase
+  status: StoryStatus;
+  context: StoryContext;   // 结构化上下文
+  created_at: string;
+  updated_at: string;
 }
 
-// 映射函数
-function mapStory(raw: Record<string, unknown>): Story {
+// 映射函数仅做状态值归一化，不做字段名转换
+const mapStory = (raw: Record<string, unknown>): Story => {
   return {
     id: String(raw.id ?? ''),
+    project_id: String(raw.project_id ?? ''),
+    backend_id: String(raw.backend_id ?? ''),
     title: String(raw.title ?? '未命名 Story'),
-    createdAt: String(raw.created_at ?? new Date().toISOString()),
-    taskIds: Array.isArray(raw.task_ids)
-      ? raw.task_ids.map((id) => String(id))
-      : [],
+    status: normalizeStoryStatus(String(raw.status ?? 'draft')),
+    context: parseStoryContext(raw.context),
+    created_at: String(raw.created_at ?? new Date().toISOString()),
+    updated_at: String(raw.updated_at ?? new Date().toISOString()),
   };
-}
+};
+```
+
+### 状态值归一化
+
+后端可能返回旧版状态名，前端映射函数负责归一化：
+
+```ts
+const normalizeStoryStatus = (value: string): StoryStatus => {
+  switch (value) {
+    case 'created': case 'draft': return 'draft';
+    case 'context_ready': case 'decomposed': case 'ready': return 'ready';
+    case 'executing': return 'running';
+    case 'awaiting_verification': return 'review';
+    // ...
+    default: return 'draft';
+  }
+};
 ```
 
 ---
@@ -209,6 +225,24 @@ type CreateStoryInput = PartialBy<Story, 'id' | 'createdAt'>;
 
 ## 参考类型定义
 
-- `frontend/src/types/index.ts` - Story, Task 等核心类型
+- `frontend/src/types/index.ts` - Project, Workspace, Story, Task 等核心类型
 - `frontend/src/features/acp-session/model/types.ts` - ACP 相关类型
 - `frontend/src/services/executor.ts` - ExecutorConfig 类型
+
+---
+
+## 架构演进记录
+
+### v0.2 — snake_case 直接映射
+
+**变更**：前端类型从 camelCase 切换到 snake_case，与后端 Rust 实体直接对齐。
+
+**影响范围**：
+- `types/index.ts` 中所有字段名使用 snake_case
+- 组件中访问字段如 `story.created_at`（非 `story.createdAt`）
+- Store 映射函数不再做字段名转换
+
+**原因**：
+1. 减少映射层代码量和出错概率
+2. 新增 Project/Workspace 等多个实体后，camelCase 转换维护成本过高
+3. TypeScript 类型与 API JSON 响应直接匹配，调试更直观

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Story, Task } from '../types';
+import type { Story, Task, StoryContext, AgentBinding } from '../types';
 import { api } from '../api/client';
 
 interface StoryState {
@@ -10,8 +10,9 @@ interface StoryState {
   isLoading: boolean;
   error: string | null;
 
-  fetchStories: (backendId: string) => Promise<void>;
-  createStory: (backendId: string, title: string, description?: string) => Promise<void>;
+  fetchStoriesByProject: (projectId: string) => Promise<void>;
+  fetchStoriesByBackend: (backendId: string) => Promise<void>;
+  createStory: (projectId: string, backendId: string, title: string, description?: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
   fetchTasks: (storyId: string) => Promise<void>;
@@ -65,49 +66,58 @@ const normalizeTaskStatus = (value: string): Task['status'] => {
   }
 };
 
+const defaultContext: StoryContext = { prd_doc: null, spec_refs: [], resource_list: [] };
+
 const mapStory = (raw: Record<string, unknown>): Story => {
-  const taskIdsRaw = raw.task_ids;
+  let context: StoryContext = defaultContext;
+  if (raw.context && typeof raw.context === 'object') {
+    const ctx = raw.context as Record<string, unknown>;
+    if ('spec_refs' in ctx || 'prd_doc' in ctx || 'resource_list' in ctx) {
+      context = {
+        prd_doc: (ctx.prd_doc as string) ?? null,
+        spec_refs: Array.isArray(ctx.spec_refs) ? ctx.spec_refs as string[] : [],
+        resource_list: Array.isArray(ctx.resource_list) ? ctx.resource_list as StoryContext['resource_list'] : [],
+      };
+    }
+  }
+
   return {
     id: String(raw.id ?? ''),
-    backendId: String(raw.backend_id ?? ''),
+    project_id: String(raw.project_id ?? ''),
+    backend_id: String(raw.backend_id ?? ''),
     title: String(raw.title ?? '未命名 Story'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeStoryStatus(String(raw.status ?? 'draft')),
-    context:
-      raw.context && typeof raw.context === 'object'
-        ? (raw.context as Story['context'])
-        : { items: [], metadata: {} },
-    taskIds: Array.isArray(taskIdsRaw) ? taskIdsRaw.map((id) => String(id)) : [],
-    createdAt: String(raw.created_at ?? new Date().toISOString()),
-    updatedAt: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
+    context,
+    created_at: String(raw.created_at ?? new Date().toISOString()),
+    updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
   };
 };
 
+const defaultBinding: AgentBinding = { agent_type: null, agent_pid: null, preset_name: null };
+
 const mapTask = (raw: Record<string, unknown>): Task => {
+  let agentBinding: AgentBinding = defaultBinding;
+  if (raw.agent_binding && typeof raw.agent_binding === 'object') {
+    const ab = raw.agent_binding as Record<string, unknown>;
+    agentBinding = {
+      agent_type: ab.agent_type ? String(ab.agent_type) : null,
+      agent_pid: ab.agent_pid ? String(ab.agent_pid) : null,
+      preset_name: ab.preset_name ? String(ab.preset_name) : null,
+    };
+  }
+
   return {
     id: String(raw.id ?? ''),
-    storyId: String(raw.story_id ?? ''),
+    story_id: String(raw.story_id ?? ''),
+    workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
     title: String(raw.title ?? raw.name ?? '未命名 Task'),
     description: raw.description ? String(raw.description) : '',
-    agentType: (String(raw.agent_type ?? 'worker') as Task['agentType']),
     status: normalizeTaskStatus(String(raw.status ?? 'pending')),
-    context:
-      raw.context && typeof raw.context === 'object'
-        ? (raw.context as Task['context'])
-        : { items: [], metadata: {} },
-    agentBinding: raw.agent_type
-      ? {
-          agentType: String(raw.agent_type) as Task['agentType'],
-          agentPid: raw.agent_pid ? String(raw.agent_pid) : null,
-          workspacePath: raw.workspace_path ? String(raw.workspace_path) : null,
-        }
-      : null,
+    agent_binding: agentBinding,
     artifacts: Array.isArray(raw.artifacts) ? (raw.artifacts as Task['artifacts']) : [],
-    executionTrace: Array.isArray(raw.execution_trace)
-      ? (raw.execution_trace as Task['executionTrace'])
-      : [],
-    createdAt: String(raw.created_at ?? new Date().toISOString()),
-    updatedAt: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
+    created_at: String(raw.created_at ?? new Date().toISOString()),
+    updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
   };
 };
 
@@ -119,7 +129,18 @@ export const useStoryStore = create<StoryState>((set) => ({
   isLoading: false,
   error: null,
 
-  fetchStories: async (backendId) => {
+  fetchStoriesByProject: async (projectId) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await api.get<Record<string, unknown>[]>(`/stories?project_id=${projectId}`);
+      const stories = response.map(mapStory);
+      set({ stories, isLoading: false });
+    } catch (e) {
+      set({ error: (e as Error).message, isLoading: false });
+    }
+  },
+
+  fetchStoriesByBackend: async (backendId) => {
     set({ isLoading: true, error: null });
     try {
       const response = await api.get<Record<string, unknown>[]>(`/stories?backend_id=${backendId}`);
@@ -130,9 +151,10 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
-  createStory: async (backendId, title, description) => {
+  createStory: async (projectId, backendId, title, description) => {
     try {
       const raw = await api.post<Record<string, unknown>>('/stories', {
+        project_id: projectId,
         backend_id: backendId,
         title,
         description,

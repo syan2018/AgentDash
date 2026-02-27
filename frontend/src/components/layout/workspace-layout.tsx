@@ -1,7 +1,11 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { ThemeToggle } from "../ui/theme-toggle";
+import { useProjectStore } from "../../stores/projectStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
+import { ProjectSelector } from "../../features/project/project-selector";
+import { WorkspaceList } from "../../features/workspace/workspace-list";
 
 export type WorkspaceView = "dashboard" | "session";
 
@@ -12,8 +16,20 @@ interface WorkspaceLayoutProps {
 }
 
 export function WorkspaceLayout({ children, activeView, onChangeView }: WorkspaceLayoutProps) {
-  const { backends, currentBackendId, selectBackend } = useCoordinatorStore();
+  const { projects, currentProjectId, selectProject } = useProjectStore();
+  const { workspacesByProjectId, fetchWorkspaces } = useWorkspaceStore();
+  const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
+
+  useEffect(() => {
+    if (currentProjectId) {
+      void fetchWorkspaces(currentProjectId);
+    }
+  }, [currentProjectId, fetchWorkspaces]);
+
+  const currentWorkspaces = currentProjectId
+    ? workspacesByProjectId[currentProjectId] ?? []
+    : [];
 
   const streamStatusLabel =
     connectionState === "connected"
@@ -27,55 +43,71 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <aside className="flex h-full w-64 flex-col border-r border-border bg-card">
+        {/* 头部 */}
         <div className="border-b border-border px-4 py-3">
-          <h1 className="text-lg font-semibold tracking-tight text-foreground">AgentDashboard</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-foreground">AgentDash</h1>
           <p className="mt-1 text-xs text-muted-foreground">{streamStatusLabel}</p>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">导航</p>
-          <div className="mb-4 space-y-1">
-            <button
-              type="button"
-              onClick={() => onChangeView("dashboard")}
-              className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
-                activeView === "dashboard"
-                  ? "bg-secondary text-foreground"
-                  : "text-foreground hover:bg-secondary/70"
-              }`}
-            >
-              看板
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeView("session")}
-              className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
-                activeView === "session"
-                  ? "bg-secondary text-foreground"
-                  : "text-foreground hover:bg-secondary/70"
-              }`}
-            >
-              会话
-            </button>
+        <nav className="flex-1 space-y-4 overflow-y-auto p-3">
+          {/* 导航 */}
+          <div>
+            <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">导航</p>
+            <div className="mt-1 space-y-1">
+              <button
+                type="button"
+                onClick={() => onChangeView("dashboard")}
+                className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                  activeView === "dashboard"
+                    ? "bg-secondary text-foreground"
+                    : "text-foreground hover:bg-secondary/70"
+                }`}
+              >
+                看板
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeView("session")}
+                className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                  activeView === "session"
+                    ? "bg-secondary text-foreground"
+                    : "text-foreground hover:bg-secondary/70"
+                }`}
+              >
+                会话
+              </button>
+            </div>
           </div>
 
-          <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">后端连接</p>
-          {backends.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">暂无后端配置</p>}
-          {backends.map((backend) => (
-            <button
-              key={backend.id}
-              type="button"
-              onClick={() => selectBackend(backend.id)}
-              className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
-                currentBackendId === backend.id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-foreground hover:bg-secondary"
-              }`}
-            >
-              <p className="truncate font-medium">{backend.name}</p>
-              <p className="truncate text-xs opacity-75">{backend.endpoint}</p>
-            </button>
-          ))}
+          {/* 项目选择 */}
+          <ProjectSelector
+            projects={projects}
+            currentProjectId={currentProjectId}
+            onSelect={selectProject}
+          />
+
+          {/* 工作空间列表 */}
+          {currentProjectId && (
+            <WorkspaceList
+              projectId={currentProjectId}
+              workspaces={currentWorkspaces}
+            />
+          )}
+
+          {/* 后端连接 */}
+          <div>
+            <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">后端连接</p>
+            {backends.length === 0 && <p className="px-2 py-2 text-sm text-muted-foreground">暂无后端</p>}
+            {backends.map((backend) => (
+              <div
+                key={backend.id}
+                className="rounded-md px-3 py-2 text-sm"
+              >
+                <p className="truncate font-medium text-foreground">{backend.name}</p>
+                <p className="truncate text-xs text-muted-foreground">{backend.endpoint}</p>
+              </div>
+            ))}
+          </div>
         </nav>
 
         <div className="border-t border-border p-3">

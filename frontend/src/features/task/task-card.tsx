@@ -7,6 +7,8 @@ interface TaskCardProps {
 }
 
 export function TaskCard({ task, onClick }: TaskCardProps) {
+  const agentLabel = task.agent_binding?.agent_type ?? "未指定";
+
   return (
     <button
       type="button"
@@ -21,8 +23,8 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
         <TaskStatusBadge status={task.status} />
       </div>
       <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{task.agentType}</span>
-        <span>{new Date(task.updatedAt).toLocaleDateString("zh-CN")}</span>
+        <span>{agentLabel}</span>
+        <span>{new Date(task.updated_at).toLocaleDateString("zh-CN")}</span>
       </div>
     </button>
   );

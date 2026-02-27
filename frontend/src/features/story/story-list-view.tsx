@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Story, StoryStatus } from "../../types";
 import { StoryCard } from "./story-card";
+import { useStoryStore } from "../../stores/storyStore";
 
 const statusGroups: Array<{ key: StoryStatus; label: string; dotClass: string }> = [
   { key: "running", label: "执行中", dotClass: "bg-primary" },
@@ -16,10 +17,24 @@ interface StoryListViewProps {
   stories: Story[];
   taskCountByStoryId: Record<string, number>;
   onOpenStory: (story: Story) => void;
+  projectId: string;
+  backendId: string;
 }
 
-export function StoryListView({ stories, taskCountByStoryId, onOpenStory }: StoryListViewProps) {
+export function StoryListView({ stories, taskCountByStoryId, onOpenStory, projectId, backendId }: StoryListViewProps) {
   const [search, setSearch] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const { createStory } = useStoryStore();
+
+  const handleCreate = async () => {
+    if (!title.trim()) return;
+    await createStory(projectId, backendId, title.trim(), description.trim() || undefined);
+    setTitle("");
+    setDescription("");
+    setShowCreate(false);
+  };
 
   const filtered = useMemo(() => {
     if (!search.trim()) return stories;
@@ -34,13 +49,49 @@ export function StoryListView({ stories, taskCountByStoryId, onOpenStory }: Stor
           <h2 className="text-sm font-semibold tracking-tight text-foreground">Story 列表</h2>
           <p className="text-xs text-muted-foreground">{stories.length} 个 Story</p>
         </div>
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="搜索 Story..."
-          className="h-8 w-56 rounded-md border border-border bg-background px-3 text-sm outline-none ring-ring focus:ring-1"
-        />
+        <div className="flex items-center gap-2">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索 Story..."
+            className="h-8 w-56 rounded-md border border-border bg-background px-3 text-sm outline-none ring-ring focus:ring-1"
+          />
+          <button
+            type="button"
+            onClick={() => setShowCreate(!showCreate)}
+            className="h-8 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
+          >
+            {showCreate ? "取消" : "+ 创建"}
+          </button>
+        </div>
       </header>
+
+      {showCreate && (
+        <div className="border-b border-border bg-card/50 px-6 py-3">
+          <div className="flex gap-2">
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Story 标题"
+              className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            />
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="描述（可选）"
+              className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            />
+            <button
+              type="button"
+              onClick={() => void handleCreate()}
+              disabled={!title.trim()}
+              className="rounded-md bg-primary px-4 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+            >
+              创建
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         {statusGroups.map((group) => {
@@ -58,7 +109,7 @@ export function StoryListView({ stories, taskCountByStoryId, onOpenStory }: Stor
                   <StoryCard
                     key={story.id}
                     story={story}
-                    taskCount={taskCountByStoryId[story.id] ?? story.taskIds.length}
+                    taskCount={taskCountByStoryId[story.id] ?? 0}
                     onClick={() => onOpenStory(story)}
                   />
                 ))}

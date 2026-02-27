@@ -1,9 +1,5 @@
-import type { Artifact, SessionUpdate, Task } from "../../types";
+import type { Artifact, Task } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
-import { ContentBlockList } from "../../components/acp/content-block";
-import { ToolCallView } from "../../components/acp/tool-call";
-import { PlanView } from "../../components/acp/plan";
-import { ConfirmationRequestCard } from "../../components/acp/confirmation-request";
 
 interface TaskDrawerProps {
   task: Task | null;
@@ -24,7 +20,9 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
     return (
       <div className="rounded-md border border-border bg-card p-3">
         <p className="mb-2 text-xs font-medium text-muted-foreground">{artifact.title ?? "内容块产物"}</p>
-        <ContentBlockList blocks={artifact.blocks} />
+        <pre className="whitespace-pre-wrap text-xs text-foreground">
+          {artifact.blocks.map((b) => ("text" in b ? b.text : JSON.stringify(b))).join("\n")}
+        </pre>
       </div>
     );
   }
@@ -37,26 +35,10 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
   );
 }
 
-function SessionUpdateBlock({ update }: { update: SessionUpdate }) {
-  if (update.type === "content") {
-    return (
-      <div className="rounded-md border border-border bg-card p-3">
-        <p className="mb-2 text-xs text-muted-foreground">内容输出</p>
-        <ContentBlockList blocks={update.blocks} />
-      </div>
-    );
-  }
-  if (update.type === "tool_call") {
-    return <ToolCallView toolCall={update.toolCall} />;
-  }
-  if (update.type === "plan") {
-    return <PlanView entries={update.entries} />;
-  }
-  return <ConfirmationRequestCard request={update.request} />;
-}
-
 export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
   if (!task) return null;
+
+  const agentLabel = task.agent_binding?.agent_type ?? "未指定 Agent";
 
   return (
     <>
@@ -66,7 +48,7 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
           <div className="min-w-0">
             <div className="mb-1 flex items-center gap-2">
               <TaskStatusBadge status={task.status} />
-              <span className="text-xs text-muted-foreground">{task.agentType}</span>
+              <span className="text-xs text-muted-foreground">{agentLabel}</span>
             </div>
             <h3 className="truncate text-base font-semibold text-foreground">{task.title}</h3>
             {task.description && <p className="mt-1 text-sm text-muted-foreground">{task.description}</p>}
@@ -76,36 +58,32 @@ export function TaskDrawer({ task, onClose }: TaskDrawerProps) {
           </button>
         </header>
 
-        <div className="grid flex-1 grid-cols-1 gap-0 overflow-hidden md:grid-cols-2">
-          <section className="overflow-y-auto border-b border-border p-4 md:border-b-0 md:border-r">
-            <h4 className="mb-3 text-sm font-medium text-foreground">执行日志</h4>
-            {task.executionTrace.length === 0 ? (
-              <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                暂无执行日志
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {task.executionTrace.map((update, index) => (
-                  <SessionUpdateBlock key={index} update={update} />
-                ))}
-              </div>
-            )}
-          </section>
+        <div className="flex-1 overflow-y-auto p-6">
+          <h4 className="mb-3 text-sm font-medium text-foreground">任务详情</h4>
 
-          <section className="overflow-y-auto p-4">
-            <h4 className="mb-3 text-sm font-medium text-foreground">执行产物</h4>
-            {task.artifacts.length === 0 ? (
-              <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                暂无执行产物
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {task.artifacts.map((artifact, index) => (
-                  <ArtifactBlock key={index} artifact={artifact} />
-                ))}
-              </div>
-            )}
-          </section>
+          <div className="mb-6 grid grid-cols-2 gap-3">
+            <div className="rounded-md border border-border bg-card p-3">
+              <p className="text-xs text-muted-foreground">工作空间 ID</p>
+              <p className="mt-1 truncate text-sm font-mono text-foreground">{task.workspace_id ?? "未绑定"}</p>
+            </div>
+            <div className="rounded-md border border-border bg-card p-3">
+              <p className="text-xs text-muted-foreground">Agent 预设</p>
+              <p className="mt-1 text-sm text-foreground">{task.agent_binding?.preset_name ?? "无"}</p>
+            </div>
+          </div>
+
+          <h4 className="mb-3 text-sm font-medium text-foreground">执行产物</h4>
+          {task.artifacts.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+              暂无执行产物
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {task.artifacts.map((artifact, index) => (
+                <ArtifactBlock key={index} artifact={artifact} />
+              ))}
+            </div>
+          )}
         </div>
       </aside>
     </>

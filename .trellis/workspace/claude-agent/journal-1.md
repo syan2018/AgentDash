@@ -329,3 +329,161 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Project/Workspace/Story/Task 领域模型重构
+
+**Date**: 2026-02-27
+**Task**: Project/Workspace/Story/Task 领域模型重构
+
+### Summary
+
+| 变更 | 说明 |
+|------|------|
+| Project 模块 | 新增实体/Repository/SQLite实现/API路由 |
+| Workspace 模块 | 新增实体/Repository/SQLite实现/API路由 |
+| Story 扩展 | 添加 project_id，context 结构化为 StoryContext |
+| Task 扩展 | workspace_id 替代 workspace_path，AgentBinding/Artifact 结构化 |
+| Repository 扩展 | Story/Task 支持完整 CRUD + 按项目/工作空间查询 |
+| API 层 | 新增 Project/Workspace 端点，更新 AppState |
+| Mock 数据 | seed-mock-data.py 适配新领域模型 |
+| Code-Spec | 更新 directory-structure/repository-pattern/index |
+
+**新增文件**: project/(4), workspace/(4), project_repository.rs, workspace_repository.rs, projects.rs, workspaces.rs
+**修改文件**: story/entity+repo+vo, task/entity+repo+vo, story_repository.rs, task_repository.rs, app_state.rs, routes.rs, stories.rs, seed-mock-data.py, spec docs(3)
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `026cf37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 10: Project/Workspace/Story/Task 领域模型重构
+
+**Date**: 2026-02-27
+**Task**: Project/Workspace/Story/Task 领域模型重构
+
+### Summary
+
+建立完整的 Project-Workspace-Story-Task 领域模型层次。新增 Project/Workspace 模块（实体+Repository+SQLite+API），扩展 Story（project_id, StoryContext）和 Task（workspace_id, AgentBinding, Artifact），更新 mock 数据脚本和 code-spec 文档。
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `026cf37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 11: Project/Workspace/Story/Task 领域模型重构
+
+**Date**: 2026-02-27
+**Task**: Project/Workspace/Story/Task 领域模型重构
+
+### Summary
+
+建立完整的 Project-Workspace-Story-Task 领域模型层次。新增 Project/Workspace 模块（实体+Repository+SQLite+API），扩展 Story（project_id, StoryContext）和 Task（workspace_id, AgentBinding, Artifact），更新 mock 数据脚本和 code-spec 文档。
+
+### Main Changes
+
+﻿
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `026cf37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 12: 前端适配 Project/Workspace 领域模型
+
+**Date**: 2026-02-27
+**Task**: 前端适配 Project/Workspace 领域模型
+
+### Summary
+
+## 前端适配 Project/Workspace 领域模型
+
+| 变更 | 说明 |
+|------|------|
+| types/index.ts | 重写：新增 Project/Workspace 类型，Story/Task 类型对齐后端 snake_case |
+| api/client.ts | 重写：新增 PUT/PATCH/DELETE 方法 |
+| stores/projectStore.ts | 新增：Project CRUD + 选择逻辑 |
+| stores/workspaceStore.ts | 新增：Workspace CRUD + 状态管理 |
+| stores/storyStore.ts | 重写：从 backendId 切换到 projectId 驱动 |
+| features/project/ | 新增：项目选择器 + 创建表单 |
+| features/workspace/ | 新增：工作空间列表 + 创建面板（含目录选择） |
+| workspace-layout.tsx | 重写：侧边栏加入项目/工作空间管理 |
+| DashboardPage.tsx | 重写：projectId 驱动 |
+| story/task 组件 | 更新：适配新字段结构 |
+| spec docs (4) | 更新：index/directory-structure/state-management/type-safety |
+
+**浏览器验证**: 项目创建/切换、工作空间创建、Story 创建、Drawer 展示全部通过
+
+### Main Changes
+
+﻿
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `026cf37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

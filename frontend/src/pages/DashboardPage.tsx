@@ -1,19 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import type { Story, Task } from "../types";
+import { useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import type { Story } from "../types";
 import { useProjectStore } from "../stores/projectStore";
 import { useStoryStore } from "../stores/storyStore";
-import { useWorkspaceStore } from "../stores/workspaceStore";
 import { StoryListView } from "../features/story/story-list-view";
-import { StoryDrawer } from "../features/story/story-drawer";
-import { TaskDrawer } from "../features/task/task-drawer";
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const { currentProjectId, projects } = useProjectStore();
-  const { stories, tasksByStoryId, isLoading, error, fetchStoriesByProject, fetchTasks } = useStoryStore();
-  const { workspacesByProjectId } = useWorkspaceStore();
-
-  const [openedStory, setOpenedStory] = useState<Story | null>(null);
-  const [openedTask, setOpenedTask] = useState<Task | null>(null);
+  const { stories, tasksByStoryId, isLoading, error, fetchStoriesByProject } = useStoryStore();
 
   const currentProject = projects.find((p) => p.id === currentProjectId);
 
@@ -30,46 +25,8 @@ export function DashboardPage() {
     return result;
   }, [stories, tasksByStoryId]);
 
-  const openedStoryTasks = openedStory ? tasksByStoryId[openedStory.id] ?? [] : [];
-  const currentWorkspaces = currentProjectId ? workspacesByProjectId[currentProjectId] ?? [] : [];
-
-  const handleOpenStory = async (story: Story) => {
-    setOpenedTask(null);
-    setOpenedStory(story);
-    if (!tasksByStoryId[story.id]) {
-      await fetchTasks(story.id);
-    }
-  };
-
-  const handleOpenTask = (task: Task) => {
-    setOpenedTask(task);
-  };
-
-  const handleStoryUpdated = (story: Story) => {
-    setOpenedStory(story);
-  };
-
-  const handleStoryDeleted = (storyId: string) => {
-    if (openedStory?.id === storyId) {
-      setOpenedStory(null);
-    }
-    setOpenedTask(null);
-  };
-
-  const handleTaskUpdated = (task: Task) => {
-    setOpenedTask(task);
-  };
-
-  const handleTaskDeleted = (taskId: string, storyId: string) => {
-    if (openedTask?.id === taskId) {
-      setOpenedTask(null);
-    }
-    if (openedStory?.id === storyId) {
-      const list = tasksByStoryId[storyId] ?? [];
-      if (list.length <= 1) {
-        setOpenedTask(null);
-      }
-    }
+  const handleOpenStory = (story: Story) => {
+    navigate(`/story/${story.id}`);
   };
 
   if (!currentProjectId) {
@@ -101,27 +58,9 @@ export function DashboardPage() {
       <StoryListView
         stories={stories}
         taskCountByStoryId={taskCountByStoryId}
-        onOpenStory={(story) => void handleOpenStory(story)}
+        onOpenStory={handleOpenStory}
         projectId={currentProjectId}
         backendId={currentProject?.backend_id ?? ""}
-      />
-      <StoryDrawer
-        key={`story-drawer-${openedStory?.id ?? "none"}`}
-        story={openedStory}
-        tasks={openedStoryTasks}
-        workspaces={currentWorkspaces}
-        projectConfig={currentProject?.config}
-        onClose={() => setOpenedStory(null)}
-        onStoryUpdated={handleStoryUpdated}
-        onStoryDeleted={handleStoryDeleted}
-        onOpenTask={handleOpenTask}
-      />
-      <TaskDrawer
-        key={`task-drawer-${openedTask?.id ?? "none"}`}
-        task={openedTask}
-        onTaskUpdated={handleTaskUpdated}
-        onTaskDeleted={handleTaskDeleted}
-        onClose={() => setOpenedTask(null)}
       />
     </div>
   );

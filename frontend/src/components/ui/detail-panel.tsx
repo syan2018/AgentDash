@@ -64,14 +64,18 @@ export interface DetailSectionProps {
   title: string;
   description?: string;
   children: ReactNode;
+  extra?: ReactNode;
 }
 
-export function DetailSection({ title, description, children }: DetailSectionProps) {
+export function DetailSection({ title, description, children, extra }: DetailSectionProps) {
   return (
     <section className="space-y-3 rounded-md border border-border bg-card p-4">
-      <div>
-        <h4 className="text-sm font-medium text-foreground">{title}</h4>
-        {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
+      <div className="flex items-start justify-between">
+        <div>
+          <h4 className="text-sm font-medium text-foreground">{title}</h4>
+          {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
+        </div>
+        {extra}
       </div>
       {children}
     </section>

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { DashboardPage } from "./pages/DashboardPage";
-import { SessionPage } from "./pages/SessionPage";
+import { StoryPage } from "./pages/StoryPage";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
 import { useEventStore } from "./stores/eventStore";
 
-function App() {
+function AppContent() {
   const { fetchProjects } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect } = useEventStore();
@@ -20,8 +21,20 @@ function App() {
 
   return (
     <WorkspaceLayout activeView={activeView} onChangeView={setActiveView}>
-      {activeView === "dashboard" ? <DashboardPage /> : <SessionPage />}
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/story/:storyId" element={<StoryPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </WorkspaceLayout>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   );
 }
 

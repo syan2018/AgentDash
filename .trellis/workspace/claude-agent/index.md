@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-02-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~490 | Active |
+| `journal-1.md` | ~522 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 13 | 2026-02-27 | 归档任务: Project 配置增强与 Story 下 Task 创建流程 | `6fa8e43` |
 | 12 | 2026-02-27 | 前端适配 Project/Workspace 领域模型 | `026cf37` |
 | 11 | 2026-02-27 | Project/Workspace/Story/Task 领域模型重构 | `026cf37` |
 | 10 | 2026-02-27 | Project/Workspace/Story/Task 领域模型重构 | `026cf37` |

@@ -4,6 +4,7 @@ import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
+import { useSessionHistoryStore } from "../../stores/sessionHistoryStore";
 import { ProjectSelector } from "../../features/project/project-selector";
 
 export type WorkspaceView = "dashboard" | "session";
@@ -19,6 +20,7 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
   const { fetchWorkspaces } = useWorkspaceStore();
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
+  const { sessions: sessionHistory } = useSessionHistoryStore();
 
   useEffect(() => {
     if (currentProjectId) {
@@ -34,6 +36,11 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
         : connectionState === "connecting"
           ? "事件流连接中…"
           : "事件流未连接";
+
+  const formatTime = (timestamp: number) => {
+    const date = new Date(timestamp);
+    return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -74,17 +81,45 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
             </div>
           </div>
 
-          {/* 项目选择 */}
-          <ProjectSelector
-            projects={projects}
-            currentProjectId={currentProjectId}
-            onSelect={selectProject}
-          />
+          {/* 看板模式：项目选择 */}
+          {activeView === "dashboard" && (
+            <ProjectSelector
+              projects={projects}
+              currentProjectId={currentProjectId}
+              onSelect={selectProject}
+            />
+          )}
 
-          {/* 后端连接 */}
-          <div>
-            <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">后端连接</p>
-            {backends.length === 0 && <p className="px-2 py-2 text-sm text-muted-foreground">暂无后端</p>}
+          {/* 会话模式：历史会话列表 */}
+          {activeView === "session" && (
+            <div>
+              <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">历史会话</p>
+              {sessionHistory.length === 0 ? (
+                <p className="px-2 py-2 text-sm text-muted-foreground">暂无历史会话</p>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  {sessionHistory.map((session) => (
+                    <div
+                      key={session.id}
+                      className="rounded-md px-3 py-2 text-sm hover:bg-secondary/50 cursor-pointer"
+                      title={session.preview}
+                    >
+                      <p className="truncate font-medium text-foreground">{session.title}</p>
+                      <p className="truncate text-xs text-muted-foreground">{session.preview}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{formatTime(session.timestamp)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
+
+        {/* 后端连接 - 移到底部单独一栏 */}
+        <div className="border-t border-border p-3">
+          <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">后端连接</p>
+          {backends.length === 0 && <p className="px-2 py-2 text-sm text-muted-foreground">暂无后端</p>}
+          <div className="mt-1 space-y-1">
             {backends.map((backend) => (
               <div
                 key={backend.id}
@@ -95,7 +130,7 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
               </div>
             ))}
           </div>
-        </nav>
+        </div>
 
         <div className="border-t border-border p-3">
           <ThemeToggle />

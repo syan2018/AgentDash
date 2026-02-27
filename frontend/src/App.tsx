@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { DashboardPage } from "./pages/DashboardPage";
 import { StoryPage } from "./pages/StoryPage";
+import { SessionPage } from "./pages/SessionPage";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
 import { useEventStore } from "./stores/eventStore";
@@ -21,11 +22,15 @@ function AppContent() {
 
   return (
     <WorkspaceLayout activeView={activeView} onChangeView={setActiveView}>
-      <Routes>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/story/:storyId" element={<StoryPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      {activeView === "dashboard" ? (
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/story/:storyId" element={<StoryPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      ) : (
+        <SessionPage />
+      )}
     </WorkspaceLayout>
   );
 }

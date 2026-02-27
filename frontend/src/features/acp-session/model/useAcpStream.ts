@@ -175,6 +175,16 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
 
     if (update.sessionUpdate === "tool_call_update") {
       handleToolCallUpdate(update);
+      // 查找是否已有相同 toolCallId 的条目（tool_call 或 tool_call_update）
+      const existingIndex = prev.findIndex(
+        (e) =>
+          (e.update.sessionUpdate === "tool_call" || e.update.sessionUpdate === "tool_call_update") &&
+          (e.update as { toolCallId?: string }).toolCallId === update.toolCallId
+      );
+      if (existingIndex >= 0) {
+        // 不添加新条目，只更新状态
+        return prev;
+      }
       newEntry.isPendingApproval = update.status === "pending";
       return [...prev, newEntry];
     }
@@ -241,27 +251,29 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     return next;
   }, [handleToolCall, handleToolCallUpdate]);
 
-  const flushPending = useCallback(() => {
-    flushTimerRef.current = null;
-    if (!mountedRef.current) return;
-    const pending = pendingNotificationsRef.current;
-    if (pending.length === 0) return;
-    pendingNotificationsRef.current = [];
-
-    setEntries((prev) => {
-      let next = prev;
-      for (const n of pending) {
-        next = applyNotification(next, n);
-      }
-      return next;
-    });
-  }, [applyNotification]);
+  // 使用 ref 存储 applyNotification 避免依赖循环
+  const applyNotificationRef = useRef(applyNotification);
+  applyNotificationRef.current = applyNotification;
 
   const enqueueNotification = useCallback((notification: SessionNotification) => {
     pendingNotificationsRef.current.push(notification);
     if (flushTimerRef.current) return;
-    flushTimerRef.current = setTimeout(flushPending, FLUSH_INTERVAL_MS);
-  }, [flushPending]);
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null;
+      if (!mountedRef.current) return;
+      const pending = pendingNotificationsRef.current;
+      if (pending.length === 0) return;
+      pendingNotificationsRef.current = [];
+
+      setEntries((prev) => {
+        let next = prev;
+        for (const n of pending) {
+          next = applyNotificationRef.current(next, n);
+        }
+        return next;
+      });
+    }, FLUSH_INTERVAL_MS);
+  }, []);
 
   const sendCancel = useCallback(() => {
     void fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/cancel`), {
@@ -344,7 +356,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, endpoint, connectKey, enqueueNotification]);
+  }, [sessionId, endpoint, connectKey]);
 
   const close = useCallback(() => {
     if (transportRef.current) {

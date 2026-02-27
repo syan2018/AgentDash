@@ -12,7 +12,8 @@
       "Bash(pnpm run lint)",
       "Bash(pnpm exec tsc -b)",
       "Bash(pushd frontend)",
-      "Bash(popd)"
+      "Bash(popd)",
+      "Bash(npx tsc -b)"
     ]
   }
 }

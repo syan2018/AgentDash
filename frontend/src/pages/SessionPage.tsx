@@ -3,6 +3,7 @@ import { useAcpSession, AcpSessionEntry } from "../features/acp-session";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../features/acp-session/model/types";
 import type { AcpDisplayItem } from "../features/acp-session/model/types";
 import { promptSession, type ExecutorConfig } from "../services/executor";
+import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import {
   useExecutorDiscovery,
   useExecutorConfig,
@@ -60,6 +61,7 @@ export function SessionPage() {
   const [isSending, setIsSending] = useState(false);
   const [hasSentOnce, setHasSentOnce] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const { addSession } = useSessionHistoryStore();
 
   const discovery = useExecutorDiscovery();
   const execConfig = useExecutorConfig();
@@ -130,13 +132,19 @@ export function SessionPage() {
     try {
       await promptSession(nextSessionId, { prompt: trimmed, executorConfig });
       execConfig.recordUsage();
+      // 添加到历史会话
+      addSession({
+        id: nextSessionId,
+        title: trimmed.slice(0, 30) + (trimmed.length > 30 ? "..." : ""),
+        preview: trimmed.slice(0, 100),
+      });
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
       setPrompt(trimmed);
     } finally {
       setIsSending(false);
     }
-  }, [prompt, isSending, executorConfig, execConfig]);
+  }, [prompt, isSending, executorConfig, execConfig, addSession]);
 
   const handleCancel = useCallback(() => {
     sendCancel();

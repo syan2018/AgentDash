@@ -38,6 +38,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{project_id}/workspaces",
             get(workspaces::list_workspaces).post(workspaces::create_workspace),
         )
+        .route("/workspaces/pick-directory", post(workspaces::pick_directory))
         .route("/workspaces/detect-git", post(workspaces::detect_git))
         .route(
             "/workspaces/{id}",

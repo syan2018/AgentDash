@@ -2,8 +2,6 @@ import { useState } from "react";
 import type { Workspace, WorkspaceType, WorkspaceStatus } from "../../types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 
-// ─── 状态徽标 ─────────────────────────────────────────
-
 const statusConfig: Record<WorkspaceStatus, { label: string; cls: string }> = {
   pending: { label: "待创建", cls: "bg-muted text-muted-foreground" },
   preparing: { label: "准备中", cls: "bg-info/15 text-info" },
@@ -19,116 +17,84 @@ const typeLabels: Record<WorkspaceType, string> = {
   ephemeral: "临时环境",
 };
 
+const isLikelyAbsolutePath = (value: string) =>
+  /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("/") || value.startsWith("\\\\");
+
 function WorkspaceStatusBadge({ status }: { status: WorkspaceStatus }) {
   const cfg = statusConfig[status];
   return (
     <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.cls}`}>
-      {status === "active" && <span className="mr-1 mt-0.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
+      {status === "active" && (
+        <span className="mr-1 mt-0.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+      )}
       {cfg.label}
     </span>
   );
 }
 
-// ─── 创建面板 ─────────────────────────────────────────
-
-function CreateWorkspacePanel({ projectId, onDone }: { projectId: string; onDone: () => void }) {
-  const { createWorkspace, detectGitInfo } = useWorkspaceStore();
+function CreateWorkspacePanel({
+  projectId,
+  onDone,
+  onCancel,
+}: {
+  projectId: string;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const { createWorkspace, pickDirectory, error } = useWorkspaceStore();
   const [name, setName] = useState("");
   const [wsType, setWsType] = useState<WorkspaceType>("static");
   const [containerRef, setContainerRef] = useState("");
-  const [sourceRepo, setSourceRepo] = useState("");
-  const [branch, setBranch] = useState("main");
-  const [commitHash, setCommitHash] = useState("");
-  const [isDetectingGit, setIsDetectingGit] = useState(false);
-  const [detectResult, setDetectResult] = useState<string | null>(null);
+  const [isPickingDirectory, setIsPickingDirectory] = useState(false);
+  const [formMessage, setFormMessage] = useState<string | null>(null);
 
   const handleCreate = async () => {
-    if (!name.trim()) return;
-    await createWorkspace(projectId, name.trim(), {
-      workspace_type: wsType,
-      container_ref: containerRef.trim(),
-      git_config: wsType === "git_worktree"
-        ? {
-          source_repo: sourceRepo,
-          branch,
-          commit_hash: commitHash.trim() || undefined,
-        }
-        : undefined,
-    });
-    setName("");
-    setContainerRef("");
-    setSourceRepo("");
-    setBranch("main");
-    setCommitHash("");
-    setDetectResult(null);
-    onDone();
-  };
-
-  const handleDetectGit = async (pathOverride?: string) => {
-    const targetPath = (pathOverride ?? containerRef).trim();
-    if (!targetPath) {
-      setDetectResult("请先填写目录路径");
+    if (!name.trim()) {
+      setFormMessage("请填写工作空间名称");
       return;
     }
 
-    setIsDetectingGit(true);
-    setDetectResult(null);
+    const path = containerRef.trim();
+    if (!path && wsType !== "ephemeral") {
+      setFormMessage("静态目录/Git Worktree 类型必须填写本地绝对路径");
+      return;
+    }
+    if (path && !isLikelyAbsolutePath(path)) {
+      setFormMessage("请填写本地绝对路径（例如 C:\\repo\\project 或 /Users/me/project）");
+      return;
+    }
 
+    setFormMessage(null);
+    const workspace = await createWorkspace(projectId, name.trim(), {
+      workspace_type: wsType,
+      container_ref: path || undefined,
+    });
+    if (!workspace) return;
+
+    setName("");
+    setContainerRef("");
+    setFormMessage(null);
+    onDone();
+  };
+
+  const handleBrowseDirectory = async () => {
+    setIsPickingDirectory(true);
+    setFormMessage(null);
     try {
-      const detected = await detectGitInfo(targetPath);
-      if (!detected) {
-        setDetectResult("Git 识别失败，请检查路径后重试");
+      const pickedPath = await pickDirectory(containerRef);
+      if (!pickedPath) {
+        setFormMessage("已取消目录选择");
         return;
       }
-
-      if (!detected.is_git_repo) {
-        setDetectResult("该目录不是 Git 仓库，可继续手动填写配置");
-        return;
-      }
-
-      setWsType("git_worktree");
-      setSourceRepo(detected.source_repo ?? targetPath);
-      setBranch(detected.branch ?? "main");
-      setCommitHash(detected.commit_hash ?? "");
-      setDetectResult("Git 信息识别成功，已自动回填");
+      setContainerRef(pickedPath);
+      setFormMessage(`已从后端选择并回填目录：${pickedPath}`);
     } finally {
-      setIsDetectingGit(false);
+      setIsPickingDirectory(false);
     }
   };
 
-  const handleBrowseDirectory = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    const directoryInput = input as HTMLInputElement & { webkitdirectory?: boolean };
-    directoryInput.webkitdirectory = true;
-    input.addEventListener("change", () => {
-      const files = input.files;
-      if (files && files.length > 0) {
-        const firstFile = files[0] as File & { path?: string };
-        const firstPath = firstFile.webkitRelativePath;
-        const topDir = firstPath.split("/")[0];
-
-        let detectedPath = topDir;
-        if (typeof firstFile.path === "string" && firstFile.path.length > 0 && firstPath) {
-          const relativePath = firstPath.replace(/\//g, "\\");
-          if (firstFile.path.endsWith(relativePath)) {
-            detectedPath = firstFile.path
-              .slice(0, firstFile.path.length - relativePath.length)
-              .replace(/[\\/]$/, "");
-          } else {
-            detectedPath = firstFile.path;
-          }
-        }
-
-        setContainerRef(detectedPath);
-        void handleDetectGit(detectedPath);
-      }
-    });
-    input.click();
-  };
-
   return (
-    <div className="space-y-2 rounded-md border border-border bg-background p-2">
+    <div className="space-y-3">
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
@@ -150,68 +116,46 @@ function CreateWorkspacePanel({ projectId, onDone }: { projectId: string; onDone
         <input
           value={containerRef}
           onChange={(e) => setContainerRef(e.target.value)}
-          placeholder="目录路径（如 /workspace/project）"
+          placeholder="目录绝对路径（如 C:\\repo\\project 或 /workspace/project）"
           className="flex-1 rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
         />
         <button
           type="button"
-          onClick={handleBrowseDirectory}
-          className="shrink-0 rounded border border-border bg-secondary px-2 py-1.5 text-xs text-foreground hover:bg-secondary/70"
+          onClick={() => void handleBrowseDirectory()}
+          disabled={isPickingDirectory}
+          className="shrink-0 rounded border border-border bg-secondary px-2 py-1.5 text-xs text-foreground hover:bg-secondary/70 disabled:opacity-50"
           title="浏览目录"
         >
-          📁
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleDetectGit()}
-          disabled={isDetectingGit || !containerRef.trim()}
-          className="shrink-0 rounded border border-border bg-secondary px-2 py-1.5 text-xs text-foreground hover:bg-secondary/70 disabled:opacity-50"
-          title="识别 Git 信息"
-        >
-          {isDetectingGit ? "识别中" : "识别Git"}
+          {isPickingDirectory ? "选择中" : "📁"}
         </button>
       </div>
 
-      {detectResult && (
-        <p className="text-xs text-muted-foreground">{detectResult}</p>
-      )}
+      <p className="text-[11px] text-muted-foreground">
+        路径选择与 Git 识别均以后端为准；创建时会自动检测并保存 Git 信息。
+      </p>
+      {formMessage && <p className="text-xs text-muted-foreground">{formMessage}</p>}
+      {error && <p className="text-xs text-destructive">创建失败：{error}</p>}
 
-      {wsType === "git_worktree" && (
-        <>
-          <input
-            value={sourceRepo}
-            onChange={(e) => setSourceRepo(e.target.value)}
-            placeholder="源仓库路径"
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-          />
-          <input
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            placeholder="分支名（默认 main）"
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-          />
-          <input
-            value={commitHash}
-            onChange={(e) => setCommitHash(e.target.value)}
-            placeholder="提交哈希（可选）"
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-          />
-        </>
-      )}
-
-      <button
-        type="button"
-        onClick={() => void handleCreate()}
-        disabled={!name.trim()}
-        className="w-full rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
-      >
-        创建工作空间
-      </button>
+      <div className="flex items-center justify-end gap-2 border-t border-border pt-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded border border-border bg-secondary px-3 py-1.5 text-sm text-foreground hover:bg-secondary/70"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleCreate()}
+          disabled={!name.trim()}
+          className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+        >
+          创建工作空间
+        </button>
+      </div>
     </div>
   );
 }
-
-// ─── 列表组件 ─────────────────────────────────────────
 
 interface WorkspaceListProps {
   projectId: string;
@@ -227,16 +171,12 @@ export function WorkspaceList({ projectId, workspaces }: WorkspaceListProps) {
         <p className="text-xs uppercase tracking-wider text-muted-foreground">工作空间</p>
         <button
           type="button"
-          onClick={() => setShowCreate(!showCreate)}
+          onClick={() => setShowCreate(true)}
           className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
         >
-          {showCreate ? "取消" : "+ 新建"}
+          + 新建
         </button>
       </div>
-
-      {showCreate && (
-        <CreateWorkspacePanel projectId={projectId} onDone={() => setShowCreate(false)} />
-      )}
 
       {workspaces.length === 0 && !showCreate && (
         <p className="px-2 py-2 text-sm text-muted-foreground">暂无工作空间</p>
@@ -252,10 +192,45 @@ export function WorkspaceList({ projectId, workspaces }: WorkspaceListProps) {
             <p className="truncate text-xs text-muted-foreground">
               {typeLabels[ws.workspace_type]} · {ws.container_ref || "未指定路径"}
             </p>
+            {ws.git_config && (
+              <p className="truncate text-xs text-muted-foreground">
+                Git: {ws.git_config.branch} · {ws.git_config.source_repo}
+              </p>
+            )}
           </div>
           <WorkspaceStatusBadge status={ws.status} />
         </div>
       ))}
+
+      {showCreate && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-foreground/30 backdrop-blur-[1px]"
+            onClick={() => setShowCreate(false)}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl rounded-xl border border-border bg-background shadow-xl">
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <h3 className="text-base font-semibold text-foreground">新建工作空间</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCreate(false)}
+                  className="rounded px-2 py-1 text-sm text-muted-foreground hover:bg-secondary"
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="p-4">
+                <CreateWorkspacePanel
+                  projectId={projectId}
+                  onDone={() => setShowCreate(false)}
+                  onCancel={() => setShowCreate(false)}
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

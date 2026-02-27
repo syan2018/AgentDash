@@ -94,15 +94,19 @@ function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
   );
 }
 
-function CreateTaskPanel({
+function CreateTaskDialog({
+  open,
   storyId,
   workspaces,
   projectConfig,
+  onClose,
   onCreated,
 }: {
+  open: boolean;
   storyId: string;
   workspaces: Workspace[];
   projectConfig?: ProjectConfig;
+  onClose: () => void;
   onCreated: (task: Task) => void;
 }) {
   const { createTask, error } = useStoryStore();
@@ -114,12 +118,16 @@ function CreateTaskPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
+    if (!open) return;
+
     const defaultWorkspace = projectConfig?.default_workspace_id ?? "";
     const defaultAgent = projectConfig?.default_agent_type ?? "";
+    setTitle("");
+    setDescription("");
     setWorkspaceId(defaultWorkspace);
     setAgentType(defaultAgent);
     setPresetName("");
-  }, [projectConfig, storyId]);
+  }, [open, projectConfig, storyId]);
 
   const handlePresetChange = (value: string) => {
     setPresetName(value);
@@ -145,76 +153,107 @@ function CreateTaskPanel({
       });
       if (!task) return;
 
-      setTitle("");
-      setDescription("");
+      onClose();
       onCreated(task);
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  if (!open) return null;
+
   return (
-    <div className="space-y-2 rounded-md border border-border bg-card p-3">
-      <p className="text-sm font-medium text-foreground">创建 Task</p>
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Task 标题"
-          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-        />
-        <select
-          value={workspaceId}
-          onChange={(e) => setWorkspaceId(e.target.value)}
-          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-        >
-          <option value="">不绑定 Workspace</option>
-          {workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspace.name}
-            </option>
-          ))}
-        </select>
+    <>
+      <div className="fixed inset-0 z-40 bg-foreground/30 backdrop-blur-[1px]" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-3xl rounded-xl border border-border bg-background shadow-xl">
+          <header className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h4 className="text-base font-semibold text-foreground">创建 Task</h4>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded px-2 py-1 text-sm text-muted-foreground hover:bg-secondary"
+            >
+              关闭
+            </button>
+          </header>
+
+          <div className="space-y-3 p-4">
+            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Task 标题"
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              />
+              <select
+                value={workspaceId}
+                onChange={(e) => setWorkspaceId(e.target.value)}
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              >
+                <option value="">不绑定 Workspace</option>
+                {workspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              placeholder="描述（可选）"
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            />
+
+            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+              <input
+                value={agentType}
+                onChange={(e) => setAgentType(e.target.value)}
+                placeholder="Agent 类型（可选，留空则使用项目默认）"
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              />
+              <select
+                value={presetName}
+                onChange={(e) => handlePresetChange(e.target.value)}
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              >
+                <option value="">不使用预设</option>
+                {(projectConfig?.agent_presets ?? []).map((preset) => (
+                  <option key={preset.name} value={preset.name}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {error && (
+              <p className="text-xs text-destructive">创建失败：{error}</p>
+            )}
+
+            <div className="flex items-center justify-end gap-2 border-t border-border pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded border border-border bg-secondary px-3 py-1.5 text-sm text-foreground hover:bg-secondary/70"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSubmit()}
+                disabled={isSubmitting || !title.trim()}
+                className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+              >
+                {isSubmitting ? "创建中..." : "创建 Task"}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
-      <textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        rows={2}
-        placeholder="描述（可选）"
-        className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-      />
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-        <input
-          value={agentType}
-          onChange={(e) => setAgentType(e.target.value)}
-          placeholder="Agent 类型（可选，留空则使用项目默认）"
-          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-        />
-        <select
-          value={presetName}
-          onChange={(e) => handlePresetChange(e.target.value)}
-          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-        >
-          <option value="">不使用预设</option>
-          {(projectConfig?.agent_presets ?? []).map((preset) => (
-            <option key={preset.name} value={preset.name}>
-              {preset.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      {error && (
-        <p className="text-xs text-destructive">创建失败：{error}</p>
-      )}
-      <button
-        type="button"
-        onClick={() => void handleSubmit()}
-        disabled={isSubmitting || !title.trim()}
-        className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
-      >
-        {isSubmitting ? "创建中..." : "创建 Task"}
-      </button>
-    </div>
+    </>
   );
 }
 
@@ -227,6 +266,7 @@ export function StoryDrawer({
   onOpenTask,
 }: StoryDrawerProps) {
   const [activeTab, setActiveTab] = useState<DrawerTab>("context");
+  const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
 
   const sortedTasks = useMemo(
     () =>
@@ -279,18 +319,31 @@ export function StoryDrawer({
           {activeTab === "context" && <ContextPanel story={story} />}
           {activeTab === "tasks" && (
             <div className="space-y-4 p-6">
-              <CreateTaskPanel
-                storyId={story.id}
-                workspaces={workspaces}
-                projectConfig={projectConfig}
-                onCreated={onOpenTask}
-              />
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium text-foreground">任务列表</h4>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateTaskOpen(true)}
+                  className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+                >
+                  + 新建 Task
+                </button>
+              </div>
               <TaskList tasks={sortedTasks} onTaskClick={onOpenTask} />
             </div>
           )}
           {activeTab === "review" && <ReviewPanel story={story} tasks={sortedTasks} />}
         </div>
       </aside>
+
+      <CreateTaskDialog
+        open={isCreateTaskOpen}
+        storyId={story.id}
+        workspaces={workspaces}
+        projectConfig={projectConfig}
+        onClose={() => setIsCreateTaskOpen(false)}
+        onCreated={onOpenTask}
+      />
     </>
   );
 }

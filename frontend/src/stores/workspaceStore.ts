@@ -1,18 +1,15 @@
 import { create } from 'zustand';
-import type { Workspace, WorkspaceType, WorkspaceStatus, GitConfig } from '../types';
+import type { Workspace, WorkspaceType, WorkspaceStatus } from '../types';
 import { api } from '../api/client';
 
 export interface CreateWorkspaceOpts {
   workspace_type?: WorkspaceType;
   container_ref?: string;
-  git_config?: GitConfig;
 }
 
-export interface DetectedGitInfo {
-  is_git_repo: boolean;
-  source_repo?: string;
-  branch?: string;
-  commit_hash?: string;
+interface PickDirectoryResponse {
+  selected: boolean;
+  container_ref?: string;
 }
 
 interface WorkspaceState {
@@ -22,7 +19,7 @@ interface WorkspaceState {
 
   fetchWorkspaces: (projectId: string) => Promise<void>;
   createWorkspace: (projectId: string, name: string, opts?: CreateWorkspaceOpts) => Promise<Workspace | null>;
-  detectGitInfo: (containerRef: string) => Promise<DetectedGitInfo | null>;
+  pickDirectory: (initialPath?: string) => Promise<string | null>;
   updateStatus: (id: string, status: WorkspaceStatus) => Promise<void>;
   deleteWorkspace: (id: string, projectId: string) => Promise<void>;
 }
@@ -46,13 +43,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   },
 
   createWorkspace: async (projectId, name, opts) => {
+    const containerRef = opts?.container_ref?.trim();
     try {
-      const workspace = await api.post<Workspace>(`/projects/${projectId}/workspaces`, {
+      set({ error: null });
+      const payload: Record<string, unknown> = {
         name,
-        container_ref: opts?.container_ref ?? '',
         workspace_type: opts?.workspace_type ?? 'static',
-        git_config: opts?.git_config ?? null,
-      });
+      };
+      if (containerRef) {
+        payload.container_ref = containerRef;
+      }
+
+      const workspace = await api.post<Workspace>(`/projects/${projectId}/workspaces`, payload);
       set((s) => {
         const existing = s.workspacesByProjectId[projectId] ?? [];
         return {
@@ -69,18 +71,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     }
   },
 
-  detectGitInfo: async (containerRef) => {
-    const value = containerRef.trim();
-    if (!value) {
-      set({ error: "目录路径不能为空" });
-      return null;
-    }
-
+  pickDirectory: async (initialPath) => {
     try {
-      const result = await api.post<DetectedGitInfo>("/workspaces/detect-git", {
-        container_ref: value,
+      set({ error: null });
+      const result = await api.post<PickDirectoryResponse>("/workspaces/pick-directory", {
+        initial_path: initialPath?.trim() || null,
       });
-      return result;
+      if (!result.selected) {
+        return null;
+      }
+      return result.container_ref?.trim() ?? null;
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

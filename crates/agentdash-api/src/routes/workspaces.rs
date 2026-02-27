@@ -27,6 +27,13 @@ pub struct UpdateWorkspaceStatusRequest {
 }
 
 #[derive(Deserialize)]
+pub struct UpdateWorkspaceRequest {
+    pub name: Option<String>,
+    pub container_ref: Option<String>,
+    pub workspace_type: Option<WorkspaceType>,
+}
+
+#[derive(Deserialize)]
 pub struct DetectGitRequest {
     pub container_ref: String,
 }
@@ -117,6 +124,51 @@ pub async fn get_workspace(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Workspace {id} 不存在")))?;
 
+    Ok(Json(workspace))
+}
+
+pub async fn update_workspace(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(req): Json<UpdateWorkspaceRequest>,
+) -> Result<Json<Workspace>, ApiError> {
+    let workspace_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
+
+    let mut workspace = state
+        .workspace_repo
+        .get_by_id(workspace_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Workspace {id} 不存在")))?;
+
+    if let Some(name) = req.name {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest("工作空间名称不能为空".into()));
+        }
+        workspace.name = trimmed.to_string();
+    }
+
+    let next_type = req.workspace_type.unwrap_or_else(|| workspace.workspace_type.clone());
+    let next_container_ref = req
+        .container_ref
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .unwrap_or_else(|| workspace.container_ref.clone());
+
+    let container_input = if next_container_ref.is_empty() {
+        None
+    } else {
+        Some(next_container_ref)
+    };
+    let (resolved_container_ref, resolved_git_config) =
+        resolve_container_and_git(container_input, &next_type).await?;
+
+    workspace.workspace_type = next_type;
+    workspace.container_ref = resolved_container_ref;
+    workspace.git_config = resolved_git_config;
+
+    state.workspace_repo.update(&workspace).await?;
     Ok(Json(workspace))
 }
 

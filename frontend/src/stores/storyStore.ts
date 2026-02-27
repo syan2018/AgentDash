@@ -23,8 +23,34 @@ interface StoryState {
 
   fetchStoriesByProject: (projectId: string) => Promise<void>;
   fetchStoriesByBackend: (backendId: string) => Promise<void>;
-  createStory: (projectId: string, backendId: string, title: string, description?: string) => Promise<void>;
+  createStory: (
+    projectId: string,
+    backendId: string,
+    title: string,
+    description?: string,
+  ) => Promise<Story | null>;
+  updateStory: (
+    storyId: string,
+    payload: {
+      title?: string;
+      description?: string;
+      backend_id?: string;
+      status?: Story["status"];
+    },
+  ) => Promise<Story | null>;
+  deleteStory: (storyId: string) => Promise<void>;
   createTask: (storyId: string, payload: CreateTaskInput) => Promise<Task | null>;
+  updateTask: (
+    taskId: string,
+    payload: {
+      title?: string;
+      description?: string;
+      workspace_id?: string | null;
+      status?: Task["status"];
+      agent_binding?: CreateTaskInput['agent_binding'];
+    },
+  ) => Promise<Task | null>;
+  deleteTask: (taskId: string, storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
   fetchTasks: (storyId: string) => Promise<void>;
@@ -75,6 +101,48 @@ const normalizeTaskStatus = (value: string): Task['status'] => {
       return 'cancelled';
     default:
       return 'pending';
+  }
+};
+
+const toBackendStoryStatus = (status: Story["status"]): string => {
+  switch (status) {
+    case "draft":
+      return "created";
+    case "ready":
+      return "context_ready";
+    case "running":
+      return "executing";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "review":
+      return "decomposed";
+    case "cancelled":
+      return "failed";
+    default:
+      return "created";
+  }
+};
+
+const toBackendTaskStatus = (status: Task["status"]): string => {
+  switch (status) {
+    case "pending":
+      return "pending";
+    case "queued":
+      return "assigned";
+    case "running":
+      return "running";
+    case "succeeded":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "skipped":
+      return "completed";
+    case "cancelled":
+      return "failed";
+    default:
+      return "pending";
   }
 };
 
@@ -173,6 +241,43 @@ export const useStoryStore = create<StoryState>((set) => ({
       });
       const story = mapStory(raw);
       set((s) => ({ stories: [story, ...s.stories] }));
+      return story;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  updateStory: async (storyId, payload) => {
+    try {
+      const requestPayload = {
+        ...payload,
+        status: payload.status ? toBackendStoryStatus(payload.status) : undefined,
+      };
+      const raw = await api.put<Record<string, unknown>>(`/stories/${storyId}`, requestPayload);
+      const story = mapStory(raw);
+      set((s) => ({
+        stories: s.stories.map((item) => (item.id === storyId ? story : item)),
+      }));
+      return story;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  deleteStory: async (storyId) => {
+    try {
+      await api.delete(`/stories/${storyId}`);
+      set((s) => {
+        const nextTasks = { ...s.tasksByStoryId };
+        delete nextTasks[storyId];
+        return {
+          stories: s.stories.filter((story) => story.id !== storyId),
+          tasksByStoryId: nextTasks,
+          selectedStoryId: s.selectedStoryId === storyId ? null : s.selectedStoryId,
+        };
+      });
     } catch (e) {
       set({ error: (e as Error).message });
     }
@@ -195,6 +300,46 @@ export const useStoryStore = create<StoryState>((set) => ({
     } catch (e) {
       set({ error: (e as Error).message });
       return null;
+    }
+  },
+
+  updateTask: async (taskId, payload) => {
+    try {
+      const requestPayload = {
+        ...payload,
+        workspace_id: payload.workspace_id === null ? "" : payload.workspace_id,
+        status: payload.status ? toBackendTaskStatus(payload.status) : undefined,
+      };
+      const raw = await api.put<Record<string, unknown>>(`/tasks/${taskId}`, requestPayload);
+      const task = mapTask(raw);
+      set((s) => {
+        const byStory = { ...s.tasksByStoryId };
+        const list = byStory[task.story_id] ?? [];
+        byStory[task.story_id] = list.map((item) => (item.id === task.id ? task : item));
+        return { tasksByStoryId: byStory };
+      });
+      return task;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  deleteTask: async (taskId, storyId) => {
+    try {
+      await api.delete(`/tasks/${taskId}`);
+      set((s) => {
+        const existing = s.tasksByStoryId[storyId] ?? [];
+        return {
+          tasksByStoryId: {
+            ...s.tasksByStoryId,
+            [storyId]: existing.filter((task) => task.id !== taskId),
+          },
+          selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
+        };
+      });
+    } catch (e) {
+      set({ error: (e as Error).message });
     }
   },
 

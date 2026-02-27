@@ -42,7 +42,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/workspaces/detect-git", post(workspaces::detect_git))
         .route(
             "/workspaces/{id}",
-            get(workspaces::get_workspace).delete(workspaces::delete_workspace),
+            get(workspaces::get_workspace)
+                .put(workspaces::update_workspace)
+                .delete(workspaces::delete_workspace),
         )
         .route(
             "/workspaces/{id}/status",
@@ -53,10 +55,21 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/stories",
             get(stories::list_stories).post(stories::create_story),
         )
-        .route("/stories/{id}", get(stories::get_story))
+        .route(
+            "/stories/{id}",
+            get(stories::get_story)
+                .put(stories::update_story)
+                .delete(stories::delete_story),
+        )
         .route(
             "/stories/{id}/tasks",
             get(stories::list_tasks).post(stories::create_task),
+        )
+        .route(
+            "/tasks/{id}",
+            get(stories::get_task)
+                .put(stories::update_task)
+                .delete(stories::delete_task),
         )
         // Backend
         .route(

@@ -5,8 +5,8 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_domain::story::Story;
-use agentdash_domain::task::{AgentBinding, Task};
+use agentdash_domain::story::{Story, StoryStatus};
+use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -26,6 +26,14 @@ pub struct CreateStoryRequest {
 }
 
 #[derive(Deserialize, Default)]
+pub struct UpdateStoryRequest {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub backend_id: Option<String>,
+    pub status: Option<StoryStatus>,
+}
+
+#[derive(Deserialize, Default)]
 pub struct CreateTaskAgentBindingRequest {
     pub agent_type: Option<String>,
     pub agent_pid: Option<String>,
@@ -36,6 +44,15 @@ pub struct CreateTaskAgentBindingRequest {
 pub struct CreateTaskRequest {
     pub title: String,
     pub description: Option<String>,
+    pub workspace_id: Option<String>,
+    pub agent_binding: Option<CreateTaskAgentBindingRequest>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct UpdateTaskRequest {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<TaskStatus>,
     pub workspace_id: Option<String>,
     pub agent_binding: Option<CreateTaskAgentBindingRequest>,
 }
@@ -92,6 +109,61 @@ pub async fn get_story(
         .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
 
     Ok(Json(story))
+}
+
+pub async fn update_story(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateStoryRequest>,
+) -> Result<Json<Story>, ApiError> {
+    let story_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
+
+    let mut story = state
+        .story_repo
+        .get_by_id(story_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
+
+    if let Some(title) = req.title {
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest("Story 标题不能为空".into()));
+        }
+        story.title = trimmed.to_string();
+    }
+    if let Some(description) = req.description {
+        story.description = description;
+    }
+    if let Some(backend_id) = req.backend_id {
+        let trimmed = backend_id.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest("backend_id 不能为空".into()));
+        }
+        story.backend_id = trimmed.to_string();
+    }
+    if let Some(status) = req.status {
+        story.status = status;
+    }
+
+    state.story_repo.update(&story).await?;
+    Ok(Json(story))
+}
+
+pub async fn delete_story(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let story_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
+
+    let tasks = state.task_repo.list_by_story(story_id).await?;
+    for task in tasks {
+        state.task_repo.delete(task.id).await?;
+    }
+
+    state.story_repo.delete(story_id).await?;
+    Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
 pub async fn list_tasks(
@@ -188,6 +260,96 @@ pub async fn create_task(
 
     state.task_repo.create(&task).await?;
     Ok(Json(task))
+}
+
+pub async fn get_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, ApiError> {
+    let task_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
+
+    let task = state
+        .task_repo
+        .get_by_id(task_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
+
+    Ok(Json(task))
+}
+
+pub async fn update_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateTaskRequest>,
+) -> Result<Json<Task>, ApiError> {
+    let task_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
+
+    let mut task = state
+        .task_repo
+        .get_by_id(task_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
+
+    let story = state
+        .story_repo
+        .get_by_id(task.story_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id)))?;
+
+    if let Some(title) = req.title {
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest("Task 标题不能为空".into()));
+        }
+        task.title = trimmed.to_string();
+    }
+    if let Some(description) = req.description {
+        task.description = description;
+    }
+    if let Some(status) = req.status {
+        task.status = status;
+    }
+
+    if let Some(workspace_id_raw) = req.workspace_id {
+        let normalized = workspace_id_raw.trim();
+        task.workspace_id = if normalized.is_empty() {
+            None
+        } else {
+            let ws_id = Uuid::parse_str(normalized)
+                .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
+            let workspace = state
+                .workspace_repo
+                .get_by_id(ws_id)
+                .await?
+                .ok_or_else(|| ApiError::NotFound(format!("Workspace {ws_id} 不存在")))?;
+            if workspace.project_id != story.project_id {
+                return Err(ApiError::Conflict(
+                    "Workspace 与 Task 所属 Story 不属于同一 Project".into(),
+                ));
+            }
+            Some(ws_id)
+        };
+    }
+
+    if let Some(agent_binding_req) = req.agent_binding {
+        task.agent_binding = to_agent_binding(Some(agent_binding_req));
+    }
+
+    state.task_repo.update(&task).await?;
+    Ok(Json(task))
+}
+
+pub async fn delete_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let task_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
+
+    state.task_repo.delete(task_id).await?;
+    Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
 fn normalize_option(value: Option<String>) -> Option<String> {

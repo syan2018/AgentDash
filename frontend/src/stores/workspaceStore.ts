@@ -19,6 +19,11 @@ interface WorkspaceState {
 
   fetchWorkspaces: (projectId: string) => Promise<void>;
   createWorkspace: (projectId: string, name: string, opts?: CreateWorkspaceOpts) => Promise<Workspace | null>;
+  updateWorkspace: (
+    id: string,
+    projectId: string,
+    payload: { name?: string; container_ref?: string; workspace_type?: WorkspaceType },
+  ) => Promise<Workspace | null>;
   pickDirectory: (initialPath?: string) => Promise<string | null>;
   updateStatus: (id: string, status: WorkspaceStatus) => Promise<void>;
   deleteWorkspace: (id: string, projectId: string) => Promise<void>;
@@ -61,6 +66,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           workspacesByProjectId: {
             ...s.workspacesByProjectId,
             [projectId]: [workspace, ...existing],
+          },
+        };
+      });
+      return workspace;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  updateWorkspace: async (id, projectId, payload) => {
+    try {
+      set({ error: null });
+      const workspace = await api.put<Workspace>(`/workspaces/${id}`, payload);
+      set((s) => {
+        const existing = s.workspacesByProjectId[projectId] ?? [];
+        return {
+          workspacesByProjectId: {
+            ...s.workspacesByProjectId,
+            [projectId]: existing.map((item) => (item.id === id ? workspace : item)),
           },
         };
       });

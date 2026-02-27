@@ -45,6 +45,33 @@ export function DashboardPage() {
     setOpenedTask(task);
   };
 
+  const handleStoryUpdated = (story: Story) => {
+    setOpenedStory(story);
+  };
+
+  const handleStoryDeleted = (storyId: string) => {
+    if (openedStory?.id === storyId) {
+      setOpenedStory(null);
+    }
+    setOpenedTask(null);
+  };
+
+  const handleTaskUpdated = (task: Task) => {
+    setOpenedTask(task);
+  };
+
+  const handleTaskDeleted = (taskId: string, storyId: string) => {
+    if (openedTask?.id === taskId) {
+      setOpenedTask(null);
+    }
+    if (openedStory?.id === storyId) {
+      const list = tasksByStoryId[storyId] ?? [];
+      if (list.length <= 1) {
+        setOpenedTask(null);
+      }
+    }
+  };
+
   if (!currentProjectId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -79,14 +106,23 @@ export function DashboardPage() {
         backendId={currentProject?.backend_id ?? ""}
       />
       <StoryDrawer
+        key={`story-drawer-${openedStory?.id ?? "none"}`}
         story={openedStory}
         tasks={openedStoryTasks}
         workspaces={currentWorkspaces}
         projectConfig={currentProject?.config}
         onClose={() => setOpenedStory(null)}
+        onStoryUpdated={handleStoryUpdated}
+        onStoryDeleted={handleStoryDeleted}
         onOpenTask={handleOpenTask}
       />
-      <TaskDrawer task={openedTask} onClose={() => setOpenedTask(null)} />
+      <TaskDrawer
+        key={`task-drawer-${openedTask?.id ?? "none"}`}
+        task={openedTask}
+        onTaskUpdated={handleTaskUpdated}
+        onTaskDeleted={handleTaskDeleted}
+        onClose={() => setOpenedTask(null)}
+      />
     </div>
   );
 }

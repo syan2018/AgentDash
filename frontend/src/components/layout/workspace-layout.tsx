@@ -5,7 +5,6 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
 import { ProjectSelector } from "../../features/project/project-selector";
-import { WorkspaceList } from "../../features/workspace/workspace-list";
 
 export type WorkspaceView = "dashboard" | "session";
 
@@ -17,7 +16,7 @@ interface WorkspaceLayoutProps {
 
 export function WorkspaceLayout({ children, activeView, onChangeView }: WorkspaceLayoutProps) {
   const { projects, currentProjectId, selectProject } = useProjectStore();
-  const { workspacesByProjectId, fetchWorkspaces } = useWorkspaceStore();
+  const { fetchWorkspaces } = useWorkspaceStore();
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
 
@@ -26,10 +25,6 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
       void fetchWorkspaces(currentProjectId);
     }
   }, [currentProjectId, fetchWorkspaces]);
-
-  const currentWorkspaces = currentProjectId
-    ? workspacesByProjectId[currentProjectId] ?? []
-    : [];
 
   const streamStatusLabel =
     connectionState === "connected"
@@ -85,14 +80,6 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
             currentProjectId={currentProjectId}
             onSelect={selectProject}
           />
-
-          {/* 工作空间列表 */}
-          {currentProjectId && (
-            <WorkspaceList
-              projectId={currentProjectId}
-              workspaces={currentWorkspaces}
-            />
-          )}
 
           {/* 后端连接 */}
           <div>

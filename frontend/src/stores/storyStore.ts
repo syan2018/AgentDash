@@ -64,6 +64,7 @@ const normalizeStoryStatus = (value: string): Story['status'] => {
     case 'context_ready':
       return 'ready';
     case 'decomposed':
+      return 'review';  // decomposed 映射到 review（待验收）
     case 'ready':
       return 'ready';
     case 'executing':

@@ -7,7 +7,12 @@
       "Bash(python3 ./.trellis/scripts/get_context.py)",
       "Bash(python ./.trellis/scripts/get_context.py)",
       "Bash(python ./.trellis/scripts/task.py *)",
-      "Bash(python3 .trellis/scripts/task.py *)"
+      "Bash(python3 .trellis/scripts/task.py *)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm run lint)",
+      "Bash(pnpm exec tsc -b)",
+      "Bash(pushd frontend)",
+      "Bash(popd)"
     ]
   }
 }

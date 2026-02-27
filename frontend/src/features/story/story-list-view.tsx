@@ -1,18 +1,9 @@
 import { useMemo, useState } from "react";
-import type { Story, StoryStatus } from "../../types";
-import { StoryCard } from "./story-card";
+import type { Story } from "../../types";
+import { StoryBoard } from "./story-board";
 import { useStoryStore } from "../../stores/storyStore";
 import { DetailPanel, DetailSection } from "../../components/ui/detail-panel";
 
-const statusGroups: Array<{ key: StoryStatus; label: string; dotClass: string }> = [
-  { key: "running", label: "执行中", dotClass: "bg-primary" },
-  { key: "review", label: "待验收", dotClass: "bg-warning" },
-  { key: "ready", label: "就绪", dotClass: "bg-info" },
-  { key: "draft", label: "草稿", dotClass: "bg-muted-foreground" },
-  { key: "completed", label: "已完成", dotClass: "bg-success" },
-  { key: "failed", label: "失败", dotClass: "bg-destructive" },
-  { key: "cancelled", label: "已取消", dotClass: "bg-muted-foreground" },
-];
 
 interface StoryListViewProps {
   stories: Story[];
@@ -144,32 +135,12 @@ export function StoryListView({
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto">
-          {statusGroups.map((group) => {
-            const groupItems = filtered.filter((story) => story.status === group.key);
-            if (groupItems.length === 0) return null;
-            return (
-              <section key={group.key} className="border-b border-border last:border-b-0">
-                <div className="flex items-center gap-2 bg-secondary/40 px-6 py-2">
-                  <span className={`h-2 w-2 rounded-full ${group.dotClass}`} />
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {group.label}
-                  </h3>
-                  <span className="text-xs text-muted-foreground">({groupItems.length})</span>
-                </div>
-                <div className="space-y-2 px-6 py-3">
-                  {groupItems.map((story) => (
-                    <StoryCard
-                      key={story.id}
-                      story={story}
-                      taskCount={taskCountByStoryId[story.id] ?? 0}
-                      onClick={() => onOpenStory(story)}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
+        <div className="flex-1 overflow-hidden p-4 pt-3">
+          <StoryBoard
+            stories={filtered}
+            taskCountByStoryId={taskCountByStoryId}
+            onOpenStory={onOpenStory}
+          />
         </div>
       </div>
 

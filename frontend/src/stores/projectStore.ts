@@ -10,6 +10,7 @@ interface ProjectState {
 
   fetchProjects: () => Promise<void>;
   createProject: (name: string, description: string, backendId: string, config?: Partial<ProjectConfig>) => Promise<Project | null>;
+  updateProjectConfig: (id: string, config: ProjectConfig) => Promise<Project | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<void>;
 }
@@ -44,6 +45,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set((s) => ({
         projects: [project, ...s.projects],
         currentProjectId: project.id,
+      }));
+      return project;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  updateProjectConfig: async (id, config) => {
+    try {
+      const project = await api.put<Project>(`/projects/${id}`, {
+        config,
+      });
+      set((s) => ({
+        projects: s.projects.map((item) => (item.id === id ? project : item)),
       }));
       return project;
     } catch (e) {

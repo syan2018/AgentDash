@@ -2,6 +2,17 @@ import { create } from 'zustand';
 import type { Story, Task, StoryContext, AgentBinding } from '../types';
 import { api } from '../api/client';
 
+export interface CreateTaskInput {
+  title: string;
+  description?: string;
+  workspace_id?: string | null;
+  agent_binding?: {
+    agent_type?: string | null;
+    agent_pid?: string | null;
+    preset_name?: string | null;
+  };
+}
+
 interface StoryState {
   stories: Story[];
   tasksByStoryId: Record<string, Task[]>;
@@ -13,6 +24,7 @@ interface StoryState {
   fetchStoriesByProject: (projectId: string) => Promise<void>;
   fetchStoriesByBackend: (backendId: string) => Promise<void>;
   createStory: (projectId: string, backendId: string, title: string, description?: string) => Promise<void>;
+  createTask: (storyId: string, payload: CreateTaskInput) => Promise<Task | null>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
   fetchTasks: (storyId: string) => Promise<void>;
@@ -163,6 +175,26 @@ export const useStoryStore = create<StoryState>((set) => ({
       set((s) => ({ stories: [story, ...s.stories] }));
     } catch (e) {
       set({ error: (e as Error).message });
+    }
+  },
+
+  createTask: async (storyId, payload) => {
+    try {
+      const raw = await api.post<Record<string, unknown>>(`/stories/${storyId}/tasks`, payload);
+      const task = mapTask(raw);
+      set((s) => {
+        const existing = s.tasksByStoryId[storyId] ?? [];
+        return {
+          tasksByStoryId: {
+            ...s.tasksByStoryId,
+            [storyId]: [task, ...existing],
+          },
+        };
+      });
+      return task;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
     }
   },
 

@@ -1,11 +1,13 @@
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_domain::workspace::{Workspace, WorkspaceType, WorkspaceStatus, GitConfig};
+use agentdash_domain::workspace::{GitConfig, Workspace, WorkspaceStatus, WorkspaceType};
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -21,6 +23,19 @@ pub struct CreateWorkspaceRequest {
 #[derive(Deserialize)]
 pub struct UpdateWorkspaceStatusRequest {
     pub status: WorkspaceStatus,
+}
+
+#[derive(Deserialize)]
+pub struct DetectGitRequest {
+    pub container_ref: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetectGitResponse {
+    pub is_git_repo: bool,
+    pub source_repo: Option<String>,
+    pub branch: Option<String>,
+    pub commit_hash: Option<String>,
 }
 
 pub async fn list_workspaces(
@@ -63,8 +78,8 @@ pub async fn get_workspace(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Workspace>, ApiError> {
-    let workspace_id = Uuid::parse_str(&id)
-        .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
+    let workspace_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
     let workspace = state
         .workspace_repo
@@ -80,8 +95,8 @@ pub async fn update_workspace_status(
     Path(id): Path<String>,
     Json(req): Json<UpdateWorkspaceStatusRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let workspace_id = Uuid::parse_str(&id)
-        .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
+    let workspace_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
     state
         .workspace_repo
@@ -95,9 +110,78 @@ pub async fn delete_workspace(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let workspace_id = Uuid::parse_str(&id)
-        .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
+    let workspace_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
     state.workspace_repo.delete(workspace_id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
+}
+
+pub async fn detect_git(
+    Json(req): Json<DetectGitRequest>,
+) -> Result<Json<DetectGitResponse>, ApiError> {
+    let container_ref = req.container_ref.trim();
+    if container_ref.is_empty() {
+        return Err(ApiError::BadRequest("container_ref 不能为空".into()));
+    }
+
+    let path = PathBuf::from(container_ref);
+    if !path.exists() || !path.is_dir() {
+        return Err(ApiError::BadRequest(format!(
+            "目录不存在或不可访问: {container_ref}"
+        )));
+    }
+
+    let result = tokio::task::spawn_blocking(move || detect_git_impl(path))
+        .await
+        .map_err(|e| ApiError::Internal(format!("Git 识别任务异常: {e}")))?;
+
+    Ok(Json(result))
+}
+
+fn detect_git_impl(path: PathBuf) -> DetectGitResponse {
+    if !is_inside_git_repo(&path) {
+        return DetectGitResponse {
+            is_git_repo: false,
+            source_repo: None,
+            branch: None,
+            commit_hash: None,
+        };
+    }
+
+    let source_repo = run_git_command(&path, &["remote", "get-url", "origin"])
+        .or_else(|| run_git_command(&path, &["rev-parse", "--show-toplevel"]));
+
+    let branch = run_git_command(&path, &["branch", "--show-current"]);
+    let commit_hash = run_git_command(&path, &["rev-parse", "HEAD"]);
+
+    DetectGitResponse {
+        is_git_repo: true,
+        source_repo,
+        branch,
+        commit_hash,
+    }
+}
+
+fn is_inside_git_repo(path: &PathBuf) -> bool {
+    matches!(
+        run_git_command(path, &["rev-parse", "--is-inside-work-tree"]).as_deref(),
+        Some("true")
+    )
+}
+
+fn run_git_command(path: &PathBuf, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() { None } else { Some(value) }
 }

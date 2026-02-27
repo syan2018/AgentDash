@@ -10,6 +10,8 @@ use serde::Serialize;
 pub enum ApiError {
     BadRequest(String),
     NotFound(String),
+    Conflict(String),
+    UnprocessableEntity(String),
     Internal(String),
 }
 
@@ -24,6 +26,8 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            ApiError::UnprocessableEntity(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
             ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 
@@ -39,9 +43,7 @@ impl IntoResponse for ApiError {
 impl From<agentdash_domain::DomainError> for ApiError {
     fn from(err: agentdash_domain::DomainError) -> Self {
         match &err {
-            agentdash_domain::DomainError::NotFound { .. } => {
-                ApiError::NotFound(err.to_string())
-            }
+            agentdash_domain::DomainError::NotFound { .. } => ApiError::NotFound(err.to_string()),
             agentdash_domain::DomainError::InvalidTransition { .. } => {
                 ApiError::BadRequest(err.to_string())
             }

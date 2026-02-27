@@ -8,6 +8,13 @@ export interface CreateWorkspaceOpts {
   git_config?: GitConfig;
 }
 
+export interface DetectedGitInfo {
+  is_git_repo: boolean;
+  source_repo?: string;
+  branch?: string;
+  commit_hash?: string;
+}
+
 interface WorkspaceState {
   workspacesByProjectId: Record<string, Workspace[]>;
   isLoading: boolean;
@@ -15,6 +22,7 @@ interface WorkspaceState {
 
   fetchWorkspaces: (projectId: string) => Promise<void>;
   createWorkspace: (projectId: string, name: string, opts?: CreateWorkspaceOpts) => Promise<Workspace | null>;
+  detectGitInfo: (containerRef: string) => Promise<DetectedGitInfo | null>;
   updateStatus: (id: string, status: WorkspaceStatus) => Promise<void>;
   deleteWorkspace: (id: string, projectId: string) => Promise<void>;
 }
@@ -55,6 +63,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         };
       });
       return workspace;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  detectGitInfo: async (containerRef) => {
+    const value = containerRef.trim();
+    if (!value) {
+      set({ error: "目录路径不能为空" });
+      return null;
+    }
+
+    try {
+      const result = await api.post<DetectedGitInfo>("/workspaces/detect-git", {
+        container_ref: value,
+      });
+      return result;
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

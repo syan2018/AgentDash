@@ -1,11 +1,14 @@
-import { useMemo, useState } from "react";
-import type { Story, Task } from "../../types";
+import { useEffect, useMemo, useState } from "react";
+import type { ProjectConfig, Story, Task, Workspace } from "../../types";
 import { StoryStatusBadge } from "../../components/ui/status-badge";
 import { TaskList } from "../task/task-list";
+import { useStoryStore } from "../../stores/storyStore";
 
 interface StoryDrawerProps {
   story: Story | null;
   tasks: Task[];
+  workspaces: Workspace[];
+  projectConfig?: ProjectConfig;
   onClose: () => void;
   onOpenTask: (task: Task) => void;
 }
@@ -91,7 +94,138 @@ function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
   );
 }
 
-export function StoryDrawer({ story, tasks, onClose, onOpenTask }: StoryDrawerProps) {
+function CreateTaskPanel({
+  storyId,
+  workspaces,
+  projectConfig,
+  onCreated,
+}: {
+  storyId: string;
+  workspaces: Workspace[];
+  projectConfig?: ProjectConfig;
+  onCreated: (task: Task) => void;
+}) {
+  const { createTask, error } = useStoryStore();
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [agentType, setAgentType] = useState("");
+  const [presetName, setPresetName] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const defaultWorkspace = projectConfig?.default_workspace_id ?? "";
+    const defaultAgent = projectConfig?.default_agent_type ?? "";
+    setWorkspaceId(defaultWorkspace);
+    setAgentType(defaultAgent);
+    setPresetName("");
+  }, [projectConfig, storyId]);
+
+  const handlePresetChange = (value: string) => {
+    setPresetName(value);
+    if (!value || !projectConfig) return;
+    const preset = projectConfig.agent_presets.find((item) => item.name === value);
+    if (preset) {
+      setAgentType(preset.agent_type);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!title.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const task = await createTask(storyId, {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        workspace_id: workspaceId || null,
+        agent_binding: {
+          agent_type: agentType.trim() || null,
+          preset_name: presetName || null,
+        },
+      });
+      if (!task) return;
+
+      setTitle("");
+      setDescription("");
+      onCreated(task);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-card p-3">
+      <p className="text-sm font-medium text-foreground">创建 Task</p>
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Task 标题"
+          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+        />
+        <select
+          value={workspaceId}
+          onChange={(e) => setWorkspaceId(e.target.value)}
+          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+        >
+          <option value="">不绑定 Workspace</option>
+          {workspaces.map((workspace) => (
+            <option key={workspace.id} value={workspace.id}>
+              {workspace.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={2}
+        placeholder="描述（可选）"
+        className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+      />
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+        <input
+          value={agentType}
+          onChange={(e) => setAgentType(e.target.value)}
+          placeholder="Agent 类型（可选，留空则使用项目默认）"
+          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+        />
+        <select
+          value={presetName}
+          onChange={(e) => handlePresetChange(e.target.value)}
+          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+        >
+          <option value="">不使用预设</option>
+          {(projectConfig?.agent_presets ?? []).map((preset) => (
+            <option key={preset.name} value={preset.name}>
+              {preset.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {error && (
+        <p className="text-xs text-destructive">创建失败：{error}</p>
+      )}
+      <button
+        type="button"
+        onClick={() => void handleSubmit()}
+        disabled={isSubmitting || !title.trim()}
+        className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+      >
+        {isSubmitting ? "创建中..." : "创建 Task"}
+      </button>
+    </div>
+  );
+}
+
+export function StoryDrawer({
+  story,
+  tasks,
+  workspaces,
+  projectConfig,
+  onClose,
+  onOpenTask,
+}: StoryDrawerProps) {
   const [activeTab, setActiveTab] = useState<DrawerTab>("context");
 
   const sortedTasks = useMemo(
@@ -144,7 +278,13 @@ export function StoryDrawer({ story, tasks, onClose, onOpenTask }: StoryDrawerPr
         <div className="flex-1 overflow-y-auto">
           {activeTab === "context" && <ContextPanel story={story} />}
           {activeTab === "tasks" && (
-            <div className="p-6">
+            <div className="space-y-4 p-6">
+              <CreateTaskPanel
+                storyId={story.id}
+                workspaces={workspaces}
+                projectConfig={projectConfig}
+                onCreated={onOpenTask}
+              />
               <TaskList tasks={sortedTasks} onTaskClick={onOpenTask} />
             </div>
           )}

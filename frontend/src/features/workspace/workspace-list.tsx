@@ -32,39 +32,96 @@ function WorkspaceStatusBadge({ status }: { status: WorkspaceStatus }) {
 // ─── 创建面板 ─────────────────────────────────────────
 
 function CreateWorkspacePanel({ projectId, onDone }: { projectId: string; onDone: () => void }) {
-  const { createWorkspace } = useWorkspaceStore();
+  const { createWorkspace, detectGitInfo } = useWorkspaceStore();
   const [name, setName] = useState("");
   const [wsType, setWsType] = useState<WorkspaceType>("static");
   const [containerRef, setContainerRef] = useState("");
   const [sourceRepo, setSourceRepo] = useState("");
   const [branch, setBranch] = useState("main");
+  const [commitHash, setCommitHash] = useState("");
+  const [isDetectingGit, setIsDetectingGit] = useState(false);
+  const [detectResult, setDetectResult] = useState<string | null>(null);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
     await createWorkspace(projectId, name.trim(), {
       workspace_type: wsType,
       container_ref: containerRef.trim(),
-      git_config: wsType === "git_worktree" ? { source_repo: sourceRepo, branch } : undefined,
+      git_config: wsType === "git_worktree"
+        ? {
+          source_repo: sourceRepo,
+          branch,
+          commit_hash: commitHash.trim() || undefined,
+        }
+        : undefined,
     });
     setName("");
     setContainerRef("");
     setSourceRepo("");
     setBranch("main");
+    setCommitHash("");
+    setDetectResult(null);
     onDone();
+  };
+
+  const handleDetectGit = async (pathOverride?: string) => {
+    const targetPath = (pathOverride ?? containerRef).trim();
+    if (!targetPath) {
+      setDetectResult("请先填写目录路径");
+      return;
+    }
+
+    setIsDetectingGit(true);
+    setDetectResult(null);
+
+    try {
+      const detected = await detectGitInfo(targetPath);
+      if (!detected) {
+        setDetectResult("Git 识别失败，请检查路径后重试");
+        return;
+      }
+
+      if (!detected.is_git_repo) {
+        setDetectResult("该目录不是 Git 仓库，可继续手动填写配置");
+        return;
+      }
+
+      setWsType("git_worktree");
+      setSourceRepo(detected.source_repo ?? targetPath);
+      setBranch(detected.branch ?? "main");
+      setCommitHash(detected.commit_hash ?? "");
+      setDetectResult("Git 信息识别成功，已自动回填");
+    } finally {
+      setIsDetectingGit(false);
+    }
   };
 
   const handleBrowseDirectory = () => {
     const input = document.createElement("input");
     input.type = "file";
-    // @ts-expect-error webkitdirectory 非标准属性
-    input.webkitdirectory = true;
+    const directoryInput = input as HTMLInputElement & { webkitdirectory?: boolean };
+    directoryInput.webkitdirectory = true;
     input.addEventListener("change", () => {
       const files = input.files;
       if (files && files.length > 0) {
-        // webkitRelativePath 包含相对路径，取公共前缀
-        const firstPath = files[0].webkitRelativePath;
+        const firstFile = files[0] as File & { path?: string };
+        const firstPath = firstFile.webkitRelativePath;
         const topDir = firstPath.split("/")[0];
-        setContainerRef(topDir);
+
+        let detectedPath = topDir;
+        if (typeof firstFile.path === "string" && firstFile.path.length > 0 && firstPath) {
+          const relativePath = firstPath.replace(/\//g, "\\");
+          if (firstFile.path.endsWith(relativePath)) {
+            detectedPath = firstFile.path
+              .slice(0, firstFile.path.length - relativePath.length)
+              .replace(/[\\/]$/, "");
+          } else {
+            detectedPath = firstFile.path;
+          }
+        }
+
+        setContainerRef(detectedPath);
+        void handleDetectGit(detectedPath);
       }
     });
     input.click();
@@ -104,7 +161,20 @@ function CreateWorkspacePanel({ projectId, onDone }: { projectId: string; onDone
         >
           📁
         </button>
+        <button
+          type="button"
+          onClick={() => void handleDetectGit()}
+          disabled={isDetectingGit || !containerRef.trim()}
+          className="shrink-0 rounded border border-border bg-secondary px-2 py-1.5 text-xs text-foreground hover:bg-secondary/70 disabled:opacity-50"
+          title="识别 Git 信息"
+        >
+          {isDetectingGit ? "识别中" : "识别Git"}
+        </button>
       </div>
+
+      {detectResult && (
+        <p className="text-xs text-muted-foreground">{detectResult}</p>
+      )}
 
       {wsType === "git_worktree" && (
         <>
@@ -118,6 +188,12 @@ function CreateWorkspacePanel({ projectId, onDone }: { projectId: string; onDone
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
             placeholder="分支名（默认 main）"
+            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+          />
+          <input
+            value={commitHash}
+            onChange={(e) => setCommitHash(e.target.value)}
+            placeholder="提交哈希（可选）"
             className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
           />
         </>

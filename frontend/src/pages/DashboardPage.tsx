@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Story, Task } from "../types";
 import { useProjectStore } from "../stores/projectStore";
 import { useStoryStore } from "../stores/storyStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { StoryListView } from "../features/story/story-list-view";
 import { StoryDrawer } from "../features/story/story-drawer";
 import { TaskDrawer } from "../features/task/task-drawer";
@@ -9,6 +10,7 @@ import { TaskDrawer } from "../features/task/task-drawer";
 export function DashboardPage() {
   const { currentProjectId, projects } = useProjectStore();
   const { stories, tasksByStoryId, isLoading, error, fetchStoriesByProject, fetchTasks } = useStoryStore();
+  const { workspacesByProjectId } = useWorkspaceStore();
 
   const [openedStory, setOpenedStory] = useState<Story | null>(null);
   const [openedTask, setOpenedTask] = useState<Task | null>(null);
@@ -29,6 +31,7 @@ export function DashboardPage() {
   }, [stories, tasksByStoryId]);
 
   const openedStoryTasks = openedStory ? tasksByStoryId[openedStory.id] ?? [] : [];
+  const currentWorkspaces = currentProjectId ? workspacesByProjectId[currentProjectId] ?? [] : [];
 
   const handleOpenStory = async (story: Story) => {
     setOpenedTask(null);
@@ -78,6 +81,8 @@ export function DashboardPage() {
       <StoryDrawer
         story={openedStory}
         tasks={openedStoryTasks}
+        workspaces={currentWorkspaces}
+        projectConfig={currentProject?.config}
         onClose={() => setOpenedStory(null)}
         onOpenTask={handleOpenTask}
       />

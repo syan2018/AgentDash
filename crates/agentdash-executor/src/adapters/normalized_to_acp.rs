@@ -7,6 +7,7 @@ use agent_client_protocol::{
     ContentBlock,
     ContentChunk,
     Diff,
+    Meta,
     Plan,
     PlanEntry,
     PlanEntryPriority,
@@ -14,6 +15,7 @@ use agent_client_protocol::{
     SessionId,
     SessionNotification,
     SessionUpdate,
+    SessionInfoUpdate,
     TextContent,
     ToolCall,
     ToolCallContent,
@@ -28,11 +30,13 @@ use executors::{
     approvals::ToolCallMetadata,
     logs::{ActionType, FileChange, NormalizedEntry, NormalizedEntryType, ToolStatus},
 };
+use agentdash_acp_meta::{merge_agentdash_meta, AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1};
 
 #[derive(Debug)]
 pub struct NormalizedToAcpConverter {
     session_id: SessionId,
     turn_prefix: String,
+    source: AgentDashSourceV1,
     last_by_index: HashMap<usize, NormalizedEntry>,
     tool_call_by_id: HashMap<String, ToolCall>,
     /// Dedup: total text already emitted per chunk type.
@@ -44,7 +48,7 @@ pub struct NormalizedToAcpConverter {
 }
 
 impl NormalizedToAcpConverter {
-    pub fn new(session_id: impl Into<SessionId>) -> Self {
+    pub fn new(session_id: impl Into<SessionId>, source: AgentDashSourceV1) -> Self {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -52,12 +56,42 @@ impl NormalizedToAcpConverter {
         Self {
             session_id: session_id.into(),
             turn_prefix: format!("t{ts}"),
+            source,
             last_by_index: HashMap::new(),
             tool_call_by_id: HashMap::new(),
             emitted_agent: String::new(),
             emitted_thought: String::new(),
             emitted_user: String::new(),
         }
+    }
+
+    fn base_meta(&self, entry_index: Option<usize>) -> Option<Meta> {
+        let trace = {
+            let mut t = AgentDashTraceV1::new();
+            t.turn_id = Some(self.turn_prefix.clone());
+            t.entry_index = entry_index.map(|i| i as u32);
+            Some(t)
+        };
+
+        let agentdash = AgentDashMetaV1::new()
+            .source(Some(self.source.clone()))
+            .trace(trace);
+
+        merge_agentdash_meta(None, &agentdash)
+    }
+
+    fn event_meta(&self, entry_index: usize, event_type: &str, message: &str) -> Option<Meta> {
+        let agentdash = AgentDashMetaV1::new()
+            .source(Some(self.source.clone()))
+            .trace({
+                let mut t = AgentDashTraceV1::new();
+                t.turn_id = Some(self.turn_prefix.clone());
+                t.entry_index = Some(entry_index as u32);
+                Some(t)
+            })
+            .event(Some(AgentDashEventV1::new(event_type).message(Some(message.to_string()))));
+
+        merge_agentdash_meta(None, &agentdash)
     }
 
     pub fn apply(&mut self, entry_index: usize, entry: NormalizedEntry) -> Vec<SessionNotification> {
@@ -67,56 +101,74 @@ impl NormalizedToAcpConverter {
             NormalizedEntryType::UserMessage => {
                 self.emitted_agent.clear();
                 self.emitted_thought.clear();
+                let meta = self.base_meta(Some(entry_index));
                 emit_deduped(
                     &self.session_id,
                     &mut self.emitted_user,
                     prev.as_ref().map(|p| p.content.as_str()),
                     &entry.content,
                     SessionUpdate::UserMessageChunk,
+                    meta,
                 )
             }
             NormalizedEntryType::AssistantMessage => {
+                let meta = self.base_meta(Some(entry_index));
                 emit_deduped(
                     &self.session_id,
                     &mut self.emitted_agent,
                     prev.as_ref().map(|p| p.content.as_str()),
                     &entry.content,
                     SessionUpdate::AgentMessageChunk,
+                    meta,
                 )
             }
             NormalizedEntryType::Thinking => {
+                let meta = self.base_meta(Some(entry_index));
                 emit_deduped(
                     &self.session_id,
                     &mut self.emitted_thought,
                     prev.as_ref().map(|p| p.content.as_str()),
                     &entry.content,
                     SessionUpdate::AgentThoughtChunk,
+                    meta,
                 )
             }
-            NormalizedEntryType::SystemMessage => {
-                // ABCCraft 不在 ACP 流中显示系统/hook 消息；跳过
-                Vec::new()
-            }
-            NormalizedEntryType::ErrorMessage { .. } => {
-                let text = format!("[错误] {}", entry.content);
-                chunk_updates(&self.session_id, SessionUpdate::AgentMessageChunk, Some(text))
-            }
-            NormalizedEntryType::UserFeedback { denied_tool } => {
-                let text = format!("[用户反馈] 已拒绝工具 `{}`：{}", denied_tool, entry.content);
-                chunk_updates(&self.session_id, SessionUpdate::UserMessageChunk, Some(text))
-            }
-            NormalizedEntryType::Loading => Vec::new(),
-            NormalizedEntryType::NextAction { .. } => {
-                // 内部状态转换信息，不向用户展示
-                Vec::new()
-            }
-            NormalizedEntryType::TokenUsageInfo(_info) => {
-                // ABCCraft 不在 ACP 流中显示 token 用量；跳过
-                Vec::new()
-            }
-            NormalizedEntryType::UserAnsweredQuestions { answers } => {
-                let text = format!("[用户回答] {} 个问题已回答", answers.len());
-                chunk_updates(&self.session_id, SessionUpdate::UserMessageChunk, Some(text))
+            NormalizedEntryType::SystemMessage => vec![SessionNotification::new(
+                self.session_id.clone(),
+                SessionUpdate::SessionInfoUpdate(
+                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "system_message", &entry.content)),
+                ),
+            )],
+            NormalizedEntryType::ErrorMessage { .. } => vec![SessionNotification::new(
+                self.session_id.clone(),
+                SessionUpdate::SessionInfoUpdate(
+                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "error", &entry.content)),
+                ),
+            )],
+            NormalizedEntryType::UserFeedback { .. } => vec![SessionNotification::new(
+                self.session_id.clone(),
+                SessionUpdate::SessionInfoUpdate(
+                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "user_feedback", &entry.content)),
+                ),
+            )],
+            NormalizedEntryType::UserAnsweredQuestions { .. } => vec![SessionNotification::new(
+                self.session_id.clone(),
+                SessionUpdate::SessionInfoUpdate(
+                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "user_answered_questions", &entry.content)),
+                ),
+            )],
+            NormalizedEntryType::Loading | NormalizedEntryType::NextAction { .. } => Vec::new(),
+            NormalizedEntryType::TokenUsageInfo(info) => {
+                vec![SessionNotification::new(
+                    self.session_id.clone(),
+                    SessionUpdate::UsageUpdate(
+                        agent_client_protocol::UsageUpdate::new(
+                            info.total_tokens as u64,
+                            info.model_context_window as u64,
+                        )
+                        .meta(self.base_meta(Some(entry_index))),
+                    ),
+                )]
             }
             NormalizedEntryType::ToolUse {
                 tool_name,
@@ -136,14 +188,20 @@ impl NormalizedToAcpConverter {
     ) -> Vec<SessionNotification> {
         match action_type {
             ActionType::PlanPresentation { plan } => {
-                let plan = parse_plan_string(plan);
+                let mut plan = parse_plan_string(plan);
+                if let Some(meta) = self.base_meta(Some(entry_index)) {
+                    plan = plan.meta(meta);
+                }
                 vec![SessionNotification::new(
                     self.session_id.clone(),
                     SessionUpdate::Plan(plan),
                 )]
             }
             ActionType::TodoManagement { todos, .. } => {
-                let plan = Plan::new(todos_to_plan_entries(todos));
+                let mut plan = Plan::new(todos_to_plan_entries(todos));
+                if let Some(meta) = self.base_meta(Some(entry_index)) {
+                    plan = plan.meta(meta);
+                }
                 vec![SessionNotification::new(
                     self.session_id.clone(),
                     SessionUpdate::Plan(plan),
@@ -151,8 +209,8 @@ impl NormalizedToAcpConverter {
             }
             _ => {
                 let tool_call_id = tool_call_id_from_entry(&self.turn_prefix, entry_index, entry);
-
-                let new_call = build_tool_call(tool_call_id.clone(), tool_name, action_type, status, entry);
+                let meta = self.base_meta(Some(entry_index));
+                let new_call = build_tool_call(tool_call_id.clone(), tool_name, action_type, status, entry, meta.clone());
                 let is_new = !self.tool_call_by_id.contains_key(&tool_call_id);
 
                 if is_new {
@@ -176,34 +234,17 @@ impl NormalizedToAcpConverter {
                     if fields_is_empty(&fields) {
                         Vec::new()
                     } else {
+                        let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id), fields);
+                        update.meta = meta;
                         vec![SessionNotification::new(
                             self.session_id.clone(),
-                            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                                ToolCallId::new(tool_call_id),
-                                fields,
-                            )),
+                            SessionUpdate::ToolCallUpdate(update),
                         )]
                     }
                 }
             }
         }
     }
-}
-
-/// One-shot emit (for error/feedback messages that don't need dedup).
-fn chunk_updates(
-    session_id: &SessionId,
-    ctor: fn(ContentChunk) -> SessionUpdate,
-    text: Option<String>,
-) -> Vec<SessionNotification> {
-    let Some(text) = text else {
-        return Vec::new();
-    };
-    if text.is_empty() {
-        return Vec::new();
-    }
-    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)));
-    vec![SessionNotification::new(session_id.clone(), ctor(chunk))]
 }
 
 /// Emit a text chunk, deduplicating against already-emitted content.
@@ -218,6 +259,7 @@ fn emit_deduped(
     prev_at_index: Option<&str>,
     full_content: &str,
     ctor: fn(ContentChunk) -> SessionUpdate,
+    meta: Option<Meta>,
 ) -> Vec<SessionNotification> {
     if full_content.is_empty() {
         return Vec::new();
@@ -231,7 +273,7 @@ fn emit_deduped(
                 return Vec::new();
             }
             emitted.push_str(suffix);
-            return emit_chunk(session_id, ctor, suffix);
+            return emit_chunk(session_id, ctor, suffix, meta.clone());
         }
     }
 
@@ -242,7 +284,7 @@ fn emit_deduped(
             return Vec::new();
         }
         emitted.push_str(suffix);
-        return emit_chunk(session_id, ctor, suffix);
+        return emit_chunk(session_id, ctor, suffix, meta.clone());
     }
 
     // Already-emitted text covers this content — skip.
@@ -252,18 +294,19 @@ fn emit_deduped(
 
     // Truly new content (e.g. new turn after provider reset).
     *emitted = full_content.to_string();
-    emit_chunk(session_id, ctor, full_content)
+    emit_chunk(session_id, ctor, full_content, meta)
 }
 
 fn emit_chunk(
     session_id: &SessionId,
     ctor: fn(ContentChunk) -> SessionUpdate,
     text: &str,
+    meta: Option<Meta>,
 ) -> Vec<SessionNotification> {
     if text.is_empty() {
         return Vec::new();
     }
-    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)));
+    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(meta);
     vec![SessionNotification::new(session_id.clone(), ctor(chunk))]
 }
 
@@ -284,17 +327,19 @@ fn build_tool_call(
     action_type: &ActionType,
     status: &ToolStatus,
     entry: &NormalizedEntry,
+    meta: Option<Meta>,
 ) -> ToolCall {
     let (kind, title, locations, content, raw_input, raw_output) =
         map_action_to_tool_call_parts(tool_name, action_type, entry.content.clone());
-
-    ToolCall::new(ToolCallId::new(tool_call_id), title)
+    let mut call = ToolCall::new(ToolCallId::new(tool_call_id), title)
         .kind(kind)
         .status(map_tool_status(status))
         .locations(locations)
         .content(content)
         .raw_input(raw_input)
-        .raw_output(raw_output)
+        .raw_output(raw_output);
+    call.meta = meta;
+    call
 }
 
 fn map_action_to_tool_call_parts(
@@ -558,5 +603,98 @@ fn todos_to_plan_entries(todos: &[executors::logs::TodoItem]) -> Vec<PlanEntry> 
             PlanEntry::new(t.content.clone(), priority, status)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use agentdash_acp_meta::parse_agentdash_meta;
+    use executors::logs::{NormalizedEntry, NormalizedEntryType, TokenUsageInfo};
+
+    fn test_source() -> AgentDashSourceV1 {
+        let mut s = AgentDashSourceV1::new("vibe_kanban", "local_executor");
+        s.executor_id = Some("CLAUDE_CODE".to_string());
+        s.variant = Some("DEFAULT".to_string());
+        s
+    }
+
+    #[test]
+    fn agent_message_chunk_emits_agentdash_meta() {
+        let mut converter = NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source());
+        let entry = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::AssistantMessage,
+            content: "hello".to_string(),
+            metadata: None,
+        };
+
+        let out = converter.apply(0, entry);
+        assert_eq!(out.len(), 1);
+        match &out[0].update {
+            SessionUpdate::AgentMessageChunk(chunk) => {
+                let meta = chunk
+                    .meta
+                    .as_ref()
+                    .expect("expected _meta on AgentMessageChunk");
+                let ad = parse_agentdash_meta(meta).expect("parse agentdash meta");
+                assert_eq!(ad.v, agentdash_acp_meta::AGENTDASH_META_VERSION);
+                let src = ad.source.expect("source");
+                assert_eq!(src.connector_id, "vibe_kanban");
+                assert_eq!(src.connector_type, "local_executor");
+                assert!(ad.trace.as_ref().and_then(|t| t.turn_id.clone()).is_some());
+            }
+            other => panic!("unexpected update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn system_message_is_wrapped_as_session_info_update_meta_event() {
+        let mut converter = NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source());
+        let entry = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::SystemMessage,
+            content: "hook_started".to_string(),
+            metadata: None,
+        };
+
+        let out = converter.apply(1, entry);
+        assert_eq!(out.len(), 1);
+        match &out[0].update {
+            SessionUpdate::SessionInfoUpdate(update) => {
+                let meta = update.meta.as_ref().expect("expected _meta on SessionInfoUpdate");
+                let ad = parse_agentdash_meta(meta).expect("parse agentdash meta");
+                let ev = ad.event.expect("event");
+                assert_eq!(ev.r#type, "system_message");
+                assert_eq!(ev.message.as_deref(), Some("hook_started"));
+            }
+            other => panic!("unexpected update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn token_usage_info_maps_to_usage_update_with_meta() {
+        let mut converter = NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source());
+        let entry = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::TokenUsageInfo(TokenUsageInfo {
+                total_tokens: 123,
+                model_context_window: 2000,
+            }),
+            content: String::new(),
+            metadata: None,
+        };
+
+        let out = converter.apply(2, entry);
+        assert_eq!(out.len(), 1);
+        match &out[0].update {
+            SessionUpdate::UsageUpdate(update) => {
+                let meta = update.meta.as_ref().expect("expected _meta on UsageUpdate");
+                let ad = parse_agentdash_meta(meta).expect("parse agentdash meta");
+                assert!(ad.source.is_some());
+            }
+            other => panic!("unexpected update: {other:?}"),
+        }
+    }
 }
 

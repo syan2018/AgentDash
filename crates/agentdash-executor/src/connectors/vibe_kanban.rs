@@ -12,6 +12,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
 
+use agentdash_acp_meta::AgentDashSourceV1;
+
 use executors::{
     approvals::NoopExecutorApprovalService,
     env::{ExecutionEnv, RepoContext},
@@ -226,7 +228,14 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
-        let mut converter = NormalizedToAcpConverter::new(SessionId::new(session_id.to_string()));
+        let connector_type = match self.connector_type() {
+            ConnectorType::LocalExecutor => "local_executor",
+            ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+        };
+        let mut source = AgentDashSourceV1::new(self.connector_id(), connector_type);
+        source.executor_id = Some(context.executor_config.executor.to_string());
+        source.variant = context.executor_config.variant.clone();
+        let mut converter = NormalizedToAcpConverter::new(SessionId::new(session_id.to_string()), source);
 
         tokio::spawn(async move {
             let mut stream = msg_store.history_plus_stream();

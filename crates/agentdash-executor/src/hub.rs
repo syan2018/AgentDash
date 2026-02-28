@@ -11,6 +11,8 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
 
+use agentdash_acp_meta::{merge_agentdash_meta, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1};
+
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,8 +144,22 @@ impl ExecutorHub {
             let _ = store.write_meta(&meta).await;
         }
 
-        // 注入用户消息到流和持久化存储
-        let user_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(&req.prompt)));
+        // 注入用户消息到流和持久化存储（附带 `_meta.agentdash`）
+        let connector_type = match self.connector.connector_type() {
+            crate::connector::ConnectorType::LocalExecutor => "local_executor",
+            crate::connector::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+        };
+        let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
+        source.executor_id = Some(context.executor_config.executor.to_string());
+        source.variant = context.executor_config.variant.clone();
+        let mut trace = AgentDashTraceV1::new();
+        trace.turn_id = Some(format!("t{}", chrono::Utc::now().timestamp_millis()));
+        let agentdash = AgentDashMetaV1::new()
+            .source(Some(source))
+            .trace(Some(trace));
+        let meta = merge_agentdash_meta(None, &agentdash);
+
+        let user_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(&req.prompt))).meta(meta);
         let user_notification = SessionNotification::new(
             SessionId::new(session_id),
             SessionUpdate::UserMessageChunk(user_chunk),

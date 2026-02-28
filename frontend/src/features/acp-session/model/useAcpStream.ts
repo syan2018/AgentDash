@@ -30,6 +30,8 @@ export interface UseAcpStreamResult {
   entries: AcpDisplayEntry[];
   isConnected: boolean;
   isLoading: boolean;
+  /** True while actively receiving notifications (resets after a short idle timeout) */
+  isReceiving: boolean;
   error: Error | null;
   reconnect: () => void;
   close: () => void;
@@ -37,26 +39,7 @@ export interface UseAcpStreamResult {
 }
 
 const FLUSH_INTERVAL_MS = 50;
-
-/**
- * 需要从显示中过滤掉的内容前缀。
- * 匹配 ABCCraft：系统 hook 消息和 token 用量不进入 ACP 流。
- * 这里作为安全网，过滤历史 JSONL 和后端未升级时产生的旧数据。
- */
-const FILTERED_TEXT_PREFIXES = ["[系统]", "[用量]", "[状态]"];
-
-function shouldFilterNotification(update: SessionUpdate): boolean {
-  if (
-    update.sessionUpdate !== "agent_message_chunk" &&
-    update.sessionUpdate !== "agent_thought_chunk"
-  ) {
-    return false;
-  }
-  const content = (update as unknown as { content?: { type?: string; text?: string } }).content;
-  if (content?.type !== "text" || !content.text) return false;
-  const text = content.text.trimStart();
-  return FILTERED_TEXT_PREFIXES.some((prefix) => text.startsWith(prefix));
-}
+const RECEIVING_IDLE_TIMEOUT_MS = 600;
 
 /**
  * Merge incoming text chunk into accumulated text.
@@ -131,6 +114,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const [entries, setEntries] = useState<AcpDisplayEntry[]>(initialEntries);
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isReceiving, setIsReceiving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [connectKey, setConnectKey] = useState(0);
 
@@ -138,6 +122,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const mountedRef = useRef(true);
   const pendingNotificationsRef = useRef<SessionNotification[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const receivingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const callbackRefs = useRef({ onEntry, onConnectionChange, onError });
   useEffect(() => {
@@ -147,67 +132,37 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const applyNotification = useCallback((prev: AcpDisplayEntry[], notification: SessionNotification) => {
     const { update } = notification;
 
-    // ── 过滤不应显示的通知 ───────────────────────────────────
-    if (shouldFilterNotification(update)) {
-      return prev;
-    }
+    const makeEntry = (u: SessionUpdate, extra?: Partial<AcpDisplayEntry>): AcpDisplayEntry => ({
+      id: generateId(),
+      sessionId: notification.sessionId,
+      timestamp: Date.now(),
+      update: u,
+      ...extra,
+    });
 
     // ── tool_call ──────────────────────────────────────────────
-    // 如果该 toolCallId 已存在，原地替换（处理多轮 ID 重复 + 历史重放）；
-    // 否则追加新 entry。
     if (update.sessionUpdate === "tool_call") {
       const id = getToolCallId(update)!;
       const existingIndex = prev.findIndex((e) => getToolCallId(e.update) === id);
-
       if (existingIndex >= 0) {
         const next = [...prev];
-        next[existingIndex] = {
-          ...prev[existingIndex]!,
-          update,
-          isStreaming: true,
-          isPendingApproval: update.status === "pending",
-        };
+        next[existingIndex] = { ...prev[existingIndex]!, update, isPendingApproval: update.status === "pending" };
         return next;
       }
-
-      return [...prev, {
-        id: generateId(),
-        sessionId: notification.sessionId,
-        timestamp: Date.now(),
-        update,
-        isStreaming: true,
-        isPendingApproval: update.status === "pending",
-      }];
+      return [...prev, makeEntry(update, { isPendingApproval: update.status === "pending" })];
     }
 
     // ── tool_call_update ───────────────────────────────────────
-    // 找到同 toolCallId 的已有 entry，合并字段（ABCCraft 策略）。
-    // 不创建新 entry、不触发额外 state，UI 直接从 entries 读取最新状态。
     if (update.sessionUpdate === "tool_call_update") {
       const id = getToolCallId(update)!;
       const existingIndex = prev.findIndex((e) => getToolCallId(e.update) === id);
-
       if (existingIndex >= 0) {
         const merged = mergeToolCallUpdateIntoEntry(prev[existingIndex]!.update, update);
         const next = [...prev];
-        next[existingIndex] = {
-          ...prev[existingIndex]!,
-          update: merged,
-          isStreaming: update.status !== "completed" && update.status !== "failed",
-          isPendingApproval: update.status === "pending",
-        };
+        next[existingIndex] = { ...prev[existingIndex]!, update: merged, isPendingApproval: update.status === "pending" };
         return next;
       }
-
-      // 没有对应的 tool_call（异常情况），追加为独立 entry
-      return [...prev, {
-        id: generateId(),
-        sessionId: notification.sessionId,
-        timestamp: Date.now(),
-        update,
-        isStreaming: true,
-        isPendingApproval: update.status === "pending",
-      }];
+      return [...prev, makeEntry(update, { isPendingApproval: update.status === "pending" })];
     }
 
     // ── chunk 类型（agent_message / user_message / agent_thought）───
@@ -217,41 +172,23 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       update.sessionUpdate === "agent_thought_chunk";
 
     if (!isChunkUpdate) {
-      return [...prev, {
-        id: generateId(),
-        sessionId: notification.sessionId,
-        timestamp: Date.now(),
-        update,
-        isStreaming: true,
-        isPendingApproval: false,
-      }];
+      return [...prev, makeEntry(update)];
     }
 
-    // 只和数组最后一条 entry 合并，且仅当类型完全相同。
-    // 中间穿插了 tool_call / user_message 等不同类型后，
-    // 新 chunk 创建独立条目，保持时间线顺序。
-    const newEntry: AcpDisplayEntry = {
-      id: generateId(),
-      sessionId: notification.sessionId,
-      timestamp: Date.now(),
-      update,
-      isStreaming: true,
-      isPendingApproval: false,
-    };
-
+    // 合并同类型的连续 chunk
     if (prev.length === 0) {
-      return [newEntry];
+      return [makeEntry(update)];
     }
 
     const lastEntry = prev[prev.length - 1]!;
     if (lastEntry.update.sessionUpdate !== update.sessionUpdate) {
-      return [...prev, newEntry];
+      return [...prev, makeEntry(update)];
     }
 
     const targetUpdateAny = lastEntry.update as unknown as { content?: { type?: string; text?: string } };
     const newUpdateAny = update as unknown as { content?: { type?: string; text?: string } };
     if (targetUpdateAny.content?.type !== "text" || newUpdateAny.content?.type !== "text") {
-      return [...prev, newEntry];
+      return [...prev, makeEntry(update)];
     }
 
     const previousText = targetUpdateAny.content.text ?? "";
@@ -268,15 +205,25 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     } as SessionUpdate;
 
     const next = [...prev];
-    next[next.length - 1] = { ...lastEntry, update: mergedUpdate, isStreaming: true };
+    next[next.length - 1] = { ...lastEntry, update: mergedUpdate };
     return next;
   }, []);
 
   const applyNotificationRef = useRef(applyNotification);
   applyNotificationRef.current = applyNotification;
 
+  const markReceiving = useCallback(() => {
+    setIsReceiving(true);
+    if (receivingTimerRef.current) clearTimeout(receivingTimerRef.current);
+    receivingTimerRef.current = setTimeout(() => {
+      receivingTimerRef.current = null;
+      if (mountedRef.current) setIsReceiving(false);
+    }, RECEIVING_IDLE_TIMEOUT_MS);
+  }, []);
+
   const enqueueNotification = useCallback((notification: SessionNotification) => {
     pendingNotificationsRef.current.push(notification);
+    markReceiving();
     if (flushTimerRef.current) return;
     flushTimerRef.current = setTimeout(() => {
       flushTimerRef.current = null;
@@ -293,7 +240,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
         return next;
       });
     }, FLUSH_INTERVAL_MS);
-  }, []);
+  }, [markReceiving]);
 
   const sendCancel = useCallback(() => {
     void fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/cancel`), {
@@ -348,14 +295,6 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
           setIsConnected(false);
           setIsLoading(false);
           callbackRefs.current.onConnectionChange?.(false);
-          // 流结束时清除所有条目的 isStreaming 标记
-          setEntries((prev) => {
-            const hasStreaming = prev.some((e) => e.isStreaming);
-            if (!hasStreaming) return prev;
-            return prev.map((e) =>
-              e.isStreaming ? { ...e, isStreaming: false } : e,
-            );
-          });
         }
       },
       onError: (transportError) => {
@@ -370,6 +309,10 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       if (flushTimerRef.current) {
         clearTimeout(flushTimerRef.current);
         flushTimerRef.current = null;
+      }
+      if (receivingTimerRef.current) {
+        clearTimeout(receivingTimerRef.current);
+        receivingTimerRef.current = null;
       }
       pendingNotificationsRef.current = [];
 
@@ -399,6 +342,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     setError(null);
     setIsLoading(true);
     setIsConnected(false);
+    setIsReceiving(false);
     setConnectKey((k) => k + 1);
   }, []);
 
@@ -406,6 +350,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     entries,
     isConnected,
     isLoading,
+    isReceiving,
     error,
     reconnect,
     close,

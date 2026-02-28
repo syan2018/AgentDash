@@ -5,6 +5,7 @@
  */
 
 export * from "./types";
+export * from "./agentdashMeta";
 
 export { useAcpStream, type UseAcpStreamOptions, type UseAcpStreamResult } from "./useAcpStream";
 export { useAcpSession, type UseAcpSessionOptions, type UseAcpSessionResult } from "./useAcpSession";

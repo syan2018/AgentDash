@@ -30,6 +30,8 @@ export interface UseAcpSessionResult {
   reconnect: () => void;
   close: () => void;
   sendCancel: () => void;
+  /** ID of the entry currently being streamed (last agent_message_chunk while receiving data), or null */
+  streamingEntryId: string | null;
 }
 
 function getToolAggregationType(update: SessionUpdate): ToolAggregationType | null {
@@ -186,6 +188,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     entries,
     isConnected,
     isLoading,
+    isReceiving,
     error,
     reconnect,
     close,
@@ -203,6 +206,14 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     return aggregateEntries(entries);
   }, [entries, enableAggregation]);
 
+  // Streaming indicator: only the last agent_message_chunk while actively receiving data
+  const streamingEntryId = useMemo(() => {
+    if (!isReceiving || entries.length === 0) return null;
+    const last = entries[entries.length - 1]!;
+    if (last.update.sessionUpdate === "agent_message_chunk") return last.id;
+    return null;
+  }, [isReceiving, entries]);
+
   return {
     displayItems,
     rawEntries: entries,
@@ -212,6 +223,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     reconnect,
     close,
     sendCancel,
+    streamingEntryId,
   };
 }
 

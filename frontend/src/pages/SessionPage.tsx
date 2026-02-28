@@ -94,6 +94,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     error: wsError,
     reconnect,
     sendCancel,
+    streamingEntryId,
   } = useAcpSession({ sessionId: streamSessionId });
 
   const hasSession = currentSessionId !== null;
@@ -264,7 +265,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               <div className="space-y-1 p-4">
                 {displayItems.map((item) => (
                   <div key={getItemKey(item)}>
-                    <AcpSessionEntry item={item} />
+                    <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
                   </div>
                 ))}
               </div>

@@ -40,6 +40,7 @@ export function AcpSessionList(props: AcpSessionListProps) {
     isLoading,
     error,
     reconnect,
+    streamingEntryId,
   } = useAcpSession({
     sessionId,
     endpoint,
@@ -130,7 +131,7 @@ export function AcpSessionList(props: AcpSessionListProps) {
       <div className="space-y-1 p-4">
         {displayItems.map((item) => (
           <div key={getItemKey(item)} className={itemClassName}>
-            <AcpSessionEntry item={item} />
+            <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
           </div>
         ))}
       </div>

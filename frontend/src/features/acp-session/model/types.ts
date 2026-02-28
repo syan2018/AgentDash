@@ -115,15 +115,6 @@ export type OnEntriesUpdated = (
   loading: boolean,
 ) => void;
 
-/** Hook 返回结果 */
-export interface UseAcpStreamResult {
-  entries: AcpDisplayEntry[];
-  isConnected: boolean;
-  isLoading: boolean;
-  error: Error | null;
-  reconnect: () => void;
-  close: () => void;
-}
 
 // ==================== 类型守卫 ====================
 

@@ -18,9 +18,11 @@ import { AcpPlanCard } from "./AcpPlanCard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
+  /** ID of the entry currently being streamed, or null */
+  streamingEntryId?: string | null;
 }
 
-export function AcpSessionEntry({ item }: AcpSessionEntryProps) {
+export function AcpSessionEntry({ item, streamingEntryId }: AcpSessionEntryProps) {
   if (isAggregatedGroup(item)) {
     if (item.aggregationType === "file_edit") {
       return <AggregatedDiffGroupEntry group={item} />;
@@ -33,13 +35,13 @@ export function AcpSessionEntry({ item }: AcpSessionEntryProps) {
   }
 
   if (isDisplayEntry(item)) {
-    return <SingleEntry entry={item} />;
+    return <SingleEntry entry={item} isStreaming={item.id === streamingEntryId} />;
   }
 
   return null;
 }
 
-function SingleEntry({ entry }: { entry: AcpDisplayEntry }) {
+function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; isStreaming?: boolean }) {
   const { update, isPendingApproval } = entry;
 
   switch (update.sessionUpdate) {
@@ -59,7 +61,7 @@ function SingleEntry({ entry }: { entry: AcpDisplayEntry }) {
         <AcpMessageCard
           type="agent"
           content={text}
-          isStreaming={entry.isStreaming}
+          isStreaming={isStreaming}
         />
       );
     }
@@ -70,7 +72,6 @@ function SingleEntry({ entry }: { entry: AcpDisplayEntry }) {
         <AcpMessageCard
           type="thinking"
           content={text}
-          isStreaming={entry.isStreaming}
         />
       );
     }

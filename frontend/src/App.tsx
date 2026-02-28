@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
 import { WorkspaceLayout, type WorkspaceView } from "./components/layout/workspace-layout";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -18,9 +18,12 @@ function AppContent() {
   const { fetchProjects } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect } = useEventStore();
-  const { reload: reloadSessions } = useSessionHistoryStore();
+  const reloadSessions = useSessionHistoryStore(state => state.reload);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // 用于防止重复加载的 ref
+  const hasLoadedSessionsRef = useRef(false);
 
   const activeView: WorkspaceView = location.pathname.startsWith("/session")
     ? "session"
@@ -32,11 +35,24 @@ function AppContent() {
     connect();
   }, [fetchBackends, fetchProjects, connect]);
 
-  useEffect(() => {
-    if (activeView === "session") {
+  // 使用 useCallback 稳定 reloadSessions 调用，避免循环依赖
+  const loadSessionsOnce = useCallback(() => {
+    if (activeView === "session" && !hasLoadedSessionsRef.current) {
+      hasLoadedSessionsRef.current = true;
       void reloadSessions();
     }
   }, [activeView, reloadSessions]);
+
+  useEffect(() => {
+    loadSessionsOnce();
+  }, [loadSessionsOnce]);
+
+  // 当离开 session 视图时重置标记，允许下次进入时重新加载
+  useEffect(() => {
+    if (activeView !== "session") {
+      hasLoadedSessionsRef.current = false;
+    }
+  }, [activeView]);
 
   const handleChangeView = useCallback(
     (view: WorkspaceView) => {

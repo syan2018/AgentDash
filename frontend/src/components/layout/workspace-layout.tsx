@@ -126,7 +126,7 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
                 <button
                   type="button"
                   onClick={handleNewSession}
-                  className="rounded px-1.5 py-0.5 text-xs text-primary hover:bg-secondary"
+                  className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
                   + 新建
                 </button>

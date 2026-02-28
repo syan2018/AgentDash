@@ -5,6 +5,7 @@ members = [
     "crates/agentdash-infrastructure",
     "crates/agentdash-executor",
     "crates/agentdash-api",
+    "crates/agentdash-acp-meta",
 ]
 exclude = ["third_party"]
 
@@ -45,6 +46,7 @@ futures = "0.3"
 agentdash-domain = { path = "crates/agentdash-domain" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-executor = { path = "crates/agentdash-executor" }
+agentdash-acp-meta = { path = "crates/agentdash-acp-meta" }
 
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.9.4", features = ["unstable"] }

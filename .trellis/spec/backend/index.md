@@ -86,6 +86,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | ✅ 已更新（整洁架构分层） |
 | [Repository Pattern](./repository-pattern.md) | Repository trait 定义、依赖注入、测试 | ✅ 已创建 |
+| [ACP Meta Warp](./acp-meta-warp.md) | ACP `_meta.agentdash` 跨层契约（可扩展消息语义层） | ✅ 已更新 |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
@@ -129,13 +130,6 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 - 所有状态变更必须记录 StateChange（不可省略）
 - 变更必须包含 `reason` 字段说明原因
 - 严禁直接覆盖状态而不记录历史
-
-### ACP 流转换原则 (`normalized_to_acp.rs`)
-
-- `NormalizedToAcpConverter` 必须对 `AssistantMessage`/`Thinking`/`UserMessage` 做**全局去重**（`emitted_agent`/`emitted_thought`/`emitted_user`），不能仅依赖 per-index delta
-- `SystemMessage`、`TokenUsageInfo`、`NextAction` 不应作为 ACP 通知发射（ABCCraft 标准）
-- `ErrorMessage`、`UserFeedback` 等一次性消息可直接发射，无需去重
-- 新用户消息到达时重置 agent/thought 累积器（新 turn）
 
 ---
 

@@ -95,7 +95,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     reconnect,
     sendCancel,
     streamingEntryId,
-  } = useAcpSession({ sessionId: streamSessionId });
+  } = useAcpSession({ sessionId: streamSessionId, enabled: currentSessionId !== null });
 
   const hasSession = currentSessionId !== null;
 
@@ -105,7 +105,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   useEffect(() => {
     if (!containerRef.current || !shouldScrollRef.current) return;
     containerRef.current.scrollTop = containerRef.current.scrollHeight;
-  }, [displayItems]);
+  }, [displayItems.length]);
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
@@ -162,9 +162,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     }
   }, [prompt, isSending, currentSessionId, executorConfig, execConfig, createNew, setActiveSessionId, navigate, reloadSessions]);
 
-  const handleCancel = useCallback(() => {
-    sendCancel();
-  }, [sendCancel]);
+  const handleCancel = sendCancel;
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

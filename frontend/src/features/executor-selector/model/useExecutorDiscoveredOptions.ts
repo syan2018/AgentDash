@@ -8,13 +8,6 @@ import type {
   UseExecutorDiscoveredOptionsResult,
 } from "./types";
 
-function toWsUrl(httpUrl: string): string {
-  if (httpUrl.startsWith("https://")) return httpUrl.replace("https://", "wss://");
-  if (httpUrl.startsWith("http://")) return httpUrl.replace("http://", "ws://");
-  // relative（这里不做转换，调用方应先用 URL() 解析为绝对 http(s) 再转 ws）
-  return httpUrl;
-}
-
 const INITIAL_STATE: ExecutorDiscoveryStreamState = {
   options: {
     model_selector: {
@@ -42,7 +35,8 @@ type ServerMessage =
   | { Error: string };
 
 /**
- * 对齐 vibe-kanban：通过 WebSocket 接收 JsonPatch 增量更新 discovered options。
+ * 通过 NDJSON over HTTP 接收 JsonPatch 增量更新 discovered options。
+ * 消息格式与原 WebSocket 端点保持一致：Ready / JsonPatch / finished / Error。
  */
 export function useExecutorDiscoveredOptions(
   executor: string,
@@ -54,63 +48,107 @@ export function useExecutorDiscoveredOptions(
   const [error, setError] = useState<Error | null>(null);
   const [reconnectNonce, setReconnectNonce] = useState(0);
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const stateRef = useRef<ExecutorDiscoveryStreamState>({ ...INITIAL_STATE });
 
   useEffect(() => {
     const trimmed = executor.trim();
     if (!trimmed) return;
 
-    wsRef.current?.close();
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    const http = new URL(buildApiPath("/agents/discovered-options/ws"), window.location.href).toString();
-    const url = new URL(toWsUrl(http));
+    stateRef.current = { ...INITIAL_STATE };
+    setOptions(stateRef.current.options);
+    setIsConnected(false);
+    setIsInitialized(false);
+    setError(null);
+
+    const base = buildApiPath("/agents/discovered-options/stream");
+    const url = new URL(base, window.location.href);
     url.searchParams.set("executor", trimmed);
     const v = variant.trim();
     if (v) url.searchParams.set("variant", v);
 
-    const ws = new WebSocket(url.toString());
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      stateRef.current = { ...INITIAL_STATE };
-      setOptions(stateRef.current.options);
-      setIsConnected(true);
-      setIsInitialized(false);
-      setError(null);
-    };
-    ws.onerror = () => setError(new Error("WebSocket 连接失败"));
-    ws.onclose = () => setIsConnected(false);
-    ws.onmessage = (evt) => {
+    void (async () => {
       try {
-        const msg: ServerMessage = JSON.parse(String(evt.data));
-        if ("Ready" in msg) {
-          setIsInitialized(Boolean(msg.Ready));
-          return;
-        }
-        if ("Error" in msg) {
-          setError(new Error(msg.Error));
-          return;
-        }
-        if ("finished" in msg) {
-          return;
-        }
-        if ("JsonPatch" in msg) {
-          if (!Array.isArray(msg.JsonPatch)) return;
-          const patch = msg.JsonPatch as Operation[];
-          const next = structuredClone(stateRef.current);
-          // 注意：fast-json-patch 在 mutateDocument=false 时不会修改入参，需要使用返回的 newDocument
-          const result = applyPatch(next, patch, true, false);
-          const updated = result.newDocument as ExecutorDiscoveryStreamState;
-          stateRef.current = updated;
-          setOptions(updated.options);
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e : new Error(String(e)));
-      }
-    };
+        const response = await fetch(url.toString(), {
+          method: "GET",
+          headers: { Accept: "application/x-ndjson", "Cache-Control": "no-cache" },
+          signal: controller.signal,
+          cache: "no-store",
+        });
 
-    return () => ws.close();
+        if (!response.ok || !response.body) {
+          setError(new Error(`发现选项请求失败: HTTP ${response.status}`));
+          return;
+        }
+
+        setIsConnected(true);
+
+        const decoder = new TextDecoder();
+        const reader = response.body.getReader();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          let newlineIdx = buffer.indexOf("\n");
+          while (newlineIdx >= 0) {
+            const line = buffer.slice(0, newlineIdx).trim();
+            buffer = buffer.slice(newlineIdx + 1);
+            if (line) handleLine(line);
+            newlineIdx = buffer.indexOf("\n");
+          }
+        }
+
+        const trailing = buffer.trim();
+        if (trailing) handleLine(trailing);
+
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        setError(e instanceof Error ? e : new Error(String(e)));
+      } finally {
+        setIsConnected(false);
+      }
+    })();
+
+    function handleLine(line: string) {
+      let msg: ServerMessage;
+      try {
+        msg = JSON.parse(line) as ServerMessage;
+      } catch {
+        return;
+      }
+
+      if ("Ready" in msg) {
+        setIsInitialized(Boolean(msg.Ready));
+        return;
+      }
+      if ("Error" in msg) {
+        setError(new Error(msg.Error));
+        return;
+      }
+      if ("finished" in msg) {
+        return;
+      }
+      if ("JsonPatch" in msg) {
+        if (!Array.isArray(msg.JsonPatch)) return;
+        const patch = msg.JsonPatch as Operation[];
+        const next = structuredClone(stateRef.current);
+        const result = applyPatch(next, patch, true, false);
+        const updated = result.newDocument as ExecutorDiscoveryStreamState;
+        stateRef.current = updated;
+        setOptions(updated.options);
+      }
+    }
+
+    return () => {
+      controller.abort();
+    };
   }, [executor, variant, reconnectNonce]);
 
   return {
@@ -121,4 +159,3 @@ export function useExecutorDiscoveredOptions(
     reconnect: () => setReconnectNonce((n) => n + 1),
   };
 }
-

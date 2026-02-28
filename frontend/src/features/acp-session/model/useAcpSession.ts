@@ -19,6 +19,8 @@ export interface UseAcpSessionOptions {
   sessionId: string;
   endpoint?: string;
   enableAggregation?: boolean;
+  /** 透传给 useAcpStream：false 时不发起连接 */
+  enabled?: boolean;
 }
 
 export interface UseAcpSessionResult {
@@ -178,7 +180,7 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
 }
 
 export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {
-  const { sessionId, endpoint, enableAggregation = true } = options;
+  const { sessionId, endpoint, enableAggregation = true, enabled } = options;
 
   const handleEntry = useCallback(() => {
     // 条目更新时触发重新渲染
@@ -196,6 +198,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
   } = useAcpStream({
     sessionId,
     endpoint,
+    enabled,
     onEntry: handleEntry,
   });
 

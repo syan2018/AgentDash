@@ -19,6 +19,8 @@ import { extractAgentDashMetaFromUpdate } from "./agentdashMeta";
 
 export interface UseAcpStreamOptions {
   sessionId: string;
+  /** 设为 false 时跳过连接，返回空的初始状态（满足 Rules of Hooks 的同时避免无效请求）。默认 true。 */
+  enabled?: boolean;
   endpoint?: string;
   initialEntries?: AcpDisplayEntry[];
   executeRequest?: PromptSessionRequest;
@@ -110,6 +112,7 @@ function mergeToolCallUpdateIntoEntry(
 export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const {
     sessionId,
+    enabled = true,
     endpoint,
     initialEntries = [],
     onEntry,
@@ -256,6 +259,9 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     }, RECEIVING_IDLE_TIMEOUT_MS);
   }, []);
 
+  // 使用 ref 存储最新版本，避免 effect 闭包捕获旧的 enqueueNotification
+  const enqueueNotificationRef = useRef<(n: SessionNotification) => void>(null!);
+
   const enqueueNotification = useCallback((notification: SessionNotification) => {
     pendingNotificationsRef.current.push(notification);
     markReceiving();
@@ -277,6 +283,8 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     }, FLUSH_INTERVAL_MS);
   }, [markReceiving]);
 
+  enqueueNotificationRef.current = enqueueNotification;
+
   const sendCancel = useCallback(() => {
     void fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/cancel`), {
       method: "POST",
@@ -290,6 +298,17 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
 
   useEffect(() => {
     mountedRef.current = true;
+
+    // enabled=false 时（如 sessionId 为占位值），不发起连接，直接进入空闲状态
+    if (!enabled) {
+      setEntries([]);
+      setIsLoading(false);
+      setError(null);
+      setIsConnected(false);
+      return () => {
+        mountedRef.current = false;
+      };
+    }
 
     setEntries(initialEntries);
     setIsLoading(true);
@@ -306,7 +325,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       endpoint,
       onNotification: (notification) => {
         if (!mountedRef.current) return;
-        enqueueNotification(notification);
+        enqueueNotificationRef.current(notification);
       },
       onLifecycleChange: (lifecycle) => {
         if (!mountedRef.current) return;
@@ -357,7 +376,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, endpoint, connectKey]);
+  }, [sessionId, endpoint, connectKey, enabled]);
 
   const close = useCallback(() => {
     if (transportRef.current) {

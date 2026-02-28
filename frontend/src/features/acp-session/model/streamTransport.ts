@@ -178,6 +178,7 @@ class FetchNdjsonTransport implements AcpStreamTransport {
         this.options.onInitialFailure(normalized);
         return;
       }
+      this.options.onError(normalized);
     }
 
     if (!this.closed) {

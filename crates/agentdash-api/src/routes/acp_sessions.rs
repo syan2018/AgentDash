@@ -8,13 +8,11 @@ use axum::{
         Path,
         Query,
         State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::HeaderMap,
     response::IntoResponse,
     response::sse::{Event, KeepAlive, Sse},
 };
-use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use futures::stream::Stream;
 use std::convert::Infallible;
@@ -27,13 +25,6 @@ use crate::{
 use agentdash_executor::{PromptSessionRequest, SessionMeta};
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum WsClientMessage {
-    Execute { #[serde(flatten)] req: PromptSessionRequest },
-    Cancel,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct NdjsonStreamQuery {
@@ -293,73 +284,6 @@ pub async fn acp_session_stream_ndjson(
         ],
         Body::from_stream(stream),
     )
-}
-
-/// 兼容：旧版 WebSocket 流
-pub async fn acp_session_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-    Path(session_id): Path<String>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(state, session_id, socket))
-}
-
-async fn handle_ws(state: Arc<AppState>, session_id: String, socket: WebSocket) {
-    let (history, mut rx) = state.executor_hub.subscribe_with_history(&session_id).await;
-    let (mut sender, mut receiver) = socket.split();
-
-    for n in history {
-        if let Ok(text) = serde_json::to_string(&n) {
-            if sender.send(Message::Text(text.into())).await.is_err() {
-                return;
-            }
-        }
-    }
-
-    let send_task = tokio::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(n) => {
-                    let Ok(text) = serde_json::to_string(&n) else {
-                        continue;
-                    };
-                    if sender.send(Message::Text(text.into())).await.is_err() {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
-    while let Some(Ok(msg)) = receiver.next().await {
-        match msg {
-            Message::Text(text) => {
-                let started = if let Ok(ws_msg) = serde_json::from_str::<WsClientMessage>(&text) {
-                    match ws_msg {
-                        WsClientMessage::Execute { req } => state.executor_hub.start_prompt(&session_id, req).await.ok(),
-                        WsClientMessage::Cancel => state.executor_hub.cancel(&session_id).await.ok(),
-                    };
-                    true
-                } else if let Ok(req) = serde_json::from_str::<PromptSessionRequest>(&text) {
-                    state.executor_hub.start_prompt(&session_id, req).await.ok();
-                    true
-                } else {
-                    false
-                };
-
-                if started {
-                    // no-op
-                }
-            }
-            Message::Close(_) => break,
-            _ => {}
-        }
-    }
-
-    send_task.abort();
-    let _ = send_task.await;
 }
 
 fn parse_ndjson_resume_from(headers: &HeaderMap, query_since_id: Option<u64>) -> u64 {

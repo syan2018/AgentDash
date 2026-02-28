@@ -100,7 +100,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/acp/sessions/{id}/stream/ndjson",
             get(acp_sessions::acp_session_stream_ndjson),
         )
-        .route("/acp/sessions/{id}/ws", get(acp_sessions::acp_session_ws))
         // Events
         .route("/events/stream", get(stream::event_stream))
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
@@ -108,8 +107,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Agent Discovery
         .route("/agents/discovery", get(discovery::get_discovery))
         .route(
-            "/agents/discovered-options/ws",
-            get(discovered_options::discovered_options_ws),
+            "/agents/discovered-options/stream",
+            get(discovered_options::discovered_options_stream),
         );
 
     Router::new()

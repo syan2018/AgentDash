@@ -26,7 +26,7 @@ export default defineConfig({
           proxy.on('error', (err, _req, res) => {
             const code = getProxyErrorCode(err)
             // 后端启动/编译期间 ECONNREFUSED 很常见，不应导致 dev server 退出
-            if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNREFUSED') return
+            if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNREFUSED' || code === 'ECONNABORTED') return
 
             // res 在某些错误分支可能不是 Node 的 ServerResponse（例如是 Socket），需要守卫
             const anyRes = res as unknown as {
@@ -47,7 +47,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
-        ws: true,
+        // NDJSON/SSE 是普通 HTTP 长连接，不需要 WebSocket 代理；ws 由上面的精确规则单独处理
+        ws: false,
         // /api 下含 SSE/NDJSON 长连接（例如 acp session stream），统一关闭超时
         timeout: 0,
         proxyTimeout: 0,
@@ -55,7 +56,13 @@ export default defineConfig({
           proxy.removeAllListeners('error')
           proxy.on('error', (err, _req, res) => {
             const code = getProxyErrorCode(err)
-            if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNREFUSED') return
+            // ECONNRESET/EPIPE/ECONNABORTED：HMR 刷新、页面切换、长连接断开时的正常现象
+            if (
+              code === 'ECONNRESET' ||
+              code === 'EPIPE' ||
+              code === 'ECONNREFUSED' ||
+              code === 'ECONNABORTED'
+            ) return
 
             const anyRes = res as unknown as {
               headersSent?: boolean

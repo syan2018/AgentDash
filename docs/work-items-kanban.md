@@ -1,7 +1,9 @@
 # AgentDash 工作项看板
 
 > **生成日期**: 2026-02-26
+> **最近校准**: 2026-02-28
 > **基于**: 项目设计文档、参考项目分析、代码实现审查
+> **校准范围**: 代码主干实现（后端路由/仓储、前端主路径、执行流）；未包含本地无法运行的 clippy/test 结果
 > **目的**: 为后续开发提供完整的工作项清单，按优先级分组
 
 ---
@@ -22,29 +24,66 @@
 | 8 | Executor/Model 选择器 | 02-26 | WebSocket 选项发现、前端选择器 |
 | 9 | 整洁架构重构 | 02-26 | Domain/Infrastructure 分层、Repository 模式 |
 
+### 最近新增落地（02-27 ~ 02-28）
+
+- Story 从抽屉升级为独立页面，并补齐 Project/Workspace/Story/Task 多处 CRUD 链路
+- ACP 会话流完成多轮 turn 合并修复，补充 `_meta.agentdash` 元信息跨层契约
+- 流式传输由 WebSocket 端点收敛为 NDJSON HTTP 流（保留 Resume 语义）
+
 ### 当前 Crate 状态
 
 | Crate | 状态 | 文件数 | 说明 |
 |-------|------|--------|------|
-| `agentdash-domain` | ✅ 完成 | 14 | 实体、值对象、Repository traits |
-| `agentdash-infrastructure` | ✅ 完成 | 6 | SQLite Repository 实现 |
-| `agentdash-executor` | ✅ 大部分 | 7 | VibeKanban 完整、RemoteAcp 骨架 |
-| `agentdash-api` | ✅ 完成 | 11 | 路由、流、错误处理 |
+| `agentdash-domain` | ✅ 在用 | 23 | 实体、值对象、Repository traits（已支撑 Project/Workspace/Story/Task/Backend） |
+| `agentdash-infrastructure` | ✅ 在用 | 8 | SQLite Repository 实现（Project/Workspace/Story/Task/Backend） |
+| `agentdash-executor` | ✅ 大部分 | 8 | 本地执行器链路可用，Remote ACP 仍为骨架 |
+| `agentdash-api` | ✅ 在用 | 13 | 路由、NDJSON/SSE 流、错误处理 |
+| `agentdash-acp-meta` | ✅ 在用 | 2 | ACP `_meta.agentdash` 语义层支持 |
+| `agentdash-acp-warp` | ⚠️ 空目录 | 0 | 目录存在但未纳入工作区构建 |
 | `agentdash-coordinator` | ⚠️ 遗留 | 4 | 不在 workspace，待清理 |
 | `agentdash-application` | ❌ 未创建 | 0 | 规划中 |
 
 ### 8 大模块完成度
 
 ```
-02 State        ████░░░░░░  40%   [P1] Story/Task 基础 CRUD + StateChange
-01 Connection   ███░░░░░░░  30%   [P2] Backend CRUD + 单连接器
-05 Execution    █████░░░░░  50%   [P4] Agent 启动/取消/流 + Session 历史
-03 Workspace    ██░░░░░░░░  20%   [P3] vibe-kanban worktree 隔离
-08 View         █░░░░░░░░░  15%   [P7] 基础前端列表 + View CRUD
+02 State        ██████░░░░  60%   [P1] CRUD/Context/Artifacts 已落地，状态守卫与统一 StateChange 未完成
+01 Connection   ████░░░░░░  35%   [P2] Backend CRUD 可用，但仍是单连接器，Remote ACP 未完成
+05 Execution    ███████░░░  65%   [P4] Prompt/Cancel/会话流与历史可用，Session SQLite 化未完成
+03 Workspace    ████░░░░░░  40%   [P3] CRUD + Git 检测 + 自动状态流转已通，WorkspaceManager 未抽象
+08 View         ███░░░░░░░  30%   [P7] 看板拖拽与 Story 详情页已落地，树/时间线/聚合视图未完成
 04 Orchestration░░░░░░░░░░   0%   [P5] 未开始
 06 Injection    ░░░░░░░░░░   0%   [P6] 未开始
 07 Validation   ░░░░░░░░░░   0%   [P6] 未开始
 ```
+
+### 核心工作项状态快照（截至 2026-02-28）
+
+> 状态说明：`已完成` / `部分完成` / `未完成` / `待验证`
+
+| ID | 状态 | 进度说明 |
+|----|------|----------|
+| P0-01 | 未完成 | `agentdash-coordinator` 仍存在且未清理 |
+| P0-02 | 已完成 | `TaskRepository` 及 SQLite 实现已具备完整 CRUD |
+| P0-03 | 部分完成 | Story CRUD 已补齐，但缺少独立 `update_status` 与状态守卫 |
+| P0-04 | 未完成 | 领域层缺少系统化单元测试 |
+| P0-05 | 待验证 | 本地环境缺少 `cargo`，无法确认 clippy 是否已清零 |
+| P0-06 | 未完成 | `frontend/index.html` 标题仍为 `frontend` |
+| P0-07 | 未完成 | frontend/backend `directory-structure.md` 仍含“技术栈未定”表述 |
+| P1-01 | 未完成 | Story 状态机无迁移守卫 |
+| P1-02 | 未完成 | Task 状态机无迁移守卫 |
+| P1-03 | 部分完成 | Story create/update 会写 `state_changes`，Task/Workspace 变更未统一写入 |
+| P1-04 | 已完成 | Story `context` 已结构化并贯通存储 |
+| P1-05 | 部分完成 | Task `artifacts` 结构已落库，自动捕获流程未完成 |
+| P1-07 | 部分完成 | Story CRUD + 看板拖拽已可用，仍有交互细节待打磨 |
+| P1-08 | 部分完成 | Task 创建/更新基础能力可用，主页面 Task 详情路径未接通 |
+| P2-01 | 未完成 | 运行态仍为单 connector（未实现 ConnectorRegistry） |
+| P2-02 | 未完成 | `RemoteAcpConnector` 仍为骨架返回未实现错误 |
+| P2-05 | 部分完成 | 后端列表可展示，但缺少完整的管理交互入口与健康态反馈 |
+| P2-06 | 部分完成 | Story 已携带 `backend_id`，但请求未按 backend 动态路由到不同 connector |
+| P3-01 | 部分完成 | 具备 `Pending -> Preparing -> Ready` 自动流转，其余生命周期未覆盖 |
+| P4-01 | 部分完成 | Task 结构支持 AgentBinding，但执行绑定闭环不完整 |
+| P4-05 | 未完成 | Session 历史仍是 JSONL 存储，未迁移 SQLite |
+| P7-02 | 已完成 | 看板视图与拖拽交互已落地 |
 
 ---
 

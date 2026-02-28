@@ -69,7 +69,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
+| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns, ACP 事件归并契约 | ✅ 已更新 |
 | [State Management](./state-management.md) | Local state, global state, server state | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |

@@ -1,7 +1,14 @@
 /**
  * ACP 会话条目渲染组件
  *
- * 根据条目类型渲染不同的 UI
+ * 根据条目类型渲染不同的 UI。
+ * 对照 Zed 实现，覆盖所有 ACP SessionUpdate 类型：
+ * - user_message_chunk / agent_message_chunk / agent_thought_chunk → AcpMessageCard
+ * - tool_call / tool_call_update → AcpToolCallCard
+ * - plan → AcpPlanCard
+ * - session_info_update → AcpSystemEventCard
+ * - usage_update → AcpUsageCard
+ * - available_commands_update / current_mode_update / config_option_update → 静默
  */
 
 import { useState } from "react";
@@ -18,7 +25,6 @@ import { AcpPlanCard } from "./AcpPlanCard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
-  /** ID of the entry currently being streamed, or null */
   streamingEntryId?: string | null;
 }
 
@@ -88,11 +94,11 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
     case "plan":
       return <AcpPlanCard entries={update.entries} />;
 
+    case "session_info_update":
+    case "usage_update":
     case "available_commands_update":
     case "current_mode_update":
     case "config_option_update":
-    case "session_info_update":
-    case "usage_update":
       return null;
 
     default:
@@ -101,6 +107,7 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
 }
 
 function AggregatedToolGroupEntry({ group }: { group: AggregatedEntryGroup }) {
+  const [expanded, setExpanded] = useState(false);
   const { aggregationType, entries } = group;
 
   const getIcon = () => {
@@ -143,24 +150,31 @@ function AggregatedToolGroupEntry({ group }: { group: AggregatedEntryGroup }) {
   };
 
   return (
-    <div className="rounded-md border border-border bg-card/50 p-3">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+    <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
+      >
         <span>{getIcon()}</span>
         <span>{getLabel()}</span>
-        <span className="ml-auto text-xs">{entries.length} 个</span>
-      </div>
-      <div className="mt-2 space-y-1">
-        {entries.map((entry) => (
-          <div key={entry.id} className="text-xs text-muted-foreground">
-            {entry.update.sessionUpdate === "tool_call" && (
-              <span>{entry.update.title}</span>
-            )}
-            {entry.update.sessionUpdate === "tool_call_update" && (
-              <span>{entry.update.title ?? "更新"}</span>
-            )}
-          </div>
-        ))}
-      </div>
+        <span className="ml-auto text-xs tabular-nums">{entries.length} 个</span>
+        <span className="text-xs">{expanded ? "▲" : "▼"}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-border px-3 py-2 space-y-1.5">
+          {entries.map((entry) => (
+            <div key={entry.id} className="text-xs text-muted-foreground">
+              {entry.update.sessionUpdate === "tool_call" && (
+                <span>{entry.update.title}</span>
+              )}
+              {entry.update.sessionUpdate === "tool_call_update" && (
+                <span>{entry.update.title ?? "更新"}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -179,21 +193,21 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
     .join("");
 
   return (
-    <div className="rounded-md border border-border bg-muted/30 p-3">
+    <div className="rounded-lg border border-border/50 bg-muted/20 overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between text-sm text-muted-foreground"
+        className="flex w-full items-center justify-between px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
       >
         <span className="flex items-center gap-2">
-          <span>🧠</span>
-          <span>思考过程 ({entries.length} 条)</span>
+          <span className="text-xs opacity-70">🧠</span>
+          <span className="text-xs">思考过程 ({entries.length} 条)</span>
         </span>
-        <span>{expanded ? "收起" : "展开"}</span>
+        <span className="text-xs">{expanded ? "收起" : "展开"}</span>
       </button>
       {expanded && (
-        <div className="mt-2 text-sm text-muted-foreground">
-          <pre className="whitespace-pre-wrap font-mono text-xs">
+        <div className="border-t border-border/50 px-3 py-2.5">
+          <pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground/80 leading-relaxed">
             {combinedContent}
           </pre>
         </div>
@@ -207,15 +221,15 @@ function AggregatedDiffGroupEntry({ group }: { group: AggregatedEntryGroup }) {
   const { entries } = group;
 
   return (
-    <div className="rounded-md border border-border bg-card/50 p-3">
-      <div className="flex items-center gap-2 text-sm">
+    <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2.5 text-sm border-b border-border/50">
         <span>📝</span>
-        <span className="font-mono">{filePath}</span>
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="font-mono text-xs">{filePath}</span>
+        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
           {entries.length} 次编辑
         </span>
       </div>
-      <div className="mt-2 space-y-1">
+      <div className="px-3 py-2 space-y-1.5">
         {entries.map((entry) => (
           <AcpToolCallCard
             key={entry.id}

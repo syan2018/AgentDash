@@ -1,7 +1,8 @@
 /**
  * ACP 会话管理 Hook
  *
- * 整合流管理和条目聚合逻辑
+ * 整合流管理和条目聚合逻辑。
+ * 暴露 displayItems（聚合后）、rawEntries、tokenUsage 等供 UI 使用。
  */
 
 import { useCallback, useMemo } from "react";
@@ -13,6 +14,7 @@ import type {
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
   ToolAggregationType,
+  TokenUsageInfo,
 } from "./types";
 
 export interface UseAcpSessionOptions {
@@ -28,12 +30,15 @@ export interface UseAcpSessionResult {
   rawEntries: AcpDisplayEntry[];
   isConnected: boolean;
   isLoading: boolean;
+  isReceiving: boolean;
   error: Error | null;
   reconnect: () => void;
   close: () => void;
   sendCancel: () => void;
   /** ID of the entry currently being streamed (last agent_message_chunk while receiving data), or null */
   streamingEntryId: string | null;
+  /** 最新的 token 用量（累计） */
+  tokenUsage: TokenUsageInfo | null;
 }
 
 function getToolAggregationType(update: SessionUpdate): ToolAggregationType | null {
@@ -89,6 +94,17 @@ function getFilePathFromUpdate(update: SessionUpdate): string | null {
   return null;
 }
 
+/** session_info_update 和 usage_update 不参与聚合，直接 pass-through */
+function isNonAggregatableEvent(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "session_info_update" ||
+    update.sessionUpdate === "usage_update" ||
+    update.sessionUpdate === "available_commands_update" ||
+    update.sessionUpdate === "current_mode_update" ||
+    update.sessionUpdate === "config_option_update"
+  );
+}
+
 function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
   const result: AcpDisplayItem[] = [];
   let currentToolGroup: AggregatedEntryGroup | null = null;
@@ -113,7 +129,13 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
   for (const entry of entries) {
     const update = entry.update;
 
-    // 处理文件编辑聚合（优先于通用工具聚合）
+    // 系统事件不聚合
+    if (isNonAggregatableEvent(update)) {
+      flushGroups();
+      result.push(entry);
+      continue;
+    }
+
     if (isFileEditUpdate(update)) {
       const filePath = getFilePathFromUpdate(update);
       if (filePath) {
@@ -134,7 +156,6 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
       }
     }
 
-    // 处理工具调用聚合
     const aggType = getToolAggregationType(update);
     if (aggType && aggType !== "file_edit") {
       if (currentToolGroup && currentToolGroup.aggregationType === aggType) {
@@ -152,7 +173,6 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
       continue;
     }
 
-    // 处理思考消息聚合
     if (isThinkingUpdate(update)) {
       if (currentThinkingGroup) {
         currentThinkingGroup.entries.push(entry);
@@ -168,12 +188,10 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
       continue;
     }
 
-    // 非聚合条目
     flushGroups();
     result.push(entry);
   }
 
-  // 结束剩余的聚合组
   flushGroups();
 
   return result;
@@ -192,6 +210,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     isLoading,
     isReceiving,
     error,
+    tokenUsage,
     reconnect,
     close,
     sendCancel,
@@ -209,7 +228,6 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     return aggregateEntries(entries);
   }, [entries, enableAggregation]);
 
-  // Streaming indicator: only the last agent_message_chunk while actively receiving data
   const streamingEntryId = useMemo(() => {
     if (!isReceiving || entries.length === 0) return null;
     const last = entries[entries.length - 1]!;
@@ -222,11 +240,13 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     rawEntries: entries,
     isConnected,
     isLoading,
+    isReceiving,
     error,
     reconnect,
     close,
     sendCancel,
     streamingEntryId,
+    tokenUsage,
   };
 }
 

@@ -1,25 +1,23 @@
 /**
  * ACP 消息卡片
  *
- * 显示用户消息、Agent 消息和思考过程
+ * 显示用户消息、Agent 消息和思考过程。
+ * 使用 react-markdown + remark-gfm 实现正确的 Markdown 渲染。
  */
 
-import { useState } from "react";
+import { useState, memo } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export interface AcpMessageCardProps {
-  /** 消息类型 */
   type: "user" | "agent" | "thinking";
-  /** 消息内容 */
   content: string;
-  /** 是否流式传输中 */
   isStreaming?: boolean;
-  /** 是否可折叠 */
   collapsible?: boolean;
-  /** 默认折叠状态 */
   defaultCollapsed?: boolean;
 }
 
-export function AcpMessageCard({
+export const AcpMessageCard = memo(function AcpMessageCard({
   type,
   content,
   isStreaming,
@@ -30,24 +28,23 @@ export function AcpMessageCard({
 
   const config = MESSAGE_CONFIG[type];
 
-  // 思考消息默认折叠
   if (type === "thinking" && !collapsible) {
     return (
-      <div className="rounded-md border border-border bg-muted/30 p-3">
+      <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5">
         <button
           type="button"
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="flex w-full items-center justify-between text-sm text-muted-foreground"
         >
           <span className="flex items-center gap-2">
-            <span>{config.icon}</span>
-            <span>思考过程</span>
+            <span className="text-xs opacity-70">{config.icon}</span>
+            <span className="text-xs">思考过程</span>
           </span>
-          <span>{isCollapsed ? "展开" : "收起"}</span>
+          <span className="text-xs">{isCollapsed ? "展开" : "收起"}</span>
         </button>
         {!isCollapsed && (
-          <div className="mt-2 text-sm text-muted-foreground">
-            <pre className="whitespace-pre-wrap font-mono text-xs opacity-70">
+          <div className="mt-2 text-sm text-muted-foreground/80">
+            <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
               {content}
             </pre>
           </div>
@@ -60,39 +57,33 @@ export function AcpMessageCard({
     <div className={`flex gap-3 ${config.containerClass}`}>
       {/* 头像/图标 */}
       <div
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${config.avatarClass}`}
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${config.avatarClass}`}
       >
-        <span className="text-sm">{config.icon}</span>
+        <span className="text-xs">{config.icon}</span>
       </div>
 
       {/* 内容 */}
       <div className="flex-1 min-w-0">
-        {/* 标签 */}
         <p className={`mb-1 text-xs ${config.labelClass}`}>{config.label}</p>
 
-        {/* 消息内容 */}
         <div className="relative">
-          <div
-            className={`prose prose-sm max-w-none dark:prose-invert ${config.contentClass}`}
-          >
+          <div className={config.contentClass}>
             {type === "user" ? (
-              <p className="whitespace-pre-wrap">{content}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{content}</p>
             ) : (
-              <MarkdownContent content={content} />
+              <MarkdownRenderer content={content} />
             )}
           </div>
 
-          {/* 流式指示器 */}
           {isStreaming && (
-            <span className="ml-1 inline-block h-4 w-2 animate-pulse bg-primary" />
+            <span className="ml-0.5 inline-block h-4 w-[3px] animate-pulse rounded-sm bg-primary align-text-bottom" />
           )}
         </div>
       </div>
     </div>
   );
-}
+});
 
-/** 消息配置 */
 const MESSAGE_CONFIG = {
   user: {
     icon: "👤",
@@ -120,94 +111,64 @@ const MESSAGE_CONFIG = {
   },
 };
 
-/** Markdown 内容渲染（简化版） */
-function MarkdownContent({ content }: { content: string }) {
-  // 简单的 Markdown 渲染
-  // 实际项目中可以使用 react-markdown 等库
-  const lines = content.split("\n");
-
+const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: string }) {
   return (
-    <div className="space-y-2">
-      {lines.map((line, index) => {
-        // 代码块
-        if (line.startsWith("```")) {
+    <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:before:content-none prose-code:after:content-none">
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        pre({ children }) {
           return (
-            <pre
-              key={index}
-              className="overflow-auto rounded-md bg-muted/50 p-3 text-xs"
-            >
-              <code>{line.replace(/```/g, "")}</code>
+            <pre className="overflow-auto rounded-md bg-muted/60 p-3 text-xs leading-relaxed">
+              {children}
             </pre>
           );
-        }
-
-        // 行内代码
-        if (line.includes("`")) {
-          const parts = line.split(/(`[^`]+`)/);
+        },
+        code({ children, className }) {
+          const isBlock = className?.startsWith("language-");
+          if (isBlock) {
+            return <code className="font-mono text-xs">{children}</code>;
+          }
           return (
-            <p key={index} className="whitespace-pre-wrap">
-              {parts.map((part, i) =>
-                part.startsWith("`") && part.endsWith("`") ? (
-                  <code
-                    key={i}
-                    className="rounded bg-muted px-1 py-0.5 text-xs font-mono"
-                  >
-                    {part.slice(1, -1)}
-                  </code>
-                ) : (
-                  part
-                )
-              )}
-            </p>
+            <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
+              {children}
+            </code>
           );
-        }
-
-        // 列表项
-        if (line.startsWith("- ") || line.startsWith("* ")) {
+        },
+        table({ children }) {
           return (
-            <li key={index} className="ml-4">
-              {line.slice(2)}
-            </li>
+            <div className="overflow-auto rounded-md border border-border my-2">
+              <table className="min-w-full text-sm">{children}</table>
+            </div>
           );
-        }
-
-        // 标题
-        if (line.startsWith("# ")) {
+        },
+        th({ children }) {
           return (
-            <h1 key={index} className="text-lg font-bold">
-              {line.slice(2)}
-            </h1>
+            <th className="border-b border-border bg-muted/50 px-3 py-1.5 text-left text-xs font-medium">
+              {children}
+            </th>
           );
-        }
-        if (line.startsWith("## ")) {
+        },
+        td({ children }) {
           return (
-            <h2 key={index} className="text-base font-semibold">
-              {line.slice(3)}
-            </h2>
+            <td className="border-b border-border px-3 py-1.5 text-xs">
+              {children}
+            </td>
           );
-        }
-        if (line.startsWith("### ")) {
+        },
+        a({ children, href }) {
           return (
-            <h3 key={index} className="text-sm font-medium">
-              {line.slice(4)}
-            </h3>
+            <a href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
           );
-        }
-
-        // 普通段落
-        if (line.trim()) {
-          return (
-            <p key={index} className="whitespace-pre-wrap">
-              {line}
-            </p>
-          );
-        }
-
-        // 空行
-        return <br key={index} />;
-      })}
+        },
+      }}
+    >
+      {content}
+    </Markdown>
     </div>
   );
-}
+});
 
 export default AcpMessageCard;

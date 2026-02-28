@@ -46,10 +46,7 @@ export type {
 import type {
   SessionId,
   SessionUpdate,
-  ToolCall,
-  ToolCallUpdate,
   ToolCallId,
-  ToolCallStatus,
   ContentBlock,
 } from "@agentclientprotocol/sdk";
 
@@ -66,7 +63,10 @@ export type ToolAggregationType =
   | "command_run_edit"
   | "command_run_fetch";
 
-/** ACP 显示条目 */
+/**
+ * ACP 显示条目 — entries 数组中的基本单元。
+ * 每个 ACP SessionNotification 归并后都对应一个 AcpDisplayEntry。
+ */
 export interface AcpDisplayEntry {
   id: string;
   sessionId: SessionId;
@@ -81,10 +81,10 @@ export interface AcpDisplayEntry {
 /** 工具调用聚合状态 */
 export interface AcpToolCallState {
   toolCallId: ToolCallId;
-  call: ToolCall | null;
-  updates: ToolCallUpdate[];
+  call: SessionUpdate | null;
+  updates: SessionUpdate[];
   finalResult?: unknown;
-  status: ToolCallStatus;
+  status: string;
 }
 
 /** 聚合条目组 */
@@ -117,6 +117,15 @@ export type OnEntriesUpdated = (
   loading: boolean,
 ) => void;
 
+/** Token 用量信息（从 usage_update 事件提取） */
+export interface TokenUsageInfo {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  maxTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+}
 
 // ==================== 类型守卫 ====================
 
@@ -153,4 +162,14 @@ export function extractTextFromContentBlock(content: ContentBlock | undefined): 
     return content.text;
   }
   return "";
+}
+
+/** 从 SessionUpdate 判断是否是系统事件（session_info_update）*/
+export function isSystemEvent(update: SessionUpdate): boolean {
+  return update.sessionUpdate === "session_info_update";
+}
+
+/** 从 SessionUpdate 判断是否是用量事件（usage_update）*/
+export function isUsageEvent(update: SessionUpdate): boolean {
+  return update.sessionUpdate === "usage_update";
 }

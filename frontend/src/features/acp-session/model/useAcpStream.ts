@@ -4,6 +4,13 @@
  * 处理 Streaming HTTP（SSE/NDJSON）连接和 SessionNotification 消息流。
  * 采用 entries 数组作为唯一数据源（single source of truth），
  * tool_call / tool_call_update 直接原地合并到 entries 中。
+ *
+ * 对照 Zed 实现的关键行为：
+ * - tool_call: upsert（按 toolCallId 查找，存在则更新，否则新建）
+ * - tool_call_update: 合并到已有 entry；若找不到锚点则创建"孤立 update"条目
+ * - agent_message_chunk / user_message_chunk / agent_thought_chunk: 合并相邻同类型同 turn 的 chunk
+ * - session_info_update / usage_update: 直接添加新条目（不再丢弃）
+ * - isPendingApproval: 仅在 status 为 "pending" 且尚未有后续非-pending 状态时保留
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -12,14 +19,14 @@ import type {
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import { buildApiPath } from "../../../api/origin";
-import type { AcpDisplayEntry } from "./types";
+import type { AcpDisplayEntry, TokenUsageInfo } from "./types";
 import type { PromptSessionRequest } from "../../../services/executor";
 import { createAcpStreamTransport, type AcpStreamTransport } from "./streamTransport";
 import { extractAgentDashMetaFromUpdate } from "./agentdashMeta";
 
 export interface UseAcpStreamOptions {
   sessionId: string;
-  /** 设为 false 时跳过连接，返回空的初始状态（满足 Rules of Hooks 的同时避免无效请求）。默认 true。 */
+  /** 设为 false 时跳过连接，返回空的初始状态。默认 true。 */
   enabled?: boolean;
   endpoint?: string;
   initialEntries?: AcpDisplayEntry[];
@@ -36,6 +43,8 @@ export interface UseAcpStreamResult {
   /** True while actively receiving notifications (resets after a short idle timeout) */
   isReceiving: boolean;
   error: Error | null;
+  /** 最新的 token 用量信息（累计更新） */
+  tokenUsage: TokenUsageInfo | null;
   reconnect: () => void;
   close: () => void;
   sendCancel: () => void;
@@ -53,12 +62,9 @@ function mergeStreamChunk(previous: string, incoming: string): string {
   if (!previous) return incoming;
   if (incoming === previous) return previous;
 
-  // Some providers send full snapshot chunks.
   if (incoming.startsWith(previous)) return incoming;
-  // Some providers resend the same tail chunk.
   if (previous.endsWith(incoming)) return previous;
 
-  // Merge by overlap to avoid duplicate boundaries.
   const maxOverlap = Math.min(previous.length, incoming.length);
   for (let size = maxOverlap; size > 0; size -= 1) {
     if (previous.slice(-size) === incoming.slice(0, size)) {
@@ -88,7 +94,7 @@ function getTurnId(update: SessionUpdate): string | undefined {
 
 /**
  * 将 tool_call_update 的字段合并到已有 tool_call entry 中。
- * 仿照 ABCCraft 的 mergeToolCallUpdate 策略：只覆盖非空字段。
+ * 仿照 Zed 的 update_fields 策略：只覆盖非空字段，保留已有值。
  */
 function mergeToolCallUpdateIntoEntry(
   existingUpdate: SessionUpdate,
@@ -109,6 +115,37 @@ function mergeToolCallUpdateIntoEntry(
   } as unknown as SessionUpdate;
 }
 
+/**
+ * 从 usage_update 提取 token 用量信息。
+ * 支持 ACP 标准字段（size/used）和 AgentDash 扩展字段。
+ */
+function extractTokenUsage(update: SessionUpdate): TokenUsageInfo | null {
+  if (update.sessionUpdate !== "usage_update") return null;
+  const u = update as Record<string, unknown>;
+  const usage: TokenUsageInfo = {};
+
+  // ACP 标准字段
+  if (typeof u.size === "number") usage.maxTokens = u.size;
+  if (typeof u.used === "number") usage.totalTokens = u.used;
+
+  // AgentDash 扩展字段
+  if (typeof u.inputTokens === "number") usage.inputTokens = u.inputTokens;
+  if (typeof u.outputTokens === "number") usage.outputTokens = u.outputTokens;
+  if (typeof u.totalTokens === "number") usage.totalTokens = u.totalTokens;
+  if (typeof u.maxTokens === "number") usage.maxTokens = u.maxTokens;
+  if (typeof u.cacheReadTokens === "number") usage.cacheReadTokens = u.cacheReadTokens;
+  if (typeof u.cacheCreationTokens === "number") usage.cacheCreationTokens = u.cacheCreationTokens;
+
+  return usage;
+}
+
+/**
+ * 判断 tool call 状态是否属于终态（不可再变更 isPendingApproval）
+ */
+function isTerminalToolCallStatus(status: unknown): boolean {
+  return status === "completed" || status === "failed" || status === "canceled" || status === "rejected";
+}
+
 export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const {
     sessionId,
@@ -126,6 +163,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const [isReceiving, setIsReceiving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [connectKey, setConnectKey] = useState(0);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsageInfo | null>(null);
 
   const transportRef = useRef<AcpStreamTransport | null>(null);
   const mountedRef = useRef(true);
@@ -151,6 +189,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     });
 
     // ── tool_call ──────────────────────────────────────────────
+    // Zed 模式：upsert — 如果已有同 toolCallId 的 entry，则覆盖；否则新建
     if (update.sessionUpdate === "tool_call") {
       const id = getToolCallId(update)!;
       let existingIndex = -1;
@@ -160,20 +199,22 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
           break;
         }
       }
+      const isPending = update.status === "pending";
       if (existingIndex >= 0) {
         const next = [...prev];
         next[existingIndex] = {
           ...prev[existingIndex]!,
           update,
           turnId: prev[existingIndex]!.turnId ?? getTurnId(update),
-          isPendingApproval: update.status === "pending",
+          isPendingApproval: isPending,
         };
         return next;
       }
-      return [...prev, makeEntry(update, { isPendingApproval: update.status === "pending" })];
+      return [...prev, makeEntry(update, { isPendingApproval: isPending })];
     }
 
     // ── tool_call_update ───────────────────────────────────────
+    // Zed 模式：合并到已有 entry；若找不到锚点则创建孤立 update 条目
     if (update.sessionUpdate === "tool_call_update") {
       const id = getToolCallId(update)!;
       let existingIndex = -1;
@@ -184,17 +225,50 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
         }
       }
       if (existingIndex >= 0) {
-        const merged = mergeToolCallUpdateIntoEntry(prev[existingIndex]!.update, update);
+        const existingEntry = prev[existingIndex]!;
+        const merged = mergeToolCallUpdateIntoEntry(existingEntry.update, update);
+        const incomingStatus = (update as Record<string, unknown>).status;
+        // isPendingApproval: 终态覆盖为 false；pending 状态设为 true；其余保留
+        let nextPendingApproval = existingEntry.isPendingApproval;
+        if (isTerminalToolCallStatus(incomingStatus)) {
+          nextPendingApproval = false;
+        } else if (incomingStatus === "pending") {
+          nextPendingApproval = true;
+        } else if (incomingStatus === "in_progress") {
+          nextPendingApproval = false;
+        }
+
         const next = [...prev];
         next[existingIndex] = {
-          ...prev[existingIndex]!,
+          ...existingEntry,
           update: merged,
-          turnId: prev[existingIndex]!.turnId ?? getTurnId(update),
-          isPendingApproval: update.status === "pending",
+          turnId: existingEntry.turnId ?? getTurnId(update),
+          isPendingApproval: nextPendingApproval,
         };
         return next;
       }
-      return [...prev, makeEntry(update, { isPendingApproval: update.status === "pending" })];
+      // 孤立 update（找不到锚点 tool_call）：直接作为新条目添加
+      return [...prev, makeEntry(update, {
+        isPendingApproval: (update as Record<string, unknown>).status === "pending",
+      })];
+    }
+
+    // ── session_info_update ────────────────────────────────────
+    // 不再丢弃，作为条目添加（系统消息、错误、用户反馈等）
+    if (update.sessionUpdate === "session_info_update") {
+      return [...prev, makeEntry(update)];
+    }
+
+    // ── usage_update ───────────────────────────────────────────
+    // 不再丢弃，作为条目添加（token 用量信息）
+    if (update.sessionUpdate === "usage_update") {
+      return [...prev, makeEntry(update)];
+    }
+
+    // ── plan ───────────────────────────────────────────────────
+    if (update.sessionUpdate === "plan") {
+      // 计划：直接添加（可以考虑 upsert，但协议层 plan 可多次发送）
+      return [...prev, makeEntry(update)];
     }
 
     // ── chunk 类型（agent_message / user_message / agent_thought）───
@@ -207,8 +281,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       return [...prev, makeEntry(update)];
     }
 
-    // 合并 chunk：保持时间线顺序（ABCCopilot 风格），只合并“相邻、同类型、同 turn”的文本 chunk。
-    // 重要：不能回扫合并到更早的 entry，否则会把工具卡片挤到列表底部。
+    // 合并 chunk：保持时间线顺序，只合并"相邻、同类型、同 turn"的文本 chunk。
     if (prev.length === 0) {
       return [makeEntry(update)];
     }
@@ -259,12 +332,18 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     }, RECEIVING_IDLE_TIMEOUT_MS);
   }, []);
 
-  // 使用 ref 存储最新版本，避免 effect 闭包捕获旧的 enqueueNotification
   const enqueueNotificationRef = useRef<(n: SessionNotification) => void>(null!);
 
   const enqueueNotification = useCallback((notification: SessionNotification) => {
     pendingNotificationsRef.current.push(notification);
     markReceiving();
+
+    // 实时更新 token usage（不等 flush）
+    const usage = extractTokenUsage(notification.update);
+    if (usage) {
+      setTokenUsage((prev) => (prev ? { ...prev, ...usage } : usage));
+    }
+
     if (flushTimerRef.current) return;
     flushTimerRef.current = setTimeout(() => {
       flushTimerRef.current = null;
@@ -299,12 +378,12 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   useEffect(() => {
     mountedRef.current = true;
 
-    // enabled=false 时（如 sessionId 为占位值），不发起连接，直接进入空闲状态
     if (!enabled) {
       setEntries([]);
       setIsLoading(false);
       setError(null);
       setIsConnected(false);
+      setTokenUsage(null);
       return () => {
         mountedRef.current = false;
       };
@@ -314,6 +393,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     setIsLoading(true);
     setError(null);
     setIsConnected(false);
+    setTokenUsage(null);
 
     if (transportRef.current) {
       transportRef.current.close();
@@ -397,6 +477,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     setIsLoading(true);
     setIsConnected(false);
     setIsReceiving(false);
+    setTokenUsage(null);
     setConnectKey((k) => k + 1);
   }, []);
 
@@ -406,6 +487,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     isLoading,
     isReceiving,
     error,
+    tokenUsage,
     reconnect,
     close,
     sendCancel,

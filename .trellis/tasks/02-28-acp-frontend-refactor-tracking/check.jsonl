@@ -1,0 +1,4 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Shared coding standards"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": "frontend/src/features/acp-session/model/agentdashMeta.test.ts", "reason": "协议 meta 解析测试基线"}

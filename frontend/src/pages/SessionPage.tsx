@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAcpSession, AcpSessionEntry } from "../features/acp-session";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../features/acp-session/model/types";
-import type { AcpDisplayItem } from "../features/acp-session/model/types";
+import type { AcpDisplayItem, TokenUsageInfo } from "../features/acp-session/model/types";
 import { promptSession, type ExecutorConfig } from "../services/executor";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import {
@@ -51,6 +51,74 @@ function getItemKey(item: AcpDisplayItem): string {
   return item.id;
 }
 
+function formatTokens(n: number | undefined): string {
+  if (n == null) return "-";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+/**
+ * 上下文窗口用量指示器 — 仿 Claude/ChatGPT 的小圆环。
+ * hover 时展示详细数值。
+ */
+function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
+  const [showDetail, setShowDetail] = useState(false);
+
+  if (!usage) return null;
+  const { totalTokens, maxTokens, inputTokens, outputTokens } = usage;
+  const hasAny = totalTokens != null || inputTokens != null || outputTokens != null;
+  if (!hasAny) return null;
+
+  const percent = (maxTokens && totalTokens) ? Math.min(Math.round((totalTokens / maxTokens) * 100), 100) : undefined;
+  const radius = 7;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDash = percent != null ? (percent / 100) * circumference : 0;
+  const isHigh = percent != null && percent > 80;
+
+  return (
+    <span
+      className="relative flex items-center"
+      onMouseEnter={() => setShowDetail(true)}
+      onMouseLeave={() => setShowDetail(false)}
+    >
+      {/* 圆环 */}
+      <svg width="20" height="20" className="shrink-0 -rotate-90">
+        <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted/40" />
+        {percent != null && (
+          <circle
+            cx="10" cy="10" r={radius}
+            fill="none"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={`${strokeDash} ${circumference}`}
+            className={isHigh ? "text-warning" : "text-primary/70"}
+            stroke="currentColor"
+          />
+        )}
+      </svg>
+
+      {/* Tooltip */}
+      {showDetail && (
+        <span className="absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
+          {percent != null && <span className="font-medium">{percent}% 上下文</span>}
+          {totalTokens != null && maxTokens != null && (
+            <span className="text-muted-foreground"> ({formatTokens(totalTokens)}/{formatTokens(maxTokens)})</span>
+          )}
+          {(inputTokens != null || outputTokens != null) && (
+            <span className="text-muted-foreground">
+              {percent != null ? " · " : ""}
+              {inputTokens != null && `↑${formatTokens(inputTokens)}`}
+              {inputTokens != null && outputTokens != null && " "}
+              {outputTokens != null && `↓${formatTokens(outputTokens)}`}
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 interface SessionPageProps {
   sessionId?: string;
 }
@@ -85,16 +153,17 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     };
   }, [execConfig.executor, execConfig.variant, execConfig.modelId, execConfig.reasoningId, execConfig.permissionPolicy]);
 
-  // 只有 currentSessionId 存在时才连接流
   const streamSessionId = currentSessionId ?? "__placeholder__";
   const {
     displayItems,
     isConnected,
     isLoading,
+    isReceiving,
     error: wsError,
     reconnect,
     sendCancel,
     streamingEntryId,
+    tokenUsage,
   } = useAcpSession({ sessionId: streamSessionId, enabled: currentSessionId !== null });
 
   const hasSession = currentSessionId !== null;
@@ -141,7 +210,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     try {
       let sid = currentSessionId;
 
-      // 如果还没有 session，先创建
       if (!sid) {
         const title = trimmed.slice(0, 30) + (trimmed.length > 30 ? "…" : "");
         const meta = await createNew(title);
@@ -194,39 +262,39 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex shrink-0 flex-col gap-3 border-b border-border bg-card px-6 py-4 md:flex-row md:items-center md:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-foreground">会话（Session）</h2>
-            <span className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-              <span className={`inline-block h-2 w-2 rounded-full ${connectionColor}`} />
-              {connectionLabel}
+      <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-5 py-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">会话</h2>
+          <span className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
+            {connectionLabel}
+          </span>
+          {isReceiving && (
+            <span className="flex items-center gap-1 text-xs text-primary animate-pulse">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+              接收中
             </span>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {hasSession
-              ? "在当前会话中继续对话，或点击「新会话」开始新的对话。"
-              : "输入 prompt 发送后将自动创建新会话。"}
-          </p>
+          )}
+          <ContextUsageRing usage={tokenUsage} />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           {hasSession && (
             <>
-              <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-                <span className="mr-2">sessionId</span>
-                <span className="font-mono text-foreground">{currentSessionId!.slice(0, 24)}…</span>
-              </div>
+              <span className="hidden lg:inline text-xs text-muted-foreground font-mono">
+                {currentSessionId!.slice(0, 12)}…
+              </span>
               <button
                 type="button"
                 onClick={() => void handleCopySessionId()}
-                className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-secondary"
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-secondary"
+                title="复制 Session ID"
               >
                 复制
               </button>
             </>
           )}
-          <button type="button" onClick={handleNewSession} className="rounded-md bg-secondary px-3 py-2 text-sm text-foreground hover:bg-secondary/80">
+          <button type="button" onClick={handleNewSession} className="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-foreground hover:bg-secondary/80">
             新会话
           </button>
         </div>
@@ -234,10 +302,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
       {/* Error banner */}
       {displayError && (
-        <div className="flex items-center justify-between border-b border-destructive/40 bg-destructive/10 px-6 py-2 text-sm text-destructive">
-          <span>{displayError}</span>
+        <div className="flex items-center justify-between border-b border-destructive/40 bg-destructive/10 px-5 py-2 text-sm text-destructive">
+          <span className="truncate">{displayError}</span>
           {wsError && !isConnected && hasSession && (
-            <button type="button" onClick={reconnect} className="ml-4 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
+            <button type="button" onClick={reconnect} className="ml-4 shrink-0 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
               重新连接
             </button>
           )}
@@ -260,7 +328,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                 </div>
               </div>
             ) : hasSession && displayItems.length > 0 ? (
-              <div className="space-y-1 p-4">
+              <div className="mx-auto w-full max-w-3xl space-y-3 px-4 py-5">
                 {displayItems.map((item) => (
                   <div key={getItemKey(item)}>
                     <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
@@ -270,6 +338,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             ) : (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted/50">
+                    <span className="text-xl">💬</span>
+                  </div>
                   <p className="text-sm text-muted-foreground">
                     {hasSession ? "会话已就绪，继续发送消息" : "输入 prompt 并发送开始会话"}
                   </p>
@@ -279,75 +350,77 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           </div>
 
           {/* Input area */}
-          <div className="shrink-0 border-t border-border bg-card px-6 py-4">
-            {!hasSession && (
-              <div className="mb-3 flex flex-wrap gap-2">
-                {promptTemplates.map((tpl) => (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={() => setPrompt(tpl.content)}
-                    className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-secondary"
-                  >
-                    {tpl.label}
-                  </button>
-                ))}
-              </div>
-            )}
+          <div className="shrink-0 border-t border-border bg-card">
+            <div className="mx-auto w-full max-w-3xl px-4 py-4">
+              {!hasSession && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {promptTemplates.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => setPrompt(tpl.content)}
+                      className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-secondary transition-colors"
+                    >
+                      {tpl.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-            <ExecutorSelector
-              executors={discovery.executors}
-              isLoading={discovery.isLoading}
-              error={discovery.error}
-              discoveredOptions={discovered.options}
-              discoveredError={discovered.error}
-              isDiscoveredLoading={Boolean(execConfig.executor.trim()) && !discovered.isInitialized}
-              onDiscoveredReconnect={discovered.reconnect}
-              executor={execConfig.executor}
-              variant={execConfig.variant}
-              modelId={execConfig.modelId}
-              reasoningId={execConfig.reasoningId}
-              permissionPolicy={execConfig.permissionPolicy}
-              onExecutorChange={execConfig.setExecutor}
-              onVariantChange={execConfig.setVariant}
-              onModelIdChange={execConfig.setModelId}
-              onReasoningIdChange={execConfig.setReasoningId}
-              onPermissionPolicyChange={execConfig.setPermissionPolicy}
-              onReset={execConfig.reset}
-              onRefetch={discovery.refetch}
-            />
-
-            <div className="mt-3 flex gap-2">
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={hasSession ? "继续对话，Ctrl+Enter 发送…" : "输入 prompt，Ctrl+Enter 发送…"}
-                rows={3}
-                className="min-h-[72px] flex-1 resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
+              <ExecutorSelector
+                executors={discovery.executors}
+                isLoading={discovery.isLoading}
+                error={discovery.error}
+                discoveredOptions={discovered.options}
+                discoveredError={discovered.error}
+                isDiscoveredLoading={Boolean(execConfig.executor.trim()) && !discovered.isInitialized}
+                onDiscoveredReconnect={discovered.reconnect}
+                executor={execConfig.executor}
+                variant={execConfig.variant}
+                modelId={execConfig.modelId}
+                reasoningId={execConfig.reasoningId}
+                permissionPolicy={execConfig.permissionPolicy}
+                onExecutorChange={execConfig.setExecutor}
+                onVariantChange={execConfig.setVariant}
+                onModelIdChange={execConfig.setModelId}
+                onReasoningIdChange={execConfig.setReasoningId}
+                onPermissionPolicyChange={execConfig.setPermissionPolicy}
+                onReset={execConfig.reset}
+                onRefetch={discovery.refetch}
               />
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  disabled={isSending || !prompt.trim()}
-                  onClick={() => void handleSend()}
-                  className="h-9 w-24 rounded-md bg-primary text-sm font-medium text-primary-foreground disabled:opacity-50"
-                >
-                  {isSending ? "发送中…" : "发送"}
-                </button>
-                {hasSession && (
+
+              <div className="mt-3 flex gap-2">
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={hasSession ? "继续对话，Ctrl+Enter 发送…" : "输入 prompt，Ctrl+Enter 发送…"}
+                  rows={3}
+                  className="min-h-[72px] flex-1 resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1 transition-shadow"
+                />
+                <div className="flex flex-col gap-2">
                   <button
                     type="button"
-                    disabled={!isConnected}
-                    onClick={handleCancel}
-                    className="h-9 w-24 rounded-md border border-border bg-background text-sm text-foreground hover:bg-secondary disabled:opacity-50"
+                    disabled={isSending || !prompt.trim()}
+                    onClick={() => void handleSend()}
+                    className="h-9 w-20 rounded-lg bg-primary text-sm font-medium text-primary-foreground disabled:opacity-50 transition-opacity"
                   >
-                    取消执行
+                    {isSending ? "…" : "发送"}
                   </button>
-                )}
+                  {hasSession && (
+                    <button
+                      type="button"
+                      disabled={!isConnected}
+                      onClick={handleCancel}
+                      className="h-9 w-20 rounded-lg border border-border bg-background text-xs text-foreground hover:bg-secondary disabled:opacity-50 transition-colors"
+                    >
+                      取消
+                    </button>
+                  )}
+                </div>
               </div>
+              <p className="mt-1 text-xs text-muted-foreground/60">Ctrl+Enter 快捷发送</p>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">Ctrl+Enter 快捷发送</p>
           </div>
         </div>
       </section>

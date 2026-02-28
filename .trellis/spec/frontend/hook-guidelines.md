@@ -214,8 +214,64 @@ export const useStoryStore = create<StoryState>((set) => ({
 
 ---
 
+## ACP 事件归并契约（useAcpStream reducer）
+
+`useAcpStream.applyNotification` 是 ACP 事件的唯一归并入口。以下是各事件类型的处理契约：
+
+### 事件处理矩阵
+
+| SessionUpdate 类型 | 归并策略 | 主流绘制 | 备注 |
+|---|---|---|---|
+| `tool_call` | **upsert**：按 `toolCallId` 反向查找，存在则覆盖，否则新建 | 是 | 对齐 Zed `upsert_tool_call` |
+| `tool_call_update` | **merge**：合并到已有 entry；找不到锚点则创建孤立条目 | 是 | 孤立 update 不丢弃 |
+| `agent_message_chunk` | **合并相邻**：同类型 + 同 turnId + 文本类型 → `mergeStreamChunk` | 是 | |
+| `user_message_chunk` | 同上 | 是 | |
+| `agent_thought_chunk` | 同上 | 是 | |
+| `plan` | 直接添加新条目 | 是 | |
+| `session_info_update` | 直接添加新条目 | **否**（静默） | 数据保留在 entries 中，UI 不绘制 |
+| `usage_update` | 直接添加新条目 + 实时更新 `tokenUsage` state | **否**（header 圆环） | 用量通过 header 小圆环展示 |
+| 其他 | 直接添加新条目 | 否 | |
+
+### isPendingApproval 终态保护
+
+```
+status === "completed" | "failed" | "canceled" | "rejected"
+  → isPendingApproval = false（覆盖）
+status === "pending"
+  → isPendingApproval = true
+status === "in_progress"
+  → isPendingApproval = false
+其他
+  → 保留已有值
+```
+
+### ToolCallStatus 扩展
+
+SDK v0.14 定义 `"pending" | "in_progress" | "completed" | "failed"`。
+后端可能发送 Zed 扩展状态 `"canceled" | "rejected"`。
+前端使用 `ExtendedToolCallStatus` 类型兼容。
+
+### 错误模式：tool_call_update 覆盖 approval 状态
+
+```ts
+// 错误：直接用 incoming status 设置 isPendingApproval
+isPendingApproval: update.status === "pending"
+
+// 正确：终态覆盖 + 非终态保留
+if (isTerminalToolCallStatus(incomingStatus)) {
+  nextPendingApproval = false;
+} else if (incomingStatus === "pending") {
+  nextPendingApproval = true;
+} else if (incomingStatus === "in_progress") {
+  nextPendingApproval = false;
+}
+```
+
+---
+
 ## 参考实现
 
-- `features/acp-session/model/useAcpStream.ts` - SSE 流管理（使用 EventSource）
-- `features/acp-session/model/useAcpSession.ts` - 业务逻辑封装
+- `features/acp-session/model/useAcpStream.ts` - ACP 流管理 + 事件归并 reducer
+- `features/acp-session/model/useAcpSession.ts` - 聚合逻辑 + tokenUsage 暴露
+- `features/acp-session/model/streamTransport.ts` - NDJSON/SSE 双通道传输
 - `stores/storyStore.ts` - Zustand Store

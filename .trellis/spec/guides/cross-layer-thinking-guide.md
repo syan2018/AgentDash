@@ -216,6 +216,33 @@ fn emit_deduped(emitted: &mut String, full_content: &str, ...) {
 - 前端的 `mergeStreamChunk` 应匹配 ABCCraft 标准实现
 - `[系统]`/`[用量]`/`[状态]` 等元数据不应作为 `agent_message_chunk` 发射
 - 前端需添加安全过滤以兼容旧 JSONL 历史数据
+
+---
+
+### 设计决策6：ACP 事件的 UI 展示策略
+
+**问题：**
+```
+// 错误：所有 ACP 事件都在主对话流中逐条绘制
+// session_info_update（系统消息）和 usage_update（用量）占据大量空间
+// 用户不关心这些技术细节，干扰对话阅读体验
+```
+
+**正确：**
+```
+// 分层展示策略：
+// 1. 主对话流：只绘制用户关心的内容
+//    - user_message_chunk / agent_message_chunk / agent_thought_chunk
+//    - tool_call / tool_call_update
+//    - plan
+// 2. Header 指示器：用量信息通过小圆环实时更新（hover 展示详情）
+// 3. 静默保留：session_info_update 数据保留在 entries 中但不绘制
+//    - 便于调试和日志追溯
+//    - 未来可通过"显示系统消息"开关控制
+```
+
+**为何重要：** 行业惯例（Claude/ChatGPT）将上下文用量放在 header 小圆环中，
+系统消息不干扰主对话流。数据层保留所有事件，UI 层按需展示。
 <!-- PROJECT-SPECIFIC-END -->
 
 ---

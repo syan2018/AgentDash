@@ -120,7 +120,11 @@ impl ExecutorHub {
 
         let working_directory = resolve_working_dir(&self.workspace_root, req.working_dir.as_deref());
 
+        // 该 turn_id 必须在“用户消息注入”和“连接器流”之间保持一致，便于前端归并。
+        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
+
         let context = ExecutionContext {
+            turn_id: turn_id.clone(),
             working_directory,
             environment_variables: req.env,
             executor_config,
@@ -153,7 +157,7 @@ impl ExecutorHub {
         source.executor_id = Some(context.executor_config.executor.to_string());
         source.variant = context.executor_config.variant.clone();
         let mut trace = AgentDashTraceV1::new();
-        trace.turn_id = Some(format!("t{}", chrono::Utc::now().timestamp_millis()));
+        trace.turn_id = Some(turn_id);
         let agentdash = AgentDashMetaV1::new()
             .source(Some(source))
             .trace(Some(trace));

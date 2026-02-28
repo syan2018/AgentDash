@@ -15,6 +15,7 @@ import { buildApiPath } from "../../../api/origin";
 import type { AcpDisplayEntry } from "./types";
 import type { PromptSessionRequest } from "../../../services/executor";
 import { createAcpStreamTransport, type AcpStreamTransport } from "./streamTransport";
+import { extractAgentDashMetaFromUpdate } from "./agentdashMeta";
 
 export interface UseAcpStreamOptions {
   sessionId: string;
@@ -78,6 +79,11 @@ function getToolCallId(update: SessionUpdate): string | undefined {
   return undefined;
 }
 
+function getTurnId(update: SessionUpdate): string | undefined {
+  const meta = extractAgentDashMetaFromUpdate(update);
+  return meta?.trace?.turnId ?? undefined;
+}
+
 /**
  * 将 tool_call_update 的字段合并到已有 tool_call entry 中。
  * 仿照 ABCCraft 的 mergeToolCallUpdate 策略：只覆盖非空字段。
@@ -137,16 +143,28 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       sessionId: notification.sessionId,
       timestamp: Date.now(),
       update: u,
+      turnId: getTurnId(u),
       ...extra,
     });
 
     // ── tool_call ──────────────────────────────────────────────
     if (update.sessionUpdate === "tool_call") {
       const id = getToolCallId(update)!;
-      const existingIndex = prev.findIndex((e) => getToolCallId(e.update) === id);
+      let existingIndex = -1;
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (getToolCallId(prev[i]!.update) === id) {
+          existingIndex = i;
+          break;
+        }
+      }
       if (existingIndex >= 0) {
         const next = [...prev];
-        next[existingIndex] = { ...prev[existingIndex]!, update, isPendingApproval: update.status === "pending" };
+        next[existingIndex] = {
+          ...prev[existingIndex]!,
+          update,
+          turnId: prev[existingIndex]!.turnId ?? getTurnId(update),
+          isPendingApproval: update.status === "pending",
+        };
         return next;
       }
       return [...prev, makeEntry(update, { isPendingApproval: update.status === "pending" })];
@@ -155,11 +173,22 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     // ── tool_call_update ───────────────────────────────────────
     if (update.sessionUpdate === "tool_call_update") {
       const id = getToolCallId(update)!;
-      const existingIndex = prev.findIndex((e) => getToolCallId(e.update) === id);
+      let existingIndex = -1;
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (getToolCallId(prev[i]!.update) === id) {
+          existingIndex = i;
+          break;
+        }
+      }
       if (existingIndex >= 0) {
         const merged = mergeToolCallUpdateIntoEntry(prev[existingIndex]!.update, update);
         const next = [...prev];
-        next[existingIndex] = { ...prev[existingIndex]!, update: merged, isPendingApproval: update.status === "pending" };
+        next[existingIndex] = {
+          ...prev[existingIndex]!,
+          update: merged,
+          turnId: prev[existingIndex]!.turnId ?? getTurnId(update),
+          isPendingApproval: update.status === "pending",
+        };
         return next;
       }
       return [...prev, makeEntry(update, { isPendingApproval: update.status === "pending" })];
@@ -175,13 +204,19 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       return [...prev, makeEntry(update)];
     }
 
-    // 合并同类型的连续 chunk
+    // 合并 chunk：保持时间线顺序（ABCCopilot 风格），只合并“相邻、同类型、同 turn”的文本 chunk。
+    // 重要：不能回扫合并到更早的 entry，否则会把工具卡片挤到列表底部。
     if (prev.length === 0) {
       return [makeEntry(update)];
     }
 
     const lastEntry = prev[prev.length - 1]!;
     if (lastEntry.update.sessionUpdate !== update.sessionUpdate) {
+      return [...prev, makeEntry(update)];
+    }
+
+    const incomingTurnId = getTurnId(update);
+    if (incomingTurnId && lastEntry.turnId && lastEntry.turnId !== incomingTurnId) {
       return [...prev, makeEntry(update)];
     }
 

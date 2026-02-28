@@ -48,14 +48,10 @@ pub struct NormalizedToAcpConverter {
 }
 
 impl NormalizedToAcpConverter {
-    pub fn new(session_id: impl Into<SessionId>, source: AgentDashSourceV1) -> Self {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
+    pub fn new(session_id: impl Into<SessionId>, source: AgentDashSourceV1, turn_id: impl Into<String>) -> Self {
         Self {
             session_id: session_id.into(),
-            turn_prefix: format!("t{ts}"),
+            turn_prefix: turn_id.into(),
             source,
             last_by_index: HashMap::new(),
             tool_call_by_id: HashMap::new(),
@@ -621,7 +617,8 @@ mod tests {
 
     #[test]
     fn agent_message_chunk_emits_agentdash_meta() {
-        let mut converter = NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source());
+        let mut converter =
+            NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source(), "t-test");
         let entry = NormalizedEntry {
             timestamp: None,
             entry_type: NormalizedEntryType::AssistantMessage,
@@ -650,7 +647,8 @@ mod tests {
 
     #[test]
     fn system_message_is_wrapped_as_session_info_update_meta_event() {
-        let mut converter = NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source());
+        let mut converter =
+            NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source(), "t-test");
         let entry = NormalizedEntry {
             timestamp: None,
             entry_type: NormalizedEntryType::SystemMessage,
@@ -674,7 +672,8 @@ mod tests {
 
     #[test]
     fn token_usage_info_maps_to_usage_update_with_meta() {
-        let mut converter = NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source());
+        let mut converter =
+            NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source(), "t-test");
         let entry = NormalizedEntry {
             timestamp: None,
             entry_type: NormalizedEntryType::TokenUsageInfo(TokenUsageInfo {

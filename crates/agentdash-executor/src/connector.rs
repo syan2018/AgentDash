@@ -42,6 +42,9 @@ pub struct ExecutorInfo {
 
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
+    /// One prompt invocation == one turn. Used to correlate injected user message
+    /// with connector-emitted updates via `_meta.agentdash.trace.turnId`.
+    pub turn_id: String,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: executors::profile::ExecutorConfig,

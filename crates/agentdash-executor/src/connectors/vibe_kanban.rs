@@ -235,7 +235,11 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         let mut source = AgentDashSourceV1::new(self.connector_id(), connector_type);
         source.executor_id = Some(context.executor_config.executor.to_string());
         source.variant = context.executor_config.variant.clone();
-        let mut converter = NormalizedToAcpConverter::new(SessionId::new(session_id.to_string()), source);
+        let mut converter = NormalizedToAcpConverter::new(
+            SessionId::new(session_id.to_string()),
+            source,
+            context.turn_id.clone(),
+        );
 
         tokio::spawn(async move {
             let mut stream = msg_store.history_plus_stream();

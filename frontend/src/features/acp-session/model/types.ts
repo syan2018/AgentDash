@@ -72,6 +72,8 @@ export interface AcpDisplayEntry {
   sessionId: SessionId;
   timestamp: number;
   update: SessionUpdate;
+  /** From `_meta.agentdash.trace.turnId` if present */
+  turnId?: string;
   isStreaming?: boolean;
   isPendingApproval?: boolean;
 }

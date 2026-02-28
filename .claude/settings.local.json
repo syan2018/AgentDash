@@ -15,7 +15,8 @@
       "Bash(popd)",
       "Bash(npx tsc -b)",
       "Bash(cargo build *)",
-      "Bash(sqlite3 agentdash.db \".schema\")"
+      "Bash(sqlite3 agentdash.db \".schema\")",
+      "Bash(python3 ./.trellis/scripts/*)"
     ]
   }
 }

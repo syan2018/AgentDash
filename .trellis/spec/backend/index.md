@@ -130,6 +130,13 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 - 变更必须包含 `reason` 字段说明原因
 - 严禁直接覆盖状态而不记录历史
 
+### ACP 流转换原则 (`normalized_to_acp.rs`)
+
+- `NormalizedToAcpConverter` 必须对 `AssistantMessage`/`Thinking`/`UserMessage` 做**全局去重**（`emitted_agent`/`emitted_thought`/`emitted_user`），不能仅依赖 per-index delta
+- `SystemMessage`、`TokenUsageInfo`、`NextAction` 不应作为 ACP 通知发射（ABCCraft 标准）
+- `ErrorMessage`、`UserFeedback` 等一次性消息可直接发射，无需去重
+- 新用户消息到达时重置 agent/thought 累积器（新 turn）
+
 ---
 
 ## 语言要求

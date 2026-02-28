@@ -186,6 +186,36 @@ ViewManager.deleteGroup(groupId) {
 ```
 
 **为何重要：** 核心设计原则：Story间关系是视图层概念，不影响执行流程。
+### 错误模式5：ACP 流数据层的 delta 重复发射
+
+**问题：**
+```
+// 错误：per-index delta 追踪在 provider 创建新 entry index 时重发全文
+fn text_delta(prev: Option<&str>, next: &str) -> Option<String> {
+    // prev 为 None（新 index）→ 返回 full_content → 重复发射！
+}
+```
+
+**正确：**
+```
+// 跟踪全局已发射文本，按 chunk 类型去重
+fn emit_deduped(emitted: &mut String, full_content: &str, ...) {
+    if full_content.starts_with(emitted.as_str()) {
+        let suffix = &full_content[emitted.len()..];
+        emitted.push_str(suffix);
+        emit_chunk(suffix)  // 只发射真正的增量
+    }
+}
+```
+
+**为何重要：** Provider（如 vibe-kanban/kimi）可能为同一段 Agent 回复创建
+多个不同 index 的 NormalizedEntry。仅靠 per-index delta 无法检测跨 index
+重复。必须在 Converter 层维护全局已发射文本追踪。
+
+**关联规则：**
+- 前端的 `mergeStreamChunk` 应匹配 ABCCraft 标准实现
+- `[系统]`/`[用量]`/`[状态]` 等元数据不应作为 `agent_message_chunk` 发射
+- 前端需添加安全过滤以兼容旧 JSONL 历史数据
 <!-- PROJECT-SPECIFIC-END -->
 
 ---

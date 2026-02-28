@@ -49,7 +49,6 @@ function SingleEntry({ entry }: { entry: AcpDisplayEntry }) {
         <AcpMessageCard
           type="user"
           content={text}
-          isStreaming={entry.isStreaming}
         />
       );
     }

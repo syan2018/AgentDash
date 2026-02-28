@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from "react-router-dom";
-import { WorkspaceLayout } from "./components/layout/workspace-layout";
+import { useCallback, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
+import { WorkspaceLayout, type WorkspaceView } from "./components/layout/workspace-layout";
 import { DashboardPage } from "./pages/DashboardPage";
 import { StoryPage } from "./pages/StoryPage";
 import { SessionPage } from "./pages/SessionPage";
@@ -19,8 +19,12 @@ function AppContent() {
   const { fetchBackends } = useCoordinatorStore();
   const { connect } = useEventStore();
   const { reload: reloadSessions } = useSessionHistoryStore();
-  const [activeView, setActiveView] = useState<"dashboard" | "session">("dashboard");
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const activeView: WorkspaceView = location.pathname.startsWith("/session")
+    ? "session"
+    : "dashboard";
 
   useEffect(() => {
     void fetchBackends();
@@ -34,14 +38,16 @@ function AppContent() {
     }
   }, [activeView, reloadSessions]);
 
-  const handleChangeView = (view: "dashboard" | "session") => {
-    setActiveView(view);
-    if (view === "dashboard") {
-      navigate("/");
-    } else {
-      navigate("/session");
-    }
-  };
+  const handleChangeView = useCallback(
+    (view: WorkspaceView) => {
+      if (view === "dashboard") {
+        navigate("/");
+      } else {
+        navigate("/session");
+      }
+    },
+    [navigate],
+  );
 
   return (
     <WorkspaceLayout activeView={activeView} onChangeView={handleChangeView}>

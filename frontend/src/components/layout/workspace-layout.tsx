@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { ThemeToggle } from "../ui/theme-toggle";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -27,20 +27,12 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
     removeSession,
   } = useSessionHistoryStore();
   const navigate = useNavigate();
-  const location = useLocation();
 
   useEffect(() => {
     if (currentProjectId) {
       void fetchWorkspaces(currentProjectId);
     }
   }, [currentProjectId, fetchWorkspaces]);
-
-  // 根据 URL 同步 activeView
-  useEffect(() => {
-    if (location.pathname.startsWith("/session")) {
-      if (activeView !== "session") onChangeView("session");
-    }
-  }, [location.pathname, activeView, onChangeView]);
 
   const streamStatusLabel =
     connectionState === "connected"

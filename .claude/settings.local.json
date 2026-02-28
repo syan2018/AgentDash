@@ -14,7 +14,8 @@
       "Bash(pushd frontend)",
       "Bash(popd)",
       "Bash(npx tsc -b)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "Bash(sqlite3 agentdash.db \".schema\")"
     ]
   }
 }

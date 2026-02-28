@@ -32,16 +32,31 @@ use executors::{
 #[derive(Debug)]
 pub struct NormalizedToAcpConverter {
     session_id: SessionId,
+    turn_prefix: String,
     last_by_index: HashMap<usize, NormalizedEntry>,
     tool_call_by_id: HashMap<String, ToolCall>,
+    /// Dedup: total text already emitted per chunk type.
+    /// Prevents re-emitting full-text snapshots when the provider creates
+    /// new entry indices for the same accumulated content.
+    emitted_agent: String,
+    emitted_thought: String,
+    emitted_user: String,
 }
 
 impl NormalizedToAcpConverter {
     pub fn new(session_id: impl Into<SessionId>) -> Self {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
         Self {
             session_id: session_id.into(),
+            turn_prefix: format!("t{ts}"),
             last_by_index: HashMap::new(),
             tool_call_by_id: HashMap::new(),
+            emitted_agent: String::new(),
+            emitted_thought: String::new(),
+            emitted_user: String::new(),
         }
     }
 
@@ -50,20 +65,37 @@ impl NormalizedToAcpConverter {
 
         match &entry.entry_type {
             NormalizedEntryType::UserMessage => {
-                let delta = text_delta(prev.as_ref().map(|p| p.content.as_str()), &entry.content);
-                chunk_updates(&self.session_id, SessionUpdate::UserMessageChunk, delta)
+                self.emitted_agent.clear();
+                self.emitted_thought.clear();
+                emit_deduped(
+                    &self.session_id,
+                    &mut self.emitted_user,
+                    prev.as_ref().map(|p| p.content.as_str()),
+                    &entry.content,
+                    SessionUpdate::UserMessageChunk,
+                )
             }
             NormalizedEntryType::AssistantMessage => {
-                let delta = text_delta(prev.as_ref().map(|p| p.content.as_str()), &entry.content);
-                chunk_updates(&self.session_id, SessionUpdate::AgentMessageChunk, delta)
+                emit_deduped(
+                    &self.session_id,
+                    &mut self.emitted_agent,
+                    prev.as_ref().map(|p| p.content.as_str()),
+                    &entry.content,
+                    SessionUpdate::AgentMessageChunk,
+                )
             }
             NormalizedEntryType::Thinking => {
-                let delta = text_delta(prev.as_ref().map(|p| p.content.as_str()), &entry.content);
-                chunk_updates(&self.session_id, SessionUpdate::AgentThoughtChunk, delta)
+                emit_deduped(
+                    &self.session_id,
+                    &mut self.emitted_thought,
+                    prev.as_ref().map(|p| p.content.as_str()),
+                    &entry.content,
+                    SessionUpdate::AgentThoughtChunk,
+                )
             }
             NormalizedEntryType::SystemMessage => {
-                let text = format!("[系统] {}", entry.content);
-                chunk_updates(&self.session_id, SessionUpdate::AgentMessageChunk, Some(text))
+                // ABCCraft 不在 ACP 流中显示系统/hook 消息；跳过
+                Vec::new()
             }
             NormalizedEntryType::ErrorMessage { .. } => {
                 let text = format!("[错误] {}", entry.content);
@@ -74,20 +106,13 @@ impl NormalizedToAcpConverter {
                 chunk_updates(&self.session_id, SessionUpdate::UserMessageChunk, Some(text))
             }
             NormalizedEntryType::Loading => Vec::new(),
-            NormalizedEntryType::NextAction { failed, .. } => {
-                let text = if *failed {
-                    format!("[状态] 下一步执行失败：{}", entry.content)
-                } else {
-                    format!("[状态] 下一步执行：{}", entry.content)
-                };
-                chunk_updates(&self.session_id, SessionUpdate::AgentThoughtChunk, Some(text))
+            NormalizedEntryType::NextAction { .. } => {
+                // 内部状态转换信息，不向用户展示
+                Vec::new()
             }
-            NormalizedEntryType::TokenUsageInfo(info) => {
-                let text = format!(
-                    "[用量] total_tokens={} context_window={}",
-                    info.total_tokens, info.model_context_window
-                );
-                chunk_updates(&self.session_id, SessionUpdate::AgentThoughtChunk, Some(text))
+            NormalizedEntryType::TokenUsageInfo(_info) => {
+                // ABCCraft 不在 ACP 流中显示 token 用量；跳过
+                Vec::new()
             }
             NormalizedEntryType::UserAnsweredQuestions { answers } => {
                 let text = format!("[用户回答] {} 个问题已回答", answers.len());
@@ -125,7 +150,7 @@ impl NormalizedToAcpConverter {
                 )]
             }
             _ => {
-                let tool_call_id = tool_call_id_from_entry(entry_index, entry);
+                let tool_call_id = tool_call_id_from_entry(&self.turn_prefix, entry_index, entry);
 
                 let new_call = build_tool_call(tool_call_id.clone(), tool_name, action_type, status, entry);
                 let is_new = !self.tool_call_by_id.contains_key(&tool_call_id);
@@ -165,6 +190,7 @@ impl NormalizedToAcpConverter {
     }
 }
 
+/// One-shot emit (for error/feedback messages that don't need dedup).
 fn chunk_updates(
     session_id: &SessionId,
     ctor: fn(ContentChunk) -> SessionUpdate,
@@ -180,24 +206,68 @@ fn chunk_updates(
     vec![SessionNotification::new(session_id.clone(), ctor(chunk))]
 }
 
-fn text_delta(prev: Option<&str>, next: &str) -> Option<String> {
-    let prev = prev.unwrap_or("");
-    if prev.is_empty() {
-        return Some(next.to_string());
+/// Emit a text chunk, deduplicating against already-emitted content.
+///
+/// The provider may create multiple normalized entries (different indices) for
+/// the same accumulated text.  A naïve per-index delta would re-emit the full
+/// text for each new index.  We track `emitted` (the total text sent so far
+/// for this chunk type) and only emit the true delta.
+fn emit_deduped(
+    session_id: &SessionId,
+    emitted: &mut String,
+    prev_at_index: Option<&str>,
+    full_content: &str,
+    ctor: fn(ContentChunk) -> SessionUpdate,
+) -> Vec<SessionNotification> {
+    if full_content.is_empty() {
+        return Vec::new();
     }
-    if next.starts_with(prev) {
-        let delta = &next[prev.len()..];
-        if delta.is_empty() {
-            None
-        } else {
-            Some(delta.to_string())
+
+    // Fast path: per-index delta (same entry updated incrementally).
+    if let Some(prev) = prev_at_index {
+        if !prev.is_empty() && full_content.starts_with(prev) {
+            let suffix = &full_content[prev.len()..];
+            if suffix.is_empty() {
+                return Vec::new();
+            }
+            emitted.push_str(suffix);
+            return emit_chunk(session_id, ctor, suffix);
         }
-    } else {
-        Some(next.to_string())
     }
+
+    // Global dedup: compute delta against total emitted text.
+    if full_content.starts_with(emitted.as_str()) {
+        let suffix = &full_content[emitted.len()..];
+        if suffix.is_empty() {
+            return Vec::new();
+        }
+        emitted.push_str(suffix);
+        return emit_chunk(session_id, ctor, suffix);
+    }
+
+    // Already-emitted text covers this content — skip.
+    if emitted.contains(full_content) || *emitted == full_content {
+        return Vec::new();
+    }
+
+    // Truly new content (e.g. new turn after provider reset).
+    *emitted = full_content.to_string();
+    emit_chunk(session_id, ctor, full_content)
 }
 
-fn tool_call_id_from_entry(entry_index: usize, entry: &NormalizedEntry) -> String {
+fn emit_chunk(
+    session_id: &SessionId,
+    ctor: fn(ContentChunk) -> SessionUpdate,
+    text: &str,
+) -> Vec<SessionNotification> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)));
+    vec![SessionNotification::new(session_id.clone(), ctor(chunk))]
+}
+
+fn tool_call_id_from_entry(turn_prefix: &str, entry_index: usize, entry: &NormalizedEntry) -> String {
     if let Some(meta) = entry.metadata.as_ref() {
         if let Ok(parsed) = serde_json::from_value::<ToolCallMetadata>(meta.clone()) {
             if !parsed.tool_call_id.trim().is_empty() {
@@ -205,7 +275,7 @@ fn tool_call_id_from_entry(entry_index: usize, entry: &NormalizedEntry) -> Strin
             }
         }
     }
-    format!("tool-{}", entry_index)
+    format!("tool-{}-{}", turn_prefix, entry_index)
 }
 
 fn build_tool_call(

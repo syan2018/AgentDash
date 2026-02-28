@@ -4,9 +4,11 @@ use std::{
     sync::Arc,
 };
 
-use agent_client_protocol::SessionNotification;
+use agent_client_protocol::{
+    ContentBlock, ContentChunk, SessionId, SessionNotification, SessionUpdate, TextContent,
+};
 use futures::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext};
@@ -23,6 +25,15 @@ pub struct PromptSessionRequest {
     pub executor_config: Option<executors::profile::ExecutorConfig>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMeta {
+    pub id: String,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Clone)]
 pub struct ExecutorHub {
     workspace_root: PathBuf,
@@ -33,7 +44,7 @@ pub struct ExecutorHub {
 
 struct SessionRuntime {
     tx: broadcast::Sender<SessionNotification>,
-    started: bool,
+    running: bool,
 }
 
 impl ExecutorHub {
@@ -47,35 +58,59 @@ impl ExecutorHub {
         }
     }
 
+    pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
+        let id = format!("sess-{}-{}", chrono::Utc::now().timestamp_millis(), &uuid::Uuid::new_v4().to_string()[..8]);
+        let now = chrono::Utc::now().timestamp_millis();
+        let meta = SessionMeta {
+            id: id.clone(),
+            title: title.to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        self.store.write_meta(&meta).await?;
+        Ok(meta)
+    }
+
+    pub async fn list_sessions(&self) -> std::io::Result<Vec<SessionMeta>> {
+        self.store.list_sessions().await
+    }
+
+    pub async fn get_session_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
+        self.store.read_meta(session_id).await
+    }
+
+    pub async fn delete_session(&self, session_id: &str) -> std::io::Result<()> {
+        {
+            let mut sessions = self.sessions.lock().await;
+            sessions.remove(session_id);
+        }
+        self.store.delete(session_id).await
+    }
+
     pub async fn ensure_session(&self, session_id: &str) -> broadcast::Receiver<SessionNotification> {
         let mut sessions = self.sessions.lock().await;
         let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
             let (tx, _rx) = broadcast::channel(1024);
-            SessionRuntime { tx, started: false }
+            SessionRuntime { tx, running: false }
         });
         runtime.tx.subscribe()
     }
 
+    /// 多轮对话：同一 session 允许多次调用，但同一时间只允许一次活跃执行。
+    /// 如果上一轮仍在执行中，返回 Err。
     pub async fn start_prompt(&self, session_id: &str, req: PromptSessionRequest) -> Result<(), ConnectorError> {
-        let (tx, should_start) = {
+        let tx = {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = broadcast::channel(1024);
-                SessionRuntime { tx, started: false }
+                SessionRuntime { tx, running: false }
             });
-            if runtime.started {
-                (runtime.tx.clone(), false)
-            } else {
-                runtime.started = true;
-                (runtime.tx.clone(), true)
+            if runtime.running {
+                return Err(ConnectorError::Runtime("该会话有正在执行的 prompt，请等待完成或取消后再试".into()));
             }
+            runtime.running = true;
+            runtime.tx.clone()
         };
-
-        if !should_start {
-            return Ok(());
-        }
-
-        self.store.reset(session_id).await.ok();
 
         let executor_config = req.executor_config.unwrap_or_else(|| {
             executors::profile::ExecutorConfig::new(executors::executors::BaseCodingAgent::ClaudeCode)
@@ -89,8 +124,35 @@ impl ExecutorHub {
             executor_config,
         };
 
-        let mut stream = self.connector.prompt(session_id, &req.prompt, context).await?;
+        // 更新元数据时间戳；如果不存在则自动创建
+        let title_hint = req.prompt.chars().take(30).collect::<String>();
         let store = self.store.clone();
+        let sid = session_id.to_string();
+        if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
+            meta.updated_at = chrono::Utc::now().timestamp_millis();
+            let _ = store.write_meta(&meta).await;
+        } else {
+            let now = chrono::Utc::now().timestamp_millis();
+            let meta = SessionMeta {
+                id: sid.clone(),
+                title: title_hint,
+                created_at: now,
+                updated_at: now,
+            };
+            let _ = store.write_meta(&meta).await;
+        }
+
+        // 注入用户消息到流和持久化存储
+        let user_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(&req.prompt)));
+        let user_notification = SessionNotification::new(
+            SessionId::new(session_id),
+            SessionUpdate::UserMessageChunk(user_chunk),
+        );
+        let _ = store.append(&sid, &user_notification).await;
+        let _ = tx.send(user_notification);
+
+        let mut stream = self.connector.prompt(session_id, &req.prompt, context).await?;
+        let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
 
         tokio::spawn(async move {
@@ -105,6 +167,11 @@ impl ExecutorHub {
                         break;
                     }
                 }
+            }
+            // 执行完成后标记 running = false，允许下一轮
+            let mut guard = sessions.lock().await;
+            if let Some(runtime) = guard.get_mut(&session_id) {
+                runtime.running = false;
             }
         });
 
@@ -142,19 +209,69 @@ impl SessionStore {
         Self { base_dir }
     }
 
-    fn file_path(&self, session_id: &str) -> PathBuf {
+    fn jsonl_path(&self, session_id: &str) -> PathBuf {
         self.base_dir.join(format!("{session_id}.jsonl"))
     }
 
-    async fn reset(&self, session_id: &str) -> std::io::Result<()> {
+    fn meta_path(&self, session_id: &str) -> PathBuf {
+        self.base_dir.join(format!("{session_id}.meta.json"))
+    }
+
+    async fn write_meta(&self, meta: &SessionMeta) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.base_dir).await?;
-        let path = self.file_path(session_id);
-        tokio::fs::write(path, "").await
+        let path = self.meta_path(&meta.id);
+        let json = serde_json::to_string_pretty(meta).unwrap_or_else(|_| "{}".into());
+        tokio::fs::write(path, json).await
+    }
+
+    async fn read_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
+        let path = self.meta_path(session_id);
+        match tokio::fs::read_to_string(path).await {
+            Ok(content) => {
+                let meta = serde_json::from_str::<SessionMeta>(&content)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                Ok(Some(meta))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn list_sessions(&self) -> std::io::Result<Vec<SessionMeta>> {
+        let mut entries = match tokio::fs::read_dir(&self.base_dir).await {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+
+        let mut sessions = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.ends_with(".meta.json") {
+                continue;
+            }
+            let content = tokio::fs::read_to_string(entry.path()).await?;
+            if let Ok(meta) = serde_json::from_str::<SessionMeta>(&content) {
+                sessions.push(meta);
+            }
+        }
+
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(sessions)
+    }
+
+    async fn delete(&self, session_id: &str) -> std::io::Result<()> {
+        let jsonl = self.jsonl_path(session_id);
+        let meta = self.meta_path(session_id);
+        let _ = tokio::fs::remove_file(jsonl).await;
+        let _ = tokio::fs::remove_file(meta).await;
+        Ok(())
     }
 
     async fn append(&self, session_id: &str, n: &SessionNotification) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.base_dir).await?;
-        let path = self.file_path(session_id);
+        let path = self.jsonl_path(session_id);
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -168,7 +285,7 @@ impl SessionStore {
     }
 
     async fn read_all(&self, session_id: &str) -> std::io::Result<Vec<SessionNotification>> {
-        let path = self.file_path(session_id);
+        let path = self.jsonl_path(session_id);
         let content = match tokio::fs::read_to_string(path).await {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

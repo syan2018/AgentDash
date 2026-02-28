@@ -118,7 +118,6 @@ export type OnEntriesUpdated = (
 /** Hook 返回结果 */
 export interface UseAcpStreamResult {
   entries: AcpDisplayEntry[];
-  toolStates: Map<string, AcpToolCallState>;
   isConnected: boolean;
   isLoading: boolean;
   error: Error | null;

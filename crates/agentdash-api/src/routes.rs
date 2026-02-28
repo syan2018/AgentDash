@@ -80,7 +80,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/backends/{id}",
             get(backends::get_backend).delete(backends::remove_backend),
         )
-        // ACP Sessions
+        // ACP Sessions — CRUD
+        .route(
+            "/sessions",
+            get(acp_sessions::list_sessions).post(acp_sessions::create_session),
+        )
+        .route(
+            "/sessions/{id}",
+            get(acp_sessions::get_session).delete(acp_sessions::delete_session),
+        )
+        // ACP Sessions — Execution
         .route("/sessions/{id}/prompt", post(acp_sessions::prompt_session))
         .route("/sessions/{id}/cancel", post(acp_sessions::cancel_session))
         .route(

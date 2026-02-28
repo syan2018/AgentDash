@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAcpSession, AcpSessionEntry } from "../features/acp-session";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../features/acp-session/model/types";
 import type { AcpDisplayItem } from "../features/acp-session/model/types";
@@ -10,11 +11,6 @@ import {
   useExecutorDiscoveredOptions,
   ExecutorSelector,
 } from "../features/executor-selector";
-
-function generateSessionId(): string {
-  const random = Math.random().toString(36).slice(2, 10);
-  return `sess-${Date.now()}-${random}`;
-}
 
 const promptTemplates = [
   {
@@ -55,13 +51,23 @@ function getItemKey(item: AcpDisplayItem): string {
   return item.id;
 }
 
-export function SessionPage() {
-  const [sessionId, setSessionId] = useState(() => generateSessionId());
+interface SessionPageProps {
+  sessionId?: string;
+}
+
+export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
+  const navigate = useNavigate();
+  const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
+
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(propSessionId ?? null);
   const [prompt, setPrompt] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [hasSentOnce, setHasSentOnce] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const { addSession } = useSessionHistoryStore();
+
+  useEffect(() => {
+    setCurrentSessionId(propSessionId ?? null);
+    setActiveSessionId(propSessionId ?? null);
+  }, [propSessionId, setActiveSessionId]);
 
   const discovery = useExecutorDiscovery();
   const execConfig = useExecutorConfig();
@@ -79,6 +85,8 @@ export function SessionPage() {
     };
   }, [execConfig.executor, execConfig.variant, execConfig.modelId, execConfig.reasoningId, execConfig.permissionPolicy]);
 
+  // 只有 currentSessionId 存在时才连接流
+  const streamSessionId = currentSessionId ?? "__placeholder__";
   const {
     displayItems,
     isConnected,
@@ -86,7 +94,9 @@ export function SessionPage() {
     error: wsError,
     reconnect,
     sendCancel,
-  } = useAcpSession({ sessionId });
+  } = useAcpSession({ sessionId: streamSessionId });
+
+  const hasSession = currentSessionId !== null;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
@@ -106,45 +116,50 @@ export function SessionPage() {
     setSendError(null);
     setPrompt("");
     setIsSending(false);
-    setHasSentOnce(false);
-    setSessionId(generateSessionId());
-  }, []);
+    setCurrentSessionId(null);
+    setActiveSessionId(null);
+    navigate("/session", { replace: true });
+  }, [navigate, setActiveSessionId]);
 
   const handleCopySessionId = useCallback(async () => {
+    if (!currentSessionId) return;
     try {
-      await navigator.clipboard.writeText(sessionId);
+      await navigator.clipboard.writeText(currentSessionId);
     } catch {
       setSendError("复制失败：浏览器未授权访问剪贴板。");
     }
-  }, [sessionId]);
+  }, [currentSessionId]);
 
   const handleSend = useCallback(async () => {
     const trimmed = prompt.trim();
     if (!trimmed || isSending) return;
 
-    const nextSessionId = generateSessionId();
-    setSessionId(nextSessionId);
-    setPrompt("");
     setSendError(null);
     setIsSending(true);
-    setHasSentOnce(true);
 
     try {
-      await promptSession(nextSessionId, { prompt: trimmed, executorConfig });
+      let sid = currentSessionId;
+
+      // 如果还没有 session，先创建
+      if (!sid) {
+        const title = trimmed.slice(0, 30) + (trimmed.length > 30 ? "…" : "");
+        const meta = await createNew(title);
+        sid = meta.id;
+        setCurrentSessionId(sid);
+        setActiveSessionId(sid);
+        navigate(`/session/${sid}`, { replace: true });
+      }
+
+      await promptSession(sid, { prompt: trimmed, executorConfig });
       execConfig.recordUsage();
-      // 添加到历史会话
-      addSession({
-        id: nextSessionId,
-        title: trimmed.slice(0, 30) + (trimmed.length > 30 ? "..." : ""),
-        preview: trimmed.slice(0, 100),
-      });
+      setPrompt("");
+      void reloadSessions();
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
-      setPrompt(trimmed);
     } finally {
       setIsSending(false);
     }
-  }, [prompt, isSending, executorConfig, execConfig, addSession]);
+  }, [prompt, isSending, currentSessionId, executorConfig, execConfig, createNew, setActiveSessionId, navigate, reloadSessions]);
 
   const handleCancel = useCallback(() => {
     sendCancel();
@@ -160,14 +175,22 @@ export function SessionPage() {
     [handleSend],
   );
 
-  const connectionLabel = isConnected ? "已连接" : isLoading ? "连接中…" : "未连接";
-  const connectionColor = isConnected
-    ? "bg-emerald-500"
-    : isLoading
-      ? "bg-amber-400 animate-pulse"
-      : "bg-red-500";
+  const connectionLabel = !hasSession
+    ? "待创建"
+    : isConnected
+      ? "已连接"
+      : isLoading
+        ? "连接中…"
+        : "未连接";
+  const connectionColor = !hasSession
+    ? "bg-gray-400"
+    : isConnected
+      ? "bg-emerald-500"
+      : isLoading
+        ? "bg-amber-400 animate-pulse"
+        : "bg-red-500";
 
-  const displayError = sendError ?? wsError?.message ?? null;
+  const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -182,22 +205,28 @@ export function SessionPage() {
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            每次发送会自动创建新的 sessionId（后端同一 sessionId 只会启动一次）。
+            {hasSession
+              ? "在当前会话中继续对话，或点击「新会话」开始新的对话。"
+              : "输入 prompt 发送后将自动创建新会话。"}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-            <span className="mr-2">sessionId</span>
-            <span className="font-mono text-foreground">{sessionId.slice(0, 24)}…</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleCopySessionId()}
-            className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-secondary"
-          >
-            复制
-          </button>
+          {hasSession && (
+            <>
+              <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                <span className="mr-2">sessionId</span>
+                <span className="font-mono text-foreground">{currentSessionId!.slice(0, 24)}…</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleCopySessionId()}
+                className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-secondary"
+              >
+                复制
+              </button>
+            </>
+          )}
           <button type="button" onClick={handleNewSession} className="rounded-md bg-secondary px-3 py-2 text-sm text-foreground hover:bg-secondary/80">
             新会话
           </button>
@@ -208,7 +237,7 @@ export function SessionPage() {
       {displayError && (
         <div className="flex items-center justify-between border-b border-destructive/40 bg-destructive/10 px-6 py-2 text-sm text-destructive">
           <span>{displayError}</span>
-          {wsError && !isConnected && (
+          {wsError && !isConnected && hasSession && (
             <button type="button" onClick={reconnect} className="ml-4 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
               重新连接
             </button>
@@ -224,18 +253,14 @@ export function SessionPage() {
             onScroll={handleScroll}
             className="flex-1 overflow-y-auto"
           >
-            {isLoading && displayItems.length === 0 && hasSentOnce ? (
+            {hasSession && isLoading && displayItems.length === 0 ? (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
                   <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
                 </div>
               </div>
-            ) : displayItems.length === 0 ? (
-              <div className="flex h-full items-center justify-center">
-                <p className="text-sm text-muted-foreground">输入 prompt 并发送开始会话</p>
-              </div>
-            ) : (
+            ) : hasSession && displayItems.length > 0 ? (
               <div className="space-y-1 p-4">
                 {displayItems.map((item) => (
                   <div key={getItemKey(item)}>
@@ -243,23 +268,33 @@ export function SessionPage() {
                   </div>
                 ))}
               </div>
+            ) : (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">
+                    {hasSession ? "会话已就绪，继续发送消息" : "输入 prompt 并发送开始会话"}
+                  </p>
+                </div>
+              </div>
             )}
           </div>
 
           {/* Input area */}
           <div className="shrink-0 border-t border-border bg-card px-6 py-4">
-            <div className="mb-3 flex flex-wrap gap-2">
-              {promptTemplates.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  type="button"
-                  onClick={() => setPrompt(tpl.content)}
-                  className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-secondary"
-                >
-                  {tpl.label}
-                </button>
-              ))}
-            </div>
+            {!hasSession && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {promptTemplates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => setPrompt(tpl.content)}
+                    className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-secondary"
+                  >
+                    {tpl.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <ExecutorSelector
               executors={discovery.executors}
@@ -288,7 +323,7 @@ export function SessionPage() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="输入 prompt，Ctrl+Enter 发送…"
+                placeholder={hasSession ? "继续对话，Ctrl+Enter 发送…" : "输入 prompt，Ctrl+Enter 发送…"}
                 rows={3}
                 className="min-h-[72px] flex-1 resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
               />
@@ -301,14 +336,16 @@ export function SessionPage() {
                 >
                   {isSending ? "发送中…" : "发送"}
                 </button>
-                <button
-                  type="button"
-                  disabled={!isConnected}
-                  onClick={handleCancel}
-                  className="h-9 w-24 rounded-md border border-border bg-background text-sm text-foreground hover:bg-secondary disabled:opacity-50"
-                >
-                  取消执行
-                </button>
+                {hasSession && (
+                  <button
+                    type="button"
+                    disabled={!isConnected}
+                    onClick={handleCancel}
+                    className="h-9 w-24 rounded-md border border-border bg-background text-sm text-foreground hover:bg-secondary disabled:opacity-50"
+                  >
+                    取消执行
+                  </button>
+                )}
               </div>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">Ctrl+Enter 快捷发送</p>

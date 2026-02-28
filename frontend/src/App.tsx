@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from "react-router-dom";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { DashboardPage } from "./pages/DashboardPage";
 import { StoryPage } from "./pages/StoryPage";
@@ -7,12 +7,20 @@ import { SessionPage } from "./pages/SessionPage";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
 import { useEventStore } from "./stores/eventStore";
+import { useSessionHistoryStore } from "./stores/sessionHistoryStore";
+
+function SessionRouteWrapper() {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  return <SessionPage sessionId={sessionId} />;
+}
 
 function AppContent() {
   const { fetchProjects } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect } = useEventStore();
+  const { reload: reloadSessions } = useSessionHistoryStore();
   const [activeView, setActiveView] = useState<"dashboard" | "session">("dashboard");
+  const navigate = useNavigate();
 
   useEffect(() => {
     void fetchBackends();
@@ -20,17 +28,30 @@ function AppContent() {
     connect();
   }, [fetchBackends, fetchProjects, connect]);
 
+  useEffect(() => {
+    if (activeView === "session") {
+      void reloadSessions();
+    }
+  }, [activeView, reloadSessions]);
+
+  const handleChangeView = (view: "dashboard" | "session") => {
+    setActiveView(view);
+    if (view === "dashboard") {
+      navigate("/");
+    } else {
+      navigate("/session");
+    }
+  };
+
   return (
-    <WorkspaceLayout activeView={activeView} onChangeView={setActiveView}>
-      {activeView === "dashboard" ? (
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/story/:storyId" element={<StoryPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      ) : (
-        <SessionPage />
-      )}
+    <WorkspaceLayout activeView={activeView} onChangeView={handleChangeView}>
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/story/:storyId" element={<StoryPage />} />
+        <Route path="/session" element={<SessionPage />} />
+        <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </WorkspaceLayout>
   );
 }

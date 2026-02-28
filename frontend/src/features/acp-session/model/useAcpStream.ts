@@ -1,19 +1,18 @@
 /**
  * ACP 会话流管理 Hook
  *
- * 处理 Streaming HTTP（SSE）连接和 SessionNotification 消息流
- * 支持消息聚合、工具调用状态跟踪、批处理刷新与去重合并
+ * 处理 Streaming HTTP（SSE/NDJSON）连接和 SessionNotification 消息流。
+ * 采用 entries 数组作为唯一数据源（single source of truth），
+ * tool_call / tool_call_update 直接原地合并到 entries 中。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   SessionNotification,
   SessionUpdate,
-  ToolCall,
-  ToolCallUpdate,
 } from "@agentclientprotocol/sdk";
 import { buildApiPath } from "../../../api/origin";
-import type { AcpDisplayEntry, AcpToolCallState } from "./types";
+import type { AcpDisplayEntry } from "./types";
 import type { PromptSessionRequest } from "../../../services/executor";
 import { createAcpStreamTransport, type AcpStreamTransport } from "./streamTransport";
 
@@ -29,7 +28,6 @@ export interface UseAcpStreamOptions {
 
 export interface UseAcpStreamResult {
   entries: AcpDisplayEntry[];
-  toolStates: Map<string, AcpToolCallState>;
   isConnected: boolean;
   isLoading: boolean;
   error: Error | null;
@@ -40,27 +38,48 @@ export interface UseAcpStreamResult {
 
 const FLUSH_INTERVAL_MS = 50;
 
+/**
+ * 需要从显示中过滤掉的内容前缀。
+ * 匹配 ABCCraft：系统 hook 消息和 token 用量不进入 ACP 流。
+ * 这里作为安全网，过滤历史 JSONL 和后端未升级时产生的旧数据。
+ */
+const FILTERED_TEXT_PREFIXES = ["[系统]", "[用量]", "[状态]"];
+
+function shouldFilterNotification(update: SessionUpdate): boolean {
+  if (
+    update.sessionUpdate !== "agent_message_chunk" &&
+    update.sessionUpdate !== "agent_thought_chunk"
+  ) {
+    return false;
+  }
+  const content = (update as unknown as { content?: { type?: string; text?: string } }).content;
+  if (content?.type !== "text" || !content.text) return false;
+  const text = content.text.trimStart();
+  return FILTERED_TEXT_PREFIXES.some((prefix) => text.startsWith(prefix));
+}
+
+/**
+ * Merge incoming text chunk into accumulated text.
+ * Matches ABCCraft's mergeStreamChunk — standard ACP handling only.
+ */
 function mergeStreamChunk(previous: string, incoming: string): string {
   if (!incoming) return previous;
   if (!previous) return incoming;
   if (incoming === previous) return previous;
 
-  // 子串/超串保护：一些 provider 会重复发送“相同片段但位置不同”的快照
-  if (previous.includes(incoming)) return previous;
-  if (incoming.includes(previous)) return incoming;
-
-  // 有些 provider 会发送“完整快照”chunk
+  // Some providers send full snapshot chunks.
   if (incoming.startsWith(previous)) return incoming;
-  // 有些 provider 会重复发送尾部 chunk
+  // Some providers resend the same tail chunk.
   if (previous.endsWith(incoming)) return previous;
 
-  // 通过 overlap 合并，避免边界重复
+  // Merge by overlap to avoid duplicate boundaries.
   const maxOverlap = Math.min(previous.length, incoming.length);
   for (let size = maxOverlap; size > 0; size -= 1) {
     if (previous.slice(-size) === incoming.slice(0, size)) {
       return `${previous}${incoming.slice(size)}`;
     }
   }
+
   return `${previous}${incoming}`;
 }
 
@@ -68,20 +87,48 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+/** 从 SessionUpdate 中提取 toolCallId（tool_call 或 tool_call_update） */
+function getToolCallId(update: SessionUpdate): string | undefined {
+  if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+    return (update as { toolCallId?: string }).toolCallId;
+  }
+  return undefined;
+}
+
+/**
+ * 将 tool_call_update 的字段合并到已有 tool_call entry 中。
+ * 仿照 ABCCraft 的 mergeToolCallUpdate 策略：只覆盖非空字段。
+ */
+function mergeToolCallUpdateIntoEntry(
+  existingUpdate: SessionUpdate,
+  incomingUpdate: SessionUpdate,
+): SessionUpdate {
+  const existing = existingUpdate as Record<string, unknown>;
+  const incoming = incomingUpdate as Record<string, unknown>;
+  return {
+    ...existing,
+    sessionUpdate: existing.sessionUpdate,
+    title: incoming.title ?? existing.title,
+    kind: incoming.kind ?? existing.kind,
+    status: incoming.status ?? existing.status,
+    content: incoming.content ?? existing.content,
+    locations: incoming.locations ?? existing.locations,
+    rawInput: incoming.rawInput !== undefined ? incoming.rawInput : existing.rawInput,
+    rawOutput: incoming.rawOutput !== undefined ? incoming.rawOutput : existing.rawOutput,
+  } as unknown as SessionUpdate;
+}
+
 export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const {
     sessionId,
     endpoint,
     initialEntries = [],
-    // executeRequest：SSE 为单向流，不支持在同一连接上发送 execute（由上层 HTTP prompt 触发）
-    // 保留该字段是为了兼容未来可能的 transport 切换
     onEntry,
     onConnectionChange,
     onError,
   } = options;
 
   const [entries, setEntries] = useState<AcpDisplayEntry[]>(initialEntries);
-  const [toolStates, setToolStates] = useState<Map<string, AcpToolCallState>>(new Map());
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -91,73 +138,98 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const mountedRef = useRef(true);
   const pendingNotificationsRef = useRef<SessionNotification[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const toolStatesRef = useRef<Map<string, AcpToolCallState>>(new Map());
 
   const callbackRefs = useRef({ onEntry, onConnectionChange, onError });
   useEffect(() => {
     callbackRefs.current = { onEntry, onConnectionChange, onError };
   }, [onEntry, onConnectionChange, onError]);
 
-  const handleToolCall = useCallback((update: SessionUpdate & { sessionUpdate: "tool_call" }) => {
-    const toolCall: ToolCall = {
-      toolCallId: update.toolCallId,
-      title: update.title,
-      kind: update.kind,
-      status: update.status,
-      content: update.content,
-      locations: update.locations,
-      rawInput: update.rawInput,
-      rawOutput: update.rawOutput,
-      _meta: update._meta,
-    };
-
-    const next = new Map(toolStatesRef.current);
-    next.set(update.toolCallId, {
-      toolCallId: update.toolCallId,
-      call: toolCall,
-      updates: [],
-      status: update.status ?? "pending",
-    });
-    toolStatesRef.current = next;
-    setToolStates(next);
-
-    return toolCall;
-  }, []);
-
-  const handleToolCallUpdate = useCallback((update: SessionUpdate & { sessionUpdate: "tool_call_update" }) => {
-    const toolUpdate: ToolCallUpdate = {
-      toolCallId: update.toolCallId,
-      title: update.title,
-      kind: update.kind,
-      status: update.status,
-      content: update.content,
-      locations: update.locations,
-      rawInput: update.rawInput,
-      rawOutput: update.rawOutput,
-      _meta: update._meta,
-    };
-
-    const next = new Map(toolStatesRef.current);
-    const existing = next.get(update.toolCallId);
-    if (existing) {
-      const updatedState: AcpToolCallState = {
-        ...existing,
-        updates: [...existing.updates, toolUpdate],
-        status: update.status ?? existing.status,
-      };
-      if (update.status === "completed" || update.status === "failed") {
-        updatedState.finalResult = update.rawOutput;
-      }
-      next.set(update.toolCallId, updatedState);
-      toolStatesRef.current = next;
-      setToolStates(next);
-    }
-
-    return toolUpdate;
-  }, []);
-
   const applyNotification = useCallback((prev: AcpDisplayEntry[], notification: SessionNotification) => {
     const { update } = notification;
+
+    // ── 过滤不应显示的通知 ───────────────────────────────────
+    if (shouldFilterNotification(update)) {
+      return prev;
+    }
+
+    // ── tool_call ──────────────────────────────────────────────
+    // 如果该 toolCallId 已存在，原地替换（处理多轮 ID 重复 + 历史重放）；
+    // 否则追加新 entry。
+    if (update.sessionUpdate === "tool_call") {
+      const id = getToolCallId(update)!;
+      const existingIndex = prev.findIndex((e) => getToolCallId(e.update) === id);
+
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = {
+          ...prev[existingIndex]!,
+          update,
+          isStreaming: true,
+          isPendingApproval: update.status === "pending",
+        };
+        return next;
+      }
+
+      return [...prev, {
+        id: generateId(),
+        sessionId: notification.sessionId,
+        timestamp: Date.now(),
+        update,
+        isStreaming: true,
+        isPendingApproval: update.status === "pending",
+      }];
+    }
+
+    // ── tool_call_update ───────────────────────────────────────
+    // 找到同 toolCallId 的已有 entry，合并字段（ABCCraft 策略）。
+    // 不创建新 entry、不触发额外 state，UI 直接从 entries 读取最新状态。
+    if (update.sessionUpdate === "tool_call_update") {
+      const id = getToolCallId(update)!;
+      const existingIndex = prev.findIndex((e) => getToolCallId(e.update) === id);
+
+      if (existingIndex >= 0) {
+        const merged = mergeToolCallUpdateIntoEntry(prev[existingIndex]!.update, update);
+        const next = [...prev];
+        next[existingIndex] = {
+          ...prev[existingIndex]!,
+          update: merged,
+          isStreaming: update.status !== "completed" && update.status !== "failed",
+          isPendingApproval: update.status === "pending",
+        };
+        return next;
+      }
+
+      // 没有对应的 tool_call（异常情况），追加为独立 entry
+      return [...prev, {
+        id: generateId(),
+        sessionId: notification.sessionId,
+        timestamp: Date.now(),
+        update,
+        isStreaming: true,
+        isPendingApproval: update.status === "pending",
+      }];
+    }
+
+    // ── chunk 类型（agent_message / user_message / agent_thought）───
+    const isChunkUpdate =
+      update.sessionUpdate === "agent_message_chunk" ||
+      update.sessionUpdate === "user_message_chunk" ||
+      update.sessionUpdate === "agent_thought_chunk";
+
+    if (!isChunkUpdate) {
+      return [...prev, {
+        id: generateId(),
+        sessionId: notification.sessionId,
+        timestamp: Date.now(),
+        update,
+        isStreaming: true,
+        isPendingApproval: false,
+      }];
+    }
+
+    // 只和数组最后一条 entry 合并，且仅当类型完全相同。
+    // 中间穿插了 tool_call / user_message 等不同类型后，
+    // 新 chunk 创建独立条目，保持时间线顺序。
     const newEntry: AcpDisplayEntry = {
       id: generateId(),
       sessionId: notification.sessionId,
@@ -167,66 +239,16 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       isPendingApproval: false,
     };
 
-    if (update.sessionUpdate === "tool_call") {
-      handleToolCall(update);
-      newEntry.isPendingApproval = update.status === "pending";
+    if (prev.length === 0) {
+      return [newEntry];
+    }
+
+    const lastEntry = prev[prev.length - 1]!;
+    if (lastEntry.update.sessionUpdate !== update.sessionUpdate) {
       return [...prev, newEntry];
     }
 
-    if (update.sessionUpdate === "tool_call_update") {
-      handleToolCallUpdate(update);
-      // 查找是否已有相同 toolCallId 的条目（tool_call 或 tool_call_update）
-      const existingIndex = prev.findIndex(
-        (e) =>
-          (e.update.sessionUpdate === "tool_call" || e.update.sessionUpdate === "tool_call_update") &&
-          (e.update as { toolCallId?: string }).toolCallId === update.toolCallId
-      );
-      if (existingIndex >= 0) {
-        // 不添加新条目，只更新状态
-        return prev;
-      }
-      newEntry.isPendingApproval = update.status === "pending";
-      return [...prev, newEntry];
-    }
-
-    const isChunkUpdate =
-      update.sessionUpdate === "agent_message_chunk" ||
-      update.sessionUpdate === "user_message_chunk" ||
-      update.sessionUpdate === "agent_thought_chunk";
-
-    if (!isChunkUpdate) {
-      return [...prev, newEntry];
-    }
-
-    // turn 边界：用最近一次 user_message_chunk 切分，避免跨 turn 合并 agent chunk
-    let lastUserIndex = -1;
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      if (prev[i]?.update.sessionUpdate === "user_message_chunk") {
-        lastUserIndex = i;
-        break;
-      }
-    }
-
-    let targetIndex = -1;
-    const scanStart = prev.length - 1;
-    const scanEndExclusive =
-      update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk"
-        ? Math.max(lastUserIndex, -1)
-        : -1;
-
-    for (let i = scanStart; i > scanEndExclusive; i -= 1) {
-      if (prev[i]?.update.sessionUpdate === update.sessionUpdate) {
-        targetIndex = i;
-        break;
-      }
-    }
-
-    if (targetIndex === -1) {
-      return [...prev, newEntry];
-    }
-
-    const target = prev[targetIndex]!;
-    const targetUpdateAny = target.update as unknown as { content?: { type?: string; text?: string } };
+    const targetUpdateAny = lastEntry.update as unknown as { content?: { type?: string; text?: string } };
     const newUpdateAny = update as unknown as { content?: { type?: string; text?: string } };
     if (targetUpdateAny.content?.type !== "text" || newUpdateAny.content?.type !== "text") {
       return [...prev, newEntry];
@@ -236,22 +258,20 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     const incomingText = newUpdateAny.content.text ?? "";
     const mergedText = mergeStreamChunk(previousText, incomingText);
 
-    // 重要：如果合并后文本不变，不触发 state 更新，避免“卡死/不停刷新”的表现
     if (mergedText === previousText) {
       return prev;
     }
 
     const mergedUpdate: SessionUpdate = {
-      ...target.update,
+      ...lastEntry.update,
       content: { type: "text" as const, text: mergedText },
     } as SessionUpdate;
 
     const next = [...prev];
-    next[targetIndex] = { ...target, update: mergedUpdate, isStreaming: true };
+    next[next.length - 1] = { ...lastEntry, update: mergedUpdate, isStreaming: true };
     return next;
-  }, [handleToolCall, handleToolCallUpdate]);
+  }, []);
 
-  // 使用 ref 存储 applyNotification 避免依赖循环
   const applyNotificationRef = useRef(applyNotification);
   applyNotificationRef.current = applyNotification;
 
@@ -286,16 +306,10 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     });
   }, [sessionId]);
 
-  /**
-   * sessionId/endpoint 变化时：关闭旧连接 → 重置状态 → 建立新连接（transport）
-   * transport 默认优先 NDJSON(fetch streaming)，失败后自动降级到 SSE
-   */
   useEffect(() => {
     mountedRef.current = true;
 
     setEntries(initialEntries);
-    setToolStates(new Map());
-    toolStatesRef.current = new Map();
     setIsLoading(true);
     setError(null);
     setIsConnected(false);
@@ -332,7 +346,16 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
 
         if (lifecycle === "closed") {
           setIsConnected(false);
+          setIsLoading(false);
           callbackRefs.current.onConnectionChange?.(false);
+          // 流结束时清除所有条目的 isStreaming 标记
+          setEntries((prev) => {
+            const hasStreaming = prev.some((e) => e.isStreaming);
+            if (!hasStreaming) return prev;
+            return prev.map((e) =>
+              e.isStreaming ? { ...e, isStreaming: false } : e,
+            );
+          });
         }
       },
       onError: (transportError) => {
@@ -373,8 +396,6 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       transportRef.current = null;
     }
     setEntries([]);
-    setToolStates(new Map());
-    toolStatesRef.current = new Map();
     setError(null);
     setIsLoading(true);
     setIsConnected(false);
@@ -383,7 +404,6 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
 
   return {
     entries,
-    toolStates,
     isConnected,
     isLoading,
     error,

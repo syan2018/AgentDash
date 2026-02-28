@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useCallback, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { ThemeToggle } from "../ui/theme-toggle";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -20,13 +21,26 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
   const { fetchWorkspaces } = useWorkspaceStore();
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
-  const { sessions: sessionHistory } = useSessionHistoryStore();
+  const {
+    sessions: sessionHistory,
+    activeSessionId,
+    removeSession,
+  } = useSessionHistoryStore();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (currentProjectId) {
       void fetchWorkspaces(currentProjectId);
     }
   }, [currentProjectId, fetchWorkspaces]);
+
+  // 根据 URL 同步 activeView
+  useEffect(() => {
+    if (location.pathname.startsWith("/session")) {
+      if (activeView !== "session") onChangeView("session");
+    }
+  }, [location.pathname, activeView, onChangeView]);
 
   const streamStatusLabel =
     connectionState === "connected"
@@ -41,6 +55,28 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
     const date = new Date(timestamp);
     return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
   };
+
+  const handleSessionClick = useCallback(
+    (id: string) => {
+      navigate(`/session/${id}`);
+    },
+    [navigate],
+  );
+
+  const handleDeleteSession = useCallback(
+    async (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      await removeSession(id);
+      if (activeSessionId === id) {
+        navigate("/session", { replace: true });
+      }
+    },
+    [removeSession, activeSessionId, navigate],
+  );
+
+  const handleNewSession = useCallback(() => {
+    navigate("/session");
+  }, [navigate]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -93,7 +129,16 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
           {/* 会话模式：历史会话列表 */}
           {activeView === "session" && (
             <div>
-              <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">历史会话</p>
+              <div className="flex items-center justify-between px-2">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">历史会话</p>
+                <button
+                  type="button"
+                  onClick={handleNewSession}
+                  className="rounded px-1.5 py-0.5 text-xs text-primary hover:bg-secondary"
+                >
+                  + 新建
+                </button>
+              </div>
               {sessionHistory.length === 0 ? (
                 <p className="px-2 py-2 text-sm text-muted-foreground">暂无历史会话</p>
               ) : (
@@ -101,12 +146,31 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
                   {sessionHistory.map((session) => (
                     <div
                       key={session.id}
-                      className="rounded-md px-3 py-2 text-sm hover:bg-secondary/50 cursor-pointer"
-                      title={session.preview}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleSessionClick(session.id)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSessionClick(session.id)}
+                      className={`group rounded-md px-3 py-2 text-sm cursor-pointer transition-colors ${
+                        activeSessionId === session.id
+                          ? "bg-secondary text-foreground"
+                          : "hover:bg-secondary/50"
+                      }`}
+                      title={session.title}
                     >
-                      <p className="truncate font-medium text-foreground">{session.title}</p>
-                      <p className="truncate text-xs text-muted-foreground">{session.preview}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{formatTime(session.timestamp)}</p>
+                      <div className="flex items-start justify-between gap-1">
+                        <p className="truncate font-medium text-foreground">{session.title}</p>
+                        <button
+                          type="button"
+                          onClick={(e) => void handleDeleteSession(e, session.id)}
+                          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                          title="删除会话"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatTime(session.updatedAt)}
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -115,7 +179,7 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
           )}
         </nav>
 
-        {/* 后端连接 - 移到底部单独一栏 */}
+        {/* 后端连接 */}
         <div className="border-t border-border p-3">
           <p className="px-2 text-xs uppercase tracking-wider text-muted-foreground">后端连接</p>
           {backends.length === 0 && <p className="px-2 py-2 text-sm text-muted-foreground">暂无后端</p>}

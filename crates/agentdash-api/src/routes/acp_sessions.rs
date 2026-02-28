@@ -24,7 +24,7 @@ use crate::{
     app_state::AppState,
     rpc::ApiError,
 };
-use agentdash_executor::PromptSessionRequest;
+use agentdash_executor::{PromptSessionRequest, SessionMeta};
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -38,6 +38,61 @@ enum WsClientMessage {
 #[derive(Debug, Deserialize)]
 pub struct NdjsonStreamQuery {
     pub since_id: Option<u64>,
+}
+
+pub async fn list_sessions(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<SessionMeta>>, ApiError> {
+    let sessions = state
+        .executor_hub
+        .list_sessions()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(sessions))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSessionRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+pub async fn create_session(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateSessionRequest>,
+) -> Result<Json<SessionMeta>, ApiError> {
+    let title = req.title.unwrap_or_else(|| "新会话".to_string());
+    let meta = state
+        .executor_hub
+        .create_session(&title)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(meta))
+}
+
+pub async fn get_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionMeta>, ApiError> {
+    let meta = state
+        .executor_hub
+        .get_session_meta(&session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
+    Ok(Json(meta))
+}
+
+pub async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .executor_hub
+        .delete_session(&session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "deleted": true, "sessionId": session_id })))
 }
 
 pub async fn prompt_session(

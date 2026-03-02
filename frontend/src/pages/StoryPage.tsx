@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { ProjectConfig, Story, StoryStatus, Task, Workspace } from "../types";
+import type { AgentBinding, ProjectConfig, Story, StoryStatus, Task, Workspace } from "../types";
 import { StoryStatusBadge } from "../components/ui/status-badge";
 import { TaskList } from "../features/task/task-list";
 import { TaskDrawer } from "../features/task/task-drawer";
+import { AgentBindingFields } from "../features/task/agent-binding-fields";
+import {
+  createDefaultAgentBinding,
+  hasAgentBindingSelection,
+  normalizeAgentBinding,
+} from "../features/task/agent-binding";
 import { useStoryStore } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -117,31 +123,24 @@ function CreateTaskPanel({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [workspaceId, setWorkspaceId] = useState(projectConfig?.default_workspace_id ?? "");
-  const [agentType, setAgentType] = useState(projectConfig?.default_agent_type ?? "");
-  const [presetName, setPresetName] = useState("");
+  const [agentBinding, setAgentBinding] = useState<AgentBinding>(() => createDefaultAgentBinding(projectConfig));
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handlePresetChange = (value: string) => {
-    setPresetName(value);
-    if (!value || !projectConfig) return;
-    const preset = projectConfig.agent_presets.find((item) => item.name === value);
-    if (preset) {
-      setAgentType(preset.agent_type);
-    }
-  };
+  const [formMessage, setFormMessage] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!title.trim()) return;
+    if (!hasAgentBindingSelection(agentBinding, projectConfig)) {
+      setFormMessage("请指定 Agent 类型或预设，或先在 Project 配置中设置 default_agent_type");
+      return;
+    }
     setIsSubmitting(true);
+    setFormMessage(null);
     try {
       const task = await createTask(storyId, {
         title: title.trim(),
         description: description.trim() || undefined,
         workspace_id: workspaceId || null,
-        agent_binding: {
-          agent_type: agentType.trim() || null,
-          preset_name: presetName || null,
-        },
+        agent_binding: normalizeAgentBinding(agentBinding),
       });
       if (!task) return;
 
@@ -149,6 +148,7 @@ function CreateTaskPanel({
       // 重置表单并收起
       setTitle("");
       setDescription("");
+      setAgentBinding(createDefaultAgentBinding(projectConfig));
       setIsExpanded(false);
     } finally {
       setIsSubmitting(false);
@@ -192,32 +192,18 @@ function CreateTaskPanel({
           className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
         />
 
-        <div className="grid grid-cols-2 gap-2">
-          <select
-            value={workspaceId}
-            onChange={(event) => setWorkspaceId(event.target.value)}
-            className="rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
-          >
-            <option value="">Workspace</option>
-            {workspaces.map((workspace) => (
-              <option key={workspace.id} value={workspace.id}>
-                {workspace.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={presetName}
-            onChange={(event) => handlePresetChange(event.target.value)}
-            className="rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
-          >
-            <option value="">Agent 预设</option>
-            {(projectConfig?.agent_presets ?? []).map((preset) => (
-              <option key={preset.name} value={preset.name}>
-                {preset.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <select
+          value={workspaceId}
+          onChange={(event) => setWorkspaceId(event.target.value)}
+          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
+        >
+          <option value="">Workspace</option>
+          {workspaces.map((workspace) => (
+            <option key={workspace.id} value={workspace.id}>
+              {workspace.name}
+            </option>
+          ))}
+        </select>
 
         <textarea
           value={description}
@@ -227,9 +213,15 @@ function CreateTaskPanel({
           className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
         />
 
+        <AgentBindingFields
+          value={agentBinding}
+          projectConfig={projectConfig}
+          onChange={setAgentBinding}
+        />
+
         <div className="flex items-center justify-between">
-          {error ? (
-            <p className="text-xs text-destructive">{error}</p>
+          {formMessage || error ? (
+            <p className="text-xs text-destructive">{formMessage || error}</p>
           ) : (
             <div />
           )}
@@ -648,6 +640,8 @@ export function StoryPage() {
 
       <TaskDrawer
         task={selectedTask}
+        workspaces={workspaces}
+        projectConfig={currentProject?.config}
         onTaskUpdated={handleTaskUpdated}
         onTaskDeleted={handleTaskDeleted}
         onClose={() => setSelectedTaskId(null)}

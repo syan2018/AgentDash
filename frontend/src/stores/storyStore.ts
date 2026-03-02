@@ -6,13 +6,7 @@ export interface CreateTaskInput {
   title: string;
   description?: string;
   workspace_id?: string | null;
-  agent_binding?: {
-    agent_type?: string | null;
-    agent_pid?: string | null;
-    preset_name?: string | null;
-    prompt_template?: string | null;
-    initial_context?: string | null;
-  };
+  agent_binding?: AgentBinding;
 }
 
 export interface TaskSessionInfo {
@@ -57,7 +51,7 @@ interface StoryState {
       description?: string;
       workspace_id?: string | null;
       status?: Task["status"];
-      agent_binding?: CreateTaskInput['agent_binding'];
+      agent_binding?: AgentBinding;
     },
   ) => Promise<Task | null>;
   startTaskExecution: (

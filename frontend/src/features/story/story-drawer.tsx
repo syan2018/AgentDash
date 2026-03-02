@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
-import type { ProjectConfig, Story, StoryStatus, Task, Workspace } from "../../types";
+import type { AgentBinding, ProjectConfig, Story, StoryStatus, Task, Workspace } from "../../types";
 import { StoryStatusBadge } from "../../components/ui/status-badge";
 import { TaskList } from "../task/task-list";
+import { AgentBindingFields } from "../task/agent-binding-fields";
+import {
+  createDefaultAgentBinding,
+  hasAgentBindingSelection,
+  normalizeAgentBinding,
+} from "../task/agent-binding";
 import { useStoryStore } from "../../stores/storyStore";
 import {
   DangerConfirmDialog,
@@ -122,34 +128,30 @@ function CreateTaskDrawer({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [workspaceId, setWorkspaceId] = useState(projectConfig?.default_workspace_id ?? "");
-  const [agentType, setAgentType] = useState(projectConfig?.default_agent_type ?? "");
-  const [presetName, setPresetName] = useState("");
+  const [agentBinding, setAgentBinding] = useState<AgentBinding>(() => createDefaultAgentBinding(projectConfig));
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handlePresetChange = (value: string) => {
-    setPresetName(value);
-    if (!value || !projectConfig) return;
-    const preset = projectConfig.agent_presets.find((item) => item.name === value);
-    if (preset) {
-      setAgentType(preset.agent_type);
-    }
-  };
+  const [formMessage, setFormMessage] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!title.trim()) return;
+    if (!hasAgentBindingSelection(agentBinding, projectConfig)) {
+      setFormMessage("请指定 Agent 类型或预设，或先在 Project 配置中设置 default_agent_type");
+      return;
+    }
     setIsSubmitting(true);
+    setFormMessage(null);
     try {
       const task = await createTask(storyId, {
         title: title.trim(),
         description: description.trim() || undefined,
         workspace_id: workspaceId || null,
-        agent_binding: {
-          agent_type: agentType.trim() || null,
-          preset_name: presetName || null,
-        },
+        agent_binding: normalizeAgentBinding(agentBinding),
       });
       if (!task) return;
 
+      setTitle("");
+      setDescription("");
+      setAgentBinding(createDefaultAgentBinding(projectConfig));
       onCreated(task);
       onClose();
     } finally {
@@ -197,27 +199,14 @@ function CreateTaskDrawer({
         </DetailSection>
 
         <DetailSection title="Agent 绑定">
-          <input
-            value={agentType}
-            onChange={(event) => setAgentType(event.target.value)}
-            placeholder="Agent 类型（可选，留空则使用项目默认）"
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+          <AgentBindingFields
+            value={agentBinding}
+            projectConfig={projectConfig}
+            onChange={setAgentBinding}
           />
-          <select
-            value={presetName}
-            onChange={(event) => handlePresetChange(event.target.value)}
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-          >
-            <option value="">不使用预设</option>
-            {(projectConfig?.agent_presets ?? []).map((preset) => (
-              <option key={preset.name} value={preset.name}>
-                {preset.name}
-              </option>
-            ))}
-          </select>
         </DetailSection>
 
-        {error && <p className="text-xs text-destructive">创建失败：{error}</p>}
+        {(formMessage || error) && <p className="text-xs text-destructive">创建失败：{formMessage || error}</p>}
 
         <div className="flex items-center justify-end border-t border-border pt-3">
           <button

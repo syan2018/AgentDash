@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { Artifact, Task, TaskStatus } from "../../types";
+import type { AgentBinding, Artifact, ProjectConfig, Task, TaskStatus, Workspace } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import { useStoryStore } from "../../stores/storyStore";
 import {
@@ -9,9 +9,16 @@ import {
   DetailPanel,
   DetailSection,
 } from "../../components/ui/detail-panel";
+import { AgentBindingFields } from "./agent-binding-fields";
+import {
+  hasAgentBindingSelection,
+  normalizeAgentBinding,
+} from "./agent-binding";
 
 interface TaskDrawerProps {
   task: Task | null;
+  workspaces: Workspace[];
+  projectConfig?: ProjectConfig;
   onTaskUpdated: (task: Task) => void;
   onTaskDeleted: (taskId: string, storyId: string) => void;
   onClose: () => void;
@@ -37,6 +44,8 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
 
 export function TaskDrawer({
   task,
+  workspaces,
+  projectConfig,
   onTaskUpdated,
   onTaskDeleted,
   onClose,
@@ -52,10 +61,24 @@ export function TaskDrawer({
   const [editTitle, setEditTitle] = useState(task?.title ?? "");
   const [editDescription, setEditDescription] = useState(task?.description ?? "");
   const [editStatus, setEditStatus] = useState<TaskStatus>(task?.status ?? "pending");
+  const [editWorkspaceId, setEditWorkspaceId] = useState(task?.workspace_id ?? "");
+  const [editAgentBinding, setEditAgentBinding] = useState<AgentBinding>(task?.agent_binding ?? {});
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
+
+  useEffect(() => {
+    if (!task) return;
+    setEditTitle(task.title);
+    setEditDescription(task.description ?? "");
+    setEditStatus(task.status);
+    setEditWorkspaceId(task.workspace_id ?? "");
+    setEditAgentBinding(task.agent_binding ?? {});
+    setFormMessage(null);
+    setDeleteConfirmValue("");
+    setIsDeleteConfirmOpen(false);
+  }, [task]);
 
   if (!task) return null;
 
@@ -67,11 +90,17 @@ export function TaskDrawer({
       setFormMessage("Task 标题不能为空");
       return;
     }
+    if (!hasAgentBindingSelection(editAgentBinding, projectConfig)) {
+      setFormMessage("请指定 Agent 类型或预设，或先在 Project 配置中设置 default_agent_type");
+      return;
+    }
 
     const updated = await updateTask(task.id, {
       title: trimmedTitle,
       description: editDescription,
       status: editStatus,
+      workspace_id: editWorkspaceId || null,
+      agent_binding: normalizeAgentBinding(editAgentBinding),
     });
     if (!updated) return;
 
@@ -174,19 +203,26 @@ export function TaskDrawer({
               <option value="failed">失败</option>
             </select>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-md border border-border bg-background p-3">
-                <p className="text-xs text-muted-foreground">工作空间 ID</p>
-                <p className="mt-1 truncate text-sm font-mono text-foreground">
-                  {task.workspace_id ?? "未绑定"}
-                </p>
-              </div>
-              <div className="rounded-md border border-border bg-background p-3">
-                <p className="text-xs text-muted-foreground">Agent 预设</p>
-                <p className="mt-1 text-sm text-foreground">
-                  {task.agent_binding?.preset_name ?? "无"}
-                </p>
-              </div>
+            <select
+              value={editWorkspaceId}
+              onChange={(event) => setEditWorkspaceId(event.target.value)}
+              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            >
+              <option value="">不绑定 Workspace</option>
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="rounded-md border border-border bg-background p-3">
+              <p className="mb-2 text-xs text-muted-foreground">Agent 绑定</p>
+              <AgentBindingFields
+                value={editAgentBinding}
+                projectConfig={projectConfig}
+                onChange={setEditAgentBinding}
+              />
             </div>
             <div className="flex justify-end">
               <button

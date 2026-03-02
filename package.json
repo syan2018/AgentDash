@@ -12,6 +12,8 @@
     "frontend:dev": "pnpm --filter frontend dev",
     "frontend:build": "pnpm --filter frontend build",
     "frontend:check": "pnpm --filter frontend exec tsc --noEmit",
+    "e2e:test": "playwright test",
+    "e2e:debug": "playwright test --headed --debug",
     "backend:dev": "cargo run --bin agentdash-server",
     "backend:build": "cargo build --release",
     "backend:check": "cargo check",
@@ -22,6 +24,7 @@
     "kill:backend": "node scripts/kill-ports.js 3001"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "concurrently": "^9.0.0"
   },
   "pnpm": {

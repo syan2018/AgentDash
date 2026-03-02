@@ -15,7 +15,8 @@ export interface ExecutorConfig {
 }
 
 export interface PromptSessionRequest {
-  prompt: string;
+  prompt?: string;
+  promptBlocks?: unknown[];
   workingDir?: string;
   env?: Record<string, string>;
   executorConfig?: ExecutorConfig;

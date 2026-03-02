@@ -11,6 +11,13 @@ import {
   useExecutorDiscoveredOptions,
   ExecutorSelector,
 } from "../features/executor-selector";
+import {
+  useFileReference,
+  FilePickerPopup,
+  FileReferenceTags,
+  buildPromptBlocks,
+} from "../features/file-reference";
+import { batchReadWorkspaceFiles } from "../services/workspaceFiles";
 
 const promptTemplates = [
   {
@@ -137,6 +144,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     setActiveSessionId(propSessionId ?? null);
   }, [propSessionId, setActiveSessionId]);
 
+  const fileRef = useFileReference();
+
   const discovery = useExecutorDiscovery();
   const execConfig = useExecutorConfig();
   const discovered = useExecutorDiscoveredOptions(execConfig.executor, execConfig.variant);
@@ -219,7 +228,16 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         navigate(`/session/${sid}`, { replace: true });
       }
 
-      await promptSession(sid, { prompt: trimmed, executorConfig });
+      if (fileRef.references.length > 0) {
+        const paths = fileRef.references.map((r) => r.relPath);
+        const batchResult = await batchReadWorkspaceFiles(paths);
+        const blocks = buildPromptBlocks(trimmed, batchResult.files, paths);
+        await promptSession(sid, { promptBlocks: blocks, executorConfig });
+        fileRef.clearReferences();
+      } else {
+        await promptSession(sid, { prompt: trimmed, executorConfig });
+      }
+
       execConfig.recordUsage();
       setPrompt("");
       void reloadSessions();
@@ -228,7 +246,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     } finally {
       setIsSending(false);
     }
-  }, [prompt, isSending, currentSessionId, executorConfig, execConfig, createNew, setActiveSessionId, navigate, reloadSessions]);
+  }, [prompt, isSending, currentSessionId, executorConfig, execConfig, createNew, setActiveSessionId, navigate, reloadSessions, fileRef]);
 
   const handleCancel = sendCancel;
 
@@ -237,10 +255,42 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         void handleSend();
+        return;
       }
     },
     [handleSend],
   );
+
+  const handlePromptChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      setPrompt(value);
+
+      const cursorPos = e.target.selectionStart;
+      const textBefore = value.slice(0, cursorPos);
+      const atMatch = textBefore.match(/@(\S*)$/);
+      if (atMatch && fileRef.canAddMore) {
+        fileRef.openPicker(atMatch[1]);
+      }
+    },
+    [fileRef],
+  );
+
+  const handleFileSelected = useCallback(() => {
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      "[data-prompt-textarea]",
+    );
+    if (!textarea) return;
+
+    const cursorPos = textarea.selectionStart;
+    const textBefore = prompt.slice(0, cursorPos);
+    const atMatch = textBefore.match(/@(\S*)$/);
+    if (atMatch) {
+      const before = textBefore.slice(0, atMatch.index);
+      const after = prompt.slice(cursorPos);
+      setPrompt(before + after);
+    }
+  }, [prompt]);
 
   const connectionLabel = !hasSession
     ? "待创建"
@@ -389,37 +439,68 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                 onRefetch={discovery.refetch}
               />
 
-              <div className="mt-3 flex gap-2">
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={hasSession ? "继续对话，Ctrl+Enter 发送…" : "输入 prompt，Ctrl+Enter 发送…"}
-                  rows={3}
-                  className="min-h-[72px] flex-1 resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1 transition-shadow"
+              <div className="relative mt-3">
+                <FileReferenceTags
+                  references={fileRef.references}
+                  onRemove={(relPath) => {
+                    fileRef.removeReference(relPath);
+                  }}
                 />
-                <div className="flex flex-col gap-2">
-                  <button
-                    type="button"
-                    disabled={isSending || !prompt.trim()}
-                    onClick={() => void handleSend()}
-                    className="h-9 w-20 rounded-lg bg-primary text-sm font-medium text-primary-foreground disabled:opacity-50 transition-opacity"
-                  >
-                    {isSending ? "…" : "发送"}
-                  </button>
-                  {hasSession && (
+
+                <div className="relative mt-1 flex gap-2">
+                  <div className="relative flex-1">
+                    <FilePickerPopup
+                      open={fileRef.pickerOpen}
+                      query={fileRef.pickerQuery}
+                      files={fileRef.pickerFiles}
+                      loading={fileRef.pickerLoading}
+                      error={fileRef.pickerError}
+                      selectedIndex={fileRef.selectedIndex}
+                      onQueryChange={fileRef.updateQuery}
+                      onSelect={(file) => {
+                        fileRef.addReference(file);
+                        handleFileSelected();
+                      }}
+                      onClose={fileRef.closePicker}
+                      onMoveSelection={fileRef.moveSelection}
+                      onConfirmSelection={() => {
+                        fileRef.confirmSelection();
+                        handleFileSelected();
+                      }}
+                    />
+                    <textarea
+                      data-prompt-textarea
+                      value={prompt}
+                      onChange={handlePromptChange}
+                      onKeyDown={handleKeyDown}
+                      placeholder={hasSession ? "继续对话，@ 引用文件，Ctrl+Enter 发送…" : "输入 prompt，@ 引用文件，Ctrl+Enter 发送…"}
+                      rows={3}
+                      className="min-h-[72px] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1 transition-shadow"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
                     <button
                       type="button"
-                      disabled={!isConnected}
-                      onClick={handleCancel}
-                      className="h-9 w-20 rounded-lg border border-border bg-background text-xs text-foreground hover:bg-secondary disabled:opacity-50 transition-colors"
+                      disabled={isSending || !prompt.trim()}
+                      onClick={() => void handleSend()}
+                      className="h-9 w-20 rounded-lg bg-primary text-sm font-medium text-primary-foreground disabled:opacity-50 transition-opacity"
                     >
-                      取消
+                      {isSending ? "…" : "发送"}
                     </button>
-                  )}
+                    {hasSession && (
+                      <button
+                        type="button"
+                        disabled={!isConnected}
+                        onClick={handleCancel}
+                        className="h-9 w-20 rounded-lg border border-border bg-background text-xs text-foreground hover:bg-secondary disabled:opacity-50 transition-colors"
+                      >
+                        取消
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground/60">Ctrl+Enter 快捷发送</p>
+              <p className="mt-1 text-xs text-muted-foreground/60">Ctrl+Enter 快捷发送 · @ 引用工作空间文件</p>
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ pub mod discovery;
 pub mod health;
 pub mod projects;
 pub mod stories;
+pub mod workspace_files;
 pub mod workspaces;
 
 use std::sync::Arc;
@@ -104,6 +105,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/events/stream", get(stream::event_stream))
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .route("/events/since/{since_id}", get(stream::get_events_since))
+        // Workspace Files（内部 API，用于 @ 文件引用选择器）
+        .route("/workspace-files", get(workspace_files::list_files))
+        .route("/workspace-files/read", post(workspace_files::read_file))
+        .route("/workspace-files/batch-read", post(workspace_files::batch_read_files))
         // Agent Discovery
         .route("/agents/discovery", get(discovery::get_discovery))
         .route(

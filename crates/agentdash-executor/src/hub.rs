@@ -18,13 +18,73 @@ use crate::connector::{AgentConnector, ConnectorError, ExecutionContext};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptSessionRequest {
-    pub prompt: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub prompt_blocks: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub executor_config: Option<executors::profile::ExecutorConfig>,
+}
+
+impl PromptSessionRequest {
+    /// 解析出有效的纯文本 prompt。
+    /// 优先使用 prompt_blocks，若不存在则回退到 prompt 字段。
+    /// 二者同时存在返回 Err。
+    pub fn resolve_text_prompt(&self) -> Result<String, &'static str> {
+        match (&self.prompt, &self.prompt_blocks) {
+            (Some(_), Some(_)) => Err("prompt 与 promptBlocks 不能同时传入"),
+            (None, None) => Err("必须提供 prompt 或 promptBlocks"),
+            (Some(p), None) => {
+                let trimmed = p.trim();
+                if trimmed.is_empty() {
+                    Err("prompt 不能为空")
+                } else {
+                    Ok(trimmed.to_string())
+                }
+            }
+            (None, Some(blocks)) => {
+                if blocks.is_empty() {
+                    return Err("promptBlocks 不能为空数组");
+                }
+                let mut texts = Vec::new();
+                for block in blocks {
+                    if let Some(t) = block.get("type").and_then(|v| v.as_str()) {
+                        match t {
+                            "text" => {
+                                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                                    texts.push(text.to_string());
+                                }
+                            }
+                            "resource" => {
+                                if let Some(res) = block.get("resource") {
+                                    let uri = res.get("uri").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                    let text = res.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                    if !text.is_empty() {
+                                        texts.push(format!("\n<file path=\"{uri}\">\n{text}\n</file>"));
+                                    }
+                                }
+                            }
+                            "resource_link" => {
+                                let uri = block.get("uri").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                texts.push(format!("[引用文件: {uri}]"));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let result = texts.join("\n");
+                if result.trim().is_empty() {
+                    Err("promptBlocks 中没有有效内容")
+                } else {
+                    Ok(result)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +118,10 @@ impl ExecutorHub {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             store,
         }
+    }
+
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
     }
 
     pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
@@ -101,6 +165,9 @@ impl ExecutorHub {
     /// 多轮对话：同一 session 允许多次调用，但同一时间只允许一次活跃执行。
     /// 如果上一轮仍在执行中，返回 Err。
     pub async fn start_prompt(&self, session_id: &str, req: PromptSessionRequest) -> Result<(), ConnectorError> {
+        let resolved_prompt = req.resolve_text_prompt()
+            .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
+
         let tx = {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
@@ -130,8 +197,7 @@ impl ExecutorHub {
             executor_config,
         };
 
-        // 更新元数据时间戳；如果不存在则自动创建
-        let title_hint = req.prompt.chars().take(30).collect::<String>();
+        let title_hint = resolved_prompt.chars().take(30).collect::<String>();
         let store = self.store.clone();
         let sid = session_id.to_string();
         if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
@@ -163,7 +229,7 @@ impl ExecutorHub {
             .trace(Some(trace));
         let meta = merge_agentdash_meta(None, &agentdash);
 
-        let user_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(&req.prompt))).meta(meta);
+        let user_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(&resolved_prompt))).meta(meta);
         let user_notification = SessionNotification::new(
             SessionId::new(session_id),
             SessionUpdate::UserMessageChunk(user_chunk),
@@ -171,7 +237,7 @@ impl ExecutorHub {
         let _ = store.append(&sid, &user_notification).await;
         let _ = tx.send(user_notification);
 
-        let mut stream = self.connector.prompt(session_id, &req.prompt, context).await?;
+        let mut stream = self.connector.prompt(session_id, &resolved_prompt, context).await?;
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
 

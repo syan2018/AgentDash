@@ -95,7 +95,10 @@ pub async fn prompt_session(
         .executor_hub
         .start_prompt(&session_id, req)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| match &e {
+            agentdash_executor::ConnectorError::InvalidConfig(_) => ApiError::BadRequest(e.to_string()),
+            _ => ApiError::Internal(e.to_string()),
+        })?;
 
     Ok(Json(serde_json::json!({ "started": true, "sessionId": session_id })))
 }

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { AgentBinding, ProjectConfig } from "../../types";
 import { useExecutorDiscovery } from "../executor-selector";
 
@@ -41,7 +41,7 @@ function buildAgentTypeOptions(
   }
   appendRawOption(binding.agent_type, "当前值");
 
-  return Array.from(options.values()).sort((a, b) => a.label.localeCompare(b.label));
+  return Array.from(options.values());
 }
 
 export function AgentBindingFields({ value, projectConfig, onChange }: AgentBindingFieldsProps) {
@@ -56,6 +56,23 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
   const updateBinding = (patch: Partial<AgentBinding>) => {
     onChange({ ...value, ...patch });
   };
+
+  const fallbackExecutorId = useMemo(() => {
+    return executors.find((item) => item.available)?.id ?? executors[0]?.id ?? "";
+  }, [executors]);
+
+  useEffect(() => {
+    const hasBindingSelection = Boolean(
+      (value.agent_type ?? "").trim() ||
+      (value.preset_name ?? "").trim() ||
+      (projectConfig?.default_agent_type ?? "").trim(),
+    );
+    if (hasBindingSelection || !fallbackExecutorId) return;
+    onChange({
+      ...value,
+      agent_type: fallbackExecutorId,
+    });
+  }, [fallbackExecutorId, onChange, projectConfig?.default_agent_type, value]);
 
   const handlePresetChange = (presetName: string) => {
     if (!presetName) {

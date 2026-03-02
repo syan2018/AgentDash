@@ -244,7 +244,7 @@ pub fn build_task_agent_context(
 
     if let Some(initial_context) = clean_text(input.task.agent_binding.initial_context.as_deref()) {
         composer.push(
-            "instruction",
+            "initial_context",
             "binding_initial_context",
             80,
             MergeStrategy::Append,
@@ -362,4 +362,32 @@ fn clean_text(input: Option<&str>) -> Option<&str> {
 fn trim_or_dash(text: &str) -> &str {
     let trimmed = text.trim();
     if trimmed.is_empty() { "-" } else { trimmed }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compose_keeps_initial_context_when_instruction_slot_is_override() {
+        let mut composer = ContextComposer::default();
+        composer.push(
+            "initial_context",
+            "binding_initial_context",
+            80,
+            MergeStrategy::Append,
+            "## Initial Context\ncontext from binding",
+        );
+        composer.push(
+            "instruction",
+            "binding_template",
+            90,
+            MergeStrategy::Override,
+            "## Instruction\nrun task",
+        );
+
+        let (prompt, _) = composer.compose();
+        assert!(prompt.contains("context from binding"));
+        assert!(prompt.contains("## Instruction"));
+    }
 }

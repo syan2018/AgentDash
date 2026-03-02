@@ -1,4 +1,4 @@
-import type { AgentBinding, ProjectConfig } from "../../types";
+import type { AgentBinding, ProjectConfig, Workspace } from "../../types";
 
 function normalizeText(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
@@ -6,13 +6,46 @@ function normalizeText(value: string | null | undefined): string | null {
 }
 
 export function createDefaultAgentBinding(projectConfig?: ProjectConfig): AgentBinding {
+  const defaultAgentType = normalizeText(projectConfig?.default_agent_type);
+  if (defaultAgentType) {
+    return {
+      agent_type: defaultAgentType,
+      agent_pid: null,
+      preset_name: null,
+      prompt_template: null,
+      initial_context: null,
+    };
+  }
+
+  const fallbackPreset = projectConfig?.agent_presets?.[0];
+  if (fallbackPreset) {
+    return {
+      agent_type: normalizeText(fallbackPreset.agent_type),
+      agent_pid: null,
+      preset_name: normalizeText(fallbackPreset.name),
+      prompt_template: null,
+      initial_context: null,
+    };
+  }
+
   return {
-    agent_type: normalizeText(projectConfig?.default_agent_type),
+    agent_type: null,
     agent_pid: null,
     preset_name: null,
     prompt_template: null,
     initial_context: null,
   };
+}
+
+export function resolveDefaultWorkspaceId(
+  projectConfig: ProjectConfig | undefined,
+  workspaces: Workspace[],
+): string {
+  const projectDefault = projectConfig?.default_workspace_id?.trim() ?? "";
+  if (projectDefault && workspaces.some((item) => item.id === projectDefault)) {
+    return projectDefault;
+  }
+  return workspaces[0]?.id ?? "";
 }
 
 export function normalizeAgentBinding(binding: AgentBinding): AgentBinding {

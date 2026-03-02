@@ -9,6 +9,7 @@ import {
   createDefaultAgentBinding,
   hasAgentBindingSelection,
   normalizeAgentBinding,
+  resolveDefaultWorkspaceId,
 } from "../features/task/agent-binding";
 import { useStoryStore } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
@@ -122,10 +123,17 @@ function CreateTaskPanel({
   const [isExpanded, setIsExpanded] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [workspaceId, setWorkspaceId] = useState(projectConfig?.default_workspace_id ?? "");
+  const [workspaceId, setWorkspaceId] = useState(() => resolveDefaultWorkspaceId(projectConfig, workspaces));
   const [agentBinding, setAgentBinding] = useState<AgentBinding>(() => createDefaultAgentBinding(projectConfig));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isExpanded) return;
+    setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
+    setAgentBinding(createDefaultAgentBinding(projectConfig));
+    setFormMessage(null);
+  }, [isExpanded, projectConfig, workspaces]);
 
   const handleSubmit = async () => {
     if (!title.trim()) return;
@@ -148,6 +156,7 @@ function CreateTaskPanel({
       // 重置表单并收起
       setTitle("");
       setDescription("");
+      setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
       setAgentBinding(createDefaultAgentBinding(projectConfig));
       setIsExpanded(false);
     } finally {

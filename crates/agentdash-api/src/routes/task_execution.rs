@@ -139,7 +139,7 @@ pub async fn start_task(
         prompt_blocks: None,
         working_dir: built.working_dir,
         env: HashMap::new(),
-        executor_config: req.executor_config,
+        executor_config: resolve_task_executor_config(req.executor_config, &task, &project)?,
     };
 
     let turn_id = match state.executor_hub.start_prompt(&session.id, prompt_req).await {
@@ -219,7 +219,7 @@ pub async fn continue_task(
         prompt_blocks: None,
         working_dir: built.working_dir,
         env: HashMap::new(),
-        executor_config: req.executor_config,
+        executor_config: resolve_task_executor_config(req.executor_config, &task, &project)?,
     };
 
     let turn_id = state
@@ -861,4 +861,68 @@ fn map_connector_error(err: ConnectorError) -> ApiError {
         ConnectorError::Runtime(message) => ApiError::Conflict(message),
         other => ApiError::Internal(other.to_string()),
     }
+}
+
+fn resolve_task_executor_config(
+    explicit: Option<executors::profile::ExecutorConfig>,
+    task: &Task,
+    project: &Project,
+) -> Result<Option<executors::profile::ExecutorConfig>, ApiError> {
+    if explicit.is_some() {
+        return Ok(explicit);
+    }
+
+    let Some(agent_type) = resolve_task_agent_type(task, project)? else {
+        return Ok(None);
+    };
+
+    let executor = parse_base_agent(&agent_type)?;
+    Ok(Some(executors::profile::ExecutorConfig::new(executor)))
+}
+
+fn resolve_task_agent_type(task: &Task, project: &Project) -> Result<Option<String>, ApiError> {
+    if let Some(agent_type) = normalize_option_string(task.agent_binding.agent_type.clone()) {
+        return Ok(Some(agent_type));
+    }
+
+    if let Some(preset_name) = normalize_option_string(task.agent_binding.preset_name.clone()) {
+        let preset = project
+            .config
+            .agent_presets
+            .iter()
+            .find(|item| item.name == preset_name)
+            .ok_or_else(|| ApiError::BadRequest(format!("Project 中不存在预设: {preset_name}")))?;
+        return Ok(normalize_option_string(Some(preset.agent_type.clone())));
+    }
+
+    Ok(normalize_option_string(
+        project.config.default_agent_type.clone(),
+    ))
+}
+
+fn parse_base_agent(raw: &str) -> Result<executors::executors::BaseCodingAgent, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest("Agent 类型不能为空".into()));
+    }
+
+    if let Ok(executor) = trimmed.parse::<executors::executors::BaseCodingAgent>() {
+        return Ok(executor);
+    }
+
+    let normalized = trimmed.replace('-', "_").to_ascii_uppercase();
+    normalized
+        .parse::<executors::executors::BaseCodingAgent>()
+        .map_err(|_| ApiError::BadRequest(format!("无效的 Agent 类型: {trimmed}")))
+}
+
+fn normalize_option_string(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }

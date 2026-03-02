@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AgentBinding, ProjectConfig, Story, StoryStatus, Task, Workspace } from "../../types";
 import { StoryStatusBadge } from "../../components/ui/status-badge";
 import { TaskList } from "../task/task-list";
@@ -7,6 +7,7 @@ import {
   createDefaultAgentBinding,
   hasAgentBindingSelection,
   normalizeAgentBinding,
+  resolveDefaultWorkspaceId,
 } from "../task/agent-binding";
 import { useStoryStore } from "../../stores/storyStore";
 import {
@@ -127,10 +128,17 @@ function CreateTaskDrawer({
   const { createTask, error } = useStoryStore();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [workspaceId, setWorkspaceId] = useState(projectConfig?.default_workspace_id ?? "");
+  const [workspaceId, setWorkspaceId] = useState(() => resolveDefaultWorkspaceId(projectConfig, workspaces));
   const [agentBinding, setAgentBinding] = useState<AgentBinding>(() => createDefaultAgentBinding(projectConfig));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
+    setAgentBinding(createDefaultAgentBinding(projectConfig));
+    setFormMessage(null);
+  }, [open, projectConfig, workspaces]);
 
   const handleSubmit = async () => {
     if (!title.trim()) return;
@@ -151,6 +159,7 @@ function CreateTaskDrawer({
 
       setTitle("");
       setDescription("");
+      setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
       setAgentBinding(createDefaultAgentBinding(projectConfig));
       onCreated(task);
       onClose();

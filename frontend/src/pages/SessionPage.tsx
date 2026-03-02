@@ -16,6 +16,8 @@ import {
   FilePickerPopup,
   FileReferenceTags,
   buildPromptBlocks,
+  RichInput,
+  type RichInputRef,
 } from "../features/file-reference";
 import { batchReadWorkspaceFiles, type FileEntry } from "../services/workspaceFiles";
 
@@ -69,10 +71,21 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function removeReferenceAnchor(prompt: string, relPath: string): string {
+function removeReferenceMarkers(prompt: string, relPath: string): string {
   const escapedPath = escapeRegExp(relPath);
-  const pattern = new RegExp(`@${escapedPath}(?=\\s|$)`, "g");
-  return prompt.replace(pattern, "");
+  // Canonical marker produced by RichInput extraction.
+  const fileMarker = new RegExp(`<file:${escapedPath}>`, "g");
+  // Back-compat: if user typed an @path token manually.
+  const atMarker = new RegExp(`@${escapedPath}(?=\\s|$)`, "g");
+
+  let next = prompt.replace(fileMarker, "").replace(atMarker, "");
+
+  // Clean up leftover whitespace.
+  next = next.replace(/[ \t]{2,}/g, " ");
+  next = next.replace(/[ \t]+\n/g, "\n");
+  next = next.replace(/\n{3,}/g, "\n\n");
+
+  return next;
 }
 
 /**
@@ -145,9 +158,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(propSessionId ?? null);
-  const [prompt, setPrompt] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [inputValue, setInputValue] = useState("");
+
+  const richInputRef = useRef<RichInputRef>(null);
 
   useEffect(() => {
     setCurrentSessionId(propSessionId ?? null);
@@ -155,6 +170,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [propSessionId, setActiveSessionId]);
 
   const fileRef = useFileReference();
+
+  // 同步清空 RichInput 当发送成功后
+  const clearInput = useCallback(() => {
+    richInputRef.current?.setValue("");
+  }, []);
 
   const discovery = useExecutorDiscovery();
   const execConfig = useExecutorConfig();
@@ -203,12 +223,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const handleNewSession = useCallback(() => {
     setSendError(null);
-    setPrompt("");
+    clearInput();
     setIsSending(false);
     setCurrentSessionId(null);
     setActiveSessionId(null);
     navigate("/session", { replace: true });
-  }, [navigate, setActiveSessionId]);
+  }, [navigate, setActiveSessionId, clearInput]);
 
   const handleCopySessionId = useCallback(async () => {
     if (!currentSessionId) return;
@@ -220,7 +240,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId]);
 
   const handleSend = useCallback(async () => {
-    const trimmed = prompt.trim();
+    const promptText = richInputRef.current?.getValue() ?? "";
+    const trimmed = promptText.trim();
     if (!trimmed || isSending) return;
 
     setSendError(null);
@@ -249,19 +270,19 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       }
 
       execConfig.recordUsage();
-      setPrompt("");
+      clearInput();
       void reloadSessions();
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
     } finally {
       setIsSending(false);
     }
-  }, [prompt, isSending, currentSessionId, executorConfig, execConfig, createNew, setActiveSessionId, navigate, reloadSessions, fileRef]);
+  }, [isSending, currentSessionId, executorConfig, execConfig, createNew, setActiveSessionId, navigate, reloadSessions, fileRef, clearInput]);
 
   const handleCancel = sendCancel;
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         void handleSend();
@@ -271,45 +292,30 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     [handleSend],
   );
 
-  const handlePromptChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      const value = e.target.value;
-      setPrompt(value);
-
-      const cursorPos = e.target.selectionStart;
-      const textBefore = value.slice(0, cursorPos);
-      const atMatch = textBefore.match(/@(\S*)$/);
-      if (atMatch && fileRef.canAddMore) {
-        fileRef.openPicker(atMatch[1]);
-      }
-    },
-    [fileRef],
-  );
+  const handleAtTrigger = useCallback((query: string) => {
+    if (fileRef.canAddMore) {
+      // 在打开 picker 前保存 RichInput 光标位置，避免焦点切换后插入失败/插入到错误位置。
+      richInputRef.current?.saveSelection();
+      fileRef.openPicker(query);
+    }
+  }, [fileRef]);
 
   const handleFileSelected = useCallback((file: FileEntry) => {
-    const textarea = document.querySelector<HTMLTextAreaElement>(
-      "[data-prompt-textarea]",
-    );
-    if (!textarea) return;
+    const alreadySelected = fileRef.references.some((r) => r.relPath === file.relPath);
 
-    const cursorPos = textarea.selectionStart;
-    const textBefore = prompt.slice(0, cursorPos);
-    const atMatch = textBefore.match(/@(\S*)$/);
-    if (atMatch) {
-      const before = textBefore.slice(0, atMatch.index);
-      const after = prompt.slice(cursorPos);
-      const anchor = `@${file.relPath}`;
-      const needsSpace = after.length > 0 && !after.startsWith(" ") && !after.startsWith("\n");
-      const nextPrompt = `${before}${anchor}${needsSpace ? " " : ""}${after}`;
-      setPrompt(nextPrompt);
-
-      requestAnimationFrame(() => {
-        const nextPos = before.length + anchor.length + (needsSpace ? 1 : 0);
-        textarea.focus();
-        textarea.setSelectionRange(nextPos, nextPos);
-      });
+    if (!fileRef.canAddMore && !alreadySelected) {
+      fileRef.closePicker();
+      return;
     }
-  }, [prompt]);
+
+    // 先更新引用列表（内部会关闭 picker）。如果是重复选择则不再插入 pill。
+    fileRef.addReference(file);
+    if (alreadySelected) return;
+
+    requestAnimationFrame(() => {
+      richInputRef.current?.insertFileReference(file);
+    });
+  }, [fileRef]);
 
   const connectionLabel = !hasSession
     ? "待创建"
@@ -427,7 +433,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                     <button
                       key={tpl.id}
                       type="button"
-                      onClick={() => setPrompt(tpl.content)}
+                      onClick={() => richInputRef.current?.setValue(tpl.content)}
                       className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-secondary transition-colors"
                     >
                       {tpl.label}
@@ -463,11 +469,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                   references={fileRef.references}
                   onRemove={(relPath) => {
                     fileRef.removeReference(relPath);
-                    setPrompt((prev) => removeReferenceAnchor(prev, relPath));
+                    const cur = richInputRef.current?.getValue() ?? "";
+                    const next = removeReferenceMarkers(cur, relPath);
+                    richInputRef.current?.setValue(next);
                   }}
                 />
 
-                <div className="relative mt-1 flex gap-2">
+                <div className="relative flex gap-2">
                   <div className="relative flex-1">
                     <FilePickerPopup
                       open={fileRef.pickerOpen}
@@ -477,33 +485,31 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                       error={fileRef.pickerError}
                       selectedIndex={fileRef.selectedIndex}
                       onQueryChange={fileRef.updateQuery}
-                      onSelect={(file) => {
-                        fileRef.addReference(file);
-                        handleFileSelected(file);
-                      }}
+                      onSelect={handleFileSelected}
                       onClose={fileRef.closePicker}
                       onMoveSelection={fileRef.moveSelection}
                       onConfirmSelection={() => {
                         const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
                         if (!selectedFile) return;
-                        fileRef.addReference(selectedFile);
                         handleFileSelected(selectedFile);
                       }}
                     />
-                    <textarea
-                      data-prompt-textarea
-                      value={prompt}
-                      onChange={handlePromptChange}
-                      onKeyDown={handleKeyDown}
+                    <RichInput
+                      ref={richInputRef}
                       placeholder={hasSession ? "继续对话，@ 引用文件，Ctrl+Enter 发送…" : "输入 prompt，@ 引用文件，Ctrl+Enter 发送…"}
-                      rows={3}
-                      className="min-h-[72px] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1 transition-shadow"
+                      onChange={setInputValue}
+                      onKeyDown={handleKeyDown}
+                      onAtTrigger={handleAtTrigger}
+                      onFileReferenceRemoved={(relPath) => {
+                        fileRef.removeReference(relPath);
+                      }}
+                      disabled={isSending}
                     />
                   </div>
                   <div className="flex flex-col gap-2">
                     <button
                       type="button"
-                      disabled={isSending || !prompt.trim()}
+                      disabled={isSending || !inputValue.trim()}
                       onClick={() => void handleSend()}
                       className="h-9 w-20 rounded-lg bg-primary text-sm font-medium text-primary-foreground disabled:opacity-50 transition-opacity"
                     >

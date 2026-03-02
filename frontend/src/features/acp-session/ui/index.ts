@@ -9,3 +9,4 @@ export { AcpMessageCard, type AcpMessageCardProps } from "./AcpMessageCard";
 export { AcpPlanCard, type AcpPlanCardProps } from "./AcpPlanCard";
 export { AcpSystemEventCard, type AcpSystemEventCardProps } from "./AcpSystemEventCard";
 export { AcpUsageCard, type AcpUsageCardProps } from "./AcpUsageCard";
+export { ContentBlockCard, type ContentBlockCardProps } from "./ContentBlockCard";

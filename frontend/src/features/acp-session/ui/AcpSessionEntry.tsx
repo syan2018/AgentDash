@@ -18,10 +18,11 @@ import {
   isDisplayEntry,
   extractTextFromContentBlock,
 } from "../model/types";
-import type { AcpDisplayItem, AcpDisplayEntry, AggregatedEntryGroup, AggregatedThinkingGroup } from "../model/types";
+import type { AcpDisplayItem, AcpDisplayEntry, AggregatedEntryGroup, AggregatedThinkingGroup, ContentBlock } from "../model/types";
 import { AcpToolCallCard } from "./AcpToolCallCard";
 import { AcpMessageCard } from "./AcpMessageCard";
 import { AcpPlanCard } from "./AcpPlanCard";
+import { ContentBlockCard } from "./ContentBlockCard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
@@ -52,7 +53,27 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
 
   switch (update.sessionUpdate) {
     case "user_message_chunk": {
-      const text = extractTextFromContentBlock(update.content);
+      const content = update.content as ContentBlock | undefined;
+
+      // 对于 resource/resource_link 类型，使用优雅的卡片展示
+      if (content?.type === "resource" || content?.type === "resource_link") {
+        return (
+          <div className="flex gap-3">
+            {/* 头像/图标 */}
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
+              <span className="text-xs">👤</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="mb-1 text-xs text-primary font-medium">用户</p>
+              <div className="max-w-md">
+                <ContentBlockCard block={content} variant="compact" />
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const text = extractTextFromContentBlock(content);
       return (
         <AcpMessageCard
           type="user"

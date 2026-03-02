@@ -1,4 +1,4 @@
-use std::path::{Path, Component};
+use std::path::{Component, Path};
 use std::sync::Arc;
 
 use axum::Json;
@@ -82,11 +82,10 @@ pub async fn list_files(
     let pattern = query.pattern.unwrap_or_default();
     let pattern_lower = pattern.to_lowercase();
 
-    let files = tokio::task::spawn_blocking(move || {
-        walk_files(&root, &pattern_lower, MAX_LIST_RESULTS)
-    })
-    .await
-    .map_err(|e| ApiError::Internal(format!("文件列表任务异常: {e}")))?;
+    let files =
+        tokio::task::spawn_blocking(move || walk_files(&root, &pattern_lower, MAX_LIST_RESULTS))
+            .await
+            .map_err(|e| ApiError::Internal(format!("文件列表任务异常: {e}")))?;
 
     let root_display = normalize_path_display(state.executor_hub.workspace_root());
 
@@ -358,21 +357,58 @@ fn walk_dir_recursive(
 fn should_skip(name: &str) -> bool {
     matches!(
         name,
-        ".git" | "node_modules" | "target" | "__pycache__" | ".next"
-            | ".agentdash" | "dist" | "build" | ".trellis" | ".venv"
-            | ".mypy_cache" | ".pytest_cache" | ".ruff_cache"
-            | "references" | "third_party" | ".cursor" | ".claude"
+        ".git"
+            | "node_modules"
+            | "target"
+            | "__pycache__"
+            | ".next"
+            | ".agentdash"
+            | "dist"
+            | "build"
+            | ".trellis"
+            | ".venv"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            | "references"
+            | "third_party"
+            | ".cursor"
+            | ".claude"
             | ".agents"
-    ) || name.starts_with('.')
-        && matches!(name, ".env" | ".env.local" | ".DS_Store")
+    ) || name.starts_with('.') && matches!(name, ".env" | ".env.local" | ".DS_Store")
 }
 
 fn is_likely_text(rel_path: &str) -> bool {
     let text_exts = [
-        "rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml",
-        "md", "txt", "html", "css", "scss", "py", "sh", "bash", "zsh",
-        "sql", "xml", "svg", "lock", "cfg", "ini", "env", "gitignore",
-        "editorconfig", "prettierrc", "eslintrc",
+        "rs",
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "json",
+        "toml",
+        "yaml",
+        "yml",
+        "md",
+        "txt",
+        "html",
+        "css",
+        "scss",
+        "py",
+        "sh",
+        "bash",
+        "zsh",
+        "sql",
+        "xml",
+        "svg",
+        "lock",
+        "cfg",
+        "ini",
+        "env",
+        "gitignore",
+        "editorconfig",
+        "prettierrc",
+        "eslintrc",
     ];
     if let Some(ext) = Path::new(rel_path).extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
@@ -384,8 +420,13 @@ fn is_likely_text(rel_path: &str) -> bool {
         .unwrap_or_default();
     matches!(
         base_name.as_str(),
-        "Makefile" | "Dockerfile" | "Cargo.lock" | "Cargo.toml"
-            | "package.json" | "tsconfig.json" | ".gitignore"
+        "Makefile"
+            | "Dockerfile"
+            | "Cargo.lock"
+            | "Cargo.toml"
+            | "package.json"
+            | "tsconfig.json"
+            | ".gitignore"
     )
 }
 

@@ -63,8 +63,8 @@ pub async fn get_project(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ProjectDetailResponse>, ApiError> {
-    let project_id = Uuid::parse_str(&id)
-        .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    let project_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
     let project = state
         .project_repo
@@ -87,8 +87,8 @@ pub async fn update_project(
     Path(id): Path<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> Result<Json<Project>, ApiError> {
-    let project_id = Uuid::parse_str(&id)
-        .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    let project_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
     let mut project = state
         .project_repo
@@ -117,8 +117,8 @@ pub async fn delete_project(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let project_id = Uuid::parse_str(&id)
-        .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    let project_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
     // 先删除 Project 下的 Task/Story/Workspace，再删除 Project 本身，避免外键约束失败
     let stories = state.story_repo.list_by_project(project_id).await?;

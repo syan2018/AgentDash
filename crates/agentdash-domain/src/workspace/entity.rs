@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{WorkspaceType, WorkspaceStatus, GitConfig};
+use super::value_objects::{GitConfig, WorkspaceStatus, WorkspaceType};
 
 /// Workspace — 物理工作空间
 ///
@@ -26,7 +26,12 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(project_id: Uuid, name: String, container_ref: String, workspace_type: WorkspaceType) -> Self {
+    pub fn new(
+        project_id: Uuid,
+        name: String,
+        container_ref: String,
+        workspace_type: WorkspaceType,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),

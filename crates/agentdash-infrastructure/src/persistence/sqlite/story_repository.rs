@@ -1,7 +1,9 @@
 use sqlx::SqlitePool;
 
 use agentdash_domain::common::error::DomainError;
-use agentdash_domain::story::{ChangeKind, StateChange, Story, StoryStatus, StoryContext, StoryRepository};
+use agentdash_domain::story::{
+    ChangeKind, StateChange, Story, StoryContext, StoryRepository, StoryStatus,
+};
 
 pub struct SqliteStoryRepository {
     pool: SqlitePool,
@@ -77,7 +79,10 @@ impl SqliteStoryRepository {
 #[async_trait::async_trait]
 impl StoryRepository for SqliteStoryRepository {
     async fn create(&self, story: &Story) -> Result<(), DomainError> {
-        let mut tx = self.pool.begin().await
+        let mut tx = self
+            .pool
+            .begin()
+            .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         sqlx::query(
@@ -106,7 +111,8 @@ impl StoryRepository for SqliteStoryRepository {
         )
         .await?;
 
-        tx.commit().await
+        tx.commit()
+            .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(())
     }
@@ -151,7 +157,10 @@ impl StoryRepository for SqliteStoryRepository {
     }
 
     async fn update(&self, story: &Story) -> Result<(), DomainError> {
-        let mut tx = self.pool.begin().await
+        let mut tx = self
+            .pool
+            .begin()
+            .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let result = sqlx::query(
@@ -186,7 +195,8 @@ impl StoryRepository for SqliteStoryRepository {
         )
         .await?;
 
-        tx.commit().await
+        tx.commit()
+            .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(())
     }
@@ -207,7 +217,11 @@ impl StoryRepository for SqliteStoryRepository {
         Ok(())
     }
 
-    async fn get_changes_since(&self, since_id: i64, limit: i64) -> Result<Vec<StateChange>, DomainError> {
+    async fn get_changes_since(
+        &self,
+        since_id: i64,
+        limit: i64,
+    ) -> Result<Vec<StateChange>, DomainError> {
         let rows = sqlx::query_as::<_, StateChangeRow>(
             "SELECT id, entity_id, kind, payload, backend_id, created_at
              FROM state_changes WHERE id > ? ORDER BY id ASC LIMIT ?",
@@ -222,12 +236,34 @@ impl StoryRepository for SqliteStoryRepository {
     }
 
     async fn latest_event_id(&self) -> Result<i64, DomainError> {
-        let row: (i64,) =
-            sqlx::query_as("SELECT COALESCE(MAX(id), 0) FROM state_changes")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let row: (i64,) = sqlx::query_as("SELECT COALESCE(MAX(id), 0) FROM state_changes")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(row.0)
+    }
+
+    async fn append_change(
+        &self,
+        entity_id: uuid::Uuid,
+        kind: ChangeKind,
+        payload: serde_json::Value,
+        backend_id: &str,
+    ) -> Result<(), DomainError> {
+        sqlx::query(
+            "INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(entity_id.to_string())
+        .bind(serde_json::to_string(&kind)?.trim_matches('"'))
+        .bind(payload.to_string())
+        .bind(backend_id)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        Ok(())
     }
 }
 
@@ -257,8 +293,7 @@ impl TryFrom<StoryRow> for Story {
             .parse()
             .unwrap_or_default();
 
-        let context: StoryContext = serde_json::from_str(&row.context)
-            .unwrap_or_default();
+        let context: StoryContext = serde_json::from_str(&row.context).unwrap_or_default();
 
         Ok(Story {
             id: row.id.parse().map_err(|_| DomainError::NotFound {

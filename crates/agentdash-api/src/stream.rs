@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, header};
 use axum::response::IntoResponse;
-use axum::Json;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::Stream;
 use serde::Serialize;
@@ -27,10 +27,7 @@ pub async fn event_stream(
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let resume_from = parse_last_event_id(&headers);
-    tracing::info!(
-        last_event_id = resume_from,
-        "全局事件流连接建立（SSE）"
-    );
+    tracing::info!(last_event_id = resume_from, "全局事件流连接建立（SSE）");
 
     let stream = async_stream::stream! {
         let mut cursor = resume_from;
@@ -96,7 +93,11 @@ pub async fn event_stream(
         }
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(STREAM_HEARTBEAT_INTERVAL).text("keep-alive"))
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(STREAM_HEARTBEAT_INTERVAL)
+            .text("keep-alive"),
+    )
 }
 
 /// 全局事件流（NDJSON）
@@ -105,10 +106,7 @@ pub async fn event_stream_ndjson(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     let resume_from = parse_last_event_id(&headers);
-    tracing::info!(
-        last_event_id = resume_from,
-        "全局事件流连接建立（NDJSON）"
-    );
+    tracing::info!(last_event_id = resume_from, "全局事件流连接建立（NDJSON）");
 
     let stream = async_stream::stream! {
         let mut cursor = resume_from;
@@ -176,10 +174,7 @@ pub async fn event_stream_ndjson(
 
     (
         [
-            (
-                header::CONTENT_TYPE,
-                "application/x-ndjson; charset=utf-8",
-            ),
+            (header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8"),
             (header::CACHE_CONTROL, "no-cache, no-transform"),
             (header::CONNECTION, "keep-alive"),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
@@ -243,7 +238,10 @@ async fn load_state_changes_since(
     let mut all = Vec::new();
 
     loop {
-        let batch = state.story_repo.get_changes_since(cursor, STREAM_BATCH_LIMIT).await?;
+        let batch = state
+            .story_repo
+            .get_changes_since(cursor, STREAM_BATCH_LIMIT)
+            .await?;
         if batch.is_empty() {
             break;
         }

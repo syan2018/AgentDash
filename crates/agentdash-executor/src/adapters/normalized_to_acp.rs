@@ -1,36 +1,18 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use agent_client_protocol::{
-    ContentBlock,
-    ContentChunk,
-    Diff,
-    Meta,
-    Plan,
-    PlanEntry,
-    PlanEntryPriority,
-    PlanEntryStatus,
-    SessionId,
-    SessionNotification,
-    SessionUpdate,
-    SessionInfoUpdate,
-    TextContent,
-    ToolCall,
-    ToolCallContent,
-    ToolCallId,
-    ToolCallLocation,
-    ToolCallStatus,
-    ToolCallUpdate,
-    ToolCallUpdateFields,
-    ToolKind,
+    ContentBlock, ContentChunk, Diff, Meta, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus,
+    SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate, TextContent, ToolCall,
+    ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
+};
+use agentdash_acp_meta::{
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
 use executors::{
     approvals::ToolCallMetadata,
     logs::{ActionType, FileChange, NormalizedEntry, NormalizedEntryType, ToolStatus},
 };
-use agentdash_acp_meta::{merge_agentdash_meta, AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1};
 
 #[derive(Debug)]
 pub struct NormalizedToAcpConverter {
@@ -48,7 +30,11 @@ pub struct NormalizedToAcpConverter {
 }
 
 impl NormalizedToAcpConverter {
-    pub fn new(session_id: impl Into<SessionId>, source: AgentDashSourceV1, turn_id: impl Into<String>) -> Self {
+    pub fn new(
+        session_id: impl Into<SessionId>,
+        source: AgentDashSourceV1,
+        turn_id: impl Into<String>,
+    ) -> Self {
         Self {
             session_id: session_id.into(),
             turn_prefix: turn_id.into(),
@@ -85,12 +71,18 @@ impl NormalizedToAcpConverter {
                 t.entry_index = Some(entry_index as u32);
                 Some(t)
             })
-            .event(Some(AgentDashEventV1::new(event_type).message(Some(message.to_string()))));
+            .event(Some(
+                AgentDashEventV1::new(event_type).message(Some(message.to_string())),
+            ));
 
         merge_agentdash_meta(None, &agentdash)
     }
 
-    pub fn apply(&mut self, entry_index: usize, entry: NormalizedEntry) -> Vec<SessionNotification> {
+    pub fn apply(
+        &mut self,
+        entry_index: usize,
+        entry: NormalizedEntry,
+    ) -> Vec<SessionNotification> {
         let prev = self.last_by_index.insert(entry_index, entry.clone());
 
         match &entry.entry_type {
@@ -131,28 +123,36 @@ impl NormalizedToAcpConverter {
             }
             NormalizedEntryType::SystemMessage => vec![SessionNotification::new(
                 self.session_id.clone(),
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "system_message", &entry.content)),
-                ),
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(self.event_meta(
+                    entry_index,
+                    "system_message",
+                    &entry.content,
+                ))),
             )],
             NormalizedEntryType::ErrorMessage { .. } => vec![SessionNotification::new(
                 self.session_id.clone(),
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "error", &entry.content)),
-                ),
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(self.event_meta(
+                    entry_index,
+                    "error",
+                    &entry.content,
+                ))),
             )],
             NormalizedEntryType::UserFeedback { .. } => vec![SessionNotification::new(
                 self.session_id.clone(),
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "user_feedback", &entry.content)),
-                ),
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(self.event_meta(
+                    entry_index,
+                    "user_feedback",
+                    &entry.content,
+                ))),
             )],
-            NormalizedEntryType::UserAnsweredQuestions { .. } => vec![SessionNotification::new(
-                self.session_id.clone(),
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(self.event_meta(entry_index, "user_answered_questions", &entry.content)),
-                ),
-            )],
+            NormalizedEntryType::UserAnsweredQuestions { .. } => {
+                vec![SessionNotification::new(
+                    self.session_id.clone(),
+                    SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
+                        self.event_meta(entry_index, "user_answered_questions", &entry.content),
+                    )),
+                )]
+            }
             NormalizedEntryType::Loading | NormalizedEntryType::NextAction { .. } => Vec::new(),
             NormalizedEntryType::TokenUsageInfo(info) => {
                 vec![SessionNotification::new(
@@ -206,7 +206,14 @@ impl NormalizedToAcpConverter {
             _ => {
                 let tool_call_id = tool_call_id_from_entry(&self.turn_prefix, entry_index, entry);
                 let meta = self.base_meta(Some(entry_index));
-                let new_call = build_tool_call(tool_call_id.clone(), tool_name, action_type, status, entry, meta.clone());
+                let new_call = build_tool_call(
+                    tool_call_id.clone(),
+                    tool_name,
+                    action_type,
+                    status,
+                    entry,
+                    meta.clone(),
+                );
                 let is_new = !self.tool_call_by_id.contains_key(&tool_call_id);
 
                 if is_new {
@@ -221,7 +228,9 @@ impl NormalizedToAcpConverter {
                         .tool_call_by_id
                         .get(&tool_call_id)
                         .cloned()
-                        .unwrap_or_else(|| ToolCall::new(ToolCallId::new(tool_call_id.clone()), ""));
+                        .unwrap_or_else(|| {
+                            ToolCall::new(ToolCallId::new(tool_call_id.clone()), "")
+                        });
 
                     let fields = diff_tool_call_fields(&prev, &new_call);
                     self.tool_call_by_id
@@ -306,7 +315,11 @@ fn emit_chunk(
     vec![SessionNotification::new(session_id.clone(), ctor(chunk))]
 }
 
-fn tool_call_id_from_entry(turn_prefix: &str, entry_index: usize, entry: &NormalizedEntry) -> String {
+fn tool_call_id_from_entry(
+    turn_prefix: &str,
+    entry_index: usize,
+    entry: &NormalizedEntry,
+) -> String {
     if let Some(meta) = entry.metadata.as_ref() {
         if let Ok(parsed) = serde_json::from_value::<ToolCallMetadata>(meta.clone()) {
             if !parsed.tool_call_id.trim().is_empty() {
@@ -367,7 +380,9 @@ fn map_action_to_tool_call_parts(
             let content = file_changes_to_tool_content(path, changes);
             (ToolKind::Edit, title, locations, content, raw_input, None)
         }
-        ActionType::CommandRun { command, result, .. } => {
+        ActionType::CommandRun {
+            command, result, ..
+        } => {
             let title = format!("执行: {}", command);
             let mut content = Vec::new();
             if let Some(r) = result {
@@ -378,7 +393,14 @@ fn map_action_to_tool_call_parts(
                 }
             }
             let raw_output = result.as_ref().and_then(|r| serde_json::to_value(r).ok());
-            (ToolKind::Execute, title, vec![], content, raw_input, raw_output)
+            (
+                ToolKind::Execute,
+                title,
+                vec![],
+                content,
+                raw_input,
+                raw_output,
+            )
         }
         ActionType::Search { query } => {
             let title = format!("搜索: {}", query);
@@ -388,13 +410,22 @@ fn map_action_to_tool_call_parts(
             let title = format!("获取: {}", url);
             (ToolKind::Fetch, title, vec![], vec![], raw_input, None)
         }
-        ActionType::Tool { tool_name, result, .. } => {
+        ActionType::Tool {
+            tool_name, result, ..
+        } => {
             let title = tool_name.clone();
             let raw_output = result.as_ref().and_then(|r| serde_json::to_value(r).ok());
             let content = vec![ToolCallContent::from(ContentBlock::Text(TextContent::new(
                 fallback_content,
             )))];
-            (ToolKind::Other, title, vec![], content, raw_input, raw_output)
+            (
+                ToolKind::Other,
+                title,
+                vec![],
+                content,
+                raw_input,
+                raw_output,
+            )
         }
         ActionType::TaskCreate { description, .. } => {
             let title = format!("创建任务: {}", description);
@@ -456,7 +487,10 @@ fn file_changes_to_tool_content(path: &str, changes: &[FileChange]) -> Vec<ToolC
     for c in changes {
         match c {
             FileChange::Write { content } => {
-                out.push(ToolCallContent::Diff(Diff::new(PathBuf::from(path), content.clone())));
+                out.push(ToolCallContent::Diff(Diff::new(
+                    PathBuf::from(path),
+                    content.clone(),
+                )));
             }
             FileChange::Delete => {
                 out.push(ToolCallContent::from(ContentBlock::Text(TextContent::new(
@@ -660,7 +694,10 @@ mod tests {
         assert_eq!(out.len(), 1);
         match &out[0].update {
             SessionUpdate::SessionInfoUpdate(update) => {
-                let meta = update.meta.as_ref().expect("expected _meta on SessionInfoUpdate");
+                let meta = update
+                    .meta
+                    .as_ref()
+                    .expect("expected _meta on SessionInfoUpdate");
                 let ad = parse_agentdash_meta(meta).expect("parse agentdash meta");
                 let ev = ad.event.expect("event");
                 assert_eq!(ev.r#type, "system_message");
@@ -696,4 +733,3 @@ mod tests {
         }
     }
 }
-

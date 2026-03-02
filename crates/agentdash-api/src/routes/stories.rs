@@ -38,6 +38,8 @@ pub struct CreateTaskAgentBindingRequest {
     pub agent_type: Option<String>,
     pub agent_pid: Option<String>,
     pub preset_name: Option<String>,
+    pub prompt_template: Option<String>,
+    pub initial_context: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -369,6 +371,8 @@ fn to_agent_binding(input: Option<CreateTaskAgentBindingRequest>) -> AgentBindin
             agent_type: normalize_option(value.agent_type),
             agent_pid: normalize_option(value.agent_pid),
             preset_name: normalize_option(value.preset_name),
+            prompt_template: normalize_option(value.prompt_template),
+            initial_context: normalize_option(value.initial_context),
         }
     } else {
         AgentBinding::default()

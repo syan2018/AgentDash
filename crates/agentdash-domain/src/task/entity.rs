@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{TaskStatus, AgentBinding, Artifact};
+use super::value_objects::{AgentBinding, Artifact, TaskStatus};
 
 /// Task — 执行容器
 ///
@@ -17,6 +17,8 @@ pub struct Task {
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
+    /// 绑定的执行会话 ID（首次 start 时创建）
+    pub session_id: Option<String>,
     /// 结构化 Agent 绑定信息
     pub agent_binding: AgentBinding,
     /// 结构化执行产物列表
@@ -35,6 +37,7 @@ impl Task {
             title,
             description,
             status: TaskStatus::Pending,
+            session_id: None,
             agent_binding: AgentBinding::default(),
             artifacts: vec![],
             created_at: now,

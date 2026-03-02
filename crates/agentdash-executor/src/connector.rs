@@ -1,15 +1,9 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    pin::Pin,
-};
+use std::{collections::HashMap, path::PathBuf, pin::Pin};
 
-use agent_client_protocol::{
-    ContentBlock, EmbeddedResourceResource, SessionNotification,
-};
+use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, SessionNotification};
 use async_trait::async_trait;
-use futures::stream::BoxStream;
 use futures::Stream;
+use futures::stream::BoxStream;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -68,9 +62,10 @@ pub fn content_block_to_text(block: &ContentBlock) -> Option<String> {
             }
         }
         ContentBlock::Resource(resource) => match &resource.resource {
-            EmbeddedResourceResource::TextResourceContents(text_res) => {
-                Some(format!("\n<file path=\"{}\">\n{}\n</file>", text_res.uri, text_res.text))
-            }
+            EmbeddedResourceResource::TextResourceContents(text_res) => Some(format!(
+                "\n<file path=\"{}\">\n{}\n</file>",
+                text_res.uri, text_res.text
+            )),
             EmbeddedResourceResource::BlobResourceContents(blob_res) => Some(format!(
                 "[引用二进制资源: {}; mimeType={}]",
                 blob_res.uri,
@@ -155,9 +150,8 @@ mod tests {
     }
 }
 
-pub type ExecutionStream = Pin<
-    Box<dyn Stream<Item = Result<SessionNotification, ConnectorError>> + Send + 'static>,
->;
+pub type ExecutionStream =
+    Pin<Box<dyn Stream<Item = Result<SessionNotification, ConnectorError>> + Send + 'static>>;
 
 #[derive(Debug, Error)]
 pub enum ConnectorError {

@@ -1,6 +1,8 @@
 use sqlx::SqlitePool;
 
-use agentdash_domain::backend::{BackendConfig, BackendType, BackendRepository, ViewConfig, UserPreferences};
+use agentdash_domain::backend::{
+    BackendConfig, BackendRepository, BackendType, UserPreferences, ViewConfig,
+};
 use agentdash_domain::common::error::DomainError;
 
 pub struct SqliteBackendRepository {
@@ -144,13 +146,11 @@ impl BackendRepository for SqliteBackendRepository {
     }
 
     async fn save_preferences(&self, prefs: &UserPreferences) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO user_preferences (key, value) VALUES ('prefs', ?)",
-        )
-        .bind(serde_json::to_string(prefs)?)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        sqlx::query("INSERT OR REPLACE INTO user_preferences (key, value) VALUES ('prefs', ?)")
+            .bind(serde_json::to_string(prefs)?)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(())
     }

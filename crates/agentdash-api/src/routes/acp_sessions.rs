@@ -2,26 +2,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    body::{Body, Bytes},
     Json,
-    extract::{
-        Path,
-        Query,
-        State,
-    },
+    body::{Body, Bytes},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::IntoResponse,
     response::sse::{Event, KeepAlive, Sse},
 };
-use serde::Deserialize;
 use futures::stream::Stream;
+use serde::Deserialize;
 use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
-use crate::{
-    app_state::AppState,
-    rpc::ApiError,
-};
+use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_executor::{PromptSessionRequest, SessionMeta};
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
@@ -83,7 +76,9 @@ pub async fn delete_session(
         .delete_session(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(Json(serde_json::json!({ "deleted": true, "sessionId": session_id })))
+    Ok(Json(
+        serde_json::json!({ "deleted": true, "sessionId": session_id }),
+    ))
 }
 
 pub async fn prompt_session(
@@ -91,16 +86,20 @@ pub async fn prompt_session(
     Path(session_id): Path<String>,
     Json(req): Json<PromptSessionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
+    let turn_id = state
         .executor_hub
         .start_prompt(&session_id, req)
         .await
         .map_err(|e| match &e {
-            agentdash_executor::ConnectorError::InvalidConfig(_) => ApiError::BadRequest(e.to_string()),
+            agentdash_executor::ConnectorError::InvalidConfig(_) => {
+                ApiError::BadRequest(e.to_string())
+            }
             _ => ApiError::Internal(e.to_string()),
         })?;
 
-    Ok(Json(serde_json::json!({ "started": true, "sessionId": session_id })))
+    Ok(Json(
+        serde_json::json!({ "started": true, "sessionId": session_id, "turnId": turn_id }),
+    ))
 }
 
 pub async fn cancel_session(
@@ -113,7 +112,9 @@ pub async fn cancel_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    Ok(Json(serde_json::json!({ "cancelled": true, "sessionId": session_id })))
+    Ok(Json(
+        serde_json::json!({ "cancelled": true, "sessionId": session_id }),
+    ))
 }
 
 /// ACP 会话流（Streaming HTTP / SSE）

@@ -3,11 +3,10 @@ use std::sync::Arc;
 use axum::{Json, extract::State};
 use serde::Serialize;
 
-use crate::{
-    app_state::AppState,
-    rpc::ApiError,
+use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_executor::connector::{
+    ConnectorCapabilities, ConnectorType, ExecutorInfo as ConnectorExecutorInfo,
 };
-use agentdash_executor::connector::{ConnectorCapabilities, ConnectorType, ExecutorInfo as ConnectorExecutorInfo};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecutorInfoResponse {
@@ -43,12 +42,19 @@ pub async fn get_discovery(
     let executors: Vec<ExecutorInfoResponse> = connector
         .list_executors()
         .into_iter()
-        .map(|ConnectorExecutorInfo { id, name, variants, available }| ExecutorInfoResponse {
-            id,
-            name,
-            variants,
-            available,
-        })
+        .map(
+            |ConnectorExecutorInfo {
+                 id,
+                 name,
+                 variants,
+                 available,
+             }| ExecutorInfoResponse {
+                id,
+                name,
+                variants,
+                available,
+            },
+        )
         .collect();
 
     Ok(Json(DiscoveryResponse {

@@ -62,7 +62,10 @@ pub async fn discovered_options_stream(
 
     (
         [
-            (axum::http::header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/x-ndjson; charset=utf-8",
+            ),
             (axum::http::header::CACHE_CONTROL, "no-cache, no-transform"),
             (axum::http::header::CONNECTION, "keep-alive"),
             (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),

@@ -24,6 +24,10 @@ pub struct AgentBinding {
     pub agent_pid: Option<String>,
     /// 使用的预设名称（对应 ProjectConfig.agent_presets）
     pub preset_name: Option<String>,
+    /// 提示词模板（支持占位符渲染）
+    pub prompt_template: Option<String>,
+    /// 初始上下文（拼接在提示词前）
+    pub initial_context: Option<String>,
 }
 
 /// 执行产物
@@ -47,4 +51,6 @@ pub enum ArtifactType {
     LogOutput,
     /// 生成文件
     File,
+    /// 工具执行过程（tool_call/tool_call_update）
+    ToolExecution,
 }

@@ -3,17 +3,17 @@ use std::sync::Arc;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
-use agentdash_domain::backend::BackendRepository;
-use agentdash_infrastructure::{
-    SqliteProjectRepository, SqliteWorkspaceRepository,
-    SqliteStoryRepository, SqliteTaskRepository, SqliteBackendRepository,
-};
-use agentdash_executor::{AgentConnector, ExecutorHub};
+use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
+use agentdash_executor::{AgentConnector, ExecutorHub};
+use agentdash_infrastructure::{
+    SqliteBackendRepository, SqliteProjectRepository, SqliteStoryRepository, SqliteTaskRepository,
+    SqliteWorkspaceRepository,
+};
 
 /// 全局应用状态
 ///
@@ -33,19 +33,35 @@ impl AppState {
     pub async fn new(pool: SqlitePool) -> Result<Self> {
         // 按依赖顺序初始化：projects → workspaces → stories → tasks
         let project_repo = Arc::new(SqliteProjectRepository::new(pool.clone()));
-        project_repo.initialize().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        project_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let workspace_repo = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
-        workspace_repo.initialize().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        workspace_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let story_repo = Arc::new(SqliteStoryRepository::new(pool.clone()));
-        story_repo.initialize().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        story_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let task_repo = Arc::new(SqliteTaskRepository::new(pool.clone()));
-        task_repo.initialize().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        task_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let backend_repo = Arc::new(SqliteBackendRepository::new(pool));
-        backend_repo.initialize().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        backend_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        ensure_default_backend(&backend_repo).await?;
 
         let workspace_root = std::env::current_dir()?;
         let connector: Arc<dyn AgentConnector> =
@@ -62,4 +78,28 @@ impl AppState {
             connector,
         })
     }
+}
+
+async fn ensure_default_backend(backend_repo: &Arc<SqliteBackendRepository>) -> Result<()> {
+    let backends = backend_repo
+        .list_backends()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if !backends.is_empty() {
+        return Ok(());
+    }
+
+    let local = BackendConfig {
+        id: "local-default".to_string(),
+        name: "本地后端".to_string(),
+        endpoint: "http://127.0.0.1:3001".to_string(),
+        auth_token: None,
+        enabled: true,
+        backend_type: BackendType::Local,
+    };
+    backend_repo
+        .add_backend(&local)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(())
 }

@@ -5,13 +5,16 @@ use std::{
 };
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, SessionId, SessionNotification, SessionUpdate, TextContent,
+    ContentBlock, ContentChunk, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
+    TextContent,
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
 
-use agentdash_acp_meta::{merge_agentdash_meta, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1};
+use agentdash_acp_meta::{
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+};
 
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
 
@@ -67,8 +70,10 @@ impl PromptSessionRequest {
                 }
                 let mut user_blocks = Vec::with_capacity(blocks.len());
                 for (index, block) in blocks.iter().enumerate() {
-                    let parsed = serde_json::from_value::<ContentBlock>(block.clone())
-                        .map_err(|e| format!("promptBlocks[{index}] 不是有效 ACP ContentBlock: {e}"))?;
+                    let parsed =
+                        serde_json::from_value::<ContentBlock>(block.clone()).map_err(|e| {
+                            format!("promptBlocks[{index}] 不是有效 ACP ContentBlock: {e}")
+                        })?;
                     user_blocks.push(parsed);
                 }
                 let prompt_payload = PromptPayload::Blocks(user_blocks.clone());
@@ -115,6 +120,37 @@ fn build_user_message_notifications(
         .collect()
 }
 
+fn build_turn_terminal_notification(
+    session_id: &str,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+    success: bool,
+    message: Option<String>,
+) -> SessionNotification {
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = Some(turn_id.to_string());
+
+    let mut event = AgentDashEventV1::new(if success {
+        "turn_completed"
+    } else {
+        "turn_failed"
+    });
+    event.severity = Some(if success { "info" } else { "error" }.to_string());
+    event.message = message;
+
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source.clone()))
+        .trace(Some(trace))
+        .event(Some(event));
+    let meta = merge_agentdash_meta(None, &agentdash);
+
+    let info = SessionInfoUpdate::new().meta(meta);
+    SessionNotification::new(
+        SessionId::new(session_id),
+        SessionUpdate::SessionInfoUpdate(info),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -153,7 +189,11 @@ impl ExecutorHub {
     }
 
     pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
-        let id = format!("sess-{}-{}", chrono::Utc::now().timestamp_millis(), &uuid::Uuid::new_v4().to_string()[..8]);
+        let id = format!(
+            "sess-{}-{}",
+            chrono::Utc::now().timestamp_millis(),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        );
         let now = chrono::Utc::now().timestamp_millis();
         let meta = SessionMeta {
             id: id.clone(),
@@ -181,7 +221,10 @@ impl ExecutorHub {
         self.store.delete(session_id).await
     }
 
-    pub async fn ensure_session(&self, session_id: &str) -> broadcast::Receiver<SessionNotification> {
+    pub async fn ensure_session(
+        &self,
+        session_id: &str,
+    ) -> broadcast::Receiver<SessionNotification> {
         let mut sessions = self.sessions.lock().await;
         let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
             let (tx, _rx) = broadcast::channel(1024);
@@ -192,8 +235,13 @@ impl ExecutorHub {
 
     /// 多轮对话：同一 session 允许多次调用，但同一时间只允许一次活跃执行。
     /// 如果上一轮仍在执行中，返回 Err。
-    pub async fn start_prompt(&self, session_id: &str, req: PromptSessionRequest) -> Result<(), ConnectorError> {
-        let resolved_payload = req.resolve_prompt_payload()
+    pub async fn start_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        let resolved_payload = req
+            .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
 
         let tx = {
@@ -203,17 +251,22 @@ impl ExecutorHub {
                 SessionRuntime { tx, running: false }
             });
             if runtime.running {
-                return Err(ConnectorError::Runtime("该会话有正在执行的 prompt，请等待完成或取消后再试".into()));
+                return Err(ConnectorError::Runtime(
+                    "该会话有正在执行的 prompt，请等待完成或取消后再试".into(),
+                ));
             }
             runtime.running = true;
             runtime.tx.clone()
         };
 
         let executor_config = req.executor_config.unwrap_or_else(|| {
-            executors::profile::ExecutorConfig::new(executors::executors::BaseCodingAgent::ClaudeCode)
+            executors::profile::ExecutorConfig::new(
+                executors::executors::BaseCodingAgent::ClaudeCode,
+            )
         });
 
-        let working_directory = resolve_working_dir(&self.workspace_root, req.working_dir.as_deref());
+        let working_directory =
+            resolve_working_dir(&self.workspace_root, req.working_dir.as_deref());
 
         // 该 turn_id 必须在“用户消息注入”和“连接器流”之间保持一致，便于前端归并。
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -225,7 +278,11 @@ impl ExecutorHub {
             executor_config,
         };
 
-        let title_hint = resolved_payload.text_prompt.chars().take(30).collect::<String>();
+        let title_hint = resolved_payload
+            .text_prompt
+            .chars()
+            .take(30)
+            .collect::<String>();
         let store = self.store.clone();
         let sid = session_id.to_string();
         if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
@@ -268,7 +325,9 @@ impl ExecutorHub {
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
 
+        let turn_id_for_spawn = turn_id.clone();
         tokio::spawn(async move {
+            let mut terminal_notification: Option<SessionNotification> = None;
             while let Some(next) = stream.next().await {
                 match next {
                     Ok(notification) => {
@@ -277,10 +336,33 @@ impl ExecutorHub {
                     }
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
+                        terminal_notification = Some(build_turn_terminal_notification(
+                            &session_id,
+                            &source,
+                            &turn_id_for_spawn,
+                            false,
+                            Some(e.to_string()),
+                        ));
                         break;
                     }
                 }
             }
+
+            if terminal_notification.is_none() {
+                terminal_notification = Some(build_turn_terminal_notification(
+                    &session_id,
+                    &source,
+                    &turn_id_for_spawn,
+                    true,
+                    None,
+                ));
+            }
+
+            if let Some(done) = terminal_notification {
+                let _ = store.append(&session_id, &done).await;
+                let _ = tx.send(done);
+            }
+
             // 执行完成后标记 running = false，允许下一轮
             let mut guard = sessions.lock().await;
             if let Some(runtime) = guard.get_mut(&session_id) {
@@ -288,13 +370,16 @@ impl ExecutorHub {
             }
         });
 
-        Ok(())
+        Ok(turn_id)
     }
 
     pub async fn subscribe_with_history(
         &self,
         session_id: &str,
-    ) -> (Vec<SessionNotification>, broadcast::Receiver<SessionNotification>) {
+    ) -> (
+        Vec<SessionNotification>,
+        broadcast::Receiver<SessionNotification>,
+    ) {
         let history = self.store.read_all(session_id).await.unwrap_or_default();
         let rx = self.ensure_session(session_id).await;
         (history, rx)
@@ -434,14 +519,19 @@ mod tests {
             executor_config: None,
         };
 
-        let payload = req.resolve_prompt_payload().expect("resolve should succeed");
+        let payload = req
+            .resolve_prompt_payload()
+            .expect("resolve should succeed");
         assert_eq!(payload.text_prompt, "hello world");
         assert_eq!(payload.user_blocks.len(), 1);
         assert!(matches!(payload.prompt_payload, PromptPayload::Text(_)));
 
         let serialized =
             serde_json::to_value(&payload.user_blocks[0]).expect("serialize content block");
-        assert_eq!(serialized.get("type").and_then(|v| v.as_str()), Some("text"));
+        assert_eq!(
+            serialized.get("type").and_then(|v| v.as_str()),
+            Some("text")
+        );
     }
 
     #[test]
@@ -458,12 +548,22 @@ mod tests {
             executor_config: None,
         };
 
-        let payload = req.resolve_prompt_payload().expect("resolve should succeed");
+        let payload = req
+            .resolve_prompt_payload()
+            .expect("resolve should succeed");
         assert_eq!(payload.user_blocks.len(), 3);
         assert!(matches!(payload.prompt_payload, PromptPayload::Blocks(_)));
         assert!(payload.text_prompt.contains("请分析 @src/main.ts"));
-        assert!(payload.text_prompt.contains("[引用文件: src/main.ts (file:///workspace/src/main.ts)]"));
-        assert!(payload.text_prompt.contains("[引用图片: mimeType=image/png"));
+        assert!(
+            payload
+                .text_prompt
+                .contains("[引用文件: src/main.ts (file:///workspace/src/main.ts)]")
+        );
+        assert!(
+            payload
+                .text_prompt
+                .contains("[引用图片: mimeType=image/png")
+        );
     }
 
     #[test]
@@ -485,8 +585,7 @@ mod tests {
         let mut source = AgentDashSourceV1::new("unit-test", "local_executor");
         source.executor_id = Some("CLAUDE_CODE".to_string());
 
-        let notifications =
-            build_user_message_notifications("sess-test", &source, "t100", &blocks);
+        let notifications = build_user_message_notifications("sess-test", &source, "t100", &blocks);
         assert_eq!(notifications.len(), 2);
 
         let first = serde_json::to_value(&notifications[0]).expect("serialize first");

@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::story::StateChange;
 use crate::story::StoryStatus;
 use crate::task::TaskStatus;
-use crate::story::StateChange;
 
 /// 面向客户端的事件流消息
 ///
@@ -12,7 +12,9 @@ use crate::story::StateChange;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum StreamEvent {
-    Connected { last_event_id: i64 },
+    Connected {
+        last_event_id: i64,
+    },
     StateChanged(StateChange),
     StorySummary {
         story_id: Uuid,
@@ -25,5 +27,7 @@ pub enum StreamEvent {
         story_id: Uuid,
         status: TaskStatus,
     },
-    Heartbeat { timestamp: i64 },
+    Heartbeat {
+        timestamp: i64,
+    },
 }

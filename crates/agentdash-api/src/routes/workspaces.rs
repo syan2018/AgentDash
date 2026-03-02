@@ -149,7 +149,9 @@ pub async fn update_workspace(
         workspace.name = trimmed.to_string();
     }
 
-    let next_type = req.workspace_type.unwrap_or_else(|| workspace.workspace_type.clone());
+    let next_type = req
+        .workspace_type
+        .unwrap_or_else(|| workspace.workspace_type.clone());
     let next_container_ref = req
         .container_ref
         .as_ref()
@@ -372,17 +374,17 @@ fn non_git_response() -> GitDetectionResult {
 
 fn canonicalize_container_ref(container_ref: &str) -> Result<PathBuf, ApiError> {
     let raw_path = PathBuf::from(container_ref);
-    let metadata = fs::metadata(&raw_path)
-        .map_err(|err| ApiError::BadRequest(format!("目录不存在或不可访问: {container_ref} ({err})")))?;
+    let metadata = fs::metadata(&raw_path).map_err(|err| {
+        ApiError::BadRequest(format!("目录不存在或不可访问: {container_ref} ({err})"))
+    })?;
     if !metadata.is_dir() {
         return Err(ApiError::BadRequest(format!(
             "路径不是目录: {container_ref}"
         )));
     }
 
-    fs::canonicalize(&raw_path).map_err(|err| {
-        ApiError::BadRequest(format!("目录路径无法解析: {container_ref} ({err})"))
-    })
+    fs::canonicalize(&raw_path)
+        .map_err(|err| ApiError::BadRequest(format!("目录路径无法解析: {container_ref} ({err})")))
 }
 
 fn resolve_source_repo(repo: &Repository) -> Option<String> {

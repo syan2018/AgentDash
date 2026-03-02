@@ -2,7 +2,7 @@ use sqlx::SqlitePool;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workspace::{
-    Workspace, WorkspaceType, WorkspaceStatus, GitConfig, WorkspaceRepository,
+    GitConfig, Workspace, WorkspaceRepository, WorkspaceStatus, WorkspaceType,
 };
 
 pub struct SqliteWorkspaceRepository {
@@ -132,15 +132,13 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         id: uuid::Uuid,
         status: WorkspaceStatus,
     ) -> Result<(), DomainError> {
-        let result = sqlx::query(
-            "UPDATE workspaces SET status = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(workspace_status_to_str(&status))
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let result = sqlx::query("UPDATE workspaces SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(workspace_status_to_str(&status))
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {

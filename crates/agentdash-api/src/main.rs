@@ -8,6 +8,7 @@ mod app_state;
 mod routes;
 mod rpc;
 mod stream;
+mod task_agent_context;
 
 use app_state::AppState;
 

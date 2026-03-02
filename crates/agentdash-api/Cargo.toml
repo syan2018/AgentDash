@@ -12,6 +12,7 @@ path = "src/main.rs"
 agentdash-domain = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-executor = { workspace = true }
+agentdash-acp-meta = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
@@ -31,6 +32,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 git2 = "0.20"
 rfd = "0.15"
+executors = { workspace = true }
 
 # ACP 协议（仅用于路由层的类型引用）
 agent-client-protocol = { workspace = true }

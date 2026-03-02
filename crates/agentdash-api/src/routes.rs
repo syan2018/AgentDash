@@ -5,6 +5,7 @@ pub mod discovery;
 pub mod health;
 pub mod projects;
 pub mod stories;
+pub mod task_execution;
 pub mod workspace_files;
 pub mod workspaces;
 
@@ -39,7 +40,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{project_id}/workspaces",
             get(workspaces::list_workspaces).post(workspaces::create_workspace),
         )
-        .route("/workspaces/pick-directory", post(workspaces::pick_directory))
+        .route(
+            "/workspaces/pick-directory",
+            post(workspaces::pick_directory),
+        )
         .route("/workspaces/detect-git", post(workspaces::detect_git))
         .route(
             "/workspaces/{id}",
@@ -72,6 +76,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .put(stories::update_task)
                 .delete(stories::delete_task),
         )
+        .route("/tasks/{id}/start", post(task_execution::start_task))
+        .route("/tasks/{id}/continue", post(task_execution::continue_task))
+        .route("/tasks/{id}/session", get(task_execution::get_task_session))
         // Backend
         .route(
             "/backends",
@@ -108,7 +115,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Workspace Files（内部 API，用于 @ 文件引用选择器）
         .route("/workspace-files", get(workspace_files::list_files))
         .route("/workspace-files/read", post(workspace_files::read_file))
-        .route("/workspace-files/batch-read", post(workspace_files::batch_read_files))
+        .route(
+            "/workspace-files/batch-read",
+            post(workspace_files::batch_read_files),
+        )
         // Agent Discovery
         .route("/agents/discovery", get(discovery::get_discovery))
         .route(

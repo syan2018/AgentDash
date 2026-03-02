@@ -13,7 +13,7 @@ use tokio::sync::{Mutex, broadcast};
 
 use agentdash_acp_meta::{merge_agentdash_meta, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1};
 
-use crate::connector::{AgentConnector, ConnectorError, ExecutionContext};
+use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,61 +30,89 @@ pub struct PromptSessionRequest {
     pub executor_config: Option<executors::profile::ExecutorConfig>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ResolvedPromptPayload {
+    pub text_prompt: String,
+    pub prompt_payload: PromptPayload,
+    pub user_blocks: Vec<ContentBlock>,
+}
+
 impl PromptSessionRequest {
-    /// 解析出有效的纯文本 prompt。
-    /// 优先使用 prompt_blocks，若不存在则回退到 prompt 字段。
+    /// 解析出有效的 prompt payload。
+    /// - `text_prompt`：当前本地执行器仍使用的文本 prompt（由 block 降级拼接）
+    /// - `user_blocks`：注入会话流时保留的原始 ACP ContentBlock
+    ///
+    /// 优先使用 `prompt_blocks`，若不存在则回退到 `prompt` 字段。
     /// 二者同时存在返回 Err。
-    pub fn resolve_text_prompt(&self) -> Result<String, &'static str> {
+    pub fn resolve_prompt_payload(&self) -> Result<ResolvedPromptPayload, String> {
         match (&self.prompt, &self.prompt_blocks) {
-            (Some(_), Some(_)) => Err("prompt 与 promptBlocks 不能同时传入"),
-            (None, None) => Err("必须提供 prompt 或 promptBlocks"),
+            (Some(_), Some(_)) => Err("prompt 与 promptBlocks 不能同时传入".to_string()),
+            (None, None) => Err("必须提供 prompt 或 promptBlocks".to_string()),
             (Some(p), None) => {
                 let trimmed = p.trim();
                 if trimmed.is_empty() {
-                    Err("prompt 不能为空")
+                    Err("prompt 不能为空".to_string())
                 } else {
-                    Ok(trimmed.to_string())
+                    let text_prompt = trimmed.to_string();
+                    Ok(ResolvedPromptPayload {
+                        text_prompt: text_prompt.clone(),
+                        prompt_payload: PromptPayload::Text(text_prompt),
+                        user_blocks: vec![ContentBlock::Text(TextContent::new(trimmed))],
+                    })
                 }
             }
             (None, Some(blocks)) => {
                 if blocks.is_empty() {
-                    return Err("promptBlocks 不能为空数组");
+                    return Err("promptBlocks 不能为空数组".to_string());
                 }
-                let mut texts = Vec::new();
-                for block in blocks {
-                    if let Some(t) = block.get("type").and_then(|v| v.as_str()) {
-                        match t {
-                            "text" => {
-                                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                                    texts.push(text.to_string());
-                                }
-                            }
-                            "resource" => {
-                                if let Some(res) = block.get("resource") {
-                                    let uri = res.get("uri").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                    let text = res.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                                    if !text.is_empty() {
-                                        texts.push(format!("\n<file path=\"{uri}\">\n{text}\n</file>"));
-                                    }
-                                }
-                            }
-                            "resource_link" => {
-                                let uri = block.get("uri").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                texts.push(format!("[引用文件: {uri}]"));
-                            }
-                            _ => {}
-                        }
-                    }
+                let mut user_blocks = Vec::with_capacity(blocks.len());
+                for (index, block) in blocks.iter().enumerate() {
+                    let parsed = serde_json::from_value::<ContentBlock>(block.clone())
+                        .map_err(|e| format!("promptBlocks[{index}] 不是有效 ACP ContentBlock: {e}"))?;
+                    user_blocks.push(parsed);
                 }
-                let result = texts.join("\n");
-                if result.trim().is_empty() {
-                    Err("promptBlocks 中没有有效内容")
+                let prompt_payload = PromptPayload::Blocks(user_blocks.clone());
+                let text_prompt = prompt_payload.to_fallback_text();
+                if text_prompt.trim().is_empty() {
+                    Err("promptBlocks 中没有有效内容".to_string())
                 } else {
-                    Ok(result)
+                    Ok(ResolvedPromptPayload {
+                        text_prompt,
+                        prompt_payload,
+                        user_blocks,
+                    })
                 }
             }
         }
     }
+}
+
+fn build_user_message_notifications(
+    session_id: &str,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+    user_blocks: &[ContentBlock],
+) -> Vec<SessionNotification> {
+    user_blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| {
+            let mut trace = AgentDashTraceV1::new();
+            trace.turn_id = Some(turn_id.to_string());
+            trace.entry_index = Some(index as u32);
+
+            let agentdash = AgentDashMetaV1::new()
+                .source(Some(source.clone()))
+                .trace(Some(trace));
+            let meta = merge_agentdash_meta(None, &agentdash);
+
+            let chunk = ContentChunk::new(block.clone()).meta(meta);
+            SessionNotification::new(
+                SessionId::new(session_id),
+                SessionUpdate::UserMessageChunk(chunk),
+            )
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,7 +193,7 @@ impl ExecutorHub {
     /// 多轮对话：同一 session 允许多次调用，但同一时间只允许一次活跃执行。
     /// 如果上一轮仍在执行中，返回 Err。
     pub async fn start_prompt(&self, session_id: &str, req: PromptSessionRequest) -> Result<(), ConnectorError> {
-        let resolved_prompt = req.resolve_text_prompt()
+        let resolved_payload = req.resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
 
         let tx = {
@@ -197,7 +225,7 @@ impl ExecutorHub {
             executor_config,
         };
 
-        let title_hint = resolved_prompt.chars().take(30).collect::<String>();
+        let title_hint = resolved_payload.text_prompt.chars().take(30).collect::<String>();
         let store = self.store.clone();
         let sid = session_id.to_string();
         if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
@@ -222,22 +250,21 @@ impl ExecutorHub {
         let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
         source.executor_id = Some(context.executor_config.executor.to_string());
         source.variant = context.executor_config.variant.clone();
-        let mut trace = AgentDashTraceV1::new();
-        trace.turn_id = Some(turn_id);
-        let agentdash = AgentDashMetaV1::new()
-            .source(Some(source))
-            .trace(Some(trace));
-        let meta = merge_agentdash_meta(None, &agentdash);
-
-        let user_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(&resolved_prompt))).meta(meta);
-        let user_notification = SessionNotification::new(
-            SessionId::new(session_id),
-            SessionUpdate::UserMessageChunk(user_chunk),
+        let user_notifications = build_user_message_notifications(
+            session_id,
+            &source,
+            &turn_id,
+            &resolved_payload.user_blocks,
         );
-        let _ = store.append(&sid, &user_notification).await;
-        let _ = tx.send(user_notification);
+        for notification in user_notifications {
+            let _ = store.append(&sid, &notification).await;
+            let _ = tx.send(notification);
+        }
 
-        let mut stream = self.connector.prompt(session_id, &resolved_prompt, context).await?;
+        let mut stream = self
+            .connector
+            .prompt(session_id, &resolved_payload.prompt_payload, context)
+            .await?;
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
 
@@ -389,5 +416,107 @@ impl SessionStore {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resolve_prompt_payload_from_text_prompt() {
+        let req = PromptSessionRequest {
+            prompt: Some("  hello world  ".to_string()),
+            prompt_blocks: None,
+            working_dir: None,
+            env: std::collections::HashMap::new(),
+            executor_config: None,
+        };
+
+        let payload = req.resolve_prompt_payload().expect("resolve should succeed");
+        assert_eq!(payload.text_prompt, "hello world");
+        assert_eq!(payload.user_blocks.len(), 1);
+        assert!(matches!(payload.prompt_payload, PromptPayload::Text(_)));
+
+        let serialized =
+            serde_json::to_value(&payload.user_blocks[0]).expect("serialize content block");
+        assert_eq!(serialized.get("type").and_then(|v| v.as_str()), Some("text"));
+    }
+
+    #[test]
+    fn resolve_prompt_payload_supports_multiple_block_types() {
+        let req = PromptSessionRequest {
+            prompt: None,
+            prompt_blocks: Some(vec![
+                json!({ "type": "text", "text": "请分析 @src/main.ts" }),
+                json!({ "type": "resource_link", "uri": "file:///workspace/src/main.ts", "name": "src/main.ts" }),
+                json!({ "type": "image", "mimeType": "image/png", "data": "AAAA" }),
+            ]),
+            working_dir: None,
+            env: std::collections::HashMap::new(),
+            executor_config: None,
+        };
+
+        let payload = req.resolve_prompt_payload().expect("resolve should succeed");
+        assert_eq!(payload.user_blocks.len(), 3);
+        assert!(matches!(payload.prompt_payload, PromptPayload::Blocks(_)));
+        assert!(payload.text_prompt.contains("请分析 @src/main.ts"));
+        assert!(payload.text_prompt.contains("[引用文件: src/main.ts (file:///workspace/src/main.ts)]"));
+        assert!(payload.text_prompt.contains("[引用图片: mimeType=image/png"));
+    }
+
+    #[test]
+    fn build_user_notifications_preserves_block_types_and_index() {
+        let blocks = vec![
+            serde_json::from_value::<ContentBlock>(json!({
+                "type": "text",
+                "text": "hello"
+            }))
+            .expect("text block"),
+            serde_json::from_value::<ContentBlock>(json!({
+                "type": "resource_link",
+                "uri": "file:///workspace/src/main.ts",
+                "name": "src/main.ts"
+            }))
+            .expect("resource_link block"),
+        ];
+
+        let mut source = AgentDashSourceV1::new("unit-test", "local_executor");
+        source.executor_id = Some("CLAUDE_CODE".to_string());
+
+        let notifications =
+            build_user_message_notifications("sess-test", &source, "t100", &blocks);
+        assert_eq!(notifications.len(), 2);
+
+        let first = serde_json::to_value(&notifications[0]).expect("serialize first");
+        let second = serde_json::to_value(&notifications[1]).expect("serialize second");
+
+        assert_eq!(
+            first
+                .get("update")
+                .and_then(|u| u.get("content"))
+                .and_then(|c| c.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            second
+                .get("update")
+                .and_then(|u| u.get("content"))
+                .and_then(|c| c.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("resource_link")
+        );
+        assert_eq!(
+            second
+                .get("update")
+                .and_then(|u| u.get("_meta"))
+                .and_then(|m| m.get("agentdash"))
+                .and_then(|m| m.get("trace"))
+                .and_then(|t| t.get("entryIndex"))
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
     }
 }

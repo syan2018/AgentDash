@@ -155,13 +155,50 @@ export function isDisplayEntry(
 
 // ==================== 工具函数 ====================
 
+function pickNameFromUri(uri: string): string {
+  const normalized = uri.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || uri;
+}
+
 /** 从 ContentBlock 中提取文本 */
 export function extractTextFromContentBlock(content: ContentBlock | undefined): string {
   if (!content) return "";
-  if (content.type === "text") {
-    return content.text;
+
+  switch (content.type) {
+    case "text":
+      return content.text;
+
+    case "resource_link": {
+      const label = content.name?.trim() || pickNameFromUri(content.uri) || content.uri;
+      if (!content.uri || label === content.uri) {
+        return `📎 引用文件: ${label}`;
+      }
+      return `📎 引用文件: ${label}\n${content.uri}`;
+    }
+
+    case "resource": {
+      const resource = content.resource;
+      if ("text" in resource) {
+        const label = pickNameFromUri(resource.uri);
+        const mimeText = resource.mimeType ? ` (${resource.mimeType})` : "";
+        return `📎 引用文件内容: ${label}${mimeText}\n${resource.uri}\n（已附带 ${resource.text.length} 字符）`;
+      }
+
+      const label = pickNameFromUri(resource.uri);
+      const mimeText = resource.mimeType ? ` (${resource.mimeType})` : "";
+      return `📎 引用二进制资源: ${label}${mimeText}\n${resource.uri}`;
+    }
+
+    case "image":
+      return content.mimeType ? `🖼️ 图片内容 (${content.mimeType})` : "🖼️ 图片内容";
+
+    case "audio":
+      return content.mimeType ? `🔊 音频内容 (${content.mimeType})` : "🔊 音频内容";
+
+    default:
+      return "";
   }
-  return "";
 }
 
 /** 从 SessionUpdate 判断是否是系统事件（session_info_update）*/

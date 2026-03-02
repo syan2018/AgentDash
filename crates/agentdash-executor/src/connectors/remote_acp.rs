@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, ExecutorInfo,
+    ExecutionContext, ExecutionStream, ExecutorInfo, PromptPayload,
 };
 
 pub struct RemoteAcpConnector {
@@ -67,7 +67,7 @@ impl AgentConnector for RemoteAcpConnector {
     async fn prompt(
         &self,
         _session_id: &str,
-        _prompt: &str,
+        _prompt: &PromptPayload,
         _context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
         Err(ConnectorError::ConnectionFailed(format!(

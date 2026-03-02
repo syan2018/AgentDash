@@ -17,7 +17,7 @@ import {
   FileReferenceTags,
   buildPromptBlocks,
 } from "../features/file-reference";
-import { batchReadWorkspaceFiles } from "../services/workspaceFiles";
+import { batchReadWorkspaceFiles, type FileEntry } from "../services/workspaceFiles";
 
 const promptTemplates = [
   {
@@ -63,6 +63,16 @@ function formatTokens(n: number | undefined): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function removeReferenceAnchor(prompt: string, relPath: string): string {
+  const escapedPath = escapeRegExp(relPath);
+  const pattern = new RegExp(`@${escapedPath}(?=\\s|$)`, "g");
+  return prompt.replace(pattern, "");
 }
 
 /**
@@ -231,7 +241,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       if (fileRef.references.length > 0) {
         const paths = fileRef.references.map((r) => r.relPath);
         const batchResult = await batchReadWorkspaceFiles(paths);
-        const blocks = buildPromptBlocks(trimmed, batchResult.files, paths);
+        const blocks = buildPromptBlocks(trimmed, batchResult.files);
         await promptSession(sid, { promptBlocks: blocks, executorConfig });
         fileRef.clearReferences();
       } else {
@@ -276,7 +286,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     [fileRef],
   );
 
-  const handleFileSelected = useCallback(() => {
+  const handleFileSelected = useCallback((file: FileEntry) => {
     const textarea = document.querySelector<HTMLTextAreaElement>(
       "[data-prompt-textarea]",
     );
@@ -288,7 +298,16 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     if (atMatch) {
       const before = textBefore.slice(0, atMatch.index);
       const after = prompt.slice(cursorPos);
-      setPrompt(before + after);
+      const anchor = `@${file.relPath}`;
+      const needsSpace = after.length > 0 && !after.startsWith(" ") && !after.startsWith("\n");
+      const nextPrompt = `${before}${anchor}${needsSpace ? " " : ""}${after}`;
+      setPrompt(nextPrompt);
+
+      requestAnimationFrame(() => {
+        const nextPos = before.length + anchor.length + (needsSpace ? 1 : 0);
+        textarea.focus();
+        textarea.setSelectionRange(nextPos, nextPos);
+      });
     }
   }, [prompt]);
 
@@ -444,6 +463,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                   references={fileRef.references}
                   onRemove={(relPath) => {
                     fileRef.removeReference(relPath);
+                    setPrompt((prev) => removeReferenceAnchor(prev, relPath));
                   }}
                 />
 
@@ -459,13 +479,15 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                       onQueryChange={fileRef.updateQuery}
                       onSelect={(file) => {
                         fileRef.addReference(file);
-                        handleFileSelected();
+                        handleFileSelected(file);
                       }}
                       onClose={fileRef.closePicker}
                       onMoveSelection={fileRef.moveSelection}
                       onConfirmSelection={() => {
-                        fileRef.confirmSelection();
-                        handleFileSelected();
+                        const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
+                        if (!selectedFile) return;
+                        fileRef.addReference(selectedFile);
+                        handleFileSelected(selectedFile);
                       }}
                     />
                     <textarea

@@ -1,4 +1,5 @@
 import { buildApiPath } from "../api/origin";
+import type { ContentBlock } from "@agentclientprotocol/sdk";
 
 export type ExecutorProfile = string;
 
@@ -16,7 +17,7 @@ export interface ExecutorConfig {
 
 export interface PromptSessionRequest {
   prompt?: string;
-  promptBlocks?: unknown[];
+  promptBlocks?: ContentBlock[];
   workingDir?: string;
   env?: Record<string, string>;
   executorConfig?: ExecutorConfig;
@@ -34,4 +35,3 @@ export async function promptSession(sessionId: string, req: PromptSessionRequest
     throw new Error(text || `promptSession failed: HTTP ${res.status}`);
   }
 }
-

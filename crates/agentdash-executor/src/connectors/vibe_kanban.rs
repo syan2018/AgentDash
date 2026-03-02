@@ -26,7 +26,7 @@ use crate::{
     adapters::normalized_to_acp::NormalizedToAcpConverter,
     connector::{
         AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutorInfo,
-        ExecutionContext, ExecutionStream,
+        ExecutionContext, ExecutionStream, PromptPayload,
     },
 };
 
@@ -144,9 +144,17 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
     async fn prompt(
         &self,
         session_id: &str,
-        prompt: &str,
+        prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
+        let prompt_text = prompt.to_fallback_text();
+        let prompt_text = prompt_text.trim().to_string();
+        if prompt_text.is_empty() {
+            return Err(ConnectorError::InvalidConfig(
+                "prompt payload 解析后为空".to_string(),
+            ));
+        }
+
         let mut agent = ExecutorConfigs::get_cached()
             .get_coding_agent(&context.executor_config.profile_id())
             .ok_or_else(|| {
@@ -171,7 +179,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         env.merge(&context.environment_variables);
 
         let mut spawned = agent
-            .spawn(&context.working_directory, prompt, &env)
+            .spawn(&context.working_directory, &prompt_text, &env)
             .await
             .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?;
 

@@ -4,7 +4,9 @@ use std::{
     pin::Pin,
 };
 
-use agent_client_protocol::SessionNotification;
+use agent_client_protocol::{
+    ContentBlock, EmbeddedResourceResource, SessionNotification,
+};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::Stream;
@@ -50,6 +52,109 @@ pub struct ExecutionContext {
     pub executor_config: executors::profile::ExecutorConfig,
 }
 
+#[derive(Debug, Clone)]
+pub enum PromptPayload {
+    Text(String),
+    Blocks(Vec<ContentBlock>),
+}
+
+pub fn content_block_to_text(block: &ContentBlock) -> Option<String> {
+    match block {
+        ContentBlock::Text(text) => {
+            if text.text.trim().is_empty() {
+                None
+            } else {
+                Some(text.text.clone())
+            }
+        }
+        ContentBlock::Resource(resource) => match &resource.resource {
+            EmbeddedResourceResource::TextResourceContents(text_res) => {
+                Some(format!("\n<file path=\"{}\">\n{}\n</file>", text_res.uri, text_res.text))
+            }
+            EmbeddedResourceResource::BlobResourceContents(blob_res) => Some(format!(
+                "[引用二进制资源: {}; mimeType={}]",
+                blob_res.uri,
+                blob_res.mime_type.as_deref().unwrap_or("unknown")
+            )),
+            _ => Some("[引用资源: 未知类型]".to_string()),
+        },
+        ContentBlock::ResourceLink(link) => {
+            Some(format!("[引用文件: {} ({})]", link.name, link.uri))
+        }
+        ContentBlock::Image(image) => Some(format!(
+            "[引用图片: mimeType={}, base64Bytes={}]",
+            image.mime_type,
+            image.data.len()
+        )),
+        ContentBlock::Audio(audio) => Some(format!(
+            "[引用音频: mimeType={}, base64Bytes={}]",
+            audio.mime_type,
+            audio.data.len()
+        )),
+        _ => Some("[引用内容块: 未知类型]".to_string()),
+    }
+}
+
+impl PromptPayload {
+    pub fn to_fallback_text(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(content_block_to_text)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn parse_block(value: serde_json::Value) -> ContentBlock {
+        serde_json::from_value::<ContentBlock>(value).expect("valid ACP content block")
+    }
+
+    #[test]
+    fn prompt_payload_blocks_to_fallback_text() {
+        let blocks = vec![
+            parse_block(json!({ "type": "text", "text": "请分析这个实现" })),
+            parse_block(json!({
+                "type": "resource",
+                "resource": {
+                    "uri": "file:///workspace/src/main.rs",
+                    "mimeType": "text/rust",
+                    "text": "fn main() {}"
+                }
+            })),
+            parse_block(json!({
+                "type": "resource_link",
+                "name": "src/lib.rs",
+                "uri": "file:///workspace/src/lib.rs"
+            })),
+            parse_block(json!({
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "AAAA"
+            })),
+            parse_block(json!({
+                "type": "audio",
+                "mimeType": "audio/wav",
+                "data": "BBBB"
+            })),
+        ];
+
+        let text = PromptPayload::Blocks(blocks).to_fallback_text();
+        assert!(text.contains("请分析这个实现"));
+        assert!(text.contains("<file path=\"file:///workspace/src/main.rs\">"));
+        assert!(text.contains("[引用文件: src/lib.rs (file:///workspace/src/lib.rs)]"));
+        assert!(text.contains("[引用图片: mimeType=image/png"));
+        assert!(text.contains("[引用音频: mimeType=audio/wav"));
+    }
+}
+
 pub type ExecutionStream = Pin<
     Box<dyn Stream<Item = Result<SessionNotification, ConnectorError>> + Send + 'static>,
 >;
@@ -90,7 +195,7 @@ pub trait AgentConnector: Send + Sync {
     async fn prompt(
         &self,
         session_id: &str,
-        prompt: &str,
+        prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError>;
 

@@ -34,7 +34,7 @@ function toFileUri(relPath: string): string {
 }
 
 const PILL_CLASS =
-  "inline-flex select-none items-center gap-1 rounded-[6px] border border-[#5865F2]/20 bg-[#5865F2]/10 px-2 py-1 text-sm font-medium text-[#5865F2] shadow-sm transition-colors hover:bg-[#5865F2]/15 dark:border-[#5865F2]/30 dark:bg-[#5865F2]/20 dark:text-[#00A8FC]";
+  "inline-flex select-none items-center gap-1 rounded-[6px] border border-[#5865F2]/20 bg-[#5865F2]/10 px-2 py-0.5 text-xs font-medium text-[#5865F2] shadow-sm transition-colors hover:bg-[#5865F2]/15 dark:border-[#5865F2]/30 dark:bg-[#5865F2]/20 dark:text-[#00A8FC]";
 
 // 将普通文本中的 @path 和 <file:path> 标记转换为可视化药丸
 function parseContentToHtml(text: string): string {

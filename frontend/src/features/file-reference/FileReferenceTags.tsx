@@ -70,7 +70,7 @@ export function FileReferenceTags({ references, onRemove }: FileReferenceTagsPro
         return (
           <span
             key={ref.relPath}
-            className="group inline-flex items-center gap-1.5 rounded-[6px] border border-[#5865F2]/20 bg-[#5865F2]/10 px-2 py-1 text-sm font-medium text-[#5865F2] shadow-sm transition-colors hover:bg-[#5865F2]/15 dark:border-[#5865F2]/30 dark:bg-[#5865F2]/20 dark:text-[#00A8FC]"
+            className="group inline-flex items-center gap-1.5 rounded-[6px] border border-[#5865F2]/20 bg-[#5865F2]/10 px-2 py-0.5 text-xs font-medium text-[#5865F2] shadow-sm transition-colors hover:bg-[#5865F2]/15 dark:border-[#5865F2]/30 dark:bg-[#5865F2]/20 dark:text-[#00A8FC]"
             title={`${ref.relPath} (${formatSize(ref.size)})`}
           >
             <span className="text-sm">{icon}</span>

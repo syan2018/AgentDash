@@ -17,6 +17,99 @@ export interface AcpMessageCardProps {
   defaultCollapsed?: boolean;
 }
 
+function toFileUri(relPath: string): string {
+  const normalized = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
+  return `file:///${normalized}`;
+}
+
+function getFileIcon(relPath: string): string {
+  const ext = relPath.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "ts":
+    case "tsx":
+    case "js":
+    case "jsx":
+      return "📜";
+    case "json":
+    case "jsonc":
+      return "📋";
+    case "md":
+    case "mdx":
+      return "📝";
+    case "css":
+    case "scss":
+    case "less":
+      return "🎨";
+    case "html":
+    case "htm":
+      return "🌐";
+    case "yml":
+    case "yaml":
+    case "toml":
+      return "⚙️";
+    case "rs":
+      return "🦀";
+    case "py":
+      return "🐍";
+    case "go":
+      return "🐹";
+    case "java":
+      return "☕";
+    case "sql":
+      return "🗄️";
+    case "sh":
+    case "bash":
+    case "zsh":
+      return "🐚";
+    case "dockerfile":
+      return "🐳";
+    default:
+      return "📄";
+  }
+}
+
+const FILE_PILL_CLASS =
+  "inline-flex select-none items-center gap-1 rounded-[6px] border border-[#5865F2]/20 bg-[#5865F2]/10 px-2 py-0.5 text-xs font-medium text-[#5865F2] shadow-sm transition-colors hover:bg-[#5865F2]/15 dark:border-[#5865F2]/30 dark:bg-[#5865F2]/20 dark:text-[#00A8FC]";
+
+function renderTextWithFilePills(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const re = /<file:([^>]+)>/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(text)) !== null) {
+    const full = match[0];
+    const path = match[1] ?? "";
+
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const fileName = path.replace(/\\/g, "/").split("/").pop() || path;
+    nodes.push(
+      <span
+        key={`${match.index}:${path}`}
+        className={FILE_PILL_CLASS}
+        title={toFileUri(path)}
+        data-file-ref={path}
+      >
+        <span>{getFileIcon(path)}</span>
+        <span className="underline decoration-[#5865F2]/40 underline-offset-2 dark:decoration-[#00A8FC]/40">
+          {fileName}
+        </span>
+      </span>,
+    );
+
+    lastIndex = match.index + full.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
 export const AcpMessageCard = memo(function AcpMessageCard({
   type,
   content,
@@ -69,7 +162,9 @@ export const AcpMessageCard = memo(function AcpMessageCard({
         <div className="relative">
           <div className={config.contentClass}>
             {type === "user" ? (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{content}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                {renderTextWithFilePills(content)}
+              </p>
             ) : (
               <MarkdownRenderer content={content} />
             )}

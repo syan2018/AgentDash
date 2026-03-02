@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { Artifact, Task, TaskStatus } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import { useStoryStore } from "../../stores/storyStore";
@@ -17,41 +18,18 @@ interface TaskDrawerProps {
 }
 
 function ArtifactBlock({ artifact }: { artifact: Artifact }) {
-  if (artifact.type === "text") {
-    return (
-      <div className="rounded-md border border-border bg-card p-3">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">
-          {artifact.title ?? "文本产物"}
-        </p>
-        <pre className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
-          {artifact.content}
-        </pre>
-      </div>
-    );
-  }
-
-  if (artifact.type === "content_block") {
-    return (
-      <div className="rounded-md border border-border bg-card p-3">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">
-          {artifact.title ?? "内容块产物"}
-        </p>
-        <pre className="whitespace-pre-wrap text-xs text-foreground">
-          {artifact.blocks
-            .map((block) => ("text" in block ? block.text : JSON.stringify(block)))
-            .join("\n")}
-        </pre>
-      </div>
-    );
-  }
-
   return (
     <div className="rounded-md border border-border bg-card p-3">
-      <p className="mb-2 text-xs font-medium text-muted-foreground">
-        {artifact.title ?? "JSON 产物"}
-      </p>
-      <pre className="overflow-auto text-xs leading-relaxed text-foreground">
-        {JSON.stringify(artifact.data, null, 2)}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          {artifact.artifact_type}
+        </p>
+        <span className="text-[11px] text-muted-foreground">
+          {new Date(artifact.created_at).toLocaleString("zh-CN")}
+        </span>
+      </div>
+      <pre className="overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+        {JSON.stringify(artifact.content, null, 2)}
       </pre>
     </div>
   );
@@ -63,13 +41,21 @@ export function TaskDrawer({
   onTaskDeleted,
   onClose,
 }: TaskDrawerProps) {
-  const { updateTask, deleteTask, error } = useStoryStore();
+  const navigate = useNavigate();
+  const {
+    updateTask,
+    startTaskExecution,
+    continueTaskExecution,
+    deleteTask,
+    error,
+  } = useStoryStore();
   const [editTitle, setEditTitle] = useState(task?.title ?? "");
   const [editDescription, setEditDescription] = useState(task?.description ?? "");
   const [editStatus, setEditStatus] = useState<TaskStatus>(task?.status ?? "pending");
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
+  const [isExecuting, setIsExecuting] = useState(false);
 
   if (!task) return null;
 
@@ -101,6 +87,36 @@ export function TaskDrawer({
     await deleteTask(task.id, task.story_id);
     setIsDeleteConfirmOpen(false);
     onTaskDeleted(task.id, task.story_id);
+  };
+
+  const handleStartExecution = async () => {
+    setIsExecuting(true);
+    try {
+      const updated = await startTaskExecution(task.id);
+      if (!updated) return;
+      setFormMessage(null);
+      onTaskUpdated(updated);
+      if (updated.session_id) {
+        navigate(`/session/${updated.session_id}`);
+      }
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  const handleContinueExecution = async () => {
+    setIsExecuting(true);
+    try {
+      const updated = await continueTaskExecution(task.id);
+      if (!updated) return;
+      setFormMessage(null);
+      onTaskUpdated(updated);
+      if (updated.session_id) {
+        navigate(`/session/${updated.session_id}`);
+      }
+    } finally {
+      setIsExecuting(false);
+    }
   };
 
   return (
@@ -151,12 +167,11 @@ export function TaskDrawer({
               className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
             >
               <option value="pending">待执行</option>
-              <option value="queued">排队中</option>
+              <option value="assigned">已分配</option>
               <option value="running">执行中</option>
-              <option value="succeeded">成功</option>
+              <option value="awaiting_verification">待验收</option>
+              <option value="completed">已完成</option>
               <option value="failed">失败</option>
-              <option value="skipped">已跳过</option>
-              <option value="cancelled">已取消</option>
             </select>
 
             <div className="grid grid-cols-2 gap-3">
@@ -184,6 +199,42 @@ export function TaskDrawer({
             </div>
           </DetailSection>
 
+          <DetailSection title="执行操作">
+            <div className="flex flex-wrap gap-2">
+              {!task.session_id ? (
+                <button
+                  type="button"
+                  disabled={isExecuting || task.status === "running"}
+                  onClick={() => void handleStartExecution()}
+                  className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+                >
+                  {isExecuting ? "启动中..." : "启动执行"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isExecuting || task.status === "running"}
+                  onClick={() => void handleContinueExecution()}
+                  className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+                >
+                  {isExecuting ? "提交中..." : "继续执行"}
+                </button>
+              )}
+              {task.session_id && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/session/${task.session_id}`)}
+                  className="rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-muted"
+                >
+                  打开会话
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Session: {task.session_id ?? "未绑定"}
+            </p>
+          </DetailSection>
+
           <DetailSection title="执行产物">
             {task.artifacts.length === 0 ? (
               <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
@@ -191,8 +242,8 @@ export function TaskDrawer({
               </p>
             ) : (
               <div className="space-y-2">
-                {task.artifacts.map((artifact, index) => (
-                  <ArtifactBlock key={index} artifact={artifact} />
+                {task.artifacts.map((artifact) => (
+                  <ArtifactBlock key={artifact.id} artifact={artifact} />
                 ))}
               </div>
             )}

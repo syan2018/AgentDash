@@ -11,12 +11,11 @@ export type StoryStatus =
 
 export type TaskStatus =
   | "pending"
-  | "queued"
+  | "assigned"
   | "running"
-  | "succeeded"
-  | "failed"
-  | "skipped"
-  | "cancelled";
+  | "awaiting_verification"
+  | "completed"
+  | "failed";
 
 export type BackendType = "local" | "remote";
 export type WorkspaceType = "git_worktree" | "static" | "ephemeral";
@@ -98,12 +97,15 @@ export interface AgentBinding {
   agent_type?: string | null;
   agent_pid?: string | null;
   preset_name?: string | null;
+  prompt_template?: string | null;
+  initial_context?: string | null;
 }
 
 export interface Task {
   id: string;
   story_id: string;
   workspace_id?: string | null;
+  session_id?: string | null;
   title: string;
   description?: string;
   status: TaskStatus;
@@ -121,10 +123,19 @@ export type ContentBlock =
   | { type: "resource_link"; uri: string; name: string; description?: string; mimeType?: string; size?: number }
   | { type: "resource"; resource: { uri: string; mimeType?: string; text?: string } };
 
-export type Artifact =
-  | { type: "text"; title?: string; content: string }
-  | { type: "json"; title?: string; data: unknown }
-  | { type: "content_block"; title?: string; blocks: ContentBlock[] };
+export type ArtifactType =
+  | "code_change"
+  | "test_result"
+  | "log_output"
+  | "file"
+  | "tool_execution";
+
+export interface Artifact {
+  id: string;
+  artifact_type: ArtifactType;
+  content: unknown;
+  created_at: string;
+}
 
 export interface ToolCall {
   title: string;

@@ -10,7 +10,17 @@ export interface CreateTaskInput {
     agent_type?: string | null;
     agent_pid?: string | null;
     preset_name?: string | null;
+    prompt_template?: string | null;
+    initial_context?: string | null;
   };
+}
+
+export interface TaskSessionInfo {
+  task_id: string;
+  session_id: string | null;
+  task_status: Task["status"];
+  session_title: string | null;
+  last_activity: number | null;
 }
 
 interface StoryState {
@@ -50,6 +60,21 @@ interface StoryState {
       agent_binding?: CreateTaskInput['agent_binding'];
     },
   ) => Promise<Task | null>;
+  startTaskExecution: (
+    taskId: string,
+    payload?: {
+      override_prompt?: string;
+      executor_config?: Record<string, unknown>;
+    },
+  ) => Promise<Task | null>;
+  continueTaskExecution: (
+    taskId: string,
+    payload?: {
+      additional_prompt?: string;
+      executor_config?: Record<string, unknown>;
+    },
+  ) => Promise<Task | null>;
+  fetchTaskSession: (taskId: string) => Promise<TaskSessionInfo | null>;
   deleteTask: (taskId: string, storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
@@ -84,22 +109,26 @@ const normalizeStoryStatus = (value: string): Story['status'] => {
 
 const normalizeTaskStatus = (value: string): Task['status'] => {
   switch (value) {
-    case 'assigned':
     case 'pending':
       return 'pending';
-    case 'queued':
-      return 'queued';
+    case 'assigned':
+      return 'assigned';
     case 'running':
       return 'running';
+    case 'awaiting_verification':
+      return 'awaiting_verification';
     case 'completed':
-    case 'succeeded':
-      return 'succeeded';
+      return 'completed';
     case 'failed':
       return 'failed';
+    // 兼容旧数据
+    case 'queued':
+      return 'assigned';
+    case 'succeeded':
     case 'skipped':
-      return 'skipped';
+      return 'completed';
     case 'cancelled':
-      return 'cancelled';
+      return 'failed';
     default:
       return 'pending';
   }
@@ -130,17 +159,15 @@ const toBackendTaskStatus = (status: Task["status"]): string => {
   switch (status) {
     case "pending":
       return "pending";
-    case "queued":
+    case "assigned":
       return "assigned";
     case "running":
       return "running";
-    case "succeeded":
+    case "awaiting_verification":
+      return "awaiting_verification";
+    case "completed":
       return "completed";
     case "failed":
-      return "failed";
-    case "skipped":
-      return "completed";
-    case "cancelled":
       return "failed";
     default:
       return "pending";
@@ -175,7 +202,49 @@ const mapStory = (raw: Record<string, unknown>): Story => {
   };
 };
 
-const defaultBinding: AgentBinding = { agent_type: null, agent_pid: null, preset_name: null };
+const defaultBinding: AgentBinding = {
+  agent_type: null,
+  agent_pid: null,
+  preset_name: null,
+  prompt_template: null,
+  initial_context: null,
+};
+
+const normalizeArtifactType = (value: string): Task['artifacts'][number]['artifact_type'] => {
+  switch (value) {
+    case 'code_change':
+    case 'test_result':
+    case 'log_output':
+    case 'file':
+    case 'tool_execution':
+      return value;
+    default:
+      return 'log_output';
+  }
+};
+
+const mapArtifact = (raw: Record<string, unknown>): Task['artifacts'][number] => {
+  return {
+    id: String(raw.id ?? ''),
+    artifact_type: normalizeArtifactType(String(raw.artifact_type ?? 'log_output')),
+    content: raw.content ?? null,
+    created_at: String(raw.created_at ?? new Date().toISOString()),
+  };
+};
+
+const upsertTaskInMap = (
+  tasksByStoryId: Record<string, Task[]>,
+  task: Task,
+): Record<string, Task[]> => {
+  const next = { ...tasksByStoryId };
+  const existing = next[task.story_id] ?? [];
+  if (existing.some((item) => item.id === task.id)) {
+    next[task.story_id] = existing.map((item) => (item.id === task.id ? task : item));
+  } else {
+    next[task.story_id] = [task, ...existing];
+  }
+  return next;
+};
 
 const mapTask = (raw: Record<string, unknown>): Task => {
   let agentBinding: AgentBinding = defaultBinding;
@@ -185,6 +254,8 @@ const mapTask = (raw: Record<string, unknown>): Task => {
       agent_type: ab.agent_type ? String(ab.agent_type) : null,
       agent_pid: ab.agent_pid ? String(ab.agent_pid) : null,
       preset_name: ab.preset_name ? String(ab.preset_name) : null,
+      prompt_template: ab.prompt_template ? String(ab.prompt_template) : null,
+      initial_context: ab.initial_context ? String(ab.initial_context) : null,
     };
   }
 
@@ -192,11 +263,16 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     id: String(raw.id ?? ''),
     story_id: String(raw.story_id ?? ''),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
+    session_id: raw.session_id ? String(raw.session_id) : null,
     title: String(raw.title ?? raw.name ?? '未命名 Task'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeTaskStatus(String(raw.status ?? 'pending')),
     agent_binding: agentBinding,
-    artifacts: Array.isArray(raw.artifacts) ? (raw.artifacts as Task['artifacts']) : [],
+    artifacts: Array.isArray(raw.artifacts)
+      ? raw.artifacts
+          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+          .map((item) => mapArtifact(item))
+      : [],
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
   };
@@ -314,12 +390,51 @@ export const useStoryStore = create<StoryState>((set) => ({
       const raw = await api.put<Record<string, unknown>>(`/tasks/${taskId}`, requestPayload);
       const task = mapTask(raw);
       set((s) => {
-        const byStory = { ...s.tasksByStoryId };
-        const list = byStory[task.story_id] ?? [];
-        byStory[task.story_id] = list.map((item) => (item.id === task.id ? task : item));
-        return { tasksByStoryId: byStory };
+        return { tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) };
       });
       return task;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  startTaskExecution: async (taskId, payload) => {
+    try {
+      await api.post<Record<string, unknown>>(`/tasks/${taskId}/start`, payload ?? {});
+      const rawTask = await api.get<Record<string, unknown>>(`/tasks/${taskId}`);
+      const task = mapTask(rawTask);
+      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
+      return task;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  continueTaskExecution: async (taskId, payload) => {
+    try {
+      await api.post<Record<string, unknown>>(`/tasks/${taskId}/continue`, payload ?? {});
+      const rawTask = await api.get<Record<string, unknown>>(`/tasks/${taskId}`);
+      const task = mapTask(rawTask);
+      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
+      return task;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  fetchTaskSession: async (taskId) => {
+    try {
+      const raw = await api.get<Record<string, unknown>>(`/tasks/${taskId}/session`);
+      return {
+        task_id: String(raw.task_id ?? taskId),
+        session_id: raw.session_id ? String(raw.session_id) : null,
+        task_status: normalizeTaskStatus(String(raw.task_status ?? 'pending')),
+        session_title: raw.session_title ? String(raw.session_title) : null,
+        last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
+      };
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

@@ -12,12 +12,11 @@ const storyStatusConfig: Record<StoryStatus, { label: string; className: string 
 
 const taskStatusConfig: Record<TaskStatus, { label: string; className: string }> = {
   pending: { label: "待执行", className: "bg-secondary text-muted-foreground border border-muted" },
-  queued: { label: "排队中", className: "bg-info/15 text-info" },
+  assigned: { label: "已分配", className: "bg-info/15 text-info" },
   running: { label: "执行中", className: "bg-primary/15 text-primary" },
-  succeeded: { label: "成功", className: "bg-success/15 text-success" },
+  awaiting_verification: { label: "待验收", className: "bg-warning/15 text-warning" },
+  completed: { label: "已完成", className: "bg-success/15 text-success" },
   failed: { label: "失败", className: "bg-destructive/15 text-destructive" },
-  skipped: { label: "已跳过", className: "bg-muted text-muted-foreground" },
-  cancelled: { label: "已取消", className: "bg-muted text-muted-foreground" },
 };
 
 interface BadgeProps {

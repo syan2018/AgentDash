@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { ProjectConfig, Story, StoryStatus, Task, Workspace } from "../types";
 import { StoryStatusBadge } from "../components/ui/status-badge";
 import { TaskList } from "../features/task/task-list";
+import { TaskDrawer } from "../features/task/task-drawer";
 import { useStoryStore } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -300,7 +301,7 @@ function ContextPanel({ story }: { story: Story }) {
 }
 
 function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
-  const successCount = tasks.filter((task) => task.status === "succeeded").length;
+  const successCount = tasks.filter((task) => task.status === "completed").length;
   const failedCount = tasks.filter((task) => task.status === "failed").length;
 
   return (
@@ -336,6 +337,7 @@ export function StoryPage() {
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isEditingBasicInfo, setIsEditingBasicInfo] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // 获取当前 Story
   const story = useMemo(() => stories.find((s) => s.id === storyId) || null, [stories, storyId]);
@@ -360,6 +362,10 @@ export function StoryPage() {
   const sortedTasks = useMemo(
     () => [...tasks].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
     [tasks]
+  );
+  const selectedTask = useMemo(
+    () => sortedTasks.find((task) => task.id === selectedTaskId) ?? null,
+    [sortedTasks, selectedTaskId]
   );
 
   const currentProject = useMemo(() => {
@@ -427,6 +433,22 @@ export function StoryPage() {
 
   const handleTaskCreated = () => {
     // Task 创建成功后刷新列表
+    if (storyId) {
+      void fetchTasks(storyId);
+    }
+  };
+
+  const handleTaskUpdated = (updated: Task) => {
+    setSelectedTaskId(updated.id);
+    if (storyId) {
+      void fetchTasks(storyId);
+    }
+  };
+
+  const handleTaskDeleted = (taskId: string, _storyId: string) => {
+    if (selectedTaskId === taskId) {
+      setSelectedTaskId(null);
+    }
     if (storyId) {
       void fetchTasks(storyId);
     }
@@ -616,13 +638,20 @@ export function StoryPage() {
             {activeTab === "context" && <ContextPanel story={story} />}
             {activeTab === "tasks" && (
               <DetailSection title="任务列表">
-                <TaskList tasks={sortedTasks} onTaskClick={(task) => console.log("Open task:", task)} />
+                <TaskList tasks={sortedTasks} onTaskClick={(task) => setSelectedTaskId(task.id)} />
               </DetailSection>
             )}
             {activeTab === "review" && <ReviewPanel story={story} tasks={sortedTasks} />}
           </div>
         </div>
       </div>
+
+      <TaskDrawer
+        task={selectedTask}
+        onTaskUpdated={handleTaskUpdated}
+        onTaskDeleted={handleTaskDeleted}
+        onClose={() => setSelectedTaskId(null)}
+      />
 
       {/* 删除确认对话框 */}
       <DangerConfirmDialog

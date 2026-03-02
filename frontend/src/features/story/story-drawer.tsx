@@ -77,7 +77,7 @@ function ContextPanel({ story }: { story: Story }) {
 }
 
 function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
-  const successCount = tasks.filter((task) => task.status === "succeeded").length;
+  const successCount = tasks.filter((task) => task.status === "completed").length;
   const failedCount = tasks.filter((task) => task.status === "failed").length;
 
   return (

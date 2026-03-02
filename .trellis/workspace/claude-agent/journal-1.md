@@ -519,3 +519,55 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: feat(file-reference): @ 引用工作空间文件功能实现
+
+**Date**: 2026-03-02
+**Task**: feat(file-reference): @ 引用工作空间文件功能实现
+
+### Summary
+
+实现 Session 输入框 @ 引用文件功能，前后端完整闭环
+
+### Main Changes
+
+| 模块 | 变更 |
+|------|------|
+| 后端 workspace-files API | 新增文件列表/读取/批量读取端点，路径安全校验 |
+| 后端 PromptSessionRequest | 支持 promptBlocks (ContentBlock[])，兼容旧 prompt: string |
+| 前端 file-reference feature | FilePickerPopup + useFileReference + buildPromptBlocks |
+| 前端 SessionPage | 集成 @ 引用交互，引用标签可视化 |
+
+**新增文件**:
+- `crates/agentdash-api/src/routes/workspace_files.rs`
+- `frontend/src/features/file-reference/` (6 files)
+- `frontend/src/services/workspaceFiles.ts`
+
+**修改文件**:
+- `crates/agentdash-executor/src/hub.rs`
+- `crates/agentdash-api/src/routes.rs`
+- `crates/agentdash-api/src/routes/acp_sessions.rs`
+- `frontend/src/pages/SessionPage.tsx`
+- `frontend/src/services/executor.ts`
+
+**验证**: TypeScript 编译 ✅ | ESLint ✅ | Rust check ✅ | 浏览器测试 ✅
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0635bb1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

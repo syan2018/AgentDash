@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
-use crate::common::error::DomainError;
 use super::entity::Project;
+use crate::common::error::DomainError;
 
 /// Project 仓储接口（Port）
 #[async_trait::async_trait]

@@ -1,12 +1,8 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use agent_client_protocol::{SessionId, SessionNotification};
-use futures::stream::BoxStream;
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
@@ -25,8 +21,8 @@ use executors::{
 use crate::{
     adapters::normalized_to_acp::NormalizedToAcpConverter,
     connector::{
-        AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutorInfo,
-        ExecutionContext, ExecutionStream, PromptPayload,
+        AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
+        ExecutionStream, ExecutorInfo, PromptPayload,
     },
 };
 
@@ -136,7 +132,8 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             })?;
 
         let wd = working_dir.unwrap_or_else(|| self.workspace_root.clone());
-        agent.discover_options(Some(&wd), Some(&self.workspace_root))
+        agent
+            .discover_options(Some(&wd), Some(&self.workspace_root))
             .await
             .map_err(|e| ConnectorError::Runtime(format!("discover_options 失败: {e}")))
     }
@@ -235,7 +232,8 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             cancel_map.lock().await.remove(&session_id_owned);
         });
 
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
+        let (tx, rx) =
+            tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
         let connector_type = match self.connector_type() {
             ConnectorType::LocalExecutor => "local_executor",
             ConnectorType::RemoteAcpBackend => "remote_acp_backend",

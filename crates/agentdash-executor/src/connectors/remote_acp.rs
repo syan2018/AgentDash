@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::connector::{
-    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, ExecutorInfo, PromptPayload,
+    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
+    ExecutionStream, ExecutorInfo, PromptPayload,
 };
 
 pub struct RemoteAcpConnector {

@@ -1,5 +1,5 @@
+use super::entity::{BackendConfig, UserPreferences, ViewConfig};
 use crate::common::error::DomainError;
-use super::entity::{BackendConfig, ViewConfig, UserPreferences};
 
 /// Backend 仓储接口（Port）
 #[async_trait::async_trait]

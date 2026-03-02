@@ -4,4 +4,4 @@ mod value_objects;
 
 pub use entity::Project;
 pub use repository::ProjectRepository;
-pub use value_objects::{ProjectConfig, AgentPreset};
+pub use value_objects::{AgentPreset, ProjectConfig};

@@ -36,4 +36,3 @@ fn main() {
     );
     fs::write(&out, content).expect("write generated TS");
 }
-

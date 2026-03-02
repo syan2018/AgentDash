@@ -180,4 +180,3 @@ pub fn agentdash_meta_value(agentdash: &AgentDashMetaV1) -> Value {
     );
     Value::Object(map)
 }
-

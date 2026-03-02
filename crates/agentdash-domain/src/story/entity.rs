@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{StoryStatus, StoryContext};
+use super::value_objects::{StoryContext, StoryStatus};
 
 /// Story — 用户价值单元
 ///

@@ -1,216 +1,313 @@
-# Task-Agent 绑定与执行流程
+# Task-Agent 绑定与执行流程（PRD v2）
 
-## 背景与目标
+## 1. Scope / Trigger
 
-当前 AgentDash 的 Task 和 Agent 执行是分离的：
-- Task 实体有 `AgentBinding` 结构，但仅用于展示，没有完整的绑定流程
-- Session（ACP 会话）是独立的，不与 Task 关联
-- 用户需要手动在 Session 页面输入 Prompt，无法直接从 Task 启动执行
+本任务触发了典型跨层契约变更：
+- 新增 Task 执行入口 API（`/tasks/{id}/start`、`/tasks/{id}/continue`、`/tasks/{id}/session`）
+- Task 数据模型新增字段（`session_id`，`AgentBinding` 扩展）
+- Task 执行状态与 Session 事件打通（状态机与 artifact 写回）
+- 前后端 TaskStatus 契约统一（补齐 `awaiting_verification`）
 
-本任务要建立 Task 与 Agent 进程的绑定关系，实现从 Task 直接启动执行的完整流程。
+目标是把当前“Task 管理”和“Session 会话”两条独立链路，收敛为“Task 驱动执行，Session 承载上下文”的闭环。
 
-## 目标
+## 2. 当前约束（基于现有实现）
 
-1. 实现 Task 与 Session 的关联（一个 Task 对应一个 Session）
-2. 在 Task 中预设 Agent 类型、提示词模板、上下文
-3. 实现从 Task 详情页一键启动执行
-4. 执行状态回写到 Task，产物收集到 Task.artifacts
+1. 后端 `ExecutorHub` 是多轮模型：同一 `session_id` 可反复 `start_prompt`，并非单次会话即终态。
+2. 当前只有独立 `/sessions` API，Task 无法一键发起执行。
+3. Task 有 `agent_binding` 与 `artifacts`，但无 `session_id`。
+4. 全局事件流依赖 `state_changes`，Task 变更写入尚不完整。
+5. 前端 TaskStatus 仍是 `queued/succeeded/cancelled` 语义，和后端 `assigned/awaiting_verification` 不一致。
 
-## 非目标
+## 3. Goals / Non-Goals
 
-- 不实现多 Agent 并行执行（P4-02）
-- 不实现复杂的编排策略（P5 系列）
-- 不替换现有的独立 Session 页面（保留自由会话能力）
+### Goals
+- Task 与 Session 建立 1:1 持久绑定（Task 首次执行创建 Session，后续复用）。
+- 支持在 Task 配置中定义 `prompt_template` 与 `initial_context`。
+- Task Drawer 一键启动与继续执行，自动跳转到对应 Session。
+- 执行事件回写 Task 状态，并将 Tool Call 结构化写入 Task artifacts。
 
-## 当前状态分析
+### Non-Goals
+- 不做多 Agent 并行编排（P4-02）。
+- 不重构现有独立 Session 页（仍保留自由会话）。
+- 不在本任务引入复杂策略引擎（P5 系列）。
 
-### 已有基础
-- ✅ Task 实体有 `AgentBinding` 结构体（`agent_type`, `agent_pid`, `preset_name`）
-- ✅ ExecutorHub 提供 Session 管理和 Prompt 执行能力
-- ✅ 前端 Task Drawer 显示 agent_binding 信息
-- ✅ 前端有完整的 ACP 会话渲染能力
+## 4. ADR-lite（核心决策）
 
-### 需要补齐
-- ❌ Task 与 Session 的关联字段
-- ❌ 从 Task 启动执行的 API 链路
-- ❌ 执行状态同步到 Task 状态
-- ❌ Task 预设配置（提示词模板、上下文）
+### 决策 A：Task 绑定 Session，但状态按“Turn”推进
 
-## 需求规格
+`Session` 是长期上下文容器；`start/continue` 每次触发的是一个执行轮次（turn）。  
+Task 状态推进基于“本轮执行结果”，不是“整个 session 是否结束”。
 
-### FR-1: Task-Session 关联
+### 决策 B：新增 Task 执行 API 作为会话 API 的领域包装层
 
-在 Task 实体中增加 `session_id` 字段，建立与 Session 的一对一关系：
+`/tasks/{id}/start|continue` 内部复用现有 `/sessions` 能力，不替代它；  
+前者面向业务域（Task），后者面向基础能力（会话）。
+
+### 决策 C：Tool Call 以 `ToolExecution` artifact 持久化
+
+新增 artifact 类型 `ToolExecution`，以 `tool_call_id` 做幂等更新键；  
+同一工具调用先“创建 artifact（in_progress）”，后“补全结果（completed/failed）”。
+
+### 决策 D：统一 TaskStatus 语义
+
+前后端统一为：
+`pending | assigned | running | awaiting_verification | completed | failed`。  
+本任务不再使用 `queued/succeeded/cancelled/skipped` 作为 Task 主状态。
+
+## 5. Signatures（后端/API/DB/前端）
+
+### 5.1 Domain 模型
 
 ```rust
 pub struct Task {
-    // ... existing fields ...
-    /// 关联的 Session ID（执行时创建）
-    pub session_id: Option<String>,
+    pub id: Uuid,
+    pub story_id: Uuid,
+    pub workspace_id: Option<Uuid>,
+    pub title: String,
+    pub description: String,
+    pub status: TaskStatus,
+    pub session_id: Option<String>, // NEW
+    pub agent_binding: AgentBinding,
+    pub artifacts: Vec<Artifact>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+pub struct AgentBinding {
+    pub agent_type: Option<String>,
+    pub agent_pid: Option<String>,
+    pub preset_name: Option<String>,
+    pub prompt_template: Option<String>, // NEW
+    pub initial_context: Option<String>, // NEW
 }
 ```
-
-规则：
-- Task 创建时 `session_id` 为 null
-- 首次启动执行时创建 Session，写入 `session_id`
-- 后续执行复用同一个 Session（保持上下文连续性）
-- Task 删除时可选是否保留 Session 历史
-
-### FR-2: Task 预设配置
-
-扩展 `AgentBinding` 支持预设提示词和上下文：
 
 ```rust
-pub struct AgentBinding {
-    /// Agent 类型（如 "claude-code", "codex"）
-    pub agent_type: Option<String>,
-    /// Agent 进程标识
-    pub agent_pid: Option<String>,
-    /// 使用的预设名称
-    pub preset_name: Option<String>,
-    /// 预设提示词模板（用户可编辑）
-    pub prompt_template: Option<String>,
-    /// 初始上下文（注入到 Session 的第一条消息）
-    pub initial_context: Option<String>,
+pub enum ArtifactType {
+    CodeChange,
+    TestResult,
+    LogOutput,
+    File,
+    ToolExecution, // NEW
 }
 ```
 
-前端 Task Drawer 增加配置面板：
-- Agent 类型选择器（下拉框：claude-code / codex / gemini / custom）
-- 提示词模板编辑器（textarea，支持占位符如 `{{task_title}}`）
-- 初始上下文编辑器（textarea，可选）
-
-### FR-3: 一键启动执行
-
-前端 Task Drawer 增加"启动执行"按钮：
-
-1. 首次启动：
-   - 调用 `POST /tasks/{task_id}/start`
-   - 后端创建 Session，绑定到 Task
-   - 发送初始 Prompt（渲染后的模板 + 初始上下文）
-   - 打开 Session 页面（嵌入或跳转）
-
-2. 继续执行（已有 Session）：
-   - 调用 `POST /tasks/{task_id}/continue`
-   - 复用已有 Session
-   - 打开 Session 页面
-
-### FR-4: 执行状态同步
-
-执行过程中，将关键状态同步到 Task：
-
-| Session 事件 | Task 状态更新 |
-|-------------|--------------|
-| Agent 开始响应 | `Running` |
-| Tool Call 开始 | 记录到 `artifacts`（类型 `ToolExecution`）|
-| Tool Call 完成 | 更新对应 artifact |
-| Session 完成 | `AwaitingVerification` |
-| Session 错误 | `Failed` |
-
-### FR-5: API 接口
-
-新增后端 API：
+### 5.2 API 签名
 
 ```rust
 // POST /tasks/{task_id}/start
-// 启动 Task 执行（创建新 Session）
 struct StartTaskRequest {
-    /// 覆盖默认的提示词（可选）
     override_prompt: Option<String>,
-    /// 执行器配置（可选，默认使用 Task 配置）
     executor_config: Option<ExecutorConfig>,
 }
-
 struct StartTaskResponse {
     task_id: Uuid,
     session_id: String,
+    turn_id: String,
     status: TaskStatus,
 }
 
 // POST /tasks/{task_id}/continue
-// 继续已有 Session 的执行
 struct ContinueTaskRequest {
-    /// 追加提示词
     additional_prompt: Option<String>,
+    executor_config: Option<ExecutorConfig>,
+}
+struct ContinueTaskResponse {
+    task_id: Uuid,
+    session_id: String,
+    turn_id: String,
+    status: TaskStatus,
 }
 
 // GET /tasks/{task_id}/session
-// 获取 Task 关联的 Session 状态
 struct TaskSessionResponse {
+    task_id: Uuid,
     session_id: Option<String>,
-    status: TaskStatus,
+    session_title: Option<String>,
+    task_status: TaskStatus,
     last_activity: Option<DateTime<Utc>>,
 }
 ```
 
-## 技术方案
+### 5.3 数据库变更
 
-### 数据流
-
-```
-┌─────────────┐     POST /tasks/{id}/start      ┌─────────────┐
-│   前端页面   │ ───────────────────────────────>│   API 层    │
-│  Task Drawer │                                │             │
-└─────────────┘                                └──────┬──────┘
-                                                    │
-                                                    ▼
-                                           ┌─────────────────┐
-                                           │  1. 创建 Session │
-                                           │  2. 更新 Task.   │
-                                           │     session_id   │
-                                           │  3. 发送初始 Prompt│
-                                           └────────┬────────┘
-                                                    │
-                                                    ▼
-                                           ┌─────────────────┐
-                                           │   ExecutorHub   │
-                                           │  (现有能力复用)  │
-                                           └─────────────────┘
-```
-
-### 状态机
-
-```
-Task 生命周期（执行相关部分）：
-
-Pending ──start──> Running ──完成──> AwaitingVerification
-    │                    │
-    └──────失败──────────┴──────> Failed
-```
-
-### 数据库变更
+> 本项目为预研、未上线，直接演进到正确模型。
 
 ```sql
--- 添加 session_id 列
 ALTER TABLE tasks ADD COLUMN session_id TEXT;
-
--- 可选：添加索引
 CREATE INDEX idx_tasks_session_id ON tasks(session_id);
 ```
 
-## 验收标准
+`agent_binding` 与 `artifacts` 为 JSON 字段，随结构体序列化扩展，无需新增列。
 
-- [ ] 在 Task Drawer 可配置 Agent 类型和提示词模板
-- [ ] 点击"启动执行"创建 Session 并发送初始 Prompt
-- [ ] Session 页面显示 Task 关联的上下文
-- [ ] 执行完成后 Task 状态变为 `AwaitingVerification`
-- [ ] 可多次继续同一个 Task 的 Session
-- [ ] 执行产物（Tool Call 记录）保存到 Task.artifacts
+### 5.4 前端类型签名
 
-## 依赖与风险
+```ts
+type TaskStatus =
+  | "pending"
+  | "assigned"
+  | "running"
+  | "awaiting_verification"
+  | "completed"
+  | "failed";
 
-### 依赖
-- 需要 ExecutorHub 的 Session 管理能力（已具备）
-- 需要 ACP 会话流稳定（已完成重构）
+interface AgentBinding {
+  agent_type?: string | null;
+  agent_pid?: string | null;
+  preset_name?: string | null;
+  prompt_template?: string | null;
+  initial_context?: string | null;
+}
 
-### 风险
-- R1: Session 与 Task 生命周期不一致可能导致状态错乱
-  - 缓解：明确 Session 由 Task 创建，但独立管理生命周期
-- R2: 提示词模板渲染需要安全的占位符替换机制
-  - 缓解：使用简单的字符串替换，避免复杂模板引擎
+interface Task {
+  // ...
+  session_id?: string | null;
+}
+```
 
-## 参考文档
+## 6. Contracts（请求/响应/状态/事件）
 
-- `docs/modules/02-state.md` - State 模块设计
-- `docs/modules/05-execution.md` - Execution 模块设计
-- `docs/system-flow.md` - Task 生命周期流程
+### 6.1 Prompt 生成契约
+
+优先级：
+1. `override_prompt`（start 请求显式覆盖）
+2. `additional_prompt`（continue 追加）
+3. `agent_binding.prompt_template` 渲染结果
+4. 默认兜底模板
+
+模板变量（首版）：
+- `{{task_title}}`
+- `{{task_description}}`
+- `{{story_title}}`
+- `{{workspace_path}}`
+
+最终发送给 Session 的 prompt：
+`[initial_context]\n\n[rendered_template_or_override]`
+
+### 6.2 状态同步契约（按 turn）
+
+| 触发点 | Task 状态 | 备注 |
+|---|---|---|
+| `/tasks/{id}/start` 或 `/continue` 成功受理 | `running` | 表示该 task 当前轮次开始执行 |
+| 收到本轮终态（成功） | `awaiting_verification` | 不要求 session 结束 |
+| 收到本轮终态（错误/异常） | `failed` | 记录错误摘要到 artifact |
+
+### 6.3 Artifact（ToolExecution）契约
+
+```json
+{
+  "id": "uuid",
+  "artifact_type": "tool_execution",
+  "content": {
+    "session_id": "sess-xxx",
+    "turn_id": "t123",
+    "tool_call_id": "tool-abc",
+    "title": "Read file",
+    "status": "in_progress",
+    "input_preview": "...",
+    "output_preview": "...",
+    "started_at": "2026-03-02T12:00:00Z",
+    "updated_at": "2026-03-02T12:00:01Z"
+  },
+  "created_at": "2026-03-02T12:00:00Z"
+}
+```
+
+幂等键：`(task_id, turn_id, tool_call_id)`。
+
+### 6.4 StateChange 契约
+
+Task 相关变更必须写入 `state_changes`，`payload.reason` 必填：
+- `task_status_changed`
+- `task_artifact_added`
+- `task_updated`（包含 `session_id` 绑定）
+
+## 7. Validation & Error Matrix
+
+| 场景 | 接口 | 错误码 | 错误信息 |
+|---|---|---|---|
+| task 不存在 | start/continue/session | 404 | `Task {id} 不存在` |
+| Task 已有运行中 turn | start/continue | 409 | `该任务已有执行进行中` |
+| continue 时尚未绑定 session | continue | 422 | `Task 尚未启动，请先 start` |
+| prompt 解析为空 | start/continue | 422 | `生成的 prompt 为空` |
+| workspace 不存在或越权 | start/continue | 409 | `Workspace 与 Task 不匹配` |
+| executor 配置无效 | start/continue | 400 | `执行器配置无效` |
+| connector 运行异常 | start/continue | 500 | `执行启动失败` |
+
+## 8. Good / Base / Bad Cases
+
+### Good
+- Task 首次点击“启动执行”：
+  - 创建 session
+  - 回写 `task.session_id`
+  - 置 `running`
+  - 跳转 `/session/{session_id}`
+  - 轮次完成后置 `awaiting_verification`
+
+### Base
+- Task 已绑定 session，点击“继续执行”：
+  - 复用同一 session
+  - 新增一轮 turn
+  - 状态按轮次推进
+
+### Bad
+- Task 未 start 直接 continue：
+  - 返回 422
+  - 不创建 session
+  - 不改变 task 状态
+
+## 9. Tests Required（含断言点）
+
+### 后端
+1. `start_task_creates_session_and_binds_task`
+   - 断言 `task.session_id` 已写入
+   - 断言返回 `status=running`
+2. `continue_task_reuses_existing_session`
+   - 断言 session_id 不变
+3. `task_status_transitions_follow_turn_result`
+   - 成功轮次 -> `awaiting_verification`
+   - 失败轮次 -> `failed`
+4. `tool_call_persisted_as_tool_execution_artifact`
+   - 断言同 `tool_call_id` 为更新而非重复插入
+5. `task_changes_are_written_to_state_changes`
+   - 断言存在 `task_status_changed` / `task_artifact_added`
+
+### 前端
+1. Task Drawer 显示并可编辑：
+   - `agent_type` / `prompt_template` / `initial_context`
+2. 点击“启动执行”：
+   - 调用 `/tasks/{id}/start`
+   - 成功后跳转 `/session/{session_id}`
+3. Task 状态渲染：
+   - 正确显示 `awaiting_verification`
+
+## 10. Wrong vs Correct
+
+### Wrong
+- 以“session 是否结束”驱动 Task 终态；
+- 前端继续使用 `queued/succeeded`，后端写 `awaiting_verification`；
+- Tool Call 只在 UI 展示，不写 Task artifacts。
+
+### Correct
+- 以“turn 终态”驱动 Task 状态；
+- 前后端共享同一组 TaskStatus；
+- Tool Call 结构化持久化到 `artifacts`，并可回放。
+
+## 11. 验收标准（最终）
+
+- [ ] Task 模型包含 `session_id`，并在首次 start 后持久化。
+- [ ] `AgentBinding` 支持 `prompt_template`、`initial_context`。
+- [ ] Task Drawer 可配置并保存上述字段。
+- [ ] `/tasks/{id}/start` 可创建并绑定 Session，自动启动第一轮执行。
+- [ ] `/tasks/{id}/continue` 复用已绑定 Session 启动新轮次。
+- [ ] Task 状态可按轮次更新为 `running -> awaiting_verification/failed`。
+- [ ] Tool Call 可写入 `ToolExecution` artifacts 并随状态更新。
+- [ ] Task 相关状态变化可进入 `state_changes` 事件流。
+
+## 12. 实施拆分（建议）
+
+1. 后端模型与仓储层：`Task.session_id` + `AgentBinding` 扩展 + artifact 类型扩展。
+2. Task 执行 API：`start/continue/session` 路由与 service。
+3. 执行事件桥接：turn 终态回写 + Tool Call artifact 写回 + state_changes 记录。
+4. 前端契约对齐：TaskStatus 统一、Drawer 表单与启动按钮、跳转 Session。
+5. 回归测试：后端集成测试 + 前端关键交互测试。

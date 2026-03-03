@@ -43,9 +43,11 @@ pub enum ChangeKind {
     StoryCreated,
     StoryUpdated,
     StoryStatusChanged,
+    StoryDeleted,
     TaskCreated,
     TaskUpdated,
     TaskStatusChanged,
+    TaskDeleted,
     TaskArtifactAdded,
 }
 

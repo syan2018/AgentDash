@@ -5,7 +5,7 @@ description: "Break the Loop - Deep Bug Analysis"
 
 # Break the Loop - Deep Bug Analysis
 
-When debug is complete, use this command for deep analysis to break the "fix bug -> forget -> repeat" cycle.
+When debug is complete, use this skill for deep analysis to break the "fix bug -> forget -> repeat" cycle.
 
 ---
 
@@ -64,7 +64,7 @@ Solidify insights into the system:
 - [ ] Update `.trellis/spec/backend/` or `frontend/` docs
 - [ ] Create issue record (if applicable)
 - [ ] Create feature ticket for root fix
-- [ ] Update check commands if needed
+- [ ] Update check skills if needed
 
 ---
 

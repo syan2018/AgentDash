@@ -1,9 +1,9 @@
 ---
 name: record-session
-description: "[!] **Prerequisite**: This command should only be used AFTER the human has tested and committed the code."
+description: "Method 1: Simple parameters"
 ---
 
-[!] **Prerequisite**: This command should only be used AFTER the human has tested and committed the code.
+[!] **Prerequisite**: This skill should only be used AFTER the human has tested and committed the code.
 
 **AI must NOT execute git commit** - only read history (`git log`, `git status`, `git diff`).
 
@@ -43,6 +43,9 @@ EOF
 - [OK] Appends session to journal-N.md
 - [OK] Auto-detects line count, creates new file if >2000 lines
 - [OK] Updates index.md (Total Sessions +1, Last Active, line stats, history)
+- [OK] Auto-commits workspace changes
+
+> Use `--no-commit` to skip auto-commit if needed.
 
 ---
 

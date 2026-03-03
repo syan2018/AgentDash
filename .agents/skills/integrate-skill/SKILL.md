@@ -1,22 +1,22 @@
 ---
 name: integrate-skill
-description: "Integrate Claude Skill into Project Guidelines"
+description: "Integrate Skill into Project Guidelines"
 ---
 
-# Integrate Claude Skill into Project Guidelines
+# Integrate Skill into Project Guidelines
 
-Adapt and integrate a Claude global skill into your project's development guidelines (not directly into project code).
+Adapt and integrate a reusable skill into your project's development guidelines (not directly into project code).
 
 ## Usage
 
 ```
-/trellis:integrate-skill <skill-name>
+$integrate-skill <skill-name>
 ```
 
 **Examples**:
 ```
-/trellis:integrate-skill frontend-design
-/trellis:integrate-skill mcp-builder
+$integrate-skill frontend-design
+$integrate-skill mcp-builder
 ```
 
 ## Core Principle
@@ -33,14 +33,11 @@ Adapt and integrate a Claude global skill into your project's development guidel
 
 ### 1. Read Skill Content
 
-```bash
-openskills read <skill-name>
-```
+Locate and read the skill instructions:
+- `.agents/skills/<skill-name>/SKILL.md` in the repository
+- Skill list in `AGENTS.md` (when available in current context)
 
-If the skill doesn't exist, prompt user to check available skills:
-```bash
-# Available skills are listed in AGENTS.md under <available_skills>
-```
+If the skill cannot be found, ask the user for the source path or repository.
 
 ### 2. Determine Integration Target
 
@@ -169,12 +166,12 @@ yarn add <package>
 
 ---
 
-## 6. Optional: Create Usage Command
+## 6. Optional: Create Usage Skill
 
-If this skill is frequently used, create a shortcut command:
+If this skill is frequently used, create a shortcut skill:
 
 ```bash
-/trellis:create-command use-<skill-name> Use <skill-name> skill following project guidelines
+$create-command use-<skill-name> Use <skill-name> skill following project guidelines
 ```
 
 ## Common Skill Integration Reference

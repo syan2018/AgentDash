@@ -22,8 +22,6 @@ copy:
   # - .env.local
   # Workflow config
   - .trellis/.developer
-  - third_party/*
-  - references/*
 
 #-------------------------------------------------------------------------------
 # Post-Create Hooks

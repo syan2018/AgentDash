@@ -446,7 +446,7 @@ export function StoryPage() {
     }
   };
 
-  const handleTaskDeleted = (taskId: string, _storyId: string) => {
+  const handleTaskDeleted = (taskId: string) => {
     if (selectedTaskId === taskId) {
       setSelectedTaskId(null);
     }
@@ -648,6 +648,7 @@ export function StoryPage() {
       </div>
 
       <TaskDrawer
+        key={selectedTask?.id ?? "no-task-selected"}
         task={selectedTask}
         workspaces={workspaces}
         projectConfig={currentProject?.config}

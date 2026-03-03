@@ -115,6 +115,15 @@ export interface Task {
   updated_at: string;
 }
 
+export interface SessionTaskContext {
+  task_id: string;
+  agent_binding?: AgentBinding;
+}
+
+export interface SessionNavigationState {
+  task_context?: SessionTaskContext;
+}
+
 // ─── Artifact / ACP 展示类型 ──────────────────────────
 
 export type ContentBlock =

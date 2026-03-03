@@ -13,6 +13,7 @@ export interface TaskSessionInfo {
   task_id: string;
   session_id: string | null;
   task_status: Task["status"];
+  agent_binding: AgentBinding;
   session_title: string | null;
   last_activity: number | null;
 }
@@ -204,6 +205,21 @@ const defaultBinding: AgentBinding = {
   initial_context: null,
 };
 
+const mapAgentBinding = (raw: unknown): AgentBinding => {
+  if (!raw || typeof raw !== 'object') {
+    return { ...defaultBinding };
+  }
+
+  const binding = raw as Record<string, unknown>;
+  return {
+    agent_type: binding.agent_type ? String(binding.agent_type) : null,
+    agent_pid: binding.agent_pid ? String(binding.agent_pid) : null,
+    preset_name: binding.preset_name ? String(binding.preset_name) : null,
+    prompt_template: binding.prompt_template ? String(binding.prompt_template) : null,
+    initial_context: binding.initial_context ? String(binding.initial_context) : null,
+  };
+};
+
 const normalizeArtifactType = (value: string): Task['artifacts'][number]['artifact_type'] => {
   switch (value) {
     case 'code_change':
@@ -241,18 +257,6 @@ const upsertTaskInMap = (
 };
 
 const mapTask = (raw: Record<string, unknown>): Task => {
-  let agentBinding: AgentBinding = defaultBinding;
-  if (raw.agent_binding && typeof raw.agent_binding === 'object') {
-    const ab = raw.agent_binding as Record<string, unknown>;
-    agentBinding = {
-      agent_type: ab.agent_type ? String(ab.agent_type) : null,
-      agent_pid: ab.agent_pid ? String(ab.agent_pid) : null,
-      preset_name: ab.preset_name ? String(ab.preset_name) : null,
-      prompt_template: ab.prompt_template ? String(ab.prompt_template) : null,
-      initial_context: ab.initial_context ? String(ab.initial_context) : null,
-    };
-  }
-
   return {
     id: String(raw.id ?? ''),
     story_id: String(raw.story_id ?? ''),
@@ -261,7 +265,7 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     title: String(raw.title ?? raw.name ?? '未命名 Task'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeTaskStatus(String(raw.status ?? 'pending')),
-    agent_binding: agentBinding,
+    agent_binding: mapAgentBinding(raw.agent_binding),
     artifacts: Array.isArray(raw.artifacts)
       ? raw.artifacts
           .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
@@ -426,6 +430,7 @@ export const useStoryStore = create<StoryState>((set) => ({
         task_id: String(raw.task_id ?? taskId),
         session_id: raw.session_id ? String(raw.session_id) : null,
         task_status: normalizeTaskStatus(String(raw.task_status ?? 'pending')),
+        agent_binding: mapAgentBinding(raw.agent_binding),
         session_title: raw.session_title ? String(raw.session_title) : null,
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
       };

@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAcpSession, AcpSessionEntry } from "../features/acp-session";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../features/acp-session/model/types";
 import type { AcpDisplayItem, TokenUsageInfo } from "../features/acp-session/model/types";
 import { promptSession, type ExecutorConfig } from "../services/executor";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
+import { useStoryStore } from "../stores/storyStore";
 import {
   useExecutorDiscovery,
   useExecutorConfig,
   useExecutorDiscoveredOptions,
   ExecutorSelector,
 } from "../features/executor-selector";
+import type { AgentBinding, SessionNavigationState } from "../types";
 import {
   useFileReference,
   FilePickerPopup,
@@ -88,6 +90,25 @@ function removeReferenceMarkers(prompt: string, relPath: string): string {
   return next;
 }
 
+function normalizeExecutorToken(raw: string): string {
+  return raw.trim().replace(/[-\s]+/g, "_").toUpperCase();
+}
+
+function resolveExecutorFromAgentType(
+  agentType: string | null | undefined,
+  executors: Array<{ id: string }>,
+): string | null {
+  const trimmed = (agentType ?? "").trim();
+  if (!trimmed) return null;
+
+  const exact = executors.find((item) => item.id === trimmed);
+  if (exact) return exact.id;
+
+  const normalized = normalizeExecutorToken(trimmed);
+  const matched = executors.find((item) => normalizeExecutorToken(item.id) === normalized);
+  return matched?.id ?? trimmed;
+}
+
 /**
  * 上下文窗口用量指示器 — 仿 Claude/ChatGPT 的小圆环。
  * hover 时展示详细数值。
@@ -155,6 +176,9 @@ interface SessionPageProps {
 
 export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const fetchTaskSession = useStoryStore((state) => state.fetchTaskSession);
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(propSessionId ?? null);
@@ -163,11 +187,37 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const [inputValue, setInputValue] = useState("");
 
   const richInputRef = useRef<RichInputRef>(null);
+  const appliedTaskExecutorRef = useRef<string | null>(null);
+  const [taskAgentBinding, setTaskAgentBinding] = useState<AgentBinding | null>(null);
+  const taskIdFromQuery = searchParams.get("task_id")?.trim() || "";
+  const taskContextFromRoute = useMemo(() => {
+    const state = location.state as SessionNavigationState | null;
+    return state?.task_context ?? null;
+  }, [location.state]);
+  const taskIdHint = taskContextFromRoute?.task_id ?? taskIdFromQuery;
 
   useEffect(() => {
     setCurrentSessionId(propSessionId ?? null);
     setActiveSessionId(propSessionId ?? null);
   }, [propSessionId, setActiveSessionId]);
+
+  useEffect(() => {
+    setTaskAgentBinding(taskContextFromRoute?.agent_binding ?? null);
+  }, [taskContextFromRoute?.agent_binding, propSessionId]);
+
+  useEffect(() => {
+    if (!taskIdHint) return;
+    let cancelled = false;
+    void (async () => {
+      const taskSession = await fetchTaskSession(taskIdHint);
+      if (cancelled || !taskSession?.agent_binding) return;
+      setTaskAgentBinding(taskSession.agent_binding);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchTaskSession, taskIdHint]);
 
   const fileRef = useFileReference();
 
@@ -179,6 +229,19 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const discovery = useExecutorDiscovery();
   const execConfig = useExecutorConfig();
   const discovered = useExecutorDiscoveredOptions(execConfig.executor, execConfig.variant);
+  const setExecutor = execConfig.setExecutor;
+  const executorFromTaskBinding = useMemo(
+    () => resolveExecutorFromAgentType(taskAgentBinding?.agent_type, discovery.executors),
+    [discovery.executors, taskAgentBinding?.agent_type],
+  );
+
+  useEffect(() => {
+    if (!propSessionId || !executorFromTaskBinding) return;
+    const marker = `${propSessionId}:${executorFromTaskBinding}`;
+    if (appliedTaskExecutorRef.current === marker) return;
+    appliedTaskExecutorRef.current = marker;
+    setExecutor(executorFromTaskBinding);
+  }, [executorFromTaskBinding, propSessionId, setExecutor]);
 
   const executorConfig: ExecutorConfig | undefined = useMemo(() => {
     const trimmedExecutor = execConfig.executor.trim();

@@ -62,6 +62,7 @@ pub struct TaskSessionResponse {
     pub task_id: Uuid,
     pub session_id: Option<String>,
     pub task_status: TaskStatus,
+    pub agent_binding: agentdash_domain::task::AgentBinding,
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
 }
@@ -273,8 +274,9 @@ pub async fn get_task_session(
 ) -> Result<Json<TaskSessionResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
     let task = get_task(&state, task_id).await?;
+    let session_id = task.session_id.clone();
 
-    let (session_title, last_activity) = if let Some(session_id) = task.session_id.as_deref() {
+    let (session_title, last_activity) = if let Some(session_id) = session_id.as_deref() {
         match state.executor_hub.get_session_meta(session_id).await {
             Ok(Some(meta)) => (Some(meta.title), Some(meta.updated_at)),
             Ok(None) => (None, None),
@@ -286,8 +288,9 @@ pub async fn get_task_session(
 
     Ok(Json(TaskSessionResponse {
         task_id: task.id,
-        session_id: task.session_id,
+        session_id,
         task_status: task.status,
+        agent_binding: task.agent_binding,
         session_title,
         last_activity,
     }))

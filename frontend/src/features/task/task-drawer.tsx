@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useMemo, useState } from "react";
 import type { AgentBinding, Artifact, ProjectConfig, Task, TaskStatus, Workspace } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import { useStoryStore } from "../../stores/storyStore";
@@ -14,30 +13,47 @@ import {
   hasAgentBindingSelection,
   normalizeAgentBinding,
 } from "./agent-binding";
+import { TaskAgentSessionPanel } from "./task-agent-session-panel";
 
 interface TaskDrawerProps {
   task: Task | null;
   workspaces: Workspace[];
   projectConfig?: ProjectConfig;
   onTaskUpdated: (task: Task) => void;
-  onTaskDeleted: (taskId: string, storyId: string) => void;
+  onTaskDeleted: (taskId: string) => void;
   onClose: () => void;
 }
 
 function ArtifactBlock({ artifact }: { artifact: Artifact }) {
+  const [isCollapsed, setIsCollapsed] = useState(true);
+
   return (
     <div className="rounded-md border border-border bg-card p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-muted-foreground">
           {artifact.artifact_type}
         </p>
-        <span className="text-[11px] text-muted-foreground">
-          {new Date(artifact.created_at).toLocaleString("zh-CN")}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">
+            {new Date(artifact.created_at).toLocaleString("zh-CN")}
+          </span>
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((value) => !value)}
+            aria-expanded={!isCollapsed}
+            className="rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+          >
+            {isCollapsed ? "展开" : "收起"}
+          </button>
+        </div>
       </div>
-      <pre className="overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground">
-        {JSON.stringify(artifact.content, null, 2)}
-      </pre>
+      {isCollapsed ? (
+        <p className="text-xs text-muted-foreground">内容已折叠，点击展开查看详情</p>
+      ) : (
+        <pre className="overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+          {JSON.stringify(artifact.content, null, 2)}
+        </pre>
+      )}
     </div>
   );
 }
@@ -50,14 +66,7 @@ export function TaskDrawer({
   onTaskDeleted,
   onClose,
 }: TaskDrawerProps) {
-  const navigate = useNavigate();
-  const {
-    updateTask,
-    startTaskExecution,
-    continueTaskExecution,
-    deleteTask,
-    error,
-  } = useStoryStore();
+  const { updateTask, deleteTask, error } = useStoryStore();
   const [editTitle, setEditTitle] = useState(task?.title ?? "");
   const [editDescription, setEditDescription] = useState(task?.description ?? "");
   const [editStatus, setEditStatus] = useState<TaskStatus>(task?.status ?? "pending");
@@ -66,23 +75,30 @@ export function TaskDrawer({
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
-  const [isExecuting, setIsExecuting] = useState(false);
-
-  useEffect(() => {
-    if (!task) return;
-    setEditTitle(task.title);
-    setEditDescription(task.description ?? "");
-    setEditStatus(task.status);
-    setEditWorkspaceId(task.workspace_id ?? "");
-    setEditAgentBinding(task.agent_binding ?? {});
-    setFormMessage(null);
-    setDeleteConfirmValue("");
-    setIsDeleteConfirmOpen(false);
-  }, [task]);
+  const [isArtifactsCollapsed, setIsArtifactsCollapsed] = useState(true);
+  const sortedArtifacts = useMemo(
+    () => {
+      if (!task) return [];
+      return [...task.artifacts].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+    },
+    [task],
+  );
 
   if (!task) return null;
 
   const agentLabel = task.agent_binding?.agent_type ?? "未指定 Agent";
+  const hasArtifacts = sortedArtifacts.length > 0;
+
+  const applyTaskSnapshot = (nextTask: Task) => {
+    setEditTitle(nextTask.title);
+    setEditDescription(nextTask.description ?? "");
+    setEditStatus(nextTask.status);
+    setEditWorkspaceId(nextTask.workspace_id ?? "");
+    setEditAgentBinding(nextTask.agent_binding ?? {});
+    setFormMessage(null);
+  };
 
   const handleSaveTask = async () => {
     const trimmedTitle = editTitle.trim();
@@ -104,7 +120,7 @@ export function TaskDrawer({
     });
     if (!updated) return;
 
-    setFormMessage(null);
+    applyTaskSnapshot(updated);
     onTaskUpdated(updated);
   };
 
@@ -115,37 +131,7 @@ export function TaskDrawer({
     }
     await deleteTask(task.id, task.story_id);
     setIsDeleteConfirmOpen(false);
-    onTaskDeleted(task.id, task.story_id);
-  };
-
-  const handleStartExecution = async () => {
-    setIsExecuting(true);
-    try {
-      const updated = await startTaskExecution(task.id);
-      if (!updated) return;
-      setFormMessage(null);
-      onTaskUpdated(updated);
-      if (updated.session_id) {
-        navigate(`/session/${updated.session_id}`);
-      }
-    } finally {
-      setIsExecuting(false);
-    }
-  };
-
-  const handleContinueExecution = async () => {
-    setIsExecuting(true);
-    try {
-      const updated = await continueTaskExecution(task.id);
-      if (!updated) return;
-      setFormMessage(null);
-      onTaskUpdated(updated);
-      if (updated.session_id) {
-        navigate(`/session/${updated.session_id}`);
-      }
-    } finally {
-      setIsExecuting(false);
-    }
+    onTaskDeleted(task.id);
   };
 
   return (
@@ -155,7 +141,7 @@ export function TaskDrawer({
         title={task.title}
         subtitle={`ID: ${task.id}`}
         onClose={onClose}
-        widthClassName="max-w-[52rem]"
+        widthClassName="max-w-[78rem]"
         overlayClassName="z-30"
         panelClassName="z-40"
         headerExtra={
@@ -175,119 +161,118 @@ export function TaskDrawer({
           </div>
         }
       >
-        <div className="space-y-4 p-5">
-          <DetailSection title="任务详情">
-            <input
-              value={editTitle}
-              onChange={(event) => setEditTitle(event.target.value)}
-              placeholder="Task 标题"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-            />
-            <textarea
-              value={editDescription}
-              onChange={(event) => setEditDescription(event.target.value)}
-              rows={3}
-              placeholder="Task 描述"
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-            />
-            <select
-              value={editStatus}
-              onChange={(event) => setEditStatus(event.target.value as TaskStatus)}
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-            >
-              <option value="pending">待执行</option>
-              <option value="assigned">已分配</option>
-              <option value="running">执行中</option>
-              <option value="awaiting_verification">待验收</option>
-              <option value="completed">已完成</option>
-              <option value="failed">失败</option>
-            </select>
-
-            <select
-              value={editWorkspaceId}
-              onChange={(event) => setEditWorkspaceId(event.target.value)}
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-            >
-              <option value="">不绑定 Workspace</option>
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}
-                </option>
-              ))}
-            </select>
-
-            <div className="rounded-md border border-border bg-background p-3">
-              <p className="mb-2 text-xs text-muted-foreground">Agent 绑定</p>
-              <AgentBindingFields
-                value={editAgentBinding}
-                projectConfig={projectConfig}
-                onChange={setEditAgentBinding}
+        <div className="grid gap-4 p-5 lg:grid-cols-[22rem_minmax(0,1fr)]">
+          <div className="space-y-4">
+            <DetailSection title="任务详情">
+              <input
+                value={editTitle}
+                onChange={(event) => setEditTitle(event.target.value)}
+                placeholder="Task 标题"
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
               />
-            </div>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => void handleSaveTask()}
-                className="rounded border border-border bg-secondary px-3 py-1.5 text-sm text-foreground hover:bg-secondary/70"
+              <textarea
+                value={editDescription}
+                onChange={(event) => setEditDescription(event.target.value)}
+                rows={3}
+                placeholder="Task 描述"
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              />
+              <select
+                value={editStatus}
+                onChange={(event) => setEditStatus(event.target.value as TaskStatus)}
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
               >
-                保存 Task
-              </button>
-            </div>
-          </DetailSection>
+                <option value="pending">待执行</option>
+                <option value="assigned">已分配</option>
+                <option value="running">执行中</option>
+                <option value="awaiting_verification">待验收</option>
+                <option value="completed">已完成</option>
+                <option value="failed">失败</option>
+              </select>
 
-          <DetailSection title="执行操作">
-            <div className="flex flex-wrap gap-2">
-              {!task.session_id ? (
-                <button
-                  type="button"
-                  disabled={isExecuting || task.status === "running"}
-                  onClick={() => void handleStartExecution()}
-                  className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
-                >
-                  {isExecuting ? "启动中..." : "启动执行"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isExecuting || task.status === "running"}
-                  onClick={() => void handleContinueExecution()}
-                  className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
-                >
-                  {isExecuting ? "提交中..." : "继续执行"}
-                </button>
-              )}
-              {task.session_id && (
-                <button
-                  type="button"
-                  onClick={() => navigate(`/session/${task.session_id}`)}
-                  className="rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-muted"
-                >
-                  打开会话
-                </button>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Session: {task.session_id ?? "未绑定"}
-            </p>
-          </DetailSection>
-
-          <DetailSection title="执行产物">
-            {task.artifacts.length === 0 ? (
-              <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                暂无执行产物
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {task.artifacts.map((artifact) => (
-                  <ArtifactBlock key={artifact.id} artifact={artifact} />
+              <select
+                value={editWorkspaceId}
+                onChange={(event) => setEditWorkspaceId(event.target.value)}
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              >
+                <option value="">不绑定 Workspace</option>
+                {workspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </option>
                 ))}
-              </div>
-            )}
-          </DetailSection>
+              </select>
 
-          {(formMessage || error) && (
-            <p className="text-xs text-destructive">{formMessage || error}</p>
-          )}
+              <div className="rounded-md border border-border bg-background p-3">
+                <p className="mb-2 text-xs text-muted-foreground">Agent 绑定</p>
+                <AgentBindingFields
+                  value={editAgentBinding}
+                  projectConfig={projectConfig}
+                  onChange={setEditAgentBinding}
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveTask()}
+                  className="rounded border border-border bg-secondary px-3 py-1.5 text-sm text-foreground hover:bg-secondary/70"
+                >
+                  保存 Task
+                </button>
+              </div>
+            </DetailSection>
+
+            {(formMessage || error) && (
+              <p className="text-xs text-destructive">{formMessage || error}</p>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <DetailSection
+              title="Agent 执行会话"
+              description="不跳转页面，直接在抽屉中查看实时输出和进度。"
+            >
+              <TaskAgentSessionPanel
+                task={task}
+                onTaskUpdated={(updated) => {
+                  applyTaskSnapshot(updated);
+                  onTaskUpdated(updated);
+                }}
+              />
+            </DetailSection>
+
+            <DetailSection
+              title="执行产物"
+              extra={
+                hasArtifacts ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsArtifactsCollapsed((value) => !value)}
+                    aria-expanded={!isArtifactsCollapsed}
+                    className="rounded border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    {isArtifactsCollapsed ? `展开（${sortedArtifacts.length}）` : "收起"}
+                  </button>
+                ) : null
+              }
+            >
+              {!hasArtifacts ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                  暂无执行产物
+                </p>
+              ) : isArtifactsCollapsed ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                  已折叠执行产物，点击右上角展开（共 {sortedArtifacts.length} 条）
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {sortedArtifacts.map((artifact) => (
+                    <ArtifactBlock key={artifact.id} artifact={artifact} />
+                  ))}
+                </div>
+              )}
+            </DetailSection>
+          </div>
         </div>
       </DetailPanel>
 

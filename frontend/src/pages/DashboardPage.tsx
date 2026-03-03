@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Story } from "../types";
 import { useProjectStore } from "../stores/projectStore";
@@ -8,7 +8,8 @@ import { StoryListView } from "../features/story/story-list-view";
 export function DashboardPage() {
   const navigate = useNavigate();
   const { currentProjectId, projects } = useProjectStore();
-  const { stories, tasksByStoryId, isLoading, error, fetchStoriesByProject } = useStoryStore();
+  const { stories, tasksByStoryId, isLoading, error, fetchStoriesByProject, fetchTasks } = useStoryStore();
+  const requestedTaskStoryIdsRef = useRef<Set<string>>(new Set());
 
   const currentProject = projects.find((p) => p.id === currentProjectId);
 
@@ -16,6 +17,24 @@ export function DashboardPage() {
     if (!currentProjectId) return;
     void fetchStoriesByProject(currentProjectId);
   }, [currentProjectId, fetchStoriesByProject]);
+
+  useEffect(() => {
+    const activeStoryIds = new Set(stories.map((story) => story.id));
+
+    // 切换项目后清理已不存在的 Story 请求标记，避免无效缓存
+    requestedTaskStoryIdsRef.current.forEach((storyId) => {
+      if (!activeStoryIds.has(storyId)) {
+        requestedTaskStoryIdsRef.current.delete(storyId);
+      }
+    });
+
+    stories.forEach((story) => {
+      if (tasksByStoryId[story.id]) return;
+      if (requestedTaskStoryIdsRef.current.has(story.id)) return;
+      requestedTaskStoryIdsRef.current.add(story.id);
+      void fetchTasks(story.id);
+    });
+  }, [stories, tasksByStoryId, fetchTasks]);
 
   const taskCountByStoryId = useMemo(() => {
     const result: Record<string, number> = {};

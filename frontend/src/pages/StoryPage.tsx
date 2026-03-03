@@ -801,8 +801,6 @@ export function StoryPage() {
                     </div>
                   </div>
                 )}
-                  </p>
-                </div>
               </div>
             )}
           </DetailSection>

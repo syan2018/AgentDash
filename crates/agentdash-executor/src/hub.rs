@@ -5,8 +5,8 @@ use std::{
 };
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-    TextContent,
+    ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
+    SessionUpdate, TextContent,
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, broadcast};
 
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+    parse_agentdash_meta,
 };
 
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
@@ -151,6 +152,38 @@ fn build_turn_terminal_notification(
     )
 }
 
+fn parse_executor_session_bound(meta: Option<&Meta>, expected_turn_id: &str) -> Option<String> {
+    let parsed = parse_agentdash_meta(meta?)?;
+    let trace = parsed.trace?;
+    let turn_id = trace.turn_id?;
+    if turn_id != expected_turn_id {
+        return None;
+    }
+
+    let event = parsed.event?;
+    if event.r#type != "executor_session_bound" {
+        return None;
+    }
+
+    if let Some(data) = event.data {
+        if let Some(session_id) = data
+            .get("executor_session_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(session_id.to_string());
+        }
+    }
+
+    event
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -158,6 +191,8 @@ pub struct SessionMeta {
     pub title: String,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_session_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -200,6 +235,7 @@ impl ExecutorHub {
             title: title.to_string(),
             created_at: now,
             updated_at: now,
+            executor_session_id: None,
         };
         self.store.write_meta(&meta).await?;
         Ok(meta)
@@ -238,6 +274,17 @@ impl ExecutorHub {
     pub async fn start_prompt(
         &self,
         session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.start_prompt_with_follow_up(session_id, None, req)
+            .await
+    }
+
+    /// 多轮对话（支持底层执行器 follow-up 会话续跑）。
+    pub async fn start_prompt_with_follow_up(
+        &self,
+        session_id: &str,
+        follow_up_session_id: Option<&str>,
         req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
         let resolved_payload = req
@@ -285,19 +332,35 @@ impl ExecutorHub {
             .collect::<String>();
         let store = self.store.clone();
         let sid = session_id.to_string();
-        if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
-            meta.updated_at = chrono::Utc::now().timestamp_millis();
-            let _ = store.write_meta(&meta).await;
-        } else {
-            let now = chrono::Utc::now().timestamp_millis();
-            let meta = SessionMeta {
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut session_meta = match store.read_meta(&sid).await {
+            Ok(Some(meta)) => meta,
+            Ok(None) | Err(_) => SessionMeta {
                 id: sid.clone(),
-                title: title_hint,
+                title: title_hint.clone(),
                 created_at: now,
                 updated_at: now,
-            };
-            let _ = store.write_meta(&meta).await;
+                executor_session_id: None,
+            },
+        };
+        session_meta.updated_at = now;
+        if session_meta.title.trim().is_empty() {
+            session_meta.title = title_hint;
         }
+        let _ = store.write_meta(&session_meta).await;
+
+        let resolved_follow_up_session_id = follow_up_session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                session_meta
+                    .executor_session_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+            });
 
         // 注入用户消息到流和持久化存储（附带 `_meta.agentdash`）
         let connector_type = match self.connector.connector_type() {
@@ -320,7 +383,12 @@ impl ExecutorHub {
 
         let mut stream = self
             .connector
-            .prompt(session_id, &resolved_payload.prompt_payload, context)
+            .prompt(
+                session_id,
+                resolved_follow_up_session_id.as_deref(),
+                &resolved_payload.prompt_payload,
+                context,
+            )
             .await?;
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
@@ -328,9 +396,32 @@ impl ExecutorHub {
         let turn_id_for_spawn = turn_id.clone();
         tokio::spawn(async move {
             let mut terminal_notification: Option<SessionNotification> = None;
+            let mut last_executor_session_id: Option<String> = None;
             while let Some(next) = stream.next().await {
                 match next {
                     Ok(notification) => {
+                        let meta = match &notification.update {
+                            SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
+                            _ => None,
+                        };
+                        if let Some(executor_session_id) =
+                            parse_executor_session_bound(meta, &turn_id_for_spawn)
+                        {
+                            if last_executor_session_id.as_deref()
+                                != Some(executor_session_id.as_str())
+                            {
+                                last_executor_session_id = Some(executor_session_id.clone());
+                                if let Ok(Some(mut meta)) = store.read_meta(&session_id).await {
+                                    if meta.executor_session_id.as_deref()
+                                        != Some(executor_session_id.as_str())
+                                    {
+                                        meta.executor_session_id = Some(executor_session_id);
+                                        meta.updated_at = chrono::Utc::now().timestamp_millis();
+                                        let _ = store.write_meta(&meta).await;
+                                    }
+                                }
+                            }
+                        }
                         let _ = store.append(&session_id, &notification).await;
                         let _ = tx.send(notification);
                     }

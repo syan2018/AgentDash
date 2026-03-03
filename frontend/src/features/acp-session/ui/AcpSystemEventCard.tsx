@@ -36,11 +36,25 @@ const SEVERITY_STYLES: Record<string, { border: string; bg: string; text: string
 const DEFAULT_STYLE = SEVERITY_STYLES.info!;
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
+  executor_session_bound: "会话已绑定",
+  turn_completed: "执行完成",
+  turn_failed: "执行失败",
   system_message: "系统消息",
   error: "错误",
   user_feedback: "用户反馈",
   user_answered_questions: "用户回答",
   permission_denied: "权限拒绝",
+};
+
+const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
+  executor_session_bound: "已绑定到底层执行会话",
+  turn_completed: "本轮执行已完成",
+  turn_failed: "本轮执行失败",
+  system_message: "系统消息",
+  error: "执行出现错误",
+  user_feedback: "已收到用户反馈",
+  user_answered_questions: "已收到用户回答",
+  permission_denied: "操作被权限策略拒绝",
 };
 
 export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
@@ -59,7 +73,7 @@ export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
   const sessionInfo = u.sessionInfo as Record<string, unknown> | undefined;
   const fallbackMessage = typeof sessionInfo?.message === "string" ? sessionInfo.message : undefined;
 
-  const displayMessage = message || fallbackMessage || "系统事件";
+  const displayMessage = message || fallbackMessage || EVENT_TYPE_DEFAULT_MESSAGES[eventType] || "系统事件";
 
   return (
     <div className={`rounded-md border ${style.border} ${style.bg} px-3 py-2`}>

@@ -189,6 +189,7 @@ pub trait AgentConnector: Send + Sync {
     async fn prompt(
         &self,
         session_id: &str,
+        follow_up_session_id: Option<&str>,
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError>;

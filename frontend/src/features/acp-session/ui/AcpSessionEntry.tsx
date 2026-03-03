@@ -23,6 +23,8 @@ import { AcpToolCallCard } from "./AcpToolCallCard";
 import { AcpMessageCard } from "./AcpMessageCard";
 import { AcpPlanCard } from "./AcpPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
+import { AcpSystemEventCard } from "./AcpSystemEventCard";
+import { AcpUsageCard } from "./AcpUsageCard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
@@ -116,7 +118,11 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
       return <AcpPlanCard entries={update.entries} />;
 
     case "session_info_update":
+      return <AcpSystemEventCard update={update} />;
+
     case "usage_update":
+      return <AcpUsageCard update={update} />;
+
     case "available_commands_update":
     case "current_mode_update":
     case "config_option_update":

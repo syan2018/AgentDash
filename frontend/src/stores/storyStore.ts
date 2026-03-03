@@ -12,6 +12,7 @@ export interface CreateTaskInput {
 export interface TaskSessionInfo {
   task_id: string;
   session_id: string | null;
+  executor_session_id: string | null;
   task_status: Task["status"];
   agent_binding: AgentBinding;
   session_title: string | null;
@@ -69,6 +70,8 @@ interface StoryState {
       executor_config?: Record<string, unknown>;
     },
   ) => Promise<Task | null>;
+  cancelTaskExecution: (taskId: string) => Promise<Task | null>;
+  refreshTask: (taskId: string) => Promise<Task | null>;
   fetchTaskSession: (taskId: string) => Promise<TaskSessionInfo | null>;
   deleteTask: (taskId: string, storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
@@ -262,6 +265,7 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     story_id: String(raw.story_id ?? ''),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
     session_id: raw.session_id ? String(raw.session_id) : null,
+    executor_session_id: raw.executor_session_id ? String(raw.executor_session_id) : null,
     title: String(raw.title ?? raw.name ?? '未命名 Task'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeTaskStatus(String(raw.status ?? 'pending')),
@@ -423,12 +427,37 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
+  cancelTaskExecution: async (taskId) => {
+    try {
+      const rawTask = await api.post<Record<string, unknown>>(`/tasks/${taskId}/cancel`, {});
+      const task = mapTask(rawTask);
+      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
+      return task;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  refreshTask: async (taskId) => {
+    try {
+      const rawTask = await api.get<Record<string, unknown>>(`/tasks/${taskId}`);
+      const task = mapTask(rawTask);
+      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
+      return task;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
   fetchTaskSession: async (taskId) => {
     try {
       const raw = await api.get<Record<string, unknown>>(`/tasks/${taskId}/session`);
       return {
         task_id: String(raw.task_id ?? taskId),
         session_id: raw.session_id ? String(raw.session_id) : null,
+        executor_session_id: raw.executor_session_id ? String(raw.executor_session_id) : null,
         task_status: normalizeTaskStatus(String(raw.task_status ?? 'pending')),
         agent_binding: mapAgentBinding(raw.agent_binding),
         session_title: raw.session_title ? String(raw.session_title) : null,

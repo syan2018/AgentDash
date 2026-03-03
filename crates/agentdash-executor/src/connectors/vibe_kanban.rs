@@ -1,14 +1,17 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use agent_client_protocol::{SessionId, SessionNotification};
+use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
 use futures::StreamExt;
 use futures::stream::BoxStream;
+use serde_json::json;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
 
-use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_acp_meta::{
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+};
 
 use executors::{
     approvals::NoopExecutorApprovalService,
@@ -44,6 +47,32 @@ fn humanize_executor_id(id: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn build_executor_session_bound_notification(
+    session_id: &str,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+    executor_session_id: &str,
+) -> SessionNotification {
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = Some(turn_id.to_string());
+
+    let event = AgentDashEventV1::new("executor_session_bound")
+        .message(Some(executor_session_id.to_string()))
+        .data(Some(json!({ "executor_session_id": executor_session_id })));
+
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source.clone()))
+        .trace(Some(trace))
+        .event(Some(event));
+
+    SessionNotification::new(
+        SessionId::new(session_id.to_string()),
+        SessionUpdate::SessionInfoUpdate(
+            SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
+        ),
+    )
 }
 
 impl VibeKanbanExecutorsConnector {
@@ -141,6 +170,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
     async fn prompt(
         &self,
         session_id: &str,
+        follow_up_session_id: Option<&str>,
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
@@ -175,10 +205,27 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         );
         env.merge(&context.environment_variables);
 
-        let mut spawned = agent
-            .spawn(&context.working_directory, &prompt_text, &env)
-            .await
-            .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?;
+        let follow_up_session_id = follow_up_session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        let mut spawned = if let Some(follow_up_session_id) = follow_up_session_id {
+            agent
+                .spawn_follow_up(
+                    &context.working_directory,
+                    &prompt_text,
+                    follow_up_session_id,
+                    None,
+                    &env,
+                )
+                .await
+                .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?
+        } else {
+            agent
+                .spawn(&context.working_directory, &prompt_text, &env)
+                .await
+                .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?
+        };
 
         if let Some(cancel) = spawned.cancel.clone() {
             self.cancel_by_session
@@ -226,10 +273,11 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         let ms = msg_store.clone();
         let cancel_map = self.cancel_by_session.clone();
         let session_id_owned = session_id.to_string();
+        let session_id_for_wait = session_id_owned.clone();
         tokio::spawn(async move {
             let _ = spawned.child.wait().await;
             ms.push_finished();
-            cancel_map.lock().await.remove(&session_id_owned);
+            cancel_map.lock().await.remove(&session_id_for_wait);
         });
 
         let (tx, rx) =
@@ -241,14 +289,16 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         let mut source = AgentDashSourceV1::new(self.connector_id(), connector_type);
         source.executor_id = Some(context.executor_config.executor.to_string());
         source.variant = context.executor_config.variant.clone();
+        let turn_id = context.turn_id.clone();
         let mut converter = NormalizedToAcpConverter::new(
             SessionId::new(session_id.to_string()),
-            source,
-            context.turn_id.clone(),
+            source.clone(),
+            turn_id.clone(),
         );
 
         tokio::spawn(async move {
             let mut stream = msg_store.history_plus_stream();
+            let mut last_executor_session_id: Option<String> = None;
             while let Some(next) = stream.next().await {
                 match next {
                     Ok(LogMsg::JsonPatch(patch)) => {
@@ -258,6 +308,22 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
                                     return;
                                 }
                             }
+                        }
+                    }
+                    Ok(LogMsg::SessionId(executor_session_id)) => {
+                        if last_executor_session_id.as_deref() == Some(executor_session_id.as_str())
+                        {
+                            continue;
+                        }
+                        last_executor_session_id = Some(executor_session_id.clone());
+                        let notification = build_executor_session_bound_notification(
+                            &session_id_owned,
+                            &source,
+                            &turn_id,
+                            &executor_session_id,
+                        );
+                        if tx.send(Ok(notification)).await.is_err() {
+                            return;
                         }
                     }
                     Ok(LogMsg::Finished) => break,

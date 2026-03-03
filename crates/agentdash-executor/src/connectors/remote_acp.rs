@@ -67,6 +67,7 @@ impl AgentConnector for RemoteAcpConnector {
     async fn prompt(
         &self,
         _session_id: &str,
+        _follow_up_session_id: Option<&str>,
         _prompt: &PromptPayload,
         _context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {

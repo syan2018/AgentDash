@@ -19,6 +19,8 @@ pub struct Task {
     pub status: TaskStatus,
     /// 绑定的执行会话 ID（首次 start 时创建）
     pub session_id: Option<String>,
+    /// 执行器原生会话 ID（用于 follow-up/resume）
+    pub executor_session_id: Option<String>,
     /// 结构化 Agent 绑定信息
     pub agent_binding: AgentBinding,
     /// 结构化执行产物列表
@@ -38,6 +40,7 @@ impl Task {
             description,
             status: TaskStatus::Pending,
             session_id: None,
+            executor_session_id: None,
             agent_binding: AgentBinding::default(),
             artifacts: vec![],
             created_at: now,

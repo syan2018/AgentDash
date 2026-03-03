@@ -35,6 +35,7 @@ pub struct StartTaskRequest {
 pub struct StartTaskResponse {
     pub task_id: Uuid,
     pub session_id: String,
+    pub executor_session_id: Option<String>,
     pub turn_id: String,
     pub status: TaskStatus,
     pub context_sources: Vec<String>,
@@ -52,6 +53,7 @@ pub struct ContinueTaskRequest {
 pub struct ContinueTaskResponse {
     pub task_id: Uuid,
     pub session_id: String,
+    pub executor_session_id: Option<String>,
     pub turn_id: String,
     pub status: TaskStatus,
     pub context_sources: Vec<String>,
@@ -61,6 +63,7 @@ pub struct ContinueTaskResponse {
 pub struct TaskSessionResponse {
     pub task_id: Uuid,
     pub session_id: Option<String>,
+    pub executor_session_id: Option<String>,
     pub task_status: TaskStatus,
     pub agent_binding: agentdash_domain::task::AgentBinding,
     pub session_title: Option<String>,
@@ -100,6 +103,7 @@ pub async fn start_task(
     let previous_status = task.status.clone();
 
     task.session_id = Some(session.id.clone());
+    task.executor_session_id = None;
     task.status = TaskStatus::Running;
     state.task_repo.update(&task).await?;
 
@@ -113,6 +117,7 @@ pub async fn start_task(
             "task_id": task.id,
             "story_id": task.story_id,
             "session_id": task.session_id,
+            "executor_session_id": task.executor_session_id,
         }),
     )
     .await?;
@@ -128,6 +133,7 @@ pub async fn start_task(
                 "task_id": task.id,
                 "story_id": task.story_id,
                 "session_id": task.session_id,
+                "executor_session_id": task.executor_session_id,
                 "from": previous_status,
                 "to": task.status,
             }),
@@ -143,7 +149,11 @@ pub async fn start_task(
         executor_config: resolve_task_executor_config(req.executor_config, &task, &project)?,
     };
 
-    let turn_id = match state.executor_hub.start_prompt(&session.id, prompt_req).await {
+    let turn_id = match state
+        .executor_hub
+        .start_prompt(&session.id, prompt_req)
+        .await
+    {
         Ok(turn_id) => turn_id,
         Err(e) => {
             let mut fail_task = task.clone();
@@ -159,6 +169,7 @@ pub async fn start_task(
                     "task_id": fail_task.id,
                     "story_id": fail_task.story_id,
                     "session_id": fail_task.session_id,
+                    "executor_session_id": fail_task.executor_session_id,
                     "from": TaskStatus::Running,
                     "to": TaskStatus::Failed,
                     "error": e.to_string(),
@@ -180,6 +191,7 @@ pub async fn start_task(
     Ok(Json(StartTaskResponse {
         task_id: task.id,
         session_id: session.id,
+        executor_session_id: task.executor_session_id.clone(),
         turn_id,
         status: task.status,
         context_sources: built.source_summary,
@@ -244,6 +256,7 @@ pub async fn continue_task(
                 "task_id": task.id,
                 "story_id": task.story_id,
                 "session_id": task.session_id,
+                "executor_session_id": task.executor_session_id,
                 "from": previous_status,
                 "to": task.status,
             }),
@@ -262,10 +275,62 @@ pub async fn continue_task(
     Ok(Json(ContinueTaskResponse {
         task_id: task.id,
         session_id,
+        executor_session_id: task.executor_session_id.clone(),
         turn_id,
         status: task.status,
         context_sources: built.source_summary,
     }))
+}
+
+pub async fn cancel_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, ApiError> {
+    let task_id = parse_task_id(&id)?;
+    let mut task = get_task(&state, task_id).await?;
+
+    let session_id = task
+        .session_id
+        .clone()
+        .ok_or_else(|| ApiError::UnprocessableEntity("Task 尚未启动，无法取消执行".into()))?;
+
+    state
+        .executor_hub
+        .cancel(&session_id)
+        .await
+        .map_err(map_connector_error)?;
+
+    if task.status == TaskStatus::Running {
+        let previous_status = task.status.clone();
+        task.status = TaskStatus::Failed;
+        state.task_repo.update(&task).await?;
+
+        let backend_id = state
+            .story_repo
+            .get_by_id(task.story_id)
+            .await?
+            .map(|story| story.backend_id)
+            .unwrap_or_else(|| "unknown".to_string());
+
+        append_task_change(
+            &state,
+            task.id,
+            &backend_id,
+            ChangeKind::TaskStatusChanged,
+            json!({
+                "reason": "task_cancel_requested",
+                "task_id": task.id,
+                "story_id": task.story_id,
+                "session_id": task.session_id,
+                "executor_session_id": task.executor_session_id,
+                "from": previous_status,
+                "to": task.status,
+            }),
+        )
+        .await?;
+    }
+
+    Ok(Json(task))
 }
 
 pub async fn get_task_session(
@@ -289,6 +354,7 @@ pub async fn get_task_session(
     Ok(Json(TaskSessionResponse {
         task_id: task.id,
         session_id,
+        executor_session_id: task.executor_session_id,
         task_status: task.status,
         agent_binding: task.agent_binding,
         session_title,
@@ -430,6 +496,11 @@ async fn handle_turn_notification(
             }
         }
         SessionUpdate::SessionInfoUpdate(info) => {
+            sync_task_executor_session_binding_from_hub(
+                state, task_id, backend_id, session_id, turn_id,
+            )
+            .await?;
+
             if let Some((event_type, message)) = parse_turn_event(info.meta.as_ref(), turn_id) {
                 match event_type.as_str() {
                     "turn_completed" => {
@@ -450,12 +521,7 @@ async fn handle_turn_notification(
                     "turn_failed" => {
                         if let Some(err_msg) = message.as_deref() {
                             persist_turn_failure_artifact(
-                                state,
-                                task_id,
-                                backend_id,
-                                session_id,
-                                turn_id,
-                                err_msg,
+                                state, task_id, backend_id, session_id, turn_id, err_msg,
                             )
                             .await?;
                         }
@@ -499,13 +565,8 @@ async fn persist_tool_call_artifact(
         None => return Ok(()),
     };
 
-    let changed = upsert_tool_execution_artifact(
-        &mut task,
-        session_id,
-        turn_id,
-        tool_call_id,
-        patch,
-    );
+    let changed =
+        upsert_tool_execution_artifact(&mut task, session_id, turn_id, tool_call_id, patch);
     if !changed {
         return Ok(());
     }
@@ -636,6 +697,81 @@ async fn persist_turn_failure_artifact(
     Ok(())
 }
 
+async fn bind_executor_session_id(
+    state: &Arc<AppState>,
+    task_id: Uuid,
+    backend_id: &str,
+    session_id: &str,
+    turn_id: &str,
+    executor_session_id: &str,
+) -> Result<(), agentdash_domain::DomainError> {
+    let Some(mut task) = state.task_repo.get_by_id(task_id).await? else {
+        return Ok(());
+    };
+
+    if task.executor_session_id.as_deref() == Some(executor_session_id) {
+        return Ok(());
+    }
+
+    task.executor_session_id = Some(executor_session_id.to_string());
+    state.task_repo.update(&task).await?;
+
+    append_task_change(
+        state,
+        task.id,
+        backend_id,
+        ChangeKind::TaskUpdated,
+        json!({
+            "reason": "executor_session_bound",
+            "task_id": task.id,
+            "story_id": task.story_id,
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "executor_session_id": executor_session_id,
+        }),
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn sync_task_executor_session_binding_from_hub(
+    state: &Arc<AppState>,
+    task_id: Uuid,
+    backend_id: &str,
+    session_id: &str,
+    turn_id: &str,
+) -> Result<(), agentdash_domain::DomainError> {
+    let meta = match state.executor_hub.get_session_meta(session_id).await {
+        Ok(Some(meta)) => meta,
+        Ok(None) => return Ok(()),
+        Err(err) => {
+            return Err(agentdash_domain::DomainError::InvalidConfig(
+                err.to_string(),
+            ));
+        }
+    };
+
+    let Some(executor_session_id) = meta
+        .executor_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    bind_executor_session_id(
+        state,
+        task_id,
+        backend_id,
+        session_id,
+        turn_id,
+        executor_session_id,
+    )
+    .await
+}
+
 async fn update_task_status(
     state: &Arc<AppState>,
     task_id: Uuid,
@@ -667,6 +803,7 @@ async fn update_task_status(
             "task_id": task.id,
             "story_id": task.story_id,
             "session_id": task.session_id,
+            "executor_session_id": task.executor_session_id,
             "from": previous_status,
             "to": next_status,
             "context": context,
@@ -700,7 +837,10 @@ fn turn_matches(meta: Option<&Meta>, expected_turn_id: &str) -> bool {
         == Some(expected_turn_id)
 }
 
-fn parse_turn_event(meta: Option<&Meta>, expected_turn_id: &str) -> Option<(String, Option<String>)> {
+fn parse_turn_event(
+    meta: Option<&Meta>,
+    expected_turn_id: &str,
+) -> Option<(String, Option<String>)> {
     let parsed = parse_agentdash_meta(meta?)?;
     let trace = parsed.trace?;
     let turn_id = trace.turn_id?;
@@ -733,17 +873,25 @@ fn build_tool_call_patch(tool_call: &ToolCall) -> Map<String, Value> {
     }
     if let Some(raw_input) = tool_call.raw_input.clone() {
         patch.insert("raw_input".to_string(), raw_input.clone());
-        patch.insert("input_preview".to_string(), json!(preview_value(&raw_input)));
+        patch.insert(
+            "input_preview".to_string(),
+            json!(preview_value(&raw_input)),
+        );
     }
     if let Some(raw_output) = tool_call.raw_output.clone() {
         patch.insert("raw_output".to_string(), raw_output.clone());
-        patch.insert("output_preview".to_string(), json!(preview_value(&raw_output)));
+        patch.insert(
+            "output_preview".to_string(),
+            json!(preview_value(&raw_output)),
+        );
     }
 
     patch
 }
 
-fn build_tool_call_update_patch(update: &agent_client_protocol::ToolCallUpdate) -> Map<String, Value> {
+fn build_tool_call_update_patch(
+    update: &agent_client_protocol::ToolCallUpdate,
+) -> Map<String, Value> {
     let mut patch = Map::new();
     if let Some(title) = update.fields.title.clone() {
         patch.insert("title".to_string(), json!(title));
@@ -757,7 +905,10 @@ fn build_tool_call_update_patch(update: &agent_client_protocol::ToolCallUpdate) 
     if let Some(content) = update.fields.content.clone() {
         let content_value = serde_json::to_value(content).unwrap_or_else(|_| json!([]));
         patch.insert("content".to_string(), content_value.clone());
-        patch.insert("output_preview".to_string(), json!(preview_value(&content_value)));
+        patch.insert(
+            "output_preview".to_string(),
+            json!(preview_value(&content_value)),
+        );
     }
     if let Some(locations) = update.fields.locations.clone() {
         patch.insert(
@@ -767,11 +918,17 @@ fn build_tool_call_update_patch(update: &agent_client_protocol::ToolCallUpdate) 
     }
     if let Some(raw_input) = update.fields.raw_input.clone() {
         patch.insert("raw_input".to_string(), raw_input.clone());
-        patch.insert("input_preview".to_string(), json!(preview_value(&raw_input)));
+        patch.insert(
+            "input_preview".to_string(),
+            json!(preview_value(&raw_input)),
+        );
     }
     if let Some(raw_output) = update.fields.raw_output.clone() {
         patch.insert("raw_output".to_string(), raw_output.clone());
-        patch.insert("output_preview".to_string(), json!(preview_value(&raw_output)));
+        patch.insert(
+            "output_preview".to_string(),
+            json!(preview_value(&raw_output)),
+        );
     }
     patch
 }

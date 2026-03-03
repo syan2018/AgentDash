@@ -78,6 +78,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/tasks/{id}/start", post(task_execution::start_task))
         .route("/tasks/{id}/continue", post(task_execution::continue_task))
+        .route("/tasks/{id}/cancel", post(task_execution::cancel_task))
         .route("/tasks/{id}/session", get(task_execution::get_task_session))
         // Backend
         .route(

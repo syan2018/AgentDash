@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AcpSessionEntry, useAcpSession } from "../acp-session";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../acp-session/model/types";
 import type { AcpDisplayItem, TokenUsageInfo } from "../acp-session/model/types";
+import { extractAgentDashMetaFromUpdate } from "../acp-session/model/agentdashMeta";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import type { Artifact, SessionNavigationState, Task } from "../../types";
 import { useStoryStore } from "../../stores/storyStore";
@@ -85,7 +86,8 @@ function buildUsageSummary(usage: TokenUsageInfo | null): string {
 
 export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionPanelProps) {
   const navigate = useNavigate();
-  const { startTaskExecution, continueTaskExecution } = useStoryStore();
+  const { startTaskExecution, continueTaskExecution, cancelTaskExecution, refreshTask } =
+    useStoryStore();
 
   const [prompt, setPrompt] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -93,17 +95,18 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
 
   const hasSession = Boolean(task.session_id);
   const sessionId = task.session_id ?? null;
+  const executorSessionId = task.executor_session_id ?? null;
   const streamSessionId = sessionId ?? "__placeholder__";
   const executionLocked = task.status === "running";
 
   const {
     displayItems,
+    rawEntries,
     isConnected,
     isLoading,
     isReceiving,
     error: streamError,
     reconnect,
-    sendCancel,
     streamingEntryId,
     tokenUsage,
   } = useAcpSession({ sessionId: streamSessionId, enabled: hasSession });
@@ -115,6 +118,38 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     if (!listRef.current || !shouldAutoScrollRef.current) return;
     listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [displayItems.length]);
+
+  useEffect(() => {
+    if (!hasSession || !executionLocked) return;
+
+    const timer = window.setInterval(() => {
+      void (async () => {
+        const latest = await refreshTask(task.id);
+        if (!latest) return;
+        if (latest.status !== task.status || latest.updated_at !== task.updated_at) {
+          onTaskUpdated(latest);
+        }
+      })();
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [executionLocked, hasSession, onTaskUpdated, refreshTask, task.id, task.status, task.updated_at]);
+
+  useEffect(() => {
+    if (!hasSession || rawEntries.length === 0) return;
+
+    const last = rawEntries[rawEntries.length - 1];
+    if (!last || last.update.sessionUpdate !== "session_info_update") return;
+
+    const meta = extractAgentDashMetaFromUpdate(last.update);
+    const eventType = meta?.event?.type;
+    if (eventType !== "turn_completed" && eventType !== "turn_failed") return;
+
+    void (async () => {
+      const latest = await refreshTask(task.id);
+      if (latest) onTaskUpdated(latest);
+    })();
+  }, [hasSession, onTaskUpdated, rawEntries, refreshTask, task.id]);
 
   useEffect(() => {
     setSubmitError(null);
@@ -189,6 +224,25 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     task.id,
   ]);
 
+  const handleCancel = useCallback(async () => {
+    if (!hasSession || isSubmitting || !executionLocked) return;
+    setSubmitError(null);
+
+    setIsSubmitting(true);
+    try {
+      const updated = await cancelTaskExecution(task.id);
+      if (updated) {
+        onTaskUpdated(updated);
+      } else {
+        setSubmitError("取消执行失败，请稍后重试");
+      }
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "取消执行失败，请稍后重试");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [cancelTaskExecution, executionLocked, hasSession, isSubmitting, onTaskUpdated, task.id]);
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -198,9 +252,12 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
           {connectionLabel}
         </span>
         {isReceiving && <span className="text-xs text-primary">实时输出中</span>}
-        <span className="ml-auto text-xs text-muted-foreground">
-          Session: {sessionId ? `${sessionId.slice(0, 12)}...` : "未绑定"}
-        </span>
+        <div className="ml-auto flex flex-col items-end text-xs text-muted-foreground">
+          <span>Session: {sessionId ? `${sessionId.slice(0, 12)}...` : "未绑定"}</span>
+          <span>
+            Executor: {executorSessionId ? `${executorSessionId.slice(0, 24)}...` : "未绑定"}
+          </span>
+        </div>
       </div>
 
       <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
@@ -295,8 +352,8 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
             {hasSession && (
               <button
                 type="button"
-                disabled={!isConnected}
-                onClick={sendCancel}
+                disabled={isSubmitting || !executionLocked}
+                onClick={() => void handleCancel()}
                 className="rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50"
               >
                 取消执行

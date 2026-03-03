@@ -106,6 +106,7 @@ export interface Task {
   story_id: string;
   workspace_id?: string | null;
   session_id?: string | null;
+  executor_session_id?: string | null;
   title: string;
   description?: string;
   status: TaskStatus;

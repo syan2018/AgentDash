@@ -355,15 +355,13 @@ fn resolve_instruction_template(input: &TaskAgentBuildInput<'_>) -> String {
                 .filter(|v| !v.trim().is_empty())
                 .unwrap_or_else(|| DEFAULT_START_TEMPLATE.to_string())
         }
-        TaskExecutionPhase::Continue => {
-            input
-                .task
-                .agent_binding
-                .prompt_template
-                .clone()
-                .filter(|v| !v.trim().is_empty())
-                .unwrap_or_else(|| DEFAULT_CONTINUE_TEMPLATE.to_string())
-        }
+        TaskExecutionPhase::Continue => input
+            .task
+            .agent_binding
+            .prompt_template
+            .clone()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_CONTINUE_TEMPLATE.to_string()),
     }
 }
 

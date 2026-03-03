@@ -184,6 +184,26 @@ fn parse_executor_session_bound(meta: Option<&Meta>, expected_turn_id: &str) -> 
         .map(ToString::to_string)
 }
 
+fn parse_turn_id(meta: Option<&Meta>) -> Option<String> {
+    parse_agentdash_meta(meta?)
+        .and_then(|parsed| parsed.trace.and_then(|trace| trace.turn_id))
+        .map(|turn_id| turn_id.trim().to_string())
+        .filter(|turn_id| !turn_id.is_empty())
+}
+
+fn parse_turn_terminal_event(meta: Option<&Meta>) -> Option<(String, bool, Option<String>)> {
+    let parsed = parse_agentdash_meta(meta?)?;
+    let trace = parsed.trace?;
+    let turn_id = trace.turn_id?;
+    let event = parsed.event?;
+
+    match event.r#type.as_str() {
+        "turn_completed" => Some((turn_id, true, event.message)),
+        "turn_failed" => Some((turn_id, false, event.message)),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -206,6 +226,24 @@ pub struct ExecutorHub {
 struct SessionRuntime {
     tx: broadcast::Sender<SessionNotification>,
     running: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionExecutionState {
+    Idle,
+    Running {
+        turn_id: Option<String>,
+    },
+    Completed {
+        turn_id: String,
+    },
+    Failed {
+        turn_id: String,
+        message: Option<String>,
+    },
+    Interrupted {
+        turn_id: Option<String>,
+    },
 }
 
 impl ExecutorHub {
@@ -247,6 +285,59 @@ impl ExecutorHub {
 
     pub async fn get_session_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
         self.store.read_meta(session_id).await
+    }
+
+    pub async fn inspect_session_execution_state(
+        &self,
+        session_id: &str,
+    ) -> std::io::Result<SessionExecutionState> {
+        let running = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(session_id).map(|runtime| runtime.running)
+        }
+        .unwrap_or(false);
+
+        let history = self.store.read_all(session_id).await?;
+        let mut latest_turn_id: Option<String> = None;
+        let mut terminal_by_turn: HashMap<String, (bool, Option<String>)> = HashMap::new();
+
+        for notification in history {
+            match &notification.update {
+                SessionUpdate::UserMessageChunk(chunk) => {
+                    if let Some(turn_id) = parse_turn_id(chunk.meta.as_ref()) {
+                        latest_turn_id = Some(turn_id);
+                    }
+                }
+                SessionUpdate::SessionInfoUpdate(info) => {
+                    if let Some((turn_id, success, message)) =
+                        parse_turn_terminal_event(info.meta.as_ref())
+                    {
+                        terminal_by_turn.insert(turn_id, (success, message));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if running {
+            return Ok(SessionExecutionState::Running {
+                turn_id: latest_turn_id,
+            });
+        }
+
+        if let Some(turn_id) = latest_turn_id {
+            if let Some((success, message)) = terminal_by_turn.remove(&turn_id) {
+                if success {
+                    return Ok(SessionExecutionState::Completed { turn_id });
+                }
+                return Ok(SessionExecutionState::Failed { turn_id, message });
+            }
+            return Ok(SessionExecutionState::Interrupted {
+                turn_id: Some(turn_id),
+            });
+        }
+
+        Ok(SessionExecutionState::Idle)
     }
 
     pub async fn delete_session(&self, session_id: &str) -> std::io::Result<()> {

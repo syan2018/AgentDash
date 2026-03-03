@@ -8,4 +8,4 @@ pub use connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
     ExecutionStream, ExecutorInfo, PromptPayload,
 };
-pub use hub::{ExecutorHub, PromptSessionRequest, SessionMeta};
+pub use hub::{ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta};

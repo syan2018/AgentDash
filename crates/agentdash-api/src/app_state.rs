@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
@@ -67,6 +68,16 @@ impl AppState {
         let connector: Arc<dyn AgentConnector> =
             Arc::new(VibeKanbanExecutorsConnector::new(workspace_root.clone()));
         let executor_hub = ExecutorHub::new(workspace_root, connector.clone());
+        let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
+        let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
+        let task_repo_port: Arc<dyn TaskRepository> = task_repo.clone();
+        reconcile_task_states_on_boot(
+            &project_repo_port,
+            &story_repo_port,
+            &task_repo_port,
+            &executor_hub,
+        )
+        .await?;
 
         Ok(Self {
             project_repo,

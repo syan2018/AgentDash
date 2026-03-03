@@ -1,7 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
-use agent_client_protocol::{Meta, SessionNotification, SessionUpdate, ToolCall, ToolCallStatus};
-use agentdash_acp_meta::parse_agentdash_meta;
+use agent_client_protocol::{
+    Meta, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate, ToolCall,
+    ToolCallStatus,
+};
+use agentdash_acp_meta::{
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+    parse_agentdash_meta,
+};
 use agentdash_domain::{
     project::Project,
     story::{ChangeKind, Story},
@@ -134,16 +140,16 @@ pub async fn start_task(
                 "story_id": task.story_id,
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
-                "from": previous_status,
-                "to": task.status,
+                "from": previous_status.clone(),
+                "to": task.status.clone(),
             }),
         )
         .await?;
     }
 
     let prompt_req = PromptSessionRequest {
-        prompt: Some(built.prompt),
-        prompt_blocks: None,
+        prompt: None,
+        prompt_blocks: Some(built.prompt_blocks),
         working_dir: built.working_dir,
         env: HashMap::new(),
         executor_config: resolve_task_executor_config(req.executor_config, &task, &project)?,
@@ -179,6 +185,23 @@ pub async fn start_task(
             return Err(map_connector_error(e));
         }
     };
+
+    bridge_task_status_event_to_session(
+        &state,
+        &session.id,
+        &turn_id,
+        "task_start_accepted",
+        "Task 已开始执行",
+        json!({
+            "task_id": task.id,
+            "story_id": task.story_id,
+            "session_id": session.id,
+            "executor_session_id": task.executor_session_id,
+            "from": previous_status,
+            "to": task.status,
+        }),
+    )
+    .await;
 
     spawn_task_turn_monitor(
         state.clone(),
@@ -228,8 +251,8 @@ pub async fn continue_task(
     .map_err(ApiError::UnprocessableEntity)?;
 
     let prompt_req = PromptSessionRequest {
-        prompt: Some(built.prompt),
-        prompt_blocks: None,
+        prompt: None,
+        prompt_blocks: Some(built.prompt_blocks),
         working_dir: built.working_dir,
         env: HashMap::new(),
         executor_config: resolve_task_executor_config(req.executor_config, &task, &project)?,
@@ -257,12 +280,29 @@ pub async fn continue_task(
                 "story_id": task.story_id,
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
-                "from": previous_status,
-                "to": task.status,
+                "from": previous_status.clone(),
+                "to": task.status.clone(),
             }),
         )
         .await?;
     }
+
+    bridge_task_status_event_to_session(
+        &state,
+        &session_id,
+        &turn_id,
+        "task_continue_accepted",
+        "Task 已继续执行",
+        json!({
+            "task_id": task.id,
+            "story_id": task.story_id,
+            "session_id": session_id,
+            "executor_session_id": task.executor_session_id,
+            "from": previous_status,
+            "to": task.status,
+        }),
+    )
+    .await;
 
     spawn_task_turn_monitor(
         state.clone(),
@@ -825,6 +865,51 @@ async fn append_task_change(
         .story_repo
         .append_change(task_id, kind, payload, backend_id)
         .await
+}
+
+/// 将 Task 侧生命周期事件桥接到对应 ACP session 流，便于后续 inbox 等场景复用。
+/// 当前常规会话 UI 保持静默渲染（不直接展示这类系统事件卡片）。
+async fn bridge_task_status_event_to_session(
+    state: &Arc<AppState>,
+    session_id: &str,
+    turn_id: &str,
+    event_type: &str,
+    message: &str,
+    data: Value,
+) {
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = Some(turn_id.to_string());
+
+    let mut event = AgentDashEventV1::new(event_type);
+    event.severity = Some("info".to_string());
+    event.message = Some(message.to_string());
+    event.data = Some(data);
+
+    let source = AgentDashSourceV1::new("agentdash-task-execution", "api_task_route");
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source))
+        .trace(Some(trace))
+        .event(Some(event));
+    let meta = merge_agentdash_meta(None, &agentdash);
+
+    let notification = SessionNotification::new(
+        SessionId::new(session_id.to_string()),
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
+    );
+
+    if let Err(err) = state
+        .executor_hub
+        .inject_notification(session_id, notification)
+        .await
+    {
+        tracing::warn!(
+            session_id = %session_id,
+            turn_id = %turn_id,
+            event_type = %event_type,
+            error = %err,
+            "桥接 Task 生命周期事件到 session 流失败"
+        );
+    }
 }
 
 fn turn_matches(meta: Option<&Meta>, expected_turn_id: &str) -> bool {

@@ -10,3 +10,5 @@ export { AcpPlanCard, type AcpPlanCardProps } from "./AcpPlanCard";
 export { AcpSystemEventCard, type AcpSystemEventCardProps } from "./AcpSystemEventCard";
 export { AcpUsageCard, type AcpUsageCardProps } from "./AcpUsageCard";
 export { ContentBlockCard, type ContentBlockCardProps } from "./ContentBlockCard";
+export { AcpTaskContextCard, type AcpTaskContextCardProps } from "./AcpTaskContextCard";
+export { AcpTaskEventCard, type AcpTaskEventCardProps } from "./AcpTaskEventCard";

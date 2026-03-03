@@ -4,11 +4,17 @@
  * 根据条目类型渲染不同的 UI。
  * 对照 Zed 实现，覆盖所有 ACP SessionUpdate 类型：
  * - user_message_chunk / agent_message_chunk / agent_thought_chunk → AcpMessageCard
+ *   - 其中 agentdash://task-context/* 资源块 → AcpTaskContextCard（Task 专属）
  * - tool_call / tool_call_update → AcpToolCallCard
  * - plan → AcpPlanCard
- * - session_info_update → AcpSystemEventCard
- * - usage_update → AcpUsageCard
- * - available_commands_update / current_mode_update / config_option_update → 静默
+ * - session_info_update
+ *   - task_* 事件 → AcpTaskEventCard（Task 专属）
+ *   - 其他事件保持静默
+ * - usage_update / available_commands_update / current_mode_update / config_option_update → 静默
+ *
+ * 说明：
+ * - 上下文用量已在 Task 会话面板的进度区做汇总展示，此处不重复渲染 usage card
+ * - 系统信息后续计划收敛到 inbox 场景，常规会话流先保持静默
  */
 
 import { useState } from "react";
@@ -23,8 +29,8 @@ import { AcpToolCallCard } from "./AcpToolCallCard";
 import { AcpMessageCard } from "./AcpMessageCard";
 import { AcpPlanCard } from "./AcpPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
-import { AcpSystemEventCard } from "./AcpSystemEventCard";
-import { AcpUsageCard } from "./AcpUsageCard";
+import { AcpTaskContextCard, isAgentDashTaskContextBlock } from "./AcpTaskContextCard";
+import { AcpTaskEventCard, isTaskEventUpdate } from "./AcpTaskEventCard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
@@ -59,6 +65,9 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
 
       // 对于 resource/resource_link 类型，使用优雅的卡片展示
       if (content?.type === "resource" || content?.type === "resource_link") {
+        const contextCard = isAgentDashTaskContextBlock(content)
+          ? <AcpTaskContextCard block={content} />
+          : <ContentBlockCard block={content} variant="compact" />;
         return (
           <div className="flex gap-3">
             {/* 头像/图标 */}
@@ -68,7 +77,7 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
             <div className="flex-1 min-w-0">
               <p className="mb-1 text-xs text-primary font-medium">用户</p>
               <div className="max-w-md">
-                <ContentBlockCard block={content} variant="compact" />
+                {contextCard}
               </div>
             </div>
           </div>
@@ -118,11 +127,12 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
       return <AcpPlanCard entries={update.entries} />;
 
     case "session_info_update":
-      return <AcpSystemEventCard update={update} />;
+      if (isTaskEventUpdate(update)) {
+        return <AcpTaskEventCard update={update} />;
+      }
+      return null;
 
     case "usage_update":
-      return <AcpUsageCard update={update} />;
-
     case "available_commands_update":
     case "current_mode_update":
     case "config_option_update":

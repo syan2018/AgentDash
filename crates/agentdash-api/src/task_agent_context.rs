@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
+use serde_json::{Value, json};
 
 const DEFAULT_START_TEMPLATE: &str = r#"你是该任务的执行 Agent。
 请结合任务上下文完成实现，并在完成后给出关键变更与验证结果。
@@ -35,7 +36,7 @@ pub struct TaskAgentBuildInput<'a> {
 }
 
 pub struct BuiltTaskAgentContext {
-    pub prompt: String,
+    pub prompt_blocks: Vec<Value>,
     pub working_dir: Option<String>,
     pub source_summary: Vec<String>,
 }
@@ -129,12 +130,13 @@ impl ContextComposer {
 pub fn build_task_agent_context(
     input: TaskAgentBuildInput<'_>,
 ) -> Result<BuiltTaskAgentContext, String> {
-    let mut composer = ContextComposer::default();
+    let mut context_composer = ContextComposer::default();
+    let mut instruction_composer = ContextComposer::default();
 
     let working_dir = input.workspace.map(|w| w.container_ref.clone());
     let workspace_path = working_dir.clone().unwrap_or_else(|| ".".to_string());
 
-    composer.push(
+    context_composer.push(
         "task",
         "task_core",
         10,
@@ -148,7 +150,7 @@ pub fn build_task_agent_context(
         ),
     );
 
-    composer.push(
+    context_composer.push(
         "story",
         "story_core",
         20,
@@ -162,7 +164,7 @@ pub fn build_task_agent_context(
     );
 
     if let Some(prd) = clean_text(input.story.context.prd_doc.as_deref()) {
-        composer.push(
+        context_composer.push(
             "story_context",
             "story_prd",
             30,
@@ -180,7 +182,7 @@ pub fn build_task_agent_context(
             .map(|item| format!("- {item}"))
             .collect::<Vec<_>>()
             .join("\n");
-        composer.push(
+        context_composer.push(
             "story_context",
             "story_spec_refs",
             31,
@@ -198,7 +200,7 @@ pub fn build_task_agent_context(
             .map(|res| format!("- [{}] {} ({})", res.resource_type, res.name, res.uri))
             .collect::<Vec<_>>()
             .join("\n");
-        composer.push(
+        context_composer.push(
             "story_context",
             "story_resources",
             32,
@@ -207,7 +209,7 @@ pub fn build_task_agent_context(
         );
     }
 
-    composer.push(
+    context_composer.push(
         "project",
         "project_config",
         40,
@@ -226,7 +228,7 @@ pub fn build_task_agent_context(
     );
 
     if let Some(workspace) = input.workspace {
-        composer.push(
+        context_composer.push(
             "workspace",
             "workspace_context",
             50,
@@ -243,7 +245,7 @@ pub fn build_task_agent_context(
     }
 
     if let Some(initial_context) = clean_text(input.task.agent_binding.initial_context.as_deref()) {
-        composer.push(
+        context_composer.push(
             "initial_context",
             "binding_initial_context",
             80,
@@ -262,7 +264,7 @@ pub fn build_task_agent_context(
             &workspace_path,
         ),
     );
-    composer.push(
+    instruction_composer.push(
         "instruction",
         "binding_template",
         90,
@@ -272,7 +274,7 @@ pub fn build_task_agent_context(
 
     if input.phase == TaskExecutionPhase::Continue {
         if let Some(additional) = clean_text(input.additional_prompt) {
-            composer.push(
+            instruction_composer.push(
                 "instruction",
                 "user_additional_prompt",
                 100,
@@ -282,15 +284,60 @@ pub fn build_task_agent_context(
         }
     }
 
-    let (prompt, source_summary) = composer.compose();
-    if prompt.trim().is_empty() {
+    let (context_prompt, mut source_summary) = context_composer.compose();
+    let (instruction_prompt, instruction_sources) = instruction_composer.compose();
+    source_summary.extend(instruction_sources);
+
+    let combined_prompt = [context_prompt.as_str(), instruction_prompt.as_str()]
+        .iter()
+        .filter(|chunk| !chunk.trim().is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    if combined_prompt.trim().is_empty() {
         return Err("构建执行上下文失败：最终 prompt 为空".to_string());
     }
 
+    let mut prompt_blocks = Vec::new();
+    if !context_prompt.trim().is_empty() {
+        prompt_blocks.push(build_task_context_resource_block(
+            input.task.id.to_string(),
+            input.phase,
+            context_prompt,
+        ));
+    }
+    if !instruction_prompt.trim().is_empty() {
+        prompt_blocks.push(json!({
+            "type": "text",
+            "text": instruction_prompt,
+        }));
+    }
+
     Ok(BuiltTaskAgentContext {
-        prompt,
+        prompt_blocks,
         working_dir,
         source_summary,
+    })
+}
+
+fn build_task_context_resource_block(
+    task_id: String,
+    phase: TaskExecutionPhase,
+    markdown: String,
+) -> Value {
+    let phase_label = match phase {
+        TaskExecutionPhase::Start => "start",
+        TaskExecutionPhase::Continue => "continue",
+    };
+
+    json!({
+        "type": "resource",
+        "resource": {
+            "uri": format!("agentdash://task-context/{task_id}?phase={phase_label}"),
+            "mimeType": "text/markdown",
+            "text": markdown,
+        }
     })
 }
 
@@ -309,9 +356,6 @@ fn resolve_instruction_template(input: &TaskAgentBuildInput<'_>) -> String {
                 .unwrap_or_else(|| DEFAULT_START_TEMPLATE.to_string())
         }
         TaskExecutionPhase::Continue => {
-            if let Some(additional_prompt) = clean_text(input.additional_prompt) {
-                return additional_prompt.to_string();
-            }
             input
                 .task
                 .agent_binding

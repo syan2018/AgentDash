@@ -476,6 +476,29 @@ impl ExecutorHub {
         (history, rx)
     }
 
+    /// 向指定 session 主动注入通知：
+    /// - 先持久化到会话历史
+    /// - 再广播给当前订阅者
+    pub async fn inject_notification(
+        &self,
+        session_id: &str,
+        notification: SessionNotification,
+    ) -> std::io::Result<()> {
+        self.store.append(session_id, &notification).await?;
+
+        let tx = {
+            let mut sessions = self.sessions.lock().await;
+            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+                let (tx, _rx) = broadcast::channel(1024);
+                SessionRuntime { tx, running: false }
+            });
+            runtime.tx.clone()
+        };
+
+        let _ = tx.send(notification);
+        Ok(())
+    }
+
     pub async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
         self.connector.cancel(session_id).await
     }

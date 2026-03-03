@@ -11,19 +11,19 @@ const storyStatusConfig: Record<StoryStatus, { label: string; className: string 
 };
 
 const storyPriorityConfig: Record<StoryPriority, { label: string; className: string; dotColor: string }> = {
-  p0: { label: "P0", className: "bg-destructive/15 text-destructive border border-destructive/30", dotColor: "bg-destructive" },
-  p1: { label: "P1", className: "bg-warning/15 text-warning border border-warning/30", dotColor: "bg-warning" },
-  p2: { label: "P2", className: "bg-info/15 text-info border border-info/30", dotColor: "bg-info" },
-  p3: { label: "P3", className: "bg-secondary text-muted-foreground border border-muted", dotColor: "bg-muted-foreground" },
+  p0: { label: "P0", className: "bg-red-50 text-red-600 border border-red-100", dotColor: "bg-red-500" },
+  p1: { label: "P1", className: "bg-orange-50 text-orange-600 border border-orange-100", dotColor: "bg-orange-500" },
+  p2: { label: "P2", className: "bg-blue-50 text-blue-600 border border-blue-100", dotColor: "bg-blue-500" },
+  p3: { label: "P3", className: "bg-gray-50 text-gray-500 border border-gray-200", dotColor: "bg-gray-400" },
 };
 
 const storyTypeConfig: Record<StoryType, { label: string; icon: string; className: string }> = {
-  feature: { label: "功能", icon: "✨", className: "bg-primary/15 text-primary" },
-  bugfix: { label: "缺陷", icon: "🐛", className: "bg-destructive/15 text-destructive" },
-  refactor: { label: "重构", icon: "♻️", className: "bg-warning/15 text-warning" },
-  docs: { label: "文档", icon: "📝", className: "bg-info/15 text-info" },
-  test: { label: "测试", icon: "🧪", className: "bg-success/15 text-success" },
-  other: { label: "其他", icon: "📦", className: "bg-secondary text-muted-foreground" },
+  feature: { label: "功能", icon: "✨", className: "bg-violet-50 text-violet-600" },
+  bugfix: { label: "缺陷", icon: "🐛", className: "bg-rose-50 text-rose-600" },
+  refactor: { label: "重构", icon: "♻️", className: "bg-amber-50 text-amber-600" },
+  docs: { label: "文档", icon: "📝", className: "bg-sky-50 text-sky-600" },
+  test: { label: "测试", icon: "🧪", className: "bg-emerald-50 text-emerald-600" },
+  other: { label: "其他", icon: "📦", className: "bg-slate-50 text-slate-500" },
 };
 
 const taskStatusConfig: Record<TaskStatus, { label: string; className: string }> = {

@@ -404,6 +404,8 @@ export function StoryDrawer({
         panelClassName="z-30"
         headerExtra={
           <div className="flex items-center gap-2">
+            <StoryTypeBadge type={story.story_type} />
+            <StoryPriorityBadge priority={story.priority} showLabel />
             <StoryStatusBadge status={story.status} />
             <DetailMenu
               items={[

@@ -2,6 +2,7 @@
   "name": "agentdash",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "AgentDashboard — 统一看板系统，管理多设备、多项目中 AI Agent 的协同工作",
   "packageManager": "pnpm@10.18.2",
   "scripts": {

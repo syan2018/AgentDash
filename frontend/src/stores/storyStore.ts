@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Story, Task, StoryContext, AgentBinding } from '../types';
+import type { Story, Task, StoryContext, AgentBinding, StateChange } from '../types';
 import { api } from '../api/client';
 
 export interface CreateTaskInput {
@@ -78,6 +78,7 @@ interface StoryState {
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
   fetchTasks: (storyId: string) => Promise<void>;
+  handleStateChange: (change: StateChange) => void;
 }
 
 const normalizeStoryStatus = (value: string): Story['status'] => {
@@ -520,6 +521,77 @@ export const useStoryStore = create<StoryState>((set) => ({
       }));
     } catch (e) {
       set({ error: (e as Error).message });
+    }
+  },
+
+  handleStateChange: (change: StateChange) => {
+    const entityId = change.entity_id;
+    const payload = change.payload as Record<string, unknown>;
+
+    switch (change.kind) {
+      case 'story_created':
+      case 'story_updated':
+      case 'story_status_changed': {
+        api
+          .get<Record<string, unknown>>(`/stories/${entityId}`)
+          .then((raw) => {
+            const story = mapStory(raw);
+            set((s) => {
+              const idx = s.stories.findIndex((item) => item.id === story.id);
+              if (idx >= 0) {
+                const next = [...s.stories];
+                next[idx] = story;
+                return { stories: next };
+              }
+              return { stories: [story, ...s.stories] };
+            });
+          })
+          .catch(() => {});
+        break;
+      }
+      case 'story_deleted': {
+        set((s) => {
+          const nextTasks = { ...s.tasksByStoryId };
+          delete nextTasks[entityId];
+          return {
+            stories: s.stories.filter((item) => item.id !== entityId),
+            tasksByStoryId: nextTasks,
+            selectedStoryId:
+              s.selectedStoryId === entityId ? null : s.selectedStoryId,
+          };
+        });
+        break;
+      }
+      case 'task_created':
+      case 'task_updated':
+      case 'task_status_changed':
+      case 'task_artifact_added': {
+        api
+          .get<Record<string, unknown>>(`/tasks/${entityId}`)
+          .then((raw) => {
+            const task = mapTask(raw);
+            set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
+          })
+          .catch(() => {});
+        break;
+      }
+      case 'task_deleted': {
+        const storyId = payload.story_id ? String(payload.story_id) : null;
+        if (storyId) {
+          set((s) => {
+            const existing = s.tasksByStoryId[storyId] ?? [];
+            return {
+              tasksByStoryId: {
+                ...s.tasksByStoryId,
+                [storyId]: existing.filter((t) => t.id !== entityId),
+              },
+              selectedTaskId:
+                s.selectedTaskId === entityId ? null : s.selectedTaskId,
+            };
+          });
+        }
+        break;
+      }
     }
   },
 }));

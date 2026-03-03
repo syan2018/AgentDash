@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { StreamEvent } from '../types';
 import { connectEventStream } from '../api/eventStream';
 import { registerStreamConnection } from '../api/streamRegistry';
+import { useStoryStore } from './storyStore';
 
 export type EventConnectionState =
   | 'disconnected'
@@ -43,6 +44,7 @@ export const useEventStore = create<EventState>((set, get) => ({
             break;
           case 'StateChanged':
             set({ lastEventId: event.data.id, connected: true, connectionState: 'connected' });
+            useStoryStore.getState().handleStateChange(event.data);
             break;
           case 'Heartbeat':
             break;

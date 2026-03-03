@@ -12,7 +12,7 @@ import {
   useExecutorDiscoveredOptions,
   ExecutorSelector,
 } from "../features/executor-selector";
-import type { AgentBinding, SessionNavigationState } from "../types";
+import type { AgentBinding, SessionNavigationState, StoryNavigationState } from "../types";
 import {
   useFileReference,
   FilePickerPopup,
@@ -189,11 +189,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const richInputRef = useRef<RichInputRef>(null);
   const appliedTaskExecutorRef = useRef<string | null>(null);
   const [taskAgentBinding, setTaskAgentBinding] = useState<AgentBinding | null>(null);
+  const routeState = useMemo(
+    () => (location.state as SessionNavigationState | null) ?? null,
+    [location.state],
+  );
   const taskIdFromQuery = searchParams.get("task_id")?.trim() || "";
-  const taskContextFromRoute = useMemo(() => {
-    const state = location.state as SessionNavigationState | null;
-    return state?.task_context ?? null;
-  }, [location.state]);
+  const taskContextFromRoute = routeState?.task_context ?? null;
+  const returnTarget = routeState?.return_to ?? null;
   const taskIdHint = taskContextFromRoute?.task_id ?? taskIdFromQuery;
 
   useEffect(() => {
@@ -292,6 +294,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     setActiveSessionId(null);
     navigate("/session", { replace: true });
   }, [navigate, setActiveSessionId, clearInput]);
+
+  const handleBackToTask = useCallback(() => {
+    if (!returnTarget) return;
+    const state: StoryNavigationState = { open_task_id: returnTarget.task_id };
+    navigate(`/story/${returnTarget.story_id}`, { state });
+  }, [navigate, returnTarget]);
 
   const handleCopySessionId = useCallback(async () => {
     if (!currentSessionId) return;
@@ -417,6 +425,15 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          {returnTarget && (
+            <button
+              type="button"
+              onClick={handleBackToTask}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-secondary"
+            >
+              返回任务
+            </button>
+          )}
           {hasSession && (
             <>
               <span className="hidden lg:inline text-xs text-muted-foreground font-mono">

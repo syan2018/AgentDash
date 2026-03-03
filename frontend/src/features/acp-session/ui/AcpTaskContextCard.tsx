@@ -41,11 +41,6 @@ function parseTaskContextBlock(block: ContentBlock): ParsedTaskContext | null {
   return { taskId, phase, text };
 }
 
-export function isAgentDashTaskContextBlock(block: ContentBlock | undefined): boolean {
-  if (!block || block.type !== "resource") return false;
-  return block.resource.uri.startsWith("agentdash://task-context/");
-}
-
 export function AcpTaskContextCard({ block }: AcpTaskContextCardProps) {
   const [expanded, setExpanded] = useState(false);
   const parsed = useMemo(() => parseTaskContextBlock(block), [block]);

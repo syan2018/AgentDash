@@ -29,6 +29,7 @@ interface StoryState {
 
   fetchStoriesByProject: (projectId: string) => Promise<void>;
   fetchStoriesByBackend: (backendId: string) => Promise<void>;
+  fetchStoryById: (storyId: string) => Promise<Story | null>;
   createStory: (
     projectId: string,
     backendId: string,
@@ -307,6 +308,26 @@ export const useStoryStore = create<StoryState>((set) => ({
       set({ stories, isLoading: false });
     } catch (e) {
       set({ error: (e as Error).message, isLoading: false });
+    }
+  },
+
+  fetchStoryById: async (storyId) => {
+    try {
+      const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}`);
+      const story = mapStory(raw);
+      set((s) => {
+        const existingIndex = s.stories.findIndex((item) => item.id === story.id);
+        if (existingIndex >= 0) {
+          const nextStories = [...s.stories];
+          nextStories[existingIndex] = story;
+          return { stories: nextStories };
+        }
+        return { stories: [story, ...s.stories] };
+      });
+      return story;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
     }
   },
 

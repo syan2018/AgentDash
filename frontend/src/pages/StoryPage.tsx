@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import type { AgentBinding, ProjectConfig, Story, StoryStatus, Task, Workspace } from "../types";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import type {
+  AgentBinding,
+  ProjectConfig,
+  Story,
+  StoryNavigationState,
+  StoryStatus,
+  Task,
+  Workspace,
+} from "../types";
 import { StoryStatusBadge } from "../components/ui/status-badge";
 import { TaskList } from "../features/task/task-list";
 import { TaskDrawer } from "../features/task/task-drawer";
@@ -328,9 +336,18 @@ function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
 
 export function StoryPage() {
   const { storyId } = useParams<{ storyId: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const { projects } = useProjectStore();
-  const { stories, tasksByStoryId, fetchStoriesByProject, fetchTasks, updateStory, deleteStory, error } = useStoryStore();
+  const {
+    stories,
+    tasksByStoryId,
+    fetchStoryById,
+    fetchTasks,
+    updateStory,
+    deleteStory,
+    error,
+  } = useStoryStore();
   const { workspacesByProjectId } = useWorkspaceStore();
 
   const [activeTab, setActiveTab] = useState<TabKey>("context");
@@ -339,6 +356,12 @@ export function StoryPage() {
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isEditingBasicInfo, setIsEditingBasicInfo] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [isStoryLoading, setIsStoryLoading] = useState(false);
+  const routeState = useMemo(
+    () => (location.state as StoryNavigationState | null) ?? null,
+    [location.state],
+  );
+  const openTaskIdFromRoute = routeState?.open_task_id?.trim() ?? "";
 
   // 获取当前 Story
   const story = useMemo(() => stories.find((s) => s.id === storyId) || null, [stories, storyId]);
@@ -379,20 +402,27 @@ export function StoryPage() {
     return workspacesByProjectId[story.project_id] ?? [];
   }, [story, workspacesByProjectId]);
 
-  // 加载 Story 数据
+  // 按 ID 精准加载 Story，避免按项目循环覆盖导致“Story 不存在”闪烁
   useEffect(() => {
-    if (!story && storyId) {
-      // Story 不在列表中，可能需要先加载项目数据
-      // 这里简化处理，实际可能需要根据 storyId 反查 projectId
-      const loadStory = async () => {
-        // 尝试从已有的项目中查找
-        for (const project of projects) {
-          await fetchStoriesByProject(project.id);
-        }
-      };
-      void loadStory();
+    if (!storyId) return;
+    if (story?.id === storyId) {
+      setIsStoryLoading(false);
+      return;
     }
-  }, [story, storyId, projects, fetchStoriesByProject]);
+
+    let cancelled = false;
+    setIsStoryLoading(true);
+    void (async () => {
+      await fetchStoryById(storyId);
+      if (!cancelled) {
+        setIsStoryLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchStoryById, story?.id, storyId]);
 
   // 加载 Tasks
   useEffect(() => {
@@ -400,6 +430,17 @@ export function StoryPage() {
       void fetchTasks(storyId);
     }
   }, [storyId, tasksByStoryId, fetchTasks]);
+
+  useEffect(() => {
+    if (!openTaskIdFromRoute) return;
+    if (selectedTaskId === openTaskIdFromRoute) return;
+
+    const matched = sortedTasks.some((task) => task.id === openTaskIdFromRoute);
+    if (!matched) return;
+
+    setSelectedTaskId(openTaskIdFromRoute);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, navigate, openTaskIdFromRoute, selectedTaskId, sortedTasks]);
 
 
   const handleSaveStory = async () => {
@@ -454,6 +495,17 @@ export function StoryPage() {
       void fetchTasks(storyId);
     }
   };
+
+  if (!story && isStoryLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="mt-3 text-sm text-muted-foreground">正在加载 Story...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!story) {
     return (
@@ -639,7 +691,12 @@ export function StoryPage() {
             {activeTab === "context" && <ContextPanel story={story} />}
             {activeTab === "tasks" && (
               <DetailSection title="任务列表">
-                <TaskList tasks={sortedTasks} onTaskClick={(task) => setSelectedTaskId(task.id)} />
+                <TaskList
+                  tasks={sortedTasks}
+                  onTaskClick={(task) => {
+                    setSelectedTaskId(task.id);
+                  }}
+                />
               </DetailSection>
             )}
             {activeTab === "review" && <ReviewPanel story={story} tasks={sortedTasks} />}

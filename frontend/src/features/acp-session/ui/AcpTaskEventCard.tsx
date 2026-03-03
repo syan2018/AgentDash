@@ -22,7 +22,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function isTaskEventUpdate(update: SessionUpdate): boolean {
+function isTaskEventUpdate(update: SessionUpdate): boolean {
   if (update.sessionUpdate !== "session_info_update") return false;
   const eventType = extractAgentDashMetaFromUpdate(update)?.event?.type;
   return typeof eventType === "string" && eventType.startsWith("task_");

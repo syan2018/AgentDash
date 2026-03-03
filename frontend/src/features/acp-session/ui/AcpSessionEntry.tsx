@@ -29,8 +29,10 @@ import { AcpToolCallCard } from "./AcpToolCallCard";
 import { AcpMessageCard } from "./AcpMessageCard";
 import { AcpPlanCard } from "./AcpPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
-import { AcpTaskContextCard, isAgentDashTaskContextBlock } from "./AcpTaskContextCard";
-import { AcpTaskEventCard, isTaskEventUpdate } from "./AcpTaskEventCard";
+import { AcpTaskContextCard } from "./AcpTaskContextCard";
+import { isAgentDashTaskContextBlock } from "./AcpTaskContextGuard";
+import { AcpTaskEventCard } from "./AcpTaskEventCard";
+import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;

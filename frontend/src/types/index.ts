@@ -121,8 +121,18 @@ export interface SessionTaskContext {
   agent_binding?: AgentBinding;
 }
 
+export interface SessionReturnTarget {
+  story_id: string;
+  task_id: string;
+}
+
 export interface SessionNavigationState {
   task_context?: SessionTaskContext;
+  return_to?: SessionReturnTarget;
+}
+
+export interface StoryNavigationState {
+  open_task_id?: string;
 }
 
 // ─── Artifact / ACP 展示类型 ──────────────────────────

@@ -86,8 +86,11 @@ function buildUsageSummary(usage: TokenUsageInfo | null): string {
 
 export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionPanelProps) {
   const navigate = useNavigate();
-  const { startTaskExecution, continueTaskExecution, cancelTaskExecution, refreshTask } =
-    useStoryStore();
+  const startTaskExecution = useStoryStore((state) => state.startTaskExecution);
+  const continueTaskExecution = useStoryStore((state) => state.continueTaskExecution);
+  const cancelTaskExecution = useStoryStore((state) => state.cancelTaskExecution);
+  const refreshTask = useStoryStore((state) => state.refreshTask);
+  const storeError = useStoryStore((state) => state.error);
 
   const [prompt, setPrompt] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -113,6 +116,16 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
 
   const listRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const taskSnapshotRef = useRef({ status: task.status, updated_at: task.updated_at });
+  const onTaskUpdatedRef = useRef(onTaskUpdated);
+
+  useEffect(() => {
+    taskSnapshotRef.current = { status: task.status, updated_at: task.updated_at };
+  }, [task.status, task.updated_at]);
+
+  useEffect(() => {
+    onTaskUpdatedRef.current = onTaskUpdated;
+  }, [onTaskUpdated]);
 
   useEffect(() => {
     if (!listRef.current || !shouldAutoScrollRef.current) return;
@@ -127,13 +140,31 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
         const latest = await refreshTask(task.id);
         if (!latest) return;
         if (latest.status !== task.status || latest.updated_at !== task.updated_at) {
-          onTaskUpdated(latest);
+          onTaskUpdatedRef.current(latest);
         }
       })();
     }, 2000);
 
     return () => window.clearInterval(timer);
-  }, [executionLocked, hasSession, onTaskUpdated, refreshTask, task.id, task.status, task.updated_at]);
+  }, [executionLocked, hasSession, refreshTask, task.id, task.status, task.updated_at]);
+
+  useEffect(() => {
+    if (!hasSession) return;
+    let cancelled = false;
+    void (async () => {
+      const latest = await refreshTask(task.id);
+      if (cancelled || !latest) return;
+      if (
+        latest.status !== taskSnapshotRef.current.status ||
+        latest.updated_at !== taskSnapshotRef.current.updated_at
+      ) {
+        onTaskUpdatedRef.current(latest);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSession, refreshTask, task.id]);
 
   useEffect(() => {
     if (!hasSession || rawEntries.length === 0) return;
@@ -147,9 +178,9 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
 
     void (async () => {
       const latest = await refreshTask(task.id);
-      if (latest) onTaskUpdated(latest);
+      if (latest) onTaskUpdatedRef.current(latest);
     })();
-  }, [hasSession, onTaskUpdated, rawEntries, refreshTask, task.id]);
+  }, [hasSession, rawEntries, refreshTask, task.id]);
 
   useEffect(() => {
     setSubmitError(null);
@@ -183,20 +214,27 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
   const displayError = submitError ?? streamError?.message ?? null;
   const navigateToSessionPage = useCallback(
     (targetSessionId: string) => {
-      const search = new URLSearchParams({ task_id: task.id }).toString();
       const state: SessionNavigationState = {
         task_context: {
           task_id: task.id,
           agent_binding: task.agent_binding,
         },
+        return_to: {
+          story_id: task.story_id,
+          task_id: task.id,
+        },
       };
-      navigate(`/session/${targetSessionId}?${search}`, { state });
+      navigate(`/session/${targetSessionId}`, { state });
     },
-    [navigate, task.agent_binding, task.id],
+    [navigate, task.agent_binding, task.id, task.story_id],
   );
 
   const handleExecute = useCallback(async () => {
-    if (isSubmitting || executionLocked) return;
+    if (isSubmitting) return;
+    if (executionLocked) {
+      setSubmitError("任务仍在执行中，请先等待完成或点击“取消执行”。");
+      return;
+    }
     setSubmitError(null);
 
     const trimmedPrompt = prompt.trim();
@@ -205,7 +243,10 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
       const updated = hasSession
         ? await continueTaskExecution(task.id, trimmedPrompt ? { additional_prompt: trimmedPrompt } : undefined)
         : await startTaskExecution(task.id, trimmedPrompt ? { override_prompt: trimmedPrompt } : undefined);
-      if (!updated) return;
+      if (!updated) {
+        setSubmitError(storeError ?? (hasSession ? "继续执行失败，请稍后重试" : "启动执行失败，请稍后重试"));
+        return;
+      }
       onTaskUpdated(updated);
       setPrompt("");
     } catch (error) {
@@ -221,6 +262,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     onTaskUpdated,
     prompt,
     startTaskExecution,
+    storeError,
     task.id,
   ]);
 
@@ -242,6 +284,16 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
       setIsSubmitting(false);
     }
   }, [cancelTaskExecution, executionLocked, hasSession, isSubmitting, onTaskUpdated, task.id]);
+
+  const handleRefresh = useCallback(async () => {
+    setSubmitError(null);
+    const latest = await refreshTask(task.id);
+    if (!latest) {
+      setSubmitError(storeError ?? "刷新任务状态失败，请稍后重试");
+      return;
+    }
+    onTaskUpdatedRef.current(latest);
+  }, [refreshTask, storeError, task.id]);
 
   return (
     <div className="space-y-3">
@@ -343,6 +395,16 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
             {hasSession && (
               <button
                 type="button"
+                disabled={isSubmitting}
+                onClick={() => void handleRefresh()}
+                className="rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50"
+              >
+                刷新状态
+              </button>
+            )}
+            {hasSession && (
+              <button
+                type="button"
                 onClick={() => navigateToSessionPage(sessionId!)}
                 className="rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground hover:bg-muted"
               >
@@ -361,7 +423,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
             )}
             <button
               type="button"
-              disabled={isSubmitting || executionLocked}
+              disabled={isSubmitting}
               onClick={() => void handleExecute()}
               className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
             >

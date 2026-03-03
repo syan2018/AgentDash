@@ -99,7 +99,7 @@ export function StoryBoard({ stories, taskCountByStoryId, onOpenStory }: StoryBo
     setLocalStories(stories);
   }, [stories]);
 
-  // 将 Story 按看板列分组（使用本地状态）
+  // 将 Story 按看板列分组（使用本地状态），并按优先级排序
   const storiesByColumn = useMemo(() => {
     const result: Record<BoardColumnKey, Story[]> = {
       todo: [],
@@ -107,10 +107,30 @@ export function StoryBoard({ stories, taskCountByStoryId, onOpenStory }: StoryBo
       inreview: [],
       done: [],
     };
+
+    // 优先级权重映射
+    const priorityWeight: Record<Story['priority'], number> = {
+      p0: 0,
+      p1: 1,
+      p2: 2,
+      p3: 3,
+    };
+
+    // 按优先级排序的辅助函数
+    const sortByPriority = (a: Story, b: Story) => {
+      return priorityWeight[a.priority] - priorityWeight[b.priority];
+    };
+
     localStories.forEach((story) => {
       const columnKey = statusToColumnMap[story.status];
       result[columnKey].push(story);
     });
+
+    // 每列内按优先级排序
+    Object.keys(result).forEach((key) => {
+      result[key as BoardColumnKey].sort(sortByPriority);
+    });
+
     return result;
   }, [localStories]);
 

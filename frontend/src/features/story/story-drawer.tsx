@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AgentBinding, ProjectConfig, Story, StoryStatus, Task, Workspace } from "../../types";
-import { StoryStatusBadge } from "../../components/ui/status-badge";
+import type { AgentBinding, ProjectConfig, Story, StoryStatus, StoryPriority, StoryType, Task, Workspace } from "../../types";
+import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge, getStoryTypeInfo, getStoryPriorityInfo } from "../../components/ui/status-badge";
 import { TaskList } from "../task/task-list";
 import { AgentBindingFields } from "../task/agent-binding-fields";
 import {
@@ -16,6 +16,24 @@ import {
   DetailPanel,
   DetailSection,
 } from "../../components/ui/detail-panel";
+
+// Story 优先级选项
+const priorityOptions: { value: StoryPriority; label: string; description: string }[] = [
+  { value: "p0", label: "P0 - 紧急", description: "需要立即处理，阻塞其他工作" },
+  { value: "p1", label: "P1 - 高", description: "重要功能，应尽快完成" },
+  { value: "p2", label: "P2 - 中", description: "正常优先级，按计划进行" },
+  { value: "p3", label: "P3 - 低", description: "可以延后处理" },
+];
+
+// Story 类型选项
+const storyTypeOptions: { value: StoryType; label: string; icon: string; description: string }[] = [
+  { value: "feature", label: "功能", icon: "✨", description: "新功能开发" },
+  { value: "bugfix", label: "缺陷", icon: "🐛", description: "Bug 修复" },
+  { value: "refactor", label: "重构", icon: "♻️", description: "代码重构" },
+  { value: "docs", label: "文档", icon: "📝", description: "文档更新" },
+  { value: "test", label: "测试", icon: "🧪", description: "测试相关" },
+  { value: "other", label: "其他", icon: "📦", description: "其他类型" },
+];
 
 interface StoryDrawerProps {
   story: Story | null;
@@ -86,24 +104,84 @@ function ContextPanel({ story }: { story: Story }) {
 function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
   const successCount = tasks.filter((task) => task.status === "completed").length;
   const failedCount = tasks.filter((task) => task.status === "failed").length;
+  const runningCount = tasks.filter((task) => task.status === "running").length;
+  const pendingCount = tasks.filter((task) => task.status === "pending" || task.status === "assigned").length;
+
+  const typeInfo = getStoryTypeInfo(story.story_type);
+  const priorityInfo = getStoryPriorityInfo(story.priority);
 
   return (
     <DetailSection title="验收">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {/* Story 元信息卡片 */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">Story 状态</p>
-          <p className="mt-1 text-sm font-medium text-foreground">{story.status}</p>
+          <p className="text-xs text-muted-foreground">类型</p>
+          <div className="mt-1 flex items-center gap-1.5">
+            <span className="text-base">{typeInfo.icon}</span>
+            <span className="text-sm font-medium text-foreground">{typeInfo.label}</span>
+          </div>
         </div>
         <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">成功任务数</p>
+          <p className="text-xs text-muted-foreground">优先级</p>
+          <div className="mt-1 flex items-center gap-1.5">
+            <span className={`inline-block h-2 w-2 rounded-full ${priorityInfo.dotColor}`} />
+            <span className="text-sm font-medium text-foreground">{priorityInfo.label}</span>
+          </div>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">状态</p>
+          <div className="mt-1">
+            <StoryStatusBadge status={story.status} />
+          </div>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">任务总数</p>
+          <p className="mt-1 text-sm font-medium text-foreground">{tasks.length}</p>
+        </div>
+      </div>
+
+      {/* 标签 */}
+      {story.tags.length > 0 && (
+        <div className="mb-4">
+          <p className="mb-2 text-xs text-muted-foreground">标签</p>
+          <div className="flex flex-wrap gap-1.5">
+            {story.tags.map((tag, index) => (
+              <span
+                key={index}
+                className="inline-flex items-center rounded bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 任务统计 */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">待执行</p>
+          <p className="mt-1 text-sm font-medium text-muted-foreground">{pendingCount}</p>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">执行中</p>
+          <p className="mt-1 text-sm font-medium text-primary">{runningCount}</p>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">成功</p>
           <p className="mt-1 text-sm font-medium text-success">{successCount}</p>
         </div>
         <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">失败任务数</p>
+          <p className="text-xs text-muted-foreground">失败</p>
           <p className="mt-1 text-sm font-medium text-destructive">{failedCount}</p>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">{story.description || "暂无 Story 描述"}</p>
+
+      {/* 描述 */}
+      <div className="rounded-md border border-border bg-card p-3">
+        <p className="mb-2 text-xs text-muted-foreground">描述</p>
+        <p className="text-sm text-foreground">{story.description || "暂无 Story 描述"}</p>
+      </div>
     </DetailSection>
   );
 }
@@ -248,9 +326,24 @@ export function StoryDrawer({
   const [editTitle, setEditTitle] = useState(story?.title ?? "");
   const [editDescription, setEditDescription] = useState(story?.description ?? "");
   const [editStatus, setEditStatus] = useState<StoryStatus>(story?.status ?? "draft");
+  const [editPriority, setEditPriority] = useState<StoryPriority>(story?.priority ?? "p2");
+  const [editStoryType, setEditStoryType] = useState<StoryType>(story?.story_type ?? "feature");
+  const [editTags, setEditTags] = useState<string>(story?.tags.join(", ") ?? "");
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
+
+  // 当 story 变化时同步编辑状态
+  useEffect(() => {
+    if (story) {
+      setEditTitle(story.title);
+      setEditDescription(story.description ?? "");
+      setEditStatus(story.status);
+      setEditPriority(story.priority);
+      setEditStoryType(story.story_type);
+      setEditTags(story.tags.join(", "));
+    }
+  }, [story?.id]);
 
   const sortedTasks = useMemo(
     () =>
@@ -269,10 +362,19 @@ export function StoryDrawer({
       return;
     }
 
+    // 解析标签
+    const parsedTags = editTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
     const updated = await updateStory(story.id, {
       title: trimmedTitle,
       description: editDescription,
       status: editStatus,
+      priority: editPriority,
+      story_type: editStoryType,
+      tags: parsedTags,
     });
     if (!updated) return;
 
@@ -318,12 +420,15 @@ export function StoryDrawer({
       >
         <div className="space-y-4 p-5">
           <DetailSection title="Story 详情">
+            {/* 标题 */}
             <input
               value={editTitle}
               onChange={(event) => setEditTitle(event.target.value)}
               placeholder="Story 标题"
               className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
             />
+
+            {/* 描述 */}
             <textarea
               value={editDescription}
               onChange={(event) => setEditDescription(event.target.value)}
@@ -331,19 +436,91 @@ export function StoryDrawer({
               placeholder="Story 描述"
               className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
             />
-            <select
-              value={editStatus}
-              onChange={(event) => setEditStatus(event.target.value as StoryStatus)}
-              className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
-            >
-              <option value="draft">草稿</option>
-              <option value="ready">就绪</option>
-              <option value="running">执行中</option>
-              <option value="review">待验收</option>
-              <option value="completed">已完成</option>
-              <option value="failed">失败</option>
-              <option value="cancelled">已取消</option>
-            </select>
+
+            {/* 状态、优先级、类型 三列布局 */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">状态</label>
+                <select
+                  value={editStatus}
+                  onChange={(event) => setEditStatus(event.target.value as StoryStatus)}
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                >
+                  <option value="draft">草稿</option>
+                  <option value="ready">就绪</option>
+                  <option value="running">执行中</option>
+                  <option value="review">待验收</option>
+                  <option value="completed">已完成</option>
+                  <option value="failed">失败</option>
+                  <option value="cancelled">已取消</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">优先级</label>
+                <select
+                  value={editPriority}
+                  onChange={(event) => setEditPriority(event.target.value as StoryPriority)}
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                >
+                  {priorityOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">类型</label>
+                <select
+                  value={editStoryType}
+                  onChange={(event) => setEditStoryType(event.target.value as StoryType)}
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                >
+                  {storyTypeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.icon} {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* 标签 */}
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">标签（用逗号分隔）</label>
+              <input
+                value={editTags}
+                onChange={(event) => setEditTags(event.target.value)}
+                placeholder="例如: frontend, api, urgent"
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              />
+              {/* 标签预览 */}
+              <div className="mt-2 flex flex-wrap gap-1">
+                {editTags
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter((t) => t.length > 0)
+                  .map((tag, index) => (
+                    <span
+                      key={index}
+                      className="inline-flex items-center rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+              </div>
+            </div>
+
+            {/* 当前值展示 */}
+            <div className="flex items-center gap-2 rounded bg-muted/50 px-3 py-2">
+              <span className="text-xs text-muted-foreground">当前:</span>
+              <StoryTypeBadge type={editStoryType} />
+              <StoryPriorityBadge priority={editPriority} showLabel />
+              <StoryStatusBadge status={editStatus} />
+            </div>
+
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"

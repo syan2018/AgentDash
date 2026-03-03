@@ -1,5 +1,5 @@
 import type { Story } from "../../types";
-import { StoryStatusBadge } from "../../components/ui/status-badge";
+import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../../components/ui/status-badge";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
@@ -19,6 +19,29 @@ export function StoryCard({ story, taskCount, onClick, isDragging }: StoryCardPr
         isDragging ? "rotate-2 scale-105 shadow-lg ring-2 ring-primary" : ""
       }`}
     >
+      {/* 顶部：类型和优先级 */}
+      <div className="mb-2 flex items-center gap-1.5">
+        <StoryTypeBadge type={story.story_type} />
+        <StoryPriorityBadge priority={story.priority} showLabel />
+        {story.tags.length > 0 && (
+          <div className="ml-auto flex items-center gap-1">
+            {story.tags.slice(0, 2).map((tag, index) => (
+              <span
+                key={index}
+                className="inline-flex max-w-[60px] truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                title={tag}
+              >
+                {tag}
+              </span>
+            ))}
+            {story.tags.length > 2 && (
+              <span className="text-[10px] text-muted-foreground">+{story.tags.length - 2}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 标题和描述 */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-foreground">{story.title}</p>
@@ -28,6 +51,8 @@ export function StoryCard({ story, taskCount, onClick, isDragging }: StoryCardPr
         </div>
         <StoryStatusBadge status={story.status} />
       </div>
+
+      {/* 底部：任务数和时间 */}
       <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
         <span>{taskCount} 个任务</span>
         <span>{new Date(story.updated_at).toLocaleDateString("zh-CN")}</span>

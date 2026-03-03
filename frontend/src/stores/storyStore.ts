@@ -176,6 +176,44 @@ const toBackendTaskStatus = (status: Task["status"]): string => {
 
 const defaultContext: StoryContext = { prd_doc: null, spec_refs: [], resource_list: [] };
 
+const normalizeStoryPriority = (value: string): Story['priority'] => {
+  switch (value) {
+    case 'p0':
+    case 'critical':
+      return 'p0';
+    case 'p1':
+    case 'high':
+      return 'p1';
+    case 'p2':
+    case 'medium':
+      return 'p2';
+    case 'p3':
+    case 'low':
+      return 'p3';
+    default:
+      return 'p2';
+  }
+};
+
+const normalizeStoryType = (value: string): Story['story_type'] => {
+  switch (value) {
+    case 'feature':
+      return 'feature';
+    case 'bugfix':
+    case 'bug':
+      return 'bugfix';
+    case 'refactor':
+      return 'refactor';
+    case 'docs':
+    case 'documentation':
+      return 'docs';
+    case 'test':
+      return 'test';
+    default:
+      return 'other';
+  }
+};
+
 const mapStory = (raw: Record<string, unknown>): Story => {
   let context: StoryContext = defaultContext;
   if (raw.context && typeof raw.context === 'object') {
@@ -196,6 +234,9 @@ const mapStory = (raw: Record<string, unknown>): Story => {
     title: String(raw.title ?? '未命名 Story'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeStoryStatus(String(raw.status ?? 'draft')),
+    priority: normalizeStoryPriority(String(raw.priority ?? 'p2')),
+    story_type: normalizeStoryType(String(raw.story_type ?? 'feature')),
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === 'string') : [],
     context,
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
@@ -351,10 +392,12 @@ export const useStoryStore = create<StoryState>((set) => ({
 
   updateStory: async (storyId, payload) => {
     try {
-      const requestPayload = {
+      const requestPayload: Record<string, unknown> = {
         ...payload,
-        status: payload.status ? toBackendStoryStatus(payload.status) : undefined,
       };
+      if (payload.status) {
+        requestPayload.status = toBackendStoryStatus(payload.status);
+      }
       const raw = await api.put<Record<string, unknown>>(`/stories/${storyId}`, requestPayload);
       const story = mapStory(raw);
       set((s) => ({

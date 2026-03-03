@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import type { Story } from "../../types";
+import type { Story, StoryPriority, StoryType } from "../../types";
 import { StoryBoard } from "./story-board";
 import { useStoryStore } from "../../stores/storyStore";
 import { DetailPanel, DetailSection } from "../../components/ui/detail-panel";
+import { StoryPriorityBadge, StoryTypeBadge } from "../../components/ui/status-badge";
 
 
 interface StoryListViewProps {
@@ -13,6 +14,24 @@ interface StoryListViewProps {
   backendId: string;
 }
 
+// Story 优先级选项
+const priorityOptions: { value: StoryPriority; label: string }[] = [
+  { value: "p0", label: "P0 - 紧急" },
+  { value: "p1", label: "P1 - 高" },
+  { value: "p2", label: "P2 - 中" },
+  { value: "p3", label: "P3 - 低" },
+];
+
+// Story 类型选项
+const storyTypeOptions: { value: StoryType; label: string; icon: string }[] = [
+  { value: "feature", label: "功能", icon: "✨" },
+  { value: "bugfix", label: "缺陷", icon: "🐛" },
+  { value: "refactor", label: "重构", icon: "♻️" },
+  { value: "docs", label: "文档", icon: "📝" },
+  { value: "test", label: "测试", icon: "🧪" },
+  { value: "other", label: "其他", icon: "📦" },
+];
+
 interface CreateStoryDrawerProps {
   open: boolean;
   projectId: string;
@@ -21,9 +40,12 @@ interface CreateStoryDrawerProps {
 }
 
 function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryDrawerProps) {
-  const { createStory, error } = useStoryStore();
+  const { createStory, error, updateStory } = useStoryStore();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState<StoryPriority>("p2");
+  const [storyType, setStoryType] = useState<StoryType>("feature");
+  const [tags, setTags] = useState("");
   const [formMessage, setFormMessage] = useState<string | null>(null);
 
   const handleCreate = async () => {
@@ -44,8 +66,24 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
       description.trim() || undefined,
     );
     if (!created) return;
+
+    // 创建成功后更新优先级、类型和标签
+    const parsedTags = tags
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
+    await updateStory(created.id, {
+      priority,
+      story_type: storyType,
+      tags: parsedTags,
+    });
+
     setTitle("");
     setDescription("");
+    setPriority("p2");
+    setStoryType("feature");
+    setTags("");
     setFormMessage(null);
     onClose();
   };
@@ -73,6 +111,71 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
             placeholder="描述（可选）"
             className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
           />
+        </DetailSection>
+
+        <DetailSection title="优先级与类型">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">优先级</label>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as StoryPriority)}
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              >
+                {priorityOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-2">
+                <StoryPriorityBadge priority={priority} showLabel />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">类型</label>
+              <select
+                value={storyType}
+                onChange={(e) => setStoryType(e.target.value as StoryType)}
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+              >
+                {storyTypeOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.icon} {opt.label}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-2">
+                <StoryTypeBadge type={storyType} />
+              </div>
+            </div>
+          </div>
+        </DetailSection>
+
+        <DetailSection title="标签">
+          <input
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+            placeholder="用逗号分隔，例如: frontend, api, urgent"
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+          />
+          {tags && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {tags
+                .split(",")
+                .map((t) => t.trim())
+                .filter((t) => t.length > 0)
+                .map((tag, index) => (
+                  <span
+                    key={index}
+                    className="inline-flex items-center rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+                  >
+                    {tag}
+                  </span>
+                ))}
+            </div>
+          )}
         </DetailSection>
 
         {(formMessage || error) && (

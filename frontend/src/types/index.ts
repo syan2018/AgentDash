@@ -67,6 +67,10 @@ export interface Workspace {
 
 // ─── Story ────────────────────────────────────────────
 
+export type StoryPriority = "p0" | "p1" | "p2" | "p3";
+
+export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "other";
+
 export interface ResourceRef {
   name: string;
   uri: string;
@@ -86,6 +90,9 @@ export interface Story {
   title: string;
   description?: string;
   status: StoryStatus;
+  priority: StoryPriority;
+  story_type: StoryType;
+  tags: string[];
   context: StoryContext;
   created_at: string;
   updated_at: string;

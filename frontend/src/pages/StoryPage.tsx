@@ -6,10 +6,12 @@ import type {
   Story,
   StoryNavigationState,
   StoryStatus,
+  StoryPriority,
+  StoryType,
   Task,
   Workspace,
 } from "../types";
-import { StoryStatusBadge } from "../components/ui/status-badge";
+import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../components/ui/status-badge";
 import { TaskList } from "../features/task/task-list";
 import { TaskDrawer } from "../features/task/task-drawer";
 import { AgentBindingFields } from "../features/task/agent-binding-fields";
@@ -27,6 +29,24 @@ import {
   DetailMenu,
   DetailSection,
 } from "../components/ui/detail-panel";
+
+// Story 优先级选项
+const priorityOptions: { value: StoryPriority; label: string }[] = [
+  { value: "p0", label: "P0 - 紧急" },
+  { value: "p1", label: "P1 - 高" },
+  { value: "p2", label: "P2 - 中" },
+  { value: "p3", label: "P3 - 低" },
+];
+
+// Story 类型选项
+const storyTypeOptions: { value: StoryType; label: string; icon: string }[] = [
+  { value: "feature", label: "功能", icon: "✨" },
+  { value: "bugfix", label: "缺陷", icon: "🐛" },
+  { value: "refactor", label: "重构", icon: "♻️" },
+  { value: "docs", label: "文档", icon: "📝" },
+  { value: "test", label: "测试", icon: "🧪" },
+  { value: "other", label: "其他", icon: "📦" },
+];
 
 type TabKey = "context" | "tasks" | "review";
 
@@ -312,24 +332,79 @@ function ContextPanel({ story }: { story: Story }) {
 function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
   const successCount = tasks.filter((task) => task.status === "completed").length;
   const failedCount = tasks.filter((task) => task.status === "failed").length;
+  const runningCount = tasks.filter((task) => task.status === "running").length;
+  const pendingCount = tasks.filter((task) => task.status === "pending" || task.status === "assigned").length;
 
   return (
     <DetailSection title="验收">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {/* Story 元信息 */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">Story 状态</p>
-          <p className="mt-1 text-sm font-medium text-foreground">{story.status}</p>
+          <p className="text-xs text-muted-foreground">类型</p>
+          <div className="mt-1">
+            <StoryTypeBadge type={story.story_type} />
+          </div>
         </div>
         <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">成功任务数</p>
+          <p className="text-xs text-muted-foreground">优先级</p>
+          <div className="mt-1">
+            <StoryPriorityBadge priority={story.priority} showLabel />
+          </div>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">状态</p>
+          <div className="mt-1">
+            <StoryStatusBadge status={story.status} />
+          </div>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">任务总数</p>
+          <p className="mt-1 text-sm font-medium text-foreground">{tasks.length}</p>
+        </div>
+      </div>
+
+      {/* 标签 */}
+      {story.tags.length > 0 && (
+        <div className="mb-4">
+          <p className="mb-2 text-xs text-muted-foreground">标签</p>
+          <div className="flex flex-wrap gap-1.5">
+            {story.tags.map((tag, index) => (
+              <span
+                key={index}
+                className="inline-flex items-center rounded bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 任务统计 */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">待执行</p>
+          <p className="mt-1 text-sm font-medium text-muted-foreground">{pendingCount}</p>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">执行中</p>
+          <p className="mt-1 text-sm font-medium text-primary">{runningCount}</p>
+        </div>
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">成功</p>
           <p className="mt-1 text-sm font-medium text-success">{successCount}</p>
         </div>
         <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">失败任务数</p>
+          <p className="text-xs text-muted-foreground">失败</p>
           <p className="mt-1 text-sm font-medium text-destructive">{failedCount}</p>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">{story.description || "暂无 Story 描述"}</p>
+
+      {/* 描述 */}
+      <div className="rounded-md border border-border bg-card p-3">
+        <p className="mb-2 text-xs text-muted-foreground">描述</p>
+        <p className="text-sm text-foreground">{story.description || "暂无 Story 描述"}</p>
+      </div>
     </DetailSection>
   );
 }
@@ -370,6 +445,9 @@ export function StoryPage() {
   const [editTitle, setEditTitle] = useState(story?.title ?? "");
   const [editDescription, setEditDescription] = useState(story?.description ?? "");
   const [editStatus, setEditStatus] = useState<StoryStatus>(story?.status ?? "draft");
+  const [editPriority, setEditPriority] = useState<StoryPriority>(story?.priority ?? "p2");
+  const [editStoryType, setEditStoryType] = useState<StoryType>(story?.story_type ?? "feature");
+  const [editTags, setEditTags] = useState<string>(story?.tags.join(", ") ?? "");
 
   // 当 storyId 变化时重置表单（通过 key 属性实现，这里作为备份）
   useEffect(() => {
@@ -377,6 +455,9 @@ export function StoryPage() {
       setEditTitle(story.title);
       setEditDescription(story.description || "");
       setEditStatus(story.status);
+      setEditPriority(story.priority);
+      setEditStoryType(story.story_type);
+      setEditTags(story.tags.join(", "));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storyId]);
@@ -451,10 +532,19 @@ export function StoryPage() {
       return;
     }
 
+    // 解析标签
+    const parsedTags = editTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
     const updated = await updateStory(story.id, {
       title: trimmedTitle,
       description: editDescription,
       status: editStatus,
+      priority: editPriority,
+      story_type: editStoryType,
+      tags: parsedTags,
     });
     if (!updated) return;
 
@@ -550,6 +640,8 @@ export function StoryPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <StoryTypeBadge type={story.story_type} />
+          <StoryPriorityBadge priority={story.priority} showLabel />
           <StoryStatusBadge status={story.status} />
           <DetailMenu
             items={[
@@ -605,6 +697,43 @@ export function StoryPage() {
                     className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
                   />
                 </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">类型</label>
+                  <select
+                    value={editStoryType}
+                    onChange={(event) => setEditStoryType(event.target.value as StoryType)}
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                  >
+                    {storyTypeOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.icon} {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">优先级</label>
+                  <select
+                    value={editPriority}
+                    onChange={(event) => setEditPriority(event.target.value as StoryPriority)}
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                  >
+                    {priorityOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">标签（逗号分隔）</label>
+                  <input
+                    value={editTags}
+                    onChange={(event) => setEditTags(event.target.value)}
+                    placeholder="例如: frontend, api, urgent"
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                  />
+                </div>
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -614,6 +743,10 @@ export function StoryPage() {
                       if (story) {
                         setEditTitle(story.title);
                         setEditDescription(story.description || "");
+                        setEditStatus(story.status);
+                        setEditPriority(story.priority);
+                        setEditStoryType(story.story_type);
+                        setEditTags(story.tags.join(", "));
                       }
                     }}
                     className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted"
@@ -630,7 +763,7 @@ export function StoryPage() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div>
                   <span className="text-xs text-muted-foreground">标题</span>
                   <p className="mt-0.5 text-sm font-medium">{story.title}</p>
@@ -639,6 +772,35 @@ export function StoryPage() {
                   <span className="text-xs text-muted-foreground">描述</span>
                   <p className="mt-0.5 text-sm text-foreground">
                     {story.description || <span className="text-muted-foreground">暂无描述</span>}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">类型</span>
+                  <div className="mt-1">
+                    <StoryTypeBadge type={story.story_type} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">优先级</span>
+                  <div className="mt-1">
+                    <StoryPriorityBadge priority={story.priority} showLabel />
+                  </div>
+                </div>
+                {story.tags.length > 0 && (
+                  <div>
+                    <span className="text-xs text-muted-foreground">标签</span>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {story.tags.map((tag, index) => (
+                        <span
+                          key={index}
+                          className="inline-flex items-center rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                   </p>
                 </div>
               </div>

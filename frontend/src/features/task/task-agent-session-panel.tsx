@@ -285,6 +285,14 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     }
   }, [cancelTaskExecution, executionLocked, hasSession, isSubmitting, onTaskUpdated, task.id]);
 
+  const handlePrimaryAction = useCallback(async () => {
+    if (executionLocked) {
+      await handleCancel();
+      return;
+    }
+    await handleExecute();
+  }, [executionLocked, handleCancel, handleExecute]);
+
   const handleRefresh = useCallback(async () => {
     setSubmitError(null);
     const latest = await refreshTask(task.id);
@@ -411,23 +419,23 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
                 会话页
               </button>
             )}
-            {hasSession && (
-              <button
-                type="button"
-                disabled={isSubmitting || !executionLocked}
-                onClick={() => void handleCancel()}
-                className="rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50"
-              >
-                取消执行
-              </button>
-            )}
             <button
               type="button"
-              disabled={isSubmitting}
-              onClick={() => void handleExecute()}
-              className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+              disabled={isSubmitting || (executionLocked && !hasSession)}
+              onClick={() => void handlePrimaryAction()}
+              className={`rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
+                executionLocked
+                  ? "bg-white text-foreground border border-border hover:bg-gray-50"
+                  : "bg-primary text-primary-foreground"
+              }`}
             >
-              {executionLocked ? "执行中..." : isSubmitting ? "提交中..." : hasSession ? "继续执行" : "启动执行"}
+              {isSubmitting
+                ? "处理中..."
+                : executionLocked
+                  ? "取消执行"
+                  : hasSession
+                    ? "继续执行"
+                    : "启动执行"}
             </button>
           </div>
         </div>

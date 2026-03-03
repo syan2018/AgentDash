@@ -121,22 +121,19 @@ fn build_user_message_notifications(
         .collect()
 }
 
-fn build_turn_terminal_notification(
+fn build_turn_lifecycle_notification(
     session_id: &str,
     source: &AgentDashSourceV1,
     turn_id: &str,
-    success: bool,
+    event_type: &str,
+    severity: &str,
     message: Option<String>,
 ) -> SessionNotification {
     let mut trace = AgentDashTraceV1::new();
     trace.turn_id = Some(turn_id.to_string());
 
-    let mut event = AgentDashEventV1::new(if success {
-        "turn_completed"
-    } else {
-        "turn_failed"
-    });
-    event.severity = Some(if success { "info" } else { "error" }.to_string());
+    let mut event = AgentDashEventV1::new(event_type);
+    event.severity = Some(severity.to_string());
     event.message = message;
 
     let agentdash = AgentDashMetaV1::new()
@@ -149,6 +146,27 @@ fn build_turn_terminal_notification(
     SessionNotification::new(
         SessionId::new(session_id),
         SessionUpdate::SessionInfoUpdate(info),
+    )
+}
+
+fn build_turn_terminal_notification(
+    session_id: &str,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+    success: bool,
+    message: Option<String>,
+) -> SessionNotification {
+    build_turn_lifecycle_notification(
+        session_id,
+        source,
+        turn_id,
+        if success {
+            "turn_completed"
+        } else {
+            "turn_failed"
+        },
+        if success { "info" } else { "error" },
+        message,
     )
 }
 
@@ -471,6 +489,17 @@ impl ExecutorHub {
             let _ = store.append(&sid, &notification).await;
             let _ = tx.send(notification);
         }
+
+        let started = build_turn_lifecycle_notification(
+            session_id,
+            &source,
+            &turn_id,
+            "turn_started",
+            "info",
+            Some("开始执行".to_string()),
+        );
+        let _ = store.append(&sid, &started).await;
+        let _ = tx.send(started);
 
         let mut stream = self
             .connector

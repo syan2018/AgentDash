@@ -4,6 +4,7 @@ import { useAcpSession, AcpSessionEntry } from "../features/acp-session";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../features/acp-session/model/types";
 import type { AcpDisplayItem, TokenUsageInfo } from "../features/acp-session/model/types";
 import { promptSession, type ExecutorConfig } from "../services/executor";
+import { extractAgentDashMetaFromUpdate } from "../features/acp-session/model/agentdashMeta";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { useStoryStore } from "../stores/storyStore";
 import {
@@ -174,6 +175,8 @@ interface SessionPageProps {
   sessionId?: string;
 }
 
+const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
+
 export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -185,9 +188,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
+  const [optimisticRunning, setOptimisticRunning] = useState(false);
+  const [stableActionRunning, setStableActionRunning] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedTaskExecutorRef = useRef<string | null>(null);
+  const optimisticRunningUntilRef = useRef(0);
+  const actionRunningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [taskAgentBinding, setTaskAgentBinding] = useState<AgentBinding | null>(null);
   const routeState = useMemo(
     () => (location.state as SessionNavigationState | null) ?? null,
@@ -260,9 +267,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const streamSessionId = currentSessionId ?? "__placeholder__";
   const {
     displayItems,
+    rawEntries,
     isConnected,
     isLoading,
-    isReceiving,
     error: wsError,
     reconnect,
     sendCancel,
@@ -271,6 +278,87 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   } = useAcpSession({ sessionId: streamSessionId, enabled: currentSessionId !== null });
 
   const hasSession = currentSessionId !== null;
+  const streamRunning = useMemo(() => {
+    if (!hasSession || rawEntries.length === 0) return false;
+
+    for (let index = rawEntries.length - 1; index >= 0; index -= 1) {
+      const entry = rawEntries[index];
+      if (!entry || entry.update.sessionUpdate !== "session_info_update") continue;
+
+      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
+      if (eventType === "turn_started") return true;
+      if (eventType === "turn_completed" || eventType === "turn_failed") return false;
+    }
+
+    return false;
+  }, [hasSession, rawEntries]);
+
+  const targetActionRunning = hasSession && (streamRunning || optimisticRunning);
+
+  useEffect(() => {
+    if (targetActionRunning) {
+      if (actionRunningReleaseTimerRef.current) {
+        clearTimeout(actionRunningReleaseTimerRef.current);
+        actionRunningReleaseTimerRef.current = null;
+      }
+      setStableActionRunning(true);
+      return;
+    }
+
+    if (actionRunningReleaseTimerRef.current) {
+      clearTimeout(actionRunningReleaseTimerRef.current);
+    }
+    actionRunningReleaseTimerRef.current = setTimeout(() => {
+      actionRunningReleaseTimerRef.current = null;
+      setStableActionRunning(false);
+    }, ACTION_RUNNING_RELEASE_DELAY_MS);
+  }, [targetActionRunning]);
+
+  useEffect(() => {
+    return () => {
+      if (actionRunningReleaseTimerRef.current) {
+        clearTimeout(actionRunningReleaseTimerRef.current);
+      }
+    };
+  }, []);
+
+  const isActionRunning = hasSession && stableActionRunning;
+
+  useEffect(() => {
+    if (!hasSession) {
+      setOptimisticRunning(false);
+      optimisticRunningUntilRef.current = 0;
+    }
+  }, [hasSession]);
+
+  useEffect(() => {
+    if (!optimisticRunning) return;
+    const remainMs = Math.max(optimisticRunningUntilRef.current - Date.now(), 0);
+    const timer = window.setTimeout(() => {
+      setOptimisticRunning(false);
+    }, remainMs);
+    return () => window.clearTimeout(timer);
+  }, [optimisticRunning]);
+
+  useEffect(() => {
+    if (!hasSession || rawEntries.length === 0) return;
+
+    for (let index = rawEntries.length - 1; index >= 0; index -= 1) {
+      const entry = rawEntries[index];
+      if (!entry || entry.update.sessionUpdate !== "session_info_update") continue;
+
+      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
+      if (eventType === "turn_started") {
+        setOptimisticRunning(false);
+        return;
+      }
+      if (eventType === "turn_completed" || eventType === "turn_failed") {
+        optimisticRunningUntilRef.current = 0;
+        setOptimisticRunning(false);
+        return;
+      }
+    }
+  }, [hasSession, rawEntries]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
@@ -316,6 +404,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     if (!trimmed || isSending) return;
 
     setSendError(null);
+    setOptimisticRunning(true);
+    optimisticRunningUntilRef.current = Date.now() + 2500;
     setIsSending(true);
 
     try {
@@ -344,6 +434,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       clearInput();
       void reloadSessions();
     } catch (e) {
+      optimisticRunningUntilRef.current = 0;
+      setOptimisticRunning(false);
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
     } finally {
       setIsSending(false);
@@ -351,6 +443,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [isSending, currentSessionId, executorConfig, execConfig, createNew, setActiveSessionId, navigate, reloadSessions, fileRef, clearInput]);
 
   const handleCancel = sendCancel;
+
+  const handlePrimaryAction = useCallback(() => {
+    if (hasSession && isActionRunning) {
+      handleCancel();
+      return;
+    }
+    void handleSend();
+  }, [handleCancel, handleSend, hasSession, isActionRunning]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -415,7 +515,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
             {connectionLabel}
           </span>
-          {isReceiving && (
+          {isActionRunning && (
             <span className="flex items-center gap-1 text-xs text-primary animate-pulse">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
               接收中
@@ -589,22 +689,19 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                   <div className="flex flex-col gap-2">
                     <button
                       type="button"
-                      disabled={isSending || !inputValue.trim()}
-                      onClick={() => void handleSend()}
-                      className="h-9 w-20 rounded-lg bg-primary text-sm font-medium text-primary-foreground disabled:opacity-50 transition-opacity"
+                      disabled={
+                        isSending ||
+                        (hasSession && isActionRunning ? !isConnected : !inputValue.trim())
+                      }
+                      onClick={handlePrimaryAction}
+                      className={`h-9 w-20 rounded-lg text-sm font-medium disabled:opacity-50 transition-opacity ${
+                        hasSession && isActionRunning
+                          ? "bg-white text-foreground border border-border hover:bg-gray-50"
+                          : "bg-primary text-primary-foreground"
+                      }`}
                     >
-                      {isSending ? "…" : "发送"}
+                      {isSending ? "…" : hasSession && isActionRunning ? "取消" : "发送"}
                     </button>
-                    {hasSession && (
-                      <button
-                        type="button"
-                        disabled={!isConnected}
-                        onClick={handleCancel}
-                        className="h-9 w-20 rounded-lg border border-border bg-background text-xs text-foreground hover:bg-secondary disabled:opacity-50 transition-colors"
-                      >
-                        取消
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>

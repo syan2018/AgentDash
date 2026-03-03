@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_domain::story::{Story, StoryStatus};
+use agentdash_domain::story::{ChangeKind, Story, StoryStatus};
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
 use crate::app_state::AppState;
@@ -159,12 +159,47 @@ pub async fn delete_story(
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
+    let story = state
+        .story_repo
+        .get_by_id(story_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
+
     let tasks = state.task_repo.list_by_story(story_id).await?;
-    for task in tasks {
+    for task in &tasks {
         state.task_repo.delete(task.id).await?;
+        state
+            .story_repo
+            .append_change(
+                task.id,
+                ChangeKind::TaskDeleted,
+                serde_json::json!({
+                    "task_id": task.id,
+                    "story_id": story_id,
+                    "reason": "cascade_delete_with_story"
+                }),
+                &story.backend_id,
+            )
+            .await
+            .ok();
     }
 
     state.story_repo.delete(story_id).await?;
+
+    state
+        .story_repo
+        .append_change(
+            story_id,
+            ChangeKind::StoryDeleted,
+            serde_json::json!({
+                "story_id": story_id,
+                "reason": "story_deleted_by_user"
+            }),
+            &story.backend_id,
+        )
+        .await
+        .ok();
+
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
@@ -261,6 +296,19 @@ pub async fn create_task(
     task.agent_binding = agent_binding;
 
     state.task_repo.create(&task).await?;
+
+    let backend_id = story.backend_id.clone();
+    state
+        .story_repo
+        .append_change(
+            task.id,
+            ChangeKind::TaskCreated,
+            serde_json::to_value(&task).unwrap_or_default(),
+            &backend_id,
+        )
+        .await
+        .ok();
+
     Ok(Json(task))
 }
 
@@ -293,6 +341,8 @@ pub async fn update_task(
         .get_by_id(task_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
+
+    let old_status = task.status.clone();
 
     let story = state
         .story_repo
@@ -340,6 +390,23 @@ pub async fn update_task(
     }
 
     state.task_repo.update(&task).await?;
+
+    let change_kind = if task.status != old_status {
+        ChangeKind::TaskStatusChanged
+    } else {
+        ChangeKind::TaskUpdated
+    };
+    state
+        .story_repo
+        .append_change(
+            task.id,
+            change_kind,
+            serde_json::to_value(&task).unwrap_or_default(),
+            &story.backend_id,
+        )
+        .await
+        .ok();
+
     Ok(Json(task))
 }
 
@@ -350,7 +417,36 @@ pub async fn delete_task(
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
 
+    let task = state
+        .task_repo
+        .get_by_id(task_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
+
+    let backend_id = state
+        .story_repo
+        .get_by_id(task.story_id)
+        .await?
+        .map(|s| s.backend_id.clone())
+        .unwrap_or_default();
+
     state.task_repo.delete(task_id).await?;
+
+    state
+        .story_repo
+        .append_change(
+            task_id,
+            ChangeKind::TaskDeleted,
+            serde_json::json!({
+                "task_id": task_id,
+                "story_id": task.story_id,
+                "reason": "task_deleted_by_user"
+            }),
+            &backend_id,
+        )
+        .await
+        .ok();
+
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 

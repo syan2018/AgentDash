@@ -19,7 +19,7 @@ impl SqliteStoryRepository {
             r#"
             CREATE TABLE IF NOT EXISTS stories (
                 id TEXT PRIMARY KEY,
-                project_id TEXT REFERENCES projects(id),
+                project_id TEXT NOT NULL REFERENCES projects(id),
                 backend_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
@@ -272,7 +272,7 @@ impl StoryRepository for SqliteStoryRepository {
 #[derive(sqlx::FromRow)]
 struct StoryRow {
     id: String,
-    project_id: Option<String>,
+    project_id: String,
     backend_id: String,
     title: String,
     description: String,
@@ -286,12 +286,10 @@ impl TryFrom<StoryRow> for Story {
     type Error = DomainError;
 
     fn try_from(row: StoryRow) -> Result<Self, Self::Error> {
-        let project_id = row
-            .project_id
-            .as_deref()
-            .unwrap_or("00000000-0000-0000-0000-000000000000")
-            .parse()
-            .unwrap_or_default();
+        let project_id = row.project_id.parse().map_err(|_| DomainError::NotFound {
+            entity: "story",
+            id: row.id.clone(),
+        })?;
 
         let context: StoryContext = serde_json::from_str(&row.context).unwrap_or_default();
 
@@ -348,9 +346,11 @@ impl TryFrom<StateChangeRow> for StateChange {
                 "story_created" => ChangeKind::StoryCreated,
                 "story_updated" => ChangeKind::StoryUpdated,
                 "story_status_changed" => ChangeKind::StoryStatusChanged,
+                "story_deleted" => ChangeKind::StoryDeleted,
                 "task_created" => ChangeKind::TaskCreated,
                 "task_updated" => ChangeKind::TaskUpdated,
                 "task_status_changed" => ChangeKind::TaskStatusChanged,
+                "task_deleted" => ChangeKind::TaskDeleted,
                 "task_artifact_added" => ChangeKind::TaskArtifactAdded,
                 _ => ChangeKind::StoryUpdated,
             },

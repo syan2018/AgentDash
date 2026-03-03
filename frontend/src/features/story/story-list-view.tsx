@@ -40,7 +40,7 @@ interface CreateStoryDrawerProps {
 }
 
 function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryDrawerProps) {
-  const { createStory, error, updateStory } = useStoryStore();
+  const { createStory, error } = useStoryStore();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<StoryPriority>("p2");
@@ -59,25 +59,23 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
       return;
     }
 
-    const created = await createStory(
-      projectId,
-      backendId,
-      trimmedTitle,
-      description.trim() || undefined,
-    );
-    if (!created) return;
-
-    // 创建成功后更新优先级、类型和标签
     const parsedTags = tags
       .split(",")
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
-    await updateStory(created.id, {
-      priority,
-      story_type: storyType,
-      tags: parsedTags,
-    });
+    const created = await createStory(
+      projectId,
+      backendId,
+      trimmedTitle,
+      description.trim() || undefined,
+      {
+        priority,
+        story_type: storyType,
+        tags: parsedTags,
+      },
+    );
+    if (!created) return;
 
     setTitle("");
     setDescription("");

@@ -2,7 +2,8 @@ use sqlx::SqlitePool;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::{
-    ChangeKind, StateChange, Story, StoryContext, StoryRepository, StoryStatus,
+    ChangeKind, StateChange, Story, StoryContext, StoryPriority, StoryRepository, StoryStatus,
+    StoryType,
 };
 
 pub struct SqliteStoryRepository {
@@ -24,6 +25,10 @@ impl SqliteStoryRepository {
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'created',
+                priority TEXT NOT NULL DEFAULT 'p2',
+                story_type TEXT NOT NULL DEFAULT 'feature',
+                tags TEXT NOT NULL DEFAULT '[]',
+                task_count INTEGER NOT NULL DEFAULT 0,
                 context TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -48,6 +53,46 @@ impl SqliteStoryRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        self.add_story_column_if_missing("priority TEXT NOT NULL DEFAULT 'p2'")
+            .await?;
+        self.add_story_column_if_missing("story_type TEXT NOT NULL DEFAULT 'feature'")
+            .await?;
+        self.add_story_column_if_missing("tags TEXT NOT NULL DEFAULT '[]'")
+            .await?;
+        self.add_story_column_if_missing("task_count INTEGER NOT NULL DEFAULT 0")
+            .await?;
+
+        Ok(())
+    }
+
+    async fn add_story_column_if_missing(&self, ddl: &str) -> Result<(), DomainError> {
+        let statement = format!("ALTER TABLE stories ADD COLUMN {ddl}");
+        if let Err(err) = sqlx::query(&statement).execute(&self.pool).await {
+            let is_duplicate = err
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("duplicate column name");
+            if !is_duplicate {
+                return Err(DomainError::InvalidConfig(err.to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn reconcile_task_counts(&self) -> Result<(), DomainError> {
+        sqlx::query(
+            r#"
+            UPDATE stories
+            SET task_count = (
+              SELECT COUNT(*)
+              FROM tasks
+              WHERE tasks.story_id = stories.id
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(())
     }
 
@@ -86,8 +131,8 @@ impl StoryRepository for SqliteStoryRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         sqlx::query(
-            "INSERT INTO stories (id, project_id, backend_id, title, description, status, context, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO stories (id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(story.id.to_string())
         .bind(story.project_id.to_string())
@@ -95,6 +140,10 @@ impl StoryRepository for SqliteStoryRepository {
         .bind(&story.title)
         .bind(&story.description)
         .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.tags)?)
+        .bind(story.task_count as i64)
         .bind(serde_json::to_string(&story.context)?)
         .bind(story.created_at.to_rfc3339())
         .bind(story.updated_at.to_rfc3339())
@@ -119,7 +168,7 @@ impl StoryRepository for SqliteStoryRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Story>, DomainError> {
         let row = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, backend_id, title, description, status, context, created_at, updated_at
+            "SELECT id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
              FROM stories WHERE id = ?",
         )
         .bind(id.to_string())
@@ -132,7 +181,7 @@ impl StoryRepository for SqliteStoryRepository {
 
     async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError> {
         let rows = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, backend_id, title, description, status, context, created_at, updated_at
+            "SELECT id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
              FROM stories WHERE backend_id = ? ORDER BY created_at DESC",
         )
         .bind(backend_id)
@@ -145,7 +194,7 @@ impl StoryRepository for SqliteStoryRepository {
 
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Story>, DomainError> {
         let rows = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, backend_id, title, description, status, context, created_at, updated_at
+            "SELECT id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
              FROM stories WHERE project_id = ? ORDER BY created_at DESC",
         )
         .bind(project_id.to_string())
@@ -164,7 +213,7 @@ impl StoryRepository for SqliteStoryRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let result = sqlx::query(
-            "UPDATE stories SET project_id = ?, backend_id = ?, title = ?, description = ?, status = ?, context = ?, updated_at = ?
+            "UPDATE stories SET project_id = ?, backend_id = ?, title = ?, description = ?, status = ?, priority = ?, story_type = ?, tags = ?, task_count = ?, context = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(story.project_id.to_string())
@@ -172,6 +221,10 @@ impl StoryRepository for SqliteStoryRepository {
         .bind(&story.title)
         .bind(&story.description)
         .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
+        .bind(serde_json::to_string(&story.tags)?)
+        .bind(story.task_count as i64)
         .bind(serde_json::to_string(&story.context)?)
         .bind(chrono::Utc::now().to_rfc3339())
         .bind(story.id.to_string())
@@ -277,6 +330,10 @@ struct StoryRow {
     title: String,
     description: String,
     status: String,
+    priority: String,
+    story_type: String,
+    tags: String,
+    task_count: i64,
     context: String,
     created_at: String,
     updated_at: String,
@@ -292,6 +349,7 @@ impl TryFrom<StoryRow> for Story {
         })?;
 
         let context: StoryContext = serde_json::from_str(&row.context).unwrap_or_default();
+        let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
 
         Ok(Story {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
@@ -309,8 +367,28 @@ impl TryFrom<StoryRow> for Story {
                 "executing" => StoryStatus::Executing,
                 "completed" => StoryStatus::Completed,
                 "failed" => StoryStatus::Failed,
+                "cancelled" => StoryStatus::Cancelled,
+                "canceled" => StoryStatus::Cancelled,
                 _ => StoryStatus::Created,
             },
+            priority: match row.priority.as_str() {
+                "p0" => StoryPriority::P0,
+                "p1" => StoryPriority::P1,
+                "p2" => StoryPriority::P2,
+                "p3" => StoryPriority::P3,
+                _ => StoryPriority::P2,
+            },
+            story_type: match row.story_type.as_str() {
+                "feature" => StoryType::Feature,
+                "bugfix" => StoryType::Bugfix,
+                "refactor" => StoryType::Refactor,
+                "docs" => StoryType::Docs,
+                "test" => StoryType::Test,
+                "other" => StoryType::Other,
+                _ => StoryType::Feature,
+            },
+            tags,
+            task_count: row.task_count.max(0) as u32,
             context,
             created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))

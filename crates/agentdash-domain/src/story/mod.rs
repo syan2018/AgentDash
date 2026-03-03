@@ -4,4 +4,6 @@ mod value_objects;
 
 pub use entity::Story;
 pub use repository::StoryRepository;
-pub use value_objects::{ChangeKind, Resource, StateChange, StoryContext, StoryStatus};
+pub use value_objects::{
+    ChangeKind, Resource, StateChange, StoryContext, StoryPriority, StoryStatus, StoryType,
+};

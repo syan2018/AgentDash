@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{StoryContext, StoryStatus};
+use super::value_objects::{StoryContext, StoryPriority, StoryStatus, StoryType};
 
 /// Story — 用户价值单元
 ///
@@ -18,6 +18,11 @@ pub struct Story {
     pub title: String,
     pub description: String,
     pub status: StoryStatus,
+    pub priority: StoryPriority,
+    pub story_type: StoryType,
+    pub tags: Vec<String>,
+    /// Story 聚合信息：当前关联 Task 数量
+    pub task_count: u32,
     /// 结构化设计上下文
     pub context: StoryContext,
     pub created_at: DateTime<Utc>,
@@ -34,6 +39,10 @@ impl Story {
             title,
             description,
             status: StoryStatus::Created,
+            priority: StoryPriority::default(),
+            story_type: StoryType::default(),
+            tags: vec![],
+            task_count: 0,
             context: StoryContext::default(),
             created_at: now,
             updated_at: now,

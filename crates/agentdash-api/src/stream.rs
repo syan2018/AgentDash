@@ -27,24 +27,35 @@ pub async fn event_stream(
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let resume_from = parse_last_event_id(&headers);
-    tracing::info!(last_event_id = resume_from, "全局事件流连接建立（SSE）");
+    tracing::info!(
+        last_event_id = ?resume_from,
+        has_resume_cursor = resume_from.is_some(),
+        "全局事件流连接建立（SSE）"
+    );
 
     let stream = async_stream::stream! {
-        let mut cursor = resume_from;
+        let mut cursor = match resume_from {
+            Some(value) => value,
+            None => state.story_repo.latest_event_id().await.unwrap_or(0),
+        };
         let mut replayed = 0usize;
 
-        match load_state_changes_since(&state, cursor).await {
-            Ok(changes) => {
-                for change in changes {
-                    cursor = change.id;
-                    replayed += 1;
-                    if let Some(event) = build_sse_event(&StreamEvent::StateChanged(change), Some(cursor)) {
-                        yield Ok(event);
+        if resume_from.is_some() {
+            match load_state_changes_since(&state, cursor).await {
+                Ok(changes) => {
+                    for change in changes {
+                        cursor = change.id;
+                        replayed += 1;
+                        if let Some(event) =
+                            build_sse_event(&StreamEvent::StateChanged(change), Some(cursor))
+                        {
+                            yield Ok(event);
+                        }
                     }
                 }
-            }
-            Err(err) => {
-                tracing::error!(error = %err, "全局事件流补发失败");
+                Err(err) => {
+                    tracing::error!(error = %err, "全局事件流补发失败");
+                }
             }
         }
 
@@ -106,24 +117,33 @@ pub async fn event_stream_ndjson(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     let resume_from = parse_last_event_id(&headers);
-    tracing::info!(last_event_id = resume_from, "全局事件流连接建立（NDJSON）");
+    tracing::info!(
+        last_event_id = ?resume_from,
+        has_resume_cursor = resume_from.is_some(),
+        "全局事件流连接建立（NDJSON）"
+    );
 
     let stream = async_stream::stream! {
-        let mut cursor = resume_from;
+        let mut cursor = match resume_from {
+            Some(value) => value,
+            None => state.story_repo.latest_event_id().await.unwrap_or(0),
+        };
         let mut replayed = 0usize;
 
-        match load_state_changes_since(&state, cursor).await {
-            Ok(changes) => {
-                for change in changes {
-                    cursor = change.id;
-                    replayed += 1;
-                    if let Some(line) = to_ndjson_line(&StreamEvent::StateChanged(change)) {
-                        yield Ok::<Bytes, std::convert::Infallible>(line);
+        if resume_from.is_some() {
+            match load_state_changes_since(&state, cursor).await {
+                Ok(changes) => {
+                    for change in changes {
+                        cursor = change.id;
+                        replayed += 1;
+                        if let Some(line) = to_ndjson_line(&StreamEvent::StateChanged(change)) {
+                            yield Ok::<Bytes, std::convert::Infallible>(line);
+                        }
                     }
                 }
-            }
-            Err(err) => {
-                tracing::error!(error = %err, "NDJSON 事件流补发失败");
+                Err(err) => {
+                    tracing::error!(error = %err, "NDJSON 事件流补发失败");
+                }
             }
         }
 
@@ -192,13 +212,12 @@ pub async fn get_events_since(
     Ok(Json(changes))
 }
 
-fn parse_last_event_id(headers: &HeaderMap) -> i64 {
+fn parse_last_event_id(headers: &HeaderMap) -> Option<i64> {
     headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<i64>().ok())
         .map(|value| value.max(0))
-        .unwrap_or(0)
 }
 
 fn build_sse_event(event: &StreamEvent, id: Option<i64>) -> Option<Event> {

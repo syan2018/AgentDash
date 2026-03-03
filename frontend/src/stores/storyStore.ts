@@ -35,6 +35,11 @@ interface StoryState {
     backendId: string,
     title: string,
     description?: string,
+    options?: {
+      priority?: Story["priority"];
+      story_type?: Story["story_type"];
+      tags?: string[];
+    },
   ) => Promise<Story | null>;
   updateStory: (
     storyId: string,
@@ -43,6 +48,9 @@ interface StoryState {
       description?: string;
       backend_id?: string;
       status?: Story["status"];
+      priority?: Story["priority"];
+      story_type?: Story["story_type"];
+      tags?: string[];
     },
   ) => Promise<Story | null>;
   deleteStory: (storyId: string) => Promise<void>;
@@ -101,6 +109,7 @@ const normalizeStoryStatus = (value: string): Story['status'] => {
     case 'failed':
       return 'failed';
     case 'cancelled':
+    case 'canceled':
       return 'cancelled';
     default:
       return 'draft';
@@ -149,7 +158,7 @@ const toBackendStoryStatus = (status: Story["status"]): string => {
     case "review":
       return "decomposed";
     case "cancelled":
-      return "failed";
+      return "cancelled";
     default:
       return "created";
   }
@@ -237,6 +246,7 @@ const mapStory = (raw: Record<string, unknown>): Story => {
     priority: normalizeStoryPriority(String(raw.priority ?? 'p2')),
     story_type: normalizeStoryType(String(raw.story_type ?? 'feature')),
     tags: Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === 'string') : [],
+    task_count: Number.isFinite(Number(raw.task_count ?? 0)) ? Number(raw.task_count ?? 0) : 0,
     context,
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
@@ -302,6 +312,19 @@ const upsertTaskInMap = (
   return next;
 };
 
+const upsertStoryInList = (stories: Story[], story: Story): Story[] => {
+  const existingIndex = stories.findIndex((item) => item.id === story.id);
+  if (existingIndex >= 0) {
+    const nextStories = [...stories];
+    nextStories[existingIndex] = story;
+    return nextStories;
+  }
+  return [story, ...stories];
+};
+
+const storyRefreshInFlight = new Set<string>();
+const taskRefreshInFlight = new Set<string>();
+
 const mapTask = (raw: Record<string, unknown>): Task => {
   return {
     id: String(raw.id ?? ''),
@@ -321,6 +344,26 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
   };
+};
+
+const canMapStoryFromPayload = (payload: Record<string, unknown>): boolean => {
+  return (
+    typeof payload.id === 'string' &&
+    typeof payload.title === 'string' &&
+    typeof payload.project_id === 'string' &&
+    typeof payload.backend_id === 'string' &&
+    typeof payload.status === 'string' &&
+    payload.task_count !== undefined
+  );
+};
+
+const canMapTaskFromPayload = (payload: Record<string, unknown>): boolean => {
+  return (
+    typeof payload.id === 'string' &&
+    typeof payload.title === 'string' &&
+    typeof payload.story_id === 'string' &&
+    typeof payload.status === 'string'
+  );
 };
 
 export const useStoryStore = create<StoryState>((set) => ({
@@ -357,15 +400,7 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}`);
       const story = mapStory(raw);
-      set((s) => {
-        const existingIndex = s.stories.findIndex((item) => item.id === story.id);
-        if (existingIndex >= 0) {
-          const nextStories = [...s.stories];
-          nextStories[existingIndex] = story;
-          return { stories: nextStories };
-        }
-        return { stories: [story, ...s.stories] };
-      });
+      set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
       return story;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -373,16 +408,19 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
-  createStory: async (projectId, backendId, title, description) => {
+  createStory: async (projectId, backendId, title, description, options) => {
     try {
       const raw = await api.post<Record<string, unknown>>('/stories', {
         project_id: projectId,
         backend_id: backendId,
         title,
         description,
+        priority: options?.priority,
+        story_type: options?.story_type,
+        tags: options?.tags,
       });
       const story = mapStory(raw);
-      set((s) => ({ stories: [story, ...s.stories] }));
+      set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
       return story;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -400,9 +438,7 @@ export const useStoryStore = create<StoryState>((set) => ({
       }
       const raw = await api.put<Record<string, unknown>>(`/stories/${storyId}`, requestPayload);
       const story = mapStory(raw);
-      set((s) => ({
-        stories: s.stories.map((item) => (item.id === storyId ? story : item)),
-      }));
+      set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
       return story;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -569,27 +605,50 @@ export const useStoryStore = create<StoryState>((set) => ({
 
   handleStateChange: (change: StateChange) => {
     const entityId = change.entity_id;
-    const payload = change.payload as Record<string, unknown>;
+    const payload = (change.payload && typeof change.payload === 'object'
+      ? change.payload
+      : {}) as Record<string, unknown>;
+
+    const refreshStoryById = (storyId: string) => {
+      if (storyRefreshInFlight.has(storyId)) return;
+      storyRefreshInFlight.add(storyId);
+      api
+        .get<Record<string, unknown>>(`/stories/${storyId}`)
+        .then((raw) => {
+          const story = mapStory(raw);
+          set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
+        })
+        .catch(() => {})
+        .finally(() => {
+          storyRefreshInFlight.delete(storyId);
+        });
+    };
+
+    const refreshTaskById = (taskId: string) => {
+      if (taskRefreshInFlight.has(taskId)) return;
+      taskRefreshInFlight.add(taskId);
+      api
+        .get<Record<string, unknown>>(`/tasks/${taskId}`)
+        .then((raw) => {
+          const task = mapTask(raw);
+          set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
+        })
+        .catch(() => {})
+        .finally(() => {
+          taskRefreshInFlight.delete(taskId);
+        });
+    };
 
     switch (change.kind) {
       case 'story_created':
       case 'story_updated':
       case 'story_status_changed': {
-        api
-          .get<Record<string, unknown>>(`/stories/${entityId}`)
-          .then((raw) => {
-            const story = mapStory(raw);
-            set((s) => {
-              const idx = s.stories.findIndex((item) => item.id === story.id);
-              if (idx >= 0) {
-                const next = [...s.stories];
-                next[idx] = story;
-                return { stories: next };
-              }
-              return { stories: [story, ...s.stories] };
-            });
-          })
-          .catch(() => {});
+        if (canMapStoryFromPayload(payload)) {
+          const story = mapStory(payload);
+          set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
+          break;
+        }
+        refreshStoryById(entityId);
         break;
       }
       case 'story_deleted': {
@@ -609,13 +668,12 @@ export const useStoryStore = create<StoryState>((set) => ({
       case 'task_updated':
       case 'task_status_changed':
       case 'task_artifact_added': {
-        api
-          .get<Record<string, unknown>>(`/tasks/${entityId}`)
-          .then((raw) => {
-            const task = mapTask(raw);
-            set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-          })
-          .catch(() => {});
+        if (canMapTaskFromPayload(payload)) {
+          const task = mapTask(payload);
+          set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
+          break;
+        }
+        refreshTaskById(entityId);
         break;
       }
       case 'task_deleted': {

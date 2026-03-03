@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_domain::story::{ChangeKind, Story, StoryStatus};
+use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, StoryType};
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
 use crate::app_state::AppState;
@@ -23,6 +23,9 @@ pub struct CreateStoryRequest {
     pub backend_id: String,
     pub title: String,
     pub description: Option<String>,
+    pub priority: Option<StoryPriority>,
+    pub story_type: Option<StoryType>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -31,6 +34,9 @@ pub struct UpdateStoryRequest {
     pub description: Option<String>,
     pub backend_id: Option<String>,
     pub status: Option<StoryStatus>,
+    pub priority: Option<StoryPriority>,
+    pub story_type: Option<StoryType>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -86,15 +92,34 @@ pub async fn create_story(
 ) -> Result<Json<Story>, ApiError> {
     let project_id = Uuid::parse_str(&req.project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    let title = req.title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest("Story 标题不能为空".into()));
+    }
+    let backend_id = req.backend_id.trim();
+    if backend_id.is_empty() {
+        return Err(ApiError::BadRequest("backend_id 不能为空".into()));
+    }
 
     let story = Story::new(
         project_id,
-        req.backend_id,
-        req.title,
+        backend_id.to_string(),
+        title.to_string(),
         req.description.unwrap_or_default(),
     );
-    state.story_repo.create(&story).await?;
-    Ok(Json(story))
+    let mut next_story = story;
+    if let Some(priority) = req.priority {
+        next_story.priority = priority;
+    }
+    if let Some(story_type) = req.story_type {
+        next_story.story_type = story_type;
+    }
+    if let Some(tags) = req.tags {
+        next_story.tags = normalize_tags(tags);
+    }
+
+    state.story_repo.create(&next_story).await?;
+    Ok(Json(next_story))
 }
 
 pub async fn get_story(
@@ -146,6 +171,15 @@ pub async fn update_story(
     }
     if let Some(status) = req.status {
         story.status = status;
+    }
+    if let Some(priority) = req.priority {
+        story.priority = priority;
+    }
+    if let Some(story_type) = req.story_type {
+        story.story_type = story_type;
+    }
+    if let Some(tags) = req.tags {
+        story.tags = normalize_tags(tags);
     }
 
     state.story_repo.update(&story).await?;
@@ -295,19 +329,10 @@ pub async fn create_task(
     task.workspace_id = workspace_id;
     task.agent_binding = agent_binding;
 
-    state.task_repo.create(&task).await?;
-
-    let backend_id = story.backend_id.clone();
     state
-        .story_repo
-        .append_change(
-            task.id,
-            ChangeKind::TaskCreated,
-            serde_json::to_value(&task).unwrap_or_default(),
-            &backend_id,
-        )
-        .await
-        .ok();
+        .sqlite_task_repo
+        .create_task_with_story_update(&task)
+        .await?;
 
     Ok(Json(task))
 }
@@ -417,35 +442,10 @@ pub async fn delete_task(
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
 
-    let task = state
-        .task_repo
-        .get_by_id(task_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
-
-    let backend_id = state
-        .story_repo
-        .get_by_id(task.story_id)
-        .await?
-        .map(|s| s.backend_id.clone())
-        .unwrap_or_default();
-
-    state.task_repo.delete(task_id).await?;
-
     state
-        .story_repo
-        .append_change(
-            task_id,
-            ChangeKind::TaskDeleted,
-            serde_json::json!({
-                "task_id": task_id,
-                "story_id": task.story_id,
-                "reason": "task_deleted_by_user"
-            }),
-            &backend_id,
-        )
-        .await
-        .ok();
+        .sqlite_task_repo
+        .delete_task_with_story_update(task_id)
+        .await?;
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -459,6 +459,13 @@ fn normalize_option(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    tags.into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 fn to_agent_binding(input: Option<CreateTaskAgentBindingRequest>) -> AgentBinding {

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Story 状态枚举
-/// 生命周期: Created → ContextReady → Decomposed → Executing → Completed/Failed
+/// 生命周期: Created → ContextReady → Decomposed → Executing → Completed/Failed/Cancelled
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StoryStatus {
@@ -13,6 +13,31 @@ pub enum StoryStatus {
     Executing,
     Completed,
     Failed,
+    Cancelled,
+}
+
+/// Story 优先级枚举
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StoryPriority {
+    P0,
+    P1,
+    #[default]
+    P2,
+    P3,
+}
+
+/// Story 类型枚举
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StoryType {
+    #[default]
+    Feature,
+    Bugfix,
+    Refactor,
+    Docs,
+    Test,
+    Other,
 }
 
 /// 结构化 Story 上下文

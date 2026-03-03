@@ -9,11 +9,7 @@ use crate::story::StateChange;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum StreamEvent {
-    Connected {
-        last_event_id: i64,
-    },
+    Connected { last_event_id: i64 },
     StateChanged(StateChange),
-    Heartbeat {
-        timestamp: i64,
-    },
+    Heartbeat { timestamp: i64 },
 }

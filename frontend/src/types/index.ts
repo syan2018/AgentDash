@@ -93,6 +93,7 @@ export interface Story {
   priority: StoryPriority;
   story_type: StoryType;
   tags: string[];
+  task_count: number;
   context: StoryContext;
   created_at: string;
   updated_at: string;

@@ -24,6 +24,7 @@ pub struct AppState {
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
+    pub sqlite_task_repo: Arc<SqliteTaskRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub executor_hub: ExecutorHub,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
@@ -56,6 +57,10 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        story_repo
+            .reconcile_task_counts()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let backend_repo = Arc::new(SqliteBackendRepository::new(pool));
         backend_repo
@@ -83,7 +88,8 @@ impl AppState {
             project_repo,
             workspace_repo,
             story_repo,
-            task_repo,
+            task_repo: task_repo.clone(),
+            sqlite_task_repo: task_repo,
             backend_repo,
             executor_hub,
             connector,

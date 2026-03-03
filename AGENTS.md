@@ -28,7 +28,3 @@ Keep this managed block so 'trellis update' can refresh the instructions.
 
 
 ## 问题说明
-
-1. `before-backend-dev` skill 中建议读取 `.trellis/spec/backend/type-safety.md`，但当前仓库没有这个文件（会报 `No such file or directory`）。
-   - 实际可读取的后端规范文件以 `.trellis/spec/backend/index.md` 中现有条目为准。
-   - 建议后续补齐该文件，或更新 skill 文案避免误导。

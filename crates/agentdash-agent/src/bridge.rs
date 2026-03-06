@@ -1,25 +1,43 @@
-/// LLM 桥接层 — Runtime 与 LLM 提供方之间的隔离层
+/// LLM 桥接层 — Streaming-first 架构
 ///
-/// 设计参考 pi-mono/packages/ai 的 streaming-first 架构：
-/// - pi-mono: Provider → stream() → AssistantMessageEventStream
-/// - 本模块: RigBridge → complete() 内部用 stream() → 收集完整响应
+/// 设计参考 pi-mono/packages/ai：
+/// - 所有 LLM 调用默认走 streaming
+/// - `StreamChunk` 对应 pi-mono 的 `AssistantMessageEvent`
+/// - `complete()` 通过消费 `stream_complete()` 实现
 ///
-/// Rig 的 CompletionModel 提供 completion() (同步) 和 stream() (流式) 两种 API，
-/// 许多 OpenAI 兼容端点仅支持流式响应，因此 RigBridge 统一使用 stream() 实现。
+/// Rig 的 `CompletionModel` 提供 `stream()` API，内部通过 channel 将
+/// Rig 的 `StreamedAssistantContent` → 我们的 `StreamChunk` 逐个推送。
+use std::pin::Pin;
+
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use rig::completion::message::AssistantContent;
-use rig::completion::{CompletionModel, CompletionRequest, Usage};
 use rig::completion::request::GetTokenUsage;
+use rig::completion::{CompletionModel, CompletionRequest, Usage};
 use rig::OneOrMany;
+use rig::streaming::{StreamedAssistantContent, ToolCallDeltaContent};
 use thiserror::Error;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::convert::{assistant_from_llm_content, default_convert_to_llm};
 use crate::types::AgentMessage;
 
+// ─── 流式 Chunk 类型 ────────────────────────────────────────
+
+/// LLM 流式输出的 chunk 单元（对标 pi-mono `AssistantMessageEvent`）
+#[derive(Debug, Clone)]
+pub enum StreamChunk {
+    TextDelta(String),
+    ToolCallStart { id: String, name: String },
+    ToolCallInputDelta { id: String, delta: String },
+    ToolCallEnd { id: String },
+    /// 流结束，附带聚合后的完整响应
+    Done(BridgeResponse),
+    Error(BridgeError),
+}
+
 // ─── Bridge 协议 ────────────────────────────────────────────
 
-/// 桥接请求
 #[derive(Debug, Clone)]
 pub struct BridgeRequest {
     pub system_prompt: Option<String>,
@@ -29,7 +47,6 @@ pub struct BridgeRequest {
     pub max_tokens: Option<u64>,
 }
 
-/// 桥接响应
 #[derive(Debug, Clone)]
 pub struct BridgeResponse {
     pub message: AgentMessage,
@@ -37,7 +54,7 @@ pub struct BridgeResponse {
     pub usage: Usage,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum BridgeError {
     #[error("LLM 调用失败: {0}")]
     CompletionFailed(String),
@@ -47,18 +64,42 @@ pub enum BridgeError {
     RequestBuildFailed(String),
 }
 
-/// LLM 桥接层 trait — 对象安全，支持 `Arc<dyn LlmBridge>` 使用
+/// LLM 桥接层 trait
 #[async_trait]
 pub trait LlmBridge: Send + Sync {
-    async fn complete(&self, request: BridgeRequest) -> Result<BridgeResponse, BridgeError>;
+    /// 流式补全 — 返回 StreamChunk 流，最后一个 chunk 为 Done 或 Error
+    async fn stream_complete(
+        &self,
+        request: BridgeRequest,
+    ) -> Pin<Box<dyn Stream<Item = StreamChunk> + Send>>;
+
+    /// 收集式补全 — 消费完整流后返回聚合响应（默认实现）
+    async fn complete(&self, request: BridgeRequest) -> Result<BridgeResponse, BridgeError> {
+        let mut stream = self.stream_complete(request).await;
+        let mut result: Option<BridgeResponse> = None;
+        let mut last_error: Option<BridgeError> = None;
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                StreamChunk::Done(resp) => {
+                    result = Some(resp);
+                }
+                StreamChunk::Error(e) => {
+                    last_error = Some(e);
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(err) = last_error {
+            return Err(err);
+        }
+        result.ok_or(BridgeError::EmptyResponse)
+    }
 }
 
 // ─── Rig 实现 ───────────────────────────────────────────────
 
-/// 基于 Rig CompletionModel 的桥接实现
-///
-/// 内部使用 Rig 的 streaming API 消费 LLM 响应（兼容仅支持流式的端点），
-/// 消费完毕后从聚合结果中提取完整的 assistant 内容和 token usage。
 pub struct RigBridge<M: CompletionModel> {
     model: M,
 }
@@ -69,12 +110,10 @@ impl<M: CompletionModel> RigBridge<M> {
     }
 }
 
-/// 构建 Rig CompletionRequest（从 BridgeRequest 转换）
 fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, BridgeError> {
     let llm_messages = default_convert_to_llm(&request.messages);
 
-    // 某些 OpenAI 兼容端点不支持 system role 消息，
-    // 将 system prompt 作为首条 user 消息注入以保证兼容性。
+    // 某些 OpenAI 兼容端点不支持 system role，以 user 消息注入
     let mut full_messages = Vec::new();
     if let Some(ref sp) = request.system_prompt {
         if !sp.is_empty() {
@@ -112,40 +151,99 @@ where
     M: CompletionModel + Send + Sync + 'static,
     M::Response: Send + Sync,
 {
-    async fn complete(&self, request: BridgeRequest) -> Result<BridgeResponse, BridgeError> {
-        let rig_request = build_rig_request(&request)?;
-
-        // 使用 Rig 的 streaming API：兼容仅支持流式的端点
-        let mut stream = self
-            .model
-            .stream(rig_request)
-            .await
-            .map_err(|e| BridgeError::CompletionFailed(e.to_string()))?;
-
-        // 消费所有 chunk，Rig 内部会自动聚合到 stream.choice
-        while let Some(chunk) = stream.next().await {
-            if let Err(e) = chunk {
-                return Err(BridgeError::CompletionFailed(e.to_string()));
+    async fn stream_complete(
+        &self,
+        request: BridgeRequest,
+    ) -> Pin<Box<dyn Stream<Item = StreamChunk> + Send>> {
+        let rig_request = match build_rig_request(&request) {
+            Ok(r) => r,
+            Err(e) => {
+                let (tx, rx) = tokio::sync::mpsc::channel(1);
+                let _ = tx.send(StreamChunk::Error(e)).await;
+                return Box::pin(ReceiverStream::new(rx));
             }
-        }
+        };
 
-        let raw_content: Vec<AssistantContent> = stream.choice.into_iter().collect();
-        if raw_content.is_empty() {
-            return Err(BridgeError::EmptyResponse);
-        }
+        let mut rig_stream = match self.model.stream(rig_request).await {
+            Ok(s) => s,
+            Err(e) => {
+                let (tx, rx) = tokio::sync::mpsc::channel(1);
+                let _ = tx
+                    .send(StreamChunk::Error(BridgeError::CompletionFailed(
+                        e.to_string(),
+                    )))
+                    .await;
+                return Box::pin(ReceiverStream::new(rx));
+            }
+        };
 
-        let message = assistant_from_llm_content(&raw_content);
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamChunk>(64);
 
-        let usage = stream
-            .response
-            .and_then(|r| r.token_usage())
-            .unwrap_or_default();
+        tokio::spawn(async move {
+            while let Some(chunk) = rig_stream.next().await {
+                let sc = match chunk {
+                    Ok(StreamedAssistantContent::Text(t)) => StreamChunk::TextDelta(t.text),
+                    Ok(StreamedAssistantContent::ToolCall {
+                        tool_call,
+                        internal_call_id: _,
+                    }) => StreamChunk::ToolCallEnd {
+                        id: tool_call.id.clone(),
+                    },
+                    Ok(StreamedAssistantContent::ToolCallDelta {
+                        id,
+                        content,
+                        internal_call_id: _,
+                    }) => match content {
+                        ToolCallDeltaContent::Name(name) => {
+                            StreamChunk::ToolCallStart { id, name }
+                        }
+                        ToolCallDeltaContent::Delta(delta) => {
+                            StreamChunk::ToolCallInputDelta { id, delta }
+                        }
+                    },
+                    Ok(StreamedAssistantContent::Final(_)) => continue,
+                    Ok(StreamedAssistantContent::Reasoning(_)) => continue,
+                    Ok(StreamedAssistantContent::ReasoningDelta { .. }) => continue,
+                    Err(e) => {
+                        let _ = tx
+                            .send(StreamChunk::Error(BridgeError::CompletionFailed(
+                                e.to_string(),
+                            )))
+                            .await;
+                        return;
+                    }
+                };
+                if tx.send(sc).await.is_err() {
+                    return;
+                }
+            }
 
-        Ok(BridgeResponse {
-            message,
-            raw_content,
-            usage,
-        })
+            // Rig 的 StreamingCompletionResponse 在 Stream 结束时自动聚合 choice
+            let raw_content: Vec<AssistantContent> =
+                rig_stream.choice.clone().into_iter().collect();
+
+            if raw_content.is_empty() {
+                let _ = tx.send(StreamChunk::Error(BridgeError::EmptyResponse)).await;
+                return;
+            }
+
+            let message = assistant_from_llm_content(&raw_content);
+            let usage = rig_stream
+                .response
+                .as_ref()
+                .and_then(|r| r.token_usage())
+                .unwrap_or_default();
+
+            let _ = tx
+                .send(StreamChunk::Done(BridgeResponse {
+                    message,
+                    raw_content,
+                    usage,
+                }))
+                .await;
+        });
+
+        Box::pin(ReceiverStream::new(rx))
     }
 }
 

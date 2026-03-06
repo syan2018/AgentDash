@@ -96,12 +96,12 @@ export function ExecutorSelector({
       </button>
     </div>
   ) : discoveredError ? (
-    <div className="flex items-center gap-2 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-      <span>无法加载模型/模式选项: {discoveredError.message}</span>
+    <div className="flex items-center gap-2 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+      <span className="truncate">模型选项加载失败，可手动输入</span>
       <button
         type="button"
         onClick={onDiscoveredReconnect}
-        className="rounded-[8px] border border-destructive/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-destructive/10"
+        className="shrink-0 rounded-[8px] border border-amber-500/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-amber-500/10"
       >
         重试
       </button>

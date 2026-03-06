@@ -13,10 +13,11 @@
 ///    g. 若无 tool_calls → 检查 follow-up 队列 → 决定是否继续外循环
 ///    h. 发出 `turn_end`
 /// 4. 发出 `agent_end`
+use futures::StreamExt;
 use rig::completion::ToolDefinition;
 use tokio_util::sync::CancellationToken;
 
-use crate::bridge::{BridgeRequest, LlmBridge};
+use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
 use crate::event_stream::EventSender;
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AgentToolResult, ContentPart, DynAgentTool,
@@ -107,7 +108,34 @@ async fn run_loop(
 
         events.send(AgentEvent::MessageStart);
 
-        let response = bridge.complete(request).await?;
+        // 流式调用 LLM — 逐 chunk 发送 MessageDelta，最终聚合完整响应
+        let mut stream = bridge.stream_complete(request).await;
+        let mut response = None;
+        let mut stream_error = None;
+
+        while let Some(chunk) = stream.next().await {
+            if cancel.is_cancelled() {
+                return Err(AgentError::Cancelled);
+            }
+            match chunk {
+                StreamChunk::TextDelta(text) if !text.is_empty() => {
+                    events.send(AgentEvent::MessageDelta { text });
+                }
+                StreamChunk::Done(resp) => {
+                    response = Some(resp);
+                }
+                StreamChunk::Error(e) => {
+                    stream_error = Some(e);
+                }
+                _ => {}
+            }
+        }
+        drop(stream);
+
+        if let Some(e) = stream_error {
+            return Err(e.into());
+        }
+        let response = response.ok_or(crate::bridge::BridgeError::EmptyResponse)?;
         let assistant_message = response.message.clone();
 
         events.send(AgentEvent::MessageEnd {

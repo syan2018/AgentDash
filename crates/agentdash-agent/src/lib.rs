@@ -6,7 +6,7 @@ pub mod event_stream;
 pub mod types;
 
 pub use agent::{Agent, AgentConfig};
-pub use bridge::{BridgeRequest, BridgeResponse, LlmBridge, RigBridge};
+pub use bridge::{BridgeError, BridgeRequest, BridgeResponse, LlmBridge, RigBridge, StreamChunk};
 pub use event_stream::{EventReceiver, EventSender, event_channel};
 pub use types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool, AgentToolError, AgentToolResult,

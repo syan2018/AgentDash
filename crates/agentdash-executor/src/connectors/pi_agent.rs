@@ -33,6 +33,7 @@ pub struct PiAgentConnector {
     bridge: Arc<dyn LlmBridge>,
     tools: Vec<DynAgentTool>,
     system_prompt: String,
+    model_id: String,
     agents: Arc<Mutex<HashMap<String, Agent>>>,
 }
 
@@ -41,12 +42,14 @@ impl PiAgentConnector {
         workspace_root: PathBuf,
         bridge: Arc<dyn LlmBridge>,
         system_prompt: impl Into<String>,
+        model_id: impl Into<String>,
     ) -> Self {
         Self {
             workspace_root,
             bridge,
             tools: Vec::new(),
             system_prompt: system_prompt.into(),
+            model_id: model_id.into(),
             agents: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -80,7 +83,7 @@ impl AgentConnector for PiAgentConnector {
     fn capabilities(&self) -> ConnectorCapabilities {
         ConnectorCapabilities {
             supports_cancel: true,
-            supports_discovery: false,
+            supports_discovery: true,
             supports_variants: false,
             supports_model_override: false,
             supports_permission_policy: false,
@@ -102,9 +105,18 @@ impl AgentConnector for PiAgentConnector {
         _variant: Option<&str>,
         _working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
-        Err(ConnectorError::Runtime(
-            "Pi Agent 不支持 discover_options".to_string(),
-        ))
+        let model_id = self.model_id.clone();
+
+        let patch: json_patch::Patch = serde_json::from_value(serde_json::json!([
+            { "op": "replace", "path": "/options/model_selector/providers", "value": [{ "id": "openai", "name": "OpenAI Compatible" }] },
+            { "op": "replace", "path": "/options/model_selector/models", "value": [{ "id": model_id, "name": model_id, "provider_id": "openai", "reasoning_options": [] }] },
+            { "op": "replace", "path": "/options/model_selector/default_model", "value": model_id },
+            { "op": "replace", "path": "/options/loading_models", "value": false },
+            { "op": "replace", "path": "/options/loading_agents", "value": false },
+            { "op": "replace", "path": "/options/loading_slash_commands", "value": false }
+        ])).expect("static patch must be valid");
+
+        Ok(Box::pin(futures::stream::once(async move { patch })))
     }
 
     async fn prompt(
@@ -217,30 +229,29 @@ fn convert_event_to_notifications(
     entry_index: &mut u32,
 ) -> Vec<SessionNotification> {
     match event {
-        AgentEvent::MessageEnd { message } => {
-            if let AgentMessage::Assistant { content, .. } = message {
-                let text = content
-                    .iter()
-                    .filter_map(|p| p.extract_text())
-                    .collect::<Vec<_>>()
-                    .join("");
-
-                if text.is_empty() {
-                    return Vec::new();
-                }
-
-                let meta = make_meta(source, turn_id, *entry_index);
-                *entry_index += 1;
-
-                let chunk =
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(&text))).meta(Some(meta));
-                vec![SessionNotification::new(
-                    session_id.clone(),
-                    SessionUpdate::AgentMessageChunk(chunk),
-                )]
-            } else {
-                Vec::new()
+        AgentEvent::MessageDelta { text } => {
+            if text.is_empty() {
+                return Vec::new();
             }
+            let meta = make_meta(source, turn_id, *entry_index);
+            let chunk =
+                ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+            vec![SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::AgentMessageChunk(chunk),
+            )]
+        }
+
+        AgentEvent::MessageEnd { message } => {
+            // MessageEnd 时不再发送全量文本（已通过 MessageDelta 增量推送），
+            // 仅递增 entry_index 用于后续条目排序
+            if let AgentMessage::Assistant { content, .. } = message {
+                let has_text = content.iter().any(|p| p.extract_text().is_some());
+                if has_text {
+                    *entry_index += 1;
+                }
+            }
+            Vec::new()
         }
 
         AgentEvent::ToolExecutionStart {

@@ -183,13 +183,15 @@ async fn build_pi_agent_connector(
         let client = rig::providers::anthropic::Client::new(&api_key)
             .inspect_err(|e| tracing::warn!("Anthropic Client 初始化失败: {e}"))
             .ok()?;
-        let model = client.completion_model(rig::providers::anthropic::completion::CLAUDE_4_SONNET);
+        let anthropic_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET;
+        let model = client.completion_model(anthropic_model);
         let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
 
         let connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
             workspace_root.to_path_buf(),
             bridge,
             system_prompt,
+            anthropic_model,
         );
         tracing::info!("PiAgentConnector 已初始化（Anthropic）");
         return Some(connector);
@@ -236,6 +238,7 @@ async fn build_pi_agent_connector(
         workspace_root.to_path_buf(),
         bridge,
         system_prompt,
+        &model_id,
     );
     tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");
     Some(connector)

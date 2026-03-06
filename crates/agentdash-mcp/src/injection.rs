@@ -11,6 +11,7 @@
 //! | Story 编排 | StoryMcpServer | 上下文管理、Task 创建、状态推进 |
 //! | 全局代理 | RelayMcpServer | 项目管理、Story CRUD |
 
+use agent_client_protocol::{McpServer, McpServerHttp};
 use uuid::Uuid;
 
 use crate::scope::ToolScope;
@@ -113,33 +114,9 @@ impl McpInjectionConfig {
         )
     }
 
-    /// 生成注入到 Agent 执行环境的环境变量
-    pub fn to_env_vars(&self) -> Vec<(String, String)> {
-        let mut vars = vec![
-            ("AGENTDASH_MCP_URL".to_string(), self.endpoint_url()),
-            (
-                "AGENTDASH_MCP_SCOPE".to_string(),
-                match self.scope {
-                    ToolScope::Relay => "relay",
-                    ToolScope::Story => "story",
-                    ToolScope::Task => "task",
-                }
-                .to_string(),
-            ),
-            (
-                "AGENTDASH_PROJECT_ID".to_string(),
-                self.project_id.to_string(),
-            ),
-        ];
-
-        if let Some(story_id) = self.story_id {
-            vars.push(("AGENTDASH_STORY_ID".to_string(), story_id.to_string()));
-        }
-        if let Some(task_id) = self.task_id {
-            vars.push(("AGENTDASH_TASK_ID".to_string(), task_id.to_string()));
-        }
-
-        vars
+    /// 产出 ACP 协议标准的 `McpServer` — 用于 `session/new` 的 per-session 工具注入
+    pub fn to_acp_mcp_server(&self) -> McpServer {
+        McpServer::Http(McpServerHttp::new(self.server_name(), self.endpoint_url()))
     }
 }
 
@@ -201,18 +178,18 @@ mod tests {
     }
 
     #[test]
-    fn env_vars_contain_all_ids() {
-        let project_id = Uuid::new_v4();
-        let story_id = Uuid::new_v4();
+    fn to_acp_mcp_server_produces_http_variant() {
         let task_id = Uuid::new_v4();
-
-        let config =
-            McpInjectionConfig::for_task("http://localhost:3001", project_id, story_id, task_id);
-        let vars: std::collections::HashMap<_, _> = config.to_env_vars().into_iter().collect();
-
-        assert!(vars.contains_key("AGENTDASH_MCP_URL"));
-        assert_eq!(vars["AGENTDASH_PROJECT_ID"], project_id.to_string());
-        assert_eq!(vars["AGENTDASH_STORY_ID"], story_id.to_string());
-        assert_eq!(vars["AGENTDASH_TASK_ID"], task_id.to_string());
+        let config = McpInjectionConfig::for_task(
+            "http://localhost:3001",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            task_id,
+        );
+        let server = config.to_acp_mcp_server();
+        let json = serde_json::to_value(&server).unwrap();
+        assert_eq!(json["type"], "http");
+        assert!(json["url"].as_str().unwrap().contains("/mcp/task/"));
+        assert!(json["name"].as_str().unwrap().starts_with("agentdash-task-tools-"));
     }
 }

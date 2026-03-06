@@ -1,6 +1,8 @@
 use std::{collections::HashMap, path::PathBuf, pin::Pin};
 
-use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, SessionNotification};
+use agent_client_protocol::{
+    ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
+};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
@@ -44,6 +46,8 @@ pub struct ExecutionContext {
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: executors::profile::ExecutorConfig,
+    /// ACP 协议 per-session MCP Server 列表，由 Connector 负责传递给 Agent
+    pub mcp_servers: Vec<McpServer>,
 }
 
 #[derive(Debug, Clone)]

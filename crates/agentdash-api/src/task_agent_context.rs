@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use agent_client_protocol::McpServer;
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
 use agentdash_mcp::injection::McpInjectionConfig;
 use serde_json::{Value, json};
@@ -30,12 +31,28 @@ pub struct ContextFragment {
     pub content: String,
 }
 
+/// Contributor 的结构化产出 — 同时包含上下文片段和 ACP MCP Server 声明
+pub struct Contribution {
+    pub context_fragments: Vec<ContextFragment>,
+    /// ACP 协议 McpServer 列表，将作为 per-session 工具注入
+    pub mcp_servers: Vec<McpServer>,
+}
+
+impl Contribution {
+    pub fn fragments_only(fragments: Vec<ContextFragment>) -> Self {
+        Self {
+            context_fragments: fragments,
+            mcp_servers: vec![],
+        }
+    }
+}
+
 /// 上下文贡献者 — 所有上下文来源实现此 trait
 ///
 /// 通过 Contributor 模式，新的上下文来源只需实现此 trait 并注册到构建流程，
 /// 无需修改核心构建逻辑。
 pub trait ContextContributor: Send {
-    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment>;
+    fn contribute(&self, input: &ContributorInput<'_>) -> Contribution;
 }
 
 /// 贡献者输入 — 传递给每个 Contributor 的共享上下文
@@ -139,16 +156,8 @@ pub struct BuiltTaskAgentContext {
     pub prompt_blocks: Vec<Value>,
     pub working_dir: Option<String>,
     pub source_summary: Vec<String>,
-    /// MCP 服务端点列表（Agent 应连接的 MCP Server）
-    pub mcp_endpoints: Vec<McpEndpointInfo>,
-}
-
-/// MCP 端点信息 — 描述一个 Agent 可连接的 MCP Server
-#[derive(Debug, Clone)]
-pub struct McpEndpointInfo {
-    pub name: String,
-    pub url: String,
-    pub scope: String,
+    /// ACP 协议 McpServer 列表 — 由 Connector 通过 `session/new` 传递给 Agent
+    pub mcp_servers: Vec<McpServer>,
 }
 
 // ─── 内置 Contributor 实现 ──────────────────────────────────
@@ -157,7 +166,7 @@ pub struct McpEndpointInfo {
 struct CoreContextContributor;
 
 impl ContextContributor for CoreContextContributor {
-    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Contribution {
         let mut fragments = Vec::new();
 
         fragments.push(ContextFragment {
@@ -268,7 +277,7 @@ impl ContextContributor for CoreContextContributor {
             });
         }
 
-        fragments
+        Contribution::fragments_only(fragments)
     }
 }
 
@@ -276,7 +285,7 @@ impl ContextContributor for CoreContextContributor {
 struct BindingContextContributor;
 
 impl ContextContributor for BindingContextContributor {
-    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Contribution {
         let mut fragments = Vec::new();
 
         if let Some(initial_context) =
@@ -291,7 +300,7 @@ impl ContextContributor for BindingContextContributor {
             });
         }
 
-        fragments
+        Contribution::fragments_only(fragments)
     }
 }
 
@@ -299,7 +308,7 @@ impl ContextContributor for BindingContextContributor {
 struct InstructionContributor;
 
 impl ContextContributor for InstructionContributor {
-    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Contribution {
         let mut fragments = Vec::new();
 
         let workspace_path = input
@@ -337,11 +346,11 @@ impl ContextContributor for InstructionContributor {
             }
         }
 
-        fragments
+        Contribution::fragments_only(fragments)
     }
 }
 
-/// MCP 能力注入 Contributor — 将 MCP Server 端点信息注入到 Agent 上下文
+/// MCP 能力注入 Contributor — 通过 ACP 协议类型声明 MCP Server，并在上下文中附加简要说明
 pub struct McpContextContributor {
     pub config: McpInjectionConfig,
 }
@@ -353,19 +362,23 @@ impl McpContextContributor {
 }
 
 impl ContextContributor for McpContextContributor {
-    fn contribute(&self, _input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+    fn contribute(&self, _input: &ContributorInput<'_>) -> Contribution {
         let label: &'static str = match self.config.scope {
             agentdash_mcp::scope::ToolScope::Relay => "mcp_relay_tools",
             agentdash_mcp::scope::ToolScope::Story => "mcp_story_tools",
             agentdash_mcp::scope::ToolScope::Task => "mcp_task_tools",
         };
-        vec![ContextFragment {
-            slot: "mcp_config",
-            label,
-            order: 85,
-            strategy: MergeStrategy::Append,
-            content: self.config.to_context_content(),
-        }]
+
+        Contribution {
+            context_fragments: vec![ContextFragment {
+                slot: "mcp_config",
+                label,
+                order: 85,
+                strategy: MergeStrategy::Append,
+                content: self.config.to_context_content(),
+            }],
+            mcp_servers: vec![self.config.to_acp_mcp_server()],
+        }
     }
 }
 
@@ -426,18 +439,16 @@ pub fn build_task_agent_context(
 
     let mut context_composer = ContextComposer::default();
     let mut instruction_composer = ContextComposer::default();
-    let mut mcp_endpoints = Vec::new();
+    let mut mcp_servers: Vec<McpServer> = Vec::new();
 
     for contributor in all_contributors {
-        for fragment in contributor.contribute(&contributor_input) {
+        let contribution = contributor.contribute(&contributor_input);
+
+        mcp_servers.extend(contribution.mcp_servers);
+
+        for fragment in contribution.context_fragments {
             match fragment.slot {
                 "instruction" => instruction_composer.push_fragment(fragment),
-                "mcp_config" => {
-                    if let Some(endpoint) = parse_mcp_endpoint_from_content(&fragment.content) {
-                        mcp_endpoints.push(endpoint);
-                    }
-                    context_composer.push_fragment(fragment);
-                }
                 _ => context_composer.push_fragment(fragment),
             }
         }
@@ -477,32 +488,11 @@ pub fn build_task_agent_context(
         prompt_blocks,
         working_dir,
         source_summary,
-        mcp_endpoints,
+        mcp_servers,
     })
 }
 
 // ─── 辅助函数 ────────────────────────────────────────────────
-
-fn parse_mcp_endpoint_from_content(content: &str) -> Option<McpEndpointInfo> {
-    let mut name = None;
-    let mut url = None;
-    let mut scope = None;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(n) = trimmed.strip_prefix("## MCP: ") {
-            name = Some(n.to_string());
-        } else if let Some(u) = trimmed.strip_prefix("- url: ") {
-            url = Some(u.to_string());
-        } else if let Some(s) = trimmed.strip_prefix("- scope: ") {
-            scope = Some(s.to_string());
-        }
-    }
-    Some(McpEndpointInfo {
-        name: name?,
-        url: url?,
-        scope: scope.unwrap_or_else(|| "unknown".to_string()),
-    })
-}
 
 fn build_task_context_resource_block(
     task_id: String,
@@ -624,14 +614,14 @@ mod tests {
     }
 
     impl ContextContributor for TestContributor {
-        fn contribute(&self, _input: &ContributorInput<'_>) -> Vec<ContextFragment> {
-            vec![ContextFragment {
+        fn contribute(&self, _input: &ContributorInput<'_>) -> Contribution {
+            Contribution::fragments_only(vec![ContextFragment {
                 slot: self.slot,
                 label: self.label,
                 order: self.order,
                 strategy: MergeStrategy::Append,
                 content: self.content.clone(),
-            }]
+            }])
         }
     }
 
@@ -672,22 +662,14 @@ mod tests {
                 .any(|s| s.contains("mcp_task_tools")),
             "source_summary 应包含 MCP 贡献者标签"
         );
-        assert_eq!(result.mcp_endpoints.len(), 1);
-        assert_eq!(result.mcp_endpoints[0].name, "agentdash-task-tools");
-        assert_eq!(result.mcp_endpoints[0].scope, "task");
+        assert!(
+            result.mcp_servers.is_empty(),
+            "TestContributor 不产出 McpServer，mcp_servers 应为空"
+        );
     }
 
     #[test]
-    fn parse_mcp_endpoint_from_content_works() {
-        let content = "## MCP: my-server\n- url: http://localhost:3001/mcp/task/123\n- scope: task\n描述文本";
-        let endpoint = parse_mcp_endpoint_from_content(content).unwrap();
-        assert_eq!(endpoint.name, "my-server");
-        assert_eq!(endpoint.url, "http://localhost:3001/mcp/task/123");
-        assert_eq!(endpoint.scope, "task");
-    }
-
-    #[test]
-    fn mcp_context_contributor_produces_valid_fragment() {
+    fn mcp_context_contributor_produces_acp_mcp_server_and_fragment() {
         let config = McpInjectionConfig::for_task(
             "http://localhost:3001",
             uuid::Uuid::new_v4(),
@@ -710,12 +692,16 @@ mod tests {
             additional_prompt: None,
         };
 
-        let fragments = contributor.contribute(&input);
-        assert_eq!(fragments.len(), 1);
-        assert_eq!(fragments[0].slot, "mcp_config");
-        assert_eq!(fragments[0].label, "mcp_task_tools");
-        assert!(fragments[0].content.contains("## MCP: "));
-        assert!(fragments[0].content.contains("- url: http://localhost:3001/mcp/task/"));
-        assert!(fragments[0].content.contains("- scope: task"));
+        let contribution = contributor.contribute(&input);
+
+        assert_eq!(contribution.context_fragments.len(), 1);
+        assert_eq!(contribution.context_fragments[0].slot, "mcp_config");
+        assert_eq!(contribution.context_fragments[0].label, "mcp_task_tools");
+        assert!(contribution.context_fragments[0].content.contains("## MCP: "));
+
+        assert_eq!(contribution.mcp_servers.len(), 1, "应产出 1 个 ACP McpServer");
+        let server_json = serde_json::to_value(&contribution.mcp_servers[0]).unwrap();
+        assert_eq!(server_json["type"], "http");
+        assert!(server_json["url"].as_str().unwrap().contains("/mcp/task/"));
     }
 }

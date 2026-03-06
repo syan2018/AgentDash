@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use agent_client_protocol::{
     Meta, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate, ToolCall,
@@ -102,7 +102,6 @@ impl TaskExecutionGateway<executors::profile::ExecutorConfig> for AppStateTaskEx
             .map_err(map_internal_error)?;
 
         let mut extra_contributors: Vec<Box<dyn ContextContributor>> = Vec::new();
-        let mut mcp_injection: Option<McpInjectionConfig> = None;
 
         if let Some(base_url) = &self.state.mcp_base_url {
             let config = McpInjectionConfig::for_task(
@@ -111,7 +110,6 @@ impl TaskExecutionGateway<executors::profile::ExecutorConfig> for AppStateTaskEx
                 task.story_id,
                 task.id,
             );
-            mcp_injection = Some(config.clone());
             extra_contributors.push(Box::new(McpContextContributor::new(config)));
         }
 
@@ -135,20 +133,14 @@ impl TaskExecutionGateway<executors::profile::ExecutorConfig> for AppStateTaskEx
             .as_deref()
             .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
 
-        let mut env = HashMap::new();
-        if let Some(mcp_config) = &mcp_injection {
-            for (key, value) in mcp_config.to_env_vars() {
-                env.insert(key, value);
-            }
-        }
-
         let prompt_req = PromptSessionRequest {
             prompt: None,
             prompt_blocks: Some(built.prompt_blocks),
             working_dir: built.working_dir,
-            env,
+            env: Default::default(),
             executor_config: resolve_task_executor_config(executor_config, task, &project)
                 .map_err(map_internal_error)?,
+            mcp_servers: built.mcp_servers,
         };
 
         let turn_id = self

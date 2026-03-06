@@ -17,6 +17,8 @@ use agentdash_acp_meta::{
     parse_agentdash_meta,
 };
 
+use agent_client_protocol::McpServer;
+
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,6 +34,9 @@ pub struct PromptSessionRequest {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub executor_config: Option<executors::profile::ExecutorConfig>,
+    /// ACP per-session MCP Server 列表（不走 serde — 仅由后端代码填充）
+    #[serde(skip)]
+    pub mcp_servers: Vec<McpServer>,
 }
 
 #[derive(Debug, Clone)]
@@ -432,6 +437,7 @@ impl ExecutorHub {
             working_directory,
             environment_variables: req.env,
             executor_config,
+            mcp_servers: req.mcp_servers,
         };
 
         let title_hint = resolved_payload
@@ -751,6 +757,7 @@ mod tests {
             working_dir: None,
             env: std::collections::HashMap::new(),
             executor_config: None,
+            mcp_servers: vec![],
         };
 
         let payload = req
@@ -780,6 +787,7 @@ mod tests {
             working_dir: None,
             env: std::collections::HashMap::new(),
             executor_config: None,
+            mcp_servers: vec![],
         };
 
         let payload = req

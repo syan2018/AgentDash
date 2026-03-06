@@ -90,11 +90,11 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Agent 类型</label>
+          <label className="agentdash-form-label">Agent 类型</label>
           <select
             value={value.agent_type ?? ""}
             onChange={(event) => updateBinding({ agent_type: event.target.value || null })}
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-select"
           >
             <option value="">
               {isLoading ? "加载 Agent 类型中..." : "使用项目默认 / 预设推导"}
@@ -108,11 +108,11 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Agent 预设</label>
+          <label className="agentdash-form-label">Agent 预设</label>
           <select
             value={value.preset_name ?? ""}
             onChange={(event) => handlePresetChange(event.target.value)}
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-select"
           >
             <option value="">不使用预设</option>
             {presets.map((preset) => (
@@ -125,24 +125,24 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
       </div>
 
       <div>
-        <label className="mb-1 block text-xs text-muted-foreground">Prompt 模板</label>
+        <label className="agentdash-form-label">Prompt 模板</label>
         <textarea
           value={value.prompt_template ?? ""}
           onChange={(event) => updateBinding({ prompt_template: event.target.value || null })}
           rows={3}
           placeholder="留空则使用系统默认模板"
-          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+          className="agentdash-form-textarea"
         />
       </div>
 
       <div>
-        <label className="mb-1 block text-xs text-muted-foreground">Initial Context</label>
+        <label className="agentdash-form-label">Initial Context</label>
         <textarea
           value={value.initial_context ?? ""}
           onChange={(event) => updateBinding({ initial_context: event.target.value || null })}
           rows={3}
           placeholder="可补充执行前置约束、上下文说明"
-          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+          className="agentdash-form-textarea"
         />
       </div>
 

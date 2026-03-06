@@ -14,6 +14,7 @@ use agentdash_application::task_execution::{
 };
 use agentdash_domain::{
     project::Project,
+    session_binding::{SessionBinding, SessionOwnerType},
     story::{ChangeKind, Story},
     task::{Artifact, ArtifactType, Task, TaskStatus},
     workspace::Workspace,
@@ -133,6 +134,29 @@ impl TaskExecutionGateway<executors::profile::ExecutorConfig> for AppStateTaskEx
             turn_id,
             context_sources: built.source_summary,
         })
+    }
+
+    async fn bind_session_to_owner(
+        &self,
+        session_id: &str,
+        owner_type: &str,
+        owner_id: Uuid,
+        label: &str,
+    ) -> Result<(), TaskExecutionError> {
+        let owner_type = SessionOwnerType::from_str_loose(owner_type).ok_or_else(|| {
+            TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
+        })?;
+        let binding = SessionBinding::new(
+            session_id.to_string(),
+            owner_type,
+            owner_id,
+            label,
+        );
+        self.state
+            .session_binding_repo
+            .create(&binding)
+            .await
+            .map_err(map_domain_error)
     }
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {

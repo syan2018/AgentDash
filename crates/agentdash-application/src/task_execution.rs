@@ -105,6 +105,13 @@ pub trait TaskExecutionGateway<C>: Send + Sync {
         additional_prompt: Option<&str>,
         executor_config: Option<C>,
     ) -> Result<StartedTurn, TaskExecutionError>;
+    async fn bind_session_to_owner(
+        &self,
+        session_id: &str,
+        owner_type: &str,
+        owner_id: Uuid,
+        label: &str,
+    ) -> Result<(), TaskExecutionError>;
     async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError>;
     async fn get_session_overview(
         &self,
@@ -150,6 +157,18 @@ pub async fn start_task<C, G: TaskExecutionGateway<C>>(
     task.executor_session_id = None;
     task.status = TaskStatus::Running;
     gateway.update_task(&task).await?;
+
+    if let Err(err) = gateway
+        .bind_session_to_owner(&session_id, "task", task.id, "execution")
+        .await
+    {
+        tracing::warn!(
+            task_id = %task.id,
+            session_id = %session_id,
+            "写入 session_binding 失败（不阻塞执行流）: {}",
+            err
+        );
+    }
 
     gateway
         .append_task_change(

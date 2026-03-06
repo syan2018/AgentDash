@@ -15,6 +15,7 @@ use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_executor::{PromptSessionRequest, SessionMeta};
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
@@ -24,9 +25,42 @@ pub struct NdjsonStreamQuery {
     pub since_id: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ListSessionsQuery {
+    pub owner_type: Option<String>,
+    pub owner_id: Option<String>,
+}
+
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
+    if let (Some(owner_type_str), Some(owner_id_str)) = (&query.owner_type, &query.owner_id) {
+        let owner_type = SessionOwnerType::from_str_loose(owner_type_str)
+            .ok_or_else(|| ApiError::BadRequest(format!("无效的 owner_type: {owner_type_str}")))?;
+        let owner_id: uuid::Uuid = owner_id_str
+            .parse()
+            .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id_str}")))?;
+
+        let bindings = state
+            .session_binding_repo
+            .list_by_owner(owner_type, owner_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        let mut sessions = Vec::with_capacity(bindings.len());
+        for binding in &bindings {
+            if let Ok(Some(meta)) = state
+                .executor_hub
+                .get_session_meta(&binding.session_id)
+                .await
+            {
+                sessions.push(meta);
+            }
+        }
+        return Ok(Json(sessions));
+    }
+
     let sessions = state
         .executor_hub
         .list_sessions()

@@ -6,14 +6,15 @@ use sqlx::SqlitePool;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
 use agentdash_executor::{AgentConnector, ExecutorHub};
 use agentdash_infrastructure::{
-    SqliteBackendRepository, SqliteProjectRepository, SqliteStoryRepository, SqliteTaskRepository,
-    SqliteWorkspaceRepository,
+    SqliteBackendRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
+    SqliteStoryRepository, SqliteTaskRepository, SqliteWorkspaceRepository,
 };
 
 /// 全局应用状态
@@ -25,6 +26,7 @@ pub struct AppState {
     pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
     pub sqlite_task_repo: Arc<SqliteTaskRepository>,
+    pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub executor_hub: ExecutorHub,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
@@ -62,6 +64,12 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+        let session_binding_repo = Arc::new(SqliteSessionBindingRepository::new(pool.clone()));
+        session_binding_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let backend_repo = Arc::new(SqliteBackendRepository::new(pool));
         backend_repo
             .initialize()
@@ -90,6 +98,7 @@ impl AppState {
             story_repo,
             task_repo: task_repo.clone(),
             sqlite_task_repo: task_repo,
+            session_binding_repo,
             backend_repo,
             executor_hub,
             connector,

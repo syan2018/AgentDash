@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Story, Task, StoryContext, AgentBinding, StateChange } from '../types';
+import type { Story, Task, StoryContext, AgentBinding, StateChange, SessionBinding } from '../types';
 import { api } from '../api/client';
 
 export interface CreateTaskInput {
@@ -19,9 +19,16 @@ export interface TaskSessionInfo {
   last_activity: number | null;
 }
 
+export interface CreateStorySessionInput {
+  session_id?: string;
+  title?: string;
+  label?: string;
+}
+
 interface StoryState {
   stories: Story[];
   tasksByStoryId: Record<string, Task[]>;
+  sessionsByStoryId: Record<string, SessionBinding[]>;
   selectedStoryId: string | null;
   selectedTaskId: string | null;
   isLoading: boolean;
@@ -86,6 +93,9 @@ interface StoryState {
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
   fetchTasks: (storyId: string) => Promise<void>;
+  fetchStorySessions: (storyId: string) => Promise<void>;
+  createStorySession: (storyId: string, input: CreateStorySessionInput) => Promise<SessionBinding | null>;
+  unbindStorySession: (storyId: string, bindingId: string) => Promise<void>;
   handleStateChange: (change: StateChange) => void;
 }
 
@@ -322,6 +332,21 @@ const upsertStoryInList = (stories: Story[], story: Story): Story[] => {
   return [story, ...stories];
 };
 
+const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
+  id: String(raw.id ?? ''),
+  session_id: String(raw.sessionId ?? raw.session_id ?? ''),
+  owner_type: (raw.ownerType ?? raw.owner_type ?? 'story') as SessionBinding['owner_type'],
+  owner_id: String(raw.ownerId ?? raw.owner_id ?? ''),
+  label: String(raw.label ?? ''),
+  created_at: String(raw.createdAt ?? raw.created_at ?? new Date().toISOString()),
+  session_title: raw.sessionTitle != null || raw.session_title != null
+    ? String(raw.sessionTitle ?? raw.session_title)
+    : undefined,
+  session_updated_at: raw.sessionUpdatedAt != null || raw.session_updated_at != null
+    ? Number(raw.sessionUpdatedAt ?? raw.session_updated_at)
+    : undefined,
+});
+
 const storyRefreshInFlight = new Set<string>();
 const taskRefreshInFlight = new Set<string>();
 
@@ -369,6 +394,7 @@ const canMapTaskFromPayload = (payload: Record<string, unknown>): boolean => {
 export const useStoryStore = create<StoryState>((set) => ({
   stories: [],
   tasksByStoryId: {},
+  sessionsByStoryId: {},
   selectedStoryId: null,
   selectedTaskId: null,
   isLoading: false,
@@ -452,9 +478,12 @@ export const useStoryStore = create<StoryState>((set) => ({
       set((s) => {
         const nextTasks = { ...s.tasksByStoryId };
         delete nextTasks[storyId];
+        const nextSessions = { ...s.sessionsByStoryId };
+        delete nextSessions[storyId];
         return {
           stories: s.stories.filter((story) => story.id !== storyId),
           tasksByStoryId: nextTasks,
+          sessionsByStoryId: nextSessions,
           selectedStoryId: s.selectedStoryId === storyId ? null : s.selectedStoryId,
         };
       });
@@ -603,6 +632,55 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
+  fetchStorySessions: async (storyId) => {
+    try {
+      const response = await api.get<Record<string, unknown>[]>(`/stories/${storyId}/sessions`);
+      const bindings = response.map(mapSessionBinding);
+      set((s) => ({
+        sessionsByStoryId: { ...s.sessionsByStoryId, [storyId]: bindings },
+      }));
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
+  },
+
+  createStorySession: async (storyId, input) => {
+    try {
+      const raw = await api.post<Record<string, unknown>>(`/stories/${storyId}/sessions`, input);
+      const binding = mapSessionBinding(raw);
+      set((s) => {
+        const existing = s.sessionsByStoryId[storyId] ?? [];
+        return {
+          sessionsByStoryId: {
+            ...s.sessionsByStoryId,
+            [storyId]: [...existing, binding],
+          },
+        };
+      });
+      return binding;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  unbindStorySession: async (storyId, bindingId) => {
+    try {
+      await api.delete(`/stories/${storyId}/sessions/${bindingId}`);
+      set((s) => {
+        const existing = s.sessionsByStoryId[storyId] ?? [];
+        return {
+          sessionsByStoryId: {
+            ...s.sessionsByStoryId,
+            [storyId]: existing.filter((b) => b.id !== bindingId),
+          },
+        };
+      });
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
+  },
+
   handleStateChange: (change: StateChange) => {
     const entityId = change.entity_id;
     const payload = (change.payload && typeof change.payload === 'object'
@@ -655,9 +733,12 @@ export const useStoryStore = create<StoryState>((set) => ({
         set((s) => {
           const nextTasks = { ...s.tasksByStoryId };
           delete nextTasks[entityId];
+          const nextSessions = { ...s.sessionsByStoryId };
+          delete nextSessions[entityId];
           return {
             stories: s.stories.filter((item) => item.id !== entityId),
             tasksByStoryId: nextTasks,
+            sessionsByStoryId: nextSessions,
             selectedStoryId:
               s.selectedStoryId === entityId ? null : s.selectedStoryId,
           };

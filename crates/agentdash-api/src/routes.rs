@@ -5,6 +5,7 @@ pub mod discovery;
 pub mod health;
 pub mod projects;
 pub mod stories;
+pub mod story_sessions;
 pub mod task_execution;
 pub mod workspace_files;
 pub mod workspaces;
@@ -65,6 +66,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(stories::get_story)
                 .put(stories::update_story)
                 .delete(stories::delete_story),
+        )
+        .route(
+            "/stories/{id}/sessions",
+            get(story_sessions::list_story_sessions)
+                .post(story_sessions::create_story_session),
+        )
+        .route(
+            "/stories/{id}/sessions/{binding_id}",
+            axum::routing::delete(story_sessions::unbind_story_session),
         )
         .route(
             "/stories/{id}/tasks",

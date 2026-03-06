@@ -124,6 +124,21 @@ export interface Task {
   updated_at: string;
 }
 
+// ─── SessionBinding ─────────────────────────────────
+
+export type SessionOwnerType = "story" | "task";
+
+export interface SessionBinding {
+  id: string;
+  session_id: string;
+  owner_type: SessionOwnerType;
+  owner_id: string;
+  label: string;
+  created_at: string;
+  session_title?: string;
+  session_updated_at?: number;
+}
+
 export interface SessionTaskContext {
   task_id: string;
   agent_binding?: AgentBinding;

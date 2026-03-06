@@ -34,10 +34,13 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
                 content.iter().filter_map(content_part_to_assistant).collect();
 
             for tc in tool_calls {
-                parts.push(AssistantContent::ToolCall(ToolCall::new(
-                    tc.id.clone(),
-                    ToolFunction::new(tc.name.clone(), tc.arguments.clone()),
-                )));
+                parts.push(AssistantContent::ToolCall(
+                    ToolCall::new(
+                        tc.id.clone(),
+                        ToolFunction::new(tc.name.clone(), tc.arguments.clone()),
+                    )
+                    .with_call_id(tc.id.clone()),
+                ));
             }
 
             if parts.is_empty() {
@@ -62,7 +65,7 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
             Some(Message::User {
                 content: OneOrMany::one(UserContent::ToolResult(ToolResult {
                     id: tool_call_id.clone(),
-                    call_id: None,
+                    call_id: Some(tool_call_id.clone()),
                     content: OneOrMany::one(ToolResultContent::text(text)),
                 })),
             })

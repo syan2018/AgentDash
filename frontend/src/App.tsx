@@ -21,6 +21,11 @@ const SessionPage = lazy(async () => {
   return { default: module.SessionPage };
 });
 
+const SettingsPage = lazy(async () => {
+  const module = await import("./pages/SettingsPage");
+  return { default: module.SettingsPage };
+});
+
 function RouteFallback() {
   return (
     <div className="flex h-full items-center justify-center">
@@ -50,7 +55,9 @@ function AppContent() {
 
   const activeView: WorkspaceView = location.pathname.startsWith("/session")
     ? "session"
-    : "dashboard";
+    : location.pathname.startsWith("/settings")
+      ? "settings"
+      : "dashboard";
 
   useEffect(() => {
     void fetchBackends();
@@ -81,6 +88,8 @@ function AppContent() {
     (view: WorkspaceView) => {
       if (view === "dashboard") {
         navigate("/");
+      } else if (view === "settings") {
+        navigate("/settings");
       } else {
         navigate("/session");
       }
@@ -96,6 +105,7 @@ function AppContent() {
           <Route path="/story/:storyId" element={<StoryPage />} />
           <Route path="/session" element={<SessionPage />} />
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

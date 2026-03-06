@@ -4,6 +4,7 @@ pub mod discovered_options;
 pub mod discovery;
 pub mod health;
 pub mod projects;
+pub mod settings;
 pub mod stories;
 pub mod story_sessions;
 pub mod task_execution;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
 };
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -99,6 +100,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/backends/{id}",
             get(backends::get_backend).delete(backends::remove_backend),
         )
+        // Settings
+        .route(
+            "/settings",
+            get(settings::list_settings).put(settings::update_settings),
+        )
+        .route("/settings/{key}", delete(settings::delete_setting))
         // ACP Sessions — CRUD
         .route(
             "/sessions",

@@ -1,15 +1,21 @@
 /// LLM 桥接层 — Runtime 与 LLM 提供方之间的隔离层
 ///
-/// 设计原则：Agent Runtime 不直接调用 Rig，通过 Bridge trait 隔离。
-/// 这使得运行时可以对接不同的 LLM 后端（Rig、直连 HTTP、Mock 等）。
+/// 设计参考 pi-mono/packages/ai 的 streaming-first 架构：
+/// - pi-mono: Provider → stream() → AssistantMessageEventStream
+/// - 本模块: RigBridge → complete() 内部用 stream() → 收集完整响应
+///
+/// Rig 的 CompletionModel 提供 completion() (同步) 和 stream() (流式) 两种 API，
+/// 许多 OpenAI 兼容端点仅支持流式响应，因此 RigBridge 统一使用 stream() 实现。
 use async_trait::async_trait;
+use futures::StreamExt;
 use rig::completion::message::AssistantContent;
 use rig::completion::{CompletionModel, CompletionRequest, Usage};
+use rig::completion::request::GetTokenUsage;
 use rig::OneOrMany;
 use thiserror::Error;
 
-use crate::types::AgentMessage;
 use crate::convert::{assistant_from_llm_content, default_convert_to_llm};
+use crate::types::AgentMessage;
 
 // ─── Bridge 协议 ────────────────────────────────────────────
 
@@ -26,9 +32,7 @@ pub struct BridgeRequest {
 /// 桥接响应
 #[derive(Debug, Clone)]
 pub struct BridgeResponse {
-    /// 模型返回的 assistant 消息（已转换为 AgentMessage）
     pub message: AgentMessage,
-    /// 原始 AssistantContent 列表（用于判断是否有 tool_calls 等）
     pub raw_content: Vec<AssistantContent>,
     pub usage: Usage,
 }
@@ -53,22 +57,53 @@ pub trait LlmBridge: Send + Sync {
 
 /// 基于 Rig CompletionModel 的桥接实现
 ///
-/// 泛型 `M` 可以是 `rig::providers::anthropic::CompletionModel` 或其他
-/// 实现了 `rig::completion::CompletionModel` trait 的类型。
-pub struct RigBridge<M>
-where
-    M: CompletionModel,
-{
+/// 内部使用 Rig 的 streaming API 消费 LLM 响应（兼容仅支持流式的端点），
+/// 消费完毕后从聚合结果中提取完整的 assistant 内容和 token usage。
+pub struct RigBridge<M: CompletionModel> {
     model: M,
 }
 
-impl<M> RigBridge<M>
-where
-    M: CompletionModel,
-{
+impl<M: CompletionModel> RigBridge<M> {
     pub fn new(model: M) -> Self {
         Self { model }
     }
+}
+
+/// 构建 Rig CompletionRequest（从 BridgeRequest 转换）
+fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, BridgeError> {
+    let llm_messages = default_convert_to_llm(&request.messages);
+
+    // 某些 OpenAI 兼容端点不支持 system role 消息，
+    // 将 system prompt 作为首条 user 消息注入以保证兼容性。
+    let mut full_messages = Vec::new();
+    if let Some(ref sp) = request.system_prompt {
+        if !sp.is_empty() {
+            full_messages.push(rig::completion::Message::user(format!(
+                "[System Instructions]\n{sp}"
+            )));
+        }
+    }
+    full_messages.extend(llm_messages);
+
+    let chat_history = if full_messages.is_empty() {
+        OneOrMany::one(rig::completion::Message::user(""))
+    } else {
+        OneOrMany::many(full_messages)
+            .map_err(|e| BridgeError::RequestBuildFailed(format!("消息列表构建失败: {e}")))?
+    };
+
+    Ok(CompletionRequest {
+        model: None,
+        preamble: None,
+        chat_history,
+        documents: vec![],
+        tools: request.tools.clone(),
+        temperature: request.temperature,
+        max_tokens: request.max_tokens,
+        tool_choice: None,
+        additional_params: None,
+        output_schema: None,
+    })
 }
 
 #[async_trait]
@@ -78,45 +113,38 @@ where
     M::Response: Send + Sync,
 {
     async fn complete(&self, request: BridgeRequest) -> Result<BridgeResponse, BridgeError> {
-        let llm_messages = default_convert_to_llm(&request.messages);
+        let rig_request = build_rig_request(&request)?;
 
-        let chat_history = if llm_messages.is_empty() {
-            OneOrMany::one(rig::completion::Message::user(""))
-        } else {
-            OneOrMany::many(llm_messages)
-                .map_err(|e| BridgeError::RequestBuildFailed(format!("消息列表构建失败: {e}")))?
-        };
-
-        let rig_request = CompletionRequest {
-            model: None,
-            preamble: request.system_prompt,
-            chat_history,
-            documents: vec![],
-            tools: request.tools,
-            temperature: request.temperature,
-            max_tokens: request.max_tokens,
-            tool_choice: None,
-            additional_params: None,
-            output_schema: None,
-        };
-
-        let response = self
+        // 使用 Rig 的 streaming API：兼容仅支持流式的端点
+        let mut stream = self
             .model
-            .completion(rig_request)
+            .stream(rig_request)
             .await
             .map_err(|e| BridgeError::CompletionFailed(e.to_string()))?;
 
-        let raw_content: Vec<AssistantContent> = response.choice.into_iter().collect();
+        // 消费所有 chunk，Rig 内部会自动聚合到 stream.choice
+        while let Some(chunk) = stream.next().await {
+            if let Err(e) = chunk {
+                return Err(BridgeError::CompletionFailed(e.to_string()));
+            }
+        }
+
+        let raw_content: Vec<AssistantContent> = stream.choice.into_iter().collect();
         if raw_content.is_empty() {
             return Err(BridgeError::EmptyResponse);
         }
 
         let message = assistant_from_llm_content(&raw_content);
 
+        let usage = stream
+            .response
+            .and_then(|r| r.token_usage())
+            .unwrap_or_default();
+
         Ok(BridgeResponse {
             message,
             raw_content,
-            usage: response.usage,
+            usage,
         })
     }
 }

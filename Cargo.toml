@@ -8,6 +8,7 @@ members = [
     "crates/agentdash-api",
     "crates/agentdash-acp-meta",
     "crates/agentdash-mcp",
+    "crates/agentdash-agent",
 ]
 exclude = ["third_party"]
 
@@ -51,6 +52,10 @@ agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-executor = { path = "crates/agentdash-executor" }
 agentdash-acp-meta = { path = "crates/agentdash-acp-meta" }
 agentdash-mcp = { path = "crates/agentdash-mcp" }
+agentdash-agent = { path = "crates/agentdash-agent" }
+
+# Rig (LLM Agent SDK)
+rig-core = { path = "third_party/rig/rig/rig-core" }
 
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.9.4", features = ["unstable"] }

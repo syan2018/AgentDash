@@ -70,20 +70,7 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
         const contextCard = isAgentDashTaskContextBlock(content)
           ? <AcpTaskContextCard block={content} />
           : <ContentBlockCard block={content} variant="compact" />;
-        return (
-          <div className="flex gap-3">
-            {/* 头像/图标 */}
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-              <span className="text-xs">👤</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="mb-1 text-xs text-primary font-medium">用户</p>
-              <div className="max-w-md">
-                {contextCard}
-              </div>
-            </div>
-          </div>
-        );
+        return contextCard;
       }
 
       const text = extractTextFromContentBlock(content);
@@ -189,16 +176,18 @@ function AggregatedToolGroupEntry({ group }: { group: AggregatedEntryGroup }) {
   };
 
   return (
-    <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary/35"
       >
-        <span>{getIcon()}</span>
+        <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          {getIcon()}
+        </span>
         <span>{getLabel()}</span>
         <span className="ml-auto text-xs tabular-nums">{entries.length} 个</span>
-        <span className="text-xs">{expanded ? "▲" : "▼"}</span>
+        <span className="text-xs text-muted-foreground/50">{expanded ? "▲" : "▼"}</span>
       </button>
       {expanded && (
         <div className="border-t border-border px-3 py-2 space-y-1.5">
@@ -232,20 +221,22 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
     .join("");
 
   return (
-    <div className="rounded-lg border border-border/50 bg-muted/20 overflow-hidden">
+    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
+        className="flex w-full items-center justify-between px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary/35"
       >
-        <span className="flex items-center gap-2">
-          <span className="text-xs opacity-70">🧠</span>
+        <span className="flex items-center gap-2.5">
+          <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            TH
+          </span>
           <span className="text-xs">思考过程 ({entries.length} 条)</span>
         </span>
-        <span className="text-xs">{expanded ? "收起" : "展开"}</span>
+        <span className="text-xs text-muted-foreground/50">{expanded ? "▲" : "▼"}</span>
       </button>
       {expanded && (
-        <div className="border-t border-border/50 px-3 py-2.5">
+        <div className="border-t border-border px-3 py-2.5">
           <pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground/80 leading-relaxed">
             {combinedContent}
           </pre>
@@ -260,9 +251,11 @@ function AggregatedDiffGroupEntry({ group }: { group: AggregatedEntryGroup }) {
   const { entries } = group;
 
   return (
-    <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2.5 text-sm border-b border-border/50">
-        <span>📝</span>
+    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
+      <div className="flex items-center gap-2.5 px-3 py-2.5 text-sm border-b border-border">
+        <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          EDIT
+        </span>
         <span className="font-mono text-xs">{filePath}</span>
         <span className="ml-auto text-xs text-muted-foreground tabular-nums">
           {entries.length} 次编辑

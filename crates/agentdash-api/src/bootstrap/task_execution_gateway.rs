@@ -46,7 +46,9 @@ impl AppStateTaskExecutionGateway {
 }
 
 #[async_trait]
-impl TaskExecutionGateway<executors::profile::ExecutorConfig> for AppStateTaskExecutionGateway {
+impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
+    for AppStateTaskExecutionGateway
+{
     async fn get_task(&self, task_id: Uuid) -> Result<Task, TaskExecutionError> {
         get_task(&self.state, task_id).await
     }
@@ -95,7 +97,7 @@ impl TaskExecutionGateway<executors::profile::ExecutorConfig> for AppStateTaskEx
         phase: ExecutionPhase,
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
-        executor_config: Option<executors::profile::ExecutorConfig>,
+        executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
     ) -> Result<StartedTurn, TaskExecutionError> {
         let (story, project, workspace) = load_related_context(&self.state, task)
             .await
@@ -237,7 +239,7 @@ pub async fn execute_start_task(
     state: Arc<AppState>,
     task_id: Uuid,
     override_prompt: Option<String>,
-    executor_config: Option<executors::profile::ExecutorConfig>,
+    executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<StartTaskResult, TaskExecutionError> {
     let gateway = AppStateTaskExecutionGateway::new(state);
     agentdash_application::task_execution::start_task(
@@ -255,7 +257,7 @@ pub async fn execute_continue_task(
     state: Arc<AppState>,
     task_id: Uuid,
     additional_prompt: Option<String>,
-    executor_config: Option<executors::profile::ExecutorConfig>,
+    executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<ContinueTaskResult, TaskExecutionError> {
     let gateway = AppStateTaskExecutionGateway::new(state);
     agentdash_application::task_execution::continue_task(
@@ -1018,10 +1020,10 @@ fn map_connector_error(err: ConnectorError) -> TaskExecutionError {
 }
 
 fn resolve_task_executor_config(
-    explicit: Option<executors::profile::ExecutorConfig>,
+    explicit: Option<agentdash_executor::AgentDashExecutorConfig>,
     task: &Task,
     project: &Project,
-) -> Result<Option<executors::profile::ExecutorConfig>, TaskExecutionError> {
+) -> Result<Option<agentdash_executor::AgentDashExecutorConfig>, TaskExecutionError> {
     if explicit.is_some() {
         return Ok(explicit);
     }
@@ -1030,8 +1032,9 @@ fn resolve_task_executor_config(
         return Ok(None);
     };
 
-    let executor = parse_base_agent(&agent_type)?;
-    Ok(Some(executors::profile::ExecutorConfig::new(executor)))
+    Ok(Some(agentdash_executor::AgentDashExecutorConfig::new(
+        agent_type,
+    )))
 }
 
 fn resolve_task_agent_type(
@@ -1057,24 +1060,6 @@ fn resolve_task_agent_type(
     Ok(normalize_option_string(
         project.config.default_agent_type.clone(),
     ))
-}
-
-fn parse_base_agent(
-    raw: &str,
-) -> Result<executors::executors::BaseCodingAgent, TaskExecutionError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(TaskExecutionError::BadRequest("Agent 类型不能为空".into()));
-    }
-
-    if let Ok(executor) = trimmed.parse::<executors::executors::BaseCodingAgent>() {
-        return Ok(executor);
-    }
-
-    let normalized = trimmed.replace('-', "_").to_ascii_uppercase();
-    normalized
-        .parse::<executors::executors::BaseCodingAgent>()
-        .map_err(|_| TaskExecutionError::BadRequest(format!("无效的 Agent 类型: {trimmed}")))
 }
 
 fn normalize_option_string(value: Option<String>) -> Option<String> {

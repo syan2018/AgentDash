@@ -10,6 +10,7 @@ use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workspace::WorkspaceRepository;
+use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
 use agentdash_executor::{AgentConnector, ExecutorHub};
 use agentdash_infrastructure::{
@@ -80,8 +81,17 @@ impl AppState {
         ensure_default_backend(&backend_repo).await?;
 
         let workspace_root = std::env::current_dir()?;
-        let connector: Arc<dyn AgentConnector> =
-            Arc::new(VibeKanbanExecutorsConnector::new(workspace_root.clone()));
+
+        let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
+        sub_connectors.push(Arc::new(VibeKanbanExecutorsConnector::new(
+            workspace_root.clone(),
+        )));
+
+        if let Some(pi_connector) = build_pi_agent_connector(&workspace_root) {
+            sub_connectors.push(Arc::new(pi_connector));
+        }
+
+        let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let executor_hub = ExecutorHub::new(workspace_root, connector.clone());
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
         let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
@@ -109,6 +119,66 @@ impl AppState {
             mcp_base_url,
         })
     }
+}
+
+/// 尝试构建 PiAgentConnector（需要有效的 LLM API Key）。
+/// 按优先级依次检查：ANTHROPIC_API_KEY → OPENAI_API_KEY。
+/// 若都未配置则返回 None，不影响服务启动。
+fn build_pi_agent_connector(
+    workspace_root: &std::path::Path,
+) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
+    use agentdash_agent::{LlmBridge, RigBridge};
+    use rig::client::CompletionClient as _;
+    use rig::providers::anthropic;
+
+    if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+        let client = anthropic::Client::new(&api_key)
+            .inspect_err(|e| tracing::warn!("Anthropic Client 初始化失败: {e}"))
+            .ok()?;
+        let model = client.completion_model(anthropic::completion::CLAUDE_4_SONNET);
+        let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
+
+        let system_prompt = std::env::var("PI_AGENT_SYSTEM_PROMPT").unwrap_or_else(|_| {
+            "你是 AgentDash 内置 AI 助手，一个通用的编程与任务执行 Agent。请用中文回复用户。"
+                .to_string()
+        });
+
+        let connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
+            workspace_root.to_path_buf(),
+            bridge,
+            system_prompt,
+        );
+
+        tracing::info!("PiAgentConnector 已初始化（Anthropic）");
+        return Some(connector);
+    }
+
+    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+        let client = rig::providers::openai::Client::new(&api_key)
+            .inspect_err(|e| tracing::warn!("OpenAI Client 初始化失败: {e}"))
+            .ok()?;
+        let model = client.completion_model("gpt-4o");
+        let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
+
+        let system_prompt = std::env::var("PI_AGENT_SYSTEM_PROMPT").unwrap_or_else(|_| {
+            "你是 AgentDash 内置 AI 助手，一个通用的编程与任务执行 Agent。请用中文回复用户。"
+                .to_string()
+        });
+
+        let connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
+            workspace_root.to_path_buf(),
+            bridge,
+            system_prompt,
+        );
+
+        tracing::info!("PiAgentConnector 已初始化（OpenAI）");
+        return Some(connector);
+    }
+
+    tracing::info!(
+        "未检测到 ANTHROPIC_API_KEY 或 OPENAI_API_KEY，PiAgentConnector 不可用"
+    );
+    None
 }
 
 async fn ensure_default_backend(backend_repo: &Arc<SqliteBackendRepository>) -> Result<()> {

@@ -182,17 +182,24 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             ));
         }
 
-        let mut agent = ExecutorConfigs::get_cached()
-            .get_coding_agent(&context.executor_config.profile_id())
+        let vk_config = context
+            .executor_config
+            .to_vibe_kanban_config()
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(format!(
-                    "找不到执行器 profile: {}",
-                    context.executor_config
+                    "执行器 '{}' 不是有效的 vibe-kanban 执行器",
+                    context.executor_config.executor
                 ))
             })?;
 
-        if context.executor_config.has_overrides() {
-            agent.apply_overrides(&context.executor_config);
+        let mut agent = ExecutorConfigs::get_cached()
+            .get_coding_agent(&vk_config.profile_id())
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(format!("找不到执行器 profile: {vk_config}"))
+            })?;
+
+        if vk_config.has_overrides() {
+            agent.apply_overrides(&vk_config);
         }
 
         agent.use_approvals(Arc::new(NoopExecutorApprovalService));

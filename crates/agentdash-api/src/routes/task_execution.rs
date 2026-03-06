@@ -22,7 +22,7 @@ pub struct StartTaskRequest {
     #[serde(default)]
     pub override_prompt: Option<String>,
     #[serde(default)]
-    pub executor_config: Option<executors::profile::ExecutorConfig>,
+    pub executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,7 +40,7 @@ pub struct ContinueTaskRequest {
     #[serde(default)]
     pub additional_prompt: Option<String>,
     #[serde(default)]
-    pub executor_config: Option<executors::profile::ExecutorConfig>,
+    pub executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 }
 
 #[derive(Debug, Serialize)]

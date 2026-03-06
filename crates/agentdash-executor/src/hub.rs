@@ -33,7 +33,7 @@ pub struct PromptSessionRequest {
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
-    pub executor_config: Option<executors::profile::ExecutorConfig>,
+    pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
     /// ACP per-session MCP Server 列表（不走 serde — 仅由后端代码填充）
     #[serde(skip)]
     pub mcp_servers: Vec<McpServer>,
@@ -420,11 +420,9 @@ impl ExecutorHub {
             runtime.tx.clone()
         };
 
-        let executor_config = req.executor_config.unwrap_or_else(|| {
-            executors::profile::ExecutorConfig::new(
-                executors::executors::BaseCodingAgent::ClaudeCode,
-            )
-        });
+        let executor_config = req
+            .executor_config
+            .unwrap_or_else(crate::connector::AgentDashExecutorConfig::default);
 
         let working_directory =
             resolve_working_dir(&self.workspace_root, req.working_dir.as_deref());

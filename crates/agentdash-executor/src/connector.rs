@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, str::FromStr};
 
 use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
@@ -6,7 +6,7 @@ use agent_client_protocol::{
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// 连接器类型
@@ -38,6 +38,72 @@ pub struct ExecutorInfo {
     pub available: bool,
 }
 
+/// AgentDash 统一执行器配置
+///
+/// 与 vibe-kanban 的 `executors::profile::ExecutorConfig` 不同，executor 字段使用原始
+/// 字符串，既能表示 vibe-kanban 的 `BaseCodingAgent` 变体（如 "CLAUDE_CODE"），也能
+/// 表示 AgentDash 自有 agent（如 "PI_AGENT"）。需要路由到 vibe-kanban 时再按需转换。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDashExecutorConfig {
+    pub executor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_policy: Option<String>,
+}
+
+impl AgentDashExecutorConfig {
+    pub fn new(executor: impl Into<String>) -> Self {
+        Self {
+            executor: executor.into(),
+            variant: None,
+            model_id: None,
+            agent_id: None,
+            reasoning_id: None,
+            permission_policy: None,
+        }
+    }
+
+    /// 尝试将本配置转换为 vibe-kanban 的 ExecutorConfig。
+    /// 若 executor 字符串不是有效的 BaseCodingAgent 变体则返回 None。
+    pub fn to_vibe_kanban_config(&self) -> Option<executors::profile::ExecutorConfig> {
+        use executors::executors::BaseCodingAgent;
+
+        let norm = self.executor.replace('-', "_").to_ascii_uppercase();
+        let agent = BaseCodingAgent::from_str(&norm).ok()?;
+        let permission_policy = self
+            .permission_policy
+            .as_deref()
+            .and_then(|p| serde_json::from_value(serde_json::json!(p)).ok());
+
+        Some(executors::profile::ExecutorConfig {
+            executor: agent,
+            variant: self.variant.clone(),
+            model_id: self.model_id.clone(),
+            agent_id: self.agent_id.clone(),
+            reasoning_id: self.reasoning_id.clone(),
+            permission_policy,
+        })
+    }
+
+    /// 是否是 AgentDash 自有 agent（不属于 vibe-kanban 执行器）
+    pub fn is_native_agent(&self) -> bool {
+        self.to_vibe_kanban_config().is_none()
+    }
+}
+
+impl Default for AgentDashExecutorConfig {
+    fn default() -> Self {
+        Self::new("CLAUDE_CODE")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
     /// One prompt invocation == one turn. Used to correlate injected user message
@@ -45,7 +111,7 @@ pub struct ExecutionContext {
     pub turn_id: String,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
-    pub executor_config: executors::profile::ExecutorConfig,
+    pub executor_config: AgentDashExecutorConfig,
     /// ACP 协议 per-session MCP Server 列表，由 Connector 负责传递给 Agent
     pub mcp_servers: Vec<McpServer>,
 }

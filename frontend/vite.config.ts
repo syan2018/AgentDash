@@ -10,6 +10,26 @@ function getProxyErrorCode(error: unknown): string | undefined {
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('react-router-dom') || id.includes('@remix-run') || id.includes('react-dom') || id.includes('/react/')) {
+              return 'react-vendor'
+            }
+            if (id.includes('react-markdown') || id.includes('remark-gfm') || id.includes('mdast') || id.includes('micromark')) {
+              return 'markdown-vendor'
+            }
+            if (id.includes('@agentclientprotocol/sdk') || id.includes('fast-json-patch')) {
+              return 'acp-vendor'
+            }
+          }
+          return undefined
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

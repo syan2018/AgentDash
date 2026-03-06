@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export interface DetailPanelProps {
   open: boolean;
@@ -28,17 +28,18 @@ export function DetailPanel({
   return (
     <>
       <div
-        className={`fixed inset-0 ${overlayClassName} bg-foreground/20 backdrop-blur-[1px]`}
+        className={`fixed inset-0 ${overlayClassName} bg-foreground/18 backdrop-blur-[2px]`}
         onClick={onClose}
       />
       <aside
-        className={`fixed inset-y-0 right-0 ${panelClassName} flex w-full ${widthClassName} flex-col border-l border-border bg-background shadow-xl`}
+        className={`fixed inset-y-0 right-0 ${panelClassName} flex w-full ${widthClassName} flex-col border-l border-border bg-background shadow-2xl`}
       >
         <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="min-w-0">
+            <span className="agentdash-panel-header-tag">Panel</span>
             <h3 className="truncate text-base font-semibold text-foreground">{title}</h3>
             {subtitle && (
-              <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{subtitle}</p>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -46,7 +47,7 @@ export function DetailPanel({
             <button
               type="button"
               onClick={onClose}
-              className="h-7 w-7 rounded-md text-base leading-none text-muted-foreground hover:bg-secondary"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] border border-border bg-background text-base leading-none text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               aria-label="关闭"
               title="关闭"
             >
@@ -69,11 +70,11 @@ export interface DetailSectionProps {
 
 export function DetailSection({ title, description, children, extra }: DetailSectionProps) {
   return (
-    <section className="space-y-3 rounded-md border border-border bg-card p-4">
+    <section className="space-y-3 rounded-[12px] border border-border bg-secondary/35 p-4">
       <div className="flex items-start justify-between">
         <div>
           <h4 className="text-sm font-medium text-foreground">{title}</h4>
-          {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
+          {description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>}
         </div>
         {extra}
       </div>
@@ -92,19 +93,44 @@ export interface DetailMenuItem {
 
 export function DetailMenu({ items }: { items: DetailMenuItem[] }) {
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-secondary"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] border border-border bg-background text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         title="详情菜单"
       >
         ⋯
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-[80] min-w-[10rem] rounded-md border border-border bg-background p-1 shadow-lg">
+        <div className="absolute right-0 top-10 z-[80] min-w-[10rem] rounded-[12px] border border-border bg-background p-1.5 shadow-xl">
           {items.map((item) => (
             <button
               key={item.key}
@@ -114,7 +140,7 @@ export function DetailMenu({ items }: { items: DetailMenuItem[] }) {
                 item.onSelect();
               }}
               disabled={item.disabled}
-              className={`w-full rounded px-2 py-1.5 text-left text-sm ${
+              className={`w-full rounded-[8px] px-2.5 py-2 text-left text-sm transition-colors ${
                 item.danger
                   ? "text-destructive hover:bg-destructive/10"
                   : "text-foreground hover:bg-secondary"
@@ -161,14 +187,15 @@ export function DangerConfirmDialog({
 
   return (
     <>
-      <div className="fixed inset-0 z-[90] bg-foreground/30" onClick={onClose} />
+      <div className="fixed inset-0 z-[90] bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-lg rounded-lg border border-border bg-background shadow-xl">
-          <div className="border-b border-border px-4 py-3">
+        <div className="w-full max-w-lg rounded-[16px] border border-border bg-background shadow-2xl">
+          <div className="border-b border-border px-5 py-4">
+            <span className="agentdash-panel-header-tag">Danger</span>
             <h4 className="text-base font-semibold text-foreground">{title}</h4>
-            <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+            <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{description}</p>
           </div>
-          <div className="space-y-3 p-4">
+          <div className="space-y-3 p-5">
             {needInputMatch && (
               <>
                 <p className="text-xs text-muted-foreground">
@@ -179,16 +206,16 @@ export function DangerConfirmDialog({
                   value={inputValue}
                   onChange={(event) => onInputValueChange?.(event.target.value)}
                   placeholder={`请输入 ${expectedValue}`}
-                  className="w-full rounded border border-destructive/30 bg-background px-2 py-1.5 text-sm outline-none ring-destructive/40 focus:ring-1"
+                  className="agentdash-form-input border-destructive/30 focus:border-destructive/30 focus:ring-destructive/40"
                 />
               </>
             )}
           </div>
-          <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
+          <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
             <button
               type="button"
               onClick={onClose}
-              className="rounded border border-border bg-secondary px-3 py-1.5 text-sm text-foreground hover:bg-secondary/70"
+              className="agentdash-button-secondary"
             >
               取消
             </button>
@@ -196,7 +223,7 @@ export function DangerConfirmDialog({
               type="button"
               onClick={onConfirm}
               disabled={!canConfirm || isConfirming}
-              className="rounded bg-destructive px-3 py-1.5 text-sm text-destructive-foreground disabled:opacity-50"
+              className="agentdash-button-danger"
             >
               {isConfirming ? "处理中..." : confirmLabel}
             </button>

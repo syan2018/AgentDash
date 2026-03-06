@@ -321,21 +321,21 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
       </div>
 
       <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-md border border-border bg-background px-2.5 py-2">
+        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
           <p>工具进度</p>
           <p className="mt-0.5 text-sm font-medium text-foreground">
             {toolStats.completed}/{toolStats.total || 0}
           </p>
         </div>
-        <div className="rounded-md border border-border bg-background px-2.5 py-2">
+        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
           <p>运行中</p>
           <p className="mt-0.5 text-sm font-medium text-foreground">{toolStats.running}</p>
         </div>
-        <div className="rounded-md border border-border bg-background px-2.5 py-2">
+        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
           <p>失败</p>
           <p className="mt-0.5 text-sm font-medium text-destructive">{toolStats.failed}</p>
         </div>
-        <div className="rounded-md border border-border bg-background px-2.5 py-2">
+        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
           <p>产物总数</p>
           <p className="mt-0.5 text-sm font-medium text-foreground">{task.artifacts.length}</p>
         </div>
@@ -352,7 +352,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="max-h-[26rem] min-h-[16rem] overflow-y-auto rounded-md border border-border bg-background"
+        className="max-h-[26rem] min-h-[16rem] overflow-y-auto rounded-[12px] border border-border bg-background"
       >
         {hasSession && isLoading && displayItems.length === 0 ? (
           <div className="flex h-[16rem] items-center justify-center">
@@ -362,7 +362,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
             </div>
           </div>
         ) : hasSession && displayItems.length > 0 ? (
-          <div className="space-y-2 px-3 py-3">
+          <div className="space-y-3 px-4 py-4">
             {displayItems.map((item) => (
               <AcpSessionEntry key={getItemKey(item)} item={item} streamingEntryId={streamingEntryId} />
             ))}
@@ -374,7 +374,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
         )}
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-2 rounded-[14px] border border-border bg-secondary/60 p-3">
         <textarea
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
@@ -386,7 +386,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
               void handleExecute();
             }
           }}
-          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
+          className="w-full rounded-[12px] border border-border bg-background px-4 py-3 text-sm leading-7 outline-none ring-ring focus:ring-1"
         />
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">Ctrl+Enter 快速执行</p>
@@ -395,7 +395,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
               <button
                 type="button"
                 onClick={reconnect}
-                className="rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground hover:bg-muted"
+                className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
               >
                 重新连接
               </button>
@@ -405,7 +405,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
                 type="button"
                 disabled={isSubmitting}
                 onClick={() => void handleRefresh()}
-                className="rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50"
+                className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
               >
                 刷新状态
               </button>
@@ -414,7 +414,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
               <button
                 type="button"
                 onClick={() => navigateToSessionPage(sessionId!)}
-                className="rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground hover:bg-muted"
+                className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
               >
                 会话页
               </button>
@@ -423,10 +423,10 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
               type="button"
               disabled={isSubmitting || (executionLocked && !hasSession)}
               onClick={() => void handlePrimaryAction()}
-              className={`rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
+              className={`rounded-[10px] border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
                 executionLocked
-                  ? "bg-white text-foreground border border-border hover:bg-gray-50"
-                  : "bg-primary text-primary-foreground"
+                  ? "border-border bg-background text-foreground hover:bg-secondary"
+                  : "border-primary bg-primary text-primary-foreground hover:opacity-95"
               }`}
             >
               {isSubmitting

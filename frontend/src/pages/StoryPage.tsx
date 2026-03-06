@@ -120,7 +120,7 @@ function StoryStatusActions({ currentStatus, onStatusChange }: StoryStatusAction
               key={action.status}
               type="button"
               onClick={() => onStatusChange(action.status)}
-              className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${variantClasses[action.variant]}`}
+              className={`rounded-[10px] px-3 py-1.5 text-xs font-medium transition-colors ${variantClasses[action.variant]}`}
             >
               {action.label}
             </button>
@@ -198,7 +198,7 @@ function CreateTaskPanel({
       <button
         type="button"
         onClick={() => setIsExpanded(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-card py-3 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+        className="flex w-full items-center justify-center gap-2 rounded-[12px] border border-dashed border-border bg-secondary/25 py-3.5 text-sm text-muted-foreground transition-colors hover:border-primary/25 hover:bg-secondary/40 hover:text-foreground"
       >
         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -209,13 +209,13 @@ function CreateTaskPanel({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div className="rounded-[12px] border border-border bg-secondary/35 p-4">
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm font-medium">新建 Task</span>
         <button
           type="button"
           onClick={() => setIsExpanded(false)}
-          className="text-xs text-muted-foreground hover:text-foreground"
+          className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           取消
         </button>
@@ -227,13 +227,13 @@ function CreateTaskPanel({
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Task 标题"
           autoFocus
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
+          className="agentdash-form-input"
         />
 
         <select
           value={workspaceId}
           onChange={(event) => setWorkspaceId(event.target.value)}
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
+          className="agentdash-form-select"
         >
           <option value="">Workspace</option>
           {workspaces.map((workspace) => (
@@ -248,7 +248,7 @@ function CreateTaskPanel({
           onChange={(event) => setDescription(event.target.value)}
           rows={2}
           placeholder="描述（可选）"
-          className="w-full rounded border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-1"
+          className="agentdash-form-textarea"
         />
 
         <AgentBindingFields
@@ -267,7 +267,7 @@ function CreateTaskPanel({
             type="button"
             onClick={() => void handleSubmit()}
             disabled={isSubmitting || !title.trim()}
-            className="rounded bg-primary px-4 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+            className="agentdash-button-primary"
           >
             {isSubmitting ? "创建中..." : "创建"}
           </button>
@@ -284,22 +284,22 @@ function ContextPanel({ story }: { story: Story }) {
   return (
     <DetailSection title="上下文">
       {!hasContent ? (
-        <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+        <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
           暂无上下文条目
         </p>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {ctx.prd_doc && (
-            <div className="rounded-md border border-border bg-card p-3">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">PRD 文档</p>
-              <pre className="whitespace-pre-wrap text-sm text-foreground">{ctx.prd_doc}</pre>
+            <div className="rounded-[12px] border border-border bg-background p-3.5">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">PRD 文档</p>
+              <pre className="whitespace-pre-wrap text-sm leading-6 text-foreground">{ctx.prd_doc}</pre>
             </div>
           )}
 
           {ctx.spec_refs.length > 0 && (
-            <div className="rounded-md border border-border bg-card p-3">
+            <div className="rounded-[12px] border border-border bg-background p-3.5">
               <p className="mb-2 text-xs font-medium text-muted-foreground">规格引用</p>
-              <ul className="space-y-1">
+              <ul className="space-y-1.5">
                 {ctx.spec_refs.map((ref, index) => (
                   <li key={index} className="text-sm text-foreground">
                     <span className="mr-2 text-muted-foreground">·</span>
@@ -311,17 +311,22 @@ function ContextPanel({ story }: { story: Story }) {
           )}
 
           {ctx.resource_list.length > 0 && (
-            <div className="rounded-md border border-border bg-card p-3">
+            <div className="rounded-[12px] border border-border bg-background p-3.5">
               <p className="mb-2 text-xs font-medium text-muted-foreground">资源列表</p>
-              {ctx.resource_list.map((resource, index) => (
-                <div key={index} className="mb-1 flex items-center gap-2">
-                  <span className="rounded bg-secondary px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
-                    {resource.resource_type}
-                  </span>
-                  <span className="text-sm text-foreground">{resource.name}</span>
-                  <span className="text-xs text-muted-foreground">{resource.uri}</span>
-                </div>
-              ))}
+              <div className="space-y-2">
+                {ctx.resource_list.map((resource, index) => (
+                  <div
+                    key={index}
+                    className="flex flex-wrap items-center gap-2 rounded-[10px] border border-border bg-secondary/35 px-3 py-2"
+                  >
+                    <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
+                      {resource.resource_type}
+                    </span>
+                    <span className="text-sm font-medium text-foreground">{resource.name}</span>
+                    <span className="min-w-0 break-all text-xs text-muted-foreground">{resource.uri}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -338,73 +343,71 @@ function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
 
   return (
     <DetailSection title="验收">
-      {/* Story 元信息 */}
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">类型</p>
-          <div className="mt-1">
-            <StoryTypeBadge type={story.story_type} />
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">类型</p>
+            <div className="mt-1">
+              <StoryTypeBadge type={story.story_type} />
+            </div>
+          </div>
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">优先级</p>
+            <div className="mt-1">
+              <StoryPriorityBadge priority={story.priority} showLabel />
+            </div>
+          </div>
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">状态</p>
+            <div className="mt-1">
+              <StoryStatusBadge status={story.status} />
+            </div>
+          </div>
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">任务总数</p>
+            <p className="mt-1 text-sm font-medium text-foreground">{tasks.length}</p>
           </div>
         </div>
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">优先级</p>
-          <div className="mt-1">
-            <StoryPriorityBadge priority={story.priority} showLabel />
-          </div>
-        </div>
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">状态</p>
-          <div className="mt-1">
-            <StoryStatusBadge status={story.status} />
-          </div>
-        </div>
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">任务总数</p>
-          <p className="mt-1 text-sm font-medium text-foreground">{tasks.length}</p>
-        </div>
-      </div>
 
-      {/* 标签 */}
-      {story.tags.length > 0 && (
-        <div className="mb-4">
-          <p className="mb-2 text-xs text-muted-foreground">标签</p>
-          <div className="flex flex-wrap gap-1.5">
-            {story.tags.map((tag, index) => (
-              <span
-                key={index}
-                className="inline-flex items-center rounded bg-secondary px-2 py-1 text-xs text-secondary-foreground"
-              >
-                {tag}
-              </span>
-            ))}
+        {story.tags.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">标签</p>
+            <div className="flex flex-wrap gap-1.5">
+              {story.tags.map((tag, index) => (
+                <span
+                  key={index}
+                  className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">待执行</p>
+            <p className="mt-1 text-sm font-medium text-muted-foreground">{pendingCount}</p>
+          </div>
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">执行中</p>
+            <p className="mt-1 text-sm font-medium text-primary">{runningCount}</p>
+          </div>
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">成功</p>
+            <p className="mt-1 text-sm font-medium text-success">{successCount}</p>
+          </div>
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <p className="text-xs text-muted-foreground">失败</p>
+            <p className="mt-1 text-sm font-medium text-destructive">{failedCount}</p>
           </div>
         </div>
-      )}
 
-      {/* 任务统计 */}
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">待执行</p>
-          <p className="mt-1 text-sm font-medium text-muted-foreground">{pendingCount}</p>
+        <div className="rounded-[12px] border border-border bg-background p-3.5">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">描述</p>
+          <p className="text-sm leading-6 text-foreground">{story.description || "暂无 Story 描述"}</p>
         </div>
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">执行中</p>
-          <p className="mt-1 text-sm font-medium text-primary">{runningCount}</p>
-        </div>
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">成功</p>
-          <p className="mt-1 text-sm font-medium text-success">{successCount}</p>
-        </div>
-        <div className="rounded-md border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">失败</p>
-          <p className="mt-1 text-sm font-medium text-destructive">{failedCount}</p>
-        </div>
-      </div>
-
-      {/* 描述 */}
-      <div className="rounded-md border border-border bg-card p-3">
-        <p className="mb-2 text-xs text-muted-foreground">描述</p>
-        <p className="text-sm text-foreground">{story.description || "暂无 Story 描述"}</p>
       </div>
     </DetailSection>
   );
@@ -626,19 +629,21 @@ export function StoryPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* 页面头部 */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-6">
-        <div className="flex items-center gap-4">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-6">
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => navigate("/")}
-            className="text-sm text-muted-foreground hover:text-foreground"
+            className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             ← 返回看板
           </button>
-          <div className="h-4 w-px bg-border" />
-          <div>
+          <div className="flex items-center gap-2.5">
+            <span className="agentdash-panel-header-tag">Story</span>
+            <div>
             <h1 className="text-sm font-semibold text-foreground">{story.title}</h1>
             <p className="text-xs text-muted-foreground">ID: {story.id}</p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -661,7 +666,7 @@ export function StoryPage() {
       {/* 页面内容 */}
       <div className="flex flex-1 overflow-hidden">
         {/* 左侧：Story 编辑 */}
-        <div className="w-80 shrink-0 overflow-y-auto border-r border-border bg-card p-4">
+        <div className="w-80 shrink-0 overflow-y-auto border-r border-border bg-background p-4">
           {/* Story 基本信息 */}
           <DetailSection
             title="基本信息"
@@ -670,7 +675,7 @@ export function StoryPage() {
                 <button
                   type="button"
                   onClick={() => setIsEditingBasicInfo(true)}
-                  className="text-xs text-muted-foreground hover:text-foreground"
+                  className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 >
                   编辑
                 </button>
@@ -680,31 +685,31 @@ export function StoryPage() {
             {isEditingBasicInfo ? (
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">标题</label>
+                  <label className="agentdash-form-label">标题</label>
                   <input
                     value={editTitle}
                     onChange={(event) => setEditTitle(event.target.value)}
                     placeholder="Story 标题"
                     autoFocus
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                    className="agentdash-form-input"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">描述</label>
+                  <label className="agentdash-form-label">描述</label>
                   <textarea
                     value={editDescription}
                     onChange={(event) => setEditDescription(event.target.value)}
                     rows={3}
                     placeholder="Story 描述"
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                    className="agentdash-form-textarea"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">类型</label>
+                  <label className="agentdash-form-label">类型</label>
                   <select
                     value={editStoryType}
                     onChange={(event) => setEditStoryType(event.target.value as StoryType)}
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                    className="agentdash-form-select"
                   >
                     {storyTypeOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -714,11 +719,11 @@ export function StoryPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">优先级</label>
+                  <label className="agentdash-form-label">优先级</label>
                   <select
                     value={editPriority}
                     onChange={(event) => setEditPriority(event.target.value as StoryPriority)}
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                    className="agentdash-form-select"
                   >
                     {priorityOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -728,12 +733,12 @@ export function StoryPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">标签（逗号分隔）</label>
+                  <label className="agentdash-form-label">标签（逗号分隔）</label>
                   <input
                     value={editTags}
                     onChange={(event) => setEditTags(event.target.value)}
                     placeholder="例如: frontend, api, urgent"
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                    className="agentdash-form-input"
                   />
                 </div>
                 <div className="flex gap-2">
@@ -751,51 +756,51 @@ export function StoryPage() {
                         setEditTags(story.tags.join(", "));
                       }
                     }}
-                    className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted"
+                    className="agentdash-button-secondary flex-1"
                   >
                     取消
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleSaveStory()}
-                    className="flex-1 rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90"
+                    className="agentdash-button-primary flex-1"
                   >
                     保存
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3.5">
                 <div>
                   <span className="text-xs text-muted-foreground">标题</span>
-                  <p className="mt-0.5 text-sm font-medium">{story.title}</p>
+                  <p className="mt-1 text-sm font-medium">{story.title}</p>
                 </div>
                 <div>
                   <span className="text-xs text-muted-foreground">描述</span>
-                  <p className="mt-0.5 text-sm text-foreground">
+                  <p className="mt-1 text-sm leading-6 text-foreground">
                     {story.description || <span className="text-muted-foreground">暂无描述</span>}
                   </p>
                 </div>
                 <div>
                   <span className="text-xs text-muted-foreground">类型</span>
-                  <div className="mt-1">
+                  <div className="mt-1.5">
                     <StoryTypeBadge type={story.story_type} />
                   </div>
                 </div>
                 <div>
                   <span className="text-xs text-muted-foreground">优先级</span>
-                  <div className="mt-1">
+                  <div className="mt-1.5">
                     <StoryPriorityBadge priority={story.priority} showLabel />
                   </div>
                 </div>
                 {story.tags.length > 0 && (
                   <div>
                     <span className="text-xs text-muted-foreground">标签</span>
-                    <div className="mt-1 flex flex-wrap gap-1">
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
                       {story.tags.map((tag, index) => (
                         <span
                           key={index}
-                          className="inline-flex items-center rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+                          className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
                         >
                           {tag}
                         </span>
@@ -808,7 +813,7 @@ export function StoryPage() {
           </DetailSection>
 
           {/* 状态流转操作 */}
-          <div className="mt-4">
+          <div className="mt-3">
             <StoryStatusActions
               currentStatus={story.status}
               onStatusChange={(status) => void updateStory(story.id, { status })}
@@ -816,7 +821,7 @@ export function StoryPage() {
           </div>
 
           {/* 创建 Task */}
-          <div className="mt-4">
+          <div className="mt-3">
             <CreateTaskPanel
               storyId={story.id}
               workspaces={workspaces}
@@ -825,21 +830,21 @@ export function StoryPage() {
             />
           </div>
 
-          {(formMessage || error) && <p className="mt-4 text-xs text-destructive">{formMessage || error}</p>}
+          {(formMessage || error) && <p className="mt-3 text-xs text-destructive">{formMessage || error}</p>}
         </div>
 
         {/* 右侧：Tab 内容 */}
         <div className="flex flex-1 flex-col overflow-hidden bg-background">
           {/* Tab 导航 */}
-          <div className="flex border-b border-border bg-card">
+          <div className="flex border-b border-border bg-secondary/35 px-2 pt-2">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
-                className={`px-5 py-3 text-sm ${
+                className={`rounded-t-[10px] px-5 py-3 text-sm transition-colors ${
                   activeTab === tab.key
-                    ? "border-b-2 border-primary text-primary"
+                    ? "border border-border border-b-background bg-background font-medium text-foreground"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
@@ -862,8 +867,8 @@ export function StoryPage() {
               </DetailSection>
             )}
             {activeTab === "sessions" && (
-              <DetailSection title="伴随会话">
-                <StorySessionPanel story={story} />
+              <DetailSection title="伴随会话" description="绑定到当前 Story 的协作与规划会话。">
+                <StorySessionPanel story={story} showTitle={false} />
               </DetailSection>
             )}
             {activeTab === "review" && <ReviewPanel story={story} tasks={sortedTasks} />}

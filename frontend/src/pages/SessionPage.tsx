@@ -508,15 +508,18 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-5 py-3">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="flex shrink-0 items-center justify-between border-b border-border bg-background px-5 py-3.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            CHAT
+          </span>
           <h2 className="text-sm font-semibold text-foreground">会话</h2>
-          <span className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
             <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
             {connectionLabel}
           </span>
           {isActionRunning && (
-            <span className="flex items-center gap-1 text-xs text-primary animate-pulse">
+            <span className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
               接收中
             </span>
@@ -529,27 +532,27 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             <button
               type="button"
               onClick={handleBackToTask}
-              className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-secondary"
+              className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               返回任务
             </button>
           )}
           {hasSession && (
             <>
-              <span className="hidden lg:inline text-xs text-muted-foreground font-mono">
+              <span className="hidden rounded-full border border-border bg-secondary px-2.5 py-1 text-xs font-mono text-muted-foreground lg:inline">
                 {currentSessionId!.slice(0, 12)}…
               </span>
               <button
                 type="button"
                 onClick={() => void handleCopySessionId()}
-                className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-secondary"
+                className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 title="复制 Session ID"
               >
                 复制
               </button>
             </>
           )}
-          <button type="button" onClick={handleNewSession} className="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-foreground hover:bg-secondary/80">
+          <button type="button" onClick={handleNewSession} className="rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
             新会话
           </button>
         </div>
@@ -583,7 +586,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                 </div>
               </div>
             ) : hasSession && displayItems.length > 0 ? (
-              <div className="mx-auto w-full max-w-3xl space-y-3 px-4 py-5">
+              <div className="mx-auto w-full max-w-4xl space-y-3 px-5 py-6">
                 {displayItems.map((item) => (
                   <div key={getItemKey(item)}>
                     <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
@@ -593,8 +596,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             ) : (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
-                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted/50">
-                    <span className="text-xl">💬</span>
+                  <div className="mx-auto mb-4 w-fit rounded-[10px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                    Session
                   </div>
                   <p className="text-sm text-muted-foreground">
                     {hasSession ? "会话已就绪，继续发送消息" : "输入 prompt 并发送开始会话"}
@@ -605,8 +608,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           </div>
 
           {/* Input area */}
-          <div className="shrink-0 border-t border-border bg-card">
-            <div className="mx-auto w-full max-w-3xl px-4 py-4">
+          <div className="shrink-0 border-t border-border bg-background">
+            <div className="mx-auto w-full max-w-4xl px-5 py-4">
               {!hasSession && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {promptTemplates.map((tpl) => (
@@ -614,7 +617,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                       key={tpl.id}
                       type="button"
                       onClick={() => richInputRef.current?.setValue(tpl.content)}
-                      className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-secondary transition-colors"
+                      className="rounded-[10px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                     >
                       {tpl.label}
                     </button>
@@ -644,7 +647,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                 onRefetch={discovery.refetch}
               />
 
-              <div className="relative mt-3">
+              <div className="relative mt-3 rounded-[14px] border border-border bg-secondary/60 p-3">
                 <FileReferenceTags
                   references={fileRef.references}
                   onRemove={(relPath) => {
@@ -655,7 +658,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                   }}
                 />
 
-                <div className="relative flex gap-2">
+                <div className="relative flex gap-3">
                   <div className="relative flex-1">
                     <FilePickerPopup
                       open={fileRef.pickerOpen}
@@ -686,7 +689,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                       disabled={isSending}
                     />
                   </div>
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2 self-end">
                     <button
                       type="button"
                       disabled={
@@ -694,10 +697,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                         (hasSession && isActionRunning ? !isConnected : !inputValue.trim())
                       }
                       onClick={handlePrimaryAction}
-                      className={`h-9 w-20 rounded-lg text-sm font-medium disabled:opacity-50 transition-opacity ${
+                      className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
                         hasSession && isActionRunning
-                          ? "bg-white text-foreground border border-border hover:bg-gray-50"
-                          : "bg-primary text-primary-foreground"
+                          ? "border-border bg-background text-foreground hover:bg-secondary"
+                          : "border-primary bg-primary text-primary-foreground hover:opacity-95"
                       }`}
                     >
                       {isSending ? "…" : hasSession && isActionRunning ? "取消" : "发送"}

@@ -49,8 +49,10 @@ export function AcpUsageCard({ update }: AcpUsageCardProps) {
     : undefined;
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border/50 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground">
-      <span>📊</span>
+    <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-secondary/60 px-3.5 py-2 text-xs text-muted-foreground">
+      <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        TOKENS
+      </span>
       {hasStandard && (
         <>
           <span>
@@ -59,7 +61,7 @@ export function AcpUsageCard({ update }: AcpUsageCardProps) {
           </span>
           {usedPercent != null && (
             <div className="flex items-center gap-1">
-              <div className="h-1 w-12 rounded-full bg-muted overflow-hidden">
+              <div className="h-1 w-12 overflow-hidden rounded-full bg-background">
                 <div
                   className={`h-full rounded-full transition-all ${usedPercent > 80 ? "bg-warning" : "bg-primary/60"}`}
                   style={{ width: `${Math.min(usedPercent, 100)}%` }}

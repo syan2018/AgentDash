@@ -13,17 +13,17 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-lg border border-border bg-card p-3 text-left transition-colors hover:bg-secondary/30"
+      className="w-full rounded-[12px] border border-border bg-background p-3.5 text-left transition-colors hover:bg-secondary/35"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
-          {task.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{task.description}</p>}
+          <p className="truncate text-sm font-medium leading-6 text-foreground">{task.title}</p>
+          {task.description && <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{task.description}</p>}
         </div>
         <TaskStatusBadge status={task.status} />
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{agentLabel}</span>
+      <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
+        <span className="truncate">{agentLabel}</span>
         <span>{new Date(task.updated_at).toLocaleDateString("zh-CN")}</span>
       </div>
     </button>

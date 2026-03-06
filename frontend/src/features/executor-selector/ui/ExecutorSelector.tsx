@@ -44,10 +44,16 @@ function ChevronDown({ className }: { className?: string }) {
 function StatusDot({ available }: { available: boolean }) {
   return (
     <span
-      className={`inline-block h-2 w-2 shrink-0 rounded-full ${available ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-600"}`}
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${available ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
     />
   );
 }
+
+const FIELD_LABEL_CLASS = "mb-1.5 block text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground";
+const SELECT_CLASS =
+  "h-10 w-full appearance-none rounded-[10px] border border-border bg-background pl-3.5 pr-9 text-sm text-foreground outline-none transition-colors ring-ring focus:border-primary/30 focus:ring-1 focus:ring-ring/40 disabled:opacity-50";
+const ACTION_BUTTON_CLASS =
+  "rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground";
 
 /**
  * 执行器选择器组件
@@ -79,23 +85,23 @@ export function ExecutorSelector({
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const errorBanner = error ? (
-    <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div className="flex items-center gap-2 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
       <span>无法加载执行器列表: {error.message}</span>
       <button
         type="button"
         onClick={onRefetch}
-        className="rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30"
+        className="rounded-[8px] border border-destructive/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-destructive/10"
       >
         重试
       </button>
     </div>
   ) : discoveredError ? (
-    <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div className="flex items-center gap-2 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
       <span>无法加载模型/模式选项: {discoveredError.message}</span>
       <button
         type="button"
         onClick={onDiscoveredReconnect}
-        className="rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30"
+        className="rounded-[8px] border border-destructive/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-destructive/10"
       >
         重试
       </button>
@@ -154,19 +160,19 @@ export function ExecutorSelector({
   const reasoningOptions = selectedModel?.reasoning_options ?? [];
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 rounded-[14px] border border-border bg-secondary/45 p-3.5">
       {errorBanner}
       {/* 主选择行 */}
       <div className="flex flex-wrap items-end gap-3">
         {/* 执行器下拉 */}
         <div className="min-w-[180px] flex-1">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">执行器</span>
+          <span className={FIELD_LABEL_CLASS}>执行器</span>
           <div className="relative">
             <select
               value={executor}
               onChange={(e) => onExecutorChange(e.target.value)}
               disabled={isLoading}
-              className="h-9 w-full appearance-none rounded-md border border-border bg-background pl-3 pr-8 text-sm outline-none ring-ring focus:ring-1 disabled:opacity-50"
+              className={SELECT_CLASS}
             >
               <option value="">
                 {isLoading ? "加载中…" : "选择执行器…"}
@@ -184,12 +190,12 @@ export function ExecutorSelector({
         {/* 变体下拉（仅当选中的执行器有多个变体时显示） */}
         {variantOptions.length > 0 && (
           <div className="min-w-[140px]">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">变体（Variant）</span>
+            <span className={FIELD_LABEL_CLASS}>变体</span>
             <div className="relative">
               <select
                 value={variant}
                 onChange={(e) => onVariantChange(e.target.value)}
-                className="h-9 w-full appearance-none rounded-md border border-border bg-background pl-3 pr-8 text-sm outline-none ring-ring focus:ring-1"
+                className={SELECT_CLASS}
               >
                 <option value="">Default</option>
                 {variantOptions.map((v) => (
@@ -205,13 +211,13 @@ export function ExecutorSelector({
 
         {/* 模型选择（来自 discovered-options；无硬编码） */}
         <div className="min-w-[220px] flex-1">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">模型</span>
+          <span className={FIELD_LABEL_CLASS}>模型</span>
           <div className="relative">
             <select
               value={modelId}
               onChange={(e) => onModelIdChange(e.target.value)}
               disabled={!executor || isDiscoveredLoading || (modelSelector?.models?.length ?? 0) === 0}
-              className="h-9 w-full appearance-none rounded-md border border-border bg-background pl-3 pr-8 text-sm outline-none ring-ring focus:ring-1 disabled:opacity-50"
+              className={SELECT_CLASS}
             >
               <option value="">
                 {!executor
@@ -247,14 +253,14 @@ export function ExecutorSelector({
           <button
             type="button"
             onClick={() => setShowAdvanced((p) => !p)}
-            className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
+            className={ACTION_BUTTON_CLASS}
           >
             {showAdvanced ? "收起" : "高级"}
           </button>
           <button
             type="button"
             onClick={onReset}
-            className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
+            className={ACTION_BUTTON_CLASS}
             title="重置为默认值"
           >
             重置
@@ -264,7 +270,7 @@ export function ExecutorSelector({
 
       {/* 当前选择概览（紧凑标签） */}
       {executor && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 pt-3">
           <ConfigTag
             label={displayLabel}
             available={currentExecutorInfo?.available}
@@ -279,17 +285,17 @@ export function ExecutorSelector({
 
       {/* 高级选项面板 */}
       {showAdvanced && (
-        <div className="rounded-md border border-border bg-background/50 p-3">
+        <div className="rounded-[12px] border border-border bg-background/70 p-3">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {/* Mode / Reasoning */}
             <div>
-              <span className="mb-1 block text-xs font-medium text-muted-foreground">模式（Mode / Reasoning）</span>
+              <span className={FIELD_LABEL_CLASS}>模式</span>
               <div className="relative">
                 <select
                   value={reasoningId}
                   onChange={(e) => onReasoningIdChange(e.target.value)}
                   disabled={(reasoningOptions?.length ?? 0) === 0}
-                  className="h-9 w-full appearance-none rounded-md border border-border bg-background pl-3 pr-8 text-sm outline-none ring-ring focus:ring-1 disabled:opacity-50"
+                  className={SELECT_CLASS}
                 >
                   <option value="">
                     {(reasoningOptions?.length ?? 0) === 0 ? "当前模型不支持模式选择" : "默认"}
@@ -305,12 +311,12 @@ export function ExecutorSelector({
             </div>
 
             <div>
-              <span className="mb-1 block text-xs font-medium text-muted-foreground">权限策略（Permission Policy）</span>
+              <span className={FIELD_LABEL_CLASS}>权限策略</span>
               <div className="relative">
                 <select
                   value={permissionPolicy}
                   onChange={(e) => onPermissionPolicyChange(e.target.value)}
-                  className="h-9 w-full appearance-none rounded-md border border-border bg-background pl-3 pr-8 text-sm outline-none ring-ring focus:ring-1"
+                  className={SELECT_CLASS}
                 >
                   <option value="">默认（Auto）</option>
                   {permissions.map((p) => (
@@ -337,7 +343,7 @@ function ConfigTag({
   available?: boolean;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-2.5 py-0.5 text-xs text-foreground">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-foreground">
       {available !== undefined && <StatusDot available={available} />}
       {label}
     </span>

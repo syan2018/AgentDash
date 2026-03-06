@@ -28,7 +28,7 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
 
   return (
-    <div className="rounded-md border border-border bg-card p-3">
+    <div className="rounded-[12px] border border-border bg-background p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-muted-foreground">
           {artifact.artifact_type}
@@ -41,7 +41,7 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
             type="button"
             onClick={() => setIsCollapsed((value) => !value)}
             aria-expanded={!isCollapsed}
-            className="rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+            className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary"
           >
             {isCollapsed ? "展开" : "收起"}
           </button>
@@ -50,7 +50,7 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
       {isCollapsed ? (
         <p className="text-xs text-muted-foreground">内容已折叠，点击展开查看详情</p>
       ) : (
-        <pre className="overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+        <pre className="agentdash-chat-code-block whitespace-pre-wrap">
           {JSON.stringify(artifact.content, null, 2)}
         </pre>
       )}
@@ -168,19 +168,19 @@ export function TaskDrawer({
                 value={editTitle}
                 onChange={(event) => setEditTitle(event.target.value)}
                 placeholder="Task 标题"
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-input"
               />
               <textarea
                 value={editDescription}
                 onChange={(event) => setEditDescription(event.target.value)}
                 rows={3}
                 placeholder="Task 描述"
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-textarea"
               />
               <select
                 value={editStatus}
                 onChange={(event) => setEditStatus(event.target.value as TaskStatus)}
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-select"
               >
                 <option value="pending">待执行</option>
                 <option value="assigned">已分配</option>
@@ -193,7 +193,7 @@ export function TaskDrawer({
               <select
                 value={editWorkspaceId}
                 onChange={(event) => setEditWorkspaceId(event.target.value)}
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-select"
               >
                 <option value="">不绑定 Workspace</option>
                 {workspaces.map((workspace) => (
@@ -203,7 +203,7 @@ export function TaskDrawer({
                 ))}
               </select>
 
-              <div className="rounded-md border border-border bg-background p-3">
+              <div className="rounded-[12px] border border-border bg-background p-3">
                 <p className="mb-2 text-xs text-muted-foreground">Agent 绑定</p>
                 <AgentBindingFields
                   value={editAgentBinding}
@@ -215,7 +215,7 @@ export function TaskDrawer({
                 <button
                   type="button"
                   onClick={() => void handleSaveTask()}
-                  className="rounded border border-border bg-secondary px-3 py-1.5 text-sm text-foreground hover:bg-secondary/70"
+                  className="agentdash-button-secondary"
                 >
                   保存 Task
                 </button>
@@ -249,7 +249,7 @@ export function TaskDrawer({
                     type="button"
                     onClick={() => setIsArtifactsCollapsed((value) => !value)}
                     aria-expanded={!isArtifactsCollapsed}
-                    className="rounded border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                    className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary"
                   >
                     {isArtifactsCollapsed ? `展开（${sortedArtifacts.length}）` : "收起"}
                   </button>
@@ -257,11 +257,11 @@ export function TaskDrawer({
               }
             >
               {!hasArtifacts ? (
-                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
                   暂无执行产物
                 </p>
               ) : isArtifactsCollapsed ? (
-                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
                   已折叠执行产物，点击右上角展开（共 {sortedArtifacts.length} 条）
                 </p>
               ) : (

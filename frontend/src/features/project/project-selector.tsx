@@ -51,18 +51,18 @@ function ProjectCreateDrawer({ open, backends, onClose }: ProjectCreateDrawerPro
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="项目名称"
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-input"
           />
           <input
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             placeholder="描述（可选）"
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-input"
           />
           <select
             value={effectiveBackendId}
             onChange={(event) => setBackendId(event.target.value)}
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-select"
           >
             <option value="">选择后端</option>
             {backends.map((backend) => (
@@ -80,7 +80,7 @@ function ProjectCreateDrawer({ open, backends, onClose }: ProjectCreateDrawerPro
             type="button"
             onClick={() => void handleCreate()}
             disabled={!name.trim() || !effectiveBackendId}
-            className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+            className="agentdash-button-primary"
           >
             创建项目
           </button>
@@ -229,13 +229,13 @@ function ProjectDetailDrawer({
         }
       >
         <div className="space-y-4 p-5">
-          <div className="flex border-b border-border bg-card">
+          <div className="flex border-b border-border bg-secondary/35 px-2 pt-2">
             <button
               type="button"
               onClick={() => setActiveTab("base")}
-              className={`px-5 py-3 text-sm ${
+              className={`rounded-t-[10px] px-5 py-3 text-sm transition-colors ${
                 activeTab === "base"
-                  ? "border-b-2 border-primary text-primary"
+                  ? "border border-border border-b-background bg-background font-medium text-foreground"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -244,9 +244,9 @@ function ProjectDetailDrawer({
             <button
               type="button"
               onClick={() => setActiveTab("config")}
-              className={`px-5 py-3 text-sm ${
+              className={`rounded-t-[10px] px-5 py-3 text-sm transition-colors ${
                 activeTab === "config"
-                  ? "border-b-2 border-primary text-primary"
+                  ? "border border-border border-b-background bg-background font-medium text-foreground"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -255,9 +255,9 @@ function ProjectDetailDrawer({
             <button
               type="button"
               onClick={() => setActiveTab("workspaces")}
-              className={`px-5 py-3 text-sm ${
+              className={`rounded-t-[10px] px-5 py-3 text-sm transition-colors ${
                 activeTab === "workspaces"
-                  ? "border-b-2 border-primary text-primary"
+                  ? "border border-border border-b-background bg-background font-medium text-foreground"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -271,18 +271,18 @@ function ProjectDetailDrawer({
                 value={editName}
                 onChange={(event) => setEditName(event.target.value)}
                 placeholder="项目名称"
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-input"
               />
               <input
                 value={editDescription}
                 onChange={(event) => setEditDescription(event.target.value)}
                 placeholder="项目描述"
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-input"
               />
               <select
                 value={editBackendId}
                 onChange={(event) => setEditBackendId(event.target.value)}
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-select"
               >
                 <option value="">选择后端</option>
                 {backends.map((backend) => (
@@ -295,7 +295,7 @@ function ProjectDetailDrawer({
                 <button
                   type="button"
                   onClick={() => void handleSaveBase()}
-                  className="rounded border border-border bg-secondary px-3 py-1.5 text-sm text-foreground hover:bg-secondary/70"
+                  className="agentdash-button-secondary"
                 >
                   保存基础信息
                 </button>
@@ -309,12 +309,12 @@ function ProjectDetailDrawer({
                 value={defaultAgentType}
                 onChange={(event) => setDefaultAgentType(event.target.value)}
                 placeholder="默认 Agent 类型（可选）"
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-input"
               />
               <select
                 value={defaultWorkspaceId}
                 onChange={(event) => setDefaultWorkspaceId(event.target.value)}
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-select"
               >
                 <option value="">默认 Workspace（可选）</option>
                 {currentWorkspaces.map((workspace) => (
@@ -328,13 +328,13 @@ function ProjectDetailDrawer({
                 onChange={(event) => setAgentPresetsJson(event.target.value)}
                 rows={8}
                 placeholder='agent_presets JSON，例如 [{"name":"默认","agent_type":"claude-code","config":{}}]'
-                className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono outline-none ring-ring focus:ring-1"
+                className="agentdash-form-textarea font-mono text-xs"
               />
               <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={() => void handleSaveConfig()}
-                  className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+                  className="agentdash-button-primary"
                 >
                   保存配置
                 </button>
@@ -393,20 +393,20 @@ export function ProjectSelector({
 
   return (
     <>
-      <div className="space-y-2">
-        <div className="flex items-center justify-between px-2">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground">项目</p>
+      <div className="space-y-2 rounded-[12px] border border-border bg-secondary/35 p-2.5">
+        <div className="flex items-center justify-between px-1">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">项目</p>
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
-            className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+            className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             + 新建
           </button>
         </div>
 
         {projects.length === 0 && (
-          <p className="px-2 py-2 text-sm text-muted-foreground">暂无项目</p>
+          <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">暂无项目</p>
         )}
 
         {projects.map((project) => {
@@ -417,8 +417,10 @@ export function ProjectSelector({
           return (
             <div
               key={project.id}
-              className={`flex items-center justify-between rounded-md px-3 py-2 text-sm ${
-                isActive ? "bg-primary text-primary-foreground" : "hover:bg-secondary/50"
+              className={`flex items-center justify-between rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
+                isActive
+                  ? "border-primary/20 bg-background"
+                  : "border-transparent bg-transparent hover:border-border hover:bg-background/80"
               }`}
               onMouseEnter={() => setFocusedProjectId(project.id)}
               onMouseLeave={() => setFocusedProjectId((value) => (value === project.id ? null : value))}
@@ -433,12 +435,10 @@ export function ProjectSelector({
               <button
                 type="button"
                 onClick={() => onSelect(project.id)}
-                className={`min-w-0 flex-1 text-left ${
-                  isActive ? "text-primary-foreground" : "text-foreground"
-                }`}
+                className="min-w-0 flex-1 text-left text-foreground"
               >
                 <p className="truncate font-medium">{project.name}</p>
-                <p className={`truncate text-xs ${isActive ? "opacity-85" : "text-muted-foreground"}`}>
+                <p className="truncate text-xs text-muted-foreground">
                   {project.description || `后端: ${project.backend_id}`}
                 </p>
               </button>
@@ -450,11 +450,7 @@ export function ProjectSelector({
                     setDetailProjectId(project.id);
                     setIsDetailOpen(true);
                   }}
-                  className={`ml-2 h-6 w-6 rounded text-sm leading-none ${
-                    isActive
-                      ? "text-primary-foreground/90 hover:bg-primary-foreground/15"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  }`}
+                  className="ml-2 inline-flex h-7 w-7 items-center justify-center rounded-[8px] border border-border bg-secondary text-sm leading-none text-muted-foreground transition-colors hover:text-foreground"
                   aria-label="查看项目详情"
                   title="查看项目详情"
                 >

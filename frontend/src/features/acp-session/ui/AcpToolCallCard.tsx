@@ -65,9 +65,9 @@ export function AcpToolCallCard({
 
   if (compact) {
     return (
-      <div className="rounded border border-border bg-card px-2 py-1.5 text-xs">
+      <div className="rounded-[10px] border border-border bg-background px-2.5 py-2 text-xs">
         <div className="flex items-center gap-2">
-          <span>{kindConfig.icon}</span>
+          <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{kindConfig.icon}</span>
           <span className="flex-1 truncate">{title}</span>
           <span className={statusConfig.color}>{statusConfig.label}</span>
         </div>
@@ -77,9 +77,9 @@ export function AcpToolCallCard({
 
   return (
     <div
-      className={`rounded-lg border ${statusConfig.borderColor} bg-card transition-shadow ${
+      className={`rounded-[12px] border ${statusConfig.borderColor} bg-background transition-colors ${
         isPendingApproval
-          ? "ring-2 ring-warning/30 shadow-sm"
+          ? "ring-2 ring-warning/20"
           : status === "failed" || status === "canceled" || status === "rejected"
             ? "opacity-90"
             : ""
@@ -90,7 +90,7 @@ export function AcpToolCallCard({
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/50 text-base">
+        <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           {kindConfig.icon}
         </span>
         <div className="flex-1 min-w-0">
@@ -113,17 +113,19 @@ export function AcpToolCallCard({
       </button>
 
       {expanded && (
-        <div className="border-t border-border px-3 py-2.5 space-y-3">
+        <div className="space-y-3 border-t border-border px-3 py-3">
           {isPendingApproval && (
-            <div className="rounded-md bg-warning/10 border border-warning/20 p-2.5 text-sm text-warning flex items-center gap-2">
-              <span>⏳</span>
+            <div className="flex items-center gap-2 rounded-[10px] border border-warning/20 bg-warning/10 p-2.5 text-sm text-warning">
+              <span className="inline-flex rounded-[6px] border border-warning/30 bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]">WAIT</span>
               <span>等待用户审批</span>
             </div>
           )}
 
           {(status === "canceled" || status === "rejected") && (
-            <div className="rounded-md bg-muted/50 border border-border p-2.5 text-sm text-muted-foreground flex items-center gap-2">
-              <span>{status === "canceled" ? "🚫" : "✋"}</span>
+            <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/70 p-2.5 text-sm text-muted-foreground">
+              <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]">
+                {status === "canceled" ? "STOP" : "NO"}
+              </span>
               <span>{status === "canceled" ? "已取消执行" : "已拒绝执行"}</span>
             </div>
           )}
@@ -142,7 +144,7 @@ export function AcpToolCallCard({
           {rawInput !== undefined && (
             <div>
               <p className="mb-1.5 text-xs font-medium text-muted-foreground">输入</p>
-              <pre className="overflow-auto rounded-md bg-muted/50 p-2.5 text-xs font-mono leading-relaxed">
+              <pre className="agentdash-chat-code-block">
                 {safeJson(rawInput)}
               </pre>
             </div>
@@ -151,7 +153,7 @@ export function AcpToolCallCard({
           {rawOutput !== undefined && (
             <div>
               <p className="mb-1.5 text-xs font-medium text-muted-foreground">输出</p>
-              <pre className="overflow-auto rounded-md bg-muted/50 p-2.5 text-xs font-mono leading-relaxed max-h-64">
+              <pre className="agentdash-chat-code-block max-h-64">
                 {safeJson(rawOutput)}
               </pre>
             </div>
@@ -171,7 +173,7 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
     const block = content.content;
     if (block.type === "text") {
       return (
-        <div className="text-sm whitespace-pre-wrap leading-relaxed">{block.text}</div>
+        <div className="whitespace-pre-wrap text-sm leading-7">{block.text}</div>
       );
     }
     if (block.type === "image") {
@@ -179,7 +181,7 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
         <img
           src={`data:${block.mimeType};base64,${block.data}`}
           alt=""
-          className="max-h-48 rounded-md border border-border"
+          className="max-h-48 rounded-[10px] border border-border"
         />
       );
     }
@@ -202,7 +204,7 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
 
   if (content.type === "diff") {
     return (
-      <div className="rounded-md border border-border bg-muted/30 p-2.5 font-mono text-xs">
+      <div className="rounded-[10px] border border-border bg-secondary/70 p-2.5 font-mono text-xs">
         <p className="mb-1.5 text-muted-foreground">{content.path}</p>
         {content.oldText && (
           <div className="text-destructive/70 line-through whitespace-pre-wrap">
@@ -220,9 +222,9 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
 
   if (content.type === "terminal") {
     return (
-      <div className="rounded-md border border-border bg-muted/30 p-2.5">
+      <div className="rounded-[10px] border border-border bg-secondary/70 p-2.5">
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <span>💻</span>
+          <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]">TERM</span>
           终端: {content.terminalId}
         </p>
       </div>
@@ -261,26 +263,26 @@ function getStatusConfig(
 function getKindConfig(kind: ToolKind): { label: string; icon: string } {
   switch (kind) {
     case "read":
-      return { label: "读取", icon: "📖" };
+      return { label: "读取", icon: "READ" };
     case "edit":
-      return { label: "编辑", icon: "✏️" };
+      return { label: "编辑", icon: "EDIT" };
     case "delete":
-      return { label: "删除", icon: "🗑️" };
+      return { label: "删除", icon: "DEL" };
     case "move":
-      return { label: "移动", icon: "📦" };
+      return { label: "移动", icon: "MOVE" };
     case "search":
-      return { label: "搜索", icon: "🔍" };
+      return { label: "搜索", icon: "FIND" };
     case "execute":
-      return { label: "执行", icon: "⚡" };
+      return { label: "执行", icon: "RUN" };
     case "think":
-      return { label: "思考", icon: "🧠" };
+      return { label: "思考", icon: "THNK" };
     case "fetch":
-      return { label: "获取", icon: "🌐" };
+      return { label: "获取", icon: "NET" };
     case "switch_mode":
-      return { label: "切换模式", icon: "🔄" };
+      return { label: "切换模式", icon: "MODE" };
     case "other":
     default:
-      return { label: "工具", icon: "🔧" };
+      return { label: "工具", icon: "TOOL" };
   }
 }
 

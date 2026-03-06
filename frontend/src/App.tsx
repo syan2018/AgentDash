@@ -1,13 +1,36 @@
-import { useCallback, useEffect, useRef } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
 import { WorkspaceLayout, type WorkspaceView } from "./components/layout/workspace-layout";
-import { DashboardPage } from "./pages/DashboardPage";
-import { StoryPage } from "./pages/StoryPage";
-import { SessionPage } from "./pages/SessionPage";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
 import { useEventStore } from "./stores/eventStore";
 import { useSessionHistoryStore } from "./stores/sessionHistoryStore";
+
+const DashboardPage = lazy(async () => {
+  const module = await import("./pages/DashboardPage");
+  return { default: module.DashboardPage };
+});
+
+const StoryPage = lazy(async () => {
+  const module = await import("./pages/StoryPage");
+  return { default: module.StoryPage };
+});
+
+const SessionPage = lazy(async () => {
+  const module = await import("./pages/SessionPage");
+  return { default: module.SessionPage };
+});
+
+function RouteFallback() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="text-center">
+        <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <p className="mt-3 text-sm text-muted-foreground">正在加载页面...</p>
+      </div>
+    </div>
+  );
+}
 
 function SessionRouteWrapper() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -67,13 +90,15 @@ function AppContent() {
 
   return (
     <WorkspaceLayout activeView={activeView} onChangeView={handleChangeView}>
-      <Routes>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/story/:storyId" element={<StoryPage />} />
-        <Route path="/session" element={<SessionPage />} />
-        <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/story/:storyId" element={<StoryPage />} />
+          <Route path="/session" element={<SessionPage />} />
+          <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </WorkspaceLayout>
   );
 }

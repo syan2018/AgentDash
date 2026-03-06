@@ -30,7 +30,7 @@ export function AcpPlanCard({
 
   const cardContent = (
     <>
-      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
         <div
           className="h-full rounded-full bg-primary transition-all duration-300"
           style={{ width: `${progress}%` }}
@@ -43,7 +43,7 @@ export function AcpPlanCard({
         ))}
       </ul>
 
-      <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+      <div className="mt-3 flex items-center gap-4 border-t border-border pt-3 text-xs text-muted-foreground">
         <span>总计: {entries.length}</span>
         <span className="text-success">已完成: {completedCount}</span>
         {inProgressCount > 0 && (
@@ -56,15 +56,17 @@ export function AcpPlanCard({
 
   if (collapsible) {
     return (
-      <div className="rounded-md border border-border bg-card p-4">
+      <div className="rounded-[12px] border border-border bg-background p-4">
         <button
           type="button"
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="flex w-full items-center justify-between"
         >
           <div className="flex items-center gap-2">
-            <span className="text-lg">📋</span>
-            <span className="font-medium">执行计划</span>
+            <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              PLAN
+            </span>
+            <span className="font-medium text-foreground">执行计划</span>
           </div>
           <span className="text-xs text-muted-foreground">
             {isCollapsed ? "展开" : "收起"}
@@ -76,10 +78,12 @@ export function AcpPlanCard({
   }
 
   return (
-    <div className="rounded-md border border-border bg-card p-4">
+    <div className="rounded-[12px] border border-border bg-background p-4">
       <div className="mb-3 flex items-center gap-2">
-        <span className="text-lg">📋</span>
-        <span className="font-medium">执行计划</span>
+        <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          PLAN
+        </span>
+        <span className="font-medium text-foreground">执行计划</span>
       </div>
       {cardContent}
     </div>
@@ -97,9 +101,9 @@ function PlanEntryItem({
   const priorityConfig = getPriorityConfig(entry.priority);
 
   return (
-    <li className="flex items-start gap-3">
+    <li className="flex items-start gap-3 rounded-[10px] border border-border/70 bg-secondary/35 px-3 py-2.5">
       <span
-        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs ${statusConfig.bgClass}`}
+        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] text-xs ${statusConfig.bgClass}`}
       >
         {statusConfig.icon}
       </span>
@@ -132,13 +136,13 @@ function getStatusConfig(status: PlanEntryStatus): {
 } {
   switch (status) {
     case "pending":
-      return { icon: "○", bgClass: "bg-muted text-muted-foreground" };
+      return { icon: "○", bgClass: "bg-background text-muted-foreground border border-border" };
     case "in_progress":
-      return { icon: "⋯", bgClass: "bg-primary/20 text-primary animate-pulse" };
+      return { icon: "⋯", bgClass: "bg-primary/10 text-primary border border-primary/20" };
     case "completed":
-      return { icon: "✓", bgClass: "bg-success/20 text-success" };
+      return { icon: "✓", bgClass: "bg-success/10 text-success border border-success/20" };
     default:
-      return { icon: "?", bgClass: "bg-muted text-muted-foreground" };
+      return { icon: "?", bgClass: "bg-background text-muted-foreground border border-border" };
   }
 }
 

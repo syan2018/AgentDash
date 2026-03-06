@@ -1,13 +1,14 @@
-/**
- * ACP 消息卡片
- *
- * 显示用户消息、Agent 消息和思考过程。
- * 使用 react-markdown + remark-gfm 实现正确的 Markdown 渲染。
- */
-
-import { useState, memo } from "react";
+import { memo, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  FILE_PILL_BADGE_CLASS,
+  FILE_PILL_CLASS,
+  FILE_PILL_LABEL_CLASS,
+  getDisplayFileName,
+  getFileKindLabel,
+  toFileUri,
+} from "../../file-reference/fileReferenceUi";
 
 export interface AcpMessageCardProps {
   type: "user" | "agent" | "thinking";
@@ -17,62 +18,8 @@ export interface AcpMessageCardProps {
   defaultCollapsed?: boolean;
 }
 
-function toFileUri(relPath: string): string {
-  const normalized = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
-  return `file:///${normalized}`;
-}
-
-function getFileIcon(relPath: string): string {
-  const ext = relPath.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "ts":
-    case "tsx":
-    case "js":
-    case "jsx":
-      return "📜";
-    case "json":
-    case "jsonc":
-      return "📋";
-    case "md":
-    case "mdx":
-      return "📝";
-    case "css":
-    case "scss":
-    case "less":
-      return "🎨";
-    case "html":
-    case "htm":
-      return "🌐";
-    case "yml":
-    case "yaml":
-    case "toml":
-      return "⚙️";
-    case "rs":
-      return "🦀";
-    case "py":
-      return "🐍";
-    case "go":
-      return "🐹";
-    case "java":
-      return "☕";
-    case "sql":
-      return "🗄️";
-    case "sh":
-    case "bash":
-    case "zsh":
-      return "🐚";
-    case "dockerfile":
-      return "🐳";
-    default:
-      return "📄";
-  }
-}
-
-const FILE_PILL_CLASS =
-  "inline-flex select-none items-center gap-1 rounded-[6px] border border-[#5865F2]/20 bg-[#5865F2]/10 px-2 py-0.5 text-xs font-medium text-[#5865F2] shadow-sm transition-colors hover:bg-[#5865F2]/15 dark:border-[#5865F2]/30 dark:bg-[#5865F2]/20 dark:text-[#00A8FC]";
-
-function renderTextWithFilePills(text: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = [];
+function renderTextWithFilePills(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
   const re = /<file:([^>]+)>/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -85,7 +32,6 @@ function renderTextWithFilePills(text: string): React.ReactNode[] {
       nodes.push(text.slice(lastIndex, match.index));
     }
 
-    const fileName = path.replace(/\\/g, "/").split("/").pop() || path;
     nodes.push(
       <span
         key={`${match.index}:${path}`}
@@ -93,10 +39,8 @@ function renderTextWithFilePills(text: string): React.ReactNode[] {
         title={toFileUri(path)}
         data-file-ref={path}
       >
-        <span>{getFileIcon(path)}</span>
-        <span className="underline decoration-[#5865F2]/40 underline-offset-2 dark:decoration-[#00A8FC]/40">
-          {fileName}
-        </span>
+        <span className={FILE_PILL_BADGE_CLASS}>{getFileKindLabel(path)}</span>
+        <span className={FILE_PILL_LABEL_CLASS}>{getDisplayFileName(path)}</span>
       </span>,
     );
 
@@ -118,28 +62,30 @@ export const AcpMessageCard = memo(function AcpMessageCard({
   defaultCollapsed = false,
 }: AcpMessageCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
-
   const config = MESSAGE_CONFIG[type];
 
   if (type === "thinking" && !collapsible) {
     return (
-      <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5">
+      <div className="rounded-[10px] border border-dashed border-border bg-secondary/60 px-3.5 py-2.5">
         <button
           type="button"
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex w-full items-center justify-between text-sm text-muted-foreground"
+          className="flex w-full items-center justify-between gap-3 text-left"
         >
           <span className="flex items-center gap-2">
-            <span className="text-xs opacity-70">{config.icon}</span>
-            <span className="text-xs">思考过程</span>
+            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-[6px] border border-border bg-background px-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">
+              {config.badge}
+            </span>
+            <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              思考
+            </span>
           </span>
-          <span className="text-xs">{isCollapsed ? "展开" : "收起"}</span>
+          <span className="text-xs text-muted-foreground">{isCollapsed ? "展开" : "收起"}</span>
         </button>
+
         {!isCollapsed && (
-          <div className="mt-2 text-sm text-muted-foreground/80">
-            <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-              {content}
-            </pre>
+          <div className="mt-2.5 border-t border-border/70 pt-2.5 text-sm text-muted-foreground">
+            <pre className="whitespace-pre-wrap text-xs leading-6">{content}</pre>
           </div>
         )}
       </div>
@@ -148,30 +94,23 @@ export const AcpMessageCard = memo(function AcpMessageCard({
 
   return (
     <div className={`flex gap-3 ${config.containerClass}`}>
-      {/* 头像/图标 */}
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${config.avatarClass}`}
-      >
-        <span className="text-xs">{config.icon}</span>
+      <div className="flex w-11 shrink-0 flex-col items-start pt-0.5">
+        <span className={config.avatarClass}>{config.badge}</span>
+        <span className={config.labelClass}>{config.label}</span>
       </div>
 
-      {/* 内容 */}
-      <div className="flex-1 min-w-0">
-        <p className={`mb-1 text-xs ${config.labelClass}`}>{config.label}</p>
-
-        <div className="relative">
-          <div className={config.contentClass}>
-            {type === "user" ? (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                {renderTextWithFilePills(content)}
-              </p>
-            ) : (
-              <MarkdownRenderer content={content} />
-            )}
-          </div>
+      <div className="min-w-0 flex-1">
+        <div className={config.contentClass}>
+          {type === "user" ? (
+            <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">
+              {renderTextWithFilePills(content)}
+            </p>
+          ) : (
+            <MarkdownRenderer content={content} />
+          )}
 
           {isStreaming && (
-            <span className="ml-0.5 inline-block h-4 w-[3px] animate-pulse rounded-sm bg-primary align-text-bottom" />
+            <span className="mt-3 inline-flex h-4 w-[2px] animate-pulse rounded-full bg-primary align-middle" />
           )}
         </div>
       </div>
@@ -181,87 +120,69 @@ export const AcpMessageCard = memo(function AcpMessageCard({
 
 const MESSAGE_CONFIG = {
   user: {
-    icon: "👤",
+    badge: "ME",
     label: "用户",
-    containerClass: "flex-row",
-    avatarClass: "bg-primary/10",
-    labelClass: "text-primary font-medium",
-    contentClass: "text-foreground",
+    containerClass: "items-start",
+    avatarClass:
+      "inline-flex h-6 min-w-6 items-center justify-center rounded-[7px] border border-border bg-secondary px-1.5 text-[10px] font-semibold tracking-[0.14em] text-foreground",
+    labelClass: "mt-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground",
+    contentClass: "rounded-[12px] border border-border bg-secondary px-4 py-3.5",
   },
   agent: {
-    icon: "🤖",
+    badge: "AI",
     label: "Agent",
-    containerClass: "flex-row",
-    avatarClass: "bg-success/10",
-    labelClass: "text-success font-medium",
-    contentClass: "text-foreground",
+    containerClass: "items-start",
+    avatarClass:
+      "inline-flex h-6 min-w-6 items-center justify-center rounded-[7px] border border-border bg-background px-1.5 text-[10px] font-semibold tracking-[0.14em] text-foreground",
+    labelClass: "mt-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground",
+    contentClass: "rounded-[12px] border border-border bg-background px-4 py-3.5",
   },
   thinking: {
-    icon: "🧠",
+    badge: "TH",
     label: "思考",
-    containerClass: "flex-row opacity-70",
-    avatarClass: "bg-muted",
-    labelClass: "text-muted-foreground",
-    contentClass: "text-muted-foreground",
+    containerClass: "items-start opacity-85",
+    avatarClass:
+      "inline-flex h-6 min-w-6 items-center justify-center rounded-[7px] border border-border bg-secondary px-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground",
+    labelClass: "mt-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground",
+    contentClass: "rounded-[12px] border border-dashed border-border bg-secondary/60 px-4 py-3.5 text-muted-foreground",
   },
-};
+} as const;
 
 const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: string }) {
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1.5 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:before:content-none prose-code:after:content-none">
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        pre({ children }) {
-          return (
-            <pre className="overflow-auto rounded-md bg-muted/60 p-3 text-xs leading-relaxed">
-              {children}
-            </pre>
-          );
-        },
-        code({ children, className }) {
-          const isBlock = className?.startsWith("language-");
-          if (isBlock) {
-            return <code className="font-mono text-xs">{children}</code>;
-          }
-          return (
-            <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
-              {children}
-            </code>
-          );
-        },
-        table({ children }) {
-          return (
-            <div className="overflow-auto rounded-md border border-border my-2">
-              <table className="min-w-full text-sm">{children}</table>
-            </div>
-          );
-        },
-        th({ children }) {
-          return (
-            <th className="border-b border-border bg-muted/50 px-3 py-1.5 text-left text-xs font-medium">
-              {children}
-            </th>
-          );
-        },
-        td({ children }) {
-          return (
-            <td className="border-b border-border px-3 py-1.5 text-xs">
-              {children}
-            </td>
-          );
-        },
-        a({ children, href }) {
-          return (
-            <a href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          );
-        },
-      }}
-    >
-      {content}
-    </Markdown>
+    <div className="agentdash-chat-markdown">
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          pre({ children }) {
+            return <pre className="agentdash-chat-code-block">{children}</pre>;
+          },
+          code({ children, className }) {
+            const isBlock = className?.startsWith("language-");
+            if (isBlock) {
+              return <code>{children}</code>;
+            }
+
+            return <code>{children}</code>;
+          },
+          table({ children }) {
+            return (
+              <div className="overflow-auto">
+                <table>{children}</table>
+              </div>
+            );
+          },
+          a({ children, href }) {
+            return (
+              <a href={href} target="_blank" rel="noopener noreferrer">
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {content}
+      </Markdown>
     </div>
   );
 });

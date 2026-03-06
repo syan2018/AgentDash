@@ -100,25 +100,25 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Story 标题"
-            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-input"
           />
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={4}
             placeholder="描述（可选）"
-            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-textarea"
           />
         </DetailSection>
 
         <DetailSection title="优先级与类型">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">优先级</label>
+              <label className="agentdash-form-label">优先级</label>
               <select
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as StoryPriority)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-select"
               >
                 {priorityOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -132,11 +132,11 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">类型</label>
+              <label className="agentdash-form-label">类型</label>
               <select
                 value={storyType}
                 onChange={(e) => setStoryType(e.target.value as StoryType)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+                className="agentdash-form-select"
               >
                 {storyTypeOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -156,7 +156,7 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
             value={tags}
             onChange={(e) => setTags(e.target.value)}
             placeholder="用逗号分隔，例如: frontend, api, urgent"
-            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-ring focus:ring-1"
+            className="agentdash-form-input"
           />
           {tags && (
             <div className="mt-2 flex flex-wrap gap-1">
@@ -167,7 +167,7 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
                 .map((tag, index) => (
                   <span
                     key={index}
-                    className="inline-flex items-center rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+                    className="inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
                   >
                     {tag}
                   </span>
@@ -185,7 +185,7 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
             type="button"
             onClick={() => void handleCreate()}
             disabled={!title.trim() || !backendId}
-            className="rounded-md bg-primary px-4 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+            className="agentdash-button-primary"
           >
             创建 Story
           </button>
@@ -214,22 +214,27 @@ export function StoryListView({
   return (
     <>
       <div className="flex h-full flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-6">
-          <div>
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-6">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              STORY
+            </span>
+            <div>
             <h2 className="text-sm font-semibold tracking-tight text-foreground">Story 列表</h2>
             <p className="text-xs text-muted-foreground">{stories.length} 个 Story</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索 Story..."
-              className="h-8 w-56 rounded-md border border-border bg-background px-3 text-sm outline-none ring-ring focus:ring-1"
+              className="h-9 w-56 rounded-[10px] border border-border bg-background px-3.5 text-sm outline-none ring-ring transition-colors focus:border-primary/30 focus:ring-1 focus:ring-ring/40"
             />
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
-              className="h-8 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
+              className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
             >
               + 创建
             </button>

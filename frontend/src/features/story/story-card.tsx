@@ -15,12 +15,12 @@ export function StoryCard({ story, taskCount, onClick, isDragging }: StoryCardPr
     <button
       type="button"
       onClick={onClick}
-      className={`w-full rounded-lg border border-border bg-card p-3 text-left transition-all hover:border-primary/50 hover:shadow-sm ${
-        isDragging ? "rotate-2 scale-105 shadow-lg ring-2 ring-primary" : ""
+      className={`w-full rounded-[12px] border border-border bg-background p-3.5 text-left transition-all hover:border-primary/25 hover:bg-secondary/35 ${
+        isDragging ? "scale-[1.02] ring-2 ring-primary/20" : ""
       }`}
     >
       {/* 顶部：类型和优先级 */}
-      <div className="mb-2 flex items-center gap-1.5">
+      <div className="mb-2.5 flex items-center gap-1.5">
         <StoryTypeBadge type={story.story_type} />
         <StoryPriorityBadge priority={story.priority} showLabel />
         {story.tags.length > 0 && (
@@ -28,7 +28,7 @@ export function StoryCard({ story, taskCount, onClick, isDragging }: StoryCardPr
             {story.tags.slice(0, 2).map((tag, index) => (
               <span
                 key={index}
-                className="inline-flex max-w-[60px] truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                className="inline-flex max-w-[72px] truncate rounded-full border border-border bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground"
                 title={tag}
               >
                 {tag}
@@ -44,16 +44,16 @@ export function StoryCard({ story, taskCount, onClick, isDragging }: StoryCardPr
       {/* 标题和描述 */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{story.title}</p>
+          <p className="truncate text-sm font-medium leading-6 text-foreground">{story.title}</p>
           {story.description && (
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{story.description}</p>
+            <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{story.description}</p>
           )}
         </div>
         <StoryStatusBadge status={story.status} />
       </div>
 
       {/* 底部：任务数和时间 */}
-      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+      <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
         <span>{taskCount} 个任务</span>
         <span>{new Date(story.updated_at).toLocaleDateString("zh-CN")}</span>
       </div>

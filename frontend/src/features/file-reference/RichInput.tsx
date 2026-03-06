@@ -1,5 +1,13 @@
 import { useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { FileEntry } from "../../services/workspaceFiles";
+import {
+  FILE_PILL_BADGE_CLASS,
+  FILE_PILL_CLASS,
+  FILE_PILL_LABEL_CLASS,
+  getDisplayFileName,
+  getFileKindLabel,
+  toFileUri,
+} from "./fileReferenceUi";
 
 export interface RichInputRef {
   getValue: () => string;
@@ -28,13 +36,7 @@ function escapeHtmlAttr(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function toFileUri(relPath: string): string {
-  const normalized = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
-  return `file:///${normalized}`;
-}
-
-const PILL_CLASS =
-  "inline-flex select-none items-center gap-1 rounded-[6px] border border-[#5865F2]/20 bg-[#5865F2]/10 px-2 py-0.5 text-xs font-medium text-[#5865F2] shadow-sm transition-colors hover:bg-[#5865F2]/15 dark:border-[#5865F2]/30 dark:bg-[#5865F2]/20 dark:text-[#00A8FC]";
+const PILL_CLASS = FILE_PILL_CLASS;
 
 // 将普通文本中的 @path 和 <file:path> 标记转换为可视化药丸
 function parseContentToHtml(text: string): string {
@@ -51,11 +53,10 @@ function parseContentToHtml(text: string): string {
   html = html.replace(
     /&lt;file:([^>]+)&gt;/g,
     (_, path) => {
-      const fileName = path.split("/").pop() || path;
-      const icon = getFileIcon(path);
+      const fileName = getDisplayFileName(path);
       const safePath = escapeHtmlAttr(path);
       const safeTitle = escapeHtmlAttr(toFileUri(path));
-      return `<span class="${PILL_CLASS}" contenteditable="false" data-file-ref="${safePath}" title="${safeTitle}"><span>${icon}</span><span class="underline decoration-[#5865F2]/40 underline-offset-2">${fileName}</span></span>`;
+      return `<span class="${PILL_CLASS}" contenteditable="false" data-file-ref="${safePath}" title="${safeTitle}"><span class="${FILE_PILL_BADGE_CLASS}">${getFileKindLabel(path)}</span><span class="${FILE_PILL_LABEL_CLASS}">${fileName}</span></span>`;
     }
   );
 
@@ -66,11 +67,10 @@ function parseContentToHtml(text: string): string {
     (match, path) => {
       // 如果这是正在被编辑的 @ 触发器，保持原样
       if (path.length < 1) return match;
-      const fileName = path.split("/").pop() || path;
-      const icon = getFileIcon(path);
+      const fileName = getDisplayFileName(path);
       const safePath = escapeHtmlAttr(path);
       const safeTitle = escapeHtmlAttr(toFileUri(path));
-      return `<span class="${PILL_CLASS}" contenteditable="false" data-file-ref="${safePath}" title="${safeTitle}"><span>${icon}</span><span class="underline decoration-[#5865F2]/40 underline-offset-2">${fileName}</span></span>`;
+      return `<span class="${PILL_CLASS}" contenteditable="false" data-file-ref="${safePath}" title="${safeTitle}"><span class="${FILE_PILL_BADGE_CLASS}">${getFileKindLabel(path)}</span><span class="${FILE_PILL_LABEL_CLASS}">${fileName}</span></span>`;
     }
   );
 
@@ -113,53 +113,6 @@ function extractContentFromElement(element: HTMLElement): string {
 
   clone.childNodes.forEach(traverse);
   return text;
-}
-
-function getFileIcon(relPath: string): string {
-  const ext = relPath.split(".").pop()?.toLowerCase();
-
-  switch (ext) {
-    case "ts":
-    case "tsx":
-    case "js":
-    case "jsx":
-      return "📜";
-    case "json":
-    case "jsonc":
-      return "📋";
-    case "md":
-    case "mdx":
-      return "📝";
-    case "css":
-    case "scss":
-    case "less":
-      return "🎨";
-    case "html":
-    case "htm":
-      return "🌐";
-    case "yml":
-    case "yaml":
-    case "toml":
-      return "⚙️";
-    case "rs":
-      return "🦀";
-    case "py":
-      return "🐍";
-    case "go":
-      return "🐹";
-    case "java":
-      return "☕";
-    case "sql":
-      return "🗄️";
-    case "sh":
-    case "bash":
-    case "zsh":
-      return "🐚";
-    case "dockerfile":
-      return "🐳";
-    default:
-      return "📄";
-  }
 }
 
 // 获取当前光标位置（用于 @ 触发器）
@@ -426,14 +379,15 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(
         pill.setAttribute("data-file-ref", file.relPath);
         pill.title = toFileUri(file.relPath);
 
-        const icon = document.createElement("span");
-        icon.textContent = getFileIcon(file.relPath);
+        const badge = document.createElement("span");
+        badge.className = FILE_PILL_BADGE_CLASS;
+        badge.textContent = getFileKindLabel(file.relPath);
 
         const name = document.createElement("span");
-        name.className = "underline decoration-[#5865F2]/40 underline-offset-2";
-        name.textContent = file.relPath.split("/").pop() || file.relPath;
+        name.className = FILE_PILL_LABEL_CLASS;
+        name.textContent = getDisplayFileName(file.relPath);
 
-        pill.appendChild(icon);
+        pill.appendChild(badge);
         pill.appendChild(name);
 
         // 插入空格
@@ -459,13 +413,13 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(
 
     return (
       <div
-        className={`relative rounded-lg border bg-background transition-all ${
-          isFocused ? "ring-1 ring-ring" : ""
+        className={`relative rounded-[12px] border border-border bg-background transition-all ${
+          isFocused ? "border-primary/30 ring-1 ring-ring/40" : ""
         } ${disabled ? "opacity-50" : ""}`}
       >
         {/* Placeholder */}
         {isEmpty && !isFocused && (
-          <div className="pointer-events-none absolute left-3 top-2 text-sm text-muted-foreground">
+          <div className="pointer-events-none absolute left-4 top-3 text-sm text-muted-foreground">
             {placeholder}
           </div>
         )}
@@ -511,8 +465,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(
               savedRangeRef.current = selection.getRangeAt(0).cloneRange();
             }
           }}
-          className="min-h-[72px] w-full px-3 py-2 text-sm outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground"
-          data-placeholder={placeholder}
+          className="min-h-[88px] w-full px-4 py-3 text-sm leading-7 outline-none"
           style={{ whiteSpace: "pre-wrap" }}
         />
       </div>

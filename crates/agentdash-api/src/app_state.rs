@@ -31,6 +31,8 @@ pub struct AppState {
     pub executor_hub: ExecutorHub,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
+    /// MCP 服务基础 URL（用于向 Agent 注入 MCP 端点信息）
+    pub mcp_base_url: Option<String>,
 }
 
 impl AppState {
@@ -92,6 +94,8 @@ impl AppState {
         )
         .await?;
 
+        let mcp_base_url = std::env::var("AGENTDASH_MCP_BASE_URL").ok();
+
         Ok(Self {
             project_repo,
             workspace_repo,
@@ -102,6 +106,7 @@ impl AppState {
             backend_repo,
             executor_hub,
             connector,
+            mcp_base_url,
         })
     }
 }

@@ -1,31 +1,45 @@
 use std::collections::HashMap;
 
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
+use agentdash_mcp::injection::McpInjectionConfig;
 use serde_json::{Value, json};
 
-const DEFAULT_START_TEMPLATE: &str = r#"你是该任务的执行 Agent。
-请结合任务上下文完成实现，并在完成后给出关键变更与验证结果。
+// ─── 公共抽象：可扩展的上下文构建框架 ───────────────────────────
 
-任务标题：{{task_title}}
-任务描述：{{task_description}}
-Story：{{story_title}}
-工作目录：{{workspace_path}}"#;
-
-const DEFAULT_CONTINUE_TEMPLATE: &str = r#"请在当前会话上下文基础上继续推进该任务。
-优先完成未完成项，并说明下一步建议。
-
-任务标题：{{task_title}}
-任务描述：{{task_description}}
-Story：{{story_title}}
-工作目录：{{workspace_path}}"#;
-
+/// 上下文片段合并策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskExecutionPhase {
-    Start,
-    Continue,
+pub enum MergeStrategy {
+    /// 追加到同名 slot 中
+    Append,
+    /// 覆盖同名 slot 的全部内容
+    Override,
 }
 
-pub struct TaskAgentBuildInput<'a> {
+/// 上下文片段 — 有序、按 slot 分组的文本块
+#[derive(Debug)]
+pub struct ContextFragment {
+    /// 逻辑分组（同 slot 的 fragment 会被合并）
+    pub slot: &'static str,
+    /// 来源标签（用于审计和调试）
+    pub label: &'static str,
+    /// 排序权重（数值越小越靠前）
+    pub order: i32,
+    /// 合并策略
+    pub strategy: MergeStrategy,
+    /// 文本内容
+    pub content: String,
+}
+
+/// 上下文贡献者 — 所有上下文来源实现此 trait
+///
+/// 通过 Contributor 模式，新的上下文来源只需实现此 trait 并注册到构建流程，
+/// 无需修改核心构建逻辑。
+pub trait ContextContributor: Send {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment>;
+}
+
+/// 贡献者输入 — 传递给每个 Contributor 的共享上下文
+pub struct ContributorInput<'a> {
     pub task: &'a Task,
     pub story: &'a Story,
     pub project: &'a Project,
@@ -35,34 +49,14 @@ pub struct TaskAgentBuildInput<'a> {
     pub additional_prompt: Option<&'a str>,
 }
 
-pub struct BuiltTaskAgentContext {
-    pub prompt_blocks: Vec<Value>,
-    pub working_dir: Option<String>,
-    pub source_summary: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MergeStrategy {
-    Append,
-    Override,
-}
-
-#[derive(Debug)]
-struct ContextFragment {
-    slot: &'static str,
-    label: &'static str,
-    order: i32,
-    strategy: MergeStrategy,
-    content: String,
-}
-
+/// 上下文组合器 — 有序合并多个 ContextFragment
 #[derive(Default)]
-struct ContextComposer {
+pub struct ContextComposer {
     fragments: Vec<ContextFragment>,
 }
 
 impl ContextComposer {
-    fn push(
+    pub fn push(
         &mut self,
         slot: &'static str,
         label: &'static str,
@@ -83,7 +77,13 @@ impl ContextComposer {
         });
     }
 
-    fn compose(mut self) -> (String, Vec<String>) {
+    pub fn push_fragment(&mut self, fragment: ContextFragment) {
+        if !fragment.content.trim().is_empty() {
+            self.fragments.push(fragment);
+        }
+    }
+
+    pub fn compose(mut self) -> (String, Vec<String>) {
         self.fragments.sort_by_key(|item| item.order);
 
         let mut slot_order: Vec<&'static str> = Vec::new();
@@ -127,160 +127,319 @@ impl ContextComposer {
     }
 }
 
+// ─── 执行阶段与构建结果 ─────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskExecutionPhase {
+    Start,
+    Continue,
+}
+
+pub struct BuiltTaskAgentContext {
+    pub prompt_blocks: Vec<Value>,
+    pub working_dir: Option<String>,
+    pub source_summary: Vec<String>,
+    /// MCP 服务端点列表（Agent 应连接的 MCP Server）
+    pub mcp_endpoints: Vec<McpEndpointInfo>,
+}
+
+/// MCP 端点信息 — 描述一个 Agent 可连接的 MCP Server
+#[derive(Debug, Clone)]
+pub struct McpEndpointInfo {
+    pub name: String,
+    pub url: String,
+    pub scope: String,
+}
+
+// ─── 内置 Contributor 实现 ──────────────────────────────────
+
+/// Task/Story/Project/Workspace 核心上下文
+struct CoreContextContributor;
+
+impl ContextContributor for CoreContextContributor {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+        let mut fragments = Vec::new();
+
+        fragments.push(ContextFragment {
+            slot: "task",
+            label: "task_core",
+            order: 10,
+            strategy: MergeStrategy::Append,
+            content: format!(
+                "## Task\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
+                input.task.id,
+                trim_or_dash(&input.task.title),
+                trim_or_dash(&input.task.description),
+                input.task.status
+            ),
+        });
+
+        fragments.push(ContextFragment {
+            slot: "story",
+            label: "story_core",
+            order: 20,
+            strategy: MergeStrategy::Append,
+            content: format!(
+                "## Story\n- id: {}\n- title: {}\n- description: {}",
+                input.story.id,
+                trim_or_dash(&input.story.title),
+                trim_or_dash(&input.story.description),
+            ),
+        });
+
+        if let Some(prd) = clean_text(input.story.context.prd_doc.as_deref()) {
+            fragments.push(ContextFragment {
+                slot: "story_context",
+                label: "story_prd",
+                order: 30,
+                strategy: MergeStrategy::Append,
+                content: format!("## Story PRD\n{prd}"),
+            });
+        }
+
+        if !input.story.context.spec_refs.is_empty() {
+            let refs = input
+                .story
+                .context
+                .spec_refs
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            fragments.push(ContextFragment {
+                slot: "story_context",
+                label: "story_spec_refs",
+                order: 31,
+                strategy: MergeStrategy::Append,
+                content: format!("## Spec Refs\n{refs}"),
+            });
+        }
+
+        if !input.story.context.resource_list.is_empty() {
+            let resources = input
+                .story
+                .context
+                .resource_list
+                .iter()
+                .map(|res| format!("- [{}] {} ({})", res.resource_type, res.name, res.uri))
+                .collect::<Vec<_>>()
+                .join("\n");
+            fragments.push(ContextFragment {
+                slot: "story_context",
+                label: "story_resources",
+                order: 32,
+                strategy: MergeStrategy::Append,
+                content: format!("## Resources\n{resources}"),
+            });
+        }
+
+        fragments.push(ContextFragment {
+            slot: "project",
+            label: "project_config",
+            order: 40,
+            strategy: MergeStrategy::Append,
+            content: format!(
+                "## Project\n- id: {}\n- name: {}\n- default_agent_type: {}",
+                input.project.id,
+                trim_or_dash(&input.project.name),
+                input
+                    .project
+                    .config
+                    .default_agent_type
+                    .as_deref()
+                    .unwrap_or("-")
+            ),
+        });
+
+        if let Some(workspace) = input.workspace {
+            fragments.push(ContextFragment {
+                slot: "workspace",
+                label: "workspace_context",
+                order: 50,
+                strategy: MergeStrategy::Append,
+                content: format!(
+                    "## Workspace\n- id: {}\n- name: {}\n- path: {}\n- type: {:?}\n- status: {:?}",
+                    workspace.id,
+                    trim_or_dash(&workspace.name),
+                    workspace.container_ref,
+                    workspace.workspace_type,
+                    workspace.status,
+                ),
+            });
+        }
+
+        fragments
+    }
+}
+
+/// Agent 绑定上下文（initial_context）
+struct BindingContextContributor;
+
+impl ContextContributor for BindingContextContributor {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+        let mut fragments = Vec::new();
+
+        if let Some(initial_context) =
+            clean_text(input.task.agent_binding.initial_context.as_deref())
+        {
+            fragments.push(ContextFragment {
+                slot: "initial_context",
+                label: "binding_initial_context",
+                order: 80,
+                strategy: MergeStrategy::Append,
+                content: format!("## Initial Context\n{initial_context}"),
+            });
+        }
+
+        fragments
+    }
+}
+
+/// 指令模板 Contributor
+struct InstructionContributor;
+
+impl ContextContributor for InstructionContributor {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+        let mut fragments = Vec::new();
+
+        let workspace_path = input
+            .workspace
+            .map(|w| w.container_ref.clone())
+            .unwrap_or_else(|| ".".to_string());
+
+        let template = resolve_instruction_template(input);
+        let rendered = render_template(
+            &template,
+            &template_vars(
+                &input.task.title,
+                &input.task.description,
+                &input.story.title,
+                &workspace_path,
+            ),
+        );
+        fragments.push(ContextFragment {
+            slot: "instruction",
+            label: "binding_template",
+            order: 90,
+            strategy: MergeStrategy::Override,
+            content: format!("## Instruction\n{rendered}"),
+        });
+
+        if input.phase == TaskExecutionPhase::Continue {
+            if let Some(additional) = clean_text(input.additional_prompt) {
+                fragments.push(ContextFragment {
+                    slot: "instruction",
+                    label: "user_additional_prompt",
+                    order: 100,
+                    strategy: MergeStrategy::Append,
+                    content: format!("## Additional Prompt\n{additional}"),
+                });
+            }
+        }
+
+        fragments
+    }
+}
+
+/// MCP 能力注入 Contributor — 将 MCP Server 端点信息注入到 Agent 上下文
+pub struct McpContextContributor {
+    pub config: McpInjectionConfig,
+}
+
+impl McpContextContributor {
+    pub fn new(config: McpInjectionConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl ContextContributor for McpContextContributor {
+    fn contribute(&self, _input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+        let label: &'static str = match self.config.scope {
+            agentdash_mcp::scope::ToolScope::Relay => "mcp_relay_tools",
+            agentdash_mcp::scope::ToolScope::Story => "mcp_story_tools",
+            agentdash_mcp::scope::ToolScope::Task => "mcp_task_tools",
+        };
+        vec![ContextFragment {
+            slot: "mcp_config",
+            label,
+            order: 85,
+            strategy: MergeStrategy::Append,
+            content: self.config.to_context_content(),
+        }]
+    }
+}
+
+// ─── 构建入口 ────────────────────────────────────────────────
+
+const DEFAULT_START_TEMPLATE: &str = r#"你是该任务的执行 Agent。
+请结合任务上下文完成实现，并在完成后给出关键变更与验证结果。
+
+任务标题：{{task_title}}
+任务描述：{{task_description}}
+Story：{{story_title}}
+工作目录：{{workspace_path}}"#;
+
+const DEFAULT_CONTINUE_TEMPLATE: &str = r#"请在当前会话上下文基础上继续推进该任务。
+优先完成未完成项，并说明下一步建议。
+
+任务标题：{{task_title}}
+任务描述：{{task_description}}
+Story：{{story_title}}
+工作目录：{{workspace_path}}"#;
+
+pub struct TaskAgentBuildInput<'a> {
+    pub task: &'a Task,
+    pub story: &'a Story,
+    pub project: &'a Project,
+    pub workspace: Option<&'a Workspace>,
+    pub phase: TaskExecutionPhase,
+    pub override_prompt: Option<&'a str>,
+    pub additional_prompt: Option<&'a str>,
+    /// 额外的上下文贡献者（如 MCP 注入）
+    pub extra_contributors: Vec<Box<dyn ContextContributor>>,
+}
+
 pub fn build_task_agent_context(
     input: TaskAgentBuildInput<'_>,
 ) -> Result<BuiltTaskAgentContext, String> {
-    let mut context_composer = ContextComposer::default();
-    let mut instruction_composer = ContextComposer::default();
+    let contributor_input = ContributorInput {
+        task: input.task,
+        story: input.story,
+        project: input.project,
+        workspace: input.workspace,
+        phase: input.phase,
+        override_prompt: input.override_prompt,
+        additional_prompt: input.additional_prompt,
+    };
 
     let working_dir = input.workspace.map(|w| w.container_ref.clone());
-    let workspace_path = working_dir.clone().unwrap_or_else(|| ".".to_string());
 
-    context_composer.push(
-        "task",
-        "task_core",
-        10,
-        MergeStrategy::Append,
-        format!(
-            "## Task\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
-            input.task.id,
-            trim_or_dash(&input.task.title),
-            trim_or_dash(&input.task.description),
-            input.task.status
-        ),
-    );
+    let builtin_contributors: Vec<Box<dyn ContextContributor>> = vec![
+        Box::new(CoreContextContributor),
+        Box::new(BindingContextContributor),
+        Box::new(InstructionContributor),
+    ];
 
-    context_composer.push(
-        "story",
-        "story_core",
-        20,
-        MergeStrategy::Append,
-        format!(
-            "## Story\n- id: {}\n- title: {}\n- description: {}",
-            input.story.id,
-            trim_or_dash(&input.story.title),
-            trim_or_dash(&input.story.description),
-        ),
-    );
+    let all_contributors = builtin_contributors
+        .into_iter()
+        .chain(input.extra_contributors);
 
-    if let Some(prd) = clean_text(input.story.context.prd_doc.as_deref()) {
-        context_composer.push(
-            "story_context",
-            "story_prd",
-            30,
-            MergeStrategy::Append,
-            format!("## Story PRD\n{prd}"),
-        );
-    }
+    let mut context_composer = ContextComposer::default();
+    let mut instruction_composer = ContextComposer::default();
+    let mut mcp_endpoints = Vec::new();
 
-    if !input.story.context.spec_refs.is_empty() {
-        let refs = input
-            .story
-            .context
-            .spec_refs
-            .iter()
-            .map(|item| format!("- {item}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        context_composer.push(
-            "story_context",
-            "story_spec_refs",
-            31,
-            MergeStrategy::Append,
-            format!("## Spec Refs\n{refs}"),
-        );
-    }
-
-    if !input.story.context.resource_list.is_empty() {
-        let resources = input
-            .story
-            .context
-            .resource_list
-            .iter()
-            .map(|res| format!("- [{}] {} ({})", res.resource_type, res.name, res.uri))
-            .collect::<Vec<_>>()
-            .join("\n");
-        context_composer.push(
-            "story_context",
-            "story_resources",
-            32,
-            MergeStrategy::Append,
-            format!("## Resources\n{resources}"),
-        );
-    }
-
-    context_composer.push(
-        "project",
-        "project_config",
-        40,
-        MergeStrategy::Append,
-        format!(
-            "## Project\n- id: {}\n- name: {}\n- default_agent_type: {}",
-            input.project.id,
-            trim_or_dash(&input.project.name),
-            input
-                .project
-                .config
-                .default_agent_type
-                .as_deref()
-                .unwrap_or("-")
-        ),
-    );
-
-    if let Some(workspace) = input.workspace {
-        context_composer.push(
-            "workspace",
-            "workspace_context",
-            50,
-            MergeStrategy::Append,
-            format!(
-                "## Workspace\n- id: {}\n- name: {}\n- path: {}\n- type: {:?}\n- status: {:?}",
-                workspace.id,
-                trim_or_dash(&workspace.name),
-                workspace.container_ref,
-                workspace.workspace_type,
-                workspace.status,
-            ),
-        );
-    }
-
-    if let Some(initial_context) = clean_text(input.task.agent_binding.initial_context.as_deref()) {
-        context_composer.push(
-            "initial_context",
-            "binding_initial_context",
-            80,
-            MergeStrategy::Append,
-            format!("## Initial Context\n{initial_context}"),
-        );
-    }
-
-    let template = resolve_instruction_template(&input);
-    let rendered_instruction = render_template(
-        &template,
-        &template_vars(
-            &input.task.title,
-            &input.task.description,
-            &input.story.title,
-            &workspace_path,
-        ),
-    );
-    instruction_composer.push(
-        "instruction",
-        "binding_template",
-        90,
-        MergeStrategy::Override,
-        format!("## Instruction\n{rendered_instruction}"),
-    );
-
-    if input.phase == TaskExecutionPhase::Continue {
-        if let Some(additional) = clean_text(input.additional_prompt) {
-            instruction_composer.push(
-                "instruction",
-                "user_additional_prompt",
-                100,
-                MergeStrategy::Append,
-                format!("## Additional Prompt\n{additional}"),
-            );
+    for contributor in all_contributors {
+        for fragment in contributor.contribute(&contributor_input) {
+            match fragment.slot {
+                "instruction" => instruction_composer.push_fragment(fragment),
+                "mcp_config" => {
+                    if let Some(endpoint) = parse_mcp_endpoint_from_content(&fragment.content) {
+                        mcp_endpoints.push(endpoint);
+                    }
+                    context_composer.push_fragment(fragment);
+                }
+                _ => context_composer.push_fragment(fragment),
+            }
         }
     }
 
@@ -318,6 +477,30 @@ pub fn build_task_agent_context(
         prompt_blocks,
         working_dir,
         source_summary,
+        mcp_endpoints,
+    })
+}
+
+// ─── 辅助函数 ────────────────────────────────────────────────
+
+fn parse_mcp_endpoint_from_content(content: &str) -> Option<McpEndpointInfo> {
+    let mut name = None;
+    let mut url = None;
+    let mut scope = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(n) = trimmed.strip_prefix("## MCP: ") {
+            name = Some(n.to_string());
+        } else if let Some(u) = trimmed.strip_prefix("- url: ") {
+            url = Some(u.to_string());
+        } else if let Some(s) = trimmed.strip_prefix("- scope: ") {
+            scope = Some(s.to_string());
+        }
+    }
+    Some(McpEndpointInfo {
+        name: name?,
+        url: url?,
+        scope: scope.unwrap_or_else(|| "unknown".to_string()),
     })
 }
 
@@ -341,7 +524,7 @@ fn build_task_context_resource_block(
     })
 }
 
-fn resolve_instruction_template(input: &TaskAgentBuildInput<'_>) -> String {
+fn resolve_instruction_template(input: &ContributorInput<'_>) -> String {
     match input.phase {
         TaskExecutionPhase::Start => {
             if let Some(override_prompt) = clean_text(input.override_prompt) {
@@ -431,5 +614,108 @@ mod tests {
         let (prompt, _) = composer.compose();
         assert!(prompt.contains("context from binding"));
         assert!(prompt.contains("## Instruction"));
+    }
+
+    struct TestContributor {
+        slot: &'static str,
+        label: &'static str,
+        order: i32,
+        content: String,
+    }
+
+    impl ContextContributor for TestContributor {
+        fn contribute(&self, _input: &ContributorInput<'_>) -> Vec<ContextFragment> {
+            vec![ContextFragment {
+                slot: self.slot,
+                label: self.label,
+                order: self.order,
+                strategy: MergeStrategy::Append,
+                content: self.content.clone(),
+            }]
+        }
+    }
+
+    #[test]
+    fn extra_contributor_fragments_are_included() {
+        let task = Task::new(uuid::Uuid::new_v4(), "test task".into(), "desc".into());
+        let story = Story::new(
+            uuid::Uuid::new_v4(),
+            "test-backend".into(),
+            "test story".into(),
+            "story desc".into(),
+        );
+        let project = Project::new("test project".into(), "desc".into(), "test-backend".into());
+
+        let mcp_contributor = TestContributor {
+            slot: "mcp_config",
+            label: "mcp_task_tools",
+            order: 85,
+            content: "## MCP: agentdash-task-tools\n- url: http://localhost:3001/mcp/task/abc\n- scope: task\n可通过此 MCP Server 更新 Task 状态".to_string(),
+        };
+
+        let result = build_task_agent_context(TaskAgentBuildInput {
+            task: &task,
+            story: &story,
+            project: &project,
+            workspace: None,
+            phase: TaskExecutionPhase::Start,
+            override_prompt: None,
+            additional_prompt: None,
+            extra_contributors: vec![Box::new(mcp_contributor)],
+        })
+        .expect("should build context");
+
+        assert!(
+            result
+                .source_summary
+                .iter()
+                .any(|s| s.contains("mcp_task_tools")),
+            "source_summary 应包含 MCP 贡献者标签"
+        );
+        assert_eq!(result.mcp_endpoints.len(), 1);
+        assert_eq!(result.mcp_endpoints[0].name, "agentdash-task-tools");
+        assert_eq!(result.mcp_endpoints[0].scope, "task");
+    }
+
+    #[test]
+    fn parse_mcp_endpoint_from_content_works() {
+        let content = "## MCP: my-server\n- url: http://localhost:3001/mcp/task/123\n- scope: task\n描述文本";
+        let endpoint = parse_mcp_endpoint_from_content(content).unwrap();
+        assert_eq!(endpoint.name, "my-server");
+        assert_eq!(endpoint.url, "http://localhost:3001/mcp/task/123");
+        assert_eq!(endpoint.scope, "task");
+    }
+
+    #[test]
+    fn mcp_context_contributor_produces_valid_fragment() {
+        let config = McpInjectionConfig::for_task(
+            "http://localhost:3001",
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        );
+        let contributor = McpContextContributor::new(config);
+
+        let task = Task::new(uuid::Uuid::new_v4(), "t".into(), "d".into());
+        let story = Story::new(uuid::Uuid::new_v4(), "b".into(), "s".into(), "d".into());
+        let project = Project::new("p".into(), "d".into(), "b".into());
+
+        let input = ContributorInput {
+            task: &task,
+            story: &story,
+            project: &project,
+            workspace: None,
+            phase: TaskExecutionPhase::Start,
+            override_prompt: None,
+            additional_prompt: None,
+        };
+
+        let fragments = contributor.contribute(&input);
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].slot, "mcp_config");
+        assert_eq!(fragments[0].label, "mcp_task_tools");
+        assert!(fragments[0].content.contains("## MCP: "));
+        assert!(fragments[0].content.contains("- url: http://localhost:3001/mcp/task/"));
+        assert!(fragments[0].content.contains("- scope: task"));
     }
 }

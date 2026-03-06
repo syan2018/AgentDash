@@ -18,6 +18,7 @@
 //! - `POST /mcp/task/{task_id}` → Task 工具
 
 pub mod error;
+pub mod injection;
 pub mod scope;
 pub mod servers;
 pub mod services;

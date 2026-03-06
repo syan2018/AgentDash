@@ -50,23 +50,28 @@ export function AcpTaskContextCard({ block }: AcpTaskContextCardProps) {
     parsed.phase === "start" ? "启动" : parsed.phase === "continue" ? "继续" : "未知";
 
   return (
-    <div className="rounded-lg border border-primary/20 bg-primary/5 overflow-hidden">
+    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-primary/10 transition-colors"
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
       >
-        <span className="text-sm">🧩</span>
-        <span className="text-xs font-medium text-primary">Task 上下文注入</span>
-        <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+        <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          CTX
+        </span>
+        <span className="text-sm font-medium text-foreground">Task 上下文注入</span>
+        <span className="rounded-[6px] border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
           {phaseLabel}
         </span>
         <span className="ml-auto text-[10px] text-muted-foreground font-mono">
           {parsed.taskId.length > 8 ? `${parsed.taskId.slice(0, 8)}...` : parsed.taskId}
         </span>
+        <span className="text-xs text-muted-foreground/50">
+          {expanded ? "▲" : "▼"}
+        </span>
       </button>
       {expanded && (
-        <div className="border-t border-primary/15 px-3 py-2.5">
+        <div className="border-t border-border px-3 py-2.5">
           {parsed.text ? (
             <pre className="max-h-56 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/80">
               {parsed.text}

@@ -41,19 +41,29 @@ export function AcpTaskEventCard({ update }: AcpTaskEventCardProps) {
   const toStatus = typeof data?.to === "string" ? data.to : null;
   const taskId = typeof data?.task_id === "string" ? data.task_id : null;
 
+  const isFailure = eventType === "task_start_failed" || eventType === "task_cancel_requested";
+  const borderColor = isFailure ? "border-destructive/30" : "border-success/30";
+  const statusColor = isFailure ? "text-destructive" : "text-success";
+
   return (
-    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
-      <div className="flex items-center gap-2 text-xs">
-        <span>📌</span>
-        <span className="font-medium text-emerald-700">{label}</span>
-        {toStatus && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-700">{toStatus}</span>}
+    <div className={`rounded-[12px] border ${borderColor} bg-background px-3 py-2.5`}>
+      <div className="flex items-center gap-2.5 text-xs">
+        <span className={`inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground`}>
+          TASK
+        </span>
+        <span className={`font-medium ${statusColor}`}>{label}</span>
+        {toStatus && (
+          <span className={`rounded-[6px] border ${borderColor} bg-secondary/60 px-1.5 py-0.5 text-[10px] ${statusColor}`}>
+            {toStatus}
+          </span>
+        )}
       </div>
-      <p className="mt-1 text-xs text-foreground/80">{message}</p>
+      <p className="mt-1.5 text-xs text-foreground/80">{message}</p>
       {(fromStatus || taskId) && (
-        <p className="mt-1 text-[10px] text-muted-foreground font-mono">
+        <p className="mt-1.5 text-[10px] text-muted-foreground font-mono">
           {taskId ? `task=${taskId}` : ""}
           {taskId && fromStatus ? " · " : ""}
-          {fromStatus && toStatus ? `${fromStatus} -> ${toStatus}` : ""}
+          {fromStatus && toStatus ? `${fromStatus} → ${toStatus}` : ""}
         </p>
       )}
     </div>

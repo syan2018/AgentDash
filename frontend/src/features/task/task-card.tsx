@@ -13,7 +13,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-[12px] border border-border bg-background p-3.5 text-left transition-colors hover:bg-secondary/35"
+      className="w-full rounded-[12px] border border-border bg-background p-3.5 text-left transition-all hover:border-primary/25 hover:bg-secondary/35"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

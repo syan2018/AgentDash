@@ -21,12 +21,14 @@ const LABEL_DISPLAY: Record<string, string> = {
 };
 
 function labelText(label: string): string {
-  return LABEL_DISPLAY[label] ?? label || "通用";
+  return (LABEL_DISPLAY[label] ?? label) || "通用";
 }
+
+const EMPTY_SESSIONS: SessionBinding[] = [];
 
 export function StorySessionPanel({ story }: StorySessionPanelProps) {
   const navigate = useNavigate();
-  const sessions = useStoryStore((s) => s.sessionsByStoryId[story.id] ?? []);
+  const sessions = useStoryStore((s) => s.sessionsByStoryId[story.id] ?? EMPTY_SESSIONS);
   const fetchStorySessions = useStoryStore((s) => s.fetchStorySessions);
   const createStorySession = useStoryStore((s) => s.createStorySession);
   const unbindStorySession = useStoryStore((s) => s.unbindStorySession);

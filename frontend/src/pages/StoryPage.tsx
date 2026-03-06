@@ -11,6 +11,7 @@ import type {
   Task,
   Workspace,
 } from "../types";
+import { StorySessionPanel } from "../features/story/story-session-panel";
 import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../components/ui/status-badge";
 import { TaskList } from "../features/task/task-list";
 import { TaskDrawer } from "../features/task/task-drawer";
@@ -48,7 +49,7 @@ const storyTypeOptions: { value: StoryType; label: string; icon: string }[] = [
   { value: "other", label: "其他", icon: "📦" },
 ];
 
-type TabKey = "context" | "tasks" | "review";
+type TabKey = "context" | "tasks" | "sessions" | "review";
 
 // 状态流转操作按钮组
 interface StoryStatusActionsProps {
@@ -618,6 +619,7 @@ export function StoryPage() {
   const tabs = [
     { key: "context", label: "上下文" },
     { key: "tasks", label: "任务列表" },
+    { key: "sessions", label: "会话" },
     { key: "review", label: "验收" },
   ] as const;
 
@@ -857,6 +859,11 @@ export function StoryPage() {
                     setSelectedTaskId(task.id);
                   }}
                 />
+              </DetailSection>
+            )}
+            {activeTab === "sessions" && (
+              <DetailSection title="伴随会话">
+                <StorySessionPanel story={story} />
               </DetailSection>
             )}
             {activeTab === "review" && <ReviewPanel story={story} tasks={sortedTasks} />}

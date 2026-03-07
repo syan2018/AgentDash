@@ -77,10 +77,26 @@ export interface ResourceRef {
   resource_type: string;
 }
 
+export type ContextSourceKind = "manual_text" | "file" | "project_snapshot";
+export type ContextSlot = "requirements" | "constraints" | "codebase" | "references" | "instruction_append";
+export type ContextDelivery = "inline" | "resource" | "lazy";
+
+export interface ContextSourceRef {
+  kind: ContextSourceKind;
+  locator: string;
+  label?: string | null;
+  slot: ContextSlot;
+  priority: number;
+  required: boolean;
+  max_chars?: number | null;
+  delivery: ContextDelivery;
+}
+
 export interface StoryContext {
   prd_doc?: string | null;
   spec_refs: string[];
   resource_list: ResourceRef[];
+  source_refs: ContextSourceRef[];
 }
 
 export interface Story {
@@ -107,6 +123,7 @@ export interface AgentBinding {
   preset_name?: string | null;
   prompt_template?: string | null;
   initial_context?: string | null;
+  context_sources: ContextSourceRef[];
 }
 
 export interface Task {
@@ -144,9 +161,27 @@ export interface SessionTaskContext {
   agent_binding?: AgentBinding;
 }
 
-export interface SessionReturnTarget {
-  story_id: string;
-  task_id: string;
+export type SessionReturnTarget =
+  | {
+      owner_type: "story";
+      story_id: string;
+    }
+  | {
+      owner_type: "task";
+      story_id: string;
+      task_id: string;
+    };
+
+export interface SessionBindingOwner {
+  id: string;
+  session_id: string;
+  owner_type: SessionOwnerType;
+  owner_id: string;
+  label: string;
+  created_at: string;
+  owner_title?: string | null;
+  story_id?: string | null;
+  task_id?: string | null;
 }
 
 export interface SessionNavigationState {

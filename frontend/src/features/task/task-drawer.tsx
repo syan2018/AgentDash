@@ -10,6 +10,7 @@ import {
 } from "../../components/ui/detail-panel";
 import { AgentBindingFields } from "./agent-binding-fields";
 import {
+  createDefaultAgentBinding,
   hasAgentBindingSelection,
   normalizeAgentBinding,
 } from "./agent-binding";
@@ -71,7 +72,9 @@ export function TaskDrawer({
   const [editDescription, setEditDescription] = useState(task?.description ?? "");
   const [editStatus, setEditStatus] = useState<TaskStatus>(task?.status ?? "pending");
   const [editWorkspaceId, setEditWorkspaceId] = useState(task?.workspace_id ?? "");
-  const [editAgentBinding, setEditAgentBinding] = useState<AgentBinding>(task?.agent_binding ?? {});
+  const [editAgentBinding, setEditAgentBinding] = useState<AgentBinding>(
+    task?.agent_binding ?? createDefaultAgentBinding(projectConfig),
+  );
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
@@ -96,7 +99,7 @@ export function TaskDrawer({
     setEditDescription(nextTask.description ?? "");
     setEditStatus(nextTask.status);
     setEditWorkspaceId(nextTask.workspace_id ?? "");
-    setEditAgentBinding(nextTask.agent_binding ?? {});
+    setEditAgentBinding(nextTask.agent_binding ?? createDefaultAgentBinding(projectConfig));
     setFormMessage(null);
   };
 
@@ -210,6 +213,30 @@ export function TaskDrawer({
                   projectConfig={projectConfig}
                   onChange={setEditAgentBinding}
                 />
+
+                {editAgentBinding.context_sources.length > 0 && (
+                  <div className="mt-3 space-y-2 border-t border-border pt-3">
+                    <p className="text-xs text-muted-foreground">已分配 Story 上下文</p>
+                    {editAgentBinding.context_sources.map((context, index) => (
+                      <div
+                        key={`${context.label ?? "task-context"}-${index}`}
+                        className="rounded-[10px] border border-border bg-secondary/25 px-3 py-2"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">
+                            {context.label?.trim() || `上下文 ${index + 1}`}
+                          </span>
+                          <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                            {context.slot}
+                          </span>
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+                          {context.locator}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="flex justify-end">
                 <button

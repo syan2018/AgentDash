@@ -1,5 +1,13 @@
 import { create } from 'zustand';
-import type { Story, Task, StoryContext, AgentBinding, StateChange, SessionBinding } from '../types';
+import type {
+  Story,
+  Task,
+  StoryContext,
+  AgentBinding,
+  StateChange,
+  SessionBinding,
+  ContextSourceRef,
+} from '../types';
 import { api } from '../api/client';
 
 export interface CreateTaskInput {
@@ -58,6 +66,7 @@ interface StoryState {
       priority?: Story["priority"];
       story_type?: Story["story_type"];
       tags?: string[];
+      context_source_refs?: ContextSourceRef[];
     },
   ) => Promise<Story | null>;
   deleteStory: (storyId: string) => Promise<void>;
@@ -193,7 +202,7 @@ const toBackendTaskStatus = (status: Task["status"]): string => {
   }
 };
 
-const defaultContext: StoryContext = { prd_doc: null, spec_refs: [], resource_list: [] };
+const defaultContext: StoryContext = { prd_doc: null, spec_refs: [], resource_list: [], source_refs: [] };
 
 const normalizeStoryPriority = (value: string): Story['priority'] => {
   switch (value) {
@@ -242,6 +251,7 @@ const mapStory = (raw: Record<string, unknown>): Story => {
         prd_doc: (ctx.prd_doc as string) ?? null,
         spec_refs: Array.isArray(ctx.spec_refs) ? ctx.spec_refs as string[] : [],
         resource_list: Array.isArray(ctx.resource_list) ? ctx.resource_list as StoryContext['resource_list'] : [],
+        source_refs: Array.isArray(ctx.source_refs) ? ctx.source_refs as ContextSourceRef[] : [],
       };
     }
   }
@@ -269,6 +279,7 @@ const defaultBinding: AgentBinding = {
   preset_name: null,
   prompt_template: null,
   initial_context: null,
+  context_sources: [],
 };
 
 const mapAgentBinding = (raw: unknown): AgentBinding => {
@@ -283,6 +294,9 @@ const mapAgentBinding = (raw: unknown): AgentBinding => {
     preset_name: binding.preset_name ? String(binding.preset_name) : null,
     prompt_template: binding.prompt_template ? String(binding.prompt_template) : null,
     initial_context: binding.initial_context ? String(binding.initial_context) : null,
+    context_sources: Array.isArray(binding.context_sources)
+      ? binding.context_sources as ContextSourceRef[]
+      : [],
   };
 };
 

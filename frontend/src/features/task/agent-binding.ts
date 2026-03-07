@@ -14,6 +14,7 @@ export function createDefaultAgentBinding(projectConfig?: ProjectConfig): AgentB
       preset_name: null,
       prompt_template: null,
       initial_context: null,
+      context_sources: [],
     };
   }
 
@@ -25,6 +26,7 @@ export function createDefaultAgentBinding(projectConfig?: ProjectConfig): AgentB
       preset_name: normalizeText(fallbackPreset.name),
       prompt_template: null,
       initial_context: null,
+      context_sources: [],
     };
   }
 
@@ -34,6 +36,7 @@ export function createDefaultAgentBinding(projectConfig?: ProjectConfig): AgentB
     preset_name: null,
     prompt_template: null,
     initial_context: null,
+    context_sources: [],
   };
 }
 
@@ -55,6 +58,7 @@ export function normalizeAgentBinding(binding: AgentBinding): AgentBinding {
     preset_name: normalizeText(binding.preset_name),
     prompt_template: normalizeText(binding.prompt_template),
     initial_context: normalizeText(binding.initial_context),
+    context_sources: Array.isArray(binding.context_sources) ? binding.context_sources : [],
   };
 }
 

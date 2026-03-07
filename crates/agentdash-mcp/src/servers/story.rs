@@ -9,12 +9,15 @@ use std::sync::Arc;
 
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::*;
-use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
+use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::McpError;
 use crate::services::McpServices;
+use agentdash_domain::context_source::{
+    ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
+};
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -26,6 +29,19 @@ pub struct UpdateStoryContextParams {
     pub add_spec_refs: Option<Vec<String>>,
     #[schemars(description = "追加的资源清单项 [{name, uri, resource_type}]")]
     pub add_resources: Option<Vec<ResourceInput>>,
+    #[schemars(description = "追加的声明式上下文来源")]
+    pub add_source_refs: Option<Vec<ContextSourceRefInput>>,
+    #[schemars(description = "完整替换声明式上下文来源")]
+    pub replace_source_refs: Option<Vec<ContextSourceRefInput>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UpdateStoryDetailsParams {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub priority: Option<String>,
+    pub story_type: Option<String>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -33,6 +49,18 @@ pub struct ResourceInput {
     pub name: String,
     pub uri: String,
     pub resource_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+pub struct ContextSourceRefInput {
+    pub kind: String,
+    pub locator: String,
+    pub label: Option<String>,
+    pub slot: Option<String>,
+    pub priority: Option<i32>,
+    pub required: Option<bool>,
+    pub max_chars: Option<usize>,
+    pub delivery: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -47,6 +75,8 @@ pub struct CreateTaskParams {
     pub agent_type: Option<String>,
     #[schemars(description = "初始上下文（拼接在提示词前的额外信息）")]
     pub initial_context: Option<String>,
+    #[schemars(description = "Task 专属声明式上下文来源")]
+    pub context_sources: Option<Vec<ContextSourceRefInput>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -62,6 +92,7 @@ pub struct TaskInput {
     pub workspace_id: Option<String>,
     pub agent_type: Option<String>,
     pub initial_context: Option<String>,
+    pub context_sources: Option<Vec<ContextSourceRefInput>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -105,6 +136,64 @@ impl StoryMcpServer {
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Story", self.story_id))
     }
+
+    fn into_context_source(source: ContextSourceRefInput) -> Result<ContextSourceRef, McpError> {
+        let kind = match source.kind.as_str() {
+            "manual_text" => ContextSourceKind::ManualText,
+            "file" => ContextSourceKind::File,
+            "project_snapshot" => ContextSourceKind::ProjectSnapshot,
+            other => {
+                return Err(McpError::invalid_param(
+                    "kind",
+                    format!("不支持的来源类型: {other}"),
+                ));
+            }
+        };
+
+        let slot = match source.slot.as_deref().unwrap_or("references") {
+            "requirements" => ContextSlot::Requirements,
+            "constraints" => ContextSlot::Constraints,
+            "codebase" => ContextSlot::Codebase,
+            "references" => ContextSlot::References,
+            "instruction_append" => ContextSlot::InstructionAppend,
+            other => {
+                return Err(McpError::invalid_param(
+                    "slot",
+                    format!("不支持的 slot: {other}"),
+                ));
+            }
+        };
+
+        let delivery = match source.delivery.as_deref().unwrap_or("resource") {
+            "inline" => ContextDelivery::Inline,
+            "resource" => ContextDelivery::Resource,
+            "lazy" => ContextDelivery::Lazy,
+            other => {
+                return Err(McpError::invalid_param(
+                    "delivery",
+                    format!("不支持的 delivery: {other}"),
+                ));
+            }
+        };
+
+        Ok(ContextSourceRef {
+            kind,
+            locator: source.locator,
+            label: source.label,
+            slot,
+            priority: source.priority.unwrap_or_default(),
+            required: source.required.unwrap_or(false),
+            max_chars: source.max_chars,
+            delivery,
+        })
+    }
+
+    fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+        tags.into_iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect()
+    }
 }
 
 // ─── 工具实现 ──────────────────────────────────────────────────
@@ -124,6 +213,7 @@ impl StoryMcpServer {
                 "prd_doc": story.context.prd_doc,
                 "spec_refs": story.context.spec_refs,
                 "resource_list": story.context.resource_list,
+                "source_refs": story.context.source_refs,
             },
         });
 
@@ -160,6 +250,22 @@ impl StoryMcpServer {
             }
         }
 
+        if let Some(source_refs) = params.replace_source_refs {
+            story.context.source_refs = source_refs
+                .into_iter()
+                .map(Self::into_context_source)
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+
+        if let Some(source_refs) = params.add_source_refs {
+            for source in source_refs {
+                story
+                    .context
+                    .source_refs
+                    .push(Self::into_context_source(source)?);
+            }
+        }
+
         story.updated_at = chrono::Utc::now();
 
         self.services
@@ -173,6 +279,52 @@ impl StoryMcpServer {
             self.story_id,
             story.context.spec_refs.len(),
             story.context.resource_list.len(),
+        ))]))
+    }
+
+    #[tool(description = "更新 Story 基本信息（标题、描述、优先级、类型、标签）")]
+    async fn update_story_details(
+        &self,
+        Parameters(params): Parameters<UpdateStoryDetailsParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let mut story = self.load_story().await?;
+
+        if let Some(title) = params.title {
+            let trimmed = title.trim();
+            if trimmed.is_empty() {
+                return Err(McpError::invalid_param("title", "标题不能为空").into());
+            }
+            story.title = trimmed.to_string();
+        }
+        if let Some(description) = params.description {
+            story.description = description;
+        }
+        if let Some(priority) = params.priority {
+            story.priority = serde_json::from_value(serde_json::Value::String(priority.clone()))
+                .map_err(|_| {
+                    McpError::invalid_param("priority", format!("无效的优先级: {priority}"))
+                })?;
+        }
+        if let Some(story_type) = params.story_type {
+            story.story_type = serde_json::from_value(serde_json::Value::String(story_type.clone()))
+                .map_err(|_| {
+                    McpError::invalid_param("story_type", format!("无效的类型: {story_type}"))
+                })?;
+        }
+        if let Some(tags) = params.tags {
+            story.tags = Self::normalize_tags(tags);
+        }
+
+        story.updated_at = chrono::Utc::now();
+        self.services
+            .story_repo
+            .update(&story)
+            .await
+            .map_err(McpError::from)?;
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Story {} 基本信息已更新",
+            self.story_id,
         ))]))
     }
 
@@ -197,6 +349,12 @@ impl StoryMcpServer {
         task.agent_binding = AgentBinding {
             agent_type: params.agent_type,
             initial_context: params.initial_context,
+            context_sources: params
+                .context_sources
+                .unwrap_or_default()
+                .into_iter()
+                .map(Self::into_context_source)
+                .collect::<Result<Vec<_>, _>>()?,
             ..Default::default()
         };
 
@@ -237,12 +395,22 @@ impl StoryMcpServer {
                 })
                 .transpose()?;
 
-            let mut task =
-                Task::new(self.story_id, input.title.clone(), input.description.clone());
+            let mut task = Task::new(
+                self.story_id,
+                input.title.clone(),
+                input.description.clone(),
+            );
             task.workspace_id = workspace_id;
             task.agent_binding = AgentBinding {
                 agent_type: input.agent_type.clone(),
                 initial_context: input.initial_context.clone(),
+                context_sources: input
+                    .context_sources
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Self::into_context_source)
+                    .collect::<Result<Vec<_>, _>>()?,
                 ..Default::default()
             };
 
@@ -295,7 +463,9 @@ impl StoryMcpServer {
         )]))
     }
 
-    #[tool(description = "推进 Story 生命周期状态（如从 created 到 context_ready，或到 decomposed）")]
+    #[tool(
+        description = "推进 Story 生命周期状态（如从 created 到 context_ready，或到 decomposed）"
+    )]
     async fn advance_story_status(
         &self,
         Parameters(params): Parameters<AdvanceStoryStatusParams>,

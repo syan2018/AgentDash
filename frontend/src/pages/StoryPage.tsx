@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
   AgentBinding,
+  ContextSourceRef,
   ProjectConfig,
   Story,
   StoryNavigationState,
@@ -50,6 +51,41 @@ const storyTypeOptions: { value: StoryType; label: string; icon: string }[] = [
 ];
 
 type TabKey = "context" | "tasks" | "sessions" | "review";
+
+interface StoryFileContextDraft {
+  label: string;
+  relPath: string;
+  priority: number;
+}
+
+function isFileContextSource(source: ContextSourceRef): boolean {
+  return source.kind === "file";
+}
+
+function getStoryFileContexts(story: Story): ContextSourceRef[] {
+  return story.context.source_refs.filter(isFileContextSource);
+}
+
+function toStoryFileContextDraft(source: ContextSourceRef, index: number): StoryFileContextDraft {
+  return {
+    label: source.label?.trim() ?? "",
+    relPath: source.locator,
+    priority: Number.isFinite(source.priority) ? source.priority : 1000 - index,
+  };
+}
+
+function buildStoryFileContextSource(draft: StoryFileContextDraft, index: number): ContextSourceRef {
+  return {
+    kind: "file",
+    locator: draft.relPath.trim(),
+    label: draft.label.trim() || null,
+    slot: "references",
+    priority: Number.isFinite(draft.priority) ? draft.priority : 1000 - index,
+    required: false,
+    max_chars: null,
+    delivery: "resource",
+  };
+}
 
 // 状态流转操作按钮组
 interface StoryStatusActionsProps {
@@ -136,6 +172,7 @@ function StoryStatusActions({ currentStatus, onStatusChange }: StoryStatusAction
 }
 
 interface CreateTaskPanelProps {
+  story: Story;
   storyId: string;
   workspaces: Workspace[];
   projectConfig?: ProjectConfig;
@@ -143,6 +180,7 @@ interface CreateTaskPanelProps {
 }
 
 function CreateTaskPanel({
+  story,
   storyId,
   workspaces,
   projectConfig,
@@ -154,15 +192,30 @@ function CreateTaskPanel({
   const [description, setDescription] = useState("");
   const [workspaceId, setWorkspaceId] = useState(() => resolveDefaultWorkspaceId(projectConfig, workspaces));
   const [agentBinding, setAgentBinding] = useState<AgentBinding>(() => createDefaultAgentBinding(projectConfig));
+  const [selectedContextIndexes, setSelectedContextIndexes] = useState<number[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
+  const availableContexts = useMemo(() => getStoryFileContexts(story), [story]);
 
   useEffect(() => {
     if (isExpanded) return;
     setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
     setAgentBinding(createDefaultAgentBinding(projectConfig));
+    setSelectedContextIndexes([]);
     setFormMessage(null);
   }, [isExpanded, projectConfig, workspaces]);
+
+  useEffect(() => {
+    if (!isExpanded) {
+      setSelectedContextIndexes([]);
+    }
+  }, [isExpanded, story.id]);
+
+  const toggleContextSelection = (index: number) => {
+    setSelectedContextIndexes((current) =>
+      current.includes(index) ? current.filter((item) => item !== index) : [...current, index].sort((a, b) => a - b),
+    );
+  };
 
   const handleSubmit = async () => {
     if (!title.trim()) return;
@@ -173,11 +226,17 @@ function CreateTaskPanel({
     setIsSubmitting(true);
     setFormMessage(null);
     try {
+      const selectedContexts = selectedContextIndexes
+        .map((index) => availableContexts[index])
+        .filter((item): item is ContextSourceRef => Boolean(item));
       const task = await createTask(storyId, {
         title: title.trim(),
         description: description.trim() || undefined,
         workspace_id: workspaceId || null,
-        agent_binding: normalizeAgentBinding(agentBinding),
+        agent_binding: normalizeAgentBinding({
+          ...agentBinding,
+          context_sources: selectedContexts,
+        }),
       });
       if (!task) return;
 
@@ -187,6 +246,7 @@ function CreateTaskPanel({
       setDescription("");
       setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
       setAgentBinding(createDefaultAgentBinding(projectConfig));
+      setSelectedContextIndexes([]);
       setIsExpanded(false);
     } finally {
       setIsSubmitting(false);
@@ -257,6 +317,55 @@ function CreateTaskPanel({
           onChange={setAgentBinding}
         />
 
+        {availableContexts.length > 0 && (
+          <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">关联 Story 上下文</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  勾选后会把这些文件引用分配给 Task Agent，并在执行时由后端解析。
+                </p>
+              </div>
+              <span className="rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">
+                已选 {selectedContextIndexes.length}
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {availableContexts.map((context, index) => {
+                const checked = selectedContextIndexes.includes(index);
+                return (
+                  <label
+                    key={`${context.label ?? "context"}-${index}`}
+                    className={`flex cursor-pointer items-start gap-3 rounded-[10px] border px-3 py-2 transition-colors ${
+                      checked
+                        ? "border-primary/40 bg-primary/5"
+                        : "border-border bg-secondary/20 hover:bg-secondary/35"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleContextSelection(index)}
+                      className="mt-1 h-4 w-4 rounded border-border"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-foreground">
+                          {context.label?.trim() || `上下文 ${index + 1}`}
+                        </span>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+                        {context.locator}
+                      </p>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           {formMessage || error ? (
             <p className="text-xs text-destructive">{formMessage || error}</p>
@@ -279,24 +388,90 @@ function CreateTaskPanel({
 
 function ContextPanel({ story }: { story: Story }) {
   const ctx = story.context;
-  const hasContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
+  const { updateStory, error } = useStoryStore();
+  const fileContexts = useMemo(() => getStoryFileContexts(story), [story]);
+  const [isEditing, setIsEditing] = useState(false);
+  const [drafts, setDrafts] = useState<StoryFileContextDraft[]>(() =>
+    fileContexts.map((item, index) => toStoryFileContextDraft(item, index)),
+  );
+  const [message, setMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const hasLegacyContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
+
+  useEffect(() => {
+    if (isEditing) return;
+    setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
+  }, [fileContexts, isEditing]);
+
+  useEffect(() => {
+    setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
+    setMessage(null);
+    setIsEditing(false);
+  }, [story.id]);
+
+  const updateDraft = (index: number, patch: Partial<StoryFileContextDraft>) => {
+    setDrafts((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+  };
+
+  const addDraft = () => {
+    setDrafts((current) => [
+      ...current,
+      { label: "", relPath: "", priority: 1000 - current.length },
+    ]);
+  };
+
+  const removeDraft = (index: number) => {
+    setDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const handleSaveContexts = async () => {
+    const normalizedDrafts = drafts
+      .map((item) => ({
+        ...item,
+        label: item.label.trim(),
+        relPath: item.relPath.trim(),
+      }))
+      .filter((item) => item.relPath);
+    const nonFileSources = ctx.source_refs.filter((item) => !isFileContextSource(item));
+    const nextSourceRefs = [
+      ...nonFileSources,
+      ...normalizedDrafts.map((item, index) => buildStoryFileContextSource(item, index)),
+    ];
+
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      const updated = await updateStory(story.id, {
+        context_source_refs: nextSourceRefs,
+      });
+      if (!updated) {
+        setMessage(error ?? "保存上下文失败");
+        return;
+      }
+      setMessage("文件引用已保存到 Story，可用于伴生会话与 Task 分配");
+      setIsEditing(false);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <DetailSection title="上下文">
-      {!hasContent ? (
-        <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
-          暂无上下文条目
-        </p>
-      ) : (
-        <div className="space-y-3">
-          {ctx.prd_doc && (
+      <div className="space-y-3">
+        {!hasLegacyContent && fileContexts.length === 0 && !isEditing ? (
+          <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
+            暂无上下文条目
+          </p>
+        ) : null}
+
+        {ctx.prd_doc && (
             <div className="rounded-[12px] border border-border bg-background p-3.5">
               <p className="mb-2 text-xs font-medium text-muted-foreground">PRD 文档</p>
               <pre className="whitespace-pre-wrap text-sm leading-6 text-foreground">{ctx.prd_doc}</pre>
             </div>
-          )}
+        )}
 
-          {ctx.spec_refs.length > 0 && (
+        {ctx.spec_refs.length > 0 && (
             <div className="rounded-[12px] border border-border bg-background p-3.5">
               <p className="mb-2 text-xs font-medium text-muted-foreground">规格引用</p>
               <ul className="space-y-1.5">
@@ -308,9 +483,9 @@ function ContextPanel({ story }: { story: Story }) {
                 ))}
               </ul>
             </div>
-          )}
+        )}
 
-          {ctx.resource_list.length > 0 && (
+        {ctx.resource_list.length > 0 && (
             <div className="rounded-[12px] border border-border bg-background p-3.5">
               <p className="mb-2 text-xs font-medium text-muted-foreground">资源列表</p>
               <div className="space-y-2">
@@ -328,9 +503,120 @@ function ContextPanel({ story }: { story: Story }) {
                 ))}
               </div>
             </div>
-          )}
+        )}
+
+        <div className="rounded-[12px] border border-border bg-background p-3.5">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">工作区文件引用</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  这些文件会暂存在 Story 上，伴生会话会自动解析它们，创建 Task 时也可按需分配给 Task Agent。
+                </p>
+              </div>
+              {!isEditing ? (
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(true)}
+                  className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  编辑
+                </button>
+              ) : null}
+            </div>
+
+            {!isEditing ? (
+              fileContexts.length > 0 ? (
+                <div className="space-y-2">
+                  {fileContexts.map((context, index) => (
+                    <div
+                      key={`${context.locator}-${index}`}
+                      className="rounded-[10px] border border-border bg-secondary/25 px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-foreground">
+                          {context.label?.trim() || `文件引用 ${index + 1}`}
+                        </span>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+                        {context.locator}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-[10px] border border-dashed border-border bg-secondary/20 px-3 py-4 text-sm text-muted-foreground">
+                  暂无文件引用。
+                </p>
+              )
+            ) : (
+              <div className="space-y-3">
+                {drafts.length > 0 ? (
+                  drafts.map((draft, index) => (
+                    <div key={index} className="rounded-[10px] border border-border bg-secondary/20 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">文件引用 {index + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeDraft(index)}
+                          className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                        >
+                          删除
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <input
+                          value={draft.label}
+                          onChange={(event) => updateDraft(index, { label: event.target.value })}
+                          placeholder="引用标题（可选）"
+                          className="agentdash-form-input"
+                        />
+                        <input
+                          value={draft.relPath}
+                          onChange={(event) => updateDraft(index, { relPath: event.target.value })}
+                          placeholder="例如: crates/agentdash-api/src/routes/stories.rs"
+                          className="agentdash-form-input"
+                        />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-[10px] border border-dashed border-border bg-secondary/20 px-3 py-4 text-sm text-muted-foreground">
+                    还没有文件引用，点击下方按钮新增。
+                  </p>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={addDraft} className="agentdash-button-secondary">
+                    新增文件引用
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
+                      setIsEditing(false);
+                      setMessage(null);
+                    }}
+                    className="agentdash-button-secondary"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveContexts()}
+                    disabled={isSaving}
+                    className="agentdash-button-primary"
+                  >
+                    {isSaving ? "保存中..." : "保存上下文"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {message && <p className="mt-3 text-xs text-emerald-600">{message}</p>}
+            {!message && error && isEditing && <p className="mt-3 text-xs text-destructive">{error}</p>}
         </div>
-      )}
+      </div>
     </DetailSection>
   );
 }
@@ -823,6 +1109,7 @@ export function StoryPage() {
           {/* 创建 Task */}
           <div className="mt-3">
             <CreateTaskPanel
+              story={story}
               storyId={story.id}
               workspaces={workspaces}
               projectConfig={currentProject?.config}

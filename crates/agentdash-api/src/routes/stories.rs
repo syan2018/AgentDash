@@ -5,6 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, StoryType};
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
@@ -37,6 +38,7 @@ pub struct UpdateStoryRequest {
     pub priority: Option<StoryPriority>,
     pub story_type: Option<StoryType>,
     pub tags: Option<Vec<String>>,
+    pub context_source_refs: Option<Vec<ContextSourceRef>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -46,6 +48,7 @@ pub struct CreateTaskAgentBindingRequest {
     pub preset_name: Option<String>,
     pub prompt_template: Option<String>,
     pub initial_context: Option<String>,
+    pub context_sources: Option<Vec<ContextSourceRef>>,
 }
 
 #[derive(Deserialize)]
@@ -180,6 +183,9 @@ pub async fn update_story(
     }
     if let Some(tags) = req.tags {
         story.tags = normalize_tags(tags);
+    }
+    if let Some(context_source_refs) = req.context_source_refs {
+        story.context.source_refs = context_source_refs;
     }
 
     state.story_repo.update(&story).await?;
@@ -476,6 +482,7 @@ fn to_agent_binding(input: Option<CreateTaskAgentBindingRequest>) -> AgentBindin
             preset_name: normalize_option(value.preset_name),
             prompt_template: normalize_option(value.prompt_template),
             initial_context: normalize_option(value.initial_context),
+            context_sources: value.context_sources.unwrap_or_default(),
         }
     } else {
         AgentBinding::default()

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::*;
-use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
+use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -20,7 +20,9 @@ use crate::services::McpServices;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateTaskStatusParams {
-    #[schemars(description = "目标状态：pending / assigned / running / awaiting_verification / completed / failed")]
+    #[schemars(
+        description = "目标状态：pending / assigned / running / awaiting_verification / completed / failed"
+    )]
     pub status: String,
     #[schemars(description = "状态变更原因说明")]
     pub reason: Option<String>,
@@ -28,7 +30,9 @@ pub struct UpdateTaskStatusParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReportArtifactParams {
-    #[schemars(description = "产物类型：code_change / test_result / log_output / file / tool_execution")]
+    #[schemars(
+        description = "产物类型：code_change / test_result / log_output / file / tool_execution"
+    )]
     pub artifact_type: String,
     #[schemars(description = "产物内容。优先传 JSON 字符串；若为纯文本，可直接传文本")]
     pub content: String,
@@ -227,6 +231,7 @@ impl TaskMcpServer {
                 "prd_doc": story.context.prd_doc,
                 "spec_refs": story.context.spec_refs,
                 "resource_list": story.context.resource_list,
+                "source_refs": story.context.source_refs,
             },
         });
 

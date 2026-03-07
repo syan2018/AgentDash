@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::context_source::ContextSourceRef;
+
 /// Story 状态枚举
 /// 生命周期: Created → ContextReady → Decomposed → Executing → Completed/Failed/Cancelled
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,6 +53,9 @@ pub struct StoryContext {
     /// 资源清单
     #[serde(default)]
     pub resource_list: Vec<Resource>,
+    /// 声明式上下文来源
+    #[serde(default)]
+    pub source_refs: Vec<ContextSourceRef>,
 }
 
 /// 资源引用

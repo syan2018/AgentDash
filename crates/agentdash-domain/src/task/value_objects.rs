@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::context_source::ContextSourceRef;
+
 /// Task 状态枚举
 /// 生命周期: Pending → Assigned → Running → AwaitingVerification → Completed/Failed
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,6 +30,9 @@ pub struct AgentBinding {
     pub prompt_template: Option<String>,
     /// 初始上下文（拼接在提示词前）
     pub initial_context: Option<String>,
+    /// 声明式 Task 特定上下文来源
+    #[serde(default)]
+    pub context_sources: Vec<ContextSourceRef>,
 }
 
 /// 执行产物

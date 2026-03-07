@@ -2,34 +2,14 @@ use std::collections::HashMap;
 
 use agent_client_protocol::McpServer;
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
+use agentdash_injection::{
+    ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesRequest,
+    resolve_declared_sources,
+};
 use agentdash_mcp::injection::McpInjectionConfig;
 use serde_json::{Value, json};
 
 // ─── 公共抽象：可扩展的上下文构建框架 ───────────────────────────
-
-/// 上下文片段合并策略
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MergeStrategy {
-    /// 追加到同名 slot 中
-    Append,
-    /// 覆盖同名 slot 的全部内容
-    Override,
-}
-
-/// 上下文片段 — 有序、按 slot 分组的文本块
-#[derive(Debug)]
-pub struct ContextFragment {
-    /// 逻辑分组（同 slot 的 fragment 会被合并）
-    pub slot: &'static str,
-    /// 来源标签（用于审计和调试）
-    pub label: &'static str,
-    /// 排序权重（数值越小越靠前）
-    pub order: i32,
-    /// 合并策略
-    pub strategy: MergeStrategy,
-    /// 文本内容
-    pub content: String,
-}
 
 /// Contributor 的结构化产出 — 同时包含上下文片段和 ACP MCP Server 声明
 pub struct Contribution {
@@ -64,84 +44,6 @@ pub struct ContributorInput<'a> {
     pub phase: TaskExecutionPhase,
     pub override_prompt: Option<&'a str>,
     pub additional_prompt: Option<&'a str>,
-}
-
-/// 上下文组合器 — 有序合并多个 ContextFragment
-#[derive(Default)]
-pub struct ContextComposer {
-    fragments: Vec<ContextFragment>,
-}
-
-impl ContextComposer {
-    pub fn push(
-        &mut self,
-        slot: &'static str,
-        label: &'static str,
-        order: i32,
-        strategy: MergeStrategy,
-        content: impl Into<String>,
-    ) {
-        let content = content.into();
-        if content.trim().is_empty() {
-            return;
-        }
-        self.fragments.push(ContextFragment {
-            slot,
-            label,
-            order,
-            strategy,
-            content,
-        });
-    }
-
-    pub fn push_fragment(&mut self, fragment: ContextFragment) {
-        if !fragment.content.trim().is_empty() {
-            self.fragments.push(fragment);
-        }
-    }
-
-    pub fn compose(mut self) -> (String, Vec<String>) {
-        self.fragments.sort_by_key(|item| item.order);
-
-        let mut slot_order: Vec<&'static str> = Vec::new();
-        let mut slot_chunks: HashMap<&'static str, Vec<String>> = HashMap::new();
-        let mut source_summary: Vec<String> = Vec::new();
-
-        for fragment in self.fragments {
-            if !slot_chunks.contains_key(fragment.slot) {
-                slot_order.push(fragment.slot);
-            }
-            source_summary.push(format!("{}({})", fragment.label, fragment.slot));
-
-            match fragment.strategy {
-                MergeStrategy::Append => {
-                    slot_chunks
-                        .entry(fragment.slot)
-                        .or_default()
-                        .push(fragment.content);
-                }
-                MergeStrategy::Override => {
-                    slot_chunks.insert(fragment.slot, vec![fragment.content]);
-                }
-            }
-        }
-
-        let mut sections = Vec::new();
-        for slot in slot_order {
-            if let Some(chunks) = slot_chunks.remove(slot) {
-                let merged = chunks
-                    .into_iter()
-                    .filter(|chunk| !chunk.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                if !merged.trim().is_empty() {
-                    sections.push(merged);
-                }
-            }
-        }
-
-        (sections.join("\n\n"), source_summary)
-    }
 }
 
 // ─── 执行阶段与构建结果 ─────────────────────────────────────
@@ -304,6 +206,59 @@ impl ContextContributor for BindingContextContributor {
     }
 }
 
+/// 声明式来源注入 Contributor（Story + Task）
+struct DeclaredSourcesContributor;
+
+impl ContextContributor for DeclaredSourcesContributor {
+    fn contribute(&self, input: &ContributorInput<'_>) -> Contribution {
+        let mut sources = input.story.context.source_refs.clone();
+        sources.extend(input.task.agent_binding.context_sources.clone());
+
+        if sources.is_empty() {
+            return Contribution::fragments_only(Vec::new());
+        }
+
+        let workspace_root = input
+            .workspace
+            .map(|workspace| std::path::Path::new(workspace.container_ref.as_str()));
+
+        match resolve_declared_sources(ResolveSourcesRequest {
+            sources: &sources,
+            workspace_root,
+            base_order: 82,
+        }) {
+            Ok(result) => {
+                let mut fragments = result.fragments;
+                if !result.warnings.is_empty() {
+                    fragments.push(ContextFragment {
+                        slot: "references",
+                        label: "declared_source_warnings",
+                        order: 89,
+                        strategy: MergeStrategy::Append,
+                        content: format!(
+                            "## Injection Notes\n{}",
+                            result
+                                .warnings
+                                .iter()
+                                .map(|item| format!("- {item}"))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        ),
+                    });
+                }
+                Contribution::fragments_only(fragments)
+            }
+            Err(err) => Contribution::fragments_only(vec![ContextFragment {
+                slot: "references",
+                label: "declared_source_error",
+                order: 89,
+                strategy: MergeStrategy::Append,
+                content: format!("## Injection Error\n- 声明式上下文来源解析失败：{}", err),
+            }]),
+        }
+    }
+}
+
 /// 指令模板 Contributor
 struct InstructionContributor;
 
@@ -430,6 +385,7 @@ pub fn build_task_agent_context(
     let builtin_contributors: Vec<Box<dyn ContextContributor>> = vec![
         Box::new(CoreContextContributor),
         Box::new(BindingContextContributor),
+        Box::new(DeclaredSourcesContributor),
         Box::new(InstructionContributor),
     ];
 
@@ -448,7 +404,9 @@ pub fn build_task_agent_context(
 
         for fragment in contribution.context_fragments {
             match fragment.slot {
-                "instruction" => instruction_composer.push_fragment(fragment),
+                "instruction" | "instruction_append" => {
+                    instruction_composer.push_fragment(fragment)
+                }
                 _ => context_composer.push_fragment(fragment),
             }
         }
@@ -582,6 +540,10 @@ fn trim_or_dash(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::context_source::{
+        ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
+    };
+    use agentdash_domain::workspace::{Workspace, WorkspaceStatus, WorkspaceType};
 
     #[test]
     fn compose_keeps_initial_context_when_instruction_slot_is_override() {
@@ -697,11 +659,82 @@ mod tests {
         assert_eq!(contribution.context_fragments.len(), 1);
         assert_eq!(contribution.context_fragments[0].slot, "mcp_config");
         assert_eq!(contribution.context_fragments[0].label, "mcp_task_tools");
-        assert!(contribution.context_fragments[0].content.contains("## MCP: "));
+        assert!(
+            contribution.context_fragments[0]
+                .content
+                .contains("## MCP: ")
+        );
 
-        assert_eq!(contribution.mcp_servers.len(), 1, "应产出 1 个 ACP McpServer");
+        assert_eq!(
+            contribution.mcp_servers.len(),
+            1,
+            "应产出 1 个 ACP McpServer"
+        );
         let server_json = serde_json::to_value(&contribution.mcp_servers[0]).unwrap();
         assert_eq!(server_json["type"], "http");
         assert!(server_json["url"].as_str().unwrap().contains("/mcp/task/"));
+    }
+
+    #[test]
+    fn declared_sources_are_included_in_context_prompt() {
+        let mut task = Task::new(uuid::Uuid::new_v4(), "task".into(), "desc".into());
+        task.agent_binding.context_sources = vec![ContextSourceRef {
+            kind: ContextSourceKind::ManualText,
+            locator: "请严格遵守接口约束".to_string(),
+            label: Some("task constraint".to_string()),
+            slot: ContextSlot::Constraints,
+            priority: 50,
+            required: true,
+            max_chars: None,
+            delivery: ContextDelivery::Resource,
+        }];
+
+        let mut story = Story::new(
+            uuid::Uuid::new_v4(),
+            "backend".into(),
+            "story".into(),
+            "story desc".into(),
+        );
+        story.context.source_refs = vec![ContextSourceRef {
+            kind: ContextSourceKind::ManualText,
+            locator: "这是 Story 级需求摘要".to_string(),
+            label: Some("story requirements".to_string()),
+            slot: ContextSlot::Requirements,
+            priority: 100,
+            required: true,
+            max_chars: None,
+            delivery: ContextDelivery::Resource,
+        }];
+
+        let project = Project::new("proj".into(), "desc".into(), "backend".into());
+        let workspace = Workspace {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "ws".into(),
+            container_ref: ".".into(),
+            workspace_type: WorkspaceType::Static,
+            status: WorkspaceStatus::Ready,
+            git_config: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let result = build_task_agent_context(TaskAgentBuildInput {
+            task: &task,
+            story: &story,
+            project: &project,
+            workspace: Some(&workspace),
+            phase: TaskExecutionPhase::Start,
+            override_prompt: None,
+            additional_prompt: None,
+            extra_contributors: vec![],
+        })
+        .expect("should build context");
+
+        let context_block = result.prompt_blocks[0]["resource"]["text"]
+            .as_str()
+            .expect("resource block text");
+        assert!(context_block.contains("这是 Story 级需求摘要"));
+        assert!(context_block.contains("请严格遵守接口约束"));
     }
 }

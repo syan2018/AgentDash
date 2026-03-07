@@ -1,0 +1,122 @@
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeStrategy {
+    Append,
+    Override,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextFragment {
+    pub slot: &'static str,
+    pub label: &'static str,
+    pub order: i32,
+    pub strategy: MergeStrategy,
+    pub content: String,
+}
+
+#[derive(Default)]
+pub struct ContextComposer {
+    fragments: Vec<ContextFragment>,
+}
+
+impl ContextComposer {
+    pub fn push(
+        &mut self,
+        slot: &'static str,
+        label: &'static str,
+        order: i32,
+        strategy: MergeStrategy,
+        content: impl Into<String>,
+    ) {
+        let content = content.into();
+        if content.trim().is_empty() {
+            return;
+        }
+        self.fragments.push(ContextFragment {
+            slot,
+            label,
+            order,
+            strategy,
+            content,
+        });
+    }
+
+    pub fn push_fragment(&mut self, fragment: ContextFragment) {
+        if !fragment.content.trim().is_empty() {
+            self.fragments.push(fragment);
+        }
+    }
+
+    pub fn compose(mut self) -> (String, Vec<String>) {
+        self.fragments.sort_by_key(|item| item.order);
+
+        let mut slot_order: Vec<&'static str> = Vec::new();
+        let mut slot_chunks: HashMap<&'static str, Vec<String>> = HashMap::new();
+        let mut source_summary: Vec<String> = Vec::new();
+
+        for fragment in self.fragments {
+            if !slot_chunks.contains_key(fragment.slot) {
+                slot_order.push(fragment.slot);
+            }
+            source_summary.push(format!("{}({})", fragment.label, fragment.slot));
+
+            match fragment.strategy {
+                MergeStrategy::Append => {
+                    slot_chunks
+                        .entry(fragment.slot)
+                        .or_default()
+                        .push(fragment.content);
+                }
+                MergeStrategy::Override => {
+                    slot_chunks.insert(fragment.slot, vec![fragment.content]);
+                }
+            }
+        }
+
+        let mut sections = Vec::new();
+        for slot in slot_order {
+            if let Some(chunks) = slot_chunks.remove(slot) {
+                let merged = chunks
+                    .into_iter()
+                    .filter(|chunk| !chunk.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if !merged.trim().is_empty() {
+                    sections.push(merged);
+                }
+            }
+        }
+
+        (sections.join("\n\n"), source_summary)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn override_only_affects_same_slot() {
+        let mut composer = ContextComposer::default();
+        composer.push(
+            "requirements",
+            "manual_text",
+            10,
+            MergeStrategy::Append,
+            "req-a",
+        );
+        composer.push(
+            "instruction",
+            "instruction_base",
+            20,
+            MergeStrategy::Override,
+            "run-a",
+        );
+
+        let (prompt, summary) = composer.compose();
+        assert!(prompt.contains("req-a"));
+        assert!(prompt.contains("run-a"));
+        assert_eq!(summary.len(), 2);
+    }
+}

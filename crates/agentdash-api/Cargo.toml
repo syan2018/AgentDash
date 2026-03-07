@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 agentdash-domain = { workspace = true }
 agentdash-application = { workspace = true }
+agentdash-injection = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-executor = { workspace = true }
 agentdash-acp-meta = { workspace = true }

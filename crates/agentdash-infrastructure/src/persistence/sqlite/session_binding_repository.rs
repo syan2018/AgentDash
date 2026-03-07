@@ -185,6 +185,17 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
 
         row.map(|r| r.try_into()).transpose()
     }
+
+    async fn list_bound_session_ids(&self) -> Result<Vec<String>, DomainError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT session_id FROM session_bindings",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
 }
 
 #[derive(sqlx::FromRow)]

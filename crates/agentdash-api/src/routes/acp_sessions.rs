@@ -35,6 +35,8 @@ pub struct NdjsonStreamQuery {
 pub struct ListSessionsQuery {
     pub owner_type: Option<String>,
     pub owner_id: Option<String>,
+    /// 为 true 时排除已绑定到 Story/Task 的会话，仅返回独立会话
+    pub exclude_bound: Option<bool>,
 }
 
 pub async fn list_sessions(
@@ -67,11 +69,23 @@ pub async fn list_sessions(
         return Ok(Json(sessions));
     }
 
-    let sessions = state
+    let mut sessions = state
         .executor_hub
         .list_sessions()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if query.exclude_bound.unwrap_or(false) {
+        let bound_ids = state
+            .session_binding_repo
+            .list_bound_session_ids()
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let bound_set: std::collections::HashSet<&str> =
+            bound_ids.iter().map(|s| s.as_str()).collect();
+        sessions.retain(|s| !bound_set.contains(s.id.as_str()));
+    }
+
     Ok(Json(sessions))
 }
 

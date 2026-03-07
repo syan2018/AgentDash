@@ -32,4 +32,7 @@ pub trait SessionBindingRepository: Send + Sync {
         owner_id: Uuid,
         label: &str,
     ) -> Result<Option<SessionBinding>, DomainError>;
+
+    /// 返回所有存在绑定关系的 session_id 集合（去重）
+    async fn list_bound_session_ids(&self) -> Result<Vec<String>, DomainError>;
 }

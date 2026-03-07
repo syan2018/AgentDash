@@ -259,13 +259,15 @@ export function TaskDrawer({
               title="Agent 执行会话"
               description="不跳转页面，直接在抽屉中查看实时输出和进度。"
             >
-              <TaskAgentSessionPanel
-                task={task}
-                onTaskUpdated={(updated) => {
-                  applyTaskSnapshot(updated);
-                  onTaskUpdated(updated);
-                }}
-              />
+              <div className="h-[32rem] overflow-hidden rounded-[12px] border border-border">
+                <TaskAgentSessionPanel
+                  task={task}
+                  onTaskUpdated={(updated) => {
+                    applyTaskSnapshot(updated);
+                    onTaskUpdated(updated);
+                  }}
+                />
+              </div>
             </DetailSection>
 
             <DetailSection

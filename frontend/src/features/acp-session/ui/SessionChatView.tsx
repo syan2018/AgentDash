@@ -147,6 +147,8 @@ export interface SessionChatViewProps {
   /** 当前会话 ID，null 表示尚未创建 */
   sessionId: string | null;
 
+  // ─── 会话生命周期 ────────────────────────────────────
+
   /** 无 session 时用户发送第一条消息，由父组件创建会话并返回新 ID */
   onCreateSession?: (title: string) => Promise<string>;
 
@@ -156,17 +158,50 @@ export interface SessionChatViewProps {
   /** 消息发送成功后回调（父组件可刷新列表等） */
   onMessageSent?: () => void;
 
+  /** Agent turn 结束时回调（turn_completed / turn_failed） */
+  onTurnEnd?: () => void;
+
+  // ─── 执行器 ──────────────────────────────────────────
+
   /** 执行器提示（如 task 的 agent_type），自动映射为执行器选择 */
   executorHint?: string | null;
+
+  /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
+  showExecutorSelector?: boolean;
+
+  // ─── 自定义发送流程 ──────────────────────────────────
+
+  /**
+   * 全接管发送流程 — 替换默认 onCreateSession + promptSession 链路。
+   * sessionId 为 null 时代表首次发送（可在此创建会话）。
+   * prompt 可为空（如 Task 无额外指令直接执行）。
+   * 返回后 SessionChatView 自动清空输入。
+   */
+  customSend?: (
+    sessionId: string | null,
+    prompt: string,
+    executorConfig?: ExecutorConfig,
+  ) => Promise<void>;
+
+  // ─── 布局插槽 ────────────────────────────────────────
+
+  /** 渲染在状态栏下方、流区域上方 */
+  headerSlot?: React.ReactNode;
+
+  /** 渲染在执行器选择器上方（如 owner binding 信息） */
+  inputPrefix?: React.ReactNode;
+
+  /** 替换默认空状态（如 Task 上下文预览） */
+  emptyStateContent?: React.ReactNode;
+
+  /** 隐藏内置连接状态栏 */
+  showStatusBar?: boolean;
 
   /** 无 session 时显示的 prompt 模板按钮 */
   promptTemplates?: PromptTemplate[];
 
-  /** 渲染在执行器选择器上方的自定义内容（如 session owner 绑定信息） */
-  inputPrefix?: React.ReactNode;
-
-  /** Agent turn 结束时回调（turn_completed / turn_failed），Task 场景用于刷新状态 */
-  onTurnEnd?: () => void;
+  /** 输入框占位符 */
+  inputPlaceholder?: string;
 }
 
 const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
@@ -176,10 +211,16 @@ export function SessionChatView({
   onCreateSession,
   onSessionIdChange,
   onMessageSent,
-  executorHint,
-  promptTemplates,
-  inputPrefix,
   onTurnEnd,
+  executorHint,
+  showExecutorSelector = true,
+  customSend,
+  headerSlot,
+  inputPrefix,
+  emptyStateContent,
+  showStatusBar = true,
+  promptTemplates,
+  inputPlaceholder,
 }: SessionChatViewProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -340,10 +381,16 @@ export function SessionChatView({
 
   // ─── 发送 / 取消 ─────────────────────────────────────
 
+  const customSendRef = useRef(customSend);
+  useEffect(() => { customSendRef.current = customSend; }, [customSend]);
+
   const handleSend = useCallback(async () => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
-    if (!trimmed || isSending) return;
+
+    // customSend 模式允许空 prompt（如 Task 直接执行）
+    if (!customSendRef.current && !trimmed) return;
+    if (isSending) return;
 
     setSendError(null);
     setOptimisticRunning(true);
@@ -351,26 +398,28 @@ export function SessionChatView({
     setIsSending(true);
 
     try {
-      let sid = sessionId;
-
-      if (!sid) {
-        if (!onCreateSession) {
-          setSendError("当前无法创建新会话");
-          return;
-        }
-        const title = trimmed.slice(0, 30) + (trimmed.length > 30 ? "…" : "");
-        sid = await onCreateSession(title);
-        onSessionIdChange?.(sid);
-      }
-
-      if (fileRef.references.length > 0) {
-        const paths = fileRef.references.map((r) => r.relPath);
-        const batchResult = await batchReadWorkspaceFiles(paths);
-        const blocks = buildPromptBlocks(trimmed, batchResult.files);
-        await promptSession(sid, { promptBlocks: blocks, executorConfig });
-        fileRef.clearReferences();
+      if (customSendRef.current) {
+        // customSend 全接管：session 创建 + 消息发送一体处理
+        await customSendRef.current(sessionId, trimmed, executorConfig);
       } else {
-        await promptSession(sid, { prompt: trimmed, executorConfig });
+        // 默认流程：onCreateSession → promptSession
+        let sid = sessionId;
+        if (!sid) {
+          if (!onCreateSession) { setSendError("当前无法创建新会话"); return; }
+          const title = trimmed.slice(0, 30) + (trimmed.length > 30 ? "…" : "");
+          sid = await onCreateSession(title);
+          onSessionIdChange?.(sid);
+        }
+
+        if (fileRef.references.length > 0) {
+          const paths = fileRef.references.map((r) => r.relPath);
+          const batchResult = await batchReadWorkspaceFiles(paths);
+          const blocks = buildPromptBlocks(trimmed, batchResult.files);
+          await promptSession(sid, { promptBlocks: blocks, executorConfig });
+          fileRef.clearReferences();
+        } else {
+          await promptSession(sid, { prompt: trimmed, executorConfig });
+        }
       }
 
       execConfig.recordUsage();
@@ -437,20 +486,25 @@ export function SessionChatView({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* 状态栏 */}
-      <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
-        <span className="flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
-          {connectionLabel}
-        </span>
-        {isActionRunning && (
-          <span className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
-            接收中
+      {/* 内置状态栏 — 可通过 showStatusBar=false 隐藏 */}
+      {showStatusBar && (
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
+          <span className="flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
+            {connectionLabel}
           </span>
-        )}
-        <ContextUsageRing usage={tokenUsage} />
-      </div>
+          {isActionRunning && (
+            <span className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+              接收中
+            </span>
+          )}
+          <ContextUsageRing usage={tokenUsage} />
+        </div>
+      )}
+
+      {/* headerSlot — 外部注入区（如 Task 执行控制栏） */}
+      {headerSlot}
 
       {/* 错误横幅 */}
       {displayError && (
@@ -485,6 +539,9 @@ export function SessionChatView({
               </div>
             ))}
           </div>
+        ) : emptyStateContent ? (
+          /* 自定义空状态（如 Task 上下文预览） */
+          <div className="flex h-full flex-col">{emptyStateContent}</div>
         ) : (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
@@ -502,8 +559,8 @@ export function SessionChatView({
       {/* 输入区 */}
       <div className="shrink-0 border-t border-border bg-background">
         <div className="mx-auto w-full max-w-4xl px-5 py-4">
-          {/* prompt 模板 */}
-          {!hasSession && promptTemplates && promptTemplates.length > 0 && (
+          {/* prompt 模板（仅默认模式） */}
+          {!hasSession && !customSend && promptTemplates && promptTemplates.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
               {promptTemplates.map((tpl) => (
                 <button
@@ -518,34 +575,35 @@ export function SessionChatView({
             </div>
           )}
 
-          {/* 父组件自定义区域（如 owner binding 信息） */}
           {inputPrefix}
 
-          {/* 执行器选择 */}
-          <ExecutorSelector
-            executors={discovery.executors}
-            isLoading={discovery.isLoading}
-            error={discovery.error}
-            discoveredOptions={discovered.options}
-            discoveredError={discovered.error}
-            isDiscoveredLoading={Boolean(execConfig.executor.trim()) && !discovered.isInitialized}
-            onDiscoveredReconnect={discovered.reconnect}
-            executor={execConfig.executor}
-            variant={execConfig.variant}
-            modelId={execConfig.modelId}
-            reasoningId={execConfig.reasoningId}
-            permissionPolicy={execConfig.permissionPolicy}
-            onExecutorChange={execConfig.setExecutor}
-            onVariantChange={execConfig.setVariant}
-            onModelIdChange={execConfig.setModelId}
-            onReasoningIdChange={execConfig.setReasoningId}
-            onPermissionPolicyChange={execConfig.setPermissionPolicy}
-            onReset={execConfig.reset}
-            onRefetch={discovery.refetch}
-          />
+          {/* 执行器选择（可隐藏） */}
+          {showExecutorSelector && (
+            <ExecutorSelector
+              executors={discovery.executors}
+              isLoading={discovery.isLoading}
+              error={discovery.error}
+              discoveredOptions={discovered.options}
+              discoveredError={discovered.error}
+              isDiscoveredLoading={Boolean(execConfig.executor.trim()) && !discovered.isInitialized}
+              onDiscoveredReconnect={discovered.reconnect}
+              executor={execConfig.executor}
+              variant={execConfig.variant}
+              modelId={execConfig.modelId}
+              reasoningId={execConfig.reasoningId}
+              permissionPolicy={execConfig.permissionPolicy}
+              onExecutorChange={execConfig.setExecutor}
+              onVariantChange={execConfig.setVariant}
+              onModelIdChange={execConfig.setModelId}
+              onReasoningIdChange={execConfig.setReasoningId}
+              onPermissionPolicyChange={execConfig.setPermissionPolicy}
+              onReset={execConfig.reset}
+              onRefetch={discovery.refetch}
+            />
+          )}
 
           {/* 富文本输入 */}
-          <div className="relative mt-3 rounded-[14px] border border-border bg-secondary/60 p-3">
+          <div className={`relative rounded-[14px] border border-border bg-secondary/60 p-3${showExecutorSelector ? " mt-3" : ""}`}>
             <FileReferenceTags
               references={fileRef.references}
               onRemove={(relPath) => {
@@ -577,7 +635,7 @@ export function SessionChatView({
                 />
                 <RichInput
                   ref={richInputRef}
-                  placeholder={hasSession ? "继续对话，@ 引用文件，Ctrl+Enter 发送…" : "输入 prompt，@ 引用文件，Ctrl+Enter 发送…"}
+                  placeholder={inputPlaceholder ?? (hasSession ? "继续对话，@ 引用文件，Ctrl+Enter 发送…" : "输入 prompt，@ 引用文件，Ctrl+Enter 发送…")}
                   onChange={setInputValue}
                   onKeyDown={handleKeyDown}
                   onAtTrigger={handleAtTrigger}
@@ -590,7 +648,9 @@ export function SessionChatView({
                   type="button"
                   disabled={
                     isSending ||
-                    (hasSession && isActionRunning ? !isConnected : !inputValue.trim())
+                    (hasSession && isActionRunning
+                      ? !isConnected
+                      : customSend ? false : !inputValue.trim())
                   }
                   onClick={handlePrimaryAction}
                   className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${

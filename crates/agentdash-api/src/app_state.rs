@@ -180,9 +180,7 @@ async fn build_pi_agent_connector(
         .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
 
     if let Some(api_key) = anthropic_key {
-        let client = rig::providers::anthropic::Client::new(&api_key)
-            .inspect_err(|e| tracing::warn!("Anthropic Client 初始化失败: {e}"))
-            .ok()?;
+        let client = rig::providers::anthropic::Client::new(&api_key);
         let anthropic_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET;
         let model = client.completion_model(anthropic_model);
         let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
@@ -200,39 +198,24 @@ async fn build_pi_agent_connector(
     // --- 尝试 OpenAI/兼容端点 ---
     let api_key = api_key?;
 
-    let bridge: Arc<dyn LlmBridge> = if wire_api == "completions" {
-        // Chat Completions API
-        let mut builder = rig::providers::openai::CompletionsClient::builder()
-            .api_key(&api_key);
-        if let Some(ref url) = base_url {
-            builder = builder.base_url(url);
-        }
-        let client = builder.build()
-            .inspect_err(|e| tracing::warn!("OpenAI Completions Client 初始化失败: {e}"))
-            .ok()?;
-        let model = client.completion_model(&model_id);
-        tracing::info!(
-            "OpenAI Completions Client 已就绪（base_url={}, model={model_id}）",
-            base_url.as_deref().unwrap_or("default")
+    if wire_api != "responses" {
+        tracing::warn!(
+            "Rig 发行版当前统一走 Responses API，忽略 llm.openai.wire_api={} 配置",
+            wire_api
         );
-        Arc::new(RigBridge::new(model))
-    } else {
-        // Responses API（默认）
-        let mut builder = rig::providers::openai::Client::builder()
-            .api_key(&api_key);
-        if let Some(ref url) = base_url {
-            builder = builder.base_url(url);
-        }
-        let client = builder.build()
-            .inspect_err(|e| tracing::warn!("OpenAI Responses Client 初始化失败: {e}"))
-            .ok()?;
-        let model = client.completion_model(&model_id);
-        tracing::info!(
-            "OpenAI Responses Client 已就绪（base_url={}, model={model_id}）",
-            base_url.as_deref().unwrap_or("default")
-        );
-        Arc::new(RigBridge::new(model))
-    };
+    }
+
+    let mut builder = rig::providers::openai::Client::builder(&api_key);
+    if let Some(ref url) = base_url {
+        builder = builder.base_url(url);
+    }
+    let client = builder.build();
+    let model = client.completion_model(&model_id);
+    tracing::info!(
+        "OpenAI Responses Client 已就绪（base_url={}, model={model_id}）",
+        base_url.as_deref().unwrap_or("default")
+    );
+    let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
 
     let connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
         workspace_root.to_path_buf(),

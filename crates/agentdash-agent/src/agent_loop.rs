@@ -248,7 +248,12 @@ async fn execute_tool_calls(
             is_error: result.is_error,
         });
 
-        results.push(AgentMessage::tool_result(&tc.id, &result_text, result.is_error));
+        results.push(AgentMessage::tool_result_with_call_id(
+            &tc.id,
+            tc.call_id.clone(),
+            &result_text,
+            result.is_error,
+        ));
 
         // steering 检查：每个工具执行后轮询 steering 队列
         if let Some(get_steering) = get_steering {
@@ -270,7 +275,12 @@ async fn execute_tool_calls(
 }
 
 fn skip_tool_call(tc: &ToolCallInfo, reason: &str) -> AgentMessage {
-    AgentMessage::tool_result(&tc.id, format!("[已跳过] {reason}"), true)
+    AgentMessage::tool_result_with_call_id(
+        &tc.id,
+        tc.call_id.clone(),
+        format!("[已跳过] {reason}"),
+        true,
+    )
 }
 
 fn build_tool_definitions(tools: &[DynAgentTool]) -> Vec<ToolDefinition> {

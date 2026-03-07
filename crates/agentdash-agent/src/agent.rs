@@ -173,7 +173,7 @@ impl Agent {
         };
 
         let handle = tokio::spawn(async move {
-            let result = if prompts.is_empty() {
+            if prompts.is_empty() {
                 agent_loop::agent_loop_continue(
                     &mut context,
                     &config,
@@ -192,9 +192,7 @@ impl Agent {
                     cancel,
                 )
                 .await
-            };
-
-            result
+            }
         });
 
         (event_rx, handle)

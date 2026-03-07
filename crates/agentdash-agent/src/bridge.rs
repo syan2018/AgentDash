@@ -15,7 +15,7 @@ use rig::completion::message::AssistantContent;
 use rig::completion::request::GetTokenUsage;
 use rig::completion::{CompletionModel, CompletionRequest, Usage};
 use rig::OneOrMany;
-use rig::streaming::{StreamedAssistantContent, ToolCallDeltaContent};
+use rig::streaming::StreamedAssistantContent;
 use thiserror::Error;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -115,12 +115,12 @@ fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, Bridg
 
     // 某些 OpenAI 兼容端点不支持 system role，以 user 消息注入
     let mut full_messages = Vec::new();
-    if let Some(ref sp) = request.system_prompt {
-        if !sp.is_empty() {
-            full_messages.push(rig::completion::Message::user(format!(
-                "[System Instructions]\n{sp}"
-            )));
-        }
+    if let Some(ref sp) = request.system_prompt
+        && !sp.is_empty()
+    {
+        full_messages.push(rig::completion::Message::user(format!(
+            "[System Instructions]\n{sp}"
+        )));
     }
     full_messages.extend(llm_messages);
 
@@ -132,7 +132,6 @@ fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, Bridg
     };
 
     Ok(CompletionRequest {
-        model: None,
         preamble: None,
         chat_history,
         documents: vec![],
@@ -141,7 +140,6 @@ fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, Bridg
         max_tokens: request.max_tokens,
         tool_choice: None,
         additional_params: None,
-        output_schema: None,
     })
 }
 
@@ -183,27 +181,14 @@ where
             while let Some(chunk) = rig_stream.next().await {
                 let sc = match chunk {
                     Ok(StreamedAssistantContent::Text(t)) => StreamChunk::TextDelta(t.text),
-                    Ok(StreamedAssistantContent::ToolCall {
-                        tool_call,
-                        internal_call_id: _,
-                    }) => StreamChunk::ToolCallEnd {
+                    Ok(StreamedAssistantContent::ToolCall(tool_call)) => StreamChunk::ToolCallEnd {
                         id: tool_call.id.clone(),
                     },
-                    Ok(StreamedAssistantContent::ToolCallDelta {
-                        id,
-                        content,
-                        internal_call_id: _,
-                    }) => match content {
-                        ToolCallDeltaContent::Name(name) => {
-                            StreamChunk::ToolCallStart { id, name }
-                        }
-                        ToolCallDeltaContent::Delta(delta) => {
-                            StreamChunk::ToolCallInputDelta { id, delta }
-                        }
-                    },
+                    Ok(StreamedAssistantContent::ToolCallDelta { id, delta }) => {
+                        StreamChunk::ToolCallInputDelta { id, delta }
+                    }
                     Ok(StreamedAssistantContent::Final(_)) => continue,
                     Ok(StreamedAssistantContent::Reasoning(_)) => continue,
-                    Ok(StreamedAssistantContent::ReasoningDelta { .. }) => continue,
                     Err(e) => {
                         let _ = tx
                             .send(StreamChunk::Error(BridgeError::CompletionFailed(

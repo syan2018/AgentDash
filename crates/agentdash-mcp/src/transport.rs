@@ -1,8 +1,8 @@
 //! 传输层集成
 //!
 //! 提供将 MCP Server 挂载到不同传输通道的辅助函数：
-//! - Streamable HTTP（集成到现有 Axum 服务，面向 Relay 层）
-//! - Stdio（面向 Agent 子进程，用于 Story/Task 层）
+//! - Streamable HTTP（集成到现有 Axum 服务，面向 Relay / Story / Task 层）
+//! - Stdio（面向 Agent 子进程，可用于后续独立进程模式）
 //!
 //! ## 架构
 //!
@@ -10,19 +10,21 @@
 //!                    ┌─────────────────────────────────────────────────┐
 //!                    │              agentdash-api (Axum)               │
 //!                    │                                                 │
-//!  用户 / IDE  ──────┤  POST /mcp/relay  → StreamableHttpService      │
-//!                    │                      (RelayMcpServer)           │
-//!                    │                                                 │
-//!                    │  内部 spawn ─────→ StoryMcpServer.serve(stdio)  │
-//!                    │                     ↕ Agent 子进程              │
-//!                    │                                                 │
-//!                    │  内部 spawn ─────→ TaskMcpServer.serve(stdio)   │
-//!                    │                     ↕ Agent 子进程              │
+//!  用户 / IDE  ──────┤  POST /mcp/relay        → RelayMcpServer       │
+//!                    │  POST /mcp/story/{id}   → StoryMcpServer       │
+//!                    │  POST /mcp/task/{id}    → TaskMcpServer        │
 //!                    └─────────────────────────────────────────────────┘
 //! ```
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 
+use axum::{
+    body::Body,
+    extract::Path,
+    http::{Request, StatusCode},
+    response::IntoResponse,
+    routing::{any, get},
+};
 use rmcp::transport::{
     StreamableHttpServerConfig,
     streamable_http_server::{session::local::LocalSessionManager, tower::StreamableHttpService},
@@ -33,15 +35,6 @@ use crate::servers::{RelayMcpServer, StoryMcpServer, TaskMcpServer};
 use crate::services::McpServices;
 
 /// 创建 Relay 层的 Streamable HTTP 服务
-///
-/// 返回的 `StreamableHttpService` 实现了 Tower `Service` trait，
-/// 可直接通过 `axum::Router::nest_service` 挂载到路由树。
-///
-/// ```rust,ignore
-/// let relay_service = create_relay_http_service(services.clone());
-/// let router = Router::new()
-///     .nest_service("/mcp/relay", relay_service);
-/// ```
 pub fn create_relay_http_service(
     services: Arc<McpServices>,
 ) -> StreamableHttpService<RelayMcpServer> {
@@ -52,14 +45,32 @@ pub fn create_relay_http_service(
     )
 }
 
+fn create_story_http_service(
+    services: Arc<McpServices>,
+    project_id: Uuid,
+    story_id: Uuid,
+) -> StreamableHttpService<StoryMcpServer> {
+    StreamableHttpService::new(
+        move || Ok(StoryMcpServer::new(services.clone(), project_id, story_id)),
+        LocalSessionManager::default().into(),
+        StreamableHttpServerConfig::default(),
+    )
+}
+
+fn create_task_http_service(
+    services: Arc<McpServices>,
+    project_id: Uuid,
+    story_id: Uuid,
+    task_id: Uuid,
+) -> StreamableHttpService<TaskMcpServer> {
+    StreamableHttpService::new(
+        move || Ok(TaskMcpServer::new(services.clone(), project_id, story_id, task_id)),
+        LocalSessionManager::default().into(),
+        StreamableHttpServerConfig::default(),
+    )
+}
+
 /// 通过 stdio 服务 StoryMcpServer
-///
-/// 阻塞当前 async 上下文直到连接关闭。
-/// 典型用法：Agent 子进程启动时，在 main 中调用此函数。
-///
-/// ```rust,ignore
-/// serve_story_via_stdio(services, project_id, story_id).await?;
-/// ```
 pub async fn serve_story_via_stdio(
     services: Arc<McpServices>,
     project_id: Uuid,
@@ -74,9 +85,6 @@ pub async fn serve_story_via_stdio(
 }
 
 /// 通过 stdio 服务 TaskMcpServer
-///
-/// 阻塞当前 async 上下文直到连接关闭。
-/// 典型用法：Agent 子进程启动时，在 main 中调用此函数。
 pub async fn serve_task_via_stdio(
     services: Arc<McpServices>,
     project_id: Uuid,
@@ -91,21 +99,135 @@ pub async fn serve_task_via_stdio(
     Ok(())
 }
 
+#[derive(Clone)]
+struct McpHttpRouterState {
+    services: Arc<McpServices>,
+    story_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<StoryMcpServer>>>>,
+    task_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<TaskMcpServer>>>>,
+}
+
+impl McpHttpRouterState {
+    fn new(services: Arc<McpServices>) -> Self {
+        Self {
+            services,
+            story_services: Arc::new(Mutex::new(HashMap::new())),
+            task_services: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    async fn story_service(
+        &self,
+        story_id: Uuid,
+    ) -> Result<StreamableHttpService<StoryMcpServer>, (StatusCode, String)> {
+        if let Some(service) = self
+            .story_services
+            .lock()
+            .expect("story service cache lock poisoned")
+            .get(&story_id)
+            .cloned()
+        {
+            return Ok(service);
+        }
+
+        let story = self
+            .services
+            .story_repo
+            .get_by_id(story_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(%story_id, ?error, "加载 Story 以建立 MCP HTTP 服务失败");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("加载 Story 失败: {error}"))
+            })?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Story 不存在: {story_id}")))?;
+
+        let service = create_story_http_service(self.services.clone(), story.project_id, story_id);
+        let mut guard = self
+            .story_services
+            .lock()
+            .expect("story service cache lock poisoned");
+
+        Ok(guard.entry(story_id).or_insert_with(|| service.clone()).clone())
+    }
+
+    async fn task_service(
+        &self,
+        task_id: Uuid,
+    ) -> Result<StreamableHttpService<TaskMcpServer>, (StatusCode, String)> {
+        if let Some(service) = self
+            .task_services
+            .lock()
+            .expect("task service cache lock poisoned")
+            .get(&task_id)
+            .cloned()
+        {
+            return Ok(service);
+        }
+
+        let task = self
+            .services
+            .task_repo
+            .get_by_id(task_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(%task_id, ?error, "加载 Task 以建立 MCP HTTP 服务失败");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("加载 Task 失败: {error}"))
+            })?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
+
+        let story = self
+            .services
+            .story_repo
+            .get_by_id(task.story_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(task_id=%task.id, story_id=%task.story_id, ?error, "加载 Task 所属 Story 失败");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("加载 Task 所属 Story 失败: {error}"))
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("Task 关联的 Story 不存在: {}", task.story_id),
+                )
+            })?;
+
+        let service = create_task_http_service(
+            self.services.clone(),
+            story.project_id,
+            task.story_id,
+            task.id,
+        );
+        let mut guard = self
+            .task_services
+            .lock()
+            .expect("task service cache lock poisoned");
+
+        Ok(guard.entry(task_id).or_insert_with(|| service.clone()).clone())
+    }
+}
+
+async fn handle_story_mcp(
+    state: Arc<McpHttpRouterState>,
+    story_id: Uuid,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    match state.story_service(story_id).await {
+        Ok(service) => service.handle(request).await.into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn handle_task_mcp(
+    state: Arc<McpHttpRouterState>,
+    task_id: Uuid,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    match state.task_service(task_id).await {
+        Ok(service) => service.handle(request).await.into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
 /// MCP 路由构建器
-///
-/// 辅助将 MCP 服务挂载到现有 Axum Router。
-/// 提供统一的路由前缀和中间件配置入口。
-///
-/// ## 路由结构
-///
-/// ```text
-/// /mcp/
-///   ├── relay    → Streamable HTTP (RelayMcpServer)
-///   └── health   → MCP 服务健康检查
-/// ```
-///
-/// Story/Task 层的 MCP Server 通过 stdio 传输提供给 Agent 子进程，
-/// 不直接挂载到 HTTP 路由。
 pub struct McpRouterBuilder {
     services: Arc<McpServices>,
 }
@@ -116,17 +238,33 @@ impl McpRouterBuilder {
     }
 
     /// 构建 MCP 路由子树
-    ///
-    /// 返回一个可以通过 `Router::merge` 或 `Router::nest` 挂载的路由。
-    /// 调用方负责添加认证中间件等。
     pub fn build(self) -> axum::Router {
-        use axum::{Router, routing::get};
+        let relay_service = create_relay_http_service(self.services.clone());
+        let http_state = Arc::new(McpHttpRouterState::new(self.services));
 
-        let relay_service = create_relay_http_service(self.services);
-
-        Router::new()
+        axum::Router::new()
             .nest_service("/mcp/relay", relay_service)
             .route("/mcp/health", get(mcp_health_check))
+            .route(
+                "/mcp/story/{story_id}",
+                any({
+                    let state = http_state.clone();
+                    move |Path(story_id): Path<Uuid>, request: Request<Body>| {
+                        let state = state.clone();
+                        async move { handle_story_mcp(state, story_id, request).await }
+                    }
+                }),
+            )
+            .route(
+                "/mcp/task/{task_id}",
+                any({
+                    let state = http_state.clone();
+                    move |Path(task_id): Path<Uuid>, request: Request<Body>| {
+                        let state = state.clone();
+                        async move { handle_task_mcp(state, task_id, request).await }
+                    }
+                }),
+            )
     }
 }
 

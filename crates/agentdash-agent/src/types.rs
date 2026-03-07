@@ -29,6 +29,8 @@ impl ContentPart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallInfo {
     pub id: String,
+    #[serde(default)]
+    pub call_id: Option<String>,
     pub name: String,
     pub arguments: serde_json::Value,
 }
@@ -50,6 +52,8 @@ pub enum AgentMessage {
     },
     ToolResult {
         tool_call_id: String,
+        #[serde(default)]
+        call_id: Option<String>,
         content: Vec<ContentPart>,
         #[serde(default)]
         is_error: bool,
@@ -77,6 +81,21 @@ impl AgentMessage {
     ) -> Self {
         Self::ToolResult {
             tool_call_id: tool_call_id.into(),
+            call_id: None,
+            content: vec![ContentPart::text(text)],
+            is_error,
+        }
+    }
+
+    pub fn tool_result_with_call_id(
+        tool_call_id: impl Into<String>,
+        call_id: Option<String>,
+        text: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
+        Self::ToolResult {
+            tool_call_id: tool_call_id.into(),
+            call_id,
             content: vec![ContentPart::text(text)],
             is_error,
         }

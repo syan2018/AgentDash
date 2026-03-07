@@ -20,12 +20,15 @@ use agentdash_acp_meta::{
     AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
 
-use agentdash_agent::{Agent, AgentConfig, AgentEvent, AgentMessage, DynAgentTool, LlmBridge};
+use agentdash_agent::{
+    Agent, AgentConfig, AgentEvent, AgentMessage, BuiltinToolset, DynAgentTool, LlmBridge,
+};
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
     ExecutionStream, ExecutorInfo, PromptPayload,
 };
+use crate::connectors::pi_agent_mcp::discover_mcp_tools;
 
 pub struct PiAgentConnector {
     #[allow(dead_code)]
@@ -67,6 +70,41 @@ impl PiAgentConnector {
         let mut agent = Agent::new(self.bridge.clone(), config);
         agent.set_tools(self.tools.clone());
         agent
+    }
+
+    fn build_runtime_system_prompt(
+        &self,
+        context: &ExecutionContext,
+        tool_names: &[String],
+    ) -> String {
+        let mut sections = vec![self.system_prompt.clone()];
+        sections.push(format!(
+            "工作空间根目录：{}\n当前工作目录：{}",
+            self.workspace_root.display(),
+            context.working_directory.display()
+        ));
+
+        if !tool_names.is_empty() {
+            sections.push(format!(
+                "你当前可调用的内置工具有：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。",
+                tool_names.join("、")
+            ));
+        }
+
+        if !context.mcp_servers.is_empty() {
+            let server_lines = context
+                .mcp_servers
+                .iter()
+                .map(describe_mcp_server)
+                .collect::<Vec<_>>()
+                .join("\n");
+            sections.push(format!(
+                "以下 MCP Server 已注入当前会话，可在需要时使用：\n{}",
+                server_lines
+            ));
+        }
+
+        sections.join("\n\n")
     }
 }
 
@@ -141,6 +179,24 @@ impl AgentConnector for PiAgentConnector {
                 .unwrap_or_else(|| self.create_agent())
         };
 
+        let builtin_tools = BuiltinToolset::for_workspace(context.working_directory.clone()).into_tools();
+        let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
+            Ok(tools) => tools,
+            Err(error) => {
+                tracing::warn!("发现 MCP 工具失败，继续使用本地工具: {error}");
+                Vec::new()
+            }
+        };
+        let mut runtime_tools = self.tools.clone();
+        runtime_tools.extend(builtin_tools);
+        runtime_tools.extend(mcp_tools);
+        let tool_names = runtime_tools
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect::<Vec<_>>();
+        agent.set_tools(runtime_tools);
+        agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
+
         let (event_rx, join_handle) = agent.prompt(AgentMessage::user(&prompt_text));
 
         let session_id_owned = session_id.to_string();
@@ -186,10 +242,14 @@ impl AgentConnector for PiAgentConnector {
                     }
                 }
                 Ok(Err(e)) => {
-                    tracing::error!("Pi Agent loop 错误: {e}");
+                    let error = ConnectorError::Runtime(format!("Pi Agent loop 错误: {e}"));
+                    tracing::error!("{error}");
+                    let _ = tx.send(Err(error)).await;
                 }
                 Err(e) => {
-                    tracing::error!("Pi Agent task panic: {e}");
+                    let error = ConnectorError::Runtime(format!("Pi Agent task panic: {e}"));
+                    tracing::error!("{error}");
+                    let _ = tx.send(Err(error)).await;
                 }
             }
         });
@@ -203,6 +263,23 @@ impl AgentConnector for PiAgentConnector {
         }
         Ok(())
     }
+}
+
+fn describe_mcp_server(server: &agent_client_protocol::McpServer) -> String {
+    let value = serde_json::to_value(server).unwrap_or_default();
+    let name = value
+        .get("name")
+        .and_then(|item| item.as_str())
+        .unwrap_or("unnamed-mcp");
+    let url = value
+        .get("url")
+        .and_then(|item| item.as_str())
+        .unwrap_or("unknown-url");
+    let server_type = value
+        .get("type")
+        .and_then(|item| item.as_str())
+        .unwrap_or("unknown");
+    format!("- {name} ({server_type}): {url}")
 }
 
 fn make_meta(

@@ -30,8 +30,12 @@ pub struct UpdateTaskStatusParams {
 pub struct ReportArtifactParams {
     #[schemars(description = "产物类型：code_change / test_result / log_output / file / tool_execution")]
     pub artifact_type: String,
-    #[schemars(description = "产物内容（JSON 格式，结构取决于 artifact_type）")]
-    pub content: serde_json::Value,
+    #[schemars(description = "产物内容。优先传 JSON 字符串；若为纯文本，可直接传文本")]
+    pub content: String,
+}
+
+fn parse_artifact_content(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -158,7 +162,7 @@ impl TaskMcpServer {
         let artifact = Artifact {
             id: Uuid::new_v4(),
             artifact_type,
-            content: params.content,
+            content: parse_artifact_content(&params.content),
             created_at: chrono::Utc::now(),
         };
 
@@ -251,6 +255,24 @@ impl TaskMcpServer {
             "Task {} 描述已更新",
             self.task_id,
         ))]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_artifact_content;
+
+    #[test]
+    fn parse_artifact_content_accepts_json_string() {
+        let value = parse_artifact_content(r#"{"ok":true,"items":[1,2]}"#);
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["items"][0], 1);
+    }
+
+    #[test]
+    fn parse_artifact_content_falls_back_to_plain_text() {
+        let value = parse_artifact_content("plain text");
+        assert_eq!(value, serde_json::Value::String("plain text".to_string()));
     }
 }
 

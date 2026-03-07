@@ -2,10 +2,7 @@
 ///
 /// 这是设计文档中 `convert_to_llm` / `convert_from_llm` 管线的实现。
 /// AgentMessage 是面向会话的消息层，rig::Message 是面向模型的消息层。
-use rig::completion::message::{
-    AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
-    UserContent,
-};
+use rig::completion::message::{AssistantContent, Message, Text, UserContent};
 use rig::OneOrMany;
 
 use crate::types::{AgentMessage, ContentPart, ToolCallInfo};
@@ -34,12 +31,12 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
                 content.iter().filter_map(content_part_to_assistant).collect();
 
             for tc in tool_calls {
-                parts.push(AssistantContent::ToolCall(
-                    ToolCall::new(
-                        tc.id.clone(),
-                        ToolFunction::new(tc.name.clone(), tc.arguments.clone()),
-                    )
-                    .with_call_id(tc.id.clone()),
+                let call_id = tc.call_id.clone().unwrap_or_else(|| tc.id.clone());
+                parts.push(AssistantContent::tool_call_with_call_id(
+                    tc.id.clone(),
+                    call_id,
+                    tc.name.clone(),
+                    tc.arguments.clone(),
                 ));
             }
 
@@ -53,6 +50,7 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
         }
         AgentMessage::ToolResult {
             tool_call_id,
+            call_id,
             content,
             ..
         } => {
@@ -62,13 +60,11 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            Some(Message::User {
-                content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                    id: tool_call_id.clone(),
-                    call_id: Some(tool_call_id.clone()),
-                    content: OneOrMany::one(ToolResultContent::text(text)),
-                })),
-            })
+            Some(Message::tool_result_with_call_id(
+                tool_call_id.clone(),
+                call_id.clone().or_else(|| Some(tool_call_id.clone())),
+                text,
+            ))
         }
     }
 }
@@ -100,11 +96,12 @@ pub fn assistant_from_llm_content(content: &[AssistantContent]) -> AgentMessage 
             AssistantContent::ToolCall(tc) => {
                 tool_calls.push(ToolCallInfo {
                     id: tc.id.clone(),
+                    call_id: tc.call_id.clone().or_else(|| Some(tc.id.clone())),
                     name: tc.function.name.clone(),
                     arguments: tc.function.arguments.clone(),
                 });
             }
-            AssistantContent::Reasoning(_) | AssistantContent::Image(_) => {}
+            AssistantContent::Reasoning(_) => {}
         }
     }
 
@@ -136,10 +133,7 @@ mod tests {
     fn convert_assistant_with_tool_calls() {
         let content = vec![
             AssistantContent::text("让我帮你查一下"),
-            AssistantContent::ToolCall(ToolCall::new(
-                "tc_1".to_string(),
-                ToolFunction::new("search".to_string(), serde_json::json!({"query": "rust"})),
-            )),
+            AssistantContent::tool_call("tc_1", "search", serde_json::json!({"query": "rust"})),
         ];
 
         let msg = assistant_from_llm_content(&content);

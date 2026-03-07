@@ -13,6 +13,7 @@ pub mod workspaces;
 
 use std::sync::Arc;
 
+use agentdash_mcp::{services::McpServices, transport::McpRouterBuilder};
 use axum::{
     Router,
     routing::{delete, get, patch, post},
@@ -24,6 +25,14 @@ use crate::app_state::AppState;
 use crate::stream;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
+    let mcp_services = Arc::new(McpServices {
+        project_repo: state.project_repo.clone(),
+        story_repo: state.story_repo.clone(),
+        task_repo: state.task_repo.clone(),
+        workspace_repo: state.workspace_repo.clone(),
+    });
+    let mcp = McpRouterBuilder::new(mcp_services).build();
+
     let api = Router::new()
         .route("/health", get(health::health_check))
         // Project CRUD
@@ -142,11 +151,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/agents/discovered-options/stream",
             get(discovered_options::discovered_options_stream),
-        );
+        )
+        .with_state(state);
 
     Router::new()
+        .merge(mcp)
         .nest("/api", api)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
 }

@@ -15,8 +15,14 @@ use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_domain::session_binding::SessionOwnerType;
+use agentdash_domain::{project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace};
 use agentdash_executor::{PromptSessionRequest, SessionMeta};
+use agentdash_injection::{
+    ContextComposer, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
+};
+use agentdash_mcp::injection::McpInjectionConfig;
+use serde::Serialize;
+use serde_json::json;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -101,6 +107,78 @@ pub async fn get_session(
     Ok(Json(meta))
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionBindingOwnerResponse {
+    pub id: String,
+    pub session_id: String,
+    pub owner_type: String,
+    pub owner_id: String,
+    pub label: String,
+    pub created_at: String,
+    pub owner_title: Option<String>,
+    pub story_id: Option<String>,
+    pub task_id: Option<String>,
+}
+
+pub async fn get_session_bindings(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Vec<SessionBindingOwnerResponse>>, ApiError> {
+    let bindings = state
+        .session_binding_repo
+        .list_by_session(&session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut responses = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let mut owner_title = None;
+        let mut story_id = None;
+        let mut task_id = None;
+
+        match binding.owner_type {
+            SessionOwnerType::Story => {
+                if let Some(story) = state
+                    .story_repo
+                    .get_by_id(binding.owner_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                {
+                    owner_title = Some(story.title);
+                    story_id = Some(story.id.to_string());
+                }
+            }
+            SessionOwnerType::Task => {
+                if let Some(task) = state
+                    .task_repo
+                    .get_by_id(binding.owner_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                {
+                    owner_title = Some(task.title);
+                    story_id = Some(task.story_id.to_string());
+                    task_id = Some(task.id.to_string());
+                }
+            }
+        }
+
+        responses.push(SessionBindingOwnerResponse {
+            id: binding.id.to_string(),
+            session_id: binding.session_id,
+            owner_type: binding.owner_type.to_string(),
+            owner_id: binding.owner_id.to_string(),
+            label: binding.label,
+            created_at: binding.created_at.to_rfc3339(),
+            owner_title,
+            story_id,
+            task_id,
+        });
+    }
+
+    Ok(Json(responses))
+}
+
 pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -120,6 +198,7 @@ pub async fn prompt_session(
     Path(session_id): Path<String>,
     Json(req): Json<PromptSessionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let req = augment_prompt_request_for_owner(&state, &session_id, req).await?;
     let turn_id = state
         .executor_hub
         .start_prompt(&session_id, req)
@@ -134,6 +213,267 @@ pub async fn prompt_session(
     Ok(Json(
         serde_json::json!({ "started": true, "sessionId": session_id, "turnId": turn_id }),
     ))
+}
+
+async fn augment_prompt_request_for_owner(
+    state: &Arc<AppState>,
+    session_id: &str,
+    req: PromptSessionRequest,
+) -> Result<PromptSessionRequest, ApiError> {
+    let bindings = state
+        .session_binding_repo
+        .list_by_session(session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let Some(binding) = bindings
+        .iter()
+        .find(|binding| binding.owner_type == SessionOwnerType::Story)
+    else {
+        return Ok(req);
+    };
+
+    let story = state
+        .story_repo
+        .get_by_id(binding.owner_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
+    let project = state
+        .project_repo
+        .get_by_id(story.project_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
+    let workspace = resolve_story_workspace(state, &project).await?;
+
+    Ok(build_story_owner_prompt_request(state, req, &story, &project, workspace.as_ref()))
+}
+
+async fn resolve_story_workspace(
+    state: &Arc<AppState>,
+    project: &Project,
+) -> Result<Option<Workspace>, ApiError> {
+    if let Some(workspace_id) = project.config.default_workspace_id {
+        return state
+            .workspace_repo
+            .get_by_id(workspace_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()));
+    }
+
+    let workspaces = state
+        .workspace_repo
+        .list_by_project(project.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(workspaces.into_iter().next())
+}
+
+fn build_story_owner_prompt_request(
+    state: &AppState,
+    mut req: PromptSessionRequest,
+    story: &Story,
+    project: &Project,
+    workspace: Option<&Workspace>,
+) -> PromptSessionRequest {
+    let (context_markdown, source_summary) = build_story_context_markdown(story, project, workspace);
+
+    let mut prefix_blocks = Vec::new();
+    if !context_markdown.trim().is_empty() {
+        prefix_blocks.push(json!({
+            "type": "resource",
+            "resource": {
+                "uri": format!("agentdash://story-context/{}", story.id),
+                "mimeType": "text/markdown",
+                "text": context_markdown,
+            }
+        }));
+    }
+
+    let story_instruction = format!(
+        "## Instruction\n你是该 Story 的主代理。请围绕 Story 进行分析、补充上下文、拆解并创建 Task。\n\n可优先使用 Story MCP 工具直接更新 Story、维护上下文引用，并在创建 Task 时为 Task Agent 分配合适的上下文引用。\n\n当前来源摘要：{}",
+        if source_summary.is_empty() {
+            "-".to_string()
+        } else {
+            source_summary.join(", ")
+        }
+    );
+    prefix_blocks.push(json!({
+        "type": "text",
+        "text": story_instruction,
+    }));
+
+    let user_blocks = match (req.prompt.take(), req.prompt_blocks.take()) {
+        (Some(prompt), None) => vec![json!({
+            "type": "text",
+            "text": prompt,
+        })],
+        (None, Some(blocks)) => blocks,
+        (Some(prompt), Some(mut blocks)) => {
+            let mut merged = vec![json!({ "type": "text", "text": prompt })];
+            merged.append(&mut blocks);
+            merged
+        }
+        (None, None) => Vec::new(),
+    };
+
+    prefix_blocks.extend(user_blocks);
+    req.prompt = None;
+    req.prompt_blocks = Some(prefix_blocks);
+
+    if req.working_dir.is_none() {
+        req.working_dir = workspace.map(|item| item.container_ref.clone());
+    }
+
+    let base_url = state
+        .mcp_base_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    req.mcp_servers
+        .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
+
+    req
+}
+
+fn build_story_context_markdown(
+    story: &Story,
+    project: &Project,
+    workspace: Option<&Workspace>,
+) -> (String, Vec<String>) {
+    let mut composer = ContextComposer::default();
+    composer.push(
+        "story",
+        "story_core",
+        10,
+        MergeStrategy::Append,
+        format!(
+            "## Story\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
+            story.id,
+            trim_or_dash(&story.title),
+            trim_or_dash(&story.description),
+            story.status
+        ),
+    );
+    composer.push(
+        "project",
+        "project_core",
+        20,
+        MergeStrategy::Append,
+        format!(
+            "## Project\n- id: {}\n- name: {}\n- backend_id: {}",
+            project.id,
+            trim_or_dash(&project.name),
+            trim_or_dash(&project.backend_id)
+        ),
+    );
+    if let Some(workspace) = workspace {
+        composer.push(
+            "workspace",
+            "workspace_context",
+            30,
+            MergeStrategy::Append,
+            format!(
+                "## Workspace\n- id: {}\n- name: {}\n- path: {}",
+                workspace.id,
+                trim_or_dash(&workspace.name),
+                trim_or_dash(&workspace.container_ref)
+            ),
+        );
+    }
+    if let Some(prd) = clean_text(story.context.prd_doc.as_deref()) {
+        composer.push(
+            "story_context",
+            "story_prd",
+            40,
+            MergeStrategy::Append,
+            format!("## Story PRD\n{prd}"),
+        );
+    }
+    if !story.context.spec_refs.is_empty() {
+        composer.push(
+            "story_context",
+            "story_spec_refs",
+            41,
+            MergeStrategy::Append,
+            format!(
+                "## Spec Refs\n{}",
+                story
+                    .context
+                    .spec_refs
+                    .iter()
+                    .map(|item| format!("- {item}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        );
+    }
+    if !story.context.resource_list.is_empty() {
+        composer.push(
+            "story_context",
+            "story_resources",
+            42,
+            MergeStrategy::Append,
+            format!(
+                "## Resources\n{}",
+                story
+                    .context
+                    .resource_list
+                    .iter()
+                    .map(|item| format!("- [{}] {} ({})", item.resource_type, item.name, item.uri))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        );
+    }
+
+    let workspace_root = workspace
+        .map(|item| std::path::Path::new(item.container_ref.as_str()))
+        .or(Some(std::path::Path::new(".")));
+    if let Ok(resolved) = resolve_declared_sources(ResolveSourcesRequest {
+        sources: &story.context.source_refs,
+        workspace_root,
+        base_order: 50,
+    }) {
+        for fragment in resolved.fragments {
+            composer.push_fragment(fragment);
+        }
+        if !resolved.warnings.is_empty() {
+            composer.push(
+                "story_context",
+                "story_context_warnings",
+                59,
+                MergeStrategy::Append,
+                format!(
+                    "## Injection Notes\n{}",
+                    resolved
+                        .warnings
+                        .iter()
+                        .map(|item| format!("- {item}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+            );
+        }
+    }
+
+    composer.compose()
+}
+
+fn clean_text(input: Option<&str>) -> Option<&str> {
+    input.and_then(|text| {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+fn trim_or_dash(text: &str) -> &str {
+    let trimmed = text.trim();
+    if trimmed.is_empty() { "-" } else { trimmed }
 }
 
 pub async fn cancel_session(

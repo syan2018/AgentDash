@@ -79,8 +79,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/stories/{id}/sessions",
-            get(story_sessions::list_story_sessions)
-                .post(story_sessions::create_story_session),
+            get(story_sessions::list_story_sessions).post(story_sessions::create_story_session),
         )
         .route(
             "/stories/{id}/sessions/{binding_id}",
@@ -123,6 +122,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/sessions/{id}",
             get(acp_sessions::get_session).delete(acp_sessions::delete_session),
+        )
+        .route(
+            "/sessions/{id}/bindings",
+            get(acp_sessions::get_session_bindings),
         )
         // ACP Sessions — Execution
         .route("/sessions/{id}/prompt", post(acp_sessions::prompt_session))

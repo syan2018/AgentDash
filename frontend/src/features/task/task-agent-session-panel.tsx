@@ -220,6 +220,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
           agent_binding: task.agent_binding,
         },
         return_to: {
+          owner_type: "task",
           story_id: task.story_id,
           task_id: task.id,
         },

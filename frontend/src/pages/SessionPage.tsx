@@ -5,6 +5,7 @@ import { isAggregatedGroup, isAggregatedThinkingGroup } from "../features/acp-se
 import type { AcpDisplayItem, TokenUsageInfo } from "../features/acp-session/model/types";
 import { promptSession, type ExecutorConfig } from "../services/executor";
 import { extractAgentDashMetaFromUpdate } from "../features/acp-session/model/agentdashMeta";
+import { fetchSessionBindings } from "../services/session";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { useStoryStore } from "../stores/storyStore";
 import {
@@ -13,7 +14,12 @@ import {
   useExecutorDiscoveredOptions,
   ExecutorSelector,
 } from "../features/executor-selector";
-import type { AgentBinding, SessionNavigationState, StoryNavigationState } from "../types";
+import type {
+  AgentBinding,
+  SessionBindingOwner,
+  SessionNavigationState,
+  StoryNavigationState,
+} from "../types";
 import {
   useFileReference,
   FilePickerPopup,
@@ -196,6 +202,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const optimisticRunningUntilRef = useRef(0);
   const actionRunningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [taskAgentBinding, setTaskAgentBinding] = useState<AgentBinding | null>(null);
+  const [sessionBindings, setSessionBindings] = useState<SessionBindingOwner[]>([]);
   const routeState = useMemo(
     () => (location.state as SessionNavigationState | null) ?? null,
     [location.state],
@@ -227,6 +234,58 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       cancelled = true;
     };
   }, [fetchTaskSession, taskIdHint]);
+
+  useEffect(() => {
+    if (!currentSessionId) {
+      setSessionBindings([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const bindings = await fetchSessionBindings(currentSessionId);
+        if (!cancelled) {
+          setSessionBindings(bindings);
+        }
+      } catch {
+        if (!cancelled) {
+          setSessionBindings([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSessionId]);
+
+  const sessionOwnerBinding = useMemo(() => {
+    if (sessionBindings.length === 0) return null;
+    return (
+      sessionBindings.find((item) => item.owner_type === "story")
+      ?? sessionBindings.find((item) => item.owner_type === "task")
+      ?? sessionBindings[0]
+      ?? null
+    );
+  }, [sessionBindings]);
+
+  const effectiveReturnTarget = useMemo(() => {
+    if (returnTarget) return returnTarget;
+    if (!sessionOwnerBinding?.story_id) return null;
+    if (sessionOwnerBinding.owner_type === "story") {
+      return {
+        owner_type: "story" as const,
+        story_id: sessionOwnerBinding.story_id,
+      };
+    }
+    if (!sessionOwnerBinding.task_id) return null;
+    return {
+      owner_type: "task" as const,
+      story_id: sessionOwnerBinding.story_id,
+      task_id: sessionOwnerBinding.task_id,
+    };
+  }, [returnTarget, sessionOwnerBinding]);
 
   const fileRef = useFileReference();
 
@@ -383,11 +442,17 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     navigate("/session", { replace: true });
   }, [navigate, setActiveSessionId, clearInput]);
 
-  const handleBackToTask = useCallback(() => {
-    if (!returnTarget) return;
-    const state: StoryNavigationState = { open_task_id: returnTarget.task_id };
-    navigate(`/story/${returnTarget.story_id}`, { state });
-  }, [navigate, returnTarget]);
+  const handleBackToOwner = useCallback(() => {
+    if (!effectiveReturnTarget) return;
+    if (effectiveReturnTarget.owner_type === "task") {
+      const state: StoryNavigationState = { open_task_id: effectiveReturnTarget.task_id };
+      navigate(`/story/${effectiveReturnTarget.story_id}`, { state });
+      return;
+    }
+    navigate(`/story/${effectiveReturnTarget.story_id}`);
+  }, [effectiveReturnTarget, navigate]);
+
+  const backButtonLabel = effectiveReturnTarget?.owner_type === "task" ? "返回任务" : "返回 Story";
 
   const handleCopySessionId = useCallback(async () => {
     if (!currentSessionId) return;
@@ -528,13 +593,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          {returnTarget && (
+          {effectiveReturnTarget && (
             <button
               type="button"
-              onClick={handleBackToTask}
+              onClick={handleBackToOwner}
               className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
-              返回任务
+              {backButtonLabel}
             </button>
           )}
           {hasSession && (
@@ -622,6 +687,26 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
                       {tpl.label}
                     </button>
                   ))}
+                </div>
+              )}
+
+              {sessionOwnerBinding && (
+                <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
+                  <span className="rounded-full border border-border bg-background px-2 py-0.5 uppercase">
+                    {sessionOwnerBinding.owner_type}
+                  </span>
+                  <span>
+                    已绑定：{sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id}
+                  </span>
+                  {sessionOwnerBinding.story_id && (
+                    <button
+                      type="button"
+                      onClick={handleBackToOwner}
+                      className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] transition-colors hover:bg-secondary hover:text-foreground"
+                    >
+                      打开关联{sessionOwnerBinding.owner_type === "task" ? "任务" : "Story"}
+                    </button>
+                  )}
                 </div>
               )}
 

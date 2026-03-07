@@ -72,7 +72,7 @@ export function StorySessionPanel({ story, showTitle = true }: StorySessionPanel
     (sessionId: string) => {
       navigate(`/session/${sessionId}`, {
         state: {
-          return_to: { story_id: story.id },
+          return_to: { owner_type: "story", story_id: story.id },
         },
       });
     },

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
@@ -69,16 +69,17 @@ pub async fn list_settings(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListSettingsQuery>,
 ) -> Result<Json<Vec<SettingResponse>>, ApiError> {
-    let settings = state
-        .settings_repo
-        .list(query.category.as_deref())
-        .await?;
+    let settings = state.settings_repo.list(query.category.as_deref()).await?;
 
     let responses: Vec<SettingResponse> = settings
         .into_iter()
         .map(|s| {
             let masked = is_sensitive_key(&s.key);
-            let value = if masked { mask_value(&s.value) } else { s.value };
+            let value = if masked {
+                mask_value(&s.value)
+            } else {
+                s.value
+            };
             SettingResponse {
                 key: s.key,
                 value,

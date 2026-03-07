@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+/**
+ * Task Agent 执行面板
+ *
+ * 保留 Task 专有的执行控制（启动/继续/取消）和状态轮询，
+ * 流式输出与聊天输入复用 SessionChatView。
+ */
+
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { AcpSessionEntry, useAcpSession } from "../acp-session";
-import { isAggregatedGroup, isAggregatedThinkingGroup } from "../acp-session/model/types";
-import type { AcpDisplayItem, TokenUsageInfo } from "../acp-session/model/types";
-import { extractAgentDashMetaFromUpdate } from "../acp-session/model/agentdashMeta";
+import { SessionChatView } from "../acp-session";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import type { Artifact, SessionNavigationState, Task } from "../../types";
 import { useStoryStore } from "../../stores/storyStore";
@@ -13,25 +17,13 @@ interface TaskAgentSessionPanelProps {
   onTaskUpdated: (task: Task) => void;
 }
 
+// ─── 工具执行统计 ──────────────────────────────────────
+
 interface ToolExecutionStats {
   total: number;
   completed: number;
   failed: number;
   running: number;
-  pending: number;
-}
-
-function getItemKey(item: AcpDisplayItem): string {
-  if (isAggregatedGroup(item)) return item.groupKey;
-  if (isAggregatedThinkingGroup(item)) return item.groupKey;
-  return item.id;
-}
-
-function formatTokens(n: number | undefined): string {
-  if (n == null) return "-";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
 }
 
 function getArtifactStatus(artifact: Artifact): string | null {
@@ -43,14 +35,7 @@ function getArtifactStatus(artifact: Artifact): string | null {
 }
 
 function collectToolExecutionStats(artifacts: Artifact[]): ToolExecutionStats {
-  const stats: ToolExecutionStats = {
-    total: 0,
-    completed: 0,
-    failed: 0,
-    running: 0,
-    pending: 0,
-  };
-
+  const stats: ToolExecutionStats = { total: 0, completed: 0, failed: 0, running: 0 };
   for (const artifact of artifacts) {
     if (artifact.artifact_type !== "tool_execution") continue;
     stats.total += 1;
@@ -58,388 +43,243 @@ function collectToolExecutionStats(artifacts: Artifact[]): ToolExecutionStats {
     if (status === "completed") stats.completed += 1;
     else if (status === "failed" || status === "rejected" || status === "canceled") stats.failed += 1;
     else if (status === "in_progress") stats.running += 1;
-    else stats.pending += 1;
   }
-
   return stats;
 }
 
-function buildUsageSummary(usage: TokenUsageInfo | null): string {
-  if (!usage) return "上下文用量: -";
-  const { totalTokens, maxTokens, inputTokens, outputTokens } = usage;
-  if (totalTokens == null && inputTokens == null && outputTokens == null) return "上下文用量: -";
-
-  const ratio =
-    totalTokens != null && maxTokens != null && maxTokens > 0
-      ? ` (${Math.min(Math.round((totalTokens / maxTokens) * 100), 100)}%)`
-      : "";
-  const io =
-    inputTokens != null || outputTokens != null
-      ? ` · ↑${formatTokens(inputTokens)} ↓${formatTokens(outputTokens)}`
-      : "";
-  const total =
-    totalTokens != null && maxTokens != null
-      ? ` ${formatTokens(totalTokens)}/${formatTokens(maxTokens)}`
-      : "";
-  return `上下文用量:${total}${ratio}${io}`;
-}
+// ─── 主组件 ────────────────────────────────────────────
 
 export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionPanelProps) {
   const navigate = useNavigate();
-  const startTaskExecution = useStoryStore((state) => state.startTaskExecution);
-  const continueTaskExecution = useStoryStore((state) => state.continueTaskExecution);
-  const cancelTaskExecution = useStoryStore((state) => state.cancelTaskExecution);
-  const refreshTask = useStoryStore((state) => state.refreshTask);
-  const storeError = useStoryStore((state) => state.error);
+  const startTaskExecution = useStoryStore((s) => s.startTaskExecution);
+  const continueTaskExecution = useStoryStore((s) => s.continueTaskExecution);
+  const cancelTaskExecution = useStoryStore((s) => s.cancelTaskExecution);
+  const refreshTask = useStoryStore((s) => s.refreshTask);
+  const storeError = useStoryStore((s) => s.error);
 
-  const [prompt, setPrompt] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const hasSession = Boolean(task.session_id);
   const sessionId = task.session_id ?? null;
   const executorSessionId = task.executor_session_id ?? null;
-  const streamSessionId = sessionId ?? "__placeholder__";
   const executionLocked = task.status === "running";
 
-  const {
-    displayItems,
-    rawEntries,
-    isConnected,
-    isLoading,
-    isReceiving,
-    error: streamError,
-    reconnect,
-    streamingEntryId,
-    tokenUsage,
-  } = useAcpSession({ sessionId: streamSessionId, enabled: hasSession });
-
-  const listRef = useRef<HTMLDivElement>(null);
-  const shouldAutoScrollRef = useRef(true);
-  const taskSnapshotRef = useRef({ status: task.status, updated_at: task.updated_at });
   const onTaskUpdatedRef = useRef(onTaskUpdated);
+  useEffect(() => { onTaskUpdatedRef.current = onTaskUpdated; }, [onTaskUpdated]);
 
+  const taskSnapshotRef = useRef({ status: task.status, updated_at: task.updated_at });
   useEffect(() => {
     taskSnapshotRef.current = { status: task.status, updated_at: task.updated_at };
   }, [task.status, task.updated_at]);
 
-  useEffect(() => {
-    onTaskUpdatedRef.current = onTaskUpdated;
-  }, [onTaskUpdated]);
-
-  useEffect(() => {
-    if (!listRef.current || !shouldAutoScrollRef.current) return;
-    listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [displayItems.length]);
-
+  // 执行中轮询 Task 状态
   useEffect(() => {
     if (!hasSession || !executionLocked) return;
-
     const timer = window.setInterval(() => {
       void (async () => {
         const latest = await refreshTask(task.id);
         if (!latest) return;
-        if (latest.status !== task.status || latest.updated_at !== task.updated_at) {
+        if (latest.status !== taskSnapshotRef.current.status || latest.updated_at !== taskSnapshotRef.current.updated_at) {
           onTaskUpdatedRef.current(latest);
         }
       })();
     }, 2000);
-
     return () => window.clearInterval(timer);
-  }, [executionLocked, hasSession, refreshTask, task.id, task.status, task.updated_at]);
+  }, [executionLocked, hasSession, refreshTask, task.id]);
 
+  // Session 首次建立时刷新一次 Task 状态
   useEffect(() => {
     if (!hasSession) return;
     let cancelled = false;
     void (async () => {
       const latest = await refreshTask(task.id);
       if (cancelled || !latest) return;
-      if (
-        latest.status !== taskSnapshotRef.current.status ||
-        latest.updated_at !== taskSnapshotRef.current.updated_at
-      ) {
+      if (latest.status !== taskSnapshotRef.current.status || latest.updated_at !== taskSnapshotRef.current.updated_at) {
         onTaskUpdatedRef.current(latest);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [hasSession, refreshTask, task.id]);
 
-  useEffect(() => {
-    if (!hasSession || rawEntries.length === 0) return;
+  // 切换 Task 时重置错误
+  useEffect(() => { setSubmitError(null); }, [task.id]);
 
-    const last = rawEntries[rawEntries.length - 1];
-    if (!last || last.update.sessionUpdate !== "session_info_update") return;
+  const toolStats = useMemo(() => collectToolExecutionStats(task.artifacts), [task.artifacts]);
 
-    const meta = extractAgentDashMetaFromUpdate(last.update);
-    const eventType = meta?.event?.type;
-    if (eventType !== "turn_completed" && eventType !== "turn_failed") return;
+  // ─── 执行控制 ──────────────────────────────────────────
 
+  const handleStartExecution = useCallback(async () => {
+    if (isSubmitting || executionLocked) return;
+    setSubmitError(null);
+    setIsSubmitting(true);
+    try {
+      const updated = await startTaskExecution(task.id);
+      if (!updated) {
+        setSubmitError(storeError ?? "启动执行失败，请稍后重试");
+        return;
+      }
+      onTaskUpdated(updated);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "启动执行失败");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [executionLocked, isSubmitting, onTaskUpdated, startTaskExecution, storeError, task.id]);
+
+  const handleContinueExecution = useCallback(async (prompt?: string) => {
+    if (isSubmitting || executionLocked) return;
+    setSubmitError(null);
+    setIsSubmitting(true);
+    try {
+      const updated = await continueTaskExecution(task.id, prompt ? { additional_prompt: prompt } : undefined);
+      if (!updated) {
+        setSubmitError(storeError ?? "继续执行失败，请稍后重试");
+        return;
+      }
+      onTaskUpdated(updated);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "继续执行失败");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [continueTaskExecution, executionLocked, isSubmitting, onTaskUpdated, storeError, task.id]);
+
+  const handleCancel = useCallback(async () => {
+    if (!hasSession || isSubmitting || !executionLocked) return;
+    setSubmitError(null);
+    setIsSubmitting(true);
+    try {
+      const updated = await cancelTaskExecution(task.id);
+      if (updated) onTaskUpdated(updated);
+      else setSubmitError("取消执行失败，请稍后重试");
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "取消执行失败");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [cancelTaskExecution, executionLocked, hasSession, isSubmitting, onTaskUpdated, task.id]);
+
+  const handleRefresh = useCallback(async () => {
+    setSubmitError(null);
+    const latest = await refreshTask(task.id);
+    if (!latest) {
+      setSubmitError(storeError ?? "刷新状态失败");
+      return;
+    }
+    onTaskUpdatedRef.current(latest);
+  }, [refreshTask, storeError, task.id]);
+
+  // Turn 结束时刷新 Task 状态
+  const handleTurnEnd = useCallback(() => {
     void (async () => {
       const latest = await refreshTask(task.id);
       if (latest) onTaskUpdatedRef.current(latest);
     })();
-  }, [hasSession, rawEntries, refreshTask, task.id]);
+  }, [refreshTask, task.id]);
 
-  useEffect(() => {
-    setSubmitError(null);
-    setPrompt("");
-  }, [task.id]);
-
-  const handleScroll = useCallback(() => {
-    const element = listRef.current;
-    if (!element) return;
-    shouldAutoScrollRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-  }, []);
-
-  const toolStats = useMemo(() => collectToolExecutionStats(task.artifacts), [task.artifacts]);
-  const usageSummary = useMemo(() => buildUsageSummary(tokenUsage), [tokenUsage]);
-
-  const connectionLabel = !hasSession
-    ? "未创建"
-    : isConnected
-      ? "已连接"
-      : isLoading
-        ? "连接中"
-        : "连接中断";
-  const connectionDotClassName = !hasSession
-    ? "bg-muted-foreground"
-    : isConnected
-      ? "bg-emerald-500"
-      : isLoading
-        ? "animate-pulse bg-amber-400"
-        : "bg-destructive";
-
-  const displayError = submitError ?? streamError?.message ?? null;
   const navigateToSessionPage = useCallback(
     (targetSessionId: string) => {
       const state: SessionNavigationState = {
-        task_context: {
-          task_id: task.id,
-          agent_binding: task.agent_binding,
-        },
-        return_to: {
-          owner_type: "task",
-          story_id: task.story_id,
-          task_id: task.id,
-        },
+        task_context: { task_id: task.id, agent_binding: task.agent_binding },
+        return_to: { owner_type: "task", story_id: task.story_id, task_id: task.id },
       };
       navigate(`/session/${targetSessionId}`, { state });
     },
     [navigate, task.agent_binding, task.id, task.story_id],
   );
 
-  const handleExecute = useCallback(async () => {
-    if (isSubmitting) return;
-    if (executionLocked) {
-      setSubmitError("任务仍在执行中，请先等待完成或点击“取消执行”。");
-      return;
-    }
-    setSubmitError(null);
+  // ─── Task 控制栏 ──────────────────────────────────────
 
-    const trimmedPrompt = prompt.trim();
-    setIsSubmitting(true);
-    try {
-      const updated = hasSession
-        ? await continueTaskExecution(task.id, trimmedPrompt ? { additional_prompt: trimmedPrompt } : undefined)
-        : await startTaskExecution(task.id, trimmedPrompt ? { override_prompt: trimmedPrompt } : undefined);
-      if (!updated) {
-        setSubmitError(storeError ?? (hasSession ? "继续执行失败，请稍后重试" : "启动执行失败，请稍后重试"));
-        return;
-      }
-      onTaskUpdated(updated);
-      setPrompt("");
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "执行失败，请重试");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [
-    continueTaskExecution,
-    executionLocked,
-    hasSession,
-    isSubmitting,
-    onTaskUpdated,
-    prompt,
-    startTaskExecution,
-    storeError,
-    task.id,
-  ]);
-
-  const handleCancel = useCallback(async () => {
-    if (!hasSession || isSubmitting || !executionLocked) return;
-    setSubmitError(null);
-
-    setIsSubmitting(true);
-    try {
-      const updated = await cancelTaskExecution(task.id);
-      if (updated) {
-        onTaskUpdated(updated);
-      } else {
-        setSubmitError("取消执行失败，请稍后重试");
-      }
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "取消执行失败，请稍后重试");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [cancelTaskExecution, executionLocked, hasSession, isSubmitting, onTaskUpdated, task.id]);
-
-  const handlePrimaryAction = useCallback(async () => {
-    if (executionLocked) {
-      await handleCancel();
-      return;
-    }
-    await handleExecute();
-  }, [executionLocked, handleCancel, handleExecute]);
-
-  const handleRefresh = useCallback(async () => {
-    setSubmitError(null);
-    const latest = await refreshTask(task.id);
-    if (!latest) {
-      setSubmitError(storeError ?? "刷新任务状态失败，请稍后重试");
-      return;
-    }
-    onTaskUpdatedRef.current(latest);
-  }, [refreshTask, storeError, task.id]);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+  const taskControlBar = (
+    <div className="space-y-2">
+      {/* 状态 + 统计 */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
         <TaskStatusBadge status={task.status} />
-        <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-          <span className={`h-1.5 w-1.5 rounded-full ${connectionDotClassName}`} />
-          {connectionLabel}
+        <span className="text-muted-foreground">
+          工具 {toolStats.completed}/{toolStats.total}
+          {toolStats.running > 0 && <span className="ml-1 text-primary">({toolStats.running} 运行中)</span>}
+          {toolStats.failed > 0 && <span className="ml-1 text-destructive">({toolStats.failed} 失败)</span>}
         </span>
-        {isReceiving && <span className="text-xs text-primary">实时输出中</span>}
-        <div className="ml-auto flex flex-col items-end text-xs text-muted-foreground">
-          <span>Session: {sessionId ? `${sessionId.slice(0, 12)}...` : "未绑定"}</span>
-          <span>
-            Executor: {executorSessionId ? `${executorSessionId.slice(0, 24)}...` : "未绑定"}
-          </span>
+        <div className="ml-auto flex items-center gap-1.5 text-muted-foreground">
+          <span>S: {sessionId ? `${sessionId.slice(0, 8)}…` : "-"}</span>
+          <span>E: {executorSessionId ? `${executorSessionId.slice(0, 16)}…` : "-"}</span>
         </div>
       </div>
 
-      <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
-          <p>工具进度</p>
-          <p className="mt-0.5 text-sm font-medium text-foreground">
-            {toolStats.completed}/{toolStats.total || 0}
-          </p>
-        </div>
-        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
-          <p>运行中</p>
-          <p className="mt-0.5 text-sm font-medium text-foreground">{toolStats.running}</p>
-        </div>
-        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
-          <p>失败</p>
-          <p className="mt-0.5 text-sm font-medium text-destructive">{toolStats.failed}</p>
-        </div>
-        <div className="rounded-[10px] border border-border bg-background px-3 py-2.5">
-          <p>产物总数</p>
-          <p className="mt-0.5 text-sm font-medium text-foreground">{task.artifacts.length}</p>
-        </div>
-      </div>
-
-      <p className="text-xs text-muted-foreground">{usageSummary}</p>
-
-      {displayError && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {displayError}
-        </div>
-      )}
-
-      <div
-        ref={listRef}
-        onScroll={handleScroll}
-        className="max-h-[26rem] min-h-[16rem] overflow-y-auto rounded-[12px] border border-border bg-background"
-      >
-        {hasSession && isLoading && displayItems.length === 0 ? (
-          <div className="flex h-[16rem] items-center justify-center">
-            <div className="text-center">
-              <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <p className="mt-2 text-xs text-muted-foreground">正在连接会话流...</p>
-            </div>
-          </div>
-        ) : hasSession && displayItems.length > 0 ? (
-          <div className="space-y-3 px-4 py-4">
-            {displayItems.map((item) => (
-              <AcpSessionEntry key={getItemKey(item)} item={item} streamingEntryId={streamingEntryId} />
-            ))}
-          </div>
-        ) : (
-          <div className="flex h-[16rem] items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            {hasSession ? "会话已建立，等待新的执行输出" : "填写指令后启动执行，会在此实时展示 Agent 输出"}
-          </div>
+      {/* 操作按钮 */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {!hasSession && (
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void handleStartExecution()}
+            className="rounded-[10px] border border-primary bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:opacity-95 disabled:opacity-50"
+          >
+            {isSubmitting ? "启动中…" : "启动执行"}
+          </button>
+        )}
+        {hasSession && !executionLocked && (
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void handleContinueExecution()}
+            className="rounded-[10px] border border-primary bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:opacity-95 disabled:opacity-50"
+          >
+            {isSubmitting ? "处理中…" : "继续执行"}
+          </button>
+        )}
+        {hasSession && executionLocked && (
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void handleCancel()}
+            className="rounded-[10px] border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+          >
+            {isSubmitting ? "处理中…" : "取消执行"}
+          </button>
+        )}
+        {hasSession && (
+          <>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => void handleRefresh()}
+              className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+            >
+              刷新状态
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToSessionPage(sessionId!)}
+              className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
+            >
+              会话页
+            </button>
+          </>
         )}
       </div>
 
-      <div className="space-y-2 rounded-[14px] border border-border bg-secondary/60 p-3">
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          rows={3}
-          placeholder={hasSession ? "输入追加指令（可选）" : "输入启动指令（可选）"}
-          onKeyDown={(event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-              event.preventDefault();
-              void handleExecute();
-            }
-          }}
-          className="w-full rounded-[12px] border border-border bg-background px-4 py-3 text-sm leading-7 outline-none ring-ring focus:ring-1"
-        />
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">Ctrl+Enter 快速执行</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {hasSession && !isConnected && (
-              <button
-                type="button"
-                onClick={reconnect}
-                className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
-              >
-                重新连接
-              </button>
-            )}
-            {hasSession && (
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => void handleRefresh()}
-                className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
-              >
-                刷新状态
-              </button>
-            )}
-            {hasSession && (
-              <button
-                type="button"
-                onClick={() => navigateToSessionPage(sessionId!)}
-                className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
-              >
-                会话页
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={isSubmitting || (executionLocked && !hasSession)}
-              onClick={() => void handlePrimaryAction()}
-              className={`rounded-[10px] border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
-                executionLocked
-                  ? "border-border bg-background text-foreground hover:bg-secondary"
-                  : "border-primary bg-primary text-primary-foreground hover:opacity-95"
-              }`}
-            >
-              {isSubmitting
-                ? "处理中..."
-                : executionLocked
-                  ? "取消执行"
-                  : hasSession
-                    ? "继续执行"
-                    : "启动执行"}
-            </button>
-          </div>
+      {submitError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {submitError}
         </div>
+      )}
+    </div>
+  );
+
+  // ─── 渲染 ──────────────────────────────────────────────
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Task 控制栏作为 inputPrefix 渲染在聊天输入上方 */}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <SessionChatView
+          sessionId={sessionId}
+          executorHint={task.agent_binding?.agent_type}
+          inputPrefix={taskControlBar}
+          onTurnEnd={handleTurnEnd}
+        />
       </div>
     </div>
   );

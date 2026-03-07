@@ -136,16 +136,22 @@ export function FilePickerPopup({
             key={file.relPath}
             type="button"
             data-selected={i === selectedIndex}
+            aria-selected={i === selectedIndex}
             onClick={() => onSelect(file)}
-            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+            className={`relative mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-[10px] border px-3 py-2 text-left text-xs transition-colors ${
               i === selectedIndex
-                ? "bg-accent text-accent-foreground"
-                : "text-foreground hover:bg-accent/50"
+                ? "border-primary/50 bg-primary/10 text-foreground shadow-sm ring-1 ring-primary/25"
+                : "border-transparent text-foreground hover:border-border hover:bg-accent/50"
             }`}
           >
+            {i === selectedIndex && (
+              <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary" />
+            )}
             <span className="shrink-0 text-sm">{getFileIcon(file.relPath)}</span>
             <span className="min-w-0 flex-1 truncate font-mono">{file.relPath}</span>
-            <span className="shrink-0 text-muted-foreground">{formatSize(file.size)}</span>
+            <span className={`shrink-0 ${i === selectedIndex ? "text-foreground/80" : "text-muted-foreground"}`}>
+              {formatSize(file.size)}
+            </span>
           </button>
         ))}
       </div>

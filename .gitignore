@@ -33,6 +33,15 @@ Thumbs.db
 
 # 执行会话持久化（运行时产物）
 .agentdash/
+.codex/tmp/
+
+# 日志文件
+*.out.log
+*.err.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 __pycache__/
 

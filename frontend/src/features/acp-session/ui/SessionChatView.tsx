@@ -1,0 +1,612 @@
+/**
+ * 可复用的会话聊天视图
+ *
+ * 包含完整的 ACP 会话交互能力：流式输出、富文本输入（@ 文件引用）、
+ * 执行器选择、上下文用量指示、发送/取消。
+ *
+ * SessionPage 和 StorySessionPanel 等场景复用此组件，
+ * 由父组件管理 sessionId 生命周期和外层导航。
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAcpSession } from "../model";
+import { AcpSessionEntry } from "./AcpSessionEntry";
+import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
+import type { AcpDisplayItem, TokenUsageInfo } from "../model/types";
+import { extractAgentDashMetaFromUpdate } from "../model/agentdashMeta";
+import { promptSession, type ExecutorConfig } from "../../../services/executor";
+import {
+  useExecutorDiscovery,
+  useExecutorConfig,
+  useExecutorDiscoveredOptions,
+  ExecutorSelector,
+} from "../../executor-selector";
+import {
+  useFileReference,
+  FilePickerPopup,
+  FileReferenceTags,
+  buildPromptBlocks,
+  RichInput,
+  type RichInputRef,
+} from "../../file-reference";
+import { batchReadWorkspaceFiles, type FileEntry } from "../../../services/workspaceFiles";
+
+// ─── 工具函数 ──────────────────────────────────────────
+
+function getItemKey(item: AcpDisplayItem): string {
+  if (isAggregatedGroup(item)) return item.groupKey;
+  if (isAggregatedThinkingGroup(item)) return item.groupKey;
+  return item.id;
+}
+
+function formatTokens(n: number | undefined): string {
+  if (n == null) return "-";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function removeReferenceMarkers(prompt: string, relPath: string): string {
+  const escapedPath = escapeRegExp(relPath);
+  const fileMarker = new RegExp(`<file:${escapedPath}>`, "g");
+  const atMarker = new RegExp(`@${escapedPath}(?=\\s|$)`, "g");
+
+  let next = prompt.replace(fileMarker, "").replace(atMarker, "");
+  next = next.replace(/[ \t]{2,}/g, " ");
+  next = next.replace(/[ \t]+\n/g, "\n");
+  next = next.replace(/\n{3,}/g, "\n\n");
+  return next;
+}
+
+function normalizeExecutorToken(raw: string): string {
+  return raw.trim().replace(/[-\s]+/g, "_").toUpperCase();
+}
+
+function resolveExecutorFromHint(
+  hint: string | null | undefined,
+  executors: Array<{ id: string }>,
+): string | null {
+  const trimmed = (hint ?? "").trim();
+  if (!trimmed) return null;
+  const exact = executors.find((item) => item.id === trimmed);
+  if (exact) return exact.id;
+  const normalized = normalizeExecutorToken(trimmed);
+  const matched = executors.find((item) => normalizeExecutorToken(item.id) === normalized);
+  return matched?.id ?? trimmed;
+}
+
+// ─── 子组件 ────────────────────────────────────────────
+
+function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
+  const [showDetail, setShowDetail] = useState(false);
+  if (!usage) return null;
+
+  const { totalTokens, maxTokens, inputTokens, outputTokens } = usage;
+  const hasAny = totalTokens != null || inputTokens != null || outputTokens != null;
+  if (!hasAny) return null;
+
+  const percent = (maxTokens && totalTokens)
+    ? Math.min(Math.round((totalTokens / maxTokens) * 100), 100)
+    : undefined;
+  const radius = 7;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDash = percent != null ? (percent / 100) * circumference : 0;
+  const isHigh = percent != null && percent > 80;
+
+  return (
+    <span
+      className="relative flex items-center"
+      onMouseEnter={() => setShowDetail(true)}
+      onMouseLeave={() => setShowDetail(false)}
+    >
+      <svg width="20" height="20" className="shrink-0 -rotate-90">
+        <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted/40" />
+        {percent != null && (
+          <circle
+            cx="10" cy="10" r={radius}
+            fill="none" strokeWidth="2.5" strokeLinecap="round"
+            strokeDasharray={`${strokeDash} ${circumference}`}
+            className={isHigh ? "text-warning" : "text-primary/70"}
+            stroke="currentColor"
+          />
+        )}
+      </svg>
+      {showDetail && (
+        <span className="absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
+          {percent != null && <span className="font-medium">{percent}% 上下文</span>}
+          {totalTokens != null && maxTokens != null && (
+            <span className="text-muted-foreground"> ({formatTokens(totalTokens)}/{formatTokens(maxTokens)})</span>
+          )}
+          {(inputTokens != null || outputTokens != null) && (
+            <span className="text-muted-foreground">
+              {percent != null ? " · " : ""}
+              {inputTokens != null && `↑${formatTokens(inputTokens)}`}
+              {inputTokens != null && outputTokens != null && " "}
+              {outputTokens != null && `↓${formatTokens(outputTokens)}`}
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ─── 主组件 ────────────────────────────────────────────
+
+export interface PromptTemplate {
+  id: string;
+  label: string;
+  content: string;
+}
+
+export interface SessionChatViewProps {
+  /** 当前会话 ID，null 表示尚未创建 */
+  sessionId: string | null;
+
+  /** 无 session 时用户发送第一条消息，由父组件创建会话并返回新 ID */
+  onCreateSession?: (title: string) => Promise<string>;
+
+  /** session ID 变更后回调（创建新 session 时触发） */
+  onSessionIdChange?: (id: string) => void;
+
+  /** 消息发送成功后回调（父组件可刷新列表等） */
+  onMessageSent?: () => void;
+
+  /** 执行器提示（如 task 的 agent_type），自动映射为执行器选择 */
+  executorHint?: string | null;
+
+  /** 无 session 时显示的 prompt 模板按钮 */
+  promptTemplates?: PromptTemplate[];
+
+  /** 渲染在执行器选择器上方的自定义内容（如 session owner 绑定信息） */
+  inputPrefix?: React.ReactNode;
+
+  /** Agent turn 结束时回调（turn_completed / turn_failed），Task 场景用于刷新状态 */
+  onTurnEnd?: () => void;
+}
+
+const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
+
+export function SessionChatView({
+  sessionId,
+  onCreateSession,
+  onSessionIdChange,
+  onMessageSent,
+  executorHint,
+  promptTemplates,
+  inputPrefix,
+  onTurnEnd,
+}: SessionChatViewProps) {
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [inputValue, setInputValue] = useState("");
+  const [optimisticRunning, setOptimisticRunning] = useState(false);
+  const [stableActionRunning, setStableActionRunning] = useState(false);
+
+  const richInputRef = useRef<RichInputRef>(null);
+  const appliedHintRef = useRef<string | null>(null);
+  const optimisticRunningUntilRef = useRef(0);
+  const actionRunningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const shouldScrollRef = useRef(true);
+
+  const fileRef = useFileReference();
+
+  const clearInput = useCallback(() => {
+    richInputRef.current?.setValue("");
+  }, []);
+
+  // sessionId 变更时重置内部状态
+  useEffect(() => {
+    setSendError(null);
+  }, [sessionId]);
+
+  // ─── 执行器配置 ──────────────────────────────────────
+
+  const discovery = useExecutorDiscovery();
+  const execConfig = useExecutorConfig();
+  const discovered = useExecutorDiscoveredOptions(execConfig.executor, execConfig.variant);
+  const setExecutor = execConfig.setExecutor;
+
+  const resolvedHint = useMemo(
+    () => resolveExecutorFromHint(executorHint, discovery.executors),
+    [discovery.executors, executorHint],
+  );
+
+  useEffect(() => {
+    if (!sessionId || !resolvedHint) return;
+    const marker = `${sessionId}:${resolvedHint}`;
+    if (appliedHintRef.current === marker) return;
+    appliedHintRef.current = marker;
+    setExecutor(resolvedHint);
+  }, [resolvedHint, sessionId, setExecutor]);
+
+  const executorConfig: ExecutorConfig | undefined = useMemo(() => {
+    const trimmed = execConfig.executor.trim();
+    if (!trimmed) return undefined;
+    return {
+      executor: trimmed,
+      variant: execConfig.variant.trim() || undefined,
+      model_id: execConfig.modelId.trim() || undefined,
+      reasoning_id: execConfig.reasoningId.trim() || undefined,
+      permission_policy: (execConfig.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
+    };
+  }, [execConfig.executor, execConfig.variant, execConfig.modelId, execConfig.reasoningId, execConfig.permissionPolicy]);
+
+  // ─── ACP 会话流 ──────────────────────────────────────
+
+  const streamSessionId = sessionId ?? "__placeholder__";
+  const hasSession = sessionId !== null;
+
+  const {
+    displayItems,
+    rawEntries,
+    isConnected,
+    isLoading,
+    error: wsError,
+    reconnect,
+    sendCancel,
+    streamingEntryId,
+    tokenUsage,
+  } = useAcpSession({ sessionId: streamSessionId, enabled: hasSession });
+
+  // ─── Action running 检测 ──────────────────────────────
+
+  const streamRunning = useMemo(() => {
+    if (!hasSession || rawEntries.length === 0) return false;
+    for (let i = rawEntries.length - 1; i >= 0; i -= 1) {
+      const entry = rawEntries[i];
+      if (!entry || entry.update.sessionUpdate !== "session_info_update") continue;
+      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
+      if (eventType === "turn_started") return true;
+      if (eventType === "turn_completed" || eventType === "turn_failed") return false;
+    }
+    return false;
+  }, [hasSession, rawEntries]);
+
+  const targetActionRunning = hasSession && (streamRunning || optimisticRunning);
+
+  useEffect(() => {
+    if (targetActionRunning) {
+      if (actionRunningReleaseTimerRef.current) {
+        clearTimeout(actionRunningReleaseTimerRef.current);
+        actionRunningReleaseTimerRef.current = null;
+      }
+      setStableActionRunning(true);
+      return;
+    }
+    if (actionRunningReleaseTimerRef.current) clearTimeout(actionRunningReleaseTimerRef.current);
+    actionRunningReleaseTimerRef.current = setTimeout(() => {
+      actionRunningReleaseTimerRef.current = null;
+      setStableActionRunning(false);
+    }, ACTION_RUNNING_RELEASE_DELAY_MS);
+  }, [targetActionRunning]);
+
+  useEffect(() => () => {
+    if (actionRunningReleaseTimerRef.current) clearTimeout(actionRunningReleaseTimerRef.current);
+  }, []);
+
+  const isActionRunning = hasSession && stableActionRunning;
+
+  useEffect(() => {
+    if (!hasSession) {
+      setOptimisticRunning(false);
+      optimisticRunningUntilRef.current = 0;
+    }
+  }, [hasSession]);
+
+  useEffect(() => {
+    if (!optimisticRunning) return;
+    const remainMs = Math.max(optimisticRunningUntilRef.current - Date.now(), 0);
+    const timer = window.setTimeout(() => setOptimisticRunning(false), remainMs);
+    return () => window.clearTimeout(timer);
+  }, [optimisticRunning]);
+
+  const onTurnEndRef = useRef(onTurnEnd);
+  useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
+
+  useEffect(() => {
+    if (!hasSession || rawEntries.length === 0) return;
+    for (let i = rawEntries.length - 1; i >= 0; i -= 1) {
+      const entry = rawEntries[i];
+      if (!entry || entry.update.sessionUpdate !== "session_info_update") continue;
+      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
+      if (eventType === "turn_started") { setOptimisticRunning(false); return; }
+      if (eventType === "turn_completed" || eventType === "turn_failed") {
+        optimisticRunningUntilRef.current = 0;
+        setOptimisticRunning(false);
+        onTurnEndRef.current?.();
+        return;
+      }
+    }
+  }, [hasSession, rawEntries]);
+
+  // ─── 自动滚动 ────────────────────────────────────────
+
+  useEffect(() => {
+    if (!containerRef.current || !shouldScrollRef.current) return;
+    containerRef.current.scrollTop = containerRef.current.scrollHeight;
+  }, [displayItems.length]);
+
+  const handleScroll = useCallback(() => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    shouldScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+  }, []);
+
+  // ─── 发送 / 取消 ─────────────────────────────────────
+
+  const handleSend = useCallback(async () => {
+    const promptText = richInputRef.current?.getValue() ?? "";
+    const trimmed = promptText.trim();
+    if (!trimmed || isSending) return;
+
+    setSendError(null);
+    setOptimisticRunning(true);
+    optimisticRunningUntilRef.current = Date.now() + 2500;
+    setIsSending(true);
+
+    try {
+      let sid = sessionId;
+
+      if (!sid) {
+        if (!onCreateSession) {
+          setSendError("当前无法创建新会话");
+          return;
+        }
+        const title = trimmed.slice(0, 30) + (trimmed.length > 30 ? "…" : "");
+        sid = await onCreateSession(title);
+        onSessionIdChange?.(sid);
+      }
+
+      if (fileRef.references.length > 0) {
+        const paths = fileRef.references.map((r) => r.relPath);
+        const batchResult = await batchReadWorkspaceFiles(paths);
+        const blocks = buildPromptBlocks(trimmed, batchResult.files);
+        await promptSession(sid, { promptBlocks: blocks, executorConfig });
+        fileRef.clearReferences();
+      } else {
+        await promptSession(sid, { prompt: trimmed, executorConfig });
+      }
+
+      execConfig.recordUsage();
+      clearInput();
+      onMessageSent?.();
+    } catch (e) {
+      optimisticRunningUntilRef.current = 0;
+      setOptimisticRunning(false);
+      setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
+    } finally {
+      setIsSending(false);
+    }
+  }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput]);
+
+  const handleCancel = sendCancel;
+
+  const handlePrimaryAction = useCallback(() => {
+    if (hasSession && isActionRunning) { handleCancel(); return; }
+    void handleSend();
+  }, [handleCancel, handleSend, hasSession, isActionRunning]);
+
+  // ─── 文件引用 & 键盘 ─────────────────────────────────
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (fileRef.pickerOpen) {
+        if (e.key === "ArrowDown") { e.preventDefault(); fileRef.moveSelection(1); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); fileRef.moveSelection(-1); return; }
+        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) { e.preventDefault(); fileRef.confirmSelection(); return; }
+        if (e.key === "Escape") { e.preventDefault(); fileRef.closePicker(); return; }
+      }
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handleSend(); }
+    },
+    [fileRef, handleSend],
+  );
+
+  const handleAtTrigger = useCallback((query: string) => {
+    if (fileRef.canAddMore) {
+      richInputRef.current?.saveSelection();
+      fileRef.openPicker(query);
+    }
+  }, [fileRef]);
+
+  const handleFileSelected = useCallback((file: FileEntry) => {
+    const alreadySelected = fileRef.references.some((r) => r.relPath === file.relPath);
+    if (!fileRef.canAddMore && !alreadySelected) { fileRef.closePicker(); return; }
+    fileRef.addReference(file);
+    if (alreadySelected) return;
+    requestAnimationFrame(() => { richInputRef.current?.insertFileReference(file); });
+  }, [fileRef]);
+
+  // ─── 派生状态 ────────────────────────────────────────
+
+  const connectionLabel = !hasSession
+    ? "待创建"
+    : isConnected ? "已连接" : isLoading ? "连接中…" : "未连接";
+  const connectionColor = !hasSession
+    ? "bg-gray-400"
+    : isConnected ? "bg-emerald-500" : isLoading ? "bg-amber-400 animate-pulse" : "bg-red-500";
+
+  const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
+
+  // ─── 渲染 ────────────────────────────────────────────
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* 状态栏 */}
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
+        <span className="flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
+          <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
+          {connectionLabel}
+        </span>
+        {isActionRunning && (
+          <span className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+            接收中
+          </span>
+        )}
+        <ContextUsageRing usage={tokenUsage} />
+      </div>
+
+      {/* 错误横幅 */}
+      {displayError && (
+        <div className="flex shrink-0 items-center justify-between border-b border-destructive/40 bg-destructive/10 px-5 py-2 text-sm text-destructive">
+          <span className="truncate">{displayError}</span>
+          {wsError && !isConnected && hasSession && (
+            <button type="button" onClick={reconnect} className="ml-4 shrink-0 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
+              重新连接
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 流显示区 */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto"
+      >
+        {hasSession && isLoading && displayItems.length === 0 ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
+            </div>
+          </div>
+        ) : hasSession && displayItems.length > 0 ? (
+          <div className="mx-auto w-full max-w-4xl space-y-3 px-5 py-6">
+            {displayItems.map((item) => (
+              <div key={getItemKey(item)}>
+                <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto mb-4 w-fit rounded-[10px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                Session
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {hasSession ? "会话已就绪，继续发送消息" : "输入 prompt 并发送开始会话"}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 输入区 */}
+      <div className="shrink-0 border-t border-border bg-background">
+        <div className="mx-auto w-full max-w-4xl px-5 py-4">
+          {/* prompt 模板 */}
+          {!hasSession && promptTemplates && promptTemplates.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {promptTemplates.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => richInputRef.current?.setValue(tpl.content)}
+                  className="rounded-[10px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  {tpl.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 父组件自定义区域（如 owner binding 信息） */}
+          {inputPrefix}
+
+          {/* 执行器选择 */}
+          <ExecutorSelector
+            executors={discovery.executors}
+            isLoading={discovery.isLoading}
+            error={discovery.error}
+            discoveredOptions={discovered.options}
+            discoveredError={discovered.error}
+            isDiscoveredLoading={Boolean(execConfig.executor.trim()) && !discovered.isInitialized}
+            onDiscoveredReconnect={discovered.reconnect}
+            executor={execConfig.executor}
+            variant={execConfig.variant}
+            modelId={execConfig.modelId}
+            reasoningId={execConfig.reasoningId}
+            permissionPolicy={execConfig.permissionPolicy}
+            onExecutorChange={execConfig.setExecutor}
+            onVariantChange={execConfig.setVariant}
+            onModelIdChange={execConfig.setModelId}
+            onReasoningIdChange={execConfig.setReasoningId}
+            onPermissionPolicyChange={execConfig.setPermissionPolicy}
+            onReset={execConfig.reset}
+            onRefetch={discovery.refetch}
+          />
+
+          {/* 富文本输入 */}
+          <div className="relative mt-3 rounded-[14px] border border-border bg-secondary/60 p-3">
+            <FileReferenceTags
+              references={fileRef.references}
+              onRemove={(relPath) => {
+                fileRef.removeReference(relPath);
+                const cur = richInputRef.current?.getValue() ?? "";
+                const next = removeReferenceMarkers(cur, relPath);
+                richInputRef.current?.setValue(next);
+              }}
+            />
+
+            <div className="relative flex gap-3">
+              <div className="relative flex-1">
+                <FilePickerPopup
+                  open={fileRef.pickerOpen}
+                  query={fileRef.pickerQuery}
+                  files={fileRef.pickerFiles}
+                  loading={fileRef.pickerLoading}
+                  error={fileRef.pickerError}
+                  selectedIndex={fileRef.selectedIndex}
+                  onQueryChange={fileRef.updateQuery}
+                  onSelect={handleFileSelected}
+                  onClose={fileRef.closePicker}
+                  onMoveSelection={fileRef.moveSelection}
+                  onConfirmSelection={() => {
+                    const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
+                    if (!selectedFile) return;
+                    handleFileSelected(selectedFile);
+                  }}
+                />
+                <RichInput
+                  ref={richInputRef}
+                  placeholder={hasSession ? "继续对话，@ 引用文件，Ctrl+Enter 发送…" : "输入 prompt，@ 引用文件，Ctrl+Enter 发送…"}
+                  onChange={setInputValue}
+                  onKeyDown={handleKeyDown}
+                  onAtTrigger={handleAtTrigger}
+                  onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
+                  disabled={isSending}
+                />
+              </div>
+              <div className="flex flex-col gap-2 self-end">
+                <button
+                  type="button"
+                  disabled={
+                    isSending ||
+                    (hasSession && isActionRunning ? !isConnected : !inputValue.trim())
+                  }
+                  onClick={handlePrimaryAction}
+                  className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
+                    hasSession && isActionRunning
+                      ? "border-border bg-background text-foreground hover:bg-secondary"
+                      : "border-primary bg-primary text-primary-foreground hover:opacity-95"
+                  }`}
+                >
+                  {isSending ? "…" : hasSession && isActionRunning ? "取消" : "发送"}
+                </button>
+              </div>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground/60">Ctrl+Enter 快捷发送 · @ 引用工作空间文件</p>
+        </div>
+      </div>
+    </div>
+  );
+}

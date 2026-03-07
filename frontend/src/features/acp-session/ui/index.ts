@@ -2,6 +2,7 @@
  * ACP 会话 UI 组件
  */
 
+export { SessionChatView, type SessionChatViewProps, type PromptTemplate } from "./SessionChatView";
 export { AcpSessionList, type AcpSessionListProps } from "./AcpSessionList";
 export { AcpSessionEntry, type AcpSessionEntryProps } from "./AcpSessionEntry";
 export { AcpToolCallCard, type AcpToolCallCardProps } from "./AcpToolCallCard";

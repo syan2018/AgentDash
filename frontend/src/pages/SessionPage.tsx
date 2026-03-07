@@ -519,13 +519,36 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (fileRef.pickerOpen) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          fileRef.moveSelection(1);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          fileRef.moveSelection(-1);
+          return;
+        }
+        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          fileRef.confirmSelection();
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          fileRef.closePicker();
+          return;
+        }
+      }
+
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         void handleSend();
         return;
       }
     },
-    [handleSend],
+    [fileRef, handleSend],
   );
 
   const handleAtTrigger = useCallback((query: string) => {

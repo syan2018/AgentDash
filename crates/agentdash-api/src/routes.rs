@@ -1,4 +1,5 @@
 pub mod acp_sessions;
+pub mod address_spaces;
 pub mod backends;
 pub mod discovered_options;
 pub mod discovery;
@@ -142,6 +143,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/events/stream", get(stream::event_stream))
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .route("/events/since/{since_id}", get(stream::get_events_since))
+        // Address Spaces（统一寻址空间能力发现与条目检索）
+        .route("/address-spaces", get(address_spaces::list_address_spaces))
+        .route(
+            "/address-spaces/{space_id}/entries",
+            get(address_spaces::list_address_entries),
+        )
         // Workspace Files（内部 API，用于 @ 文件引用选择器）
         .route("/workspace-files", get(workspace_files::list_files))
         .route("/workspace-files/read", post(workspace_files::read_file))

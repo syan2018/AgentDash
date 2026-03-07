@@ -16,6 +16,7 @@ import { StorySessionPanel } from "../features/story/story-session-panel";
 import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../components/ui/status-badge";
 import { TaskList } from "../features/task/task-list";
 import { TaskDrawer } from "../features/task/task-drawer";
+import { FilePickerPopup } from "../features/file-reference";
 import { AgentBindingFields } from "../features/task/agent-binding-fields";
 import {
   createDefaultAgentBinding,
@@ -26,6 +27,8 @@ import {
 import { useStoryStore } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { listAddressEntries, listAddressSpaces, type AddressSpaceDescriptor } from "../services/addressSpaces";
+import type { FileEntry } from "../services/workspaceFiles";
 import {
   DangerConfirmDialog,
   DetailMenu,
@@ -386,16 +389,37 @@ function CreateTaskPanel({
   );
 }
 
-function ContextPanel({ story }: { story: Story }) {
+function ContextPanel({
+  story,
+  workspaces,
+  projectConfig,
+}: {
+  story: Story;
+  workspaces: Workspace[];
+  projectConfig?: ProjectConfig;
+}) {
   const ctx = story.context;
   const { updateStory, error } = useStoryStore();
   const fileContexts = useMemo(() => getStoryFileContexts(story), [story]);
+  const defaultWorkspaceId = useMemo(
+    () => resolveDefaultWorkspaceId(projectConfig, workspaces),
+    [projectConfig, workspaces],
+  );
   const [isEditing, setIsEditing] = useState(false);
   const [drafts, setDrafts] = useState<StoryFileContextDraft[]>(() =>
     fileContexts.map((item, index) => toStoryFileContextDraft(item, index)),
   );
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [fileSpace, setFileSpace] = useState<AddressSpaceDescriptor | null>(null);
+  const [fileSpaceError, setFileSpaceError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [pickerFiles, setPickerFiles] = useState<FileEntry[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [activeDraftIndex, setActiveDraftIndex] = useState<number | null>(null);
   const hasLegacyContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
 
   useEffect(() => {
@@ -407,7 +431,48 @@ function ContextPanel({ story }: { story: Story }) {
     setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
     setMessage(null);
     setIsEditing(false);
+    setPickerOpen(false);
+    setPickerQuery("");
+    setPickerFiles([]);
+    setPickerError(null);
+    setSelectedIndex(0);
+    setActiveDraftIndex(null);
   }, [story.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAvailableSpaces() {
+      if (!defaultWorkspaceId) {
+        setFileSpace(null);
+        setFileSpaceError("当前 Project 尚未配置默认工作空间，暂时无法快捷选择文件。");
+        return;
+      }
+
+      try {
+        setFileSpaceError(null);
+        const result = await listAddressSpaces({
+          storyId: story.id,
+          workspaceId: defaultWorkspaceId,
+        });
+        if (cancelled) return;
+        const workspaceFileSpace = result.spaces.find((item) => item.id === "workspace_file") ?? null;
+        setFileSpace(workspaceFileSpace);
+        if (!workspaceFileSpace) {
+          setFileSpaceError("当前环境未暴露工作空间文件寻址能力。");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setFileSpace(null);
+        setFileSpaceError(err instanceof Error ? err.message : "加载寻址空间失败");
+      }
+    }
+
+    void loadAvailableSpaces();
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultWorkspaceId, story.id]);
 
   const updateDraft = (index: number, patch: Partial<StoryFileContextDraft>) => {
     setDrafts((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
@@ -422,6 +487,78 @@ function ContextPanel({ story }: { story: Story }) {
 
   const removeDraft = (index: number) => {
     setDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const loadPickerFiles = async (query: string) => {
+    if (!fileSpace || !defaultWorkspaceId) {
+      setPickerFiles([]);
+      setPickerError("当前没有可用的工作空间文件寻址能力");
+      return;
+    }
+
+    setPickerLoading(true);
+    setPickerError(null);
+    try {
+      const result = await listAddressEntries(fileSpace.id, {
+        storyId: story.id,
+        workspaceId: defaultWorkspaceId,
+        query,
+      });
+      setPickerFiles(result.entries.filter((item) => item.isText));
+      setSelectedIndex(0);
+    } catch (err) {
+      setPickerFiles([]);
+      setPickerError(err instanceof Error ? err.message : "加载文件列表失败");
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  const openDraftPicker = (index: number) => {
+    setActiveDraftIndex(index);
+    setPickerOpen(true);
+    setPickerQuery("");
+    setSelectedIndex(0);
+    void loadPickerFiles("");
+  };
+
+  const closeDraftPicker = () => {
+    setPickerOpen(false);
+    setPickerQuery("");
+    setPickerFiles([]);
+    setPickerError(null);
+    setSelectedIndex(0);
+    setActiveDraftIndex(null);
+  };
+
+  const movePickerSelection = (delta: number) => {
+    setSelectedIndex((current) => {
+      const len = pickerFiles.length;
+      if (len === 0) return 0;
+      return (current + delta + len) % len;
+    });
+  };
+
+  const handlePickerQueryChange = (query: string) => {
+    setPickerQuery(query);
+    void loadPickerFiles(query);
+  };
+
+  const handleDraftFileSelected = (file: FileEntry) => {
+    if (activeDraftIndex == null) return;
+    const fallbackLabel = file.relPath.split("/").pop() ?? file.relPath;
+    setDrafts((current) =>
+      current.map((item, index) =>
+        index === activeDraftIndex
+          ? {
+              ...item,
+              relPath: file.relPath,
+              label: item.label.trim() ? item.label : fallbackLabel,
+            }
+          : item,
+      ),
+    );
+    closeDraftPicker();
   };
 
   const handleSaveContexts = async () => {
@@ -512,6 +649,14 @@ function ContextPanel({ story }: { story: Story }) {
                 <p className="mt-1 text-xs text-muted-foreground">
                   这些文件会暂存在 Story 上，伴生会话会自动解析它们，创建 Task 时也可按需分配给 Task Agent。
                 </p>
+                {fileSpace?.root && (
+                  <p className="mt-1 break-all text-[11px] text-muted-foreground/80">
+                    当前寻址空间：{fileSpace.label} · {fileSpace.root}
+                  </p>
+                )}
+                {!fileSpace?.root && fileSpaceError && (
+                  <p className="mt-1 text-[11px] text-amber-600">{fileSpaceError}</p>
+                )}
               </div>
               {!isEditing ? (
                 <button
@@ -571,12 +716,43 @@ function ContextPanel({ story }: { story: Story }) {
                           placeholder="引用标题（可选）"
                           className="agentdash-form-input"
                         />
-                        <input
-                          value={draft.relPath}
-                          onChange={(event) => updateDraft(index, { relPath: event.target.value })}
-                          placeholder="例如: crates/agentdash-api/src/routes/stories.rs"
-                          className="agentdash-form-input"
-                        />
+                        <div className="relative flex gap-2">
+                          {pickerOpen && activeDraftIndex === index && (
+                            <FilePickerPopup
+                              open={pickerOpen}
+                              query={pickerQuery}
+                              files={pickerFiles}
+                              loading={pickerLoading}
+                              error={pickerError}
+                              selectedIndex={selectedIndex}
+                              placeholder={fileSpace?.selector?.placeholder ?? "搜索工作空间文件"}
+                              emptyText={pickerQuery ? "没有匹配的工作空间文件" : "当前工作空间暂无可选文本文件"}
+                              onQueryChange={handlePickerQueryChange}
+                              onSelect={handleDraftFileSelected}
+                              onClose={closeDraftPicker}
+                              onMoveSelection={movePickerSelection}
+                              onConfirmSelection={() => {
+                                const file = pickerFiles[selectedIndex];
+                                if (!file) return;
+                                handleDraftFileSelected(file);
+                              }}
+                            />
+                          )}
+                          <input
+                            value={draft.relPath}
+                            onChange={(event) => updateDraft(index, { relPath: event.target.value })}
+                            placeholder="例如: crates/agentdash-api/src/routes/stories.rs"
+                            className="agentdash-form-input flex-1"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => openDraftPicker(index)}
+                            disabled={!fileSpace}
+                            className="rounded-[10px] border border-border bg-background px-3 py-2 text-xs text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            选择文件
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -596,6 +772,7 @@ function ContextPanel({ story }: { story: Story }) {
                       setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
                       setIsEditing(false);
                       setMessage(null);
+                      closeDraftPicker();
                     }}
                     className="agentdash-button-secondary"
                   >
@@ -1142,7 +1319,13 @@ export function StoryPage() {
 
           {/* Tab 内容 */}
           <div className="flex-1 overflow-y-auto p-6">
-            {activeTab === "context" && <ContextPanel story={story} />}
+            {activeTab === "context" && (
+              <ContextPanel
+                story={story}
+                workspaces={workspaces}
+                projectConfig={currentProject?.config}
+              />
+            )}
             {activeTab === "tasks" && (
               <DetailSection title="任务列表">
                 <TaskList

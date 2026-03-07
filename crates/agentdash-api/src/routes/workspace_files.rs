@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
 
-const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
-const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB
-const MAX_REFERENCES: usize = 10;
-const MAX_LIST_RESULTS: usize = 200;
+pub(crate) const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
+pub(crate) const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB
+pub(crate) const MAX_REFERENCES: usize = 10;
+pub(crate) const MAX_LIST_RESULTS: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct ListFilesQuery {
@@ -279,7 +279,7 @@ pub async fn batch_read_files(
     }))
 }
 
-fn validate_path_safe(rel_path: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_path_safe(rel_path: &str) -> Result<(), ApiError> {
     let path = Path::new(rel_path);
     for component in path.components() {
         match component {
@@ -295,7 +295,7 @@ fn validate_path_safe(rel_path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn walk_files(root: &Path, pattern: &str, max_results: usize) -> Vec<FileEntry> {
+pub(crate) fn walk_files(root: &Path, pattern: &str, max_results: usize) -> Vec<FileEntry> {
     let mut results = Vec::new();
     walk_dir_recursive(root, root, pattern, max_results, &mut results);
     results.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
@@ -430,7 +430,7 @@ fn is_likely_text(rel_path: &str) -> bool {
     )
 }
 
-fn guess_mime(rel_path: &str) -> String {
+pub(crate) fn guess_mime(rel_path: &str) -> String {
     let ext = Path::new(rel_path)
         .extension()
         .and_then(|e| e.to_str())
@@ -456,7 +456,7 @@ fn guess_mime(rel_path: &str) -> String {
     .to_string()
 }
 
-fn path_to_file_uri(path: &Path) -> String {
+pub(crate) fn path_to_file_uri(path: &Path) -> String {
     let s = path.to_string_lossy().to_string();
     let cleaned = if cfg!(windows) {
         s.trim_start_matches(r"\\?\").replace('\\', "/")
@@ -467,7 +467,7 @@ fn path_to_file_uri(path: &Path) -> String {
     format!("file:///{trimmed}")
 }
 
-fn normalize_path_display(path: &Path) -> String {
+pub(crate) fn normalize_path_display(path: &Path) -> String {
     let s = path.to_string_lossy().to_string();
     if cfg!(windows) {
         s.trim_start_matches(r"\\?\").to_string()

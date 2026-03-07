@@ -25,6 +25,8 @@ interface FilePickerPopupProps {
   loading: boolean;
   error: string | null;
   selectedIndex: number;
+  placeholder?: string;
+  emptyText?: string;
   onQueryChange: (q: string) => void;
   onSelect: (file: FileEntry) => void;
   onClose: () => void;
@@ -39,6 +41,8 @@ export function FilePickerPopup({
   loading,
   error,
   selectedIndex,
+  placeholder = "搜索文件…",
+  emptyText,
   onQueryChange,
   onSelect,
   onClose,
@@ -110,7 +114,7 @@ export function FilePickerPopup({
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="搜索文件…"
+          placeholder={placeholder}
           className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
         />
         {loading && (
@@ -124,7 +128,7 @@ export function FilePickerPopup({
         )}
         {!error && files.length === 0 && !loading && (
           <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-            {query ? "没有匹配的文件" : "暂无文件"}
+            {emptyText ?? (query ? "没有匹配的文件" : "暂无文件")}
           </div>
         )}
         {files.map((file, i) => (

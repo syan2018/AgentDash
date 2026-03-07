@@ -115,7 +115,10 @@ impl AppState {
         )
         .await?;
 
-        let mcp_base_url = std::env::var("AGENTDASH_MCP_BASE_URL").ok();
+        let mcp_base_url = std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
+            let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
+            Some(format!("http://127.0.0.1:{port}"))
+        });
 
         Ok(Self {
             project_repo,

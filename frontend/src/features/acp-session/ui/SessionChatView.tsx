@@ -191,8 +191,8 @@ export interface SessionChatViewProps {
   /** 渲染在执行器选择器上方（如 owner binding 信息） */
   inputPrefix?: React.ReactNode;
 
-  /** 替换默认空状态（如 Task 上下文预览） */
-  emptyStateContent?: React.ReactNode;
+  /** 注入到流区域顶部的固定内容（如 Task 上下文卡片），始终显示 */
+  streamPrefixContent?: React.ReactNode;
 
   /** 隐藏内置连接状态栏 */
   showStatusBar?: boolean;
@@ -202,6 +202,12 @@ export interface SessionChatViewProps {
 
   /** 输入框占位符 */
   inputPlaceholder?: string;
+
+  /** 自定义主按钮文本（非运行状态时），默认 "发送" */
+  idleSendLabel?: string;
+
+  /** 初始输入值（仅首次挂载时填充） */
+  initialInputValue?: string;
 }
 
 const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
@@ -217,10 +223,12 @@ export function SessionChatView({
   customSend,
   headerSlot,
   inputPrefix,
-  emptyStateContent,
+  streamPrefixContent,
   showStatusBar = true,
   promptTemplates,
   inputPlaceholder,
+  idleSendLabel = "发送",
+  initialInputValue,
 }: SessionChatViewProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -234,12 +242,23 @@ export function SessionChatView({
   const actionRunningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const initialValueAppliedRef = useRef(false);
 
   const fileRef = useFileReference();
 
   const clearInput = useCallback(() => {
     richInputRef.current?.setValue("");
+    setInputValue("");
   }, []);
+
+  // 首次挂载时填充初始值
+  useEffect(() => {
+    if (initialInputValue && !initialValueAppliedRef.current) {
+      initialValueAppliedRef.current = true;
+      richInputRef.current?.setValue(initialInputValue);
+      setInputValue(initialInputValue);
+    }
+  }, [initialInputValue]);
 
   // sessionId 变更时重置内部状态
   useEffect(() => {
@@ -524,24 +543,22 @@ export function SessionChatView({
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto"
       >
-        {hasSession && isLoading && displayItems.length === 0 ? (
+        {hasSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
             </div>
           </div>
-        ) : hasSession && displayItems.length > 0 ? (
+        ) : (hasSession && displayItems.length > 0) || streamPrefixContent ? (
           <div className="mx-auto w-full max-w-4xl space-y-3 px-5 py-6">
+            {streamPrefixContent}
             {displayItems.map((item) => (
               <div key={getItemKey(item)}>
                 <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
               </div>
             ))}
           </div>
-        ) : emptyStateContent ? (
-          /* 自定义空状态（如 Task 上下文预览） */
-          <div className="flex h-full flex-col">{emptyStateContent}</div>
         ) : (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
@@ -659,7 +676,7 @@ export function SessionChatView({
                       : "border-primary bg-primary text-primary-foreground hover:opacity-95"
                   }`}
                 >
-                  {isSending ? "…" : hasSession && isActionRunning ? "取消" : "发送"}
+                  {isSending ? "…" : hasSession && isActionRunning ? "取消" : idleSendLabel}
                 </button>
               </div>
             </div>

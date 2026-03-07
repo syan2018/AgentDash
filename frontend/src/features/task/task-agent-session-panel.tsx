@@ -2,16 +2,16 @@
  * Task Agent 执行面板
  *
  * 设计理念：
- * - Task 已定义执行器/模型/工作空间，聊天区不重复展示
- * - 无 session 时展示任务上下文预览，用户点发送即启动执行
- * - 有 session 时展示实时流，可继续对话或取消
- * - 状态徽章、执行器信息由左侧 Task 详情面板承载
+ * - 流区域顶部注入 Task 上下文卡片（与流式输出中的 AcpTaskContextCard 视觉统一）
+ * - 输入框预填充任务默认 prompt（仅首次），发送按钮显示"执行"
+ * - 首次发送调用 startTaskExecution，后续直接 promptSession
+ * - 状态/执行器信息由左侧 Task 详情面板承载，聊天区不重复
  */
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { SessionChatView } from "../acp-session";
-import type { ExecutorConfig } from "../../services/executor";
+import { promptSession, type ExecutorConfig } from "../../services/executor";
 import type { Artifact, SessionNavigationState, Task } from "../../types";
 import { useStoryStore } from "../../stores/storyStore";
 
@@ -19,8 +19,6 @@ interface TaskAgentSessionPanelProps {
   task: Task;
   onTaskUpdated: (task: Task) => void;
 }
-
-// ─── 工具执行统计 ──────────────────────────────────────
 
 function countToolStats(artifacts: Artifact[]) {
   let total = 0, completed = 0, failed = 0, running = 0;
@@ -36,12 +34,18 @@ function countToolStats(artifacts: Artifact[]) {
   return { total, completed, failed, running };
 }
 
+/** 组装任务默认 prompt — 优先 prompt_template，回退到 description */
+function buildDefaultPrompt(task: Task): string {
+  const template = task.agent_binding?.prompt_template?.trim();
+  if (template) return template;
+  return task.description?.trim() ?? "";
+}
+
 // ─── 主组件 ────────────────────────────────────────────
 
 export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionPanelProps) {
   const navigate = useNavigate();
   const startTaskExecution = useStoryStore((s) => s.startTaskExecution);
-  const continueTaskExecution = useStoryStore((s) => s.continueTaskExecution);
   const cancelTaskExecution = useStoryStore((s) => s.cancelTaskExecution);
   const refreshTask = useStoryStore((s) => s.refreshTask);
 
@@ -74,7 +78,6 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     return () => window.clearInterval(timer);
   }, [executionLocked, hasSession, refreshTask, task.id]);
 
-  // Session 首次建立时刷新 Task 状态
   useEffect(() => {
     if (!hasSession) return;
     let cancelled = false;
@@ -91,15 +94,18 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
   useEffect(() => { setCancelError(null); }, [task.id]);
 
   const toolStats = useMemo(() => countToolStats(task.artifacts), [task.artifacts]);
+  const defaultPrompt = useMemo(() => buildDefaultPrompt(task), [task]);
 
-  // ─── customSend：全接管发送流程 ──────────────────────
+  // ─── customSend ──────────────────────────────────────
+  // 首次（无 session）→ startTaskExecution
+  // 后续（有 session）→ 直接 promptSession，不走 task API
 
   const handleCustomSend = useCallback(async (
-    _sid: string | null,
+    sid: string | null,
     prompt: string,
     _execConfig?: ExecutorConfig,
   ) => {
-    if (!hasSession) {
+    if (!sid) {
       const updated = await startTaskExecution(
         task.id,
         prompt ? { override_prompt: prompt } : undefined,
@@ -107,14 +113,10 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
       if (updated) onTaskUpdatedRef.current(updated);
       else throw new Error("启动执行失败");
     } else {
-      const updated = await continueTaskExecution(
-        task.id,
-        prompt ? { additional_prompt: prompt } : undefined,
-      );
-      if (updated) onTaskUpdatedRef.current(updated);
-      else throw new Error("继续执行失败");
+      if (!prompt) return;
+      await promptSession(sid, { prompt });
     }
-  }, [continueTaskExecution, hasSession, startTaskExecution, task.id]);
+  }, [startTaskExecution, task.id]);
 
   const handleTurnEnd = useCallback(() => {
     void (async () => {
@@ -123,7 +125,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     })();
   }, [refreshTask, task.id]);
 
-  // ─── 取消执行（headerSlot 里的唯一按钮） ────────────
+  // ─── 取消执行 ─────────────────────────────────────────
 
   const handleCancel = useCallback(async () => {
     if (!hasSession || !executionLocked) return;
@@ -146,7 +148,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     navigate(`/session/${sessionId}`, { state });
   }, [navigate, sessionId, task.agent_binding, task.id, task.story_id]);
 
-  // ─── headerSlot：仅运行中显示紧凑控制栏 ─────────────
+  // ─── headerSlot：仅有 session 时显示 ─────────────────
 
   const headerSlot = (hasSession && (executionLocked || toolStats.total > 0 || cancelError)) ? (
     <div className="flex shrink-0 items-center gap-2 border-b border-border bg-secondary/15 px-4 py-2 text-xs">
@@ -175,53 +177,42 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
           全屏
         </button>
       </div>
-      {cancelError && (
-        <span className="text-destructive">{cancelError}</span>
-      )}
+      {cancelError && <span className="text-destructive">{cancelError}</span>}
     </div>
   ) : null;
 
-  // ─── emptyStateContent：任务上下文预览 ────────────────
+  // ─── streamPrefixContent：与 AcpTaskContextCard 视觉统一的注入卡片 ──
 
   const contextSources = task.agent_binding?.context_sources ?? [];
 
-  const emptyStateContent = (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 py-8">
-      <div className="w-full max-w-lg space-y-4">
-        {/* 任务描述卡片 */}
-        <div className="rounded-[14px] border border-dashed border-primary/25 bg-primary/[0.03] px-5 py-4 space-y-2.5">
-          <div className="flex items-center gap-2">
-            <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
-              Task
-            </span>
-            <span className="text-sm font-semibold text-foreground">{task.title}</span>
-          </div>
-          {task.description && (
-            <p className="text-sm leading-relaxed text-muted-foreground">{task.description}</p>
-          )}
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {task.agent_binding?.agent_type && (
-              <span className="rounded-full border border-border bg-background px-2 py-0.5">
-                {task.agent_binding.agent_type}
-              </span>
-            )}
-            {task.workspace_id && (
-              <span className="rounded-full border border-border bg-background px-2 py-0.5">
-                WS:{task.workspace_id.slice(0, 8)}
-              </span>
-            )}
-            {contextSources.length > 0 && (
-              <span className="rounded-full border border-border bg-background px-2 py-0.5">
-                {contextSources.length} 个上下文
-              </span>
-            )}
-          </div>
-        </div>
-
-        <p className="text-center text-xs text-muted-foreground/70">
-          输入补充指令或直接发送以启动执行
-        </p>
+  const streamPrefixContent = (
+    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
+      <div className="flex items-center gap-2.5 px-3 py-2.5">
+        <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Task
+        </span>
+        <span className="text-sm font-medium text-foreground">{task.title}</span>
+        {task.agent_binding?.agent_type && (
+          <span className="rounded-[6px] border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+            {task.agent_binding.agent_type}
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+          {task.id.slice(0, 8)}…
+        </span>
       </div>
+      {(task.description || contextSources.length > 0) && (
+        <div className="border-t border-border px-3 py-2.5 space-y-1.5">
+          {task.description && (
+            <p className="text-xs leading-relaxed text-foreground/80">{task.description}</p>
+          )}
+          {contextSources.length > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              {contextSources.length} 个上下文源已注入
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -233,10 +224,12 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
       showStatusBar={false}
       showExecutorSelector={false}
       headerSlot={headerSlot}
-      emptyStateContent={emptyStateContent}
+      streamPrefixContent={streamPrefixContent}
       customSend={handleCustomSend}
       onTurnEnd={handleTurnEnd}
-      inputPlaceholder={hasSession ? "输入追加指令，Ctrl+Enter 发送…" : "补充执行指令（可选），Ctrl+Enter 启动…"}
+      idleSendLabel={hasSession ? "发送" : "执行"}
+      initialInputValue={hasSession ? undefined : defaultPrompt}
+      inputPlaceholder={hasSession ? "输入追加指令，Ctrl+Enter 发送…" : "编辑执行指令或直接点击执行"}
     />
   );
 }

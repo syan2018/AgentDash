@@ -103,7 +103,9 @@ impl AgentMessage {
 
     pub fn first_text(&self) -> Option<&str> {
         match self {
-            Self::User { content } | Self::Assistant { content, .. } | Self::ToolResult { content, .. } => {
+            Self::User { content }
+            | Self::Assistant { content, .. }
+            | Self::ToolResult { content, .. } => {
                 content.iter().find_map(ContentPart::extract_text)
             }
         }

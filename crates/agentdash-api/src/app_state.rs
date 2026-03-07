@@ -134,10 +134,7 @@ impl AppState {
 }
 
 /// 从 Settings 读取单个字符串值，如果 Settings 中没有则返回 None
-async fn read_setting_str(
-    repo: &dyn SettingsRepository,
-    key: &str,
-) -> Option<String> {
+async fn read_setting_str(repo: &dyn SettingsRepository, key: &str) -> Option<String> {
     repo.get(key)
         .await
         .ok()
@@ -158,17 +155,22 @@ async fn build_pi_agent_connector(
     use rig::client::CompletionClient as _;
 
     // 从 Settings 读取 OpenAI 系列配置
-    let api_key = read_setting_str(settings, "llm.openai.api_key").await
+    let api_key = read_setting_str(settings, "llm.openai.api_key")
+        .await
         .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-    let base_url = read_setting_str(settings, "llm.openai.base_url").await
+    let base_url = read_setting_str(settings, "llm.openai.base_url")
+        .await
         .or_else(|| std::env::var("OPENAI_BASE_URL").ok());
-    let model_id = read_setting_str(settings, "llm.openai.default_model").await
+    let model_id = read_setting_str(settings, "llm.openai.default_model")
+        .await
         .unwrap_or_else(|| "gpt-4o".to_string());
-    let wire_api = read_setting_str(settings, "llm.openai.wire_api").await
+    let wire_api = read_setting_str(settings, "llm.openai.wire_api")
+        .await
         .unwrap_or_else(|| "responses".to_string());
 
     // Pi Agent 参数
-    let system_prompt = read_setting_str(settings, "agent.pi.system_prompt").await
+    let system_prompt = read_setting_str(settings, "agent.pi.system_prompt")
+        .await
         .or_else(|| std::env::var("PI_AGENT_SYSTEM_PROMPT").ok())
         .unwrap_or_else(|| {
             "你是 AgentDash 内置 AI 助手，一个通用的编程与任务执行 Agent。请用中文回复用户。"
@@ -176,7 +178,8 @@ async fn build_pi_agent_connector(
         });
 
     // --- 尝试 Anthropic（Settings → 环境变量）---
-    let anthropic_key = read_setting_str(settings, "llm.anthropic.api_key").await
+    let anthropic_key = read_setting_str(settings, "llm.anthropic.api_key")
+        .await
         .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
 
     if let Some(api_key) = anthropic_key {

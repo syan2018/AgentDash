@@ -73,7 +73,8 @@ impl AgentConnector for CompositeConnector {
             caps.supports_cancel = caps.supports_cancel || sub.supports_cancel;
             caps.supports_discovery = caps.supports_discovery || sub.supports_discovery;
             caps.supports_variants = caps.supports_variants || sub.supports_variants;
-            caps.supports_model_override = caps.supports_model_override || sub.supports_model_override;
+            caps.supports_model_override =
+                caps.supports_model_override || sub.supports_model_override;
             caps.supports_permission_policy =
                 caps.supports_permission_policy || sub.supports_permission_policy;
         }
@@ -95,9 +96,9 @@ impl AgentConnector for CompositeConnector {
         variant: Option<&str>,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
-        let connector = self.resolve_connector(executor).ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!("未知执行器: {executor}"))
-        })?;
+        let connector = self
+            .resolve_connector(executor)
+            .ok_or_else(|| ConnectorError::InvalidConfig(format!("未知执行器: {executor}")))?;
         connector
             .discover_options_stream(executor, variant, working_dir)
             .await

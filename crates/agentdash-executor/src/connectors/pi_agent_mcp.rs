@@ -40,9 +40,7 @@ impl McpToolAdapter {
             "MCP 工具（server={}, original={}）: {}",
             server.name,
             original_name,
-            tool.description
-                .as_deref()
-                .unwrap_or("无描述")
+            tool.description.as_deref().unwrap_or("无描述")
         );
         let parameters_schema =
             sanitize_tool_schema(serde_json::Value::Object((*tool.input_schema).clone()));
@@ -101,7 +99,11 @@ impl AgentTool for McpToolAdapter {
         let _ = client.cancel().await;
 
         match call_result {
-            Ok(result) => Ok(convert_call_result(&self.server, &self.original_name, result)),
+            Ok(result) => Ok(convert_call_result(
+                &self.server,
+                &self.original_name,
+                result,
+            )),
             Err(error) => Err(AgentToolError::ExecutionFailed(format!(
                 "调用 MCP 工具失败（server={}, tool={}）: {}",
                 self.server.name,
@@ -112,7 +114,9 @@ impl AgentTool for McpToolAdapter {
     }
 }
 
-pub async fn discover_mcp_tools(servers: &[McpServer]) -> Result<Vec<DynAgentTool>, ConnectorError> {
+pub async fn discover_mcp_tools(
+    servers: &[McpServer],
+) -> Result<Vec<DynAgentTool>, ConnectorError> {
     let mut tools: Vec<DynAgentTool> = Vec::new();
 
     for server in servers {
@@ -131,7 +135,9 @@ pub async fn discover_mcp_tools(servers: &[McpServer]) -> Result<Vec<DynAgentToo
         let _ = client.cancel().await;
 
         for tool in listed {
-            tools.push(Arc::new(McpToolAdapter::from_tool(server_spec.clone(), tool)) as DynAgentTool);
+            tools.push(
+                Arc::new(McpToolAdapter::from_tool(server_spec.clone(), tool)) as DynAgentTool,
+            );
         }
     }
 
@@ -234,7 +240,13 @@ fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
 fn sanitize_identifier(input: &str) -> String {
     let sanitized = input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     sanitized.trim_matches('_').to_string()
 }

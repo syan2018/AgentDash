@@ -168,12 +168,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         let owner_type = SessionOwnerType::from_str_loose(owner_type).ok_or_else(|| {
             TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
         })?;
-        let binding = SessionBinding::new(
-            session_id.to_string(),
-            owner_type,
-            owner_id,
-            label,
-        );
+        let binding = SessionBinding::new(session_id.to_string(), owner_type, owner_id, label);
         self.state
             .session_binding_repo
             .create(&binding)

@@ -57,11 +57,21 @@ pub struct ReadFileParams {
 
 #[async_trait]
 impl AgentTool for ReadFileTool {
-    fn name(&self) -> &str { "read_file" }
-    fn description(&self) -> &str { "读取工作空间内文件内容，支持按行范围读取" }
-    fn parameters_schema(&self) -> serde_json::Value { schema_value::<ReadFileParams>() }
+    fn name(&self) -> &str {
+        "read_file"
+    }
+    fn description(&self) -> &str {
+        "读取工作空间内文件内容，支持按行范围读取"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<ReadFileParams>()
+    }
 
-    async fn execute(&self, _tool_call_id: &str, args: serde_json::Value) -> Result<AgentToolResult, AgentToolError> {
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        args: serde_json::Value,
+    ) -> Result<AgentToolResult, AgentToolError> {
         let params: ReadFileParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
         let path = resolve_existing_path(&self.workspace_root, &params.path)
@@ -109,11 +119,21 @@ pub struct WriteFileParams {
 
 #[async_trait]
 impl AgentTool for WriteFileTool {
-    fn name(&self) -> &str { "write_file" }
-    fn description(&self) -> &str { "向工作空间内文件写入内容，可覆盖或追加" }
-    fn parameters_schema(&self) -> serde_json::Value { schema_value::<WriteFileParams>() }
+    fn name(&self) -> &str {
+        "write_file"
+    }
+    fn description(&self) -> &str {
+        "向工作空间内文件写入内容，可覆盖或追加"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<WriteFileParams>()
+    }
 
-    async fn execute(&self, _tool_call_id: &str, args: serde_json::Value) -> Result<AgentToolResult, AgentToolError> {
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        args: serde_json::Value,
+    ) -> Result<AgentToolResult, AgentToolError> {
         let params: WriteFileParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
         let path = resolve_path_for_write(&self.workspace_root, &params.path)
@@ -134,7 +154,10 @@ impl AgentTool for WriteFileTool {
                 .await
                 .map_err(|e| AgentToolError::ExecutionFailed(format!("写入文件失败: {e}")))?;
         }
-        Ok(ok_text(format!("已写入文件: {}", workspace_display(&self.workspace_root, &path))))
+        Ok(ok_text(format!(
+            "已写入文件: {}",
+            workspace_display(&self.workspace_root, &path)
+        )))
     }
 }
 
@@ -160,32 +183,62 @@ pub struct ListDirectoryParams {
 
 #[async_trait]
 impl AgentTool for ListDirectoryTool {
-    fn name(&self) -> &str { "list_directory" }
-    fn description(&self) -> &str { "列出工作空间目录内容，支持递归和深度限制" }
-    fn parameters_schema(&self) -> serde_json::Value { schema_value::<ListDirectoryParams>() }
+    fn name(&self) -> &str {
+        "list_directory"
+    }
+    fn description(&self) -> &str {
+        "列出工作空间目录内容，支持递归和深度限制"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<ListDirectoryParams>()
+    }
 
-    async fn execute(&self, _tool_call_id: &str, args: serde_json::Value) -> Result<AgentToolResult, AgentToolError> {
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        args: serde_json::Value,
+    ) -> Result<AgentToolResult, AgentToolError> {
         let params: ListDirectoryParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
         let requested = params.path.as_deref().unwrap_or(".");
         let path = resolve_existing_path(&self.workspace_root, requested)
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
         if !path.is_dir() {
-            return Ok(err_text(format!("目标不是目录: {}", workspace_display(&self.workspace_root, &path))));
+            return Ok(err_text(format!(
+                "目标不是目录: {}",
+                workspace_display(&self.workspace_root, &path)
+            )));
         }
         let recursive = params.recursive.unwrap_or(false);
-        let max_depth = if recursive { params.max_depth.unwrap_or(3) } else { 1 };
+        let max_depth = if recursive {
+            params.max_depth.unwrap_or(3)
+        } else {
+            1
+        };
         let mut entries = Vec::new();
-        for entry in WalkDir::new(&path).max_depth(max_depth).into_iter().filter_map(Result::ok).skip(1) {
+        for entry in WalkDir::new(&path)
+            .max_depth(max_depth)
+            .into_iter()
+            .filter_map(Result::ok)
+            .skip(1)
+        {
             let entry_path = entry.path();
             let rel = workspace_display(&self.workspace_root, entry_path);
-            let kind = if entry.file_type().is_dir() { "dir" } else { "file" };
+            let kind = if entry.file_type().is_dir() {
+                "dir"
+            } else {
+                "file"
+            };
             entries.push(format!("[{kind}] {rel}"));
         }
         Ok(ok_text(format!(
             "目录: {}\n{}",
             workspace_display(&self.workspace_root, &path),
-            if entries.is_empty() { "(空目录)".to_string() } else { entries.join("\n") }
+            if entries.is_empty() {
+                "(空目录)".to_string()
+            } else {
+                entries.join("\n")
+            }
         )))
     }
 }
@@ -216,11 +269,21 @@ pub struct ShellParams {
 
 #[async_trait]
 impl AgentTool for ShellTool {
-    fn name(&self) -> &str { "shell" }
-    fn description(&self) -> &str { "在工作空间内执行 shell 命令，带超时与输出截断" }
-    fn parameters_schema(&self) -> serde_json::Value { schema_value::<ShellParams>() }
+    fn name(&self) -> &str {
+        "shell"
+    }
+    fn description(&self) -> &str {
+        "在工作空间内执行 shell 命令，带超时与输出截断"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<ShellParams>()
+    }
 
-    async fn execute(&self, _tool_call_id: &str, args: serde_json::Value) -> Result<AgentToolResult, AgentToolError> {
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        args: serde_json::Value,
+    ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
         let cwd = match params.cwd.as_deref() {
@@ -228,7 +291,12 @@ impl AgentTool for ShellTool {
                 .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?,
             None => self.workspace_root.clone(),
         };
-        let timeout = Duration::from_secs(params.timeout_secs.unwrap_or(self.default_timeout.as_secs()).max(1));
+        let timeout = Duration::from_secs(
+            params
+                .timeout_secs
+                .unwrap_or(self.default_timeout.as_secs())
+                .max(1),
+        );
 
         let mut command = if cfg!(windows) {
             let mut cmd = Command::new("powershell.exe");
@@ -246,12 +314,14 @@ impl AgentTool for ShellTool {
             .stderr(Stdio::piped());
 
         let output = match tokio::time::timeout(timeout, command.output()).await {
-            Ok(result) => result
-                .map_err(|e| AgentToolError::ExecutionFailed(format!("执行命令失败: {e}")))?,
+            Ok(result) => {
+                result.map_err(|e| AgentToolError::ExecutionFailed(format!("执行命令失败: {e}")))?
+            }
             Err(_) => {
                 return Ok(err_text(format!(
                     "命令执行超时（>{}s）: {}",
-                    timeout.as_secs(), params.command
+                    timeout.as_secs(),
+                    params.command
                 )));
             }
         };
@@ -271,7 +341,11 @@ impl AgentTool for ShellTool {
             params.command,
             workspace_display(&self.workspace_root, &cwd),
             output.status.code().unwrap_or(-1),
-            if truncated { "（输出已截断）" } else { "" },
+            if truncated {
+                "（输出已截断）"
+            } else {
+                ""
+            },
             body
         );
 
@@ -309,20 +383,33 @@ pub struct SearchParams {
 
 #[async_trait]
 impl AgentTool for SearchTool {
-    fn name(&self) -> &str { "search" }
-    fn description(&self) -> &str { "在工作空间内搜索文本或正则，返回命中文件和行号" }
-    fn parameters_schema(&self) -> serde_json::Value { schema_value::<SearchParams>() }
+    fn name(&self) -> &str {
+        "search"
+    }
+    fn description(&self) -> &str {
+        "在工作空间内搜索文本或正则，返回命中文件和行号"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<SearchParams>()
+    }
 
-    async fn execute(&self, _tool_call_id: &str, args: serde_json::Value) -> Result<AgentToolResult, AgentToolError> {
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        args: serde_json::Value,
+    ) -> Result<AgentToolResult, AgentToolError> {
         let params: SearchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let root = resolve_existing_path(&self.workspace_root, params.path.as_deref().unwrap_or("."))
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+        let root =
+            resolve_existing_path(&self.workspace_root, params.path.as_deref().unwrap_or("."))
+                .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
         let matcher = build_glob_matcher(params.include.as_deref(), params.exclude.as_deref())
             .map_err(|e| AgentToolError::InvalidArguments(format!("glob 解析失败: {e}")))?;
         let regex = if params.regex.unwrap_or(false) {
-            Some(Regex::new(&params.pattern)
-                .map_err(|e| AgentToolError::InvalidArguments(format!("正则无效: {e}")))?)
+            Some(
+                Regex::new(&params.pattern)
+                    .map_err(|e| AgentToolError::InvalidArguments(format!("正则无效: {e}")))?,
+            )
         } else {
             None
         };
@@ -376,7 +463,11 @@ impl AgentTool for SearchTool {
             "搜索根目录: {}\n模式: {}{}\n{}",
             workspace_display(&self.workspace_root, &root),
             params.pattern,
-            if truncated { "（输出已截断）" } else { "" },
+            if truncated {
+                "（输出已截断）"
+            } else {
+                ""
+            },
             body
         )))
     }
@@ -471,30 +562,52 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(result.content[0].extract_text().unwrap().contains("2 | world"));
+        assert!(
+            result.content[0]
+                .extract_text()
+                .unwrap()
+                .contains("2 | world")
+        );
     }
 
     #[tokio::test]
     async fn search_tool_finds_matches() {
         let dir = tempdir().unwrap();
-        tokio::fs::write(dir.path().join("main.rs"), "fn main() { println!(\"hello\"); }")
-            .await
-            .unwrap();
+        tokio::fs::write(
+            dir.path().join("main.rs"),
+            "fn main() { println!(\"hello\"); }",
+        )
+        .await
+        .unwrap();
 
         let tool = SearchTool::new(dir.path().to_path_buf());
         let result = tool
-            .execute("tc3", serde_json::json!({"pattern": "println!", "include": "*.rs"}))
+            .execute(
+                "tc3",
+                serde_json::json!({"pattern": "println!", "include": "*.rs"}),
+            )
             .await
             .unwrap();
-        assert!(result.content[0].extract_text().unwrap().contains("main.rs:1"));
+        assert!(
+            result.content[0]
+                .extract_text()
+                .unwrap()
+                .contains("main.rs:1")
+        );
     }
 
     #[tokio::test]
     async fn shell_tool_respects_workspace() {
         let dir = tempdir().unwrap();
-        tokio::fs::write(dir.path().join("marker.txt"), "ok").await.unwrap();
+        tokio::fs::write(dir.path().join("marker.txt"), "ok")
+            .await
+            .unwrap();
         let tool = ShellTool::new(dir.path().to_path_buf());
-        let command = if cfg!(windows) { "Get-Content marker.txt" } else { "cat marker.txt" };
+        let command = if cfg!(windows) {
+            "Get-Content marker.txt"
+        } else {
+            "cat marker.txt"
+        };
         let result = tool
             .execute("tc4", serde_json::json!({"command": command}))
             .await

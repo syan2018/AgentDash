@@ -13,8 +13,8 @@ use agent_client_protocol::{
 };
 use futures::stream::BoxStream;
 use tokio::sync::Mutex;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_acp_meta::{
     AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
@@ -167,9 +167,7 @@ impl AgentConnector for PiAgentConnector {
         let prompt_text = prompt.to_fallback_text();
         let prompt_text = prompt_text.trim().to_string();
         if prompt_text.is_empty() {
-            return Err(ConnectorError::InvalidConfig(
-                "prompt 内容为空".to_string(),
-            ));
+            return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
 
         let mut agent = {
@@ -179,7 +177,8 @@ impl AgentConnector for PiAgentConnector {
                 .unwrap_or_else(|| self.create_agent())
         };
 
-        let builtin_tools = BuiltinToolset::for_workspace(context.working_directory.clone()).into_tools();
+        let builtin_tools =
+            BuiltinToolset::for_workspace(context.working_directory.clone()).into_tools();
         let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
             Ok(tools) => tools,
             Err(error) => {

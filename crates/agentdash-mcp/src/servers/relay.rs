@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::*;
-use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
+use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -58,7 +58,9 @@ pub struct GetStoryDetailParams {
 pub struct UpdateStoryStatusParams {
     #[schemars(description = "Story UUID")]
     pub story_id: String,
-    #[schemars(description = "目标状态：created / context_ready / decomposed / executing / completed / failed / cancelled")]
+    #[schemars(
+        description = "目标状态：created / context_ready / decomposed / executing / completed / failed / cancelled"
+    )]
     pub status: String,
 }
 
@@ -347,7 +349,8 @@ impl RelayMcpServer {
 #[tool_handler]
 impl ServerHandler for RelayMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions("AgentDashboard 看板操作工具。可用于查看项目、创建和管理 Story、查看 Task 状态等。")
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "AgentDashboard 看板操作工具。可用于查看项目、创建和管理 Story、查看 Task 状态等。",
+        )
     }
 }

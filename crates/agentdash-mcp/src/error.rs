@@ -56,12 +56,12 @@ impl McpError {
 impl From<McpError> for rmcp::ErrorData {
     fn from(err: McpError) -> Self {
         match &err {
-            McpError::NotFound { .. } | McpError::Forbidden { .. } | McpError::ScopeMismatch { .. } => {
+            McpError::NotFound { .. }
+            | McpError::Forbidden { .. }
+            | McpError::ScopeMismatch { .. } => {
                 rmcp::ErrorData::invalid_request(err.to_string(), None)
             }
-            McpError::InvalidParam { .. } => {
-                rmcp::ErrorData::invalid_params(err.to_string(), None)
-            }
+            McpError::InvalidParam { .. } => rmcp::ErrorData::invalid_params(err.to_string(), None),
             McpError::Domain(_) | McpError::Internal(_) => {
                 rmcp::ErrorData::internal_error(err.to_string(), None)
             }

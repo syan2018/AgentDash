@@ -1,7 +1,9 @@
 use sqlx::SqlitePool;
 
 use agentdash_domain::common::error::DomainError;
-use agentdash_domain::session_binding::{SessionBinding, SessionBindingRepository, SessionOwnerType};
+use agentdash_domain::session_binding::{
+    SessionBinding, SessionBindingRepository, SessionOwnerType,
+};
 
 pub struct SqliteSessionBindingRepository {
     pool: SqlitePool,
@@ -147,10 +149,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
         rows.into_iter().map(|r| r.try_into()).collect()
     }
 
-    async fn list_by_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<SessionBinding>, DomainError> {
+    async fn list_by_session(&self, session_id: &str) -> Result<Vec<SessionBinding>, DomainError> {
         let rows = sqlx::query_as::<_, BindingRow>(
             "SELECT id, session_id, owner_type, owner_id, label, created_at
              FROM session_bindings

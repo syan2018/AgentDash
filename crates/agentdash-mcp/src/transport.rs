@@ -16,7 +16,10 @@
 //!                    └─────────────────────────────────────────────────┘
 //! ```
 
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use axum::{
     body::Body,
@@ -64,7 +67,14 @@ fn create_task_http_service(
     task_id: Uuid,
 ) -> StreamableHttpService<TaskMcpServer> {
     StreamableHttpService::new(
-        move || Ok(TaskMcpServer::new(services.clone(), project_id, story_id, task_id)),
+        move || {
+            Ok(TaskMcpServer::new(
+                services.clone(),
+                project_id,
+                story_id,
+                task_id,
+            ))
+        },
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default(),
     )
@@ -136,7 +146,10 @@ impl McpHttpRouterState {
             .await
             .map_err(|error| {
                 tracing::error!(%story_id, ?error, "加载 Story 以建立 MCP HTTP 服务失败");
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("加载 Story 失败: {error}"))
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("加载 Story 失败: {error}"),
+                )
             })?
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Story 不存在: {story_id}")))?;
 
@@ -146,7 +159,10 @@ impl McpHttpRouterState {
             .lock()
             .expect("story service cache lock poisoned");
 
-        Ok(guard.entry(story_id).or_insert_with(|| service.clone()).clone())
+        Ok(guard
+            .entry(story_id)
+            .or_insert_with(|| service.clone())
+            .clone())
     }
 
     async fn task_service(
@@ -170,7 +186,10 @@ impl McpHttpRouterState {
             .await
             .map_err(|error| {
                 tracing::error!(%task_id, ?error, "加载 Task 以建立 MCP HTTP 服务失败");
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("加载 Task 失败: {error}"))
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("加载 Task 失败: {error}"),
+                )
             })?
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
 
@@ -201,7 +220,10 @@ impl McpHttpRouterState {
             .lock()
             .expect("task service cache lock poisoned");
 
-        Ok(guard.entry(task_id).or_insert_with(|| service.clone()).clone())
+        Ok(guard
+            .entry(task_id)
+            .or_insert_with(|| service.clone())
+            .clone())
     }
 }
 

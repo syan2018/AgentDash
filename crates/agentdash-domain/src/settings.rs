@@ -15,10 +15,8 @@ pub struct Setting {
 #[async_trait::async_trait]
 pub trait SettingsRepository: Send + Sync {
     /// 列出所有设置，可选按 `category_prefix` 前缀过滤
-    async fn list(
-        &self,
-        category_prefix: Option<&str>,
-    ) -> Result<Vec<Setting>, crate::DomainError>;
+    async fn list(&self, category_prefix: Option<&str>)
+    -> Result<Vec<Setting>, crate::DomainError>;
 
     /// 获取指定 key 的设置
     async fn get(&self, key: &str) -> Result<Option<Setting>, crate::DomainError>;

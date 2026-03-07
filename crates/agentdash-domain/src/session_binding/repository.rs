@@ -24,10 +24,7 @@ pub trait SessionBindingRepository: Send + Sync {
         owner_id: Uuid,
     ) -> Result<Vec<SessionBinding>, DomainError>;
 
-    async fn list_by_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<SessionBinding>, DomainError>;
+    async fn list_by_session(&self, session_id: &str) -> Result<Vec<SessionBinding>, DomainError>;
 
     async fn find_by_owner_and_label(
         &self,

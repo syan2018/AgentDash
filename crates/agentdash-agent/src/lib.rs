@@ -10,8 +10,8 @@ pub use agent::{Agent, AgentConfig};
 pub use bridge::{BridgeError, BridgeRequest, BridgeResponse, LlmBridge, RigBridge, StreamChunk};
 pub use event_stream::{EventReceiver, EventSender, event_channel};
 pub use tools::{
-    BuiltinToolset, ListDirectoryTool, ReadFileTool, SearchTool, ShellTool, ToolInfo,
-    ToolRegistry, WriteFileTool,
+    BuiltinToolset, ListDirectoryTool, ReadFileTool, SearchTool, ShellTool, ToolInfo, ToolRegistry,
+    WriteFileTool,
 };
 pub use types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool, AgentToolError, AgentToolResult,

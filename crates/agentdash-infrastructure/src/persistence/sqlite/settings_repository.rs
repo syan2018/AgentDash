@@ -31,10 +31,7 @@ impl SqliteSettingsRepository {
 
 #[async_trait::async_trait]
 impl SettingsRepository for SqliteSettingsRepository {
-    async fn list(
-        &self,
-        category_prefix: Option<&str>,
-    ) -> Result<Vec<Setting>, DomainError> {
+    async fn list(&self, category_prefix: Option<&str>) -> Result<Vec<Setting>, DomainError> {
         let rows = match category_prefix {
             Some(prefix) => {
                 let pattern = format!("{prefix}%");
@@ -84,10 +81,7 @@ impl SettingsRepository for SqliteSettingsRepository {
         Ok(())
     }
 
-    async fn set_batch(
-        &self,
-        entries: &[(String, serde_json::Value)],
-    ) -> Result<(), DomainError> {
+    async fn set_batch(&self, entries: &[(String, serde_json::Value)]) -> Result<(), DomainError> {
         for (key, value) in entries {
             self.set(key, value.clone()).await?;
         }

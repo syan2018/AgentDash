@@ -11,10 +11,10 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
+use rig::OneOrMany;
 use rig::completion::message::AssistantContent;
 use rig::completion::request::GetTokenUsage;
 use rig::completion::{CompletionModel, CompletionRequest, Usage};
-use rig::OneOrMany;
 use rig::streaming::StreamedAssistantContent;
 use thiserror::Error;
 use tokio_stream::wrappers::ReceiverStream;
@@ -28,9 +28,17 @@ use crate::types::AgentMessage;
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
     TextDelta(String),
-    ToolCallStart { id: String, name: String },
-    ToolCallInputDelta { id: String, delta: String },
-    ToolCallEnd { id: String },
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    ToolCallInputDelta {
+        id: String,
+        delta: String,
+    },
+    ToolCallEnd {
+        id: String,
+    },
     /// 流结束，附带聚合后的完整响应
     Done(BridgeResponse),
     Error(BridgeError),
@@ -208,7 +216,9 @@ where
                 rig_stream.choice.clone().into_iter().collect();
 
             if raw_content.is_empty() {
-                let _ = tx.send(StreamChunk::Error(BridgeError::EmptyResponse)).await;
+                let _ = tx
+                    .send(StreamChunk::Error(BridgeError::EmptyResponse))
+                    .await;
                 return;
             }
 

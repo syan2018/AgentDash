@@ -1,9 +1,9 @@
+use rig::OneOrMany;
 /// AgentMessage ↔ rig::Message 双向转换
 ///
 /// 这是设计文档中 `convert_to_llm` / `convert_from_llm` 管线的实现。
 /// AgentMessage 是面向会话的消息层，rig::Message 是面向模型的消息层。
 use rig::completion::message::{AssistantContent, Message, Text, UserContent};
-use rig::OneOrMany;
 
 use crate::types::{AgentMessage, ContentPart, ToolCallInfo};
 
@@ -27,8 +27,10 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
             content,
             tool_calls,
         } => {
-            let mut parts: Vec<AssistantContent> =
-                content.iter().filter_map(content_part_to_assistant).collect();
+            let mut parts: Vec<AssistantContent> = content
+                .iter()
+                .filter_map(content_part_to_assistant)
+                .collect();
 
             for tc in tool_calls {
                 let call_id = tc.call_id.clone().unwrap_or_else(|| tc.id.clone());

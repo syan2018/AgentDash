@@ -15,7 +15,14 @@ fn sanitize_schema_in_place(schema: &mut Value) {
         return;
     };
 
-    for keyword in ["items", "additionalProperties", "contains", "if", "then", "else"] {
+    for keyword in [
+        "items",
+        "additionalProperties",
+        "contains",
+        "if",
+        "then",
+        "else",
+    ] {
         if let Some(value) = map.get_mut(keyword) {
             sanitize_schema_in_place(value);
         }

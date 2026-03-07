@@ -32,7 +32,12 @@ pub struct McpInjectionConfig {
 }
 
 impl McpInjectionConfig {
-    pub fn for_task(base_url: impl Into<String>, project_id: Uuid, story_id: Uuid, task_id: Uuid) -> Self {
+    pub fn for_task(
+        base_url: impl Into<String>,
+        project_id: Uuid,
+        story_id: Uuid,
+        task_id: Uuid,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             scope: ToolScope::Task,
@@ -190,6 +195,11 @@ mod tests {
         let json = serde_json::to_value(&server).unwrap();
         assert_eq!(json["type"], "http");
         assert!(json["url"].as_str().unwrap().contains("/mcp/task/"));
-        assert!(json["name"].as_str().unwrap().starts_with("agentdash-task-tools-"));
+        assert!(
+            json["name"]
+                .as_str()
+                .unwrap()
+                .starts_with("agentdash-task-tools-")
+        );
     }
 }

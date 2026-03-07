@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": "frontend/src/features/file-reference/RichInput.tsx", "reason": "现有会话框 @ 文件引用输入与触发逻辑"}
+{"file": "frontend/src/features/file-reference/FilePickerPopup.tsx", "reason": "现有文件引用选择弹层"}
+{"file": "crates/agentdash-api/src/routes/workspace_files.rs", "reason": "现有工作空间文件检索与读取 API"}
+{"file": "crates/agentdash-domain/src/context_source.rs", "reason": "现有声明式上下文来源领域模型"}
+{"file": "crates/agentdash-api/src/task_agent_context.rs", "reason": "现有声明式来源注入装配"}

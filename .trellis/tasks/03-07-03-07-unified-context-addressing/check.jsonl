@@ -1,0 +1,6 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": "frontend/src/features/file-reference/RichInput.tsx", "reason": "检查引用选择器复用边界"}
+{"file": "crates/agentdash-api/src/routes/workspace_files.rs", "reason": "检查统一寻址接口与现有文件接口关系"}
+{"file": "crates/agentdash-domain/src/context_source.rs", "reason": "检查领域模型演进是否保持一致"}

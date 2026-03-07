@@ -1,0 +1,41 @@
+{
+  "id": "03-07-session-ui-refactor-mcp-fix",
+  "name": "03-07-session-ui-refactor-mcp-fix",
+  "title": "前端会话体验统一重构与MCP工具注入修复",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-07",
+  "completedAt": "2026-03-07",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": "9480169,6783de8,258949f,d257edf,fad36fa,b988452,1ebbb60,82f109b",
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": ""
+}

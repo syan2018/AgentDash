@@ -53,7 +53,7 @@ const storyTypeOptions: { value: StoryType; label: string; icon: string }[] = [
   { value: "other", label: "其他", icon: "📦" },
 ];
 
-type TabKey = "context" | "tasks" | "sessions" | "review";
+type TabKey = "tasks" | "sessions" | "review";
 
 interface StoryFileContextDraft {
   label: string;
@@ -892,7 +892,8 @@ export function StoryPage() {
   } = useStoryStore();
   const { workspacesByProjectId } = useWorkspaceStore();
 
-  const [activeTab, setActiveTab] = useState<TabKey>("context");
+  const [activeTab, setActiveTab] = useState<TabKey>("sessions");
+  const [isContextExpanded, setIsContextExpanded] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [formMessage, setFormMessage] = useState<string | null>(null);
@@ -1083,9 +1084,8 @@ export function StoryPage() {
   }
 
   const tabs = [
-    { key: "context", label: "上下文" },
-    { key: "tasks", label: "任务列表" },
     { key: "sessions", label: "会话" },
+    { key: "tasks", label: "任务列表" },
     { key: "review", label: "验收" },
   ] as const;
 
@@ -1299,6 +1299,46 @@ export function StoryPage() {
 
         {/* 右侧：Tab 内容 */}
         <div className="flex flex-1 flex-col overflow-hidden bg-background">
+          {/* 可折叠上下文面板 */}
+          <div className="shrink-0 border-b border-border">
+            <button
+              type="button"
+              onClick={() => setIsContextExpanded((v) => !v)}
+              className="flex w-full items-center justify-between px-5 py-2.5 text-xs text-muted-foreground transition-colors hover:bg-secondary/25"
+            >
+              <div className="flex items-center gap-2">
+                <svg
+                  className={`h-3.5 w-3.5 transition-transform ${isContextExpanded ? "rotate-90" : ""}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                <span className="font-medium">上下文</span>
+                {story.context.source_refs.filter(isFileContextSource).length > 0 && (
+                  <span className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px]">
+                    {story.context.source_refs.filter(isFileContextSource).length} 个文件引用
+                  </span>
+                )}
+                {story.context.prd_doc && (
+                  <span className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px]">
+                    PRD
+                  </span>
+                )}
+              </div>
+            </button>
+            {isContextExpanded && (
+              <div className="max-h-[40vh] overflow-y-auto border-t border-border bg-secondary/10 px-5 py-4">
+                <ContextPanel
+                  story={story}
+                  workspaces={workspaces}
+                  projectConfig={currentProject?.config}
+                />
+              </div>
+            )}
+          </div>
+
           {/* Tab 导航 */}
           <div className="flex border-b border-border bg-secondary/35 px-2 pt-2">
             {tabs.map((tab) => (
@@ -1318,31 +1358,25 @@ export function StoryPage() {
           </div>
 
           {/* Tab 内容 */}
-          <div className="flex-1 overflow-y-auto p-6">
-            {activeTab === "context" && (
-              <ContextPanel
-                story={story}
-                workspaces={workspaces}
-                projectConfig={currentProject?.config}
-              />
-            )}
-            {activeTab === "tasks" && (
-              <DetailSection title="任务列表">
-                <TaskList
-                  tasks={sortedTasks}
-                  onTaskClick={(task) => {
-                    setSelectedTaskId(task.id);
-                  }}
-                />
-              </DetailSection>
-            )}
-            {activeTab === "sessions" && (
-              <DetailSection title="伴随会话" description="绑定到当前 Story 的协作与规划会话。">
-                <StorySessionPanel story={story} showTitle={false} />
-              </DetailSection>
-            )}
-            {activeTab === "review" && <ReviewPanel story={story} tasks={sortedTasks} />}
-          </div>
+          {activeTab === "sessions" ? (
+            <div className="flex-1 overflow-hidden">
+              <StorySessionPanel story={story} />
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-6">
+              {activeTab === "tasks" && (
+                <DetailSection title="任务列表">
+                  <TaskList
+                    tasks={sortedTasks}
+                    onTaskClick={(task) => {
+                      setSelectedTaskId(task.id);
+                    }}
+                  />
+                </DetailSection>
+              )}
+              {activeTab === "review" && <ReviewPanel story={story} tasks={sortedTasks} />}
+            </div>
+          )}
         </div>
       </div>
 

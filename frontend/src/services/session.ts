@@ -31,8 +31,18 @@ export interface SessionMeta {
   updatedAt: number;
 }
 
-export async function fetchSessions(): Promise<SessionMeta[]> {
-  const res = await fetch(buildApiPath("/sessions"));
+export interface FetchSessionsOptions {
+  excludeBound?: boolean;
+}
+
+export async function fetchSessions(options?: FetchSessionsOptions): Promise<SessionMeta[]> {
+  const params = new URLSearchParams();
+  if (options?.excludeBound) {
+    params.set("exclude_bound", "true");
+  }
+  const query = params.toString();
+  const url = query ? `${buildApiPath("/sessions")}?${query}` : buildApiPath("/sessions");
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`获取会话列表失败: HTTP ${res.status}`);
   return res.json();
 }

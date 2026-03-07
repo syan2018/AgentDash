@@ -36,7 +36,7 @@ export const useSessionHistoryStore = create<SessionHistoryState>()((set, get) =
   reload: async () => {
     set({ isLoading: true });
     try {
-      const sessions = await fetchSessions();
+      const sessions = await fetchSessions({ excludeBound: true });
       set({ sessions, isLoading: false });
     } catch {
       set({ isLoading: false });

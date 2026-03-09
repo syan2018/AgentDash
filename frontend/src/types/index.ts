@@ -17,6 +17,8 @@ export type TaskStatus =
   | "completed"
   | "failed";
 
+export type TaskExecutionMode = "standard" | "auto_retry" | "one_shot";
+
 export type BackendType = "local" | "remote";
 export type WorkspaceType = "git_worktree" | "static" | "ephemeral";
 export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "archived" | "error";
@@ -135,6 +137,7 @@ export interface Task {
   title: string;
   description?: string;
   status: TaskStatus;
+  execution_mode: TaskExecutionMode;
   agent_binding: AgentBinding;
   artifacts: Artifact[];
   created_at: string;

@@ -17,7 +17,7 @@ use agentdash_domain::{
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
     story::{ChangeKind, Story},
-    task::{Artifact, ArtifactType, Task, TaskStatus},
+    task::{Artifact, ArtifactType, Task, TaskExecutionMode, TaskStatus},
     workspace::Workspace,
 };
 use agentdash_executor::{ConnectorError, PromptSessionRequest, SessionMeta};
@@ -322,10 +322,15 @@ async fn run_turn_monitor(
     turn_id: &str,
     backend_id: &str,
 ) -> TurnOutcome {
+    let execution_mode = match state.task_repo.get_by_id(task_id).await {
+        Ok(Some(task)) => task.execution_mode,
+        _ => TaskExecutionMode::Standard,
+    };
+
     let (history, mut rx) = state.executor_hub.subscribe_with_history(session_id).await;
 
     for notification in history {
-        match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification).await {
+        match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification, &execution_mode).await {
             Ok(TurnOutcome::Continue) => {}
             Ok(outcome) => return outcome,
             Err(err) => {
@@ -343,7 +348,7 @@ async fn run_turn_monitor(
     loop {
         match rx.recv().await {
             Ok(notification) => {
-                match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification).await {
+                match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification, &execution_mode).await {
                     Ok(TurnOutcome::Continue) => {}
                     Ok(outcome) => return outcome,
                     Err(err) => {
@@ -381,6 +386,7 @@ async fn run_turn_monitor(
                     backend_id,
                     "turn_monitor_closed",
                     None,
+                    &execution_mode,
                 )
                 .await
                 .unwrap_or(TurnOutcome::Failed);
@@ -467,6 +473,7 @@ async fn handle_turn_notification(
     turn_id: &str,
     backend_id: &str,
     notification: &SessionNotification,
+    execution_mode: &TaskExecutionMode,
 ) -> Result<TurnOutcome, agentdash_domain::DomainError> {
     match &notification.update {
         SessionUpdate::ToolCall(tool_call) => {
@@ -539,6 +546,7 @@ async fn handle_turn_notification(
                             backend_id,
                             "turn_failed",
                             message.clone(),
+                            execution_mode,
                         )
                         .await?);
                     }
@@ -561,45 +569,99 @@ async fn resolve_failure_outcome(
     backend_id: &str,
     reason: &str,
     error_message: Option<String>,
+    execution_mode: &TaskExecutionMode,
 ) -> Result<TurnOutcome, agentdash_domain::DomainError> {
-    let decision = state.restart_tracker.report_failure(task_id);
-
-    match decision {
-        RestartDecision::Allowed { attempt, delay } => {
+    match execution_mode {
+        TaskExecutionMode::AutoRetry => {
+            let decision = state.restart_tracker.report_failure(task_id);
+            match decision {
+                RestartDecision::Allowed { attempt, delay } => {
+                    tracing::info!(
+                        task_id = %task_id,
+                        session_id = %session_id,
+                        turn_id = %turn_id,
+                        attempt = attempt,
+                        delay_ms = delay.as_millis() as u64,
+                        reason = reason,
+                        "Turn 失败 [AutoRetry]，RestartTracker 允许重试"
+                    );
+                    let _ = update_task_status(
+                        state,
+                        task_id,
+                        backend_id,
+                        TaskStatus::AwaitingVerification,
+                        &format!("{reason}_pending_retry"),
+                        json!({
+                            "session_id": session_id,
+                            "turn_id": turn_id,
+                            "error": error_message,
+                            "retry_attempt": attempt,
+                            "retry_delay_ms": delay.as_millis() as u64,
+                            "execution_mode": "auto_retry",
+                        }),
+                    )
+                    .await?;
+                    Ok(TurnOutcome::NeedsRetry { delay, attempt })
+                }
+                RestartDecision::Denied { attempts_exhausted } => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        session_id = %session_id,
+                        turn_id = %turn_id,
+                        attempts_exhausted = attempts_exhausted,
+                        reason = reason,
+                        "Turn 失败 [AutoRetry]，已达最大重试次数，标记为 Failed"
+                    );
+                    let _ = update_task_status(
+                        state,
+                        task_id,
+                        backend_id,
+                        TaskStatus::Failed,
+                        reason,
+                        json!({
+                            "session_id": session_id,
+                            "turn_id": turn_id,
+                            "error": error_message,
+                            "attempts_exhausted": attempts_exhausted,
+                            "execution_mode": "auto_retry",
+                        }),
+                    )
+                    .await?;
+                    Ok(TurnOutcome::Failed)
+                }
+            }
+        }
+        TaskExecutionMode::OneShot => {
             tracing::info!(
                 task_id = %task_id,
                 session_id = %session_id,
                 turn_id = %turn_id,
-                attempt = attempt,
-                delay_ms = delay.as_millis() as u64,
                 reason = reason,
-                "Turn 失败，RestartTracker 允许重试"
+                "Turn 失败 [OneShot]，标记 Failed 并清理 session"
             );
             let _ = update_task_status(
                 state,
                 task_id,
                 backend_id,
-                TaskStatus::AwaitingVerification,
-                &format!("{reason}_pending_retry"),
+                TaskStatus::Failed,
+                &format!("{reason}_oneshot"),
                 json!({
                     "session_id": session_id,
                     "turn_id": turn_id,
                     "error": error_message,
-                    "retry_attempt": attempt,
-                    "retry_delay_ms": delay.as_millis() as u64,
+                    "execution_mode": "one_shot",
                 }),
             )
             .await?;
-            Ok(TurnOutcome::NeedsRetry { delay, attempt })
+            Ok(TurnOutcome::Failed)
         }
-        RestartDecision::Denied { attempts_exhausted } => {
-            tracing::warn!(
+        TaskExecutionMode::Standard => {
+            tracing::info!(
                 task_id = %task_id,
                 session_id = %session_id,
                 turn_id = %turn_id,
-                attempts_exhausted = attempts_exhausted,
                 reason = reason,
-                "Turn 失败，已达最大重试次数，标记为 Failed"
+                "Turn 失败 [Standard]，标记为 Failed，等待人工介入"
             );
             let _ = update_task_status(
                 state,
@@ -611,7 +673,7 @@ async fn resolve_failure_outcome(
                     "session_id": session_id,
                     "turn_id": turn_id,
                     "error": error_message,
-                    "attempts_exhausted": attempts_exhausted,
+                    "execution_mode": "standard",
                 }),
             )
             .await?;

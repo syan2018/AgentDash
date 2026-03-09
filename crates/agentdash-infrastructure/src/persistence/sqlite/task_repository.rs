@@ -2,7 +2,9 @@ use sqlx::SqlitePool;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::ChangeKind;
-use agentdash_domain::task::{AgentBinding, Artifact, Task, TaskRepository, TaskStatus};
+use agentdash_domain::task::{
+    AgentBinding, Artifact, Task, TaskExecutionMode, TaskRepository, TaskStatus,
+};
 
 pub struct SqliteTaskRepository {
     pool: SqlitePool,
@@ -61,6 +63,21 @@ impl SqliteTaskRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        if let Err(err) = sqlx::query(
+            "ALTER TABLE tasks ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'standard'",
+        )
+        .execute(&self.pool)
+        .await
+        {
+            let duplicate_column = err
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("duplicate column name");
+            if !duplicate_column {
+                return Err(DomainError::InvalidConfig(err.to_string()));
+            }
+        }
+
         Ok(())
     }
 
@@ -75,8 +92,8 @@ impl SqliteTaskRepository {
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, agent_binding, artifacts, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(task.id.to_string())
         .bind(task.story_id.to_string())
@@ -86,6 +103,7 @@ impl SqliteTaskRepository {
         .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
         .bind(task.session_id.as_deref())
         .bind(task.executor_session_id.as_deref())
+        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
         .bind(serde_json::to_string(&task.agent_binding)?)
         .bind(serde_json::to_string(&task.artifacts)?)
         .bind(task.created_at.to_rfc3339())
@@ -146,7 +164,7 @@ impl SqliteTaskRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let row = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE id = ?",
         )
         .bind(task_id.to_string())
@@ -271,8 +289,8 @@ impl SqliteTaskRepository {
 impl TaskRepository for SqliteTaskRepository {
     async fn create(&self, task: &Task) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, agent_binding, artifacts, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(task.id.to_string())
         .bind(task.story_id.to_string())
@@ -282,6 +300,7 @@ impl TaskRepository for SqliteTaskRepository {
         .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
         .bind(task.session_id.as_deref())
         .bind(task.executor_session_id.as_deref())
+        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
         .bind(serde_json::to_string(&task.agent_binding)?)
         .bind(serde_json::to_string(&task.artifacts)?)
         .bind(task.created_at.to_rfc3339())
@@ -295,7 +314,7 @@ impl TaskRepository for SqliteTaskRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Task>, DomainError> {
         let row = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE id = ?",
         )
         .bind(id.to_string())
@@ -308,7 +327,7 @@ impl TaskRepository for SqliteTaskRepository {
 
     async fn list_by_story(&self, story_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
         let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE story_id = ? ORDER BY created_at ASC",
         )
         .bind(story_id.to_string())
@@ -321,7 +340,7 @@ impl TaskRepository for SqliteTaskRepository {
 
     async fn list_by_workspace(&self, workspace_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
         let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE workspace_id = ? ORDER BY created_at ASC",
         )
         .bind(workspace_id.to_string())
@@ -334,7 +353,7 @@ impl TaskRepository for SqliteTaskRepository {
 
     async fn update(&self, task: &Task) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "UPDATE tasks SET story_id = ?, workspace_id = ?, title = ?, description = ?, status = ?, session_id = ?, executor_session_id = ?, agent_binding = ?, artifacts = ?, updated_at = ?
+            "UPDATE tasks SET story_id = ?, workspace_id = ?, title = ?, description = ?, status = ?, session_id = ?, executor_session_id = ?, execution_mode = ?, agent_binding = ?, artifacts = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(task.story_id.to_string())
@@ -344,6 +363,7 @@ impl TaskRepository for SqliteTaskRepository {
         .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
         .bind(task.session_id.as_deref())
         .bind(task.executor_session_id.as_deref())
+        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
         .bind(serde_json::to_string(&task.agent_binding)?)
         .bind(serde_json::to_string(&task.artifacts)?)
         .bind(chrono::Utc::now().to_rfc3339())
@@ -408,6 +428,7 @@ struct TaskRow {
     status: String,
     session_id: Option<String>,
     executor_session_id: Option<String>,
+    execution_mode: String,
     agent_binding: String,
     artifacts: String,
     created_at: String,
@@ -465,6 +486,11 @@ impl TryFrom<TaskRow> for Task {
             },
             session_id: row.session_id,
             executor_session_id: row.executor_session_id,
+            execution_mode: match row.execution_mode.as_str() {
+                "auto_retry" => TaskExecutionMode::AutoRetry,
+                "one_shot" => TaskExecutionMode::OneShot,
+                _ => TaskExecutionMode::Standard,
+            },
             agent_binding,
             artifacts,
             created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)

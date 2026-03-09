@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, Story, StoryRepository};
-use agentdash_domain::task::{Task, TaskRepository, TaskStatus};
+use agentdash_domain::task::{Task, TaskExecutionMode, TaskRepository, TaskStatus};
 
 use super::restart_tracker::{RestartDecision, RestartTracker};
 
@@ -70,21 +70,25 @@ fn plan_for_running_task(
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
+                "execution_mode": task.execution_mode,
             });
             if let Some(msg) = &message {
                 context["error"] = json!(msg);
             }
 
-            // 咨询 RestartTracker：如果还有重试额度，标记为 AwaitingVerification 而非 Failed
-            if let Some(tracker) = restart_tracker {
-                if let RestartDecision::Allowed { attempt, .. } = tracker.report_failure(task.id) {
-                    context["retry_attempt"] = json!(attempt);
-                    context["auto_retry"] = json!(true);
-                    return Some(StatusReconcilePlan {
-                        next_status: TaskStatus::AwaitingVerification,
-                        reason: "boot_reconcile_turn_failed_pending_retry",
-                        context,
-                    });
+            if task.execution_mode == TaskExecutionMode::AutoRetry {
+                if let Some(tracker) = restart_tracker {
+                    if let RestartDecision::Allowed { attempt, .. } =
+                        tracker.report_failure(task.id)
+                    {
+                        context["retry_attempt"] = json!(attempt);
+                        context["auto_retry"] = json!(true);
+                        return Some(StatusReconcilePlan {
+                            next_status: TaskStatus::AwaitingVerification,
+                            reason: "boot_reconcile_turn_failed_pending_retry",
+                            context,
+                        });
+                    }
                 }
             }
 
@@ -99,17 +103,22 @@ fn plan_for_running_task(
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
+                "execution_mode": task.execution_mode,
             });
 
-            if let Some(tracker) = restart_tracker {
-                if let RestartDecision::Allowed { attempt, .. } = tracker.report_failure(task.id) {
-                    context["retry_attempt"] = json!(attempt);
-                    context["auto_retry"] = json!(true);
-                    return Some(StatusReconcilePlan {
-                        next_status: TaskStatus::AwaitingVerification,
-                        reason: "boot_reconcile_turn_interrupted_pending_retry",
-                        context,
-                    });
+            if task.execution_mode == TaskExecutionMode::AutoRetry {
+                if let Some(tracker) = restart_tracker {
+                    if let RestartDecision::Allowed { attempt, .. } =
+                        tracker.report_failure(task.id)
+                    {
+                        context["retry_attempt"] = json!(attempt);
+                        context["auto_retry"] = json!(true);
+                        return Some(StatusReconcilePlan {
+                            next_status: TaskStatus::AwaitingVerification,
+                            reason: "boot_reconcile_turn_interrupted_pending_retry",
+                            context,
+                        });
+                    }
                 }
             }
 

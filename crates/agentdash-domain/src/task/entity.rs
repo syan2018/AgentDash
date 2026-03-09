@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{AgentBinding, Artifact, TaskStatus};
+use super::value_objects::{AgentBinding, Artifact, TaskExecutionMode, TaskStatus};
 
 /// Task — 执行容器
 ///
@@ -21,6 +21,8 @@ pub struct Task {
     pub session_id: Option<String>,
     /// 执行器原生会话 ID（用于 follow-up/resume）
     pub executor_session_id: Option<String>,
+    /// 执行模式 — 控制失败后的自动处理策略
+    pub execution_mode: TaskExecutionMode,
     /// 结构化 Agent 绑定信息
     pub agent_binding: AgentBinding,
     /// 结构化执行产物列表
@@ -41,6 +43,7 @@ impl Task {
             status: TaskStatus::Pending,
             session_id: None,
             executor_session_id: None,
+            execution_mode: TaskExecutionMode::default(),
             agent_binding: AgentBinding::default(),
             artifacts: vec![],
             created_at: now,

@@ -54,7 +54,7 @@
 |---|------|--------|------|------|---------|
 | 3.1 | 指数退避重启策略 | 高 | 健壮性 | ✅ 已落地 | `core/src/manager/restart-tracker.ts` |
 | 3.2 | Per-Task 异步操作锁 | 高 | 健壮性 | ✅ 已落地 | `core/src/manager/agent-manager.ts` |
-| 3.3 | LaunchMode 策略模式 | 高 | 健壮性 | 🔲 待实现 | `core/src/manager/launch-mode-handler.ts` |
+| 3.3 | LaunchMode 策略模式 | 高 | 健壮性 | ✅ 已落地 | `core/src/manager/launch-mode-handler.ts` |
 | 4.1 | 三阶段上下文流水线 | 中 | 上下文 | 🔲 待实现 | Builder + Injector + Scheduler |
 | 4.2 | 双层物化策略 | 中 | 上下文 | 🔲 待实现 | `core/src/initializer/context/context-materializer.ts` |
 | 4.3 | ComponentTypeHandler 架构 | 中 | 上下文 | 🔲 待实现 | `core/src/builder/component-type-handler.ts` |
@@ -799,11 +799,14 @@ lines.push('  Read("/vcs/status")                      -- git status');
 |------|------|------|---------|------|
 | 1 | 实现 Per-Task 操作锁 | §3.2 | `task/lock.rs` + `task_execution_gateway.rs` | ✅ 已落地 |
 | 2 | 实现 RestartTracker | §3.1 | `task/restart_tracker.rs` + Turn Monitor + State Reconciler | ✅ 已落地 |
-| 3 | 引入 TaskExecutionMode | §3.3 | `value_objects.rs` + `task_execution.rs` | 🔲 待实现 |
+| 3 | 引入 TaskExecutionMode | §3.3 | `value_objects.rs` + `task_execution_gateway.rs` + `state_reconciler.rs` | ✅ 已落地 |
 
 > **落地说明（2026-03-09）**：
 > - §3.2 Per-Task 操作锁：`agentdash-application/src/task/lock.rs` 实现 `TaskLockMap`，集成到 `AppState`，所有 Task 生命周期操作（start/continue/cancel）通过 `with_lock()` 串行化。
 > - §3.1 RestartTracker：`agentdash-application/src/task/restart_tracker.rs` 实现指数退避重启策略。Turn Monitor 中 `turn_failed` 和 `turn_monitor_closed` 分支现在会咨询 RestartTracker，允许重试时自动发起 `continue_task`。State Reconciler 启动回收时也应用 RestartTracker 策略，失败但有重试额度的 Task 标记为 `AwaitingVerification` 而非 `Failed`。
+> - §3.3 TaskExecutionMode：`agentdash-domain/src/task/value_objects.rs` 定义 `TaskExecutionMode` 枚举（Standard / AutoRetry / OneShot），Task 实体新增 `execution_mode` 字段。Turn Monitor 的 `resolve_failure_outcome` 和 State Reconciler 的 `plan_for_running_task` 现在根据 `execution_mode` 分派行为——仅 `AutoRetry` 模式才咨询 RestartTracker 进行自动重试，`Standard` 直接标记 Failed，`OneShot` 标记 Failed 并清理。SQLite 持久化层和前端类型已同步。
+>
+> **Phase 1 全部完成 ✅**
 
 ### Phase 2：上下文增强（建议 2-3 周）
 

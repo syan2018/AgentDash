@@ -1,10 +1,11 @@
 import { buildApiPath } from "../api/origin";
-import type { FileEntry } from "./workspaceFiles";
 
-export interface AddressSpaceSelector {
+// ─── Descriptor（能力发现） ─────────────────────────────
+
+export interface SelectorHint {
   trigger: string;
   placeholder: string;
-  resultItemType: string;
+  result_item_type: string;
 }
 
 export interface AddressSpaceDescriptor {
@@ -14,47 +15,51 @@ export interface AddressSpaceDescriptor {
   provider: string;
   supports: string[];
   root?: string | null;
-  workspaceId?: string | null;
-  selector?: AddressSpaceSelector | null;
+  workspace_id?: string | null;
+  selector?: SelectorHint | null;
 }
 
 export interface ListAddressSpacesResponse {
   spaces: AddressSpaceDescriptor[];
 }
 
-export interface ListAddressEntriesParams {
-  projectId?: string | null;
-  storyId?: string | null;
-  taskId?: string | null;
+// ─── Entry（条目搜索） ──────────────────────────────────
+
+export interface AddressEntry {
+  address: string;
+  label: string;
+  entry_type: string;
+}
+
+export interface ListEntriesResponse {
+  entries: AddressEntry[];
+}
+
+// ─── 查询参数 ────────────────────────────────────────────
+
+export interface AddressSpaceQueryParams {
   workspaceId?: string | null;
+}
+
+export interface ListEntriesParams extends AddressSpaceQueryParams {
   query?: string;
 }
 
-export interface ListAddressEntriesResponse {
-  spaceId: string;
-  root: string;
-  workspaceId: string;
-  entries: FileEntry[];
-}
+// ─── API 函数 ────────────────────────────────────────────
 
-function appendAddressSpaceParams(
-  searchParams: URLSearchParams,
-  params?: Omit<ListAddressEntriesParams, "query">,
-) {
+function applyQueryParams(searchParams: URLSearchParams, params?: AddressSpaceQueryParams) {
   if (!params) return;
-  if (params.projectId) searchParams.set("projectId", params.projectId);
-  if (params.storyId) searchParams.set("storyId", params.storyId);
-  if (params.taskId) searchParams.set("taskId", params.taskId);
-  if (params.workspaceId) searchParams.set("workspaceId", params.workspaceId);
+  if (params.workspaceId) searchParams.set("workspace_id", params.workspaceId);
 }
 
 export async function listAddressSpaces(
-  params?: Omit<ListAddressEntriesParams, "query">,
+  params?: AddressSpaceQueryParams,
 ): Promise<ListAddressSpacesResponse> {
   const searchParams = new URLSearchParams();
-  appendAddressSpaceParams(searchParams, params);
+  applyQueryParams(searchParams, params);
 
-  const url = buildApiPath(`/address-spaces${searchParams.toString() ? `?${searchParams}` : ""}`);
+  const qs = searchParams.toString();
+  const url = buildApiPath(`/address-spaces${qs ? `?${qs}` : ""}`);
   const res = await fetch(url);
 
   if (!res.ok) {
@@ -67,14 +72,15 @@ export async function listAddressSpaces(
 
 export async function listAddressEntries(
   spaceId: string,
-  params?: ListAddressEntriesParams,
-): Promise<ListAddressEntriesResponse> {
+  params?: ListEntriesParams,
+): Promise<ListEntriesResponse> {
   const searchParams = new URLSearchParams();
-  appendAddressSpaceParams(searchParams, params);
+  applyQueryParams(searchParams, params);
   if (params?.query) searchParams.set("query", params.query);
 
+  const qs = searchParams.toString();
   const url = buildApiPath(
-    `/address-spaces/${encodeURIComponent(spaceId)}/entries${searchParams.toString() ? `?${searchParams}` : ""}`,
+    `/address-spaces/${encodeURIComponent(spaceId)}/entries${qs ? `?${qs}` : ""}`,
   );
   const res = await fetch(url);
 

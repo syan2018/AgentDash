@@ -79,7 +79,13 @@ export interface ResourceRef {
   resource_type: string;
 }
 
-export type ContextSourceKind = "manual_text" | "file" | "project_snapshot";
+export type ContextSourceKind =
+  | "manual_text"
+  | "file"
+  | "project_snapshot"
+  | "http_fetch"
+  | "mcp_resource"
+  | "entity_ref";
 export type ContextSlot = "requirements" | "constraints" | "codebase" | "references" | "instruction_append";
 export type ContextDelivery = "inline" | "resource" | "lazy";
 

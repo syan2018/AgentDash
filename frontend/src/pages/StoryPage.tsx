@@ -16,7 +16,6 @@ import { StorySessionPanel } from "../features/story/story-session-panel";
 import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../components/ui/status-badge";
 import { TaskList } from "../features/task/task-list";
 import { TaskDrawer } from "../features/task/task-drawer";
-import { FilePickerPopup } from "../features/file-reference";
 import { AgentBindingFields } from "../features/task/agent-binding-fields";
 import {
   createDefaultAgentBinding,
@@ -27,8 +26,8 @@ import {
 import { useStoryStore } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { listAddressEntries, listAddressSpaces, type AddressSpaceDescriptor } from "../services/addressSpaces";
-import type { FileEntry } from "../services/workspaceFiles";
+import type { AddressEntry } from "../services/addressSpaces";
+import { useAddressSpacePicker, AddressEntryPickerPopup } from "../features/context-source";
 import {
   DangerConfirmDialog,
   DetailMenu,
@@ -411,16 +410,14 @@ function ContextPanel({
   );
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [fileSpace, setFileSpace] = useState<AddressSpaceDescriptor | null>(null);
-  const [fileSpaceError, setFileSpaceError] = useState<string | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerQuery, setPickerQuery] = useState("");
-  const [pickerFiles, setPickerFiles] = useState<FileEntry[]>([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerError, setPickerError] = useState<string | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [activeDraftIndex, setActiveDraftIndex] = useState<number | null>(null);
   const hasLegacyContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
+
+  const filePicker = useAddressSpacePicker({
+    spaceId: "workspace_file",
+    workspaceId: defaultWorkspaceId,
+    resetKey: story.id,
+  });
 
   useEffect(() => {
     if (isEditing) return;
@@ -431,48 +428,8 @@ function ContextPanel({
     setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
     setMessage(null);
     setIsEditing(false);
-    setPickerOpen(false);
-    setPickerQuery("");
-    setPickerFiles([]);
-    setPickerError(null);
-    setSelectedIndex(0);
     setActiveDraftIndex(null);
   }, [story.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadAvailableSpaces() {
-      if (!defaultWorkspaceId) {
-        setFileSpace(null);
-        setFileSpaceError("当前 Project 尚未配置默认工作空间，暂时无法快捷选择文件。");
-        return;
-      }
-
-      try {
-        setFileSpaceError(null);
-        const result = await listAddressSpaces({
-          storyId: story.id,
-          workspaceId: defaultWorkspaceId,
-        });
-        if (cancelled) return;
-        const workspaceFileSpace = result.spaces.find((item) => item.id === "workspace_file") ?? null;
-        setFileSpace(workspaceFileSpace);
-        if (!workspaceFileSpace) {
-          setFileSpaceError("当前环境未暴露工作空间文件寻址能力。");
-        }
-      } catch (err) {
-        if (cancelled) return;
-        setFileSpace(null);
-        setFileSpaceError(err instanceof Error ? err.message : "加载寻址空间失败");
-      }
-    }
-
-    void loadAvailableSpaces();
-    return () => {
-      cancelled = true;
-    };
-  }, [defaultWorkspaceId, story.id]);
 
   const updateDraft = (index: number, patch: Partial<StoryFileContextDraft>) => {
     setDrafts((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
@@ -489,70 +446,25 @@ function ContextPanel({
     setDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
   };
 
-  const loadPickerFiles = async (query: string) => {
-    if (!fileSpace || !defaultWorkspaceId) {
-      setPickerFiles([]);
-      setPickerError("当前没有可用的工作空间文件寻址能力");
-      return;
-    }
-
-    setPickerLoading(true);
-    setPickerError(null);
-    try {
-      const result = await listAddressEntries(fileSpace.id, {
-        storyId: story.id,
-        workspaceId: defaultWorkspaceId,
-        query,
-      });
-      setPickerFiles(result.entries.filter((item) => item.isText));
-      setSelectedIndex(0);
-    } catch (err) {
-      setPickerFiles([]);
-      setPickerError(err instanceof Error ? err.message : "加载文件列表失败");
-    } finally {
-      setPickerLoading(false);
-    }
-  };
-
   const openDraftPicker = (index: number) => {
     setActiveDraftIndex(index);
-    setPickerOpen(true);
-    setPickerQuery("");
-    setSelectedIndex(0);
-    void loadPickerFiles("");
+    filePicker.openPicker();
   };
 
   const closeDraftPicker = () => {
-    setPickerOpen(false);
-    setPickerQuery("");
-    setPickerFiles([]);
-    setPickerError(null);
-    setSelectedIndex(0);
+    filePicker.closePicker();
     setActiveDraftIndex(null);
   };
 
-  const movePickerSelection = (delta: number) => {
-    setSelectedIndex((current) => {
-      const len = pickerFiles.length;
-      if (len === 0) return 0;
-      return (current + delta + len) % len;
-    });
-  };
-
-  const handlePickerQueryChange = (query: string) => {
-    setPickerQuery(query);
-    void loadPickerFiles(query);
-  };
-
-  const handleDraftFileSelected = (file: FileEntry) => {
+  const handleDraftEntrySelected = (entry: AddressEntry) => {
     if (activeDraftIndex == null) return;
-    const fallbackLabel = file.relPath.split("/").pop() ?? file.relPath;
+    const fallbackLabel = entry.address.split("/").pop() ?? entry.address;
     setDrafts((current) =>
       current.map((item, index) =>
         index === activeDraftIndex
           ? {
               ...item,
-              relPath: file.relPath,
+              relPath: entry.address,
               label: item.label.trim() ? item.label : fallbackLabel,
             }
           : item,
@@ -649,13 +561,13 @@ function ContextPanel({
                 <p className="mt-1 text-xs text-muted-foreground">
                   这些文件会暂存在 Story 上，伴生会话会自动解析它们，创建 Task 时也可按需分配给 Task Agent。
                 </p>
-                {fileSpace?.root && (
+                {filePicker.space?.root && (
                   <p className="mt-1 break-all text-[11px] text-muted-foreground/80">
-                    当前寻址空间：{fileSpace.label} · {fileSpace.root}
+                    当前寻址空间：{filePicker.space.label} · {filePicker.space.root}
                   </p>
                 )}
-                {!fileSpace?.root && fileSpaceError && (
-                  <p className="mt-1 text-[11px] text-amber-600">{fileSpaceError}</p>
+                {!filePicker.space?.root && filePicker.spaceError && (
+                  <p className="mt-1 text-[11px] text-amber-600">{filePicker.spaceError}</p>
                 )}
               </div>
               {!isEditing ? (
@@ -717,24 +629,23 @@ function ContextPanel({
                           className="agentdash-form-input"
                         />
                         <div className="relative flex gap-2">
-                          {pickerOpen && activeDraftIndex === index && (
-                            <FilePickerPopup
-                              open={pickerOpen}
-                              query={pickerQuery}
-                              files={pickerFiles}
-                              loading={pickerLoading}
-                              error={pickerError}
-                              selectedIndex={selectedIndex}
-                              placeholder={fileSpace?.selector?.placeholder ?? "搜索工作空间文件"}
-                              emptyText={pickerQuery ? "没有匹配的工作空间文件" : "当前工作空间暂无可选文本文件"}
-                              onQueryChange={handlePickerQueryChange}
-                              onSelect={handleDraftFileSelected}
+                          {filePicker.pickerOpen && activeDraftIndex === index && (
+                            <AddressEntryPickerPopup
+                              open={filePicker.pickerOpen}
+                              query={filePicker.pickerQuery}
+                              entries={filePicker.pickerEntries}
+                              loading={filePicker.pickerLoading}
+                              error={filePicker.pickerError}
+                              selectedIndex={filePicker.selectedIndex}
+                              placeholder={filePicker.space?.selector?.placeholder ?? "搜索工作空间文件"}
+                              emptyText={filePicker.pickerQuery ? "没有匹配的工作空间文件" : "当前工作空间暂无可选文件"}
+                              onQueryChange={filePicker.updatePickerQuery}
+                              onSelect={handleDraftEntrySelected}
                               onClose={closeDraftPicker}
-                              onMoveSelection={movePickerSelection}
+                              onMoveSelection={filePicker.moveSelection}
                               onConfirmSelection={() => {
-                                const file = pickerFiles[selectedIndex];
-                                if (!file) return;
-                                handleDraftFileSelected(file);
+                                const entry = filePicker.confirmSelection();
+                                if (entry) handleDraftEntrySelected(entry);
                               }}
                             />
                           )}
@@ -747,7 +658,7 @@ function ContextPanel({
                           <button
                             type="button"
                             onClick={() => openDraftPicker(index)}
-                            disabled={!fileSpace}
+                            disabled={!filePicker.isAvailable}
                             className="rounded-[10px] border border-border bg-background px-3 py-2 text-xs text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             选择文件

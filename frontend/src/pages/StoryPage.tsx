@@ -477,18 +477,20 @@ function ContextPanel({
     await persistSourceRefs(next, `已添加文件：${entry.label}`);
   }, [sourceRefs, persistSourceRefs, filePicker]);
 
+  const closeTextForm = useCallback(() => {
+    setAddingText(false);
+    setNewTextLabel("");
+    setNewTextContent("");
+  }, []);
+
   const handleAddManualText = useCallback(async () => {
     const content = newTextContent.trim();
     if (!content) return;
     const newRef = buildManualTextSource(content, newTextLabel, sourceRefs.length);
     const next = [...sourceRefs, newRef];
     const ok = await persistSourceRefs(next, "已添加文本上下文");
-    if (ok) {
-      setAddingText(false);
-      setNewTextLabel("");
-      setNewTextContent("");
-    }
-  }, [newTextContent, newTextLabel, sourceRefs, persistSourceRefs]);
+    if (ok) closeTextForm();
+  }, [newTextContent, newTextLabel, sourceRefs, persistSourceRefs, closeTextForm]);
 
   return (
     <div className="space-y-2">
@@ -571,44 +573,7 @@ function ContextPanel({
         </p>
       )}
 
-      {/* 新增文本表单 */}
-      {addingText && (
-        <div className="space-y-2 rounded-[8px] border border-primary/20 bg-primary/5 p-2.5">
-          <input
-            value={newTextLabel}
-            onChange={(e) => setNewTextLabel(e.target.value)}
-            placeholder="标签（可选）"
-            className="agentdash-form-input"
-            autoFocus
-          />
-          <textarea
-            value={newTextContent}
-            onChange={(e) => setNewTextContent(e.target.value)}
-            placeholder="输入文本内容…"
-            rows={3}
-            className="agentdash-form-input resize-y"
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void handleAddManualText()}
-              disabled={isSaving || !newTextContent.trim()}
-              className="agentdash-button-primary"
-            >
-              {isSaving ? "保存中…" : "添加"}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setAddingText(false); setNewTextLabel(""); setNewTextContent(""); }}
-              className="agentdash-button-secondary"
-            >
-              取消
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 内联文件选择器 */}
+      {/* 内联添加区（文件选择器 / 文本表单，互斥） */}
       {filePicker.pickerOpen && (
         <AddressEntryPickerInline
           open={filePicker.pickerOpen}
@@ -629,34 +594,79 @@ function ContextPanel({
           }}
         />
       )}
+      {addingText && (
+        <div className="rounded-[8px] border border-border bg-background/80">
+          <div className="flex items-center gap-2 px-2.5 py-1.5">
+            <span className="text-xs text-muted-foreground">Aa</span>
+            <input
+              value={newTextLabel}
+              onChange={(e) => setNewTextLabel(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") closeTextForm(); }}
+              placeholder="标签（可选）"
+              className="flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={closeTextForm}
+              className="rounded-[4px] p-0.5 text-muted-foreground/50 transition-colors hover:text-foreground"
+            >
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="border-t border-border px-2.5 py-1.5">
+            <textarea
+              value={newTextContent}
+              onChange={(e) => setNewTextContent(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") closeTextForm(); }}
+              placeholder="输入文本内容…"
+              rows={3}
+              className="w-full resize-y bg-transparent text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground/60"
+            />
+          </div>
+          <div className="flex items-center gap-2 border-t border-border px-2.5 py-1">
+            <button
+              type="button"
+              onClick={() => void handleAddManualText()}
+              disabled={isSaving || !newTextContent.trim()}
+              className="rounded-[6px] bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+            >
+              {isSaving ? "保存中…" : "添加"}
+            </button>
+            <span className="text-[10px] text-muted-foreground/50">Esc 取消</span>
+          </div>
+        </div>
+      )}
 
-      {/* 操作栏 */}
+      {/* 操作栏（两个都没展开时才显示按钮） */}
       <div className="flex items-center gap-2 pt-1">
-        {!filePicker.pickerOpen && (
-          <button
-            type="button"
-            onClick={filePicker.openPicker}
-            disabled={!filePicker.isAvailable || isSaving}
-            className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            文件
-          </button>
-        )}
-        {!addingText && (
-          <button
-            type="button"
-            onClick={() => setAddingText(true)}
-            disabled={isSaving}
-            className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            文本
-          </button>
+        {!filePicker.pickerOpen && !addingText && (
+          <>
+            <button
+              type="button"
+              onClick={() => { filePicker.openPicker(); }}
+              disabled={!filePicker.isAvailable || isSaving}
+              className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              文件
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAddingText(true); }}
+              disabled={isSaving}
+              className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              文本
+            </button>
+          </>
         )}
         {filePicker.spaceError && !filePicker.space && (
           <span className="text-[10px] text-amber-600">{filePicker.spaceError}</span>

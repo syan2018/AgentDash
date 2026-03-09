@@ -236,16 +236,21 @@ pub async fn execute_start_task(
     override_prompt: Option<String>,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<StartTaskResult, TaskExecutionError> {
-    let gateway = AppStateTaskExecutionGateway::new(state);
-    agentdash_application::task_execution::start_task(
-        &gateway,
-        StartTaskCommand {
-            task_id,
-            override_prompt,
-            executor_config,
-        },
-    )
-    .await
+    state
+        .task_lock_map
+        .with_lock(task_id, || async {
+            let gateway = AppStateTaskExecutionGateway::new(state.clone());
+            agentdash_application::task_execution::start_task(
+                &gateway,
+                StartTaskCommand {
+                    task_id,
+                    override_prompt,
+                    executor_config,
+                },
+            )
+            .await
+        })
+        .await
 }
 
 pub async fn execute_continue_task(
@@ -254,24 +259,34 @@ pub async fn execute_continue_task(
     additional_prompt: Option<String>,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<ContinueTaskResult, TaskExecutionError> {
-    let gateway = AppStateTaskExecutionGateway::new(state);
-    agentdash_application::task_execution::continue_task(
-        &gateway,
-        ContinueTaskCommand {
-            task_id,
-            additional_prompt,
-            executor_config,
-        },
-    )
-    .await
+    state
+        .task_lock_map
+        .with_lock(task_id, || async {
+            let gateway = AppStateTaskExecutionGateway::new(state.clone());
+            agentdash_application::task_execution::continue_task(
+                &gateway,
+                ContinueTaskCommand {
+                    task_id,
+                    additional_prompt,
+                    executor_config,
+                },
+            )
+            .await
+        })
+        .await
 }
 
 pub async fn execute_cancel_task(
     state: Arc<AppState>,
     task_id: Uuid,
 ) -> Result<Task, TaskExecutionError> {
-    let gateway = AppStateTaskExecutionGateway::new(state);
-    agentdash_application::task_execution::cancel_task(&gateway, task_id).await
+    state
+        .task_lock_map
+        .with_lock(task_id, || async {
+            let gateway = AppStateTaskExecutionGateway::new(state.clone());
+            agentdash_application::task_execution::cancel_task(&gateway, task_id).await
+        })
+        .await
 }
 
 pub async fn execute_get_task_session(

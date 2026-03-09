@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+use agentdash_application::task_lock::TaskLockMap;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
@@ -37,6 +38,8 @@ pub struct AppState {
     pub connector: Arc<dyn AgentConnector>,
     /// MCP 服务基础 URL（用于向 Agent 注入 MCP 端点信息）
     pub mcp_base_url: Option<String>,
+    /// Per-Task 异步操作锁，确保同一 Task 的生命周期操作串行执行
+    pub task_lock_map: TaskLockMap,
 }
 
 impl AppState {
@@ -132,6 +135,7 @@ impl AppState {
             executor_hub,
             connector,
             mcp_base_url,
+            task_lock_map: TaskLockMap::new(),
         })
     }
 }

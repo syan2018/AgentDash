@@ -453,6 +453,8 @@ pub async fn delete_task(
         .delete_task_with_story_update(task_id)
         .await?;
 
+    state.restart_tracker.clear(task_id);
+
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 

@@ -1,11 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSourceKind {
     ManualText,
     File,
     ProjectSnapshot,
+    /// HTTP(S) 远程资源（locator 为 URL）
+    HttpFetch,
+    /// MCP Server 暴露的资源（locator 为 `server_name/resource_uri`）
+    McpResource,
+    /// Story/Task 等实体的结构化引用（locator 为 `entity_type/entity_id`）
+    EntityRef,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

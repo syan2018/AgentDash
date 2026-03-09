@@ -1,270 +1,159 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
-use axum::{
-    Json,
-    extract::{Path, Query, State},
-};
+use axum::Json;
+use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
+
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
-use crate::routes::workspace_files::{
-    FileEntry, MAX_LIST_RESULTS, normalize_path_display, walk_files,
-};
-
-const WORKSPACE_FILE_SPACE_ID: &str = "workspace_file";
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddressSpaceQuery {
-    pub project_id: Option<String>,
-    pub story_id: Option<String>,
-    pub task_id: Option<String>,
+pub struct AddressSpacesQuery {
     pub workspace_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddressEntriesQuery {
-    pub project_id: Option<String>,
-    pub story_id: Option<String>,
-    pub task_id: Option<String>,
-    pub workspace_id: Option<String>,
-    pub query: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddressSpaceSelectorResponse {
-    pub trigger: String,
-    pub placeholder: String,
-    pub result_item_type: String,
+pub struct AddressSpacesResponse {
+    pub spaces: Vec<AddressSpaceDescriptor>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddressSpaceDescriptorResponse {
-    pub id: String,
-    pub label: String,
-    pub kind: String,
-    pub provider: String,
-    pub supports: Vec<String>,
-    pub root: Option<String>,
-    pub workspace_id: Option<String>,
-    pub selector: Option<AddressSpaceSelectorResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListAddressSpacesResponse {
-    pub spaces: Vec<AddressSpaceDescriptorResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListAddressEntriesResponse {
-    pub space_id: String,
-    pub root: String,
-    pub workspace_id: String,
-    pub entries: Vec<FileEntry>,
-}
-
+/// `GET /api/address-spaces` — 能力发现端点
+///
+/// 返回当前环境下可用的寻址空间列表。
+/// 前端据此决定显示哪些引用入口（文件选择、MCP 资源、实体引用等）。
 pub async fn list_address_spaces(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<AddressSpaceQuery>,
-) -> Result<Json<ListAddressSpacesResponse>, ApiError> {
-    let workspace = resolve_workspace_from_query(&state, &query).await?;
+    Query(query): Query<AddressSpacesQuery>,
+) -> Result<Json<AddressSpacesResponse>, ApiError> {
+    let workspace_root = if let Some(ws_id_str) = &query.workspace_id {
+        let ws_id = Uuid::parse_str(ws_id_str)
+            .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
+        state
+            .workspace_repo
+            .get_by_id(ws_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|ws| std::path::PathBuf::from(&ws.container_ref))
+    } else {
+        None
+    };
 
-    let spaces = workspace
-        .as_ref()
-        .map(|workspace| {
-            vec![AddressSpaceDescriptorResponse {
-                id: WORKSPACE_FILE_SPACE_ID.to_string(),
-                label: "工作空间文件".to_string(),
-                kind: "file".to_string(),
-                provider: "workspace".to_string(),
-                supports: vec!["search".to_string(), "browse".to_string(), "read".to_string()],
-                root: Some(normalize_path_display(PathBuf::from(&workspace.container_ref).as_path())),
-                workspace_id: Some(workspace.id.to_string()),
-                selector: Some(AddressSpaceSelectorResponse {
-                    trigger: "@".to_string(),
-                    placeholder: "搜索工作空间文件".to_string(),
-                    result_item_type: "file".to_string(),
-                }),
-            }]
-        })
-        .unwrap_or_default();
+    let has_mcp = state.mcp_base_url.is_some();
+    let ctx = AddressSpaceContext {
+        workspace_root: workspace_root.as_deref(),
+        has_mcp,
+    };
 
-    Ok(Json(ListAddressSpacesResponse { spaces }))
+    let spaces = state.address_space_registry.available_spaces(&ctx);
+
+    Ok(Json(AddressSpacesResponse { spaces }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ListEntriesQuery {
+    #[serde(default)]
+    pub query: Option<String>,
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AddressEntry {
+    pub address: String,
+    pub label: String,
+    pub entry_type: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListEntriesResponse {
+    pub entries: Vec<AddressEntry>,
+}
+
+/// `GET /api/address-spaces/{space_id}/entries` — 条目搜索端点
+///
+/// 根据 space_id 和可选的搜索 query，返回匹配的引用候选条目。
+/// 当前仅 `workspace_file` 空间支持条目检索（复用现有 workspace-files 能力）。
 pub async fn list_address_entries(
     State(state): State<Arc<AppState>>,
     Path(space_id): Path<String>,
-    Query(query): Query<AddressEntriesQuery>,
-) -> Result<Json<ListAddressEntriesResponse>, ApiError> {
-    if space_id != WORKSPACE_FILE_SPACE_ID {
-        return Err(ApiError::NotFound(format!("不支持的寻址空间: {space_id}")));
+    Query(query): Query<ListEntriesQuery>,
+) -> Result<Json<ListEntriesResponse>, ApiError> {
+    match space_id.as_str() {
+        "workspace_file" => {
+            let ws_id_str = query.workspace_id.as_deref().ok_or_else(|| {
+                ApiError::BadRequest("workspace_file 空间需要提供 workspace_id".into())
+            })?;
+            let ws_id = Uuid::parse_str(ws_id_str)
+                .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
+            let workspace = state
+                .workspace_repo
+                .get_by_id(ws_id)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+                .ok_or_else(|| ApiError::NotFound(format!("Workspace {ws_id} 不存在")))?;
+
+            let root = std::path::Path::new(&workspace.container_ref);
+            let search_query = query.query.as_deref().unwrap_or("");
+            let entries = list_workspace_file_entries(root, search_query);
+
+            Ok(Json(ListEntriesResponse { entries }))
+        }
+        _ => Err(ApiError::NotFound(format!(
+            "寻址空间 '{space_id}' 不存在或不支持条目检索"
+        ))),
     }
-
-    let workspace = resolve_workspace_from_entry_query(&state, &query)
-        .await?
-        .ok_or_else(|| ApiError::BadRequest("当前环境没有可用的工作空间文件寻址能力".into()))?;
-
-    let root = PathBuf::from(&workspace.container_ref);
-    let pattern = query.query.unwrap_or_default().to_lowercase();
-    let root_for_walk = root.clone();
-    let entries = tokio::task::spawn_blocking(move || walk_files(&root_for_walk, &pattern, MAX_LIST_RESULTS))
-        .await
-        .map_err(|e| ApiError::Internal(format!("文件列表任务异常: {e}")))?;
-
-    Ok(Json(ListAddressEntriesResponse {
-        space_id,
-        root: normalize_path_display(root.as_path()),
-        workspace_id: workspace.id.to_string(),
-        entries,
-    }))
 }
 
-async fn resolve_workspace_from_entry_query(
-    state: &Arc<AppState>,
-    query: &AddressEntriesQuery,
-) -> Result<Option<Workspace>, ApiError> {
-    resolve_workspace(
-        state,
-        query.project_id.as_deref(),
-        query.story_id.as_deref(),
-        query.task_id.as_deref(),
-        query.workspace_id.as_deref(),
-    )
-    .await
-}
+fn list_workspace_file_entries(root: &std::path::Path, query: &str) -> Vec<AddressEntry> {
+    let query_lower = query.to_lowercase();
+    let mut entries = Vec::new();
 
-async fn resolve_workspace_from_query(
-    state: &Arc<AppState>,
-    query: &AddressSpaceQuery,
-) -> Result<Option<Workspace>, ApiError> {
-    resolve_workspace(
-        state,
-        query.project_id.as_deref(),
-        query.story_id.as_deref(),
-        query.task_id.as_deref(),
-        query.workspace_id.as_deref(),
-    )
-    .await
-}
+    let walker = walkdir::WalkDir::new(root)
+        .max_depth(4)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            !matches!(
+                name.as_ref(),
+                "node_modules" | "target" | ".git" | ".next" | "dist" | "__pycache__"
+            )
+        });
 
-async fn resolve_workspace(
-    state: &Arc<AppState>,
-    project_id: Option<&str>,
-    story_id: Option<&str>,
-    task_id: Option<&str>,
-    workspace_id: Option<&str>,
-) -> Result<Option<Workspace>, ApiError> {
-    if let Some(workspace_id) = workspace_id {
-        let workspace_id = parse_uuid(workspace_id, "workspace_id")?;
-        return state
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()));
+    for entry in walker.filter_map(|e| e.ok()) {
+        if entry.path() == root {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .display()
+            .to_string()
+            .replace('\\', "/");
+
+        if !query_lower.is_empty() && !rel.to_lowercase().contains(&query_lower) {
+            continue;
+        }
+
+        let entry_type = if entry.file_type().is_dir() {
+            "directory"
+        } else {
+            "file"
+        };
+
+        entries.push(AddressEntry {
+            label: rel.clone(),
+            address: rel,
+            entry_type: entry_type.to_string(),
+        });
+
+        if entries.len() >= 50 {
+            break;
+        }
     }
 
-    if let Some(task_id) = task_id {
-        let task_id = parse_uuid(task_id, "task_id")?;
-        let task = state
-            .task_repo
-            .get_by_id(task_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-        return resolve_workspace_for_task(state, &task).await;
-    }
-
-    if let Some(story_id) = story_id {
-        let story_id = parse_uuid(story_id, "story_id")?;
-        let story = state
-            .story_repo
-            .get_by_id(story_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
-        return resolve_workspace_for_story(state, &story).await;
-    }
-
-    if let Some(project_id) = project_id {
-        let project_id = parse_uuid(project_id, "project_id")?;
-        let project = state
-            .project_repo
-            .get_by_id(project_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))?;
-        return resolve_workspace_for_project(state, &project).await;
-    }
-
-    Ok(None)
-}
-
-async fn resolve_workspace_for_task(
-    state: &Arc<AppState>,
-    task: &Task,
-) -> Result<Option<Workspace>, ApiError> {
-    if let Some(workspace_id) = task.workspace_id {
-        return state
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()));
-    }
-
-    let story = state
-        .story_repo
-        .get_by_id(task.story_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", task.story_id)))?;
-
-    resolve_workspace_for_story(state, &story).await
-}
-
-async fn resolve_workspace_for_story(
-    state: &Arc<AppState>,
-    story: &Story,
-) -> Result<Option<Workspace>, ApiError> {
-    let project = state
-        .project_repo
-        .get_by_id(story.project_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
-
-    resolve_workspace_for_project(state, &project).await
-}
-
-async fn resolve_workspace_for_project(
-    state: &Arc<AppState>,
-    project: &Project,
-) -> Result<Option<Workspace>, ApiError> {
-    if let Some(workspace_id) = project.config.default_workspace_id {
-        return state
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()));
-    }
-
-    let workspaces = state
-        .workspace_repo
-        .list_by_project(project.id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(workspaces.into_iter().next())
-}
-
-fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(raw.trim()).map_err(|_| ApiError::BadRequest(format!("无效的 {field}")))
+    entries
 }

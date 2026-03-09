@@ -31,7 +31,7 @@ impl Contribution {
 ///
 /// 通过 Contributor 模式，新的上下文来源只需实现此 trait 并注册到构建流程，
 /// 无需修改核心构建逻辑。
-pub trait ContextContributor: Send {
+pub trait ContextContributor: Send + Sync {
     fn contribute(&self, input: &ContributorInput<'_>) -> Contribution;
 }
 
@@ -355,6 +355,42 @@ const DEFAULT_CONTINUE_TEMPLATE: &str = r#"请在当前会话上下文基础上�
 Story：{{story_title}}
 工作目录：{{workspace_path}}"#;
 
+/// 上下文贡献者注册表 — 持有"常驻"贡献者，避免在构建函数中硬编码
+///
+/// 存放在 `AppState` 中，所有 Task 构建共享同一注册表实例。
+/// 动态/per-request 贡献者（如 MCP 注入）通过 `extra_contributors` 传入。
+pub struct ContextContributorRegistry {
+    contributors: Vec<Box<dyn ContextContributor>>,
+}
+
+impl ContextContributorRegistry {
+    /// 创建包含内置贡献者的注册表
+    pub fn with_builtins() -> Self {
+        Self {
+            contributors: vec![
+                Box::new(CoreContextContributor),
+                Box::new(BindingContextContributor),
+                Box::new(DeclaredSourcesContributor),
+                Box::new(InstructionContributor),
+            ],
+        }
+    }
+
+    /// 注册新的常驻贡献者
+    pub fn register(&mut self, contributor: Box<dyn ContextContributor>) {
+        self.contributors.push(contributor);
+    }
+
+    /// 常驻贡献者数量
+    pub fn len(&self) -> usize {
+        self.contributors.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.contributors.is_empty()
+    }
+}
+
 pub struct TaskAgentBuildInput<'a> {
     pub task: &'a Task,
     pub story: &'a Story,
@@ -363,12 +399,13 @@ pub struct TaskAgentBuildInput<'a> {
     pub phase: TaskExecutionPhase,
     pub override_prompt: Option<&'a str>,
     pub additional_prompt: Option<&'a str>,
-    /// 额外的上下文贡献者（如 MCP 注入）
+    /// per-request 动态贡献者（如 MCP 注入，每次构建内容不同）
     pub extra_contributors: Vec<Box<dyn ContextContributor>>,
 }
 
 pub fn build_task_agent_context(
     input: TaskAgentBuildInput<'_>,
+    registry: &ContextContributorRegistry,
 ) -> Result<BuiltTaskAgentContext, String> {
     let contributor_input = ContributorInput {
         task: input.task,
@@ -382,20 +419,15 @@ pub fn build_task_agent_context(
 
     let working_dir = input.workspace.map(|w| w.container_ref.clone());
 
-    let builtin_contributors: Vec<Box<dyn ContextContributor>> = vec![
-        Box::new(CoreContextContributor),
-        Box::new(BindingContextContributor),
-        Box::new(DeclaredSourcesContributor),
-        Box::new(InstructionContributor),
-    ];
-
-    let all_contributors = builtin_contributors
-        .into_iter()
-        .chain(input.extra_contributors);
-
     let mut context_composer = ContextComposer::default();
     let mut instruction_composer = ContextComposer::default();
     let mut mcp_servers: Vec<McpServer> = Vec::new();
+
+    let all_contributors = registry
+        .contributors
+        .iter()
+        .map(|c| c.as_ref())
+        .chain(input.extra_contributors.iter().map(|c| c.as_ref()));
 
     for contributor in all_contributors {
         let contribution = contributor.contribute(&contributor_input);
@@ -605,16 +637,20 @@ mod tests {
             content: "## MCP: agentdash-task-tools\n- url: http://localhost:3001/mcp/task/abc\n- scope: task\n可通过此 MCP Server 更新 Task 状态".to_string(),
         };
 
-        let result = build_task_agent_context(TaskAgentBuildInput {
-            task: &task,
-            story: &story,
-            project: &project,
-            workspace: None,
-            phase: TaskExecutionPhase::Start,
-            override_prompt: None,
-            additional_prompt: None,
-            extra_contributors: vec![Box::new(mcp_contributor)],
-        })
+        let registry = ContextContributorRegistry::with_builtins();
+        let result = build_task_agent_context(
+            TaskAgentBuildInput {
+                task: &task,
+                story: &story,
+                project: &project,
+                workspace: None,
+                phase: TaskExecutionPhase::Start,
+                override_prompt: None,
+                additional_prompt: None,
+                extra_contributors: vec![Box::new(mcp_contributor)],
+            },
+            &registry,
+        )
         .expect("should build context");
 
         assert!(
@@ -719,16 +755,20 @@ mod tests {
             updated_at: chrono::Utc::now(),
         };
 
-        let result = build_task_agent_context(TaskAgentBuildInput {
-            task: &task,
-            story: &story,
-            project: &project,
-            workspace: Some(&workspace),
-            phase: TaskExecutionPhase::Start,
-            override_prompt: None,
-            additional_prompt: None,
-            extra_contributors: vec![],
-        })
+        let registry = ContextContributorRegistry::with_builtins();
+        let result = build_task_agent_context(
+            TaskAgentBuildInput {
+                task: &task,
+                story: &story,
+                project: &project,
+                workspace: Some(&workspace),
+                phase: TaskExecutionPhase::Start,
+                override_prompt: None,
+                additional_prompt: None,
+                extra_contributors: vec![],
+            },
+            &registry,
+        )
         .expect("should build context");
 
         let context_block = result.prompt_blocks[0]["resource"]["text"]

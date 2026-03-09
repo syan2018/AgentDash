@@ -808,13 +808,37 @@ lines.push('  Read("/vcs/status")                      -- git status');
 >
 > **Phase 1 全部完成 ✅**
 
+### Phase 1.5：Phase 1 遗留缺口修复
+
+| 序号 | 任务 | 影响范围 | 状态 |
+|------|------|---------|------|
+| 1.5a | OneShot 模式 session 清理 | `task_execution_gateway.rs` | ✅ 已落地 |
+| 1.5b | RestartTracker.clear() 调用点 | `task_execution_gateway.rs` + `stories.rs` | ✅ 已落地 |
+
+> **落地说明（2026-03-09）**：
+> - OneShot turn_completed：直接标记 `Completed`（而非 `AwaitingVerification`），并通过 `clear_task_session_binding` 清除 session_id / executor_session_id。
+> - OneShot 失败：标记 `Failed` 后同步清理 session 绑定。
+> - `RestartTracker.clear()`：在 `execute_cancel_task` 成功后和 `delete_task` 删除后调用，防止状态残留。
+> - 新增 `clear_task_session_binding` 辅助函数，best-effort 语义。
+>
+> **Phase 1.5 全部完成 ✅**
+
 ### Phase 2：上下文增强（建议 2-3 周）
 
-| 序号 | 任务 | 参考 | 影响范围 |
-|------|------|------|---------|
-| 4 | ContextContributor 注册表化 | §4.3 | `task_agent_context.rs` |
-| 5 | MCP 工具 Scope 分级 | §4.4 | `agentdash-mcp/` |
-| 6 | 工作区文件预物化（双层策略） | §4.2 | `task_execution_gateway.rs` |
+| 序号 | 任务 | 参考 | 影响范围 | 状态 |
+|------|------|------|---------|------|
+| 4 | ContextContributor 注册表化 | §4.3 | `task_agent_context.rs` + `app_state.rs` | ✅ 已落地 |
+| 4b | SourceResolver 注册表化 | §4.3 延伸 | `agentdash-injection/resolver.rs` | ✅ 已落地 |
+| 4c | 统一寻址空间基础设施 | PRD `03-07` | `agentdash-injection/address_space.rs` + `routes/address_spaces.rs` | ✅ 已落地 |
+| 4d | ContextSourceKind 扩展 | PRD `03-07` | `agentdash-domain/context_source.rs` | ✅ 已落地 |
+| 5 | MCP 工具 Scope 分级 | §4.4 | `agentdash-mcp/` | 🔲 待实现 |
+| 6 | 工作区文件预物化（双层策略） | §4.2 | `task_execution_gateway.rs` | 🔲 待实现 |
+
+> **落地说明（2026-03-09）**：
+> - §4.3 ContextContributor 注册表化：新增 `ContextContributorRegistry`，持有常驻贡献者（Core / Binding / DeclaredSources / Instruction），存入 `AppState`。`build_task_agent_context` 改为接收 registry 引用 + per-request extras，不再硬编码贡献者列表。`ContextContributor` trait 增加 `Sync` bound。
+> - SourceResolver 注册表化：新增 `SourceResolverRegistry`，按 `ContextSourceKind` 注册解析器。内置三种解析器，未注册的 kind 产出 warning 而非 panic。新增 `resolve_declared_sources_with_registry` 入口。
+> - 统一寻址空间：新增 `AddressSpaceProvider` trait + `AddressSpaceRegistry`，内置 WorkspaceFile / WorkspaceSnapshot / McpResource 三个 Provider。新增 `GET /api/address-spaces` 能力发现端点和 `GET /api/address-spaces/{space_id}/entries` 条目搜索端点。
+> - ContextSourceKind 扩展：新增 `HttpFetch` / `McpResource` / `EntityRef` 三个变体，为未来的统一寻址空间铺路。
 
 ### Phase 3：工作流自动化（建议 2-4 周）
 

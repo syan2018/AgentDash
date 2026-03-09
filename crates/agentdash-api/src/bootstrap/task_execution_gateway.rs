@@ -116,19 +116,22 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             extra_contributors.push(Box::new(McpContextContributor::new(config)));
         }
 
-        let built = build_task_agent_context(TaskAgentBuildInput {
-            task,
-            story: &story,
-            project: &project,
-            workspace: workspace.as_ref(),
-            phase: match phase {
-                ExecutionPhase::Start => TaskExecutionPhase::Start,
-                ExecutionPhase::Continue => TaskExecutionPhase::Continue,
+        let built = build_task_agent_context(
+            TaskAgentBuildInput {
+                task,
+                story: &story,
+                project: &project,
+                workspace: workspace.as_ref(),
+                phase: match phase {
+                    ExecutionPhase::Start => TaskExecutionPhase::Start,
+                    ExecutionPhase::Continue => TaskExecutionPhase::Continue,
+                },
+                override_prompt,
+                additional_prompt,
+                extra_contributors,
             },
-            override_prompt,
-            additional_prompt,
-            extra_contributors,
-        })
+            &self.state.contributor_registry,
+        )
         .map_err(TaskExecutionError::UnprocessableEntity)?;
 
         let session_id = task
@@ -281,13 +284,19 @@ pub async fn execute_cancel_task(
     state: Arc<AppState>,
     task_id: Uuid,
 ) -> Result<Task, TaskExecutionError> {
-    state
+    let result = state
         .task_lock_map
         .with_lock(task_id, || async {
             let gateway = AppStateTaskExecutionGateway::new(state.clone());
             agentdash_application::task_execution::cancel_task(&gateway, task_id).await
         })
-        .await
+        .await;
+
+    if result.is_ok() {
+        state.restart_tracker.clear(task_id);
+    }
+
+    result
 }
 
 pub async fn execute_get_task_session(
@@ -515,19 +524,42 @@ async fn handle_turn_notification(
             if let Some((event_type, message)) = parse_turn_event(info.meta.as_ref(), turn_id) {
                 match event_type.as_str() {
                     "turn_completed" => {
-                        state.restart_tracker.record_stable_start(task_id);
-                        let _ = update_task_status(
-                            state,
-                            task_id,
-                            backend_id,
-                            TaskStatus::AwaitingVerification,
-                            "turn_completed",
-                            json!({
-                                "session_id": session_id,
-                                "turn_id": turn_id,
-                            }),
-                        )
-                        .await?;
+                        if *execution_mode == TaskExecutionMode::OneShot {
+                            tracing::info!(
+                                task_id = %task_id,
+                                session_id = %session_id,
+                                turn_id = %turn_id,
+                                "Turn 完成 [OneShot]，直接标记 Completed 并清理 session"
+                            );
+                            let _ = update_task_status(
+                                state,
+                                task_id,
+                                backend_id,
+                                TaskStatus::Completed,
+                                "turn_completed_oneshot",
+                                json!({
+                                    "session_id": session_id,
+                                    "turn_id": turn_id,
+                                    "execution_mode": "one_shot",
+                                }),
+                            )
+                            .await?;
+                            clear_task_session_binding(state, task_id, backend_id, "oneshot_completed").await;
+                        } else {
+                            state.restart_tracker.record_stable_start(task_id);
+                            let _ = update_task_status(
+                                state,
+                                task_id,
+                                backend_id,
+                                TaskStatus::AwaitingVerification,
+                                "turn_completed",
+                                json!({
+                                    "session_id": session_id,
+                                    "turn_id": turn_id,
+                                }),
+                            )
+                            .await?;
+                        }
                         return Ok(TurnOutcome::Completed);
                     }
                     "turn_failed" => {
@@ -653,6 +685,7 @@ async fn resolve_failure_outcome(
                 }),
             )
             .await?;
+            clear_task_session_binding(state, task_id, backend_id, "oneshot_failed").await;
             Ok(TurnOutcome::Failed)
         }
         TaskExecutionMode::Standard => {
@@ -679,6 +712,66 @@ async fn resolve_failure_outcome(
             .await?;
             Ok(TurnOutcome::Failed)
         }
+    }
+}
+
+/// 清理 Task 的 session 绑定 — OneShot 模式完成或失败后调用
+///
+/// 将 session_id 和 executor_session_id 置为 None，
+/// 使 Task 回到可重新启动的"干净"状态。
+async fn clear_task_session_binding(
+    state: &Arc<AppState>,
+    task_id: Uuid,
+    backend_id: &str,
+    reason: &str,
+) {
+    let result: Result<(), agentdash_domain::DomainError> = async {
+        let mut task = match state.task_repo.get_by_id(task_id).await? {
+            Some(task) => task,
+            None => return Ok(()),
+        };
+
+        let cleared_session_id = task.session_id.take();
+        let cleared_executor_session_id = task.executor_session_id.take();
+
+        if cleared_session_id.is_none() && cleared_executor_session_id.is_none() {
+            return Ok(());
+        }
+
+        state.task_repo.update(&task).await?;
+        state
+            .story_repo
+            .append_change(
+                task.id,
+                ChangeKind::TaskUpdated,
+                json!({
+                    "reason": format!("session_cleared_{reason}"),
+                    "task_id": task.id,
+                    "story_id": task.story_id,
+                    "cleared_session_id": cleared_session_id,
+                    "cleared_executor_session_id": cleared_executor_session_id,
+                }),
+                backend_id,
+            )
+            .await?;
+
+        tracing::info!(
+            task_id = %task_id,
+            reason = reason,
+            "已清理 Task session 绑定"
+        );
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(err) = result {
+        tracing::warn!(
+            task_id = %task_id,
+            reason = reason,
+            error = %err,
+            "清理 Task session 绑定失败（不阻塞主流程）"
+        );
     }
 }
 

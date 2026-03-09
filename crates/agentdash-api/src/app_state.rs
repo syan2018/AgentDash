@@ -5,7 +5,9 @@ use sqlx::SqlitePool;
 
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
+use agentdash_injection::AddressSpaceRegistry;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
+use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
@@ -43,6 +45,10 @@ pub struct AppState {
     pub task_lock_map: TaskLockMap,
     /// Per-Task 重启追踪器，控制失败后的自动重试策略
     pub restart_tracker: RestartTracker,
+    /// 上下文贡献者注册表 — 持有常驻贡献者（Core/Binding/DeclaredSources/Instruction 等）
+    pub contributor_registry: ContextContributorRegistry,
+    /// 寻址空间注册表 — 持有可用的资源引用能力提供者
+    pub address_space_registry: AddressSpaceRegistry,
 }
 
 impl AppState {
@@ -143,6 +149,8 @@ impl AppState {
             mcp_base_url,
             task_lock_map: TaskLockMap::new(),
             restart_tracker,
+            contributor_registry: ContextContributorRegistry::with_builtins(),
+            address_space_registry: agentdash_injection::builtin_address_space_registry(),
         })
     }
 }

@@ -3,4 +3,4 @@ export type {
   UseAddressSpacePickerOptions,
   UseAddressSpacePickerResult,
 } from "./model/useAddressSpacePicker";
-export { AddressEntryPickerPopup } from "./ui/AddressEntryPickerPopup";
+export { AddressEntryPickerPopup, AddressEntryPickerInline } from "./ui/AddressEntryPickerPopup";

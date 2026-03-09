@@ -28,7 +28,7 @@ import { useStoryStore } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { AddressEntry } from "../services/addressSpaces";
-import { useAddressSpacePicker, AddressEntryPickerPopup } from "../features/context-source";
+import { useAddressSpacePicker, AddressEntryPickerInline } from "../features/context-source";
 import {
   DangerConfirmDialog,
   DetailMenu,
@@ -608,50 +608,56 @@ function ContextPanel({
         </div>
       )}
 
+      {/* 内联文件选择器 */}
+      {filePicker.pickerOpen && (
+        <AddressEntryPickerInline
+          open={filePicker.pickerOpen}
+          query={filePicker.pickerQuery}
+          entries={filePicker.pickerEntries}
+          loading={filePicker.pickerLoading}
+          error={filePicker.pickerError}
+          selectedIndex={filePicker.selectedIndex}
+          placeholder={filePicker.space?.selector?.placeholder ?? "搜索文件…"}
+          emptyText={filePicker.pickerQuery ? "没有匹配的文件" : "暂无可选文件"}
+          onQueryChange={filePicker.updatePickerQuery}
+          onSelect={(entry) => void handleQuickAddFile(entry)}
+          onClose={filePicker.closePicker}
+          onMoveSelection={filePicker.moveSelection}
+          onConfirmSelection={() => {
+            const entry = filePicker.confirmSelection();
+            if (entry) void handleQuickAddFile(entry);
+          }}
+        />
+      )}
+
       {/* 操作栏 */}
-      <div className="relative flex items-center gap-2 pt-1">
-        {filePicker.pickerOpen && (
-          <AddressEntryPickerPopup
-            open={filePicker.pickerOpen}
-            query={filePicker.pickerQuery}
-            entries={filePicker.pickerEntries}
-            loading={filePicker.pickerLoading}
-            error={filePicker.pickerError}
-            selectedIndex={filePicker.selectedIndex}
-            placeholder={filePicker.space?.selector?.placeholder ?? "搜索文件…"}
-            emptyText={filePicker.pickerQuery ? "没有匹配的文件" : "暂无可选文件"}
-            onQueryChange={filePicker.updatePickerQuery}
-            onSelect={(entry) => void handleQuickAddFile(entry)}
-            onClose={filePicker.closePicker}
-            onMoveSelection={filePicker.moveSelection}
-            onConfirmSelection={() => {
-              const entry = filePicker.confirmSelection();
-              if (entry) void handleQuickAddFile(entry);
-            }}
-          />
+      <div className="flex items-center gap-2 pt-1">
+        {!filePicker.pickerOpen && (
+          <button
+            type="button"
+            onClick={filePicker.openPicker}
+            disabled={!filePicker.isAvailable || isSaving}
+            className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            文件
+          </button>
         )}
-        <button
-          type="button"
-          onClick={filePicker.openPicker}
-          disabled={!filePicker.isAvailable || isSaving}
-          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          文件
-        </button>
-        <button
-          type="button"
-          onClick={() => setAddingText(true)}
-          disabled={addingText || isSaving}
-          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          文本
-        </button>
+        {!addingText && (
+          <button
+            type="button"
+            onClick={() => setAddingText(true)}
+            disabled={isSaving}
+            className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            文本
+          </button>
+        )}
         {filePicker.spaceError && !filePicker.space && (
           <span className="text-[10px] text-amber-600">{filePicker.spaceError}</span>
         )}

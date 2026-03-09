@@ -13,7 +13,7 @@ function getEntryIcon(entry: AddressEntry): string {
   return icons[ext] ?? "📄";
 }
 
-interface AddressEntryPickerPopupProps {
+export interface AddressEntryPickerProps {
   open: boolean;
   query: string;
   entries: AddressEntry[];
@@ -29,7 +29,11 @@ interface AddressEntryPickerPopupProps {
   onConfirmSelection: () => void;
 }
 
-export function AddressEntryPickerPopup({
+/**
+ * 内联模式的寻址条目选择器。
+ * 渲染为正常文档流元素（非浮层），适合嵌入 overflow 容器中。
+ */
+export function AddressEntryPickerInline({
   open,
   query,
   entries,
@@ -43,7 +47,7 @@ export function AddressEntryPickerPopup({
   onClose,
   onMoveSelection,
   onConfirmSelection,
-}: AddressEntryPickerPopupProps) {
+}: AddressEntryPickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -60,18 +64,6 @@ export function AddressEntryPickerPopup({
       active.scrollIntoView({ block: "nearest" });
     }
   }, [open, selectedIndex]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-entry-picker]")) {
-        onClose();
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -97,11 +89,8 @@ export function AddressEntryPickerPopup({
   };
 
   return (
-    <div
-      data-entry-picker
-      className="absolute bottom-full left-0 z-50 mb-1 w-full max-w-lg rounded-lg border border-border bg-popover shadow-lg"
-    >
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+    <div className="rounded-[8px] border border-border bg-background/80">
+      <div className="flex items-center gap-2 px-2.5 py-1.5">
         <span className="text-xs text-muted-foreground">@</span>
         <input
           ref={inputRef}
@@ -110,19 +99,28 @@ export function AddressEntryPickerPopup({
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
+          className="flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
         />
         {loading && (
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border border-muted-foreground/40 border-t-primary" />
+          <span className="h-3 w-3 animate-spin rounded-full border border-muted-foreground/40 border-t-primary" />
         )}
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-[4px] p-0.5 text-muted-foreground/50 transition-colors hover:text-foreground"
+        >
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
       </div>
 
-      <div ref={listRef} className="max-h-60 overflow-y-auto py-1">
+      <div ref={listRef} className="max-h-40 overflow-y-auto border-t border-border py-0.5">
         {error && (
-          <div className="px-3 py-2 text-xs text-destructive">{error}</div>
+          <div className="px-2.5 py-1.5 text-xs text-destructive">{error}</div>
         )}
         {!error && entries.length === 0 && !loading && (
-          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+          <div className="px-2.5 py-3 text-center text-xs text-muted-foreground">
             {emptyText ?? (query ? "没有匹配的条目" : "暂无条目")}
           </div>
         )}
@@ -133,27 +131,51 @@ export function AddressEntryPickerPopup({
             data-selected={i === selectedIndex}
             aria-selected={i === selectedIndex}
             onClick={() => onSelect(entry)}
-            className={`relative mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-[10px] border px-3 py-2 text-left text-xs transition-colors ${
+            className={`flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs transition-colors ${
               i === selectedIndex
-                ? "border-primary/50 bg-primary/10 text-foreground shadow-sm ring-1 ring-primary/25"
-                : "border-transparent text-foreground hover:border-border hover:bg-accent/50"
+                ? "bg-primary/10 text-foreground"
+                : "text-foreground hover:bg-accent/50"
             }`}
           >
-            {i === selectedIndex && (
-              <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary" />
-            )}
-            <span className="shrink-0 text-sm">{getEntryIcon(entry)}</span>
+            <span className="shrink-0 text-xs">{getEntryIcon(entry)}</span>
             <span className="min-w-0 flex-1 truncate font-mono">{entry.label}</span>
-            <span className={`shrink-0 text-[10px] ${i === selectedIndex ? "text-foreground/60" : "text-muted-foreground/60"}`}>
-              {entry.entry_type}
-            </span>
           </button>
         ))}
       </div>
 
-      <div className="border-t border-border px-3 py-1.5 text-xs text-muted-foreground/60">
+      <div className="border-t border-border px-2.5 py-1 text-[10px] text-muted-foreground/50">
         ↑↓ 选择 · Enter 确认 · Esc 关闭
       </div>
+    </div>
+  );
+}
+
+/**
+ * 浮层模式的寻址条目选择器（保留作为 absolute popup 用途）。
+ */
+export function AddressEntryPickerPopup(props: AddressEntryPickerProps) {
+  const { open, onClose } = props;
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-entry-picker]")) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      data-entry-picker
+      className="absolute bottom-full left-0 z-50 mb-1 w-full max-w-lg rounded-lg border border-border bg-popover shadow-lg"
+    >
+      <AddressEntryPickerInline {...props} />
     </div>
   );
 }

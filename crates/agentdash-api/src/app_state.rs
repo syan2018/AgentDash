@@ -4,6 +4,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 use agentdash_application::task_lock::TaskLockMap;
+use agentdash_application::task_restart_tracker::RestartTracker;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
@@ -40,6 +41,8 @@ pub struct AppState {
     pub mcp_base_url: Option<String>,
     /// Per-Task 异步操作锁，确保同一 Task 的生命周期操作串行执行
     pub task_lock_map: TaskLockMap,
+    /// Per-Task 重启追踪器，控制失败后的自动重试策略
+    pub restart_tracker: RestartTracker,
 }
 
 impl AppState {
@@ -107,6 +110,8 @@ impl AppState {
 
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let executor_hub = ExecutorHub::new(workspace_root, connector.clone());
+        let restart_tracker = RestartTracker::default();
+
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
         let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
         let task_repo_port: Arc<dyn TaskRepository> = task_repo.clone();
@@ -115,6 +120,7 @@ impl AppState {
             &story_repo_port,
             &task_repo_port,
             &executor_hub,
+            &restart_tracker,
         )
         .await?;
 
@@ -136,6 +142,7 @@ impl AppState {
             connector,
             mcp_base_url,
             task_lock_map: TaskLockMap::new(),
+            restart_tracker,
         })
     }
 }

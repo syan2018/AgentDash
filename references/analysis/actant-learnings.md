@@ -50,23 +50,23 @@
 
 ## 2. 思路清单总览
 
-| # | 思路 | 优先级 | 分类 | 来源文件 |
-|---|------|--------|------|---------|
-| 3.1 | 指数退避重启策略 | 高 | 健壮性 | `core/src/manager/restart-tracker.ts` |
-| 3.2 | Per-Task 异步操作锁 | 高 | 健壮性 | `core/src/manager/agent-manager.ts` |
-| 3.3 | LaunchMode 策略模式 | 高 | 健壮性 | `core/src/manager/launch-mode-handler.ts` |
-| 4.1 | 三阶段上下文流水线 | 中 | 上下文 | Builder + Injector + Scheduler |
-| 4.2 | 双层物化策略 | 中 | 上下文 | `core/src/initializer/context/context-materializer.ts` |
-| 4.3 | ComponentTypeHandler 架构 | 中 | 上下文 | `core/src/builder/component-type-handler.ts` |
-| 4.4 | Archetype Scope 分级 | 中 | 上下文 | `core/src/context-injector/session-context-injector.ts` |
-| 4.5 | Session Token 安全模型 | 中 | 上下文 | `core/src/context-injector/session-token-store.ts` |
-| 5.1 | EmployeeScheduler 调度 | 中 | 工作流 | `core/src/scheduler/` 目录 |
-| 5.2 | HookEventBus 事件总线 | 中 | 工作流 | `core/src/hooks/hook-event-bus.ts` |
-| 5.3 | InitializationPipeline | 中 | 工作流 | `core/src/initializer/pipeline/initialization-pipeline.ts` |
-| 6.1 | PluginHost 插件系统 | 低 | 扩展性 | `core/src/plugin/plugin-host.ts` |
-| 6.2 | DeclarativeBuilder | 低 | 扩展性 | `core/src/builder/declarative-builder.ts` |
-| 6.3 | VFS 虚拟文件系统 | 低 | 扩展性 | `core/src/vfs/vfs-context-provider.ts` |
-| 6.4 | BaseComponentManager | 低 | 扩展性 | `core/src/domain/base-component-manager.ts` |
+| # | 思路 | 优先级 | 分类 | 状态 | 来源文件 |
+|---|------|--------|------|------|---------|
+| 3.1 | 指数退避重启策略 | 高 | 健壮性 | ✅ 已落地 | `core/src/manager/restart-tracker.ts` |
+| 3.2 | Per-Task 异步操作锁 | 高 | 健壮性 | ✅ 已落地 | `core/src/manager/agent-manager.ts` |
+| 3.3 | LaunchMode 策略模式 | 高 | 健壮性 | 🔲 待实现 | `core/src/manager/launch-mode-handler.ts` |
+| 4.1 | 三阶段上下文流水线 | 中 | 上下文 | 🔲 待实现 | Builder + Injector + Scheduler |
+| 4.2 | 双层物化策略 | 中 | 上下文 | 🔲 待实现 | `core/src/initializer/context/context-materializer.ts` |
+| 4.3 | ComponentTypeHandler 架构 | 中 | 上下文 | 🔲 待实现 | `core/src/builder/component-type-handler.ts` |
+| 4.4 | Archetype Scope 分级 | 中 | 上下文 | 🔲 待实现 | `core/src/context-injector/session-context-injector.ts` |
+| 4.5 | Session Token 安全模型 | 中 | 上下文 | 🔲 待实现 | `core/src/context-injector/session-token-store.ts` |
+| 5.1 | EmployeeScheduler 调度 | 中 | 工作流 | 🔲 待实现 | `core/src/scheduler/` 目录 |
+| 5.2 | HookEventBus 事件总线 | 中 | 工作流 | 🔲 待实现 | `core/src/hooks/hook-event-bus.ts` |
+| 5.3 | InitializationPipeline | 中 | 工作流 | 🔲 待实现 | `core/src/initializer/pipeline/initialization-pipeline.ts` |
+| 6.1 | PluginHost 插件系统 | 低 | 扩展性 | 🔲 待实现 | `core/src/plugin/plugin-host.ts` |
+| 6.2 | DeclarativeBuilder | 低 | 扩展性 | 🔲 待实现 | `core/src/builder/declarative-builder.ts` |
+| 6.3 | VFS 虚拟文件系统 | 低 | 扩展性 | 🔲 待实现 | `core/src/vfs/vfs-context-provider.ts` |
+| 6.4 | BaseComponentManager | 低 | 扩展性 | 🔲 待实现 | `core/src/domain/base-component-manager.ts` |
 
 > 以下所有文件路径前缀均为 `references/Actant/packages/`，省略不写。
 
@@ -795,11 +795,15 @@ lines.push('  Read("/vcs/status")                      -- git status');
 
 ### Phase 1：健壮性基础（建议 1-2 周）
 
-| 序号 | 任务 | 参考 | 影响范围 |
-|------|------|------|---------|
-| 1 | 实现 Per-Task 操作锁 | §3.2 | `task_execution.rs` |
-| 2 | 实现 RestartTracker | §3.1 | 新模块 + `task_execution_gateway.rs` |
-| 3 | 引入 TaskExecutionMode | §3.3 | `value_objects.rs` + `task_execution.rs` |
+| 序号 | 任务 | 参考 | 影响范围 | 状态 |
+|------|------|------|---------|------|
+| 1 | 实现 Per-Task 操作锁 | §3.2 | `task/lock.rs` + `task_execution_gateway.rs` | ✅ 已落地 |
+| 2 | 实现 RestartTracker | §3.1 | `task/restart_tracker.rs` + Turn Monitor + State Reconciler | ✅ 已落地 |
+| 3 | 引入 TaskExecutionMode | §3.3 | `value_objects.rs` + `task_execution.rs` | 🔲 待实现 |
+
+> **落地说明（2026-03-09）**：
+> - §3.2 Per-Task 操作锁：`agentdash-application/src/task/lock.rs` 实现 `TaskLockMap`，集成到 `AppState`，所有 Task 生命周期操作（start/continue/cancel）通过 `with_lock()` 串行化。
+> - §3.1 RestartTracker：`agentdash-application/src/task/restart_tracker.rs` 实现指数退避重启策略。Turn Monitor 中 `turn_failed` 和 `turn_monitor_closed` 分支现在会咨询 RestartTracker，允许重试时自动发起 `continue_task`。State Reconciler 启动回收时也应用 RestartTracker 策略，失败但有重试额度的 Task 标记为 `AwaitingVerification` 而非 `Failed`。
 
 ### Phase 2：上下文增强（建议 2-3 周）
 

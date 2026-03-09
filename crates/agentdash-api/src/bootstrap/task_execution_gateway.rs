@@ -12,6 +12,7 @@ use agentdash_application::task_execution::{
     ContinueTaskCommand, ContinueTaskResult, ExecutionPhase, SessionOverview, StartTaskCommand,
     StartTaskResult, StartedTurn, TaskExecutionError, TaskExecutionGateway, TaskSessionResult,
 };
+use agentdash_application::task_restart_tracker::RestartDecision;
 use agentdash_domain::{
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
@@ -305,47 +306,46 @@ fn spawn_task_turn_monitor(
     backend_id: String,
 ) {
     tokio::spawn(async move {
-        let (history, mut rx) = state.executor_hub.subscribe_with_history(&session_id).await;
+        let outcome = run_turn_monitor(&state, task_id, &session_id, &turn_id, &backend_id).await;
 
-        for notification in history {
-            match handle_turn_notification(
-                &state,
-                task_id,
-                &session_id,
-                &turn_id,
-                &backend_id,
-                &notification,
-            )
-            .await
-            {
-                Ok(true) => return,
-                Ok(false) => {}
-                Err(err) => {
-                    tracing::error!(
-                        task_id = %task_id,
-                        session_id = %session_id,
-                        turn_id = %turn_id,
-                        "处理历史会话事件失败: {}",
-                        err
-                    );
-                }
+        if let TurnOutcome::NeedsRetry { delay, attempt } = outcome {
+            schedule_auto_retry(state, task_id, session_id, backend_id, delay, attempt).await;
+        }
+    });
+}
+
+/// Turn 监听主循环，返回最终的 TurnOutcome
+async fn run_turn_monitor(
+    state: &Arc<AppState>,
+    task_id: Uuid,
+    session_id: &str,
+    turn_id: &str,
+    backend_id: &str,
+) -> TurnOutcome {
+    let (history, mut rx) = state.executor_hub.subscribe_with_history(session_id).await;
+
+    for notification in history {
+        match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification).await {
+            Ok(TurnOutcome::Continue) => {}
+            Ok(outcome) => return outcome,
+            Err(err) => {
+                tracing::error!(
+                    task_id = %task_id,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    "处理历史会话事件失败: {}",
+                    err
+                );
             }
         }
+    }
 
-        loop {
-            match rx.recv().await {
-                Ok(notification) => match handle_turn_notification(
-                    &state,
-                    task_id,
-                    &session_id,
-                    &turn_id,
-                    &backend_id,
-                    &notification,
-                )
-                .await
-                {
-                    Ok(true) => return,
-                    Ok(false) => {}
+    loop {
+        match rx.recv().await {
+            Ok(notification) => {
+                match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification).await {
+                    Ok(TurnOutcome::Continue) => {}
+                    Ok(outcome) => return outcome,
                     Err(err) => {
                         tracing::error!(
                             task_id = %task_id,
@@ -355,40 +355,109 @@ fn spawn_task_turn_monitor(
                             err
                         );
                     }
-                },
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    tracing::warn!(
-                        task_id = %task_id,
-                        session_id = %session_id,
-                        turn_id = %turn_id,
-                        skipped = skipped,
-                        "Task turn 监听落后，部分消息被跳过"
-                    );
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    tracing::warn!(
-                        task_id = %task_id,
-                        session_id = %session_id,
-                        turn_id = %turn_id,
-                        "Task turn 监听通道关闭，未收到终态事件"
-                    );
-                    let _ = update_task_status(
-                        &state,
-                        task_id,
-                        &backend_id,
-                        TaskStatus::Failed,
-                        "turn_monitor_closed",
-                        json!({
-                            "session_id": session_id,
-                            "turn_id": turn_id,
-                        }),
-                    )
-                    .await;
-                    return;
                 }
             }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                tracing::warn!(
+                    task_id = %task_id,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    skipped = skipped,
+                    "Task turn 监听落后，部分消息被跳过"
+                );
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                tracing::warn!(
+                    task_id = %task_id,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    "Task turn 监听通道关闭，未收到终态事件"
+                );
+                return resolve_failure_outcome(
+                    state,
+                    task_id,
+                    session_id,
+                    turn_id,
+                    backend_id,
+                    "turn_monitor_closed",
+                    None,
+                )
+                .await
+                .unwrap_or(TurnOutcome::Failed);
+            }
         }
-    });
+    }
+}
+
+/// 等待退避延迟后发起自动重试
+async fn schedule_auto_retry(
+    state: Arc<AppState>,
+    task_id: Uuid,
+    session_id: String,
+    backend_id: String,
+    delay: std::time::Duration,
+    attempt: u32,
+) {
+    tracing::info!(
+        task_id = %task_id,
+        session_id = %session_id,
+        attempt = attempt,
+        delay_ms = delay.as_millis() as u64,
+        "等待退避延迟后自动重试"
+    );
+
+    tokio::time::sleep(delay).await;
+
+    let retry_prompt = format!(
+        "上一次执行失败，这是第 {} 次自动重试。请继续完成任务。",
+        attempt
+    );
+
+    match execute_continue_task(state.clone(), task_id, Some(retry_prompt), None).await {
+        Ok(result) => {
+            tracing::info!(
+                task_id = %task_id,
+                session_id = %session_id,
+                new_turn_id = %result.turn_id,
+                attempt = attempt,
+                "自动重试已成功发起新 turn"
+            );
+        }
+        Err(err) => {
+            tracing::error!(
+                task_id = %task_id,
+                session_id = %session_id,
+                attempt = attempt,
+                "自动重试发起失败，标记 Task 为 Failed: {}",
+                err
+            );
+            let _ = update_task_status(
+                &state,
+                task_id,
+                &backend_id,
+                TaskStatus::Failed,
+                "auto_retry_failed",
+                json!({
+                    "session_id": session_id,
+                    "attempt": attempt,
+                    "error": err.to_string(),
+                }),
+            )
+            .await;
+        }
+    }
+}
+
+/// Turn 监听处理结果
+enum TurnOutcome {
+    /// 继续监听后续事件
+    Continue,
+    /// Turn 正常完成，监听结束
+    Completed,
+    /// Turn 失败且不可重试，监听结束
+    Failed,
+    /// Turn 失败但允许重试，需等待指定延迟后发起新 turn
+    NeedsRetry { delay: std::time::Duration, attempt: u32 },
 }
 
 async fn handle_turn_notification(
@@ -398,7 +467,7 @@ async fn handle_turn_notification(
     turn_id: &str,
     backend_id: &str,
     notification: &SessionNotification,
-) -> Result<bool, agentdash_domain::DomainError> {
+) -> Result<TurnOutcome, agentdash_domain::DomainError> {
     match &notification.update {
         SessionUpdate::ToolCall(tool_call) => {
             if turn_matches(tool_call.meta.as_ref(), turn_id) {
@@ -439,6 +508,7 @@ async fn handle_turn_notification(
             if let Some((event_type, message)) = parse_turn_event(info.meta.as_ref(), turn_id) {
                 match event_type.as_str() {
                     "turn_completed" => {
+                        state.restart_tracker.record_stable_start(task_id);
                         let _ = update_task_status(
                             state,
                             task_id,
@@ -451,7 +521,7 @@ async fn handle_turn_notification(
                             }),
                         )
                         .await?;
-                        return Ok(true);
+                        return Ok(TurnOutcome::Completed);
                     }
                     "turn_failed" => {
                         if let Some(err_msg) = message.as_deref() {
@@ -460,20 +530,17 @@ async fn handle_turn_notification(
                             )
                             .await?;
                         }
-                        let _ = update_task_status(
+
+                        return Ok(resolve_failure_outcome(
                             state,
                             task_id,
+                            session_id,
+                            turn_id,
                             backend_id,
-                            TaskStatus::Failed,
                             "turn_failed",
-                            json!({
-                                "session_id": session_id,
-                                "turn_id": turn_id,
-                                "error": message.clone(),
-                            }),
+                            message.clone(),
                         )
-                        .await?;
-                        return Ok(true);
+                        .await?);
                     }
                     _ => {}
                 }
@@ -482,7 +549,75 @@ async fn handle_turn_notification(
         _ => {}
     }
 
-    Ok(false)
+    Ok(TurnOutcome::Continue)
+}
+
+/// 根据 RestartTracker 策略决定失败后的处理方式
+async fn resolve_failure_outcome(
+    state: &Arc<AppState>,
+    task_id: Uuid,
+    session_id: &str,
+    turn_id: &str,
+    backend_id: &str,
+    reason: &str,
+    error_message: Option<String>,
+) -> Result<TurnOutcome, agentdash_domain::DomainError> {
+    let decision = state.restart_tracker.report_failure(task_id);
+
+    match decision {
+        RestartDecision::Allowed { attempt, delay } => {
+            tracing::info!(
+                task_id = %task_id,
+                session_id = %session_id,
+                turn_id = %turn_id,
+                attempt = attempt,
+                delay_ms = delay.as_millis() as u64,
+                reason = reason,
+                "Turn 失败，RestartTracker 允许重试"
+            );
+            let _ = update_task_status(
+                state,
+                task_id,
+                backend_id,
+                TaskStatus::AwaitingVerification,
+                &format!("{reason}_pending_retry"),
+                json!({
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "error": error_message,
+                    "retry_attempt": attempt,
+                    "retry_delay_ms": delay.as_millis() as u64,
+                }),
+            )
+            .await?;
+            Ok(TurnOutcome::NeedsRetry { delay, attempt })
+        }
+        RestartDecision::Denied { attempts_exhausted } => {
+            tracing::warn!(
+                task_id = %task_id,
+                session_id = %session_id,
+                turn_id = %turn_id,
+                attempts_exhausted = attempts_exhausted,
+                reason = reason,
+                "Turn 失败，已达最大重试次数，标记为 Failed"
+            );
+            let _ = update_task_status(
+                state,
+                task_id,
+                backend_id,
+                TaskStatus::Failed,
+                reason,
+                json!({
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "error": error_message,
+                    "attempts_exhausted": attempts_exhausted,
+                }),
+            )
+            .await?;
+            Ok(TurnOutcome::Failed)
+        }
+    }
 }
 
 async fn persist_tool_call_artifact(

@@ -7,6 +7,8 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, Story, StoryRepository};
 use agentdash_domain::task::{Task, TaskRepository, TaskStatus};
 
+use super::restart_tracker::{RestartDecision, RestartTracker};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionExecutionState {
     Idle,
@@ -50,6 +52,7 @@ struct StatusReconcilePlan {
 fn plan_for_running_task(
     task: &Task,
     execution_state: SessionExecutionState,
+    restart_tracker: Option<&RestartTracker>,
 ) -> Option<StatusReconcilePlan> {
     match execution_state {
         SessionExecutionState::Running { .. } => None,
@@ -68,24 +71,54 @@ fn plan_for_running_task(
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
             });
-            if let Some(msg) = message {
+            if let Some(msg) = &message {
                 context["error"] = json!(msg);
             }
+
+            // 咨询 RestartTracker：如果还有重试额度，标记为 AwaitingVerification 而非 Failed
+            if let Some(tracker) = restart_tracker {
+                if let RestartDecision::Allowed { attempt, .. } = tracker.report_failure(task.id) {
+                    context["retry_attempt"] = json!(attempt);
+                    context["auto_retry"] = json!(true);
+                    return Some(StatusReconcilePlan {
+                        next_status: TaskStatus::AwaitingVerification,
+                        reason: "boot_reconcile_turn_failed_pending_retry",
+                        context,
+                    });
+                }
+            }
+
             Some(StatusReconcilePlan {
                 next_status: TaskStatus::Failed,
                 reason: "boot_reconcile_turn_failed",
                 context,
             })
         }
-        SessionExecutionState::Interrupted { turn_id } => Some(StatusReconcilePlan {
-            next_status: TaskStatus::Failed,
-            reason: "boot_reconcile_turn_interrupted",
-            context: json!({
+        SessionExecutionState::Interrupted { turn_id } => {
+            let mut context = json!({
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
-            }),
-        }),
+            });
+
+            if let Some(tracker) = restart_tracker {
+                if let RestartDecision::Allowed { attempt, .. } = tracker.report_failure(task.id) {
+                    context["retry_attempt"] = json!(attempt);
+                    context["auto_retry"] = json!(true);
+                    return Some(StatusReconcilePlan {
+                        next_status: TaskStatus::AwaitingVerification,
+                        reason: "boot_reconcile_turn_interrupted_pending_retry",
+                        context,
+                    });
+                }
+            }
+
+            Some(StatusReconcilePlan {
+                next_status: TaskStatus::Failed,
+                reason: "boot_reconcile_turn_interrupted",
+                context,
+            })
+        }
         SessionExecutionState::Idle => Some(StatusReconcilePlan {
             next_status: TaskStatus::Failed,
             reason: "boot_reconcile_session_idle",
@@ -147,9 +180,11 @@ pub async fn reconcile_running_tasks_on_boot(
     story_repo: &Arc<dyn StoryRepository>,
     task_repo: &Arc<dyn TaskRepository>,
     session_state_reader: &dyn SessionExecutionStateReader,
+    restart_tracker: Option<&RestartTracker>,
 ) -> Result<(), TaskStateReconcileError> {
     let projects = project_repo.list_all().await?;
     let mut touched = 0usize;
+    let mut pending_retry = 0usize;
 
     for project in projects {
         let stories = story_repo.list_by_project(project.id).await?;
@@ -170,17 +205,28 @@ pub async fn reconcile_running_tasks_on_boot(
                         .map_err(TaskStateReconcileError::SessionState)?,
                 };
 
-                let Some(plan) = plan_for_running_task(&task, execution_state) else {
+                let Some(plan) = plan_for_running_task(&task, execution_state, restart_tracker)
+                else {
                     continue;
                 };
 
+                let is_retry = plan.next_status == TaskStatus::AwaitingVerification
+                    && plan.reason.contains("pending_retry");
+
                 if apply_reconcile_update(story_repo, task_repo, &story, &mut task, plan).await? {
                     touched += 1;
+                    if is_retry {
+                        pending_retry += 1;
+                    }
                 }
             }
         }
     }
 
-    tracing::info!(reconciled_count = touched, "启动阶段 Task 状态回收完成");
+    tracing::info!(
+        reconciled_count = touched,
+        pending_retry = pending_retry,
+        "启动阶段 Task 状态回收完成"
+    );
     Ok(())
 }

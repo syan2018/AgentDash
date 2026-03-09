@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
   AgentBinding,
+  ContextSourceKind,
   ContextSourceRef,
   ProjectConfig,
   Story,
@@ -54,39 +55,53 @@ const storyTypeOptions: { value: StoryType; label: string; icon: string }[] = [
 
 type TabKey = "tasks" | "sessions" | "review";
 
-interface StoryFileContextDraft {
-  label: string;
-  relPath: string;
-  priority: number;
+// ─── Context Source 辅助 ─────────────────────────────
+
+const SOURCE_KIND_META: Record<ContextSourceKind, { label: string; icon: string; color: string }> = {
+  file: { label: "文件", icon: "📄", color: "text-blue-600" },
+  manual_text: { label: "文本", icon: "📝", color: "text-emerald-600" },
+  project_snapshot: { label: "快照", icon: "📸", color: "text-violet-600" },
+  http_fetch: { label: "HTTP", icon: "🌐", color: "text-orange-600" },
+  mcp_resource: { label: "MCP", icon: "🔌", color: "text-pink-600" },
+  entity_ref: { label: "实体", icon: "🔗", color: "text-cyan-600" },
+};
+
+function sourceKindMeta(kind: ContextSourceKind) {
+  return SOURCE_KIND_META[kind] ?? { label: kind, icon: "📎", color: "text-muted-foreground" };
 }
 
-function isFileContextSource(source: ContextSourceRef): boolean {
-  return source.kind === "file";
-}
-
-function getStoryFileContexts(story: Story): ContextSourceRef[] {
-  return story.context.source_refs.filter(isFileContextSource);
-}
-
-function toStoryFileContextDraft(source: ContextSourceRef, index: number): StoryFileContextDraft {
-  return {
-    label: source.label?.trim() ?? "",
-    relPath: source.locator,
-    priority: Number.isFinite(source.priority) ? source.priority : 1000 - index,
-  };
-}
-
-function buildStoryFileContextSource(draft: StoryFileContextDraft, index: number): ContextSourceRef {
+function buildFileContextSource(address: string, label: string, index: number): ContextSourceRef {
   return {
     kind: "file",
-    locator: draft.relPath.trim(),
-    label: draft.label.trim() || null,
+    locator: address.trim(),
+    label: label.trim() || null,
     slot: "references",
-    priority: Number.isFinite(draft.priority) ? draft.priority : 1000 - index,
+    priority: 1000 - index,
     required: false,
     max_chars: null,
     delivery: "resource",
   };
+}
+
+function buildManualTextSource(text: string, label: string, index: number): ContextSourceRef {
+  return {
+    kind: "manual_text",
+    locator: text.trim(),
+    label: label.trim() || null,
+    slot: "references",
+    priority: 900 - index,
+    required: false,
+    max_chars: null,
+    delivery: "inline",
+  };
+}
+
+function contextSummary(sourceRefs: ContextSourceRef[]) {
+  const counts = new Map<ContextSourceKind, number>();
+  for (const ref of sourceRefs) {
+    counts.set(ref.kind, (counts.get(ref.kind) ?? 0) + 1);
+  }
+  return counts;
 }
 
 // 状态流转操作按钮组
@@ -197,7 +212,7 @@ function CreateTaskPanel({
   const [selectedContextIndexes, setSelectedContextIndexes] = useState<number[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
-  const availableContexts = useMemo(() => getStoryFileContexts(story), [story]);
+  const availableContexts = story.context.source_refs;
 
   useEffect(() => {
     if (isExpanded) return;
@@ -325,7 +340,7 @@ function CreateTaskPanel({
               <div>
                 <p className="text-xs font-medium text-muted-foreground">关联 Story 上下文</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  勾选后会把这些文件引用分配给 Task Agent，并在执行时由后端解析。
+                  勾选后会把这些上下文源分配给 Task Agent，并在执行时由后端解析注入。
                 </p>
               </div>
               <span className="rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -353,11 +368,16 @@ function CreateTaskPanel({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        {(() => { const m = sourceKindMeta(context.kind); return (
+                          <span className={`rounded-full border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${m.color}`}>
+                            {m.icon} {m.label}
+                          </span>
+                        ); })()}
                         <span className="text-sm font-medium text-foreground">
                           {context.label?.trim() || `上下文 ${index + 1}`}
                         </span>
                       </div>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+                      <p className="mt-1 truncate text-xs leading-5 text-muted-foreground">
                         {context.locator}
                       </p>
                     </div>
@@ -399,19 +419,17 @@ function ContextPanel({
 }) {
   const ctx = story.context;
   const { updateStory, error } = useStoryStore();
-  const fileContexts = useMemo(() => getStoryFileContexts(story), [story]);
+  const sourceRefs = ctx.source_refs;
   const defaultWorkspaceId = useMemo(
     () => resolveDefaultWorkspaceId(projectConfig, workspaces),
     [projectConfig, workspaces],
   );
-  const [isEditing, setIsEditing] = useState(false);
-  const [drafts, setDrafts] = useState<StoryFileContextDraft[]>(() =>
-    fileContexts.map((item, index) => toStoryFileContextDraft(item, index)),
-  );
+
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [activeDraftIndex, setActiveDraftIndex] = useState<number | null>(null);
-  const hasLegacyContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
+  const [addingText, setAddingText] = useState(false);
+  const [newTextLabel, setNewTextLabel] = useState("");
+  const [newTextContent, setNewTextContent] = useState("");
 
   const filePicker = useAddressSpacePicker({
     spaceId: "workspace_file",
@@ -420,292 +438,227 @@ function ContextPanel({
   });
 
   useEffect(() => {
-    if (isEditing) return;
-    setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
-  }, [fileContexts, isEditing]);
-
-  useEffect(() => {
-    setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
     setMessage(null);
-    setIsEditing(false);
-    setActiveDraftIndex(null);
+    setAddingText(false);
+    setNewTextLabel("");
+    setNewTextContent("");
   }, [story.id]);
 
-  const updateDraft = (index: number, patch: Partial<StoryFileContextDraft>) => {
-    setDrafts((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
-  };
+  const hasLegacyContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
 
-  const addDraft = () => {
-    setDrafts((current) => [
-      ...current,
-      { label: "", relPath: "", priority: 1000 - current.length },
-    ]);
-  };
-
-  const removeDraft = (index: number) => {
-    setDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
-  };
-
-  const openDraftPicker = (index: number) => {
-    setActiveDraftIndex(index);
-    filePicker.openPicker();
-  };
-
-  const closeDraftPicker = () => {
-    filePicker.closePicker();
-    setActiveDraftIndex(null);
-  };
-
-  const handleDraftEntrySelected = (entry: AddressEntry) => {
-    if (activeDraftIndex == null) return;
-    const fallbackLabel = entry.address.split("/").pop() ?? entry.address;
-    setDrafts((current) =>
-      current.map((item, index) =>
-        index === activeDraftIndex
-          ? {
-              ...item,
-              relPath: entry.address,
-              label: item.label.trim() ? item.label : fallbackLabel,
-            }
-          : item,
-      ),
-    );
-    closeDraftPicker();
-  };
-
-  const handleSaveContexts = async () => {
-    const normalizedDrafts = drafts
-      .map((item) => ({
-        ...item,
-        label: item.label.trim(),
-        relPath: item.relPath.trim(),
-      }))
-      .filter((item) => item.relPath);
-    const nonFileSources = ctx.source_refs.filter((item) => !isFileContextSource(item));
-    const nextSourceRefs = [
-      ...nonFileSources,
-      ...normalizedDrafts.map((item, index) => buildStoryFileContextSource(item, index)),
-    ];
-
+  const persistSourceRefs = useCallback(async (nextRefs: ContextSourceRef[], successMsg: string) => {
     setIsSaving(true);
     setMessage(null);
     try {
       const updated = await updateStory(story.id, {
-        context_source_refs: nextSourceRefs,
+        context_source_refs: nextRefs,
       });
       if (!updated) {
-        setMessage(error ?? "保存上下文失败");
-        return;
+        setMessage(error ?? "保存失败");
+        return false;
       }
-      setMessage("文件引用已保存到 Story，可用于伴生会话与 Task 分配");
-      setIsEditing(false);
+      setMessage(successMsg);
+      return true;
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [updateStory, story.id, error]);
+
+  const handleRemoveSource = useCallback(async (index: number) => {
+    const next = sourceRefs.filter((_, i) => i !== index);
+    await persistSourceRefs(next, "已删除");
+  }, [sourceRefs, persistSourceRefs]);
+
+  const handleQuickAddFile = useCallback(async (entry: AddressEntry) => {
+    const label = entry.address.split("/").pop() ?? entry.address;
+    const newRef = buildFileContextSource(entry.address, label, sourceRefs.length);
+    const next = [...sourceRefs, newRef];
+    filePicker.closePicker();
+    await persistSourceRefs(next, `已添加文件：${entry.label}`);
+  }, [sourceRefs, persistSourceRefs, filePicker]);
+
+  const handleAddManualText = useCallback(async () => {
+    const content = newTextContent.trim();
+    if (!content) return;
+    const newRef = buildManualTextSource(content, newTextLabel, sourceRefs.length);
+    const next = [...sourceRefs, newRef];
+    const ok = await persistSourceRefs(next, "已添加文本上下文");
+    if (ok) {
+      setAddingText(false);
+      setNewTextLabel("");
+      setNewTextContent("");
+    }
+  }, [newTextContent, newTextLabel, sourceRefs, persistSourceRefs]);
 
   return (
-    <DetailSection title="上下文">
-      <div className="space-y-3">
-        {!hasLegacyContent && fileContexts.length === 0 && !isEditing ? (
-          <p className="rounded-[12px] border border-dashed border-border bg-secondary/25 px-3 py-6 text-center text-sm text-muted-foreground">
-            暂无上下文条目
-          </p>
-        ) : null}
+    <div className="space-y-2">
 
-        {ctx.prd_doc && (
-            <div className="rounded-[12px] border border-border bg-background p-3.5">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">PRD 文档</p>
-              <pre className="whitespace-pre-wrap text-sm leading-6 text-foreground">{ctx.prd_doc}</pre>
+      {/* Legacy：PRD */}
+      {ctx.prd_doc && (
+        <div>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">PRD</p>
+          <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-[8px] bg-background/60 px-2.5 py-2 text-xs leading-5 text-foreground">{ctx.prd_doc}</pre>
+        </div>
+      )}
+
+      {/* Legacy：规格引用 */}
+      {ctx.spec_refs.length > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">规格引用</p>
+          <div className="flex flex-wrap gap-1.5">
+            {ctx.spec_refs.map((ref, index) => (
+              <span key={index} className="rounded-[6px] bg-background/60 px-2 py-1 text-xs text-foreground">{ref}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Legacy：资源列表 */}
+      {ctx.resource_list.length > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">资源</p>
+          {ctx.resource_list.map((resource, index) => (
+            <div key={index} className="flex items-center gap-2 py-1 text-xs">
+              <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">{resource.resource_type}</span>
+              <span className="font-medium text-foreground">{resource.name}</span>
+              <span className="truncate text-muted-foreground">{resource.uri}</span>
             </div>
-        )}
+          ))}
+        </div>
+      )}
 
-        {ctx.spec_refs.length > 0 && (
-            <div className="rounded-[12px] border border-border bg-background p-3.5">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">规格引用</p>
-              <ul className="space-y-1.5">
-                {ctx.spec_refs.map((ref, index) => (
-                  <li key={index} className="text-sm text-foreground">
-                    <span className="mr-2 text-muted-foreground">·</span>
-                    {ref}
-                  </li>
-                ))}
-              </ul>
-            </div>
-        )}
-
-        {ctx.resource_list.length > 0 && (
-            <div className="rounded-[12px] border border-border bg-background p-3.5">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">资源列表</p>
-              <div className="space-y-2">
-                {ctx.resource_list.map((resource, index) => (
-                  <div
-                    key={index}
-                    className="flex flex-wrap items-center gap-2 rounded-[10px] border border-border bg-secondary/35 px-3 py-2"
-                  >
-                    <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
-                      {resource.resource_type}
-                    </span>
-                    <span className="text-sm font-medium text-foreground">{resource.name}</span>
-                    <span className="min-w-0 break-all text-xs text-muted-foreground">{resource.uri}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-        )}
-
-        <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">工作区文件引用</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  这些文件会暂存在 Story 上，伴生会话会自动解析它们，创建 Task 时也可按需分配给 Task Agent。
-                </p>
-                {filePicker.space?.root && (
-                  <p className="mt-1 break-all text-[11px] text-muted-foreground/80">
-                    当前寻址空间：{filePicker.space.label} · {filePicker.space.root}
-                  </p>
+      {/* 条目列表 */}
+      {sourceRefs.length > 0 && (
+        <div className="space-y-1">
+          {sourceRefs.map((ref, index) => {
+            const meta = sourceKindMeta(ref.kind);
+            return (
+              <div
+                key={`${ref.kind}-${ref.locator}-${index}`}
+                className="group flex items-center gap-2 rounded-[8px] px-2 py-1.5 transition-colors hover:bg-background/60"
+              >
+                <span className="shrink-0 text-sm">{meta.icon}</span>
+                <span className={`shrink-0 text-[10px] font-medium ${meta.color}`}>{meta.label}</span>
+                {ref.label?.trim() && (
+                  <span className="shrink-0 text-xs font-medium text-foreground">{ref.label}</span>
                 )}
-                {!filePicker.space?.root && filePicker.spaceError && (
-                  <p className="mt-1 text-[11px] text-amber-600">{filePicker.spaceError}</p>
-                )}
-              </div>
-              {!isEditing ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={ref.locator}>
+                  {ref.kind === "manual_text"
+                    ? (ref.locator.length > 80 ? ref.locator.slice(0, 80) + "…" : ref.locator)
+                    : ref.locator}
+                </span>
                 <button
                   type="button"
-                  onClick={() => setIsEditing(true)}
-                  className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  onClick={() => void handleRemoveSource(index)}
+                  disabled={isSaving}
+                  className="shrink-0 rounded-[4px] p-0.5 text-muted-foreground/40 opacity-0 transition-all hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
+                  title="删除"
                 >
-                  编辑
+                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
-              ) : null}
-            </div>
-
-            {!isEditing ? (
-              fileContexts.length > 0 ? (
-                <div className="space-y-2">
-                  {fileContexts.map((context, index) => (
-                    <div
-                      key={`${context.locator}-${index}`}
-                      className="rounded-[10px] border border-border bg-secondary/25 px-3 py-2"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-foreground">
-                          {context.label?.trim() || `文件引用 ${index + 1}`}
-                        </span>
-                      </div>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
-                        {context.locator}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="rounded-[10px] border border-dashed border-border bg-secondary/20 px-3 py-4 text-sm text-muted-foreground">
-                  暂无文件引用。
-                </p>
-              )
-            ) : (
-              <div className="space-y-3">
-                {drafts.length > 0 ? (
-                  drafts.map((draft, index) => (
-                    <div key={index} className="rounded-[10px] border border-border bg-secondary/20 p-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="text-xs text-muted-foreground">文件引用 {index + 1}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeDraft(index)}
-                          className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                        >
-                          删除
-                        </button>
-                      </div>
-
-                      <div className="space-y-2">
-                        <input
-                          value={draft.label}
-                          onChange={(event) => updateDraft(index, { label: event.target.value })}
-                          placeholder="引用标题（可选）"
-                          className="agentdash-form-input"
-                        />
-                        <div className="relative flex gap-2">
-                          {filePicker.pickerOpen && activeDraftIndex === index && (
-                            <AddressEntryPickerPopup
-                              open={filePicker.pickerOpen}
-                              query={filePicker.pickerQuery}
-                              entries={filePicker.pickerEntries}
-                              loading={filePicker.pickerLoading}
-                              error={filePicker.pickerError}
-                              selectedIndex={filePicker.selectedIndex}
-                              placeholder={filePicker.space?.selector?.placeholder ?? "搜索工作空间文件"}
-                              emptyText={filePicker.pickerQuery ? "没有匹配的工作空间文件" : "当前工作空间暂无可选文件"}
-                              onQueryChange={filePicker.updatePickerQuery}
-                              onSelect={handleDraftEntrySelected}
-                              onClose={closeDraftPicker}
-                              onMoveSelection={filePicker.moveSelection}
-                              onConfirmSelection={() => {
-                                const entry = filePicker.confirmSelection();
-                                if (entry) handleDraftEntrySelected(entry);
-                              }}
-                            />
-                          )}
-                          <input
-                            value={draft.relPath}
-                            onChange={(event) => updateDraft(index, { relPath: event.target.value })}
-                            placeholder="例如: crates/agentdash-api/src/routes/stories.rs"
-                            className="agentdash-form-input flex-1"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => openDraftPicker(index)}
-                            disabled={!filePicker.isAvailable}
-                            className="rounded-[10px] border border-border bg-background px-3 py-2 text-xs text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            选择文件
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="rounded-[10px] border border-dashed border-border bg-secondary/20 px-3 py-4 text-sm text-muted-foreground">
-                    还没有文件引用，点击下方按钮新增。
-                  </p>
-                )}
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={addDraft} className="agentdash-button-secondary">
-                    新增文件引用
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDrafts(fileContexts.map((item, index) => toStoryFileContextDraft(item, index)));
-                      setIsEditing(false);
-                      setMessage(null);
-                      closeDraftPicker();
-                    }}
-                    className="agentdash-button-secondary"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveContexts()}
-                    disabled={isSaving}
-                    className="agentdash-button-primary"
-                  >
-                    {isSaving ? "保存中..." : "保存上下文"}
-                  </button>
-                </div>
               </div>
-            )}
-
-            {message && <p className="mt-3 text-xs text-emerald-600">{message}</p>}
-            {!message && error && isEditing && <p className="mt-3 text-xs text-destructive">{error}</p>}
+            );
+          })}
         </div>
+      )}
+
+      {/* 空态 */}
+      {sourceRefs.length === 0 && !hasLegacyContent && (
+        <p className="py-3 text-center text-xs text-muted-foreground/70">
+          暂无上下文源
+        </p>
+      )}
+
+      {/* 新增文本表单 */}
+      {addingText && (
+        <div className="space-y-2 rounded-[8px] border border-primary/20 bg-primary/5 p-2.5">
+          <input
+            value={newTextLabel}
+            onChange={(e) => setNewTextLabel(e.target.value)}
+            placeholder="标签（可选）"
+            className="agentdash-form-input"
+            autoFocus
+          />
+          <textarea
+            value={newTextContent}
+            onChange={(e) => setNewTextContent(e.target.value)}
+            placeholder="输入文本内容…"
+            rows={3}
+            className="agentdash-form-input resize-y"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void handleAddManualText()}
+              disabled={isSaving || !newTextContent.trim()}
+              className="agentdash-button-primary"
+            >
+              {isSaving ? "保存中…" : "添加"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAddingText(false); setNewTextLabel(""); setNewTextContent(""); }}
+              className="agentdash-button-secondary"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 操作栏 */}
+      <div className="relative flex items-center gap-2 pt-1">
+        {filePicker.pickerOpen && (
+          <AddressEntryPickerPopup
+            open={filePicker.pickerOpen}
+            query={filePicker.pickerQuery}
+            entries={filePicker.pickerEntries}
+            loading={filePicker.pickerLoading}
+            error={filePicker.pickerError}
+            selectedIndex={filePicker.selectedIndex}
+            placeholder={filePicker.space?.selector?.placeholder ?? "搜索文件…"}
+            emptyText={filePicker.pickerQuery ? "没有匹配的文件" : "暂无可选文件"}
+            onQueryChange={filePicker.updatePickerQuery}
+            onSelect={(entry) => void handleQuickAddFile(entry)}
+            onClose={filePicker.closePicker}
+            onMoveSelection={filePicker.moveSelection}
+            onConfirmSelection={() => {
+              const entry = filePicker.confirmSelection();
+              if (entry) void handleQuickAddFile(entry);
+            }}
+          />
+        )}
+        <button
+          type="button"
+          onClick={filePicker.openPicker}
+          disabled={!filePicker.isAvailable || isSaving}
+          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          文件
+        </button>
+        <button
+          type="button"
+          onClick={() => setAddingText(true)}
+          disabled={addingText || isSaving}
+          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          文本
+        </button>
+        {filePicker.spaceError && !filePicker.space && (
+          <span className="text-[10px] text-amber-600">{filePicker.spaceError}</span>
+        )}
+        {message && <span className="ml-auto text-[11px] text-emerald-600">{message}</span>}
+        {!message && error && <span className="ml-auto text-[11px] text-destructive">{error}</span>}
       </div>
-    </DetailSection>
+    </div>
   );
 }
 
@@ -1227,11 +1180,14 @@ export function StoryPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
                 <span className="font-medium">上下文</span>
-                {story.context.source_refs.filter(isFileContextSource).length > 0 && (
-                  <span className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px]">
-                    {story.context.source_refs.filter(isFileContextSource).length} 个文件引用
-                  </span>
-                )}
+                {Array.from(contextSummary(story.context.source_refs)).map(([kind, count]) => {
+                  const meta = sourceKindMeta(kind);
+                  return (
+                    <span key={kind} className={`rounded-full border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${meta.color}`}>
+                      {meta.icon} {count} {meta.label}
+                    </span>
+                  );
+                })}
                 {story.context.prd_doc && (
                   <span className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px]">
                     PRD

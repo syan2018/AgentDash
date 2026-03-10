@@ -1,0 +1,30 @@
+{
+  "id": "cloud-local-protocol-design",
+  "name": "cloud-local-protocol-design",
+  "title": "云端/本机双后端架构：通信协议与数据归属设计",
+  "description": "设计云端+本机双后端架构的通信协议(WebSocket JSON)、数据归属模型、两类Agent执行模型(PiAgent云端原生+第三方本地执行)",
+  "status": "completed",
+  "dev_type": "design",
+  "scope": "backend",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-10",
+  "completedAt": "2026-03-10",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 3,
+  "next_action": [],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "docs/relay-protocol.md",
+    "docs/modules/09-relay.md",
+    "docs/core-design.md",
+    ".trellis/spec/project-overview.md",
+    ".trellis/spec/backend/index.md"
+  ],
+  "notes": "纯设计任务（无代码）。产出物：relay-protocol.md(930行协议规范)、09-relay.md(432行模块设计)、更新3个架构文档。后续 unblock Task 2(extract-local-backend) 和 Task 3(create-cloud-backend)。"
+}

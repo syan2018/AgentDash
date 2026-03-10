@@ -11,19 +11,49 @@
 
 ### 项目总览
 
-后端服务负责以下核心职责：
-- 维护 Story 和 Task 的状态存储（模块02 State）
-- 管理用户与后端的连接会话（模块01 Connection）
-- 调度 Agent 执行任务（模块05 Execution）
-- 管理 Agent 执行的隔离环境（模块03 Workspace）
-- 编排任务执行流程（模块04 Orchestration）
-- 信息注入与验证（模块06 Injection, 模块07 Validation）
+AgentDashboard 采用**云端 + 本机**双后端架构，两个 binary 共享部分 crate：
+
+| Binary | 定位 | 核心职责 |
+|--------|------|---------|
+| `agentdash-cloud` | 云端后端（数据中枢 + 云端原生 Agent） | REST API、MCP、状态管理、编排、WebSocket 服务端、**PiAgent AgentLoop** |
+| `agentdash-local` | 本机后端（第三方 Agent 执行 + 工具环境） | 第三方 Agent 执行、PiAgent tool call 执行、工作空间文件、WebSocket 客户端 |
+
+> 详见 `docs/relay-protocol.md` 和 `docs/modules/09-relay.md`
+
+---
+
+### 数据归属（编码前必读）
+
+| 数据实体 | 归属方 | 说明 |
+|---------|--------|------|
+| `Project` | **云端** | 项目定义和配置 |
+| `Workspace`（元数据） | **云端** | 名称、类型、关联 Project、`backend_id`（物理文件所在本机）、`container_ref`（绝对路径） |
+| Workspace 物理文件 | **本机** | 实际的代码文件、Git worktree |
+| `Story` | **云端** | 用户价值单元 |
+| `Task` | **云端** | 执行单元定义（`backend_id` 指定执行本机） |
+| `Backend` | **云端** | 已注册本机列表、鉴权 token、在线状态 |
+| `View` / `UserPreferences` | **云端** | 跨后端视图和偏好 |
+| `Settings` | **云端** | 系统级和用户级设置 |
+| `StateChange` | **云端** | 不可变事件日志 |
+| `MCP` | **云端** | 对外暴露的 Model Context Protocol |
+| `ExecutorHub`（运行时） | **本机** | Agent 会话内存态 + JSONL 缓存 |
+| `AgentConnector` | **本机** | 第三方 Agent 进程管理（Claude Code、Codex 等） |
+| `ToolExecutor` | **本机** | PiAgent tool call 的本地执行环境 |
+| `PiAgent AgentLoop` | **云端** | 云端原生 Agent，直接访问 DB，tool call 路由到本机 |
+| `SessionNotification` | **流经** | 第三方 Agent：本机产出 → 云端转发；PiAgent：云端直接产出 |
+
+**规则：云端代码不应直接访问本地文件系统。本机代码不应直接读写业务数据库。**
+
+**路由模型：**
+- 一个本机后端 = 一台物理机器，可管理多个 Workspace 目录
+- 命令路由基于 `Task.workspace_id → Workspace.backend_id`（物理文件所在本机）
+- `Project.backend_id` / `Story.backend_id` 是创建子实体时的默认偏好，不是运行时路由键
 
 ---
 
 ### 核心数据实体
 
-后端需要管理的核心实体，遵循 Project → Workspace → Story → Task 的领域层次：
+云端持有的核心实体，遵循 Project → Workspace → Story → Task 的领域层次：
 
 ```
 Project {
@@ -38,8 +68,9 @@ Project {
 Workspace {
   id: Uuid
   project_id: Uuid            // 所属项目
+  backend_id: String          // ⚡ 物理文件所在的本机后端（命令路由依据）
   name: String
-  container_ref: String       // 物理路径
+  container_ref: String       // 物理路径（本机上的绝对目录）
   workspace_type: GitWorktree | Static | Ephemeral
   status: Pending | Preparing | Ready | Active | Archived | Error
   git_config: Option<GitConfig>
@@ -91,6 +122,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| [Relay Protocol](../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
 
 ---
 

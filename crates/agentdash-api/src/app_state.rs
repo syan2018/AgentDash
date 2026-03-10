@@ -273,7 +273,7 @@ async fn ensure_default_backend(backend_repo: &Arc<SqliteBackendRepository>) -> 
     let local = BackendConfig {
         id: "local-default".to_string(),
         name: "本地后端".to_string(),
-        endpoint: "http://127.0.0.1:3001".to_string(),
+        endpoint: String::new(),
         auth_token: None,
         enabled: true,
         backend_type: BackendType::Local,

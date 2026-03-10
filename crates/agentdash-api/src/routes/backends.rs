@@ -24,17 +24,51 @@ pub struct BackendWithStatus {
     #[serde(flatten)]
     pub config: BackendConfig,
     pub online: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accessible_roots: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<agentdash_relay::CapabilitiesPayload>,
 }
 
 pub async fn list_backends(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<BackendWithStatus>>, ApiError> {
     let backends = state.backend_repo.list_backends().await?;
-    let mut result = Vec::with_capacity(backends.len());
+    let online_list = state.backend_registry.list_online().await;
+    let mut result = Vec::with_capacity(backends.len() + online_list.len());
+
+    let mut seen_ids = std::collections::HashSet::new();
+
     for b in backends {
-        let online = state.backend_registry.is_online(&b.id).await;
-        result.push(BackendWithStatus { config: b, online });
+        seen_ids.insert(b.id.clone());
+        let online_info = online_list.iter().find(|o| o.backend_id == b.id);
+        result.push(BackendWithStatus {
+            online: online_info.is_some(),
+            accessible_roots: online_info.map(|o| o.accessible_roots.clone()),
+            capabilities: online_info.map(|o| o.capabilities.clone()),
+            config: b,
+        });
     }
+
+    for o in &online_list {
+        if seen_ids.contains(&o.backend_id) {
+            continue;
+        }
+        result.push(BackendWithStatus {
+            online: true,
+            accessible_roots: Some(o.accessible_roots.clone()),
+            capabilities: Some(o.capabilities.clone()),
+            config: BackendConfig {
+                id: o.backend_id.clone(),
+                name: o.name.clone(),
+                endpoint: String::new(),
+                auth_token: None,
+                enabled: true,
+                backend_type: BackendType::Remote,
+            },
+        });
+    }
+
     Ok(Json(result))
 }
 

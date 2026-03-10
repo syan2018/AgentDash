@@ -272,6 +272,22 @@ export interface BackendConfig {
   auth_token: string | null;
   enabled: boolean;
   backend_type: BackendType;
+  /** WebSocket 中继在线状态（由 API 附加） */
+  online?: boolean;
+  /** 在线后端的可访问根路径 */
+  accessible_roots?: string[];
+  /** 在线后端的执行器能力 */
+  capabilities?: {
+    executors: Array<{
+      id: string;
+      name: string;
+      variants: string[];
+      available: boolean;
+    }>;
+    supports_cancel: boolean;
+    supports_workspace_files: boolean;
+    supports_discover_options: boolean;
+  };
 }
 
 export interface ViewConfig {

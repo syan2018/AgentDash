@@ -181,15 +181,28 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
           <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">后端连接</p>
           {backends.length === 0 && <p className="mt-2 rounded-[10px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">暂无后端</p>}
           <div className="mt-2 space-y-1.5">
-            {backends.map((backend) => (
-              <div
-                key={backend.id}
-                className="rounded-[10px] border border-transparent bg-background/80 px-3 py-2.5 text-sm"
-              >
-                <p className="truncate font-medium text-foreground">{backend.name}</p>
-                <p className="truncate text-xs text-muted-foreground">{backend.endpoint}</p>
-              </div>
-            ))}
+            {backends.map((backend) => {
+              const executorCount = backend.capabilities?.executors.filter(e => e.available).length ?? 0;
+              return (
+                <div
+                  key={backend.id}
+                  className="rounded-[10px] border border-transparent bg-background/80 px-3 py-2.5 text-sm"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+                      title={backend.online ? "在线" : "离线"}
+                    />
+                    <p className="truncate font-medium text-foreground">{backend.name}</p>
+                  </div>
+                  <p className="mt-0.5 truncate pl-4 text-xs text-muted-foreground">
+                    {backend.online
+                      ? `${executorCount} 个执行器可用`
+                      : backend.backend_type === "local" ? "本机" : "远程"}
+                  </p>
+                </div>
+              );
+            })}
           </div>
           </div>
         </div>

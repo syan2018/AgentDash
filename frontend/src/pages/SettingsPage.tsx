@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useCoordinatorStore } from "../stores/coordinatorStore";
 import type { SettingUpdate } from "../api/settings";
+import type { BackendConfig } from "../types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -288,17 +290,150 @@ function ExecutorSection({
   );
 }
 
+function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onRemove: (id: string) => void }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const toggle = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
+
+  const onlineCount = backends.filter((b) => b.online).length;
+
+  return (
+    <SectionCard title="后端管理">
+      <p className="text-xs text-muted-foreground">
+        共 {backends.length} 个后端，{onlineCount} 个在线
+      </p>
+
+      {backends.length === 0 && (
+        <p className="rounded-[10px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+          暂无已注册后端
+        </p>
+      )}
+
+      <div className="space-y-2">
+        {backends.map((backend) => {
+          const isExpanded = expandedId === backend.id;
+          const executors = backend.capabilities?.executors ?? [];
+          const availableExecs = executors.filter((e) => e.available);
+          const roots = backend.accessible_roots ?? [];
+
+          return (
+            <div key={backend.id} className="rounded-[10px] border border-border bg-background/80">
+              <button
+                type="button"
+                className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                onClick={() => toggle(backend.id)}
+              >
+                <span
+                  className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">{backend.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {backend.online
+                      ? `${availableExecs.length} 个执行器可用`
+                      : backend.backend_type === "local"
+                        ? "本机 · 离线"
+                        : "远程 · 离线"}
+                  </p>
+                </div>
+                <span className="rounded-[6px] border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+                  {backend.backend_type === "local" ? "本机" : "远程"}
+                </span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={`shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+
+              {isExpanded && (
+                <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <span className="text-muted-foreground">ID</span>
+                    <span className="truncate font-mono text-foreground" title={backend.id}>
+                      {backend.id}
+                    </span>
+                    <span className="text-muted-foreground">状态</span>
+                    <span className={backend.online ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                      {backend.online ? "在线" : "离线"}
+                    </span>
+                    <span className="text-muted-foreground">类型</span>
+                    <span className="text-foreground">{backend.backend_type === "local" ? "本机" : "远程"}</span>
+                  </div>
+
+                  {executors.length > 0 && (
+                    <div>
+                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">执行器 ({availableExecs.length}/{executors.length} 可用)</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {executors.map((ex) => (
+                          <span
+                            key={ex.id}
+                            className={`inline-block rounded-[6px] border px-2 py-0.5 text-[11px] ${
+                              ex.available
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                : "border-border bg-muted/50 text-muted-foreground line-through"
+                            }`}
+                          >
+                            {ex.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {roots.length > 0 && (
+                    <div>
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">可访问路径</p>
+                      {roots.map((root) => (
+                        <p key={root} className="truncate text-xs text-foreground" title={root}>
+                          {root.replace(/^\\\\\?\\/, "")}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  {!backend.online && (
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        className="rounded-[8px] border border-destructive/30 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10"
+                        onClick={() => onRemove(backend.id)}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </SectionCard>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export function SettingsPage() {
   const { settings, loading, saving, error, fetchSettings, updateSettings } = useSettingsStore();
+  const { backends, fetchBackends, removeBackend } = useCoordinatorStore();
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchSettings();
-  }, [fetchSettings]);
+    void fetchBackends();
+  }, [fetchSettings, fetchBackends]);
 
   const handleSave = useCallback(
     async (updates: SettingUpdate[]) => {
@@ -335,6 +470,7 @@ export function SettingsPage() {
           </div>
         )}
 
+        <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
         <LlmSection settings={settings} saving={saving} onSave={handleSave} />
         <AgentSection settings={settings} saving={saving} onSave={handleSave} />
         <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />

@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ThemeToggle } from "../ui/theme-toggle";
 import { useProjectStore } from "../../stores/projectStore";
@@ -177,34 +177,7 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
 
         {/* 后端连接 */}
         <div className="border-t border-border p-3">
-          <div className="rounded-[12px] border border-border bg-secondary/35 p-2.5">
-          <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">后端连接</p>
-          {backends.length === 0 && <p className="mt-2 rounded-[10px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">暂无后端</p>}
-          <div className="mt-2 space-y-1.5">
-            {backends.map((backend) => {
-              const executorCount = backend.capabilities?.executors.filter(e => e.available).length ?? 0;
-              return (
-                <div
-                  key={backend.id}
-                  className="rounded-[10px] border border-transparent bg-background/80 px-3 py-2.5 text-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
-                      title={backend.online ? "在线" : "离线"}
-                    />
-                    <p className="truncate font-medium text-foreground">{backend.name}</p>
-                  </div>
-                  <p className="mt-0.5 truncate pl-4 text-xs text-muted-foreground">
-                    {backend.online
-                      ? `${executorCount} 个执行器可用`
-                      : backend.backend_type === "local" ? "本机" : "远程"}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-          </div>
+          <BackendConnectionPanel backends={backends} />
         </div>
 
         <div className="border-t border-border p-3">
@@ -225,6 +198,117 @@ export function WorkspaceLayout({ children, activeView, onChangeView }: Workspac
       </aside>
 
       <main className="flex-1 overflow-hidden">{children}</main>
+    </div>
+  );
+}
+
+// ─── 后端连接面板 ──────────────────────────────────────────
+
+function BackendConnectionPanel({ backends }: { backends: import("../../types").BackendConfig[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const toggle = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
+
+  return (
+    <div className="rounded-[12px] border border-border bg-secondary/35 p-2.5">
+      <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">后端连接</p>
+      {backends.length === 0 && (
+        <p className="mt-2 rounded-[10px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+          暂无后端
+        </p>
+      )}
+      <div className="mt-2 space-y-1.5">
+        {backends.map((backend) => {
+          const isExpanded = expandedId === backend.id;
+          const executors = backend.capabilities?.executors ?? [];
+          const availableCount = executors.filter((e) => e.available).length;
+          const roots = backend.accessible_roots ?? [];
+
+          return (
+            <div key={backend.id} className="rounded-[10px] border border-transparent bg-background/80 text-sm">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+                onClick={() => toggle(backend.id)}
+              >
+                <span
+                  className={`inline-block h-2 w-2 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+                />
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground">{backend.name}</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={`shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+
+              {!isExpanded && (
+                <p className="truncate px-3 pb-2 pl-7 text-xs text-muted-foreground">
+                  {backend.online
+                    ? `${availableCount} 个执行器可用`
+                    : backend.backend_type === "local"
+                      ? "本机"
+                      : "远程"}
+                </p>
+              )}
+
+              {isExpanded && (
+                <div className="space-y-2 border-t border-border/50 px-3 pb-3 pt-2">
+                  {backend.online && executors.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">执行器</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {executors.map((ex) => (
+                          <span
+                            key={ex.id}
+                            className={`inline-block rounded-[6px] border px-1.5 py-0.5 text-[11px] ${
+                              ex.available
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                : "border-border bg-muted/50 text-muted-foreground"
+                            }`}
+                          >
+                            {ex.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {roots.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">可访问路径</p>
+                      <div className="mt-1 space-y-0.5">
+                        {roots.map((root) => (
+                          <p key={root} className="truncate text-[11px] text-muted-foreground" title={root}>
+                            {root.replace(/^\\\\\?\\/, "")}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>{backend.backend_type === "local" ? "本机" : "远程"}</span>
+                    <span>·</span>
+                    <span>{backend.online ? "在线" : "离线"}</span>
+                    <span>·</span>
+                    <span className="truncate font-mono">{backend.id}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

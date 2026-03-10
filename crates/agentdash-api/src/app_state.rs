@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::SqlitePool;
+use tokio::sync::RwLock;
 
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
@@ -52,6 +54,8 @@ pub struct AppState {
     pub address_space_registry: AddressSpaceRegistry,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
+    /// 远程会话映射：session_id → backend_id（路由到远程后端的会话）
+    pub remote_sessions: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl AppState {
@@ -155,6 +159,7 @@ impl AppState {
             contributor_registry: ContextContributorRegistry::with_builtins(),
             address_space_registry: agentdash_injection::builtin_address_space_registry(),
             backend_registry: BackendRegistry::new(),
+            remote_sessions: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 }

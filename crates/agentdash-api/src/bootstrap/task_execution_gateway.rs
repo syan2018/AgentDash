@@ -21,6 +21,10 @@ use agentdash_domain::{
     workspace::Workspace,
 };
 use agentdash_executor::{ConnectorError, PromptSessionRequest, SessionMeta};
+use agentdash_relay::{
+    CommandCancelPayload, CommandPromptPayload, ExecutorConfigRelay, RelayMessage,
+    ResponsePromptPayload,
+};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -139,27 +143,56 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             .as_deref()
             .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
 
-        let prompt_req = PromptSessionRequest {
-            prompt: None,
-            prompt_blocks: Some(built.prompt_blocks),
-            working_dir: built.working_dir,
-            env: Default::default(),
-            executor_config: resolve_task_executor_config(executor_config, task, &project)
-                .map_err(map_internal_error)?,
-            mcp_servers: built.mcp_servers,
-        };
+        let resolved_config =
+            resolve_task_executor_config(executor_config, task, &project)
+                .map_err(map_internal_error)?;
 
-        let turn_id = self
-            .state
-            .executor_hub
-            .start_prompt(session_id, prompt_req)
-            .await
-            .map_err(map_connector_error)?;
+        let backend_id = &story.backend_id;
+        let is_remote = self.state.backend_registry.is_online(backend_id).await;
 
-        Ok(StartedTurn {
-            turn_id,
-            context_sources: built.source_summary,
-        })
+        if is_remote {
+            let turn_id = relay_start_prompt(
+                &self.state,
+                backend_id,
+                session_id,
+                &built,
+                resolved_config,
+                workspace.as_ref(),
+            )
+            .await?;
+
+            self.state
+                .remote_sessions
+                .write()
+                .await
+                .insert(session_id.to_string(), backend_id.clone());
+
+            Ok(StartedTurn {
+                turn_id,
+                context_sources: built.source_summary,
+            })
+        } else {
+            let prompt_req = PromptSessionRequest {
+                prompt: None,
+                prompt_blocks: Some(built.prompt_blocks),
+                working_dir: built.working_dir,
+                env: Default::default(),
+                executor_config: resolved_config,
+                mcp_servers: built.mcp_servers,
+            };
+
+            let turn_id = self
+                .state
+                .executor_hub
+                .start_prompt(session_id, prompt_req)
+                .await
+                .map_err(map_connector_error)?;
+
+            Ok(StartedTurn {
+                turn_id,
+                context_sources: built.source_summary,
+            })
+        }
     }
 
     async fn bind_session_to_owner(
@@ -181,11 +214,23 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
     }
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {
-        self.state
-            .executor_hub
-            .cancel(session_id)
+        let remote_backend = self
+            .state
+            .remote_sessions
+            .read()
             .await
-            .map_err(map_connector_error)
+            .get(session_id)
+            .cloned();
+
+        if let Some(backend_id) = remote_backend {
+            relay_cancel(&self.state, &backend_id, session_id).await
+        } else {
+            self.state
+                .executor_hub
+                .cancel(session_id)
+                .await
+                .map_err(map_connector_error)
+        }
     }
 
     async fn get_session_overview(
@@ -1371,4 +1416,110 @@ fn normalize_option_string(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+// ─── 远程中继辅助函数 ──────────────────────────────────────
+
+use crate::task_agent_context::BuiltTaskAgentContext;
+
+async fn relay_start_prompt(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    session_id: &str,
+    built: &BuiltTaskAgentContext,
+    executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
+    workspace: Option<&Workspace>,
+) -> Result<String, TaskExecutionError> {
+    let workspace_root = workspace
+        .map(|ws| ws.container_ref.clone())
+        .or_else(|| built.working_dir.clone())
+        .unwrap_or_else(|| ".".to_string());
+
+    let relay_config = executor_config.map(|c| ExecutorConfigRelay {
+        executor: c.executor,
+        variant: c.variant,
+        model_id: c.model_id,
+        permission_policy: c.permission_policy,
+    });
+
+    let cmd = RelayMessage::CommandPrompt {
+        id: RelayMessage::new_id("prompt"),
+        payload: CommandPromptPayload {
+            session_id: session_id.to_string(),
+            follow_up_session_id: None,
+            prompt: None,
+            prompt_blocks: Some(serde_json::Value::Array(built.prompt_blocks.clone())),
+            workspace_root,
+            working_dir: built.working_dir.clone(),
+            env: Default::default(),
+            executor_config: relay_config,
+            mcp_servers: vec![],
+        },
+    };
+
+    tracing::info!(
+        backend_id = %backend_id,
+        session_id = %session_id,
+        "中继 command.prompt → 远程后端"
+    );
+
+    let resp = state
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
+        .map_err(|e| TaskExecutionError::Internal(format!("中继 prompt 失败: {e}")))?;
+
+    match resp {
+        RelayMessage::ResponsePrompt {
+            payload: Some(ResponsePromptPayload { turn_id, .. }),
+            error: None,
+            ..
+        } => Ok(turn_id),
+        RelayMessage::ResponsePrompt {
+            error: Some(err), ..
+        } => Err(TaskExecutionError::Internal(format!(
+            "远程后端执行失败: {}",
+            err.message
+        ))),
+        other => Err(TaskExecutionError::Internal(format!(
+            "远程后端返回意外响应: {}",
+            other.id()
+        ))),
+    }
+}
+
+async fn relay_cancel(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    session_id: &str,
+) -> Result<(), TaskExecutionError> {
+    tracing::info!(
+        backend_id = %backend_id,
+        session_id = %session_id,
+        "中继 command.cancel → 远程后端"
+    );
+
+    let cmd = RelayMessage::CommandCancel {
+        id: RelayMessage::new_id("cancel"),
+        payload: CommandCancelPayload {
+            session_id: session_id.to_string(),
+        },
+    };
+
+    let resp = state
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
+        .map_err(|e| TaskExecutionError::Internal(format!("中继 cancel 失败: {e}")))?;
+
+    match resp {
+        RelayMessage::ResponseCancel { error: None, .. } => Ok(()),
+        RelayMessage::ResponseCancel {
+            error: Some(err), ..
+        } => Err(TaskExecutionError::Internal(format!(
+            "远程取消失败: {}",
+            err.message
+        ))),
+        _ => Ok(()),
+    }
 }

@@ -162,13 +162,33 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        // 事件消息 → 转发到前端事件流（TODO: 集成 EventBus）
         RelayMessage::EventSessionNotification { payload, .. } => {
-            tracing::info!(
-                backend_id = %backend_id,
-                session_id = %payload.session_id,
-                "收到远程会话通知"
-            );
+            match serde_json::from_value::<agent_client_protocol::SessionNotification>(
+                payload.notification.clone(),
+            ) {
+                Ok(notification) => {
+                    if let Err(err) = state
+                        .executor_hub
+                        .inject_notification(&payload.session_id, notification)
+                        .await
+                    {
+                        tracing::warn!(
+                            backend_id = %backend_id,
+                            session_id = %payload.session_id,
+                            error = %err,
+                            "注入远程 SessionNotification 失败"
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        backend_id = %backend_id,
+                        session_id = %payload.session_id,
+                        error = %err,
+                        "反序列化远程 SessionNotification 失败"
+                    );
+                }
+            }
         }
         RelayMessage::EventSessionStateChanged { payload, .. } => {
             tracing::info!(

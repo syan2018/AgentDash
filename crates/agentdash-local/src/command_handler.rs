@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_relay::*;
@@ -351,11 +352,36 @@ impl CommandHandler {
         id: String,
         payload: CommandWorkspaceFilesListPayload,
     ) -> RelayMessage {
-        tracing::debug!(workspace_id = %payload.workspace_id, "workspace_files.list");
-        RelayMessage::ResponseWorkspaceFilesList {
-            id,
-            payload: Some(ResponseWorkspaceFilesListPayload { files: vec![] }),
-            error: None,
+        let root = match self.resolve_workspace_root(&payload.root_path) {
+            Ok(r) => r,
+            Err(e) => {
+                return RelayMessage::ResponseWorkspaceFilesList {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(e)),
+                };
+            }
+        };
+
+        let sub_path = payload.path.as_deref().unwrap_or("");
+        let dir = if sub_path.is_empty() { root.clone() } else { root.join(sub_path) };
+        let pattern = payload.pattern.unwrap_or_default().to_lowercase();
+
+        let result = tokio::task::spawn_blocking(move || {
+            walk_files(&root, &dir, &pattern, 200)
+        }).await;
+
+        match result {
+            Ok(files) => RelayMessage::ResponseWorkspaceFilesList {
+                id,
+                payload: Some(ResponseWorkspaceFilesListPayload { files }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseWorkspaceFilesList {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(format!("文件遍历失败: {e}"))),
+            },
         }
     }
 
@@ -364,13 +390,63 @@ impl CommandHandler {
         id: String,
         payload: CommandWorkspaceFilesReadPayload,
     ) -> RelayMessage {
-        tracing::debug!(workspace_id = %payload.workspace_id, path = %payload.path, "workspace_files.read");
-        RelayMessage::ResponseWorkspaceFilesRead {
-            id,
-            payload: None,
-            error: Some(RelayError::runtime_error(
-                "workspace_files.read 尚未完全实现",
-            )),
+        let root = match self.resolve_workspace_root(&payload.root_path) {
+            Ok(r) => r,
+            Err(e) => {
+                return RelayMessage::ResponseWorkspaceFilesRead {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(e)),
+                };
+            }
+        };
+
+        let full_path = root.join(&payload.path);
+        if !full_path.starts_with(&root) {
+            return RelayMessage::ResponseWorkspaceFilesRead {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error("路径越界")),
+            };
+        }
+
+        match tokio::fs::read_to_string(&full_path).await {
+            Ok(content) => {
+                const MAX_SIZE: usize = 100 * 1024;
+                let truncated = if content.len() > MAX_SIZE {
+                    content[..MAX_SIZE].to_string()
+                } else {
+                    content
+                };
+                RelayMessage::ResponseWorkspaceFilesRead {
+                    id,
+                    payload: Some(ResponseWorkspaceFilesReadPayload {
+                        path: payload.path,
+                        content: truncated,
+                        encoding: "utf-8".to_string(),
+                    }),
+                    error: None,
+                }
+            }
+            Err(e) => RelayMessage::ResponseWorkspaceFilesRead {
+                id,
+                payload: None,
+                error: Some(RelayError::io_error(format!("读取失败: {e}"))),
+            },
+        }
+    }
+
+    fn resolve_workspace_root(&self, root_path: &Option<String>) -> Result<std::path::PathBuf, String> {
+        if let Some(rp) = root_path {
+            self.tool_executor
+                .validate_workspace_root(rp)
+                .map_err(|e| format!("路径校验失败: {e}"))
+        } else {
+            let roots = self.tool_executor.accessible_roots();
+            roots
+                .first()
+                .cloned()
+                .ok_or_else(|| "无可用的 accessible_roots".to_string())
         }
     }
 
@@ -435,6 +511,91 @@ async fn forward_session_notifications(
                 tracing::debug!(session_id = %session_id, "通知流关闭");
                 break;
             }
+        }
+    }
+}
+
+// ─── workspace_files 文件遍历 ─────────────────────────────
+
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".next",
+    ".agentdash",
+    "dist",
+    "build",
+    ".trellis",
+    ".venv",
+    ".cursor",
+    ".claude",
+    ".agents",
+];
+
+fn walk_files(root: &Path, dir: &Path, pattern: &str, max: usize) -> Vec<FileEntryRelay> {
+    let mut results = Vec::new();
+    walk_dir_recursive(root, dir, pattern, max, &mut results);
+    results.sort_by(|a, b| a.path.cmp(&b.path));
+    results
+}
+
+fn walk_dir_recursive(
+    root: &Path,
+    dir: &Path,
+    pattern: &str,
+    max: usize,
+    out: &mut Vec<FileEntryRelay>,
+) {
+    if out.len() >= max {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        if out.len() >= max {
+            return;
+        }
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if ft.is_dir() {
+            if SKIP_DIRS.contains(&name_str.as_ref()) {
+                continue;
+            }
+            walk_dir_recursive(root, &entry.path(), pattern, max, out);
+        } else if ft.is_file() {
+            let rel = entry
+                .path()
+                .strip_prefix(root)
+                .unwrap_or(&entry.path())
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if !pattern.is_empty() && !rel.to_lowercase().contains(pattern) {
+                continue;
+            }
+
+            let meta = entry.metadata().ok();
+            out.push(FileEntryRelay {
+                path: rel,
+                size: meta.as_ref().map(|m| m.len()),
+                modified_at: meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64
+                    }),
+                is_dir: false,
+            });
         }
     }
 }

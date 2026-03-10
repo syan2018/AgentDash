@@ -31,6 +31,13 @@ pub struct OnlineBackendInfo {
     pub connected_at: DateTime<Utc>,
 }
 
+fn normalize_win_path(p: &str) -> String {
+    p.trim_start_matches(r"\\?\")
+        .trim_start_matches(r"//?/")
+        .replace('\\', "/")
+        .to_lowercase()
+}
+
 /// 中继后端注册表 — 跟踪所有通过 WebSocket 连接的本机后端
 pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
@@ -124,10 +131,12 @@ impl BackendRegistry {
 
     /// 查找管理了指定路径的在线后端
     pub async fn find_backend_for_path(&self, path: &str) -> Option<String> {
+        let norm_path = normalize_win_path(path);
         let backends = self.backends.read().await;
         for b in backends.values() {
             for root in &b.accessible_roots {
-                if path.starts_with(root.as_str()) {
+                let norm_root = normalize_win_path(root);
+                if norm_path.starts_with(&norm_root) {
                     return Some(b.backend_id.clone());
                 }
             }

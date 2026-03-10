@@ -27,6 +27,8 @@ export interface ExecutorInfo {
   name: string;
   variants: string[];
   available: boolean;
+  /** 该执行器可用的远程后端 ID 列表（为空则仅本机） */
+  backend_ids?: string[];
 }
 
 /** 后端 /api/agents/discovery 响应 */

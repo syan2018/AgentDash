@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
@@ -14,6 +15,9 @@ pub struct ExecutorInfoResponse {
     pub name: String,
     pub variants: Vec<String>,
     pub available: bool,
+    /// 该执行器可用的后端 ID 列表（空 = 仅本机）
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub backend_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,23 +43,43 @@ pub async fn get_discovery(
         capabilities: connector.capabilities(),
     };
 
-    let executors: Vec<ExecutorInfoResponse> = connector
-        .list_executors()
-        .into_iter()
-        .map(
-            |ConnectorExecutorInfo {
-                 id,
-                 name,
-                 variants,
-                 available,
-             }| ExecutorInfoResponse {
-                id,
-                name,
-                variants,
-                available,
-            },
-        )
-        .collect();
+    let mut merged: HashMap<String, ExecutorInfoResponse> = HashMap::new();
+
+    for info in connector.list_executors() {
+        let ConnectorExecutorInfo { id, name, variants, available } = info;
+        merged.insert(id.clone(), ExecutorInfoResponse {
+            id,
+            name,
+            variants,
+            available,
+            backend_ids: Vec::new(),
+        });
+    }
+
+    for backend in state.backend_registry.list_online().await {
+        for ex in &backend.capabilities.executors {
+            match merged.get_mut(&ex.id) {
+                Some(existing) => {
+                    if ex.available && !existing.available {
+                        existing.available = true;
+                    }
+                    existing.backend_ids.push(backend.backend_id.clone());
+                }
+                None => {
+                    merged.insert(ex.id.clone(), ExecutorInfoResponse {
+                        id: ex.id.clone(),
+                        name: ex.name.clone(),
+                        variants: ex.variants.clone(),
+                        available: ex.available,
+                        backend_ids: vec![backend.backend_id.clone()],
+                    });
+                }
+            }
+        }
+    }
+
+    let mut executors: Vec<ExecutorInfoResponse> = merged.into_values().collect();
+    executors.sort_by(|a, b| a.id.cmp(&b.id));
 
     Ok(Json(DiscoveryResponse {
         connector: connector_info,

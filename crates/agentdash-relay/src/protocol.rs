@@ -424,6 +424,9 @@ pub struct CommandDiscoverOptionsPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceFilesListPayload {
     pub workspace_id: String,
+    /// 云端解析的物理根路径（workspace.container_ref）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -433,6 +436,9 @@ pub struct CommandWorkspaceFilesListPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceFilesReadPayload {
     pub workspace_id: String,
+    /// 云端解析的物理根路径（workspace.container_ref）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_path: Option<String>,
     pub path: String,
 }
 

@@ -16,12 +16,17 @@ interface AgentTypeOption {
 function buildAgentTypeOptions(
   binding: AgentBinding,
   projectConfig: ProjectConfig | undefined,
-  discovered: Array<{ id: string; name: string; available: boolean }>,
+  discovered: Array<{ id: string; name: string; available: boolean; backend_ids?: string[] }>,
 ): AgentTypeOption[] {
   const options = new Map<string, AgentTypeOption>();
 
   for (const executor of discovered) {
-    const suffix = executor.available ? "" : "（不可用）";
+    const tags: string[] = [];
+    if (!executor.available) tags.push("不可用");
+    if (executor.backend_ids && executor.backend_ids.length > 0) {
+      tags.push(`远程: ${executor.backend_ids.join(", ")}`);
+    }
+    const suffix = tags.length > 0 ? `（${tags.join(" · ")}）` : "";
     options.set(executor.id, {
       value: executor.id,
       label: `${executor.name}${suffix}`,

@@ -41,8 +41,12 @@ impl ToolExecutor {
         Self { accessible_roots }
     }
 
+    pub fn accessible_roots(&self) -> &[PathBuf] {
+        &self.accessible_roots
+    }
+
     /// 验证 workspace_root 在 accessible_roots 内
-    fn validate_workspace_root(&self, workspace_root: &str) -> Result<PathBuf, ToolError> {
+    pub fn validate_workspace_root(&self, workspace_root: &str) -> Result<PathBuf, ToolError> {
         let ws_path = PathBuf::from(workspace_root);
         let canonical = std::fs::canonicalize(&ws_path)
             .map_err(|_| ToolError::InvalidPath(workspace_root.to_string()))?;

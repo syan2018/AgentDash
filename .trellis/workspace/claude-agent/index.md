@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
-- **Last Active**: 2026-03-02
+- **Total Sessions**: 15
+- **Last Active**: 2026-03-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~574 | Active |
+| `journal-1.md` | ~610 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 15 | 2026-03-10 | Relay P1-P3: executor aggregation, workspace_files relay, backend management UI | `ee29fb8`, `612750f`, `a327fbc`, `f0201fe` |
 | 14 | 2026-03-02 | feat(file-reference): @ 引用工作空间文件功能实现 | `0635bb1` |
 | 13 | 2026-02-27 | 归档任务: Project 配置增强与 Story 下 Task 创建流程 | `6fa8e43` |
 | 12 | 2026-02-27 | 前端适配 Project/Workspace 领域模型 | `026cf37` |

@@ -1,16 +1,16 @@
 {
-  "id": "context-injection-design",
-  "name": "context-injection-design",
-  "title": "上下文注入机制（Injection 模块）",
+  "id": "agent-tool-system",
+  "name": "agent-tool-system",
+  "title": "Agent 工具系统（内置工具注册与执行）",
   "description": "",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "priority": "P2",
-  "creator": "claude-agent",
-  "assignee": "claude-agent",
-  "createdAt": "2026-02-28",
-  "completedAt": null,
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-06",
+  "completedAt": "2026-03-10",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": ""
+  "notes": "ToolRegistry + 5 个内置工具（ReadFile/WriteFile/ListDir/Shell/Search）+ MCP 工具桥接（McpToolAdapter）+ agent loop 执行全部实现。动态注册 API 和限流策略留待后续。"
 }

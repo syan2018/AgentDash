@@ -3,14 +3,14 @@
   "name": "agent-streaming-context",
   "title": "Agent 流式输出与上下文管理",
   "description": "",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-03-06",
-  "completedAt": null,
+  "completedAt": "2026-03-10",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": ""
+  "notes": "SSE/NDJSON 双通道、ACP 会话流（含 Resume/历史补发）、Turn 监听（spawn_task_turn_monitor）、AgentEvent→SessionNotification 桥接、EventSender/EventReceiver 全部实现。高级 token 管理/上下文裁剪留待后续。"
 }

@@ -1,0 +1,41 @@
+{
+  "id": "context-injection-design",
+  "name": "context-injection-design",
+  "title": "上下文注入机制（Injection 模块）",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-02-28",
+  "completedAt": "2026-03-10",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": "四层架构（声明/解析/组装/投递）全部落地。ContextContributor + SourceResolver 注册表化完成。ManualText/File/ProjectSnapshot 三种解析器已实现。HttpFetch/McpResource/EntityRef 解析器留待后续增强。"
+}

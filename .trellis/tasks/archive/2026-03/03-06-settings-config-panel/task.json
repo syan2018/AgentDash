@@ -1,16 +1,16 @@
 {
-  "id": "agent-tool-system",
-  "name": "agent-tool-system",
-  "title": "Agent 工具系统（内置工具注册与执行）",
+  "id": "settings-config-panel",
+  "name": "settings-config-panel",
+  "title": "Pi Agent 设置与配置面板",
   "description": "",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-03-06",
-  "completedAt": null,
+  "completedAt": "2026-03-10",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": ""
+  "notes": "SettingsPage 含 LLM（API Key/Base URL/模型/Wire API）、Pi Agent（system_prompt/temperature/max_turns）、Executor（默认标识）三区块。后端 GET/PUT/DELETE settings API + SQLite 持久化 + 敏感字段脱敏。前端 settingsStore（Zustand）全部完成。"
 }

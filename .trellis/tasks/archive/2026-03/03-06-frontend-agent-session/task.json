@@ -1,16 +1,16 @@
 {
-  "id": "03-07-unified-context-addressing",
-  "name": "03-07-unified-context-addressing",
-  "title": "brainstorm: 统一上下文引用与寻址空间设计",
+  "id": "frontend-agent-session",
+  "name": "frontend-agent-session",
+  "title": "前端 Agent 选择与会话集成",
   "description": "",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
-  "createdAt": "2026-03-07",
-  "completedAt": null,
+  "createdAt": "2026-03-06",
+  "completedAt": "2026-03-10",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": ""
+  "notes": "acp-session 模块（模型层 + UI 层 20+ 文件）、executor-selector（发现/配置/选择器）、AgentBindingFields、SessionPage（/session 路由）全部实现。"
 }

@@ -1,0 +1,45 @@
+{
+  "id": "extend-source-resolvers",
+  "name": "extend-source-resolvers",
+  "title": "扩展上下文来源解析器（HttpFetch / McpResource / EntityRef）",
+  "description": "ContextSourceKind 已定义 HttpFetch / McpResource / EntityRef 三种变体（context_source.rs），fragment_label 也有对应分支（resolver.rs L329-338），但 SourceResolverRegistry::with_builtins() 未注册对应解析器。使用这些 kind 时 required=true 直接报错，required=false 静默跳过。需要：\n1. HttpFetchResolver — 通过 HTTP GET 拉取远程内容，需支持超时和大小限制\n2. McpResourceResolver — 通过 MCP 协议读取 MCP Server 暴露的资源\n3. EntityRefResolver — 通过实体 ID 引用 Story/Task 等领域实体的摘要",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-10",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-injection/src/resolver.rs",
+    "crates/agentdash-domain/src/context_source.rs",
+    "crates/agentdash-api/src/task_agent_context.rs"
+  ],
+  "notes": "从已归档任务 context-injection-design 提取的遗留项。前置：context-injection-design Phase 1 已完成。"
+}

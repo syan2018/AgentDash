@@ -7,6 +7,7 @@ use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_injection::AddressSpaceRegistry;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
+use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
@@ -49,6 +50,8 @@ pub struct AppState {
     pub contributor_registry: ContextContributorRegistry,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub address_space_registry: AddressSpaceRegistry,
+    /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
+    pub backend_registry: Arc<BackendRegistry>,
 }
 
 impl AppState {
@@ -151,6 +154,7 @@ impl AppState {
             restart_tracker,
             contributor_registry: ContextContributorRegistry::with_builtins(),
             address_space_registry: agentdash_injection::builtin_address_space_registry(),
+            backend_registry: BackendRegistry::new(),
         })
     }
 }

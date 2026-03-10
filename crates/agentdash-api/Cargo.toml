@@ -16,6 +16,7 @@ agentdash-infrastructure = { workspace = true }
 agentdash-executor = { workspace = true }
 agentdash-acp-meta = { workspace = true }
 agentdash-mcp = { workspace = true }
+agentdash-relay = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

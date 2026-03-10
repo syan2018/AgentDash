@@ -22,6 +22,8 @@ use axum::{
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::relay;
+
 use crate::app_state::AppState;
 use crate::stream;
 
@@ -109,6 +111,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/backends/{id}",
             get(backends::get_backend).delete(backends::remove_backend),
         )
+        .route("/backends/online", get(backends::list_online_backends))
         // Settings
         .route(
             "/settings",
@@ -162,11 +165,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/agents/discovered-options/stream",
             get(discovered_options::discovered_options_stream),
         )
-        .with_state(state);
+        .with_state(state.clone());
 
     Router::new()
         .merge(mcp)
         .nest("/api", api)
+        .route(
+            "/ws/backend",
+            get(relay::ws_handler::ws_backend_handler).with_state(state),
+        )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }

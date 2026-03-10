@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 
 mod app_state;
 mod bootstrap;
+mod relay;
 mod routes;
 mod rpc;
 mod stream;

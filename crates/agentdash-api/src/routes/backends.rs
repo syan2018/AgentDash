@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use agentdash_domain::backend::{BackendConfig, BackendType};
 
 use crate::app_state::AppState;
+use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
 
 #[derive(Deserialize)]
@@ -18,11 +19,31 @@ pub struct CreateBackendRequest {
     pub backend_type: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct BackendWithStatus {
+    #[serde(flatten)]
+    pub config: BackendConfig,
+    pub online: bool,
+}
+
 pub async fn list_backends(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<BackendConfig>>, ApiError> {
+) -> Result<Json<Vec<BackendWithStatus>>, ApiError> {
     let backends = state.backend_repo.list_backends().await?;
-    Ok(Json(backends))
+    let mut result = Vec::with_capacity(backends.len());
+    for b in backends {
+        let online = state.backend_registry.is_online(&b.id).await;
+        result.push(BackendWithStatus { config: b, online });
+    }
+    Ok(Json(result))
+}
+
+/// 列出通过 WebSocket 连接的在线后端
+pub async fn list_online_backends(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<OnlineBackendInfo>>, ApiError> {
+    let online = state.backend_registry.list_online().await;
+    Ok(Json(online))
 }
 
 pub async fn get_backend(

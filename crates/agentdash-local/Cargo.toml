@@ -1,0 +1,31 @@
+[package]
+name = "agentdash-local"
+description = "本机后端 — 第三方 Agent 执行 + PiAgent 工具执行环境"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agentdash-local"
+path = "src/main.rs"
+
+[dependencies]
+agentdash-relay.workspace = true
+agentdash-executor.workspace = true
+agentdash-domain.workspace = true
+agentdash-acp-meta.workspace = true
+
+tokio.workspace = true
+tokio-tungstenite = { version = "0.26" }
+futures.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap = { version = "4", features = ["derive"] }
+globset = "0.4"

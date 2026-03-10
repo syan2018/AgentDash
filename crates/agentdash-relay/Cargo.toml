@@ -1,0 +1,13 @@
+[package]
+name = "agentdash-relay"
+description = "云端↔本机 WebSocket 中继协议类型（共享 crate）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true

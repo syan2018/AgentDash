@@ -10,6 +10,8 @@ members = [
     "crates/agentdash-acp-meta",
     "crates/agentdash-mcp",
     "crates/agentdash-agent",
+    "crates/agentdash-relay",
+    "crates/agentdash-local",
 ]
 exclude = ["third_party"]
 
@@ -55,6 +57,8 @@ agentdash-executor = { path = "crates/agentdash-executor" }
 agentdash-acp-meta = { path = "crates/agentdash-acp-meta" }
 agentdash-mcp = { path = "crates/agentdash-mcp" }
 agentdash-agent = { path = "crates/agentdash-agent" }
+agentdash-relay = { path = "crates/agentdash-relay" }
+agentdash-local = { path = "crates/agentdash-local" }
 
 # Rig (LLM Agent SDK)
 rig-core = "0.24"

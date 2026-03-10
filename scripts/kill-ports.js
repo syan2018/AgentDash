@@ -154,6 +154,7 @@ if (isWindows) {
     // 清理 node 和 cargo 相关进程
     const cleanupCmds = [
       'taskkill /F /IM "agentdash-server.exe" 2>nul',
+      'taskkill /F /IM "agentdash-local.exe" 2>nul',
       'taskkill /F /FI "WINDOWTITLE eq pnpm*" 2>nul',
       'taskkill /F /FI "WINDOWTITLE eq vite*" 2>nul'
     ];

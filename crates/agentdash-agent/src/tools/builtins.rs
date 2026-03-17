@@ -15,12 +15,17 @@ use crate::tools::schema::schema_value;
 use crate::tools::support::{
     resolve_existing_path, resolve_path_for_write, truncate_chars, workspace_display,
 };
-use crate::types::{AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool};
+use tokio_util::sync::CancellationToken;
+
+use crate::types::{
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
+};
 
 fn ok_text(text: impl Into<String>) -> AgentToolResult {
     AgentToolResult {
         content: vec![ContentPart::text(text)],
         is_error: false,
+        details: None,
     }
 }
 
@@ -32,6 +37,7 @@ fn err_text(text: impl Into<String>) -> AgentToolResult {
     AgentToolResult {
         content: vec![ContentPart::text(text)],
         is_error: true,
+        details: None,
     }
 }
 
@@ -71,6 +77,8 @@ impl AgentTool for ReadFileTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
+        _cancel: CancellationToken,
+        _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ReadFileParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
@@ -133,6 +141,8 @@ impl AgentTool for WriteFileTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
+        _cancel: CancellationToken,
+        _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: WriteFileParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
@@ -197,6 +207,8 @@ impl AgentTool for ListDirectoryTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
+        _cancel: CancellationToken,
+        _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ListDirectoryParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
@@ -283,6 +295,8 @@ impl AgentTool for ShellTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
+        _cancel: CancellationToken,
+        _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
@@ -352,6 +366,7 @@ impl AgentTool for ShellTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(message)],
             is_error: !output.status.success(),
+            details: None,
         })
     }
 }
@@ -397,6 +412,8 @@ impl AgentTool for SearchTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
+        _cancel: CancellationToken,
+        _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: SearchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
@@ -544,12 +561,15 @@ mod tests {
 
     #[tokio::test]
     async fn read_write_file_tool_roundtrip() {
+        let cancel = CancellationToken::new();
         let dir = tempdir().unwrap();
         let writer = WriteFileTool::new(dir.path().to_path_buf());
         writer
             .execute(
                 "tc1",
                 serde_json::json!({"path": "src/demo.txt", "content": "hello\nworld"}),
+                cancel.clone(),
+                None,
             )
             .await
             .unwrap();
@@ -559,6 +579,8 @@ mod tests {
             .execute(
                 "tc2",
                 serde_json::json!({"path": "src/demo.txt", "start_line": 2, "end_line": 2}),
+                cancel,
+                None,
             )
             .await
             .unwrap();
@@ -572,6 +594,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_tool_finds_matches() {
+        let cancel = CancellationToken::new();
         let dir = tempdir().unwrap();
         tokio::fs::write(
             dir.path().join("main.rs"),
@@ -585,6 +608,8 @@ mod tests {
             .execute(
                 "tc3",
                 serde_json::json!({"pattern": "println!", "include": "*.rs"}),
+                cancel,
+                None,
             )
             .await
             .unwrap();
@@ -598,6 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn shell_tool_respects_workspace() {
+        let cancel = CancellationToken::new();
         let dir = tempdir().unwrap();
         tokio::fs::write(dir.path().join("marker.txt"), "ok")
             .await
@@ -609,7 +635,7 @@ mod tests {
             "cat marker.txt"
         };
         let result = tool
-            .execute("tc4", serde_json::json!({"command": command}))
+            .execute("tc4", serde_json::json!({"command": command}), cancel, None)
             .await
             .unwrap();
         assert!(result.content[0].extract_text().unwrap().contains("ok"));

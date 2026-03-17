@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use agent_client_protocol::McpServer;
 use agentdash_agent::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool,
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     tools::sanitize_tool_schema,
 };
 use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
 use rmcp::{
     ServiceExt,
     model::{CallToolRequestParams, CallToolResult, Content, ResourceContents, Tool},
@@ -73,6 +74,8 @@ impl AgentTool for McpToolAdapter {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
+        _cancel: CancellationToken,
+        _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let arguments = match args {
             serde_json::Value::Null => None,
@@ -188,6 +191,7 @@ fn convert_call_result(
     AgentToolResult {
         content: vec![ContentPart::text(sections.join("\n\n"))],
         is_error: result.is_error.unwrap_or(false),
+        details: None,
     }
 }
 

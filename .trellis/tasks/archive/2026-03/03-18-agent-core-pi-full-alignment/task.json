@@ -1,0 +1,55 @@
+{
+  "id": "agent-core-pi-full-alignment",
+  "name": "agent-core-pi-full-alignment",
+  "title": "彻底对齐 Agent Core 与 Pi Agent 语义",
+  "description": "彻底对齐 agentdash-agent 与 pi-mono agent package 的核心运行时语义，消除生命周期、agent loop、流式事件、continue/abort、工具执行与错误语义上的所有核心偏差。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "backend",
+  "priority": "P0",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-18",
+  "completedAt": "2026-03-18",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-agent/src/agent.rs",
+    "crates/agentdash-agent/src/agent_loop.rs",
+    "crates/agentdash-agent/src/types.rs",
+    "crates/agentdash-agent/src/bridge.rs",
+    "crates/agentdash-agent/src/event_stream.rs",
+    "references/pi-mono/packages/agent/src/agent.ts",
+    "references/pi-mono/packages/agent/src/agent-loop.ts",
+    "references/pi-mono/packages/agent/src/types.ts",
+    "references/pi-mono/packages/agent/src/proxy.ts",
+    "references/pi-mono/packages/agent/test/agent.test.ts",
+    "references/pi-mono/packages/agent/test/agent-loop.test.ts",
+    "references/pi-mono/packages/agent/test/e2e.test.ts",
+    "crates/agentdash-agent/agent-design/PI_ALIGNMENT.md"
+  ],
+  "notes": "目标不是最小修补，而是对 agent package 核心逻辑进行一次彻底语义对齐。允许重构内部抽象、状态流与事件契约；不为兼容既有偏差行为保留包袱。外围设施（executor/connector/前端消费层）不作为主目标，但若核心契约变化导致其必须适配，应在后续单独列出。"
+}

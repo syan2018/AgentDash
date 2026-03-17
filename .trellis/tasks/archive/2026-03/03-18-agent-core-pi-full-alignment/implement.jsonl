@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": "references/pi-mono/packages/agent/src/agent.ts", "reason": "Pi Agent 高层包装层参考实现"}
+{"file": "crates/agentdash-agent/agent-design/PI_ALIGNMENT.md", "reason": "现有 Pi 对齐跟踪与历史结论"}
+{"file": "references/pi-mono/packages/agent/src/agent-loop.ts", "reason": "Pi Agent Loop 参考实现"}
+{"file": "references/pi-mono/packages/agent/test/agent.test.ts", "reason": "Pi Agent 高层行为测试基线"}
+{"file": "references/pi-mono/packages/agent/src/types.ts", "reason": "Pi Agent 类型与事件契约参考"}
+{"file": "crates/agentdash-agent/src/agent_loop.rs", "reason": "当前 Rust Agent Loop 实现"}
+{"file": "crates/agentdash-agent/src/agent.rs", "reason": "当前 Rust Agent 高层包装层实现"}
+{"file": "references/pi-mono/packages/agent/test/agent-loop.test.ts", "reason": "Pi Agent Loop 行为测试基线"}

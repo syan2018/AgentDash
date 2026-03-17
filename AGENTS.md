@@ -29,6 +29,3 @@ Keep this managed block so 'trellis update' can refresh the instructions.
 
 ## 问题说明
 
-- Windows PowerShell 5.1 对开发启动脚本不够稳定：
-  原生命令写入 stderr 的 warning 可能被提升为错误记录，`Start-Process` 对空参数数组也可能直接抛错。
-  当前项目的 `pnpm dev` 已切换为 `scripts/dev-joint.js`，后续不要再把默认开发启动链路放回 PowerShell 脚本。

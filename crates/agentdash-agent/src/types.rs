@@ -295,12 +295,12 @@ pub enum AgentEvent {
     MessageStart {
         message: AgentMessage,
     },
-    /// 流式文本增量 — 对应 Pi `message_update` 中的 `text_delta` 子事件
+    /// 流式消息更新 — 对齐 Pi `message_update { message, assistantMessageEvent }`
     ///
-    /// 注：Pi 的 `message_update` 还包含 `thinking_*` / `toolcall_*` 等子事件，
-    /// 当前简化为纯文本 delta；后续扩展思考模型时需补齐。
-    MessageDelta {
-        text: String,
+    /// 携带当前 partial message 快照和触发的子事件。
+    MessageUpdate {
+        message: AgentMessage,
+        event: AssistantStreamEvent,
     },
     MessageEnd {
         message: AgentMessage,
@@ -397,6 +397,76 @@ pub struct AgentContext {
     pub system_prompt: String,
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<DynAgentTool>,
+}
+
+// ─── AgentState ─────────────────────────────────────────────
+
+/// Agent 运行时状态 — 严格对齐 Pi `AgentState` (types.ts:250-260)
+///
+/// 统一的可观测状态对象，供外部代码（UI、日志）读取。
+/// Agent 内部通过 `_process_event` 在每个事件到达时同步更新此状态。
+#[derive(Clone)]
+pub struct AgentState {
+    pub system_prompt: String,
+    pub thinking_level: ThinkingLevel,
+    pub tools: Vec<DynAgentTool>,
+    pub messages: Vec<AgentMessage>,
+    /// 是否正在流式响应中 — 对齐 Pi `isStreaming`
+    pub is_streaming: bool,
+    /// 当前正在构建的流式消息 — 对齐 Pi `streamMessage`
+    pub stream_message: Option<AgentMessage>,
+    /// 正在执行的工具调用 ID 集合 — 对齐 Pi `pendingToolCalls`
+    pub pending_tool_calls: std::collections::HashSet<String>,
+    /// 最近一次错误信息 — 对齐 Pi `error`
+    pub error: Option<String>,
+}
+
+impl std::fmt::Debug for AgentState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentState")
+            .field("thinking_level", &self.thinking_level)
+            .field("messages_count", &self.messages.len())
+            .field("tools_count", &self.tools.len())
+            .field("is_streaming", &self.is_streaming)
+            .field("pending_tool_calls", &self.pending_tool_calls)
+            .field("error", &self.error)
+            .finish()
+    }
+}
+
+impl AgentState {
+    pub fn new() -> Self {
+        Self {
+            system_prompt: String::new(),
+            thinking_level: ThinkingLevel::default(),
+            tools: Vec::new(),
+            messages: Vec::new(),
+            is_streaming: false,
+            stream_message: None,
+            pending_tool_calls: std::collections::HashSet::new(),
+            error: None,
+        }
+    }
+}
+
+impl Default for AgentState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ─── AssistantStreamEvent ───────────────────────────────────
+
+/// 流式 assistant 消息子事件 — 对齐 Pi `AssistantMessageEvent` 的子集
+///
+/// Pi 的完整子事件包括 text_start/delta/end、thinking_start/delta/end、
+/// toolcall_start/delta/end、start、done、error。
+/// 当前覆盖文本和工具调用；thinking 相关待对接思考模型。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AssistantStreamEvent {
+    TextDelta { text: String },
+    ToolCallDelta { tool_call_id: String, name: String },
 }
 
 // ─── ThinkingLevel ──────────────────────────────────────────

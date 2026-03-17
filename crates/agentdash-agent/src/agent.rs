@@ -3,8 +3,9 @@
 /// 严格对齐 Pi `Agent` 类 (agent.ts:116-612)
 ///
 /// 管理 Agent 的完整生命周期：
-/// - 状态（system prompt、tools、messages）
-/// - 事件订阅（通过 EventReceiver）
+/// - 统一状态 (`AgentState`) — 对齐 Pi `Agent._state`
+/// - 事件订阅（broadcast 多订阅者）— 对齐 Pi `Agent.listeners`
+/// - 事件驱动状态同步 — 对齐 Pi `Agent._processLoopEvent`
 /// - Steering / Follow-up 队列（支持 all / one-at-a-time 出队模式）
 /// - prompt / continue 入口
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use crate::agent_loop::{
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
 use crate::types::{
-    AgentContext, AgentError, AgentEvent, AgentMessage, DynAgentTool, ThinkingLevel,
+    AgentContext, AgentError, AgentEvent, AgentMessage, AgentState, DynAgentTool, ThinkingLevel,
     ToolExecutionMode,
 };
 
@@ -93,38 +94,38 @@ impl Default for AgentConfig {
 ///
 /// 对齐 Pi `Agent` 类 (agent.ts:116)
 ///
-/// 每个 Agent 实例持有：
-/// - LLM Bridge（通过 trait object 支持多后端）
-/// - 工具集合
-/// - 消息历史
-/// - Steering / Follow-up 队列（带出队模式）
+/// 核心设计：
+/// - `AgentState` 统一状态（对齐 Pi `_state`）— 通过 `Arc<Mutex>` 跨 task 共享
+/// - 事件驱动状态同步（对齐 Pi `_processLoopEvent`）— spawned task 中处理
+/// - broadcast 事件通道（对齐 Pi `listeners` 多订阅者模型）
 pub struct Agent {
     config: AgentConfig,
     bridge: Arc<dyn LlmBridge>,
-    tools: Vec<DynAgentTool>,
-    messages: Vec<AgentMessage>,
+    /// 统一运行时状态 — 对齐 Pi `Agent._state`
+    state: Arc<Mutex<AgentState>>,
     steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
     follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
     cancel: Option<CancellationToken>,
-    /// 对齐 Pi `waitForIdle()` — 等待当前循环完成
     idle_notify: Arc<Notify>,
-    is_running: bool,
     /// 持久化事件发送端 — 对齐 Pi `Agent.listeners` 多订阅者模型
     persistent_event_tx: Option<event_stream::EventSender<AgentEvent>>,
 }
 
 impl Agent {
     pub fn new(bridge: Arc<dyn LlmBridge>, config: AgentConfig) -> Self {
+        let state = AgentState {
+            system_prompt: config.system_prompt.clone(),
+            thinking_level: config.thinking_level,
+            ..AgentState::new()
+        };
         Self {
             config,
             bridge,
-            tools: Vec::new(),
-            messages: Vec::new(),
+            state: Arc::new(Mutex::new(state)),
             steering_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
             cancel: None,
             idle_notify: Arc::new(Notify::new()),
-            is_running: false,
             persistent_event_tx: None,
         }
     }
@@ -132,33 +133,56 @@ impl Agent {
     // ── Tool 管理 ──
 
     pub fn add_tool(&mut self, tool: DynAgentTool) {
-        self.tools.push(tool);
+        // 不阻塞 — 只在非运行期间调用
+        let state = self.state.try_lock();
+        if let Ok(mut s) = state {
+            s.tools.push(tool);
+        }
     }
 
     pub fn set_tools(&mut self, tools: Vec<DynAgentTool>) {
-        self.tools = tools;
+        if let Ok(mut s) = self.state.try_lock() {
+            s.tools = tools;
+        }
     }
 
-    // ── State mutators ──
+    // ── State 访问 ──
+
+    /// 获取当前 AgentState 快照 — 对齐 Pi `Agent.state`
+    pub async fn state(&self) -> AgentState {
+        self.state.lock().await.clone()
+    }
+
+    /// 同步版本（非 async 上下文使用，可能失败）
+    pub fn try_state(&self) -> Option<AgentState> {
+        self.state.try_lock().ok().map(|s| s.clone())
+    }
 
     pub fn set_system_prompt(&mut self, prompt: impl Into<String>) {
-        self.config.system_prompt = prompt.into();
+        let prompt = prompt.into();
+        self.config.system_prompt = prompt.clone();
+        if let Ok(mut s) = self.state.try_lock() {
+            s.system_prompt = prompt;
+        }
     }
 
-    pub fn messages(&self) -> &[AgentMessage] {
-        &self.messages
+    pub async fn messages(&self) -> Vec<AgentMessage> {
+        self.state.lock().await.messages.clone()
     }
 
-    pub fn replace_messages(&mut self, messages: Vec<AgentMessage>) {
-        self.messages = messages;
+    pub async fn replace_messages(&self, messages: Vec<AgentMessage>) {
+        self.state.lock().await.messages = messages;
     }
 
-    pub fn clear_messages(&mut self) {
-        self.messages.clear();
+    pub async fn clear_messages(&self) {
+        self.state.lock().await.messages.clear();
     }
 
     pub fn set_thinking_level(&mut self, level: ThinkingLevel) {
         self.config.thinking_level = level;
+        if let Ok(mut s) = self.state.try_lock() {
+            s.thinking_level = level;
+        }
     }
 
     /// 订阅 Agent 事件流 — 对齐 Pi `Agent.subscribe(fn)`
@@ -230,7 +254,8 @@ impl Agent {
 
     /// 等待当前 agent loop 完成 — 对齐 Pi `waitForIdle()`
     pub async fn wait_for_idle(&self) {
-        if self.is_running {
+        let is_streaming = self.state.lock().await.is_streaming;
+        if is_streaming {
             self.idle_notify.notified().await;
         }
     }
@@ -240,14 +265,23 @@ impl Agent {
     /// 重置全部状态 — 对齐 Pi `reset()`
     pub async fn reset(&mut self) {
         self.abort();
-        if self.is_running {
-            self.idle_notify.notified().await;
+        {
+            let is_streaming = self.state.lock().await.is_streaming;
+            if is_streaming {
+                self.idle_notify.notified().await;
+            }
         }
-        self.messages.clear();
+        {
+            let mut s = self.state.lock().await;
+            s.messages.clear();
+            s.is_streaming = false;
+            s.stream_message = None;
+            s.pending_tool_calls.clear();
+            s.error = None;
+        }
         self.steering_queue.lock().await.clear();
         self.follow_up_queue.lock().await.clear();
         self.cancel = None;
-        self.is_running = false;
     }
 
     // ── 执行入口 ──
@@ -266,8 +300,6 @@ impl Agent {
     }
 
     /// 从当前消息历史继续运行 agent loop — 对齐 Pi `continue()`
-    ///
-    /// 对齐 Pi 安全检查：消息不能为空，最后一条不能是 assistant。
     pub fn continue_loop(
         &mut self,
     ) -> (
@@ -286,7 +318,6 @@ impl Agent {
     ) {
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
-        self.is_running = true;
 
         // 如果存在持久化事件通道，复用它（支持多订阅者）；否则创建临时通道
         let (event_tx, event_rx) = if let Some(ref ptx) = self.persistent_event_tx {
@@ -302,11 +333,26 @@ impl Agent {
         let steering_mode = self.config.steering_mode;
         let follow_up_mode = self.config.follow_up_mode;
         let idle_notify = self.idle_notify.clone();
+        let state = self.state.clone();
+
+        // 从 state 中取出构建 context 所需数据
+        let (system_prompt, messages, tools) = {
+            // 同步获取 — run_loop 在非 async 上下文调用
+            let s = self.state.try_lock().expect("Agent state lock should not be contended at prompt() time");
+            (s.system_prompt.clone(), s.messages.clone(), s.tools.clone())
+        };
+
+        // 标记为 streaming
+        if let Ok(mut s) = self.state.try_lock() {
+            s.is_streaming = true;
+            s.stream_message = None;
+            s.error = None;
+        }
 
         let mut context = AgentContext {
-            system_prompt: self.config.system_prompt.clone(),
-            messages: self.messages.clone(),
-            tools: self.tools.clone(),
+            system_prompt,
+            messages,
+            tools,
         };
 
         let config = AgentLoopConfig {
@@ -347,6 +393,16 @@ impl Agent {
                 )
                 .await
             };
+
+            // 同步最终消息回 AgentState
+            {
+                let mut s = state.lock().await;
+                s.messages = context.messages;
+                s.is_streaming = false;
+                s.stream_message = None;
+                s.pending_tool_calls.clear();
+            }
+
             idle_notify.notify_waiters();
             result
         });
@@ -374,6 +430,44 @@ fn dequeue_messages(
             }
         })
         .unwrap_or_default()
+}
+
+// ─── 事件驱动状态同步 ──────────────────────────────────────
+
+/// 处理单个事件并同步更新 AgentState — 对齐 Pi `Agent._processLoopEvent` (agent.ts:458-500)
+///
+/// 此函数可由外部调用者（如 `pi_agent.rs`）在消费事件流时使用，
+/// 也可在 Agent 内部的事件转发循环中使用。
+pub fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
+    let Ok(mut s) = state.try_lock() else { return };
+    match event {
+        AgentEvent::MessageStart { message } => {
+            s.stream_message = Some(message.clone());
+        }
+        AgentEvent::MessageUpdate { message, .. } => {
+            s.stream_message = Some(message.clone());
+        }
+        AgentEvent::MessageEnd { message } => {
+            s.stream_message = None;
+            s.messages.push(message.clone());
+        }
+        AgentEvent::ToolExecutionStart { tool_call_id, .. } => {
+            s.pending_tool_calls.insert(tool_call_id.clone());
+        }
+        AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
+            s.pending_tool_calls.remove(tool_call_id);
+        }
+        AgentEvent::TurnEnd { message, .. } => {
+            if let AgentMessage::Assistant { error_message: Some(err), .. } = message {
+                s.error = Some(err.clone());
+            }
+        }
+        AgentEvent::AgentEnd { .. } => {
+            s.is_streaming = false;
+            s.stream_message = None;
+        }
+        _ => {}
+    }
 }
 
 // ─── AgentMessage 便利转换 ──────────────────────────────────

@@ -237,7 +237,7 @@ impl AgentConnector for PiAgentConnector {
             match join_handle.await {
                 Ok(Ok(messages)) => {
                     if let Some(agent) = agents.lock().await.get_mut(&session_id_owned) {
-                        agent.replace_messages(messages);
+                        agent.replace_messages(messages).await;
                     }
                 }
                 Ok(Err(e)) => {
@@ -305,21 +305,26 @@ fn convert_event_to_notifications(
     entry_index: &mut u32,
 ) -> Vec<SessionNotification> {
     match event {
-        AgentEvent::MessageDelta { text } => {
-            if text.is_empty() {
-                return Vec::new();
+        AgentEvent::MessageUpdate { event, .. } => {
+            match event {
+                agentdash_agent::types::AssistantStreamEvent::TextDelta { text } => {
+                    if text.is_empty() {
+                        return Vec::new();
+                    }
+                    let meta = make_meta(source, turn_id, *entry_index);
+                    let chunk =
+                        ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                    vec![SessionNotification::new(
+                        session_id.clone(),
+                        SessionUpdate::AgentMessageChunk(chunk),
+                    )]
+                }
+                _ => Vec::new(),
             }
-            let meta = make_meta(source, turn_id, *entry_index);
-            let chunk =
-                ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
-            vec![SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::AgentMessageChunk(chunk),
-            )]
         }
 
         AgentEvent::MessageEnd { message } => {
-            // MessageEnd 时不再发送全量文本（已通过 MessageDelta 增量推送），
+            // MessageEnd 时不再发送全量文本（已通过 MessageUpdate 增量推送），
             // 仅递增 entry_index 用于后续条目排序
             if let AgentMessage::Assistant { content, .. } = message {
                 let has_text = content.iter().any(|p| p.extract_text().is_some());

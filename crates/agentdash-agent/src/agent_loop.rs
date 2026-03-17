@@ -342,9 +342,9 @@ async fn stream_assistant_response(
         llm_messages: Some(llm_messages),
     };
 
-    events.send(AgentEvent::MessageStart {
-        message: AgentMessage::assistant(""),
-    });
+    // 对齐 Pi: 维护 partial message — 初始为空 assistant
+    let mut partial = AgentMessage::assistant("");
+    let mut added_partial = false;
 
     let mut stream = bridge.stream_complete(request).await;
     let mut response = None;
@@ -356,7 +356,30 @@ async fn stream_assistant_response(
         }
         match chunk {
             StreamChunk::TextDelta(text) if !text.is_empty() => {
-                events.send(AgentEvent::MessageDelta { text });
+                // 首次 delta 时发出 message_start（对齐 Pi "start" 事件）
+                if !added_partial {
+                    context.messages.push(partial.clone());
+                    added_partial = true;
+                    events.send(AgentEvent::MessageStart {
+                        message: partial.clone(),
+                    });
+                }
+                // 追加文本到 partial message
+                if let AgentMessage::Assistant { ref mut content, .. } = partial {
+                    match content.first_mut() {
+                        Some(ContentPart::Text { text: t }) => t.push_str(&text),
+                        _ => content.push(ContentPart::text(&text)),
+                    }
+                }
+                // 更新 context 中的 partial
+                if added_partial {
+                    *context.messages.last_mut().unwrap() = partial.clone();
+                }
+                // 对齐 Pi: 发出 message_update 携带 partial + 子事件
+                events.send(AgentEvent::MessageUpdate {
+                    message: partial.clone(),
+                    event: crate::types::AssistantStreamEvent::TextDelta { text },
+                });
             }
             StreamChunk::Done(resp) => {
                 response = Some(resp);
@@ -374,7 +397,7 @@ async fn stream_assistant_response(
     }
     let response = response.ok_or(crate::bridge::BridgeError::EmptyResponse)?;
 
-    // 对齐 Pi: 将 usage 和 stop_reason 传播到 AgentMessage
+    // 对齐 Pi: 将 usage 和 stop_reason 传播到最终 AgentMessage
     let assistant_message = match response.message {
         AgentMessage::Assistant {
             content,
@@ -403,11 +426,20 @@ async fn stream_assistant_response(
         other => other,
     };
 
+    // 对齐 Pi: 如果从未发出 message_start（无流式 delta），补发
+    if !added_partial {
+        events.send(AgentEvent::MessageStart {
+            message: assistant_message.clone(),
+        });
+        context.messages.push(assistant_message.clone());
+    } else {
+        // 替换 context 中的 partial 为 final message
+        *context.messages.last_mut().unwrap() = assistant_message.clone();
+    }
+
     events.send(AgentEvent::MessageEnd {
         message: assistant_message.clone(),
     });
-
-    context.messages.push(assistant_message.clone());
 
     Ok(assistant_message)
 }

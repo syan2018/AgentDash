@@ -7,8 +7,10 @@
   "packageManager": "pnpm@10.32.1",
   "scripts": {
     "dev": "pnpm run dev:joint",
-    "dev:mono": "pnpm run kill-ports && concurrently -k -n server,frontend -c blue,green \"pnpm run dev:server\" \"pnpm run dev:frontend-wait\"",
-    "dev:joint": "pnpm run kill-ports && concurrently -k -n server,local,frontend -c blue,magenta,green \"pnpm run dev:server\" \"pnpm run dev:local\" \"pnpm run dev:frontend-wait\"",
+    "dev:mono": "node ./scripts/dev-joint.js --skip-local",
+    "dev:mono:skip-build": "node ./scripts/dev-joint.js --skip-local --skip-build",
+    "dev:joint": "node ./scripts/dev-joint.js",
+    "dev:joint:skip-build": "node ./scripts/dev-joint.js --skip-build",
     "dev:server": "cargo run --bin agentdash-server",
     "dev:local": "node scripts/wait-for-ready.js 3001 /api/health 120 && cargo run --bin agentdash-local -- --cloud-url ws://127.0.0.1:3001/ws/backend --token dev --accessible-roots . --name dev-local --backend-id local-dev-1",
     "dev:frontend": "pnpm --filter frontend dev",
@@ -29,8 +31,7 @@
     "kill:backend": "node scripts/kill-ports.js 3001"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
-    "concurrently": "^9.0.0"
+    "@playwright/test": "^1.58.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

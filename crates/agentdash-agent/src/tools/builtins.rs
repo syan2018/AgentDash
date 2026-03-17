@@ -21,6 +21,21 @@ use crate::types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
 };
 
+/// 应从 WalkDir 遍历中排除的目录名
+const WALK_SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    "dist",
+    "build",
+    ".tox",
+    ".venv",
+    "venv",
+];
+
 fn ok_text(text: impl Into<String>) -> AgentToolResult {
     AgentToolResult {
         content: vec![ContentPart::text(text)],
@@ -40,6 +55,18 @@ fn err_text(text: impl Into<String>) -> AgentToolResult {
         details: None,
     }
 }
+
+/// 判断一个 WalkDir entry 是否应该被跳过（通过目录名）
+fn should_skip_dir(entry: &walkdir::DirEntry) -> bool {
+    if entry.file_type().is_dir() {
+        if let Some(name) = entry.file_name().to_str() {
+            return WALK_SKIP_DIRS.contains(&name);
+        }
+    }
+    false
+}
+
+// ─── ReadFileTool ───────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct ReadFileTool {
@@ -104,6 +131,8 @@ impl AgentTool for ReadFileTool {
         )))
     }
 }
+
+// ─── WriteFileTool ──────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct WriteFileTool {
@@ -171,6 +200,8 @@ impl AgentTool for WriteFileTool {
     }
 }
 
+// ─── ListDirectoryTool ──────────────────────────────────────
+
 #[derive(Clone)]
 pub struct ListDirectoryTool {
     workspace_root: PathBuf,
@@ -207,7 +238,7 @@ impl AgentTool for ListDirectoryTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ListDirectoryParams = serde_json::from_value(args)
@@ -227,22 +258,37 @@ impl AgentTool for ListDirectoryTool {
         } else {
             1
         };
-        let mut entries = Vec::new();
-        for entry in WalkDir::new(&path)
-            .max_depth(max_depth)
-            .into_iter()
-            .filter_map(Result::ok)
-            .skip(1)
-        {
-            let entry_path = entry.path();
-            let rel = workspace_display(&self.workspace_root, entry_path);
-            let kind = if entry.file_type().is_dir() {
-                "dir"
-            } else {
-                "file"
-            };
-            entries.push(format!("[{kind}] {rel}"));
+
+        // WalkDir 是同步阻塞操作，放入 spawn_blocking 避免阻塞 tokio runtime
+        let ws_root = self.workspace_root.clone();
+        let walk_path = path.clone();
+        let entries = tokio::task::spawn_blocking(move || {
+            let mut entries = Vec::new();
+            for entry in WalkDir::new(&walk_path)
+                .max_depth(max_depth)
+                .into_iter()
+                .filter_entry(|e| !should_skip_dir(e))
+                .filter_map(Result::ok)
+                .skip(1)
+            {
+                let entry_path = entry.path();
+                let rel = workspace_display(&ws_root, entry_path);
+                let kind = if entry.file_type().is_dir() {
+                    "dir"
+                } else {
+                    "file"
+                };
+                entries.push(format!("[{kind}] {rel}"));
+            }
+            entries
+        })
+        .await
+        .map_err(|e| AgentToolError::ExecutionFailed(format!("目录遍历失败: {e}")))?;
+
+        if cancel.is_cancelled() {
+            return Ok(err_text("操作已取消"));
         }
+
         Ok(ok_text(format!(
             "目录: {}\n{}",
             workspace_display(&self.workspace_root, &path),
@@ -254,6 +300,8 @@ impl AgentTool for ListDirectoryTool {
         )))
     }
 }
+
+// ─── ShellTool ──────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct ShellTool {
@@ -295,7 +343,7 @@ impl AgentTool for ShellTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellParams = serde_json::from_value(args)
@@ -327,16 +375,21 @@ impl AgentTool for ShellTool {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let output = match tokio::time::timeout(timeout, command.output()).await {
-            Ok(result) => {
-                result.map_err(|e| AgentToolError::ExecutionFailed(format!("执行命令失败: {e}")))?
+        // 同时等待命令完成、超时、和取消 — 三者谁先到谁赢
+        let output = tokio::select! {
+            result = tokio::time::timeout(timeout, command.output()) => {
+                match result {
+                    Ok(Ok(output)) => output,
+                    Ok(Err(e)) => return Err(AgentToolError::ExecutionFailed(format!("执行命令失败: {e}"))),
+                    Err(_) => return Ok(err_text(format!(
+                        "命令执行超时（>{}s）: {}",
+                        timeout.as_secs(),
+                        params.command
+                    ))),
+                }
             }
-            Err(_) => {
-                return Ok(err_text(format!(
-                    "命令执行超时（>{}s）: {}",
-                    timeout.as_secs(),
-                    params.command
-                )));
+            _ = cancel.cancelled() => {
+                return Ok(err_text("命令执行已取消"));
             }
         };
 
@@ -370,6 +423,8 @@ impl AgentTool for ShellTool {
         })
     }
 }
+
+// ─── SearchTool ─────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct SearchTool {
@@ -412,7 +467,7 @@ impl AgentTool for SearchTool {
         &self,
         _tool_call_id: &str,
         args: serde_json::Value,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: SearchParams = serde_json::from_value(args)
@@ -431,19 +486,32 @@ impl AgentTool for SearchTool {
             None
         };
         let max_results = params.max_results.unwrap_or(50).max(1);
+
+        // Phase 1: 用 spawn_blocking 收集候选文件路径，避免 WalkDir 阻塞 runtime
+        let ws_root = self.workspace_root.clone();
+        let search_root = root.clone();
+        let file_paths: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
+            WalkDir::new(&search_root)
+                .into_iter()
+                .filter_entry(|e| !should_skip_dir(e))
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().is_file())
+                .filter(|e| matcher.is_match(&ws_root, e.path()))
+                .map(|e| e.into_path())
+                .collect()
+        })
+        .await
+        .map_err(|e| AgentToolError::ExecutionFailed(format!("文件遍历失败: {e}")))?;
+
+        // Phase 2: 逐文件异步读取+匹配，每个文件后检查取消
         let mut hits = Vec::new();
-
-        for entry in WalkDir::new(&root).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let entry_path = entry.path();
-            if !matcher.is_match(&self.workspace_root, entry_path) {
-                continue;
+        for file_path in &file_paths {
+            if cancel.is_cancelled() {
+                return Ok(err_text("搜索已取消"));
             }
 
-            let content = match tokio::fs::read_to_string(entry_path).await {
-                Ok(content) => content,
+            let content = match tokio::fs::read_to_string(file_path).await {
+                Ok(c) => c,
                 Err(_) => continue,
             };
 
@@ -455,7 +523,7 @@ impl AgentTool for SearchTool {
                 if matched {
                     hits.push(format!(
                         "{}:{}: {}",
-                        workspace_display(&self.workspace_root, entry_path),
+                        workspace_display(&self.workspace_root, file_path),
                         index + 1,
                         line.trim()
                     ));
@@ -489,6 +557,8 @@ impl AgentTool for SearchTool {
         )))
     }
 }
+
+// ─── GlobMatcher ────────────────────────────────────────────
 
 struct GlobMatcher {
     include: GlobSet,
@@ -530,6 +600,8 @@ fn build_glob_matcher(
 
     Ok(GlobMatcher { include, exclude })
 }
+
+// ─── BuiltinToolset ─────────────────────────────────────────
 
 pub struct BuiltinToolset {
     tools: Vec<DynAgentTool>,

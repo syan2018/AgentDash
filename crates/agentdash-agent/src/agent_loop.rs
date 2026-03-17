@@ -192,6 +192,21 @@ async fn run_loop(
 ) -> Result<Vec<AgentMessage>, AgentError> {
     events.send(AgentEvent::AgentStart);
 
+    // 对齐 Pi _runLoop 的 try/catch/finally 模式：
+    // 无论 run_loop_inner 正常返回还是出错，都必须发出 agent_end。
+    let result = run_loop_inner(context, config, bridge, events, &cancel).await;
+    emit_agent_end(context, events);
+    result
+}
+
+/// 主循环内部逻辑 — 从 `run_loop` 中提取，使外层可以统一处理 agent_end
+async fn run_loop_inner(
+    context: &mut AgentContext,
+    config: &AgentLoopConfig,
+    bridge: &dyn LlmBridge,
+    events: &EventSender<AgentEvent>,
+    cancel: &CancellationToken,
+) -> Result<Vec<AgentMessage>, AgentError> {
     let tool_definitions = build_tool_definitions(&context.tools);
     let mut turn_count: usize = 0;
     let mut first_turn = true;
@@ -204,23 +219,18 @@ async fn run_loop(
         let mut has_more_tool_calls = true;
 
         // 内循环：tool calls + steering 驱动
-        // 对齐 Pi: while (hasMoreToolCalls || pendingMessages.length > 0)
         while has_more_tool_calls || !pending_messages.is_empty() {
             if cancel.is_cancelled() {
-                emit_agent_end(context, events);
                 return Err(AgentError::Cancelled);
             }
 
             turn_count += 1;
             if turn_count > config.max_turns {
-                emit_agent_end(context, events);
                 return Err(AgentError::MaxTurnsExceeded(config.max_turns));
             }
 
-            if !first_turn {
-                events.send(AgentEvent::TurnStart);
-            } else {
-                events.send(AgentEvent::TurnStart);
+            events.send(AgentEvent::TurnStart);
+            if first_turn {
                 first_turn = false;
             }
 
@@ -238,23 +248,19 @@ async fn run_loop(
                 pending_messages.clear();
             }
 
-            // ─── 流式调用 LLM ───────────────────────────────
             let assistant_message = stream_assistant_response(
-                context, config, bridge, events, &tool_definitions, &cancel,
+                context, config, bridge, events, &tool_definitions, cancel,
             )
             .await?;
 
-            // 对齐 Pi: 检查 stopReason 是否为 error/aborted (agent-loop.ts:194-198)
             if assistant_message.is_error_or_aborted() {
                 events.send(AgentEvent::TurnEnd {
                     message: assistant_message,
                     tool_results: vec![],
                 });
-                emit_agent_end(context, events);
                 return Ok(context.messages.clone());
             }
 
-            // 提取 tool_calls
             let tool_calls = match &assistant_message {
                 AgentMessage::Assistant { tool_calls, .. } => tool_calls.clone(),
                 _ => vec![],
@@ -270,7 +276,7 @@ async fn run_loop(
                     &tool_calls,
                     config,
                     events,
-                    &cancel,
+                    cancel,
                 )
                 .await?;
 
@@ -284,11 +290,9 @@ async fn run_loop(
                 tool_results,
             });
 
-            // 对齐 Pi: 工具执行后轮询 steering
             pending_messages = poll_steering(config);
         }
 
-        // 对齐 Pi: agent 本应停止，检查 follow-up
         let follow_ups = poll_follow_up(config);
         if !follow_ups.is_empty() {
             pending_messages = follow_ups;
@@ -298,7 +302,6 @@ async fn run_loop(
         break;
     }
 
-    emit_agent_end(context, events);
     Ok(context.messages.clone())
 }
 

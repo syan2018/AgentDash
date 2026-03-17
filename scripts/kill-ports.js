@@ -36,42 +36,73 @@ function log(message, type = 'info') {
 
 function killPortWindows(port) {
   try {
-    // 使用 PowerShell 查找占用端口的进程 PID
-    const findCmd = `powershell -Command "& {try { $conn = Get-NetTCPConnection -LocalPort ${port} -ErrorAction Stop; $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue; Write-Output $($conn.OwningProcess) } catch { Write-Output '' }}"`;
-    const result = execSync(findCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-
-    if (!result) {
-      return { found: false };
-    }
-
-    const pid = parseInt(result, 10);
-    if (!pid || isNaN(pid)) {
-      return { found: false };
-    }
-
-    // 获取进程信息
-    let processName = 'unknown';
-    try {
-      const nameCmd = `powershell -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).ProcessName"`;
-      processName = execSync(nameCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim() || 'unknown';
-    } catch { /* ignore */ }
-
-    // 终止进程
-    try {
-      execSync(`taskkill /F /PID ${pid} 2>nul`, { stdio: 'ignore' });
-      return { found: true, killed: true, pid, name: processName };
-    } catch {
-      // taskkill 失败时，尝试使用 PowerShell Stop-Process 兜底
-      try {
-        execSync(`powershell -Command "Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue"`, { stdio: 'ignore' });
-        return { found: true, killed: true, pid, name: processName };
-      } catch {
-        return { found: true, killed: false, pid, name: processName };
-      }
-    }
+    return killPortsWindowsBatch([port])[0] ?? { found: false };
   } catch (error) {
     return { found: false, error: error.message };
   }
+}
+
+function killPortsWindowsBatch(targetPorts) {
+  const portList = targetPorts.join(',');
+  const psScript = `
+$ports = @(${portList})
+$conns = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort })
+$pidToName = @{}
+$allPids = @($conns | Select-Object -ExpandProperty OwningProcess -Unique)
+if ($allPids.Count -gt 0) {
+  Get-Process -Id $allPids -ErrorAction SilentlyContinue | ForEach-Object {
+    $pidToName[[string]$_.Id] = $_.ProcessName
+  }
+  foreach ($pid in $allPids) {
+    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+  }
+}
+$results = foreach ($port in $ports) {
+  $portConns = @($conns | Where-Object { $_.LocalPort -eq $port })
+  if ($portConns.Count -eq 0) {
+    [pscustomobject]@{
+      port = $port
+      found = $false
+      killed = $false
+      pids = @()
+      names = @()
+    }
+    continue
+  }
+
+  $pids = @($portConns | Select-Object -ExpandProperty OwningProcess -Unique)
+  [pscustomobject]@{
+    port = $port
+    found = $true
+    killed = $true
+    pids = $pids
+    names = @($pids | ForEach-Object {
+      if ($pidToName.ContainsKey([string]$_)) { $pidToName[[string]$_] } else { "unknown" }
+    })
+  }
+}
+$results | ConvertTo-Json -Depth 4 -Compress
+`.trim();
+
+  const command = `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`;
+  const output = execSync(command, {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  }).trim();
+
+  if (!output) {
+    return targetPorts.map((port) => ({ port, found: false, killed: false, pids: [], names: [] }));
+  }
+
+  const parsed = JSON.parse(output);
+  const list = Array.isArray(parsed) ? parsed : [parsed];
+  return list.map((item) => ({
+    port: item.port,
+    found: Boolean(item.found),
+    killed: Boolean(item.killed),
+    pids: Array.isArray(item.pids) ? item.pids : [],
+    names: Array.isArray(item.names) ? item.names : []
+  }));
 }
 
 function killPortUnix(port) {
@@ -132,36 +163,27 @@ log(`当前平台: ${isWindows ? 'Windows' : 'Unix/Linux/Mac'}`);
 let killedCount = 0;
 let notFoundCount = 0;
 let failedCount = 0;
+const results = isWindows ? killPortsWindowsBatch(ports) : ports.map((port) => ({ port, ...killPortUnix(port) }));
 
-for (const port of ports) {
-  const result = killPort(port);
+for (const [index, port] of ports.entries()) {
+  const result = results[index] ?? { found: false };
 
   if (!result.found) {
     log(`端口 ${port} 未被占用`, 'info');
     notFoundCount++;
   } else if (result.killed) {
-    log(`端口 ${port} - 已终止进程 ${result.name}(PID: ${result.pid})`, 'success');
+    const pairs = result.pids
+      .map((pid, pidIndex) => `${result.names[pidIndex] || 'unknown'}(PID: ${pid})`)
+      .join(', ');
+    log(`端口 ${port} - 已终止进程 ${pairs}`, 'success');
     killedCount++;
   } else {
-    log(`端口 ${port} - 终止失败 ${result.name}(PID: ${result.pid})`, 'error');
+    const pairs = (result.pids || [])
+      .map((pid, pidIndex) => `${result.names?.[pidIndex] || 'unknown'}(PID: ${pid})`)
+      .join(', ') || 'unknown';
+    log(`端口 ${port} - 终止失败 ${pairs}`, 'error');
     failedCount++;
   }
-}
-
-// 额外清理：尝试杀掉可能的僵尸进程
-if (isWindows) {
-  try {
-    // 清理 node 和 cargo 相关进程
-    const cleanupCmds = [
-      'taskkill /F /IM "agentdash-server.exe" 2>nul',
-      'taskkill /F /IM "agentdash-local.exe" 2>nul',
-      'taskkill /F /FI "WINDOWTITLE eq pnpm*" 2>nul',
-      'taskkill /F /FI "WINDOWTITLE eq vite*" 2>nul'
-    ];
-    for (const cmd of cleanupCmds) {
-      try { execSync(cmd, { stdio: 'ignore' }); } catch { /* ignore */ }
-    }
-  } catch { /* ignore */ }
 }
 
 log('');

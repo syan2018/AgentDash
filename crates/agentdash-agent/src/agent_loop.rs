@@ -13,20 +13,21 @@
 ///        - 轮询 steering
 ///    4b. 检查 follow-up → 若有则继续外循环
 /// 5. 发出 `agent_end`
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::StreamExt;
+use jsonschema::validator_for;
 use rig::completion::ToolDefinition;
 use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
-use crate::event_stream::EventSender;
 use crate::types::{
     AfterToolCallContext, AfterToolCallResult, AgentContext, AgentError, AgentEvent, AgentMessage,
-    AgentToolResult, BeforeToolCallContext, BeforeToolCallResult, ContentPart, DynAgentTool,
-    ToolCallInfo, ToolExecutionMode, ToolUpdateCallback,
+    AgentToolResult, AssistantStreamEvent, BeforeToolCallContext, BeforeToolCallResult,
+    ContentPart, DynAgentTool, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback,
 };
 
 const DEFAULT_MAX_TURNS: usize = 25;
@@ -74,6 +75,11 @@ pub type AfterToolCallFn = Arc<
         ) -> Pin<Box<dyn Future<Output = Option<AfterToolCallResult>> + Send + '_>>
         + Send
         + Sync,
+>;
+
+/// 事件 sink —— 对齐 Pi `runAgentLoop(..., emit, ...)` 的异步事件消费模型。
+pub type AgentEventSink = Arc<
+    dyn Fn(AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync,
 >;
 
 // ─── AgentLoopConfig ────────────────────────────────────────
@@ -137,20 +143,30 @@ pub async fn agent_loop(
     context: &mut AgentContext,
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
     cancel: CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
-    // 对齐 Pi: 为每个 prompt 发出 message_start/end 事件
+    let mut new_messages = prompts.clone();
+    emit_event(emit, AgentEvent::AgentStart).await;
+    emit_event(emit, AgentEvent::TurnStart).await;
     for prompt in &prompts {
-        events.send(AgentEvent::MessageStart {
-            message: prompt.clone(),
-        });
-        events.send(AgentEvent::MessageEnd {
-            message: prompt.clone(),
-        });
+        emit_event(
+            emit,
+            AgentEvent::MessageStart {
+                message: prompt.clone(),
+            },
+        )
+        .await;
+        emit_event(
+            emit,
+            AgentEvent::MessageEnd {
+                message: prompt.clone(),
+            },
+        )
+        .await;
     }
     context.messages.extend(prompts);
-    run_loop(context, config, bridge, events, cancel).await
+    run_loop(context, &mut new_messages, config, bridge, emit, &cancel).await
 }
 
 /// 从当前上下文继续 Agent Loop（不添加新 prompt）
@@ -159,10 +175,9 @@ pub async fn agent_loop_continue(
     context: &mut AgentContext,
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
     cancel: CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
-    // 对齐 Pi: 安全检查 — 消息不能为空，且最后一条不能是 assistant
     if context.messages.is_empty() {
         return Err(AgentError::ContinueError(
             "Cannot continue: no messages in context".to_string(),
@@ -173,7 +188,11 @@ pub async fn agent_loop_continue(
             "Cannot continue from message role: assistant".to_string(),
         ));
     }
-    run_loop(context, config, bridge, events, cancel).await
+
+    let mut new_messages = Vec::new();
+    emit_event(emit, AgentEvent::AgentStart).await;
+    emit_event(emit, AgentEvent::TurnStart).await;
+    run_loop(context, &mut new_messages, config, bridge, emit, &cancel).await
 }
 
 // ─── 主循环 ─────────────────────────────────────────────────
@@ -185,40 +204,20 @@ pub async fn agent_loop_continue(
 /// - 内循环：tool calls + steering 驱动（有工具调用或 pending 消息时继续）
 async fn run_loop(
     context: &mut AgentContext,
+    new_messages: &mut Vec<AgentMessage>,
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
-    events: &EventSender<AgentEvent>,
-    cancel: CancellationToken,
-) -> Result<Vec<AgentMessage>, AgentError> {
-    events.send(AgentEvent::AgentStart);
-
-    // 对齐 Pi _runLoop 的 try/catch/finally 模式：
-    // 无论 run_loop_inner 正常返回还是出错，都必须发出 agent_end。
-    let result = run_loop_inner(context, config, bridge, events, &cancel).await;
-    emit_agent_end(context, events);
-    result
-}
-
-/// 主循环内部逻辑 — 从 `run_loop` 中提取，使外层可以统一处理 agent_end
-async fn run_loop_inner(
-    context: &mut AgentContext,
-    config: &AgentLoopConfig,
-    bridge: &dyn LlmBridge,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
     let tool_definitions = build_tool_definitions(&context.tools);
     let mut turn_count: usize = 0;
     let mut first_turn = true;
-
-    // 对齐 Pi: 循环开始前轮询 steering（用户可能在等待期间输入）
     let mut pending_messages = poll_steering(config);
 
-    // 外循环：follow-up 驱动
     loop {
         let mut has_more_tool_calls = true;
 
-        // 内循环：tool calls + steering 驱动
         while has_more_tool_calls || !pending_messages.is_empty() {
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
@@ -229,36 +228,56 @@ async fn run_loop_inner(
                 return Err(AgentError::MaxTurnsExceeded(config.max_turns));
             }
 
-            events.send(AgentEvent::TurnStart);
             if first_turn {
                 first_turn = false;
+            } else {
+                emit_event(emit, AgentEvent::TurnStart).await;
             }
 
-            // 对齐 Pi: 注入 pending messages (steering 消息)
             if !pending_messages.is_empty() {
-                for msg in &pending_messages {
-                    events.send(AgentEvent::MessageStart {
-                        message: msg.clone(),
-                    });
-                    events.send(AgentEvent::MessageEnd {
-                        message: msg.clone(),
-                    });
+                for msg in pending_messages.drain(..) {
+                    emit_event(
+                        emit,
+                        AgentEvent::MessageStart {
+                            message: msg.clone(),
+                        },
+                    )
+                    .await;
+                    emit_event(
+                        emit,
+                        AgentEvent::MessageEnd {
+                            message: msg.clone(),
+                        },
+                    )
+                    .await;
                     context.messages.push(msg.clone());
+                    new_messages.push(msg);
                 }
-                pending_messages.clear();
             }
 
             let assistant_message = stream_assistant_response(
-                context, config, bridge, events, &tool_definitions, cancel,
+                context, config, bridge, emit, &tool_definitions, cancel,
             )
             .await?;
+            new_messages.push(assistant_message.clone());
 
             if assistant_message.is_error_or_aborted() {
-                events.send(AgentEvent::TurnEnd {
-                    message: assistant_message,
-                    tool_results: vec![],
-                });
-                return Ok(context.messages.clone());
+                emit_event(
+                    emit,
+                    AgentEvent::TurnEnd {
+                        message: assistant_message,
+                        tool_results: vec![],
+                    },
+                )
+                .await;
+                emit_event(
+                    emit,
+                    AgentEvent::AgentEnd {
+                        messages: new_messages.clone(),
+                    },
+                )
+                .await;
+                return Ok(new_messages.clone());
             }
 
             let tool_calls = match &assistant_message {
@@ -275,20 +294,25 @@ async fn run_loop_inner(
                     &assistant_message,
                     &tool_calls,
                     config,
-                    events,
+                    emit,
                     cancel,
                 )
                 .await?;
 
                 for result in &tool_results {
                     context.messages.push(result.clone());
+                    new_messages.push(result.clone());
                 }
             }
 
-            events.send(AgentEvent::TurnEnd {
-                message: assistant_message,
-                tool_results,
-            });
+            emit_event(
+                emit,
+                AgentEvent::TurnEnd {
+                    message: assistant_message,
+                    tool_results,
+                },
+            )
+            .await;
 
             pending_messages = poll_steering(config);
         }
@@ -302,34 +326,99 @@ async fn run_loop_inner(
         break;
     }
 
-    Ok(context.messages.clone())
+    emit_event(
+        emit,
+        AgentEvent::AgentEnd {
+            messages: new_messages.clone(),
+        },
+    )
+    .await;
+    Ok(new_messages.clone())
 }
 
-fn emit_agent_end(context: &AgentContext, events: &EventSender<AgentEvent>) {
-    events.send(AgentEvent::AgentEnd {
-        messages: context.messages.clone(),
-    });
+async fn emit_event(emit: &AgentEventSink, event: AgentEvent) {
+    emit(event).await;
 }
 
 /// 对齐 Pi `streamAssistantResponse` (agent-loop.ts:238-331)
 ///
 /// 流程：transformContext → convertToLlm → Bridge.stream_complete → 事件
+struct PartialAssistantState {
+    message: AgentMessage,
+    added_partial: bool,
+    active_text_index: Option<usize>,
+    active_reasoning_id: Option<String>,
+    reasoning_indices: HashMap<String, usize>,
+    tool_calls: HashMap<String, PartialToolCallState>,
+}
+
+#[derive(Clone)]
+struct PartialToolCallState {
+    index: usize,
+    partial_json: String,
+}
+
+impl Default for PartialAssistantState {
+    fn default() -> Self {
+        Self {
+            message: AgentMessage::assistant(""),
+            added_partial: false,
+            active_text_index: None,
+            active_reasoning_id: None,
+            reasoning_indices: HashMap::new(),
+            tool_calls: HashMap::new(),
+        }
+    }
+}
+
+impl PartialAssistantState {
+    fn new() -> Self {
+        Self {
+            message: AgentMessage::Assistant {
+                content: Vec::new(),
+                tool_calls: Vec::new(),
+                stop_reason: None,
+                error_message: None,
+                usage: None,
+                timestamp: Some(crate::types::now_millis()),
+            },
+            ..Self::default()
+        }
+    }
+
+    fn content_mut(&mut self) -> &mut Vec<ContentPart> {
+        match &mut self.message {
+            AgentMessage::Assistant { content, .. } => content,
+            _ => unreachable!(),
+        }
+    }
+
+    fn tool_calls_mut(&mut self) -> &mut Vec<ToolCallInfo> {
+        match &mut self.message {
+            AgentMessage::Assistant { tool_calls, .. } => tool_calls,
+            _ => unreachable!(),
+        }
+    }
+
+    fn reasoning_key(id: &Option<String>) -> String {
+        id.clone().unwrap_or_else(|| "__default_reasoning".to_string())
+    }
+}
+
 async fn stream_assistant_response(
     context: &mut AgentContext,
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
     tool_definitions: &[ToolDefinition],
     cancel: &CancellationToken,
 ) -> Result<AgentMessage, AgentError> {
-    // 对齐 Pi: transformContext 管线
     let messages_for_llm = if let Some(ref transform) = config.transform_context {
         transform(context.messages.clone(), cancel.clone()).await
     } else {
         context.messages.clone()
     };
 
-    // 对齐 Pi: convertToLlm
     let llm_messages = if let Some(ref convert) = config.convert_to_llm {
         convert(&messages_for_llm)
     } else {
@@ -345,106 +434,454 @@ async fn stream_assistant_response(
         llm_messages: Some(llm_messages),
     };
 
-    // 对齐 Pi: 维护 partial message — 初始为空 assistant
-    let mut partial = AgentMessage::assistant("");
-    let mut added_partial = false;
-
+    let mut partial = PartialAssistantState::new();
     let mut stream = bridge.stream_complete(request).await;
     let mut response = None;
-    let mut stream_error = None;
+    let mut stream_failure = None;
 
     while let Some(chunk) = stream.next().await {
         if cancel.is_cancelled() {
-            return Err(AgentError::Cancelled);
+            stream_failure = Some(AgentMessage::error_assistant(
+                "Agent run aborted",
+                true,
+            ));
+            break;
         }
         match chunk {
             StreamChunk::TextDelta(text) if !text.is_empty() => {
-                // 首次 delta 时发出 message_start（对齐 Pi "start" 事件）
-                if !added_partial {
-                    context.messages.push(partial.clone());
-                    added_partial = true;
-                    events.send(AgentEvent::MessageStart {
-                        message: partial.clone(),
-                    });
+                ensure_partial_started(context, emit, &mut partial).await;
+                end_active_reasoning(context, emit, &mut partial).await;
+                let content_index = if let Some(index) = partial.active_text_index {
+                    index
+                } else {
+                    let index = partial.content_mut().len();
+                    partial.content_mut().push(ContentPart::text(""));
+                    partial.active_text_index = Some(index);
+                    sync_partial(context, &partial);
+                    emit_event(
+                        emit,
+                        AgentEvent::MessageUpdate {
+                            message: partial.message.clone(),
+                            event: AssistantStreamEvent::TextStart { content_index: index },
+                        },
+                    )
+                    .await;
+                    index
+                };
+
+                if let Some(ContentPart::Text { text: existing }) =
+                    partial.content_mut().get_mut(content_index)
+                {
+                    existing.push_str(&text);
                 }
-                // 追加文本到 partial message
-                if let AgentMessage::Assistant { ref mut content, .. } = partial {
-                    match content.first_mut() {
-                        Some(ContentPart::Text { text: t }) => t.push_str(&text),
-                        _ => content.push(ContentPart::text(&text)),
+                sync_partial(context, &partial);
+                emit_event(
+                    emit,
+                    AgentEvent::MessageUpdate {
+                        message: partial.message.clone(),
+                        event: AssistantStreamEvent::TextDelta { content_index, text },
+                    },
+                )
+                .await;
+            }
+            StreamChunk::ReasoningDelta {
+                id,
+                text,
+                signature,
+            } if !text.is_empty() => {
+                ensure_partial_started(context, emit, &mut partial).await;
+                end_active_text(context, emit, &mut partial).await;
+
+                let reasoning_key = PartialAssistantState::reasoning_key(&id);
+                if partial.active_reasoning_id.as_deref() != Some(reasoning_key.as_str()) {
+                    end_active_reasoning(context, emit, &mut partial).await;
+                }
+
+                let content_index = if let Some(index) = partial.reasoning_indices.get(&reasoning_key)
+                {
+                    *index
+                } else {
+                    let index = partial.content_mut().len();
+                    partial
+                        .content_mut()
+                        .push(ContentPart::reasoning("", id.clone(), signature.clone()));
+                    partial.reasoning_indices.insert(reasoning_key.clone(), index);
+                    partial.active_reasoning_id = Some(reasoning_key.clone());
+                    sync_partial(context, &partial);
+                    emit_event(
+                        emit,
+                        AgentEvent::MessageUpdate {
+                            message: partial.message.clone(),
+                            event: AssistantStreamEvent::ThinkingStart {
+                                content_index: index,
+                                id: id.clone(),
+                            },
+                        },
+                    )
+                    .await;
+                    index
+                };
+
+                let delta = if let Some(ContentPart::Reasoning {
+                    text: existing,
+                    signature: existing_signature,
+                    ..
+                }) = partial.content_mut().get_mut(content_index)
+                {
+                    if let Some(sig) = signature.clone() {
+                        *existing_signature = Some(sig);
                     }
+                    let suffix = compute_suffix(existing, &text);
+                    if !suffix.is_empty() {
+                        existing.push_str(&suffix);
+                    }
+                    suffix
+                } else {
+                    String::new()
+                };
+
+                partial.active_reasoning_id = Some(reasoning_key);
+                if !delta.is_empty() {
+                    sync_partial(context, &partial);
+                    emit_event(
+                        emit,
+                        AgentEvent::MessageUpdate {
+                            message: partial.message.clone(),
+                            event: AssistantStreamEvent::ThinkingDelta {
+                                content_index,
+                                id: id.clone(),
+                                text: delta,
+                            },
+                        },
+                    )
+                    .await;
                 }
-                // 更新 context 中的 partial
-                if added_partial {
-                    *context.messages.last_mut().unwrap() = partial.clone();
+            }
+            StreamChunk::ToolCallDelta { id, delta } if !delta.is_empty() => {
+                ensure_partial_started(context, emit, &mut partial).await;
+                end_active_text(context, emit, &mut partial).await;
+                end_active_reasoning(context, emit, &mut partial).await;
+
+                let (content_index, tool_name) = ensure_tool_call_partial(
+                    context,
+                    emit,
+                    &mut partial,
+                    &id,
+                    None,
+                    serde_json::Value::Object(Default::default()),
+                )
+                .await;
+
+                let tool_index = if let Some(state) = partial.tool_calls.get_mut(&id) {
+                    state.partial_json.push_str(&delta);
+                    if let Ok(arguments) = serde_json::from_str::<serde_json::Value>(&state.partial_json)
+                    {
+                        Some((state.index, arguments))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some((tool_index, arguments)) = tool_index
+                    && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
+                {
+                    tc.arguments = arguments;
                 }
-                // 对齐 Pi: 发出 message_update 携带 partial + 子事件
-                events.send(AgentEvent::MessageUpdate {
-                    message: partial.clone(),
-                    event: crate::types::AssistantStreamEvent::TextDelta { text },
-                });
+                sync_partial(context, &partial);
+                emit_event(
+                    emit,
+                    AgentEvent::MessageUpdate {
+                        message: partial.message.clone(),
+                        event: AssistantStreamEvent::ToolCallDelta {
+                            content_index,
+                            tool_call_id: id,
+                            name: tool_name,
+                            delta,
+                        },
+                    },
+                )
+                .await;
+            }
+            StreamChunk::ToolCall { info } => {
+                ensure_partial_started(context, emit, &mut partial).await;
+                end_active_text(context, emit, &mut partial).await;
+                end_active_reasoning(context, emit, &mut partial).await;
+
+                let info_id = info.id.clone();
+                let (content_index, tool_name) = ensure_tool_call_partial(
+                    context,
+                    emit,
+                    &mut partial,
+                    &info_id,
+                    Some(info.name.clone()),
+                    info.arguments.clone(),
+                )
+                .await;
+
+                let mut should_emit_delta = None;
+                let tool_index = if let Some(state) = partial.tool_calls.get_mut(&info_id) {
+                    let serialized = serde_json::to_string(&info.arguments).unwrap_or_default();
+                    let suffix = compute_suffix(&state.partial_json, &serialized);
+                    state.partial_json = serialized;
+                    should_emit_delta = (!suffix.is_empty()).then_some(suffix);
+                    Some(state.index)
+                } else {
+                    None
+                };
+                if let Some(tool_index) = tool_index
+                    && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
+                {
+                    *tc = info.clone();
+                }
+
+                sync_partial(context, &partial);
+                if let Some(delta) = should_emit_delta {
+                    emit_event(
+                        emit,
+                        AgentEvent::MessageUpdate {
+                            message: partial.message.clone(),
+                            event: AssistantStreamEvent::ToolCallDelta {
+                                content_index,
+                                tool_call_id: info_id.clone(),
+                                name: tool_name,
+                                delta,
+                            },
+                        },
+                    )
+                    .await;
+                }
+                emit_event(
+                    emit,
+                    AgentEvent::MessageUpdate {
+                        message: partial.message.clone(),
+                        event: AssistantStreamEvent::ToolCallEnd {
+                            content_index,
+                            tool_call: info,
+                        },
+                    },
+                )
+                .await;
             }
             StreamChunk::Done(resp) => {
                 response = Some(resp);
             }
-            StreamChunk::Error(e) => {
-                stream_error = Some(e);
+            StreamChunk::Error(error) => {
+                stream_failure = Some(AgentMessage::error_assistant(error.to_string(), false));
+                break;
             }
             _ => {}
         }
     }
     drop(stream);
 
-    if let Some(e) = stream_error {
-        return Err(e.into());
-    }
-    let response = response.ok_or(crate::bridge::BridgeError::EmptyResponse)?;
+    end_active_text(context, emit, &mut partial).await;
+    end_active_reasoning(context, emit, &mut partial).await;
 
-    // 对齐 Pi: 将 usage 和 stop_reason 传播到最终 AgentMessage
-    let assistant_message = match response.message {
-        AgentMessage::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let has_tool_calls = !tool_calls.is_empty();
-            let stop_reason = if has_tool_calls {
-                Some(crate::types::StopReason::ToolUse)
-            } else {
-                Some(crate::types::StopReason::Stop)
-            };
-            let usage = Some(crate::types::TokenUsage {
-                input: response.usage.input_tokens,
-                output: response.usage.output_tokens,
-            });
+    let assistant_message = if let Some(message) = stream_failure {
+        message
+    } else {
+        let response = response.ok_or(crate::bridge::BridgeError::EmptyResponse)?;
+        match response.message {
             AgentMessage::Assistant {
                 content,
                 tool_calls,
                 stop_reason,
-                error_message: None,
-                usage,
+                error_message,
+                ..
+            } => AgentMessage::Assistant {
+                content,
+                tool_calls: tool_calls.clone(),
+                stop_reason: stop_reason.or_else(|| {
+                    Some(if error_message.is_some() {
+                        crate::types::StopReason::Error
+                    } else if tool_calls.is_empty() {
+                        crate::types::StopReason::Stop
+                    } else {
+                        crate::types::StopReason::ToolUse
+                    })
+                }),
+                error_message,
+                usage: Some(crate::types::TokenUsage {
+                    input: response.usage.input_tokens,
+                    output: response.usage.output_tokens,
+                }),
                 timestamp: Some(crate::types::now_millis()),
-            }
+            },
+            other => other,
         }
-        other => other,
     };
 
-    // 对齐 Pi: 如果从未发出 message_start（无流式 delta），补发
-    if !added_partial {
-        events.send(AgentEvent::MessageStart {
-            message: assistant_message.clone(),
-        });
+    if !partial.added_partial {
+        emit_event(
+            emit,
+            AgentEvent::MessageStart {
+                message: assistant_message.clone(),
+            },
+        )
+        .await;
         context.messages.push(assistant_message.clone());
     } else {
-        // 替换 context 中的 partial 为 final message
-        *context.messages.last_mut().unwrap() = assistant_message.clone();
+        *context
+            .messages
+            .last_mut()
+            .expect("partial must exist in context") = assistant_message.clone();
     }
 
-    events.send(AgentEvent::MessageEnd {
-        message: assistant_message.clone(),
-    });
+    emit_event(
+        emit,
+        AgentEvent::MessageEnd {
+            message: assistant_message.clone(),
+        },
+    )
+    .await;
 
     Ok(assistant_message)
+}
+
+async fn ensure_partial_started(
+    context: &mut AgentContext,
+    emit: &AgentEventSink,
+    partial: &mut PartialAssistantState,
+) {
+    if partial.added_partial {
+        return;
+    }
+    context.messages.push(partial.message.clone());
+    partial.added_partial = true;
+    emit_event(
+        emit,
+        AgentEvent::MessageStart {
+            message: partial.message.clone(),
+        },
+    )
+    .await;
+}
+
+fn sync_partial(context: &mut AgentContext, partial: &PartialAssistantState) {
+    if partial.added_partial {
+        if let Some(last) = context.messages.last_mut() {
+            *last = partial.message.clone();
+        }
+    }
+}
+
+async fn end_active_text(
+    context: &mut AgentContext,
+    emit: &AgentEventSink,
+    partial: &mut PartialAssistantState,
+) {
+    let Some(content_index) = partial.active_text_index.take() else {
+        return;
+    };
+    sync_partial(context, partial);
+    let text = match &partial.content_mut()[content_index] {
+        ContentPart::Text { text } => text.clone(),
+        _ => String::new(),
+    };
+    emit_event(
+        emit,
+        AgentEvent::MessageUpdate {
+            message: partial.message.clone(),
+            event: AssistantStreamEvent::TextEnd { content_index, text },
+        },
+    )
+    .await;
+}
+
+async fn end_active_reasoning(
+    context: &mut AgentContext,
+    emit: &AgentEventSink,
+    partial: &mut PartialAssistantState,
+) {
+    let Some(reasoning_key) = partial.active_reasoning_id.take() else {
+        return;
+    };
+    let Some(&content_index) = partial.reasoning_indices.get(&reasoning_key) else {
+        return;
+    };
+    sync_partial(context, partial);
+    let (id, text, signature) = match &partial.content_mut()[content_index] {
+        ContentPart::Reasoning {
+            id,
+            text,
+            signature,
+        } => (id.clone(), text.clone(), signature.clone()),
+        _ => (None, String::new(), None),
+    };
+    emit_event(
+        emit,
+        AgentEvent::MessageUpdate {
+            message: partial.message.clone(),
+            event: AssistantStreamEvent::ThinkingEnd {
+                content_index,
+                id,
+                text,
+                signature,
+            },
+        },
+    )
+    .await;
+}
+
+async fn ensure_tool_call_partial(
+    context: &mut AgentContext,
+    emit: &AgentEventSink,
+    partial: &mut PartialAssistantState,
+    tool_call_id: &str,
+    tool_name: Option<String>,
+    arguments: serde_json::Value,
+) -> (usize, String) {
+    if let Some(state) = partial.tool_calls.get(tool_call_id).cloned() {
+        let name = partial.tool_calls_mut()[state.index].name.clone();
+        return (state.index, name);
+    }
+
+    let name = tool_name.unwrap_or_else(|| "pending_tool".to_string());
+    let index = partial.tool_calls_mut().len();
+    partial.tool_calls_mut().push(ToolCallInfo {
+        id: tool_call_id.to_string(),
+        call_id: Some(tool_call_id.to_string()),
+        name: name.clone(),
+        arguments,
+    });
+    partial.tool_calls.insert(
+        tool_call_id.to_string(),
+        PartialToolCallState {
+            index,
+            partial_json: String::new(),
+        },
+    );
+    sync_partial(context, partial);
+    emit_event(
+        emit,
+        AgentEvent::MessageUpdate {
+            message: partial.message.clone(),
+            event: AssistantStreamEvent::ToolCallStart {
+                content_index: index,
+                tool_call_id: tool_call_id.to_string(),
+                name: name.clone(),
+            },
+        },
+    )
+    .await;
+    (index, name)
+}
+
+fn compute_suffix(existing: &str, incoming: &str) -> String {
+    if incoming.is_empty() {
+        return String::new();
+    }
+    if existing.is_empty() {
+        return incoming.to_string();
+    }
+    if incoming.starts_with(existing) {
+        incoming[existing.len()..].to_string()
+    } else if existing == incoming || existing.ends_with(incoming) {
+        String::new()
+    } else {
+        incoming.to_string()
+    }
 }
 
 // ─── 工具执行 ───────────────────────────────────────────────
@@ -457,7 +894,7 @@ async fn execute_tool_calls(
     assistant_message: &AgentMessage,
     tool_calls: &[ToolCallInfo],
     config: &AgentLoopConfig,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
     match config.tool_execution {
@@ -467,7 +904,7 @@ async fn execute_tool_calls(
                 assistant_message,
                 tool_calls,
                 config,
-                events,
+                emit,
                 cancel,
             )
             .await
@@ -478,7 +915,7 @@ async fn execute_tool_calls(
                 assistant_message,
                 tool_calls,
                 config,
-                events,
+                emit,
                 cancel,
             )
             .await
@@ -492,34 +929,36 @@ async fn execute_tool_calls_sequential(
     assistant_message: &AgentMessage,
     tool_calls: &[ToolCallInfo],
     config: &AgentLoopConfig,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
     let mut results = Vec::new();
 
     for tc in tool_calls {
-        events.send(AgentEvent::ToolExecutionStart {
-            tool_call_id: tc.id.clone(),
-            tool_name: tc.name.clone(),
-            args: tc.arguments.clone(),
-        });
+        emit_event(
+            emit,
+            AgentEvent::ToolExecutionStart {
+                tool_call_id: tc.id.clone(),
+                tool_name: tc.name.clone(),
+                args: tc.arguments.clone(),
+            },
+        )
+        .await;
 
         let preparation =
             prepare_tool_call(context, assistant_message, tc, config, cancel).await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
-                results.push(
-                    emit_tool_call_outcome(tc, &result, is_error, events),
-                );
+                results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
             }
             ToolCallPreparation::Prepared { tool, args } => {
-                let executed = execute_prepared_tool_call(tc, &tool, &args, cancel, events).await;
+                let executed = execute_prepared_tool_call(tc, &tool, &args, cancel, emit).await;
                 let finalized =
                     finalize_executed_tool_call(context, assistant_message, tc, &args, executed, config, cancel)
                         .await;
                 results.push(
-                    emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, events),
+                    emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, emit).await,
                 );
             }
         }
@@ -536,7 +975,7 @@ async fn execute_tool_calls_parallel(
     assistant_message: &AgentMessage,
     tool_calls: &[ToolCallInfo],
     config: &AgentLoopConfig,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
     let mut results = Vec::new();
@@ -551,20 +990,22 @@ async fn execute_tool_calls_parallel(
 
     // Phase 1: 顺序 prepare
     for tc in tool_calls {
-        events.send(AgentEvent::ToolExecutionStart {
-            tool_call_id: tc.id.clone(),
-            tool_name: tc.name.clone(),
-            args: tc.arguments.clone(),
-        });
+        emit_event(
+            emit,
+            AgentEvent::ToolExecutionStart {
+                tool_call_id: tc.id.clone(),
+                tool_name: tc.name.clone(),
+                args: tc.arguments.clone(),
+            },
+        )
+        .await;
 
         let preparation =
             prepare_tool_call(context, assistant_message, tc, config, cancel).await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
-                results.push(
-                    emit_tool_call_outcome(tc, &result, is_error, events),
-                );
+                results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
             }
             ToolCallPreparation::Prepared { tool, args } => {
                 runnable.push(PreparedEntry {
@@ -584,8 +1025,10 @@ async fn execute_tool_calls_parallel(
             let tc_id = entry.tc.id.clone();
             let args = entry.args.clone();
             let cancel = cancel.clone();
-            let on_update = Some(build_on_update(&entry.tc, events));
-            tokio::spawn(async move { execute_prepared_tool_call_inner(&tc_id, &tool, &args, cancel, on_update).await })
+            let on_update = Some(build_on_update(&entry.tc, emit));
+            tokio::spawn(async move {
+                execute_prepared_tool_call_inner(&tc_id, &tool, &args, cancel, on_update).await
+            })
         })
         .collect();
 
@@ -613,7 +1056,7 @@ async fn execute_tool_calls_parallel(
         )
         .await;
         results.push(
-            emit_tool_call_outcome(&entry.tc, &finalized.result, finalized.is_error, events),
+            emit_tool_call_outcome(&entry.tc, &finalized.result, finalized.is_error, emit).await,
         );
     }
 
@@ -661,12 +1104,22 @@ async fn prepare_tool_call(
         }
     };
 
+    let args = match validate_tool_call_arguments(&tool, tc) {
+        Ok(args) => args,
+        Err(error) => {
+            return ToolCallPreparation::Immediate {
+                result: error_tool_result(error),
+                is_error: true,
+            };
+        }
+    };
+
     // 对齐 Pi: beforeToolCall 钩子
     if let Some(ref hook) = config.before_tool_call {
         let ctx = BeforeToolCallContext {
             assistant_message,
             tool_call: tc,
-            args: &tc.arguments,
+            args: &args,
             context,
         };
         if let Some(before_result) = hook(ctx, cancel.clone()).await {
@@ -685,7 +1138,7 @@ async fn prepare_tool_call(
 
     ToolCallPreparation::Prepared {
         tool,
-        args: tc.arguments.clone(),
+        args,
     }
 }
 
@@ -695,24 +1148,28 @@ async fn execute_prepared_tool_call(
     tool: &DynAgentTool,
     args: &serde_json::Value,
     cancel: &CancellationToken,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
 ) -> ExecutedOutcome {
-    let on_update = build_on_update(tc, events);
+    let on_update = build_on_update(tc, emit);
     execute_prepared_tool_call_inner(&tc.id, tool, args, cancel.clone(), Some(on_update)).await
 }
 
 /// 构建 `on_update` 回调 — 对齐 Pi `executePreparedToolCall` 内联闭包
-fn build_on_update(tc: &ToolCallInfo, events: &EventSender<AgentEvent>) -> ToolUpdateCallback {
-    let events = events.clone();
+fn build_on_update(tc: &ToolCallInfo, emit: &AgentEventSink) -> ToolUpdateCallback {
+    let emit = emit.clone();
     let tc_id = tc.id.clone();
     let tc_name = tc.name.clone();
     let tc_args = tc.arguments.clone();
     Arc::new(move |partial_result: AgentToolResult| {
-        events.send(AgentEvent::ToolExecutionUpdate {
+        let emit = emit.clone();
+        let event = AgentEvent::ToolExecutionUpdate {
             tool_call_id: tc_id.clone(),
             tool_name: tc_name.clone(),
             args: tc_args.clone(),
             partial_result: serde_json::to_value(&partial_result).unwrap_or_default(),
+        };
+        tokio::spawn(async move {
+            emit(event).await;
         });
     })
 }
@@ -773,48 +1230,82 @@ async fn finalize_executed_tool_call(
         }
     }
 
+    result.is_error = is_error;
     ExecutedOutcome { result, is_error }
 }
 
 // ─── 辅助函数 ───────────────────────────────────────────────
 
+fn validate_tool_call_arguments(
+    tool: &DynAgentTool,
+    tc: &ToolCallInfo,
+) -> Result<serde_json::Value, String> {
+    let schema = tool.parameters_schema();
+    let validator = validator_for(&schema)
+        .map_err(|error| format!("Tool {} schema is invalid: {error}", tc.name))?;
+    let errors = validator
+        .iter_errors(&tc.arguments)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    if errors.is_empty() {
+        Ok(tc.arguments.clone())
+    } else {
+        Err(format!(
+            "Tool {} arguments are invalid: {}",
+            tc.name,
+            errors.join("; ")
+        ))
+    }
+}
+
 /// 发出工具执行结果事件并构建 ToolResult 消息
 /// 对齐 Pi `emitToolCallOutcome` (agent-loop.ts:589-616)
-fn emit_tool_call_outcome(
+async fn emit_tool_call_outcome(
     tc: &ToolCallInfo,
     result: &AgentToolResult,
     is_error: bool,
-    events: &EventSender<AgentEvent>,
+    emit: &AgentEventSink,
 ) -> AgentMessage {
-    let result_text = result
-        .content
-        .iter()
-        .filter_map(ContentPart::extract_text)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    events.send(AgentEvent::ToolExecutionEnd {
-        tool_call_id: tc.id.clone(),
-        tool_name: tc.name.clone(),
-        result: serde_json::json!({ "text": result_text }),
-        is_error,
-    });
+    emit_event(
+        emit,
+        AgentEvent::ToolExecutionEnd {
+            tool_call_id: tc.id.clone(),
+            tool_name: tc.name.clone(),
+            result: serde_json::to_value(result).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "content": result.content,
+                    "is_error": is_error,
+                    "details": result.details,
+                })
+            }),
+            is_error,
+        },
+    )
+    .await;
 
     let tool_result_msg = AgentMessage::tool_result_full(
         &tc.id,
         tc.call_id.clone(),
         Some(tc.name.clone()),
-        &result_text,
+        result.content.clone(),
         result.details.clone(),
         is_error,
     );
 
-    events.send(AgentEvent::MessageStart {
-        message: tool_result_msg.clone(),
-    });
-    events.send(AgentEvent::MessageEnd {
-        message: tool_result_msg.clone(),
-    });
+    emit_event(
+        emit,
+        AgentEvent::MessageStart {
+            message: tool_result_msg.clone(),
+        },
+    )
+    .await;
+    emit_event(
+        emit,
+        AgentEvent::MessageEnd {
+            message: tool_result_msg.clone(),
+        },
+    )
+    .await;
 
     tool_result_msg
 }

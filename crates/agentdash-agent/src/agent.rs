@@ -8,13 +8,15 @@
 /// - 事件驱动状态同步 — 对齐 Pi `Agent._processLoopEvent`
 /// - Steering / Follow-up 队列（支持 all / one-at-a-time 出队模式）
 /// - prompt / continue 入口
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::{
-    self, AfterToolCallFn, AgentLoopConfig, BeforeToolCallFn, ConvertToLlmFn, TransformContextFn,
+    self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, BeforeToolCallFn, ConvertToLlmFn,
+    TransformContextFn,
 };
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
@@ -292,30 +294,76 @@ impl Agent {
     pub fn prompt(
         &mut self,
         input: impl Into<AgentMessage>,
-    ) -> (
+    ) -> Result<
+        (
         EventReceiver<AgentEvent>,
         tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
-    ) {
-        self.run_loop(vec![input.into()])
+        ),
+        AgentError,
+    > {
+        self.run_loop(Some(vec![input.into()]), RunLoopOptions::default())
     }
 
     /// 从当前消息历史继续运行 agent loop — 对齐 Pi `continue()`
     pub fn continue_loop(
         &mut self,
-    ) -> (
+    ) -> Result<
+        (
         EventReceiver<AgentEvent>,
         tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
-    ) {
-        self.run_loop(vec![])
+        ),
+        AgentError,
+    > {
+        self.ensure_not_running("Agent is already processing. Wait for completion before continuing.")?;
+
+        let state = self
+            .try_state()
+            .ok_or_else(|| AgentError::InvalidState("Agent state is temporarily unavailable".to_string()))?;
+        if state.messages.is_empty() {
+            return Err(AgentError::ContinueError("No messages to continue from".to_string()));
+        }
+
+        if matches!(state.messages.last(), Some(AgentMessage::Assistant { .. })) {
+            let queued_steering =
+                try_dequeue_messages(&self.steering_queue, self.config.steering_mode)?;
+            if !queued_steering.is_empty() {
+                return self.run_loop(
+                    Some(queued_steering),
+                    RunLoopOptions {
+                        skip_initial_steering_poll: true,
+                    },
+                );
+            }
+
+            let queued_follow_up =
+                try_dequeue_messages(&self.follow_up_queue, self.config.follow_up_mode)?;
+            if !queued_follow_up.is_empty() {
+                return self.run_loop(Some(queued_follow_up), RunLoopOptions::default());
+            }
+
+            return Err(AgentError::ContinueError(
+                "Cannot continue from message role: assistant".to_string(),
+            ));
+        }
+
+        self.run_loop(None, RunLoopOptions::default())
     }
 
     fn run_loop(
         &mut self,
-        prompts: Vec<AgentMessage>,
-    ) -> (
+        prompts: Option<Vec<AgentMessage>>,
+        options: RunLoopOptions,
+    ) -> Result<
+        (
         EventReceiver<AgentEvent>,
         tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
-    ) {
+        ),
+        AgentError,
+    > {
+        self.ensure_not_running(
+            "Agent is already processing a prompt. Use steer() or follow_up() to queue messages, or wait for completion.",
+        )?;
+
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
 
@@ -334,11 +382,17 @@ impl Agent {
         let follow_up_mode = self.config.follow_up_mode;
         let idle_notify = self.idle_notify.clone();
         let state = self.state.clone();
+        let event_sink = build_event_sink(event_tx.clone(), state.clone());
+        let skip_initial_steering_poll =
+            Arc::new(AtomicBool::new(options.skip_initial_steering_poll));
 
         // 从 state 中取出构建 context 所需数据
         let (system_prompt, messages, tools) = {
             // 同步获取 — run_loop 在非 async 上下文调用
-            let s = self.state.try_lock().expect("Agent state lock should not be contended at prompt() time");
+            let s = self
+                .state
+                .try_lock()
+                .expect("Agent state lock should not be contended at prompt() time");
             (s.system_prompt.clone(), s.messages.clone(), s.tools.clone())
         };
 
@@ -365,6 +419,9 @@ impl Agent {
             before_tool_call: self.config.before_tool_call.clone(),
             after_tool_call: self.config.after_tool_call.clone(),
             get_steering_messages: Some(Arc::new(move || {
+                if skip_initial_steering_poll.swap(false, Ordering::SeqCst) {
+                    return Vec::new();
+                }
                 dequeue_messages(&steering_queue, steering_mode)
             })),
             get_follow_up_messages: Some(Arc::new(move || {
@@ -373,31 +430,66 @@ impl Agent {
         };
 
         let handle = tokio::spawn(async move {
-            let result = if prompts.is_empty() {
-                agent_loop::agent_loop_continue(
-                    &mut context,
-                    &config,
-                    bridge.as_ref(),
-                    &event_tx,
-                    cancel,
-                )
-                .await
-            } else {
-                agent_loop::agent_loop(
-                    prompts,
-                    &mut context,
-                    &config,
-                    bridge.as_ref(),
-                    &event_tx,
-                    cancel,
-                )
-                .await
+            let result = match prompts {
+                Some(prompts) => {
+                    agent_loop::agent_loop(
+                        prompts,
+                        &mut context,
+                        &config,
+                        bridge.as_ref(),
+                        &event_sink,
+                        cancel.clone(),
+                    )
+                    .await
+                }
+                None => {
+                    agent_loop::agent_loop_continue(
+                        &mut context,
+                        &config,
+                        bridge.as_ref(),
+                        &event_sink,
+                        cancel.clone(),
+                    )
+                    .await
+                }
             };
 
-            // 同步最终消息回 AgentState
+            let result = match result {
+                Ok(messages) => Ok(messages),
+                Err(error) => {
+                    let error_message =
+                        AgentMessage::error_assistant(error.to_string(), cancel.is_cancelled());
+                    event_sink(
+                        AgentEvent::MessageStart {
+                            message: error_message.clone(),
+                        },
+                    )
+                    .await;
+                    event_sink(
+                        AgentEvent::MessageEnd {
+                            message: error_message.clone(),
+                        },
+                    )
+                    .await;
+                    event_sink(
+                        AgentEvent::TurnEnd {
+                            message: error_message.clone(),
+                            tool_results: vec![],
+                        },
+                    )
+                    .await;
+                    event_sink(
+                        AgentEvent::AgentEnd {
+                            messages: vec![error_message.clone()],
+                        },
+                    )
+                    .await;
+                    Ok(vec![error_message])
+                }
+            };
+
             {
                 let mut s = state.lock().await;
-                s.messages = context.messages;
                 s.is_streaming = false;
                 s.stream_message = None;
                 s.pending_tool_calls.clear();
@@ -407,8 +499,37 @@ impl Agent {
             result
         });
 
-        (event_rx, handle)
+        Ok((event_rx, handle))
     }
+
+    fn ensure_not_running(&self, message: &str) -> Result<(), AgentError> {
+        match self.state.try_lock() {
+            Ok(state) if state.is_streaming => Err(AgentError::InvalidState(message.to_string())),
+            Ok(_) => Ok(()),
+            Err(_) => Err(AgentError::InvalidState(
+                "Agent state is temporarily unavailable".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RunLoopOptions {
+    skip_initial_steering_poll: bool,
+}
+
+fn build_event_sink(
+    sender: event_stream::EventSender<AgentEvent>,
+    state: Arc<Mutex<AgentState>>,
+) -> AgentEventSink {
+    Arc::new(move |event: AgentEvent| {
+        let sender = sender.clone();
+        let state = state.clone();
+        Box::pin(async move {
+            process_event(state.as_ref(), &event).await;
+            sender.send(event);
+        })
+    })
 }
 
 /// 按模式从队列中出队消息 — 对齐 Pi `dequeueSteeringMessages` / `dequeueFollowUpMessages`
@@ -419,17 +540,31 @@ fn dequeue_messages(
     queue
         .try_lock()
         .ok()
-        .map(|mut q| match mode {
-            QueueMode::All => q.drain(..).collect(),
-            QueueMode::OneAtATime => {
-                if q.is_empty() {
-                    vec![]
-                } else {
-                    vec![q.remove(0)]
-                }
-            }
-        })
+        .map(|mut q| dequeue_messages_inner(&mut q, mode))
         .unwrap_or_default()
+}
+
+fn try_dequeue_messages(
+    queue: &Arc<Mutex<Vec<AgentMessage>>>,
+    mode: QueueMode,
+) -> Result<Vec<AgentMessage>, AgentError> {
+    let mut q = queue.try_lock().map_err(|_| {
+        AgentError::InvalidState("Agent queue is temporarily unavailable".to_string())
+    })?;
+    Ok(dequeue_messages_inner(&mut q, mode))
+}
+
+fn dequeue_messages_inner(queue: &mut Vec<AgentMessage>, mode: QueueMode) -> Vec<AgentMessage> {
+    match mode {
+        QueueMode::All => queue.drain(..).collect(),
+        QueueMode::OneAtATime => {
+            if queue.is_empty() {
+                vec![]
+            } else {
+                vec![queue.remove(0)]
+            }
+        }
+    }
 }
 
 // ─── 事件驱动状态同步 ──────────────────────────────────────
@@ -438,8 +573,8 @@ fn dequeue_messages(
 ///
 /// 此函数可由外部调用者（如 `pi_agent.rs`）在消费事件流时使用，
 /// 也可在 Agent 内部的事件转发循环中使用。
-pub fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
-    let Ok(mut s) = state.try_lock() else { return };
+pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
+    let mut s = state.lock().await;
     match event {
         AgentEvent::MessageStart { message } => {
             s.stream_message = Some(message.clone());

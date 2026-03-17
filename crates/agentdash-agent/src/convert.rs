@@ -1,13 +1,9 @@
 use rig::OneOrMany;
-/// AgentMessage ↔ rig::Message 双向转换
-///
-/// 这是设计文档中 `convert_to_llm` / `convert_from_llm` 管线的实现。
-/// AgentMessage 是面向会话的消息层，rig::Message 是面向模型的消息层。
-use rig::completion::message::{AssistantContent, Message, Text, UserContent};
+use rig::completion::message::{AssistantContent, Message, Reasoning, Text, UserContent};
 
 use crate::types::{AgentMessage, ContentPart, ToolCallInfo};
 
-/// 默认 convert_to_llm：将 AgentMessage 列表转为 rig::Message 列表
+/// 默认 convert_to_llm：将 AgentMessage 列表转为 rig::Message 列表。
 pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<Message> {
     messages.iter().filter_map(agent_to_llm).collect()
 }
@@ -76,6 +72,7 @@ fn content_part_to_user(part: &ContentPart) -> Option<UserContent> {
     match part {
         ContentPart::Text { text } => Some(UserContent::Text(Text { text: text.clone() })),
         ContentPart::Image { .. } => None,
+        ContentPart::Reasoning { .. } => None,
     }
 }
 
@@ -83,18 +80,27 @@ fn content_part_to_assistant(part: &ContentPart) -> Option<AssistantContent> {
     match part {
         ContentPart::Text { text } => Some(AssistantContent::Text(Text { text: text.clone() })),
         ContentPart::Image { .. } => None,
+        ContentPart::Reasoning {
+            text,
+            id,
+            signature,
+        } => Some(AssistantContent::Reasoning(
+            Reasoning::new(text)
+                .optional_id(id.clone())
+                .with_signature(signature.clone()),
+        )),
     }
 }
 
-/// 从 rig 的 AssistantContent 列表构建 AgentMessage::Assistant
+/// 从 rig 的 AssistantContent 列表构建 AgentMessage::Assistant。
 pub fn assistant_from_llm_content(content: &[AssistantContent]) -> AgentMessage {
-    let mut text_parts = Vec::new();
+    let mut parts = Vec::new();
     let mut tool_calls = Vec::new();
 
     for item in content {
         match item {
             AssistantContent::Text(t) => {
-                text_parts.push(ContentPart::text(&t.text));
+                parts.push(ContentPart::text(&t.text));
             }
             AssistantContent::ToolCall(tc) => {
                 tool_calls.push(ToolCallInfo {
@@ -104,12 +110,19 @@ pub fn assistant_from_llm_content(content: &[AssistantContent]) -> AgentMessage 
                     arguments: tc.function.arguments.clone(),
                 });
             }
-            AssistantContent::Reasoning(_) => {}
+            AssistantContent::Reasoning(reasoning) => {
+                let text = reasoning.reasoning.join("");
+                parts.push(ContentPart::reasoning(
+                    text,
+                    reasoning.id.clone(),
+                    reasoning.signature.clone(),
+                ));
+            }
         }
     }
 
     AgentMessage::Assistant {
-        content: text_parts,
+        content: parts,
         tool_calls,
         stop_reason: None,
         error_message: None,
@@ -137,8 +150,13 @@ mod tests {
     }
 
     #[test]
-    fn convert_assistant_with_tool_calls() {
+    fn convert_assistant_with_tool_calls_and_reasoning() {
         let content = vec![
+            AssistantContent::Reasoning(
+                Reasoning::new("思考中")
+                    .with_id("r1".to_string())
+                    .with_signature(Some("sig".to_string())),
+            ),
             AssistantContent::text("让我帮你查一下"),
             AssistantContent::tool_call("tc_1", "search", serde_json::json!({"query": "rust"})),
         ];
@@ -150,9 +168,13 @@ mod tests {
                 tool_calls,
                 ..
             } => {
-                assert_eq!(content.len(), 1);
+                assert_eq!(content.len(), 2);
                 assert_eq!(tool_calls.len(), 1);
                 assert_eq!(tool_calls[0].name, "search");
+                assert!(matches!(
+                    &content[0],
+                    ContentPart::Reasoning { text, .. } if text == "思考中"
+                ));
             }
             _ => panic!("应该是 Assistant 消息"),
         }

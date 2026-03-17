@@ -28,16 +28,17 @@ use crate::types::AgentMessage;
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
     TextDelta(String),
-    ToolCallStart {
-        id: String,
-        name: String,
+    ReasoningDelta {
+        id: Option<String>,
+        text: String,
+        signature: Option<String>,
     },
-    ToolCallInputDelta {
+    ToolCallDelta {
         id: String,
         delta: String,
     },
-    ToolCallEnd {
-        id: String,
+    ToolCall {
+        info: crate::types::ToolCallInfo,
     },
     /// 流结束，附带聚合后的完整响应
     Done(BridgeResponse),
@@ -196,14 +197,25 @@ where
             while let Some(chunk) = rig_stream.next().await {
                 let sc = match chunk {
                     Ok(StreamedAssistantContent::Text(t)) => StreamChunk::TextDelta(t.text),
-                    Ok(StreamedAssistantContent::ToolCall(tool_call)) => StreamChunk::ToolCallEnd {
-                        id: tool_call.id.clone(),
+                    Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+                        StreamChunk::ReasoningDelta {
+                            id: reasoning.id.clone(),
+                            text: reasoning.reasoning.join(""),
+                            signature: reasoning.signature.clone(),
+                        }
+                    }
+                    Ok(StreamedAssistantContent::ToolCall(tool_call)) => StreamChunk::ToolCall {
+                        info: crate::types::ToolCallInfo {
+                            id: tool_call.id.clone(),
+                            call_id: tool_call.call_id.clone().or_else(|| Some(tool_call.id)),
+                            name: tool_call.function.name.clone(),
+                            arguments: tool_call.function.arguments.clone(),
+                        },
                     },
                     Ok(StreamedAssistantContent::ToolCallDelta { id, delta }) => {
-                        StreamChunk::ToolCallInputDelta { id, delta }
+                        StreamChunk::ToolCallDelta { id, delta }
                     }
                     Ok(StreamedAssistantContent::Final(_)) => continue,
-                    Ok(StreamedAssistantContent::Reasoning(_)) => continue,
                     Err(e) => {
                         let _ = tx
                             .send(StreamChunk::Error(BridgeError::CompletionFailed(

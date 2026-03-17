@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, SessionId, SessionNotification, SessionUpdate, TextContent,
+    ContentBlock, ContentChunk, ImageContent, SessionId, SessionNotification, SessionUpdate,
+    TextContent,
     ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
     ToolKind,
 };
@@ -21,7 +22,8 @@ use agentdash_acp_meta::{
 };
 
 use agentdash_agent::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, BuiltinToolset, DynAgentTool, LlmBridge,
+    Agent, AgentConfig, AgentEvent, AgentMessage, AgentToolResult, BuiltinToolset, ContentPart,
+    DynAgentTool, LlmBridge,
 };
 
 use crate::connector::{
@@ -196,7 +198,9 @@ impl AgentConnector for PiAgentConnector {
         agent.set_tools(runtime_tools);
         agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
 
-        let (event_rx, join_handle) = agent.prompt(AgentMessage::user(&prompt_text));
+        let (event_rx, join_handle) = agent
+            .prompt(AgentMessage::user(&prompt_text))
+            .map_err(|error| ConnectorError::Runtime(format!("Pi Agent 启动失败: {error}")))?;
 
         let session_id_owned = session_id.to_string();
         self.agents
@@ -211,8 +215,6 @@ impl AgentConnector for PiAgentConnector {
 
         let (tx, rx) =
             tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
-
-        let agents = self.agents.clone();
 
         tokio::spawn(async move {
             let mut entry_index: u32 = 0;
@@ -235,11 +237,7 @@ impl AgentConnector for PiAgentConnector {
             }
 
             match join_handle.await {
-                Ok(Ok(messages)) => {
-                    if let Some(agent) = agents.lock().await.get_mut(&session_id_owned) {
-                        agent.replace_messages(messages).await;
-                    }
-                }
+                Ok(Ok(_messages)) => {}
                 Ok(Err(e)) => {
                     let error = ConnectorError::Runtime(format!("Pi Agent loop 错误: {e}"));
                     tracing::error!("{error}");
@@ -307,7 +305,7 @@ fn convert_event_to_notifications(
     match event {
         AgentEvent::MessageUpdate { event, .. } => {
             match event {
-                agentdash_agent::types::AssistantStreamEvent::TextDelta { text } => {
+                agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
                     if text.is_empty() {
                         return Vec::new();
                     }
@@ -319,18 +317,69 @@ fn convert_event_to_notifications(
                         SessionUpdate::AgentMessageChunk(chunk),
                     )]
                 }
+                agentdash_agent::types::AssistantStreamEvent::ThinkingDelta { text, .. } => {
+                    if text.is_empty() {
+                        return Vec::new();
+                    }
+                    let meta = make_meta(source, turn_id, *entry_index);
+                    let chunk =
+                        ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                    vec![SessionNotification::new(
+                        session_id.clone(),
+                        SessionUpdate::AgentThoughtChunk(chunk),
+                    )]
+                }
                 _ => Vec::new(),
             }
         }
 
         AgentEvent::MessageEnd { message } => {
-            // MessageEnd 时不再发送全量文本（已通过 MessageUpdate 增量推送），
-            // 仅递增 entry_index 用于后续条目排序
-            if let AgentMessage::Assistant { content, .. } = message {
-                let has_text = content.iter().any(|p| p.extract_text().is_some());
-                if has_text {
+            if let AgentMessage::Assistant {
+                content,
+                error_message,
+                tool_calls,
+                ..
+            } = message
+            {
+                let meta = make_meta(source, turn_id, *entry_index);
+                let reasoning_text = content
+                    .iter()
+                    .filter_map(ContentPart::extract_reasoning)
+                    .collect::<Vec<_>>()
+                    .join("");
+                let text = error_message.clone().unwrap_or_else(|| {
+                    content
+                        .iter()
+                        .filter_map(ContentPart::extract_text)
+                        .collect::<Vec<_>>()
+                        .join("")
+                });
+
+                let mut notifications = Vec::new();
+                if !reasoning_text.is_empty() {
+                    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(reasoning_text)))
+                        .meta(Some(meta.clone()));
+                    notifications.push(SessionNotification::new(
+                        session_id.clone(),
+                        SessionUpdate::AgentThoughtChunk(chunk),
+                    ));
+                }
+                if !text.is_empty() {
+                    let chunk =
+                        ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                    notifications.push(SessionNotification::new(
+                        session_id.clone(),
+                        SessionUpdate::AgentMessageChunk(chunk),
+                    ));
+                }
+
+                let has_streamable_content = content.iter().any(|part| {
+                    part.extract_text().is_some() || part.extract_reasoning().is_some()
+                });
+                if has_streamable_content || error_message.is_some() || !tool_calls.is_empty() {
                     *entry_index += 1;
                 }
+                return notifications;
             }
             Vec::new()
         }
@@ -352,6 +401,31 @@ fn convert_event_to_notifications(
             vec![SessionNotification::new(
                 session_id.clone(),
                 SessionUpdate::ToolCall(call),
+            )]
+        }
+
+        AgentEvent::ToolExecutionUpdate {
+            tool_call_id,
+            partial_result,
+            ..
+        } => {
+            let meta = make_meta(source, turn_id, *entry_index);
+            let mut fields = ToolCallUpdateFields::default();
+            fields.status = Some(ToolCallStatus::InProgress);
+            fields.raw_output = Some(partial_result.clone());
+            if let Some(result) = decode_tool_result(partial_result) {
+                let content = content_parts_to_tool_call_content(&result.content);
+                if !content.is_empty() {
+                    fields.content = Some(content);
+                }
+            }
+
+            let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
+            update.meta = Some(meta);
+
+            vec![SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::ToolCallUpdate(update),
             )]
         }
 
@@ -378,10 +452,17 @@ fn convert_event_to_notifications(
 
             let mut fields = ToolCallUpdateFields::default();
             fields.status = Some(status);
-            fields.content = Some(vec![ToolCallContent::from(ContentBlock::Text(
-                TextContent::new(&result_text),
-            ))]);
             fields.raw_output = Some(result.clone());
+            if let Some(decoded) = decode_tool_result(result) {
+                let content = content_parts_to_tool_call_content(&decoded.content);
+                if !content.is_empty() {
+                    fields.content = Some(content);
+                }
+            } else if !result_text.is_empty() {
+                fields.content = Some(vec![ToolCallContent::from(ContentBlock::Text(
+                    TextContent::new(&result_text),
+                ))]);
+            }
 
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
             update.meta = Some(meta);
@@ -393,5 +474,164 @@ fn convert_event_to_notifications(
         }
 
         _ => Vec::new(),
+    }
+}
+
+fn decode_tool_result(value: &serde_json::Value) -> Option<AgentToolResult> {
+    serde_json::from_value(value.clone()).ok()
+}
+
+fn content_parts_to_tool_call_content(parts: &[ContentPart]) -> Vec<ToolCallContent> {
+    parts
+        .iter()
+        .filter_map(content_part_to_block)
+        .map(ToolCallContent::from)
+        .collect()
+}
+
+fn content_part_to_block(part: &ContentPart) -> Option<ContentBlock> {
+    match part {
+        ContentPart::Text { text } => Some(ContentBlock::Text(TextContent::new(text))),
+        ContentPart::Image { mime_type, data } => {
+            Some(ContentBlock::Image(ImageContent::new(data, mime_type)))
+        }
+        ContentPart::Reasoning { text, .. } => Some(ContentBlock::Text(TextContent::new(text))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_agent::{AssistantStreamEvent, StopReason};
+
+    fn test_source() -> AgentDashSourceV1 {
+        AgentDashSourceV1::new("pi-agent", "local_executor")
+    }
+
+    #[test]
+    fn thinking_delta_maps_to_agent_thought_chunk() {
+        let event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![ContentPart::reasoning("plan", None, None)],
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::Stop),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::ThinkingDelta {
+                content_index: 0,
+                id: None,
+                text: "plan".to_string(),
+            },
+        };
+
+        let mut entry_index = 0;
+        let notifications = convert_event_to_notifications(
+            &event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        match &notifications[0].update {
+            SessionUpdate::AgentThoughtChunk(chunk) => match &chunk.content {
+                ContentBlock::Text(text) => assert_eq!(text.text, "plan"),
+                other => panic!("unexpected content block: {other:?}"),
+            },
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_execution_updates_preserve_full_tool_result_payload() {
+        let result = AgentToolResult {
+            content: vec![ContentPart::text("done")],
+            is_error: false,
+            details: Some(serde_json::json!({ "ok": true })),
+        };
+        let raw_result = serde_json::to_value(&result).expect("tool result should serialize");
+
+        let update_event = AgentEvent::ToolExecutionUpdate {
+            tool_call_id: "tool-1".to_string(),
+            tool_name: "echo".to_string(),
+            args: serde_json::json!({ "value": "x" }),
+            partial_result: raw_result.clone(),
+        };
+        let end_event = AgentEvent::ToolExecutionEnd {
+            tool_call_id: "tool-1".to_string(),
+            tool_name: "echo".to_string(),
+            result: raw_result.clone(),
+            is_error: false,
+        };
+
+        let mut entry_index = 0;
+        let update_notifications = convert_event_to_notifications(
+            &update_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+        );
+        let end_notifications = convert_event_to_notifications(
+            &end_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+        );
+
+        match &update_notifications[0].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.status, Some(ToolCallStatus::InProgress));
+                assert_eq!(update.fields.raw_output, Some(raw_result.clone()));
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+
+        match &end_notifications[0].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
+                assert_eq!(update.fields.raw_output, Some(raw_result));
+                let content = update.fields.content.clone().expect("content should exist");
+                assert_eq!(content.len(), 1);
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assistant_message_end_with_error_message_emits_fallback_chunk() {
+        let event = AgentEvent::MessageEnd {
+            message: AgentMessage::Assistant {
+                content: vec![ContentPart::text("")],
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::Aborted),
+                error_message: Some("Agent run aborted".to_string()),
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+        };
+
+        let mut entry_index = 0;
+        let notifications = convert_event_to_notifications(
+            &event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(entry_index, 1);
+        match &notifications[0].update {
+            SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
+                ContentBlock::Text(text) => assert_eq!(text.text, "Agent run aborted"),
+                other => panic!("unexpected content block: {other:?}"),
+            },
+            other => panic!("unexpected session update: {other:?}"),
+        }
     }
 }

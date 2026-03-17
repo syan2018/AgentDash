@@ -6,7 +6,7 @@ pub mod event_stream;
 pub mod tools;
 pub mod types;
 
-pub use agent::{Agent, AgentConfig};
+pub use agent::{Agent, AgentConfig, QueueMode};
 pub use bridge::{BridgeError, BridgeRequest, BridgeResponse, LlmBridge, RigBridge, StreamChunk};
 pub use event_stream::{EventReceiver, EventSender, event_channel};
 pub use tools::{
@@ -14,6 +14,8 @@ pub use tools::{
     WriteFileTool,
 };
 pub use types::{
-    AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool, AgentToolError, AgentToolResult,
-    ContentPart, DynAgentTool, ToolCallInfo,
+    AfterToolCallContext, AfterToolCallResult, AgentContext, AgentError, AgentEvent, AgentMessage,
+    AgentTool, AgentToolError, AgentToolResult, BeforeToolCallContext, BeforeToolCallResult,
+    ContentPart, DynAgentTool, StopReason, ThinkingLevel, TokenUsage, ToolCallInfo,
+    ToolExecutionMode, ToolUpdateCallback,
 };

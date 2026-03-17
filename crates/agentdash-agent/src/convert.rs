@@ -14,7 +14,7 @@ pub fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<Message> {
 
 fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
     match msg {
-        AgentMessage::User { content } => {
+        AgentMessage::User { content, .. } => {
             let parts: Vec<UserContent> = content.iter().filter_map(content_part_to_user).collect();
             if parts.is_empty() {
                 return None;
@@ -26,6 +26,7 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
         AgentMessage::Assistant {
             content,
             tool_calls,
+            ..
         } => {
             let mut parts: Vec<AssistantContent> = content
                 .iter()
@@ -110,6 +111,10 @@ pub fn assistant_from_llm_content(content: &[AssistantContent]) -> AgentMessage 
     AgentMessage::Assistant {
         content: text_parts,
         tool_calls,
+        stop_reason: None,
+        error_message: None,
+        usage: None,
+        timestamp: Some(crate::types::now_millis()),
     }
 }
 
@@ -143,6 +148,7 @@ mod tests {
             AgentMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 assert_eq!(content.len(), 1);
                 assert_eq!(tool_calls.len(), 1);

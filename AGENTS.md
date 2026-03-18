@@ -29,3 +29,5 @@ Keep this managed block so 'trellis update' can refresh the instructions.
 
 ## 问题说明
 
+- 通过 PowerShell 把包含中文的 inline Node/Playwright 脚本直接管道给 `node -` 时，中文内容可能在进入浏览器前就被降成 `?`，会让会话输入框和 session 历史里都出现 `????`。如果要做中文端到端浏览器调试，优先使用 UTF-8 文件脚本、Unicode escape，或避免经由当前 PowerShell 管道直接注入中文字符串。
+- `PI_AGENT` 在会话页里执行 shell 任务时，模型有时会先把工作空间绝对路径（如 `F:\Projects\AgentDash`）直接塞进 `shell.cwd`，导致首个 tool call 因“路径必须是相对于工作空间根目录的相对路径”失败；随后它通常会自行改成 `.` 或相对路径并重试成功。排查这类问题时，不要只看首个失败 tool call，要同时检查后续是否出现成功重试，以及服务端持久化的 session jsonl 历史。

@@ -3,7 +3,7 @@
 /// 与 `VibeKanbanExecutorsConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agent_client_protocol::{
@@ -79,11 +79,15 @@ impl PiAgentConnector {
         context: &ExecutionContext,
         tool_names: &[String],
     ) -> String {
+        let current_dir_display = workspace_relative_display(
+            self.workspace_root.as_path(),
+            context.working_directory.as_path(),
+        );
         let mut sections = vec![self.system_prompt.clone()];
         sections.push(format!(
-            "工作空间根目录：{}\n当前工作目录：{}",
+            "工作空间路径锚点：.\n工作空间绝对路径（仅供参考，不要直接写入工具参数）：{}\n当前工作目录（相对工作空间）：{}",
             self.workspace_root.display(),
-            context.working_directory.display()
+            current_dir_display
         ));
 
         if !tool_names.is_empty() {
@@ -91,6 +95,9 @@ impl PiAgentConnector {
                 "你当前可调用的内置工具有：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。",
                 tool_names.join("、")
             ));
+            sections.push(
+                "调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `F:\\...` 这类绝对路径直接写进工具参数。".to_string(),
+            );
         }
 
         if !context.mcp_servers.is_empty() {
@@ -108,6 +115,19 @@ impl PiAgentConnector {
 
         sections.join("\n\n")
     }
+}
+
+fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {
+    path.strip_prefix(workspace_root)
+        .ok()
+        .map(|relative| {
+            if relative.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                relative.to_string_lossy().replace('\\', "/")
+            }
+        })
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 #[async_trait::async_trait]
@@ -632,6 +652,43 @@ mod tests {
                 other => panic!("unexpected content block: {other:?}"),
             },
             other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_system_prompt_prefers_relative_workspace_paths() {
+        let connector = PiAgentConnector::new(
+            PathBuf::from("F:/Projects/AgentDash"),
+            Arc::new(NoopBridge),
+            "系统提示",
+            "gpt-5.4",
+        );
+        let context = ExecutionContext {
+            turn_id: "turn-1".to_string(),
+            working_directory: PathBuf::from("F:/Projects/AgentDash/crates/agentdash-agent"),
+            environment_variables: HashMap::new(),
+            executor_config: crate::connector::AgentDashExecutorConfig::new("PI_AGENT"),
+            mcp_servers: vec![],
+        };
+
+        let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
+        assert!(prompt.contains("工作空间路径锚点：."));
+        assert!(prompt.contains("当前工作目录（相对工作空间）：crates/agentdash-agent"));
+        assert!(prompt.contains("不要把 `F:\\...` 这类绝对路径直接写进工具参数"));
+        assert!(prompt.contains("cwd 设为 `.`"));
+        assert!(!prompt.contains("当前工作目录（相对工作空间）：F:/Projects/AgentDash/crates/agentdash-agent"));
+    }
+
+    struct NoopBridge;
+
+    #[async_trait::async_trait]
+    impl LlmBridge for NoopBridge {
+        async fn stream_complete(
+            &self,
+            _request: agentdash_agent::BridgeRequest,
+        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>>
+        {
+            Box::pin(tokio_stream::empty())
         }
     }
 }

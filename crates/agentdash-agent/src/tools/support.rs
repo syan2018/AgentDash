@@ -2,10 +2,26 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
+fn is_workspace_absolute_input(raw_input: &str, path: &Path) -> bool {
+    if path.is_absolute() {
+        return true;
+    }
+
+    if raw_input.starts_with("\\\\?\\") || raw_input.starts_with("//?/") {
+        return true;
+    }
+
+    let bytes = raw_input.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
 pub fn normalize_relative_path(input: &str) -> Result<PathBuf> {
     let path = Path::new(input);
-    if path.is_absolute() {
-        return Err(anyhow!("路径必须是相对于工作空间根目录的相对路径"));
+    if is_workspace_absolute_input(input, path) {
+        return Ok(path.to_path_buf());
     }
 
     let mut normalized = PathBuf::new();
@@ -41,13 +57,19 @@ pub fn workspace_display(root: &Path, path: &Path) -> String {
 }
 
 pub fn resolve_existing_path(root: &Path, input: &str) -> Result<PathBuf> {
-    let normalized = normalize_relative_path(input)?;
-    let candidate = root.join(normalized);
+    let canonical_root = root.canonicalize()?;
+    let raw_input = Path::new(input);
+    let candidate = if is_workspace_absolute_input(input, raw_input) {
+        raw_input.to_path_buf()
+    } else {
+        let normalized = normalize_relative_path(input)?;
+        root.join(normalized)
+    };
+
     if !candidate.exists() {
         return Err(anyhow!("目标不存在: {}", candidate.display()));
     }
 
-    let canonical_root = root.canonicalize()?;
     let canonical_candidate = candidate.canonicalize()?;
     if !canonical_candidate.starts_with(&canonical_root) {
         return Err(anyhow!("路径越界：{}", input));

@@ -712,4 +712,34 @@ mod tests {
             .unwrap();
         assert!(result.content[0].extract_text().unwrap().contains("ok"));
     }
+
+    #[tokio::test]
+    async fn shell_tool_accepts_absolute_workspace_cwd() {
+        let cancel = CancellationToken::new();
+        let dir = tempdir().unwrap();
+        tokio::fs::write(dir.path().join("marker.txt"), "ok")
+            .await
+            .unwrap();
+        let tool = ShellTool::new(dir.path().to_path_buf());
+        let cwd = dir.path().to_string_lossy().to_string();
+        let command = if cfg!(windows) {
+            "Get-Content marker.txt"
+        } else {
+            "cat marker.txt"
+        };
+
+        let result = tool
+            .execute(
+                "tc5",
+                serde_json::json!({"command": command, "cwd": cwd}),
+                cancel,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let text = result.content[0].extract_text().unwrap();
+        assert!(text.contains("工作目录: ."));
+        assert!(text.contains("ok"));
+    }
 }

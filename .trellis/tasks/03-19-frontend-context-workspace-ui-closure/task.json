@@ -1,0 +1,50 @@
+{
+  "id": "03-19-frontend-context-workspace-ui-closure",
+  "name": "03-19-frontend-context-workspace-ui-closure",
+  "title": "前端承接上下文编排与虚拟工作空间补全",
+  "description": "围绕 Project / Story / Task 新增的虚拟容器、会话编排、Address Space 与 MCP 编辑能力，规划并补齐前端承接层。",
+  "status": "planning",
+  "dev_type": "frontend",
+  "scope": "productization",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "codex",
+  "createdAt": "2026-03-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/spec/backend/address-space-access.md",
+    ".trellis/tasks/03-19-external-service-provider-client/prd.md",
+    "frontend/src/pages/StoryPage.tsx",
+    "frontend/src/pages/SessionPage.tsx",
+    "frontend/src/features/story/story-session-panel.tsx",
+    "frontend/src/features/task/task-agent-session-panel.tsx",
+    "frontend/src/stores/storyStore.ts",
+    "frontend/src/types/index.ts"
+  ],
+  "notes": "该任务关注前端如何承接已经落地的后端能力，而不是重新定义后端模型。重点是把虚拟 mounts、session composition、Story/Task MCP 编辑能力与任务执行反馈变成可见、可编辑、可验证的产品界面。"
+}

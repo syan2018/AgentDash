@@ -1,0 +1,50 @@
+{
+  "id": "03-19-decouple-api-domain-business-orchestration",
+  "name": "03-19-decouple-api-domain-business-orchestration",
+  "title": "解耦 API 与 Domain 业务重构",
+  "description": "规划 agentdash-api 当前过度承接业务编排与领域拼装的问题，收敛到更清晰的 application / transport / domain 分层边界。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "codex",
+  "createdAt": "2026-03-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/spec/backend/directory-structure.md",
+    ".trellis/spec/backend/repository-pattern.md",
+    "crates/agentdash-api/src/routes",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-api/src/task_agent_context.rs",
+    "crates/agentdash-api/src/session_plan.rs",
+    "crates/agentdash-application/src",
+    "crates/agentdash-domain/src"
+  ],
+  "notes": "该任务不是为了做形式化分层，而是要减少 agentdash-api 中的业务拼装、领域规则判断与 transport 细节混杂的问题。目标是让 routes 更薄、application 更像真正的 use-case 编排层、domain 回到纯业务语义。"
+}

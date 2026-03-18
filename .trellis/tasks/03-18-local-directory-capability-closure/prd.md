@@ -41,12 +41,12 @@
 
 ## Acceptance Criteria
 
-- [ ] `pick_directory` 不再作为 cloud 正式部署路径的隐式本地能力存在
-- [ ] 未显式提供 `backend_id` 的目录探测请求不会再读取 cloud 宿主机目录
-- [ ] 目录相关 API 的部署语义稳定，不再依赖 cloud 当前跑在什么机器上
-- [ ] 对调用边界有清晰文档和错误语义，能区分“backend 路径”和“当前用户机器路径”
-- [ ] 前端在无目录选择器能力时，仍能通过手动输入路径完成 workspace 创建/更新
-- [ ] 若后续新增客户端本机目录选择能力，其接入路径与 backend relay 解耦，不混入 `docs/relay-protocol.md`
+- [x] `pick_directory` 不再作为 cloud 正式部署路径的隐式本地能力存在
+- [x] 未显式提供 `backend_id` 的目录探测请求不会再读取 cloud 宿主机目录
+- [x] 目录相关 API 的部署语义稳定，不再依赖 cloud 当前跑在什么机器上
+- [x] 对调用边界有清晰文档和错误语义，能区分“backend 路径”和“当前用户机器路径”
+- [x] 前端在无目录选择器能力时，仍能通过手动输入路径完成 workspace 创建/更新
+- [x] 若后续新增客户端本机目录选择能力，其接入路径与 backend relay 解耦，不混入 `docs/relay-protocol.md`
 
 ## Technical Notes
 

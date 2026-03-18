@@ -3,14 +3,14 @@
   "name": "local-directory-capability-closure",
   "title": "本机目录能力下沉与目录选择器收口",
   "description": "收敛 pick_directory 等目录选择/路径探测能力，避免 cloud 正式路径继续直接操作宿主机目录。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "backend",
   "scope": "local-backend",
   "priority": "P2",
   "creator": "claude-agent",
   "assignee": "claude-agent",
   "createdAt": "2026-03-18",
-  "completedAt": null,
+  "completedAt": "2026-03-18",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -44,5 +44,5 @@
     "crates/agentdash-relay/src/protocol.rs",
     "docs/relay-protocol.md"
   ],
-  "notes": "从 03-18-cloud-local-boundary-refactor 拆出。聚焦 pick_directory、路径探测、目录合法性校验等仍残留在 cloud 的本机目录能力下沉。"
+  "notes": "已完成第一轮正式收口：cloud 侧 `POST /workspaces/detect-git` 改为必须显式提供 `backend_id`，删除 cloud 宿主机上的本地 Git fallback；`POST /workspaces/pick-directory` 改为返回明确冲突错误，不再隐式打开 cloud 宿主机目录选择器；前端工作空间主流程同步收口为手动填写 backend 机器绝对路径，并补充边界提示。验证已覆盖 `cargo test -p agentdash-api` 与 `pnpm --dir frontend build`。"
 }

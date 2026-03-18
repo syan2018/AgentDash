@@ -82,7 +82,7 @@ Upgrade: websocket
 Connection: Upgrade
 ```
 
-云端验证 token，验证失败返回 `401 Unauthorized`，验证成功升级为 WebSocket。
+云端验证 token，验证失败（缺少 token / token 无效 / token 绑定异常）直接返回 `401 Unauthorized`，验证成功后才升级为 WebSocket。
 
 ### 2.2 注册（Register）
 
@@ -137,18 +137,23 @@ Connection: Upgrade
 }
 ```
 
-注册失败（token 无效、backend_id 不匹配等）：
+注册失败（如 backend 已禁用、`backend_id` 与 token 绑定值不匹配、重复注册等）：
 
 ```json
 {
   "type": "error",
   "id": "msg-001",
-  "payload": {
-    "code": "AUTH_FAILED",
-    "message": "Token 无效或已过期"
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "token 绑定 backend `backend-abc123`，不能注册为 `backend-other`"
   }
 }
 ```
+
+说明：
+
+- 握手阶段失败：直接返回 HTTP `401`，不会进入 WebSocket 注册阶段
+- 注册阶段失败：云端返回一条 `type = "error"` 消息后关闭连接
 
 ### 2.3 心跳
 
@@ -674,6 +679,7 @@ interface RelayError {
 |--------|-----------|------|
 | `AUTH_FAILED` | 401 | Token 无效或过期 |
 | `FORBIDDEN` | 403 | 无权限执行该操作 |
+| `CONFLICT` | 409 | 当前资源状态冲突（如 backend 重复在线注册） |
 | `NOT_FOUND` | 404 | 目标资源不存在（session、file 等） |
 | `SESSION_BUSY` | 409 | 会话正在执行，无法接受新 prompt |
 | `EXECUTOR_NOT_FOUND` | 404 | 指定的执行器不存在 |

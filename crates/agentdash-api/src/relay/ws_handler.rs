@@ -3,14 +3,17 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
+use agentdash_domain::DomainError;
+use agentdash_domain::backend::{BackendConfig, BackendRepository};
 use agentdash_relay::*;
 
 use crate::app_state::AppState;
-use crate::relay::registry::ConnectedBackend;
+use crate::relay::registry::{ConnectedBackend, RegisterBackendError};
 
 /// WebSocket 后端连接端点
 pub async fn ws_backend_handler(
@@ -18,11 +21,25 @@ pub async fn ws_backend_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let token = params.get("token").cloned().unwrap_or_default();
-    ws.on_upgrade(move |socket| handle_backend_connection(socket, state, token))
+    let token = params
+        .get("token")
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+
+    let authorized_backend =
+        match authorize_backend_token(state.backend_repo.as_ref(), &token).await {
+            Ok(config) => config,
+            Err(err) => return err.into_response(),
+        };
+
+    ws.on_upgrade(move |socket| handle_backend_connection(socket, state, authorized_backend))
 }
 
-async fn handle_backend_connection(socket: WebSocket, state: Arc<AppState>, _token: String) {
+async fn handle_backend_connection(
+    socket: WebSocket,
+    state: Arc<AppState>,
+    authorized_backend: BackendConfig,
+) {
     let (mut ws_tx, mut ws_rx) = socket.split();
 
     // 第一步：等待 Register 消息
@@ -46,12 +63,34 @@ async fn handle_backend_connection(socket: WebSocket, state: Arc<AppState>, _tok
     let (reg_id, payload) = match relay_msg {
         RelayMessage::Register { id, payload } => (id, payload),
         other => {
-            tracing::error!(msg_type = %other.id(), "首条消息必须是 register");
+            tracing::warn!(
+                authorized_backend_id = %authorized_backend.id,
+                msg_type = %other.id(),
+                "首条消息不是 register，拒绝建立 relay 注册"
+            );
+            let _ = send_relay_error(
+                &mut ws_tx,
+                other.id().to_string(),
+                RelayError::invalid_message("首条消息必须是 register"),
+            )
+            .await;
             return;
         }
     };
 
     let bid = payload.backend_id.clone();
+    if let Err(error) = validate_register_payload(&authorized_backend, &payload) {
+        tracing::warn!(
+            authorized_backend_id = %authorized_backend.id,
+            claimed_backend_id = %payload.backend_id,
+            error_code = error.code.as_str(),
+            error = %error.message.as_str(),
+            "本机后端注册校验失败"
+        );
+        let _ = send_relay_error(&mut ws_tx, reg_id, error).await;
+        return;
+    }
+
     tracing::info!(
         backend_id = %bid,
         name = %payload.name,
@@ -72,14 +111,28 @@ async fn handle_backend_connection(socket: WebSocket, state: Arc<AppState>, _tok
         connected_at: chrono::Utc::now(),
     };
 
-    state.backend_registry.register(connected).await;
+    if let Err(err) = state.backend_registry.try_register(connected).await {
+        let error = match err {
+            RegisterBackendError::AlreadyOnline { backend_id } => {
+                RelayError::conflict(format!("backend `{backend_id}` 已在线，拒绝重复注册"))
+            }
+        };
+        tracing::warn!(
+            backend_id = %bid,
+            error_code = error.code.as_str(),
+            error = %error.message.as_str(),
+            "本机后端重复注册被拒绝"
+        );
+        let _ = send_relay_error(&mut ws_tx, reg_id, error).await;
+        return;
+    }
 
     // 发送 RegisterAck
     let ack = RelayMessage::RegisterAck {
         id: reg_id,
         payload: RegisterAckPayload {
             backend_id: bid.clone(),
-            status: "ok".to_string(),
+            status: "online".to_string(),
             server_time: chrono::Utc::now().timestamp_millis(),
         },
     };
@@ -235,4 +288,235 @@ where
     let json = serde_json::to_string(msg).map_err(|_| ())?;
     tx.send(Message::Text(json.into())).await.map_err(|_| ())?;
     Ok(())
+}
+
+async fn send_relay_error<S>(tx: &mut S, id: String, error: RelayError) -> Result<(), ()>
+where
+    S: SinkExt<Message> + Unpin,
+{
+    send_relay(tx, &RelayMessage::Error { id, error }).await
+}
+
+async fn authorize_backend_token(
+    backend_repo: &dyn BackendRepository,
+    token: &str,
+) -> Result<BackendConfig, AuthResponseError> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        tracing::warn!("relay 握手缺少 token");
+        return Err(AuthResponseError::unauthorized(
+            "缺少 relay token",
+            "未携带 token，拒绝升级 WebSocket",
+        ));
+    }
+
+    match backend_repo.get_backend_by_auth_token(trimmed).await {
+        Ok(config) => Ok(config),
+        Err(DomainError::NotFound { .. }) => {
+            tracing::warn!("relay 握手 token 无效");
+            Err(AuthResponseError::unauthorized(
+                "relay token 无效",
+                "token 无效或未绑定 backend",
+            ))
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "relay 握手 token 查找失败");
+            Err(AuthResponseError::internal(
+                "relay token 校验失败",
+                "服务端无法完成 token 校验",
+            ))
+        }
+    }
+}
+
+fn validate_register_payload(
+    authorized_backend: &BackendConfig,
+    payload: &RegisterPayload,
+) -> Result<(), RelayError> {
+    if payload.backend_id != authorized_backend.id {
+        return Err(RelayError::new(
+            RelayErrorCode::Forbidden,
+            format!(
+                "token 绑定 backend `{}`，不能注册为 `{}`",
+                authorized_backend.id, payload.backend_id
+            ),
+        ));
+    }
+
+    if !authorized_backend.enabled {
+        return Err(RelayError::new(
+            RelayErrorCode::Forbidden,
+            format!("backend `{}` 已禁用，不能注册上线", authorized_backend.id),
+        ));
+    }
+
+    Ok(())
+}
+
+struct AuthResponseError {
+    status: StatusCode,
+    response_message: &'static str,
+}
+
+impl AuthResponseError {
+    fn unauthorized(_log_message: &'static str, response_message: &'static str) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            response_message,
+        }
+    }
+
+    fn internal(_log_message: &'static str, response_message: &'static str) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            response_message,
+        }
+    }
+}
+
+impl IntoResponse for AuthResponseError {
+    fn into_response(self) -> axum::response::Response {
+        (self.status, self.response_message).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::backend::{BackendType, UserPreferences, ViewConfig};
+
+    enum MockTokenResult {
+        Ok(BackendConfig),
+        NotFound,
+    }
+
+    struct MockBackendRepository {
+        token_result: MockTokenResult,
+    }
+
+    #[async_trait::async_trait]
+    impl BackendRepository for MockBackendRepository {
+        async fn add_backend(&self, _config: &BackendConfig) -> Result<(), DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn list_backends(&self) -> Result<Vec<BackendConfig>, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn get_backend(&self, _id: &str) -> Result<BackendConfig, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn get_backend_by_auth_token(
+            &self,
+            _token: &str,
+        ) -> Result<BackendConfig, DomainError> {
+            match &self.token_result {
+                MockTokenResult::Ok(config) => Ok(config.clone()),
+                MockTokenResult::NotFound => Err(DomainError::NotFound {
+                    entity: "backend_auth_token",
+                    id: "mock".to_string(),
+                }),
+            }
+        }
+
+        async fn remove_backend(&self, _id: &str) -> Result<(), DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn get_preferences(&self) -> Result<UserPreferences, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn save_preferences(&self, _prefs: &UserPreferences) -> Result<(), DomainError> {
+            unreachable!("测试未使用");
+        }
+    }
+
+    fn backend_config(id: &str, enabled: bool) -> BackendConfig {
+        BackendConfig {
+            id: id.to_string(),
+            name: "测试后端".to_string(),
+            endpoint: "ws://localhost".to_string(),
+            auth_token: Some("secret".to_string()),
+            enabled,
+            backend_type: BackendType::Local,
+        }
+    }
+
+    fn register_payload(backend_id: &str) -> RegisterPayload {
+        RegisterPayload {
+            backend_id: backend_id.to_string(),
+            name: "本机-A".to_string(),
+            version: "0.1.0".to_string(),
+            capabilities: CapabilitiesPayload {
+                executors: Vec::new(),
+                supports_cancel: true,
+                supports_workspace_files: true,
+                supports_discover_options: true,
+            },
+            accessible_roots: vec!["/tmp/project".to_string()],
+        }
+    }
+
+    #[tokio::test]
+    async fn authorize_backend_token_rejects_missing_token() {
+        let repo = MockBackendRepository {
+            token_result: MockTokenResult::Ok(backend_config("local-a", true)),
+        };
+
+        let err = authorize_backend_token(&repo, "")
+            .await
+            .expect_err("缺少 token 应被拒绝");
+
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(err.response_message, "未携带 token，拒绝升级 WebSocket");
+    }
+
+    #[tokio::test]
+    async fn authorize_backend_token_rejects_invalid_token() {
+        let repo = MockBackendRepository {
+            token_result: MockTokenResult::NotFound,
+        };
+
+        let err = authorize_backend_token(&repo, "invalid")
+            .await
+            .expect_err("无效 token 应被拒绝");
+
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(err.response_message, "token 无效或未绑定 backend");
+    }
+
+    #[test]
+    fn validate_register_payload_rejects_backend_id_mismatch() {
+        let err = validate_register_payload(
+            &backend_config("local-a", true),
+            &register_payload("local-b"),
+        )
+        .expect_err("backend_id 不匹配应被拒绝");
+
+        assert_eq!(err.code, RelayErrorCode::Forbidden);
+        assert!(err.message.contains("不能注册为"));
+    }
+
+    #[test]
+    fn validate_register_payload_rejects_disabled_backend() {
+        let err = validate_register_payload(
+            &backend_config("local-a", false),
+            &register_payload("local-a"),
+        )
+        .expect_err("禁用 backend 不应注册成功");
+
+        assert_eq!(err.code, RelayErrorCode::Forbidden);
+        assert!(err.message.contains("已禁用"));
+    }
 }

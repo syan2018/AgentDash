@@ -9,6 +9,11 @@ use agentdash_relay::{CapabilitiesPayload, RelayMessage};
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterBackendError {
+    AlreadyOnline { backend_id: String },
+}
+
 /// 已连接的本机后端
 pub struct ConnectedBackend {
     pub backend_id: String,
@@ -31,13 +36,6 @@ pub struct OnlineBackendInfo {
     pub connected_at: DateTime<Utc>,
 }
 
-fn normalize_win_path(p: &str) -> String {
-    p.trim_start_matches(r"\\?\")
-        .trim_start_matches(r"//?/")
-        .replace('\\', "/")
-        .to_lowercase()
-}
-
 /// 中继后端注册表 — 跟踪所有通过 WebSocket 连接的本机后端
 pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
@@ -53,10 +51,18 @@ impl BackendRegistry {
         })
     }
 
-    pub async fn register(&self, backend: ConnectedBackend) {
+    pub async fn try_register(
+        &self,
+        backend: ConnectedBackend,
+    ) -> Result<(), RegisterBackendError> {
         let id = backend.backend_id.clone();
-        self.backends.write().await.insert(id.clone(), backend);
+        let mut backends = self.backends.write().await;
+        if backends.contains_key(&id) {
+            return Err(RegisterBackendError::AlreadyOnline { backend_id: id });
+        }
+        backends.insert(id.clone(), backend);
         tracing::info!(backend_id = %id, "本机后端已注册");
+        Ok(())
     }
 
     pub async fn unregister(&self, backend_id: &str) {
@@ -125,19 +131,48 @@ impl BackendRegistry {
     pub async fn is_online(&self, backend_id: &str) -> bool {
         self.backends.read().await.contains_key(backend_id)
     }
+}
 
-    /// 查找管理了指定路径的在线后端
-    pub async fn find_backend_for_path(&self, path: &str) -> Option<String> {
-        let norm_path = normalize_win_path(path);
-        let backends = self.backends.read().await;
-        for b in backends.values() {
-            for root in &b.accessible_roots {
-                let norm_root = normalize_win_path(root);
-                if norm_path.starts_with(&norm_root) {
-                    return Some(b.backend_id.clone());
-                }
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connected_backend(backend_id: &str) -> ConnectedBackend {
+        let (sender, _rx) = mpsc::unbounded_channel();
+        ConnectedBackend {
+            backend_id: backend_id.to_string(),
+            name: "测试后端".to_string(),
+            version: "0.1.0".to_string(),
+            capabilities: CapabilitiesPayload {
+                executors: Vec::new(),
+                supports_cancel: true,
+                supports_workspace_files: true,
+                supports_discover_options: true,
+            },
+            accessible_roots: Vec::new(),
+            sender,
+            connected_at: Utc::now(),
         }
-        None
+    }
+
+    #[tokio::test]
+    async fn try_register_rejects_duplicate_backend_id() {
+        let registry = BackendRegistry::new();
+        registry
+            .try_register(connected_backend("local-a"))
+            .await
+            .expect("首次注册应成功");
+
+        let err = registry
+            .try_register(connected_backend("local-a"))
+            .await
+            .expect_err("重复 backend_id 应被拒绝");
+
+        assert_eq!(
+            err,
+            RegisterBackendError::AlreadyOnline {
+                backend_id: "local-a".to_string()
+            }
+        );
     }
 }

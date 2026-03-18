@@ -48,6 +48,10 @@ impl RelayError {
     pub fn timeout(message: impl Into<String>) -> Self {
         Self::new(RelayErrorCode::Timeout, message)
     }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(RelayErrorCode::Conflict, message)
+    }
 }
 
 impl std::fmt::Display for RelayError {
@@ -65,6 +69,8 @@ pub enum RelayErrorCode {
     AuthFailed,
     #[serde(rename = "FORBIDDEN")]
     Forbidden,
+    #[serde(rename = "CONFLICT")]
+    Conflict,
     #[serde(rename = "NOT_FOUND")]
     NotFound,
     #[serde(rename = "SESSION_BUSY")]
@@ -90,6 +96,7 @@ impl RelayErrorCode {
         match self {
             Self::AuthFailed => "AUTH_FAILED",
             Self::Forbidden => "FORBIDDEN",
+            Self::Conflict => "CONFLICT",
             Self::NotFound => "NOT_FOUND",
             Self::SessionBusy => "SESSION_BUSY",
             Self::ExecutorNotFound => "EXECUTOR_NOT_FOUND",

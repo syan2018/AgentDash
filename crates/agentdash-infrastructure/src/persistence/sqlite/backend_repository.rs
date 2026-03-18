@@ -94,6 +94,31 @@ impl BackendRepository for SqliteBackendRepository {
         Ok(row.into())
     }
 
+    async fn get_backend_by_auth_token(&self, token: &str) -> Result<BackendConfig, DomainError> {
+        let rows = sqlx::query_as::<_, BackendRow>(
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type FROM backends WHERE auth_token = ?",
+        )
+        .bind(token)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        match rows.len() {
+            0 => Err(DomainError::NotFound {
+                entity: "backend_auth_token",
+                id: token.to_string(),
+            }),
+            1 => Ok(rows
+                .into_iter()
+                .next()
+                .expect("rows.len() == 1 时必须存在")
+                .into()),
+            _ => Err(DomainError::InvalidConfig(
+                "检测到重复 backend auth_token 配置".to_string(),
+            )),
+        }
+    }
+
     async fn remove_backend(&self, id: &str) -> Result<(), DomainError> {
         sqlx::query("DELETE FROM backends WHERE id = ?")
             .bind(id)
@@ -202,5 +227,63 @@ impl From<ViewRow> for ViewConfig {
             filters: serde_json::from_str(&row.filters).unwrap_or_default(),
             sort_by: row.sort_by,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backend(id: &str, token: Option<&str>) -> BackendConfig {
+        BackendConfig {
+            id: id.to_string(),
+            name: format!("backend-{id}"),
+            endpoint: "ws://localhost".to_string(),
+            auth_token: token.map(str::to_string),
+            enabled: true,
+            backend_type: BackendType::Local,
+        }
+    }
+
+    async fn new_repo() -> SqliteBackendRepository {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteBackendRepository::new(pool);
+        repo.initialize().await.expect("应能初始化 schema");
+        repo
+    }
+
+    #[tokio::test]
+    async fn get_backend_by_auth_token_returns_matching_backend() {
+        let repo = new_repo().await;
+        repo.add_backend(&backend("local-a", Some("secret-a")))
+            .await
+            .expect("应能插入 backend");
+
+        let found = repo
+            .get_backend_by_auth_token("secret-a")
+            .await
+            .expect("应能按 token 查到 backend");
+
+        assert_eq!(found.id, "local-a");
+    }
+
+    #[tokio::test]
+    async fn get_backend_by_auth_token_rejects_duplicate_token_binding() {
+        let repo = new_repo().await;
+        repo.add_backend(&backend("local-a", Some("shared-token")))
+            .await
+            .expect("应能插入首个 backend");
+        repo.add_backend(&backend("local-b", Some("shared-token")))
+            .await
+            .expect("当前 schema 允许重复 token，用于验证运行时收口");
+
+        let err = repo
+            .get_backend_by_auth_token("shared-token")
+            .await
+            .expect_err("重复 token 绑定应在查询时失败");
+
+        assert!(matches!(err, DomainError::InvalidConfig(_)));
     }
 }

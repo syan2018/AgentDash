@@ -19,8 +19,8 @@ use agentdash_acp_meta::{
 
 use agent_client_protocol::McpServer;
 
-use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
 use crate::connector::ExecutionAddressSpace;
+use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -909,7 +909,8 @@ mod tests {
                 _executor: &str,
                 _variant: Option<&str>,
                 _working_dir: Option<PathBuf>,
-            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
                 Ok(Box::pin(stream::empty()))
             }
 
@@ -955,9 +956,6 @@ mod tests {
         let contexts = connector.contexts.lock().await;
         let context = contexts.last().expect("context should be recorded");
         assert_eq!(context.workspace_root, workspace.path().to_path_buf());
-        assert_eq!(
-            context.working_directory,
-            workspace.path().join("src")
-        );
+        assert_eq!(context.working_directory, workspace.path().join("src"));
     }
 }

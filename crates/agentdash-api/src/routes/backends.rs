@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
-use agentdash_domain::backend::{BackendConfig, BackendType, BackendRepository};
+use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 
 use crate::app_state::AppState;
 use crate::relay::registry::OnlineBackendInfo;
@@ -110,14 +110,16 @@ pub async fn add_backend(
         Ok(config) => Some(config),
         Err(DomainError::NotFound { .. }) => None,
         Err(err) => {
-            return Err(ApiError::Internal(format!(
-                "读取 Backend 配置失败: {err}"
-            )));
+            return Err(ApiError::Internal(format!("读取 Backend 配置失败: {err}")));
         }
     };
-    let auth_token =
-        resolve_backend_auth_token(state.backend_repo.as_ref(), id, requested_token, existing.as_ref())
-            .await?;
+    let auth_token = resolve_backend_auth_token(
+        state.backend_repo.as_ref(),
+        id,
+        requested_token,
+        existing.as_ref(),
+    )
+    .await?;
 
     let config = BackendConfig {
         id: id.to_string(),

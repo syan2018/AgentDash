@@ -111,12 +111,17 @@ impl AppState {
 
         let workspace_root = std::env::current_dir()?;
         let backend_registry = BackendRegistry::new();
-        let address_space_service = Arc::new(RelayAddressSpaceService::new(backend_registry.clone()));
+        let address_space_service =
+            Arc::new(RelayAddressSpaceService::new(backend_registry.clone()));
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
 
-        if let Some(pi_connector) =
-            build_pi_agent_connector(&workspace_root, settings_repo.as_ref(), address_space_service.clone()).await
+        if let Some(pi_connector) = build_pi_agent_connector(
+            &workspace_root,
+            settings_repo.as_ref(),
+            address_space_service.clone(),
+        )
+        .await
         {
             sub_connectors.push(Arc::new(pi_connector));
         }

@@ -86,13 +86,7 @@ pub async fn list_files(
     if let Some(ws_id) = &query.workspace_id {
         let workspace = load_workspace_by_id(&state, ws_id).await?;
         let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
-        return relay_list_files(
-            &state,
-            backend_id,
-            &workspace,
-            &pattern,
-        )
-        .await;
+        return relay_list_files(&state, backend_id, &workspace, &pattern).await;
     }
 
     let root = state.executor_hub.workspace_root().to_path_buf();

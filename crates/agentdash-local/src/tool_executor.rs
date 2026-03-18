@@ -249,9 +249,7 @@ fn is_absolute_like(raw: &str) -> bool {
             .as_bytes()
             .get(1)
             .zip(raw.as_bytes().get(2))
-            .is_some_and(|(second, third)| {
-                *second == b':' && (*third == b'\\' || *third == b'/')
-            })
+            .is_some_and(|(second, third)| *second == b':' && (*third == b'\\' || *third == b'/'))
 }
 
 async fn collect_entries(

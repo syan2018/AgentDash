@@ -115,7 +115,11 @@ impl RelayAddressSpaceService {
         address_space: &ExecutionAddressSpace,
         target: &ResourceRef,
     ) -> Result<ReadResult, String> {
-        let mount = resolve_mount(address_space, &target.mount_id, ExecutionMountCapability::Read)?;
+        let mount = resolve_mount(
+            address_space,
+            &target.mount_id,
+            ExecutionMountCapability::Read,
+        )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
         let response = self
             .backend_registry
@@ -155,7 +159,11 @@ impl RelayAddressSpaceService {
         target: &ResourceRef,
         content: &str,
     ) -> Result<(), String> {
-        let mount = resolve_mount(address_space, &target.mount_id, ExecutionMountCapability::Write)?;
+        let mount = resolve_mount(
+            address_space,
+            &target.mount_id,
+            ExecutionMountCapability::Write,
+        )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
         let response = self
             .backend_registry
@@ -229,7 +237,11 @@ impl RelayAddressSpaceService {
         address_space: &ExecutionAddressSpace,
         request: &ExecRequest,
     ) -> Result<ExecResult, String> {
-        let mount = resolve_mount(address_space, &request.mount_id, ExecutionMountCapability::Exec)?;
+        let mount = resolve_mount(
+            address_space,
+            &request.mount_id,
+            ExecutionMountCapability::Exec,
+        )?;
         let cwd = normalize_mount_relative_path(&request.cwd, true)?;
         let response = self
             .backend_registry
@@ -409,9 +421,7 @@ fn is_absolute_like(raw: &str) -> bool {
             .as_bytes()
             .get(1)
             .zip(raw.as_bytes().get(2))
-            .is_some_and(|(second, third)| {
-                *second == b':' && (*third == b'\\' || *third == b'/')
-            })
+            .is_some_and(|(second, third)| *second == b':' && (*third == b'\\' || *third == b'/'))
 }
 
 pub fn join_root_ref(root_ref: &str, relative_path: &str) -> String {
@@ -456,16 +466,20 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         })?;
 
         Ok(vec![
-            Arc::new(MountsListTool::new(self.service.clone(), address_space.clone()))
-                as DynAgentTool,
-            Arc::new(FsReadTool::new(self.service.clone(), address_space.clone()))
-                as DynAgentTool,
-            Arc::new(FsWriteTool::new(self.service.clone(), address_space.clone()))
-                as DynAgentTool,
-            Arc::new(FsListTool::new(self.service.clone(), address_space.clone()))
-                as DynAgentTool,
-            Arc::new(FsSearchTool::new(self.service.clone(), address_space.clone()))
-                as DynAgentTool,
+            Arc::new(MountsListTool::new(
+                self.service.clone(),
+                address_space.clone(),
+            )) as DynAgentTool,
+            Arc::new(FsReadTool::new(self.service.clone(), address_space.clone())) as DynAgentTool,
+            Arc::new(FsWriteTool::new(
+                self.service.clone(),
+                address_space.clone(),
+            )) as DynAgentTool,
+            Arc::new(FsListTool::new(self.service.clone(), address_space.clone())) as DynAgentTool,
+            Arc::new(FsSearchTool::new(
+                self.service.clone(),
+                address_space.clone(),
+            )) as DynAgentTool,
             Arc::new(ShellExecTool::new(self.service.clone(), address_space)) as DynAgentTool,
         ])
     }
@@ -942,7 +956,9 @@ impl AgentTool for ShellExecTool {
                     mount_id: mount_id.clone(),
                     cwd: cwd.clone(),
                     command: params.command.clone(),
-                    timeout_ms: params.timeout_secs.map(|seconds| seconds.saturating_mul(1000)),
+                    timeout_ms: params
+                        .timeout_secs
+                        .map(|seconds| seconds.saturating_mul(1000)),
                 },
             )
             .await
@@ -1072,7 +1088,10 @@ mod tests {
             .await;
         assert!(resolved);
 
-        let result = handle.await.expect("task should complete").expect("read should succeed");
+        let result = handle
+            .await
+            .expect("task should complete")
+            .expect("read should succeed");
         assert_eq!(result.content, "fn main() {}");
     }
 }

@@ -133,7 +133,9 @@ impl CommandHandler {
             cfg
         });
 
-        let workspace_root = match self.tool_executor.validate_workspace_root(&payload.workspace_root)
+        let workspace_root = match self
+            .tool_executor
+            .validate_workspace_root(&payload.workspace_root)
         {
             Ok(path) => path,
             Err(error) => {

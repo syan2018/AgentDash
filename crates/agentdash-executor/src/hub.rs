@@ -20,6 +20,7 @@ use agentdash_acp_meta::{
 use agent_client_protocol::McpServer;
 
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
+use crate::connector::ExecutionAddressSpace;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +38,12 @@ pub struct PromptSessionRequest {
     /// ACP per-session MCP Server 列表（不走 serde — 仅由后端代码填充）
     #[serde(skip)]
     pub mcp_servers: Vec<McpServer>,
+    /// 可选的工作空间根目录覆盖。用于 relay `workspace_root` 或云端原生 Agent 的 Task 绑定 workspace。
+    #[serde(skip)]
+    pub workspace_root: Option<PathBuf>,
+    /// 可选的会话级 Address Space 视图。
+    #[serde(skip)]
+    pub address_space: Option<ExecutionAddressSpace>,
 }
 
 #[derive(Debug, Clone)]
@@ -424,18 +431,23 @@ impl ExecutorHub {
             .executor_config
             .unwrap_or_else(crate::connector::AgentDashExecutorConfig::default);
 
-        let working_directory =
-            resolve_working_dir(&self.workspace_root, req.working_dir.as_deref());
+        let workspace_root = req
+            .workspace_root
+            .clone()
+            .unwrap_or_else(|| self.workspace_root.clone());
+        let working_directory = resolve_working_dir(&workspace_root, req.working_dir.as_deref());
 
         // 该 turn_id 必须在“用户消息注入”和“连接器流”之间保持一致，便于前端归并。
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
 
         let context = ExecutionContext {
             turn_id: turn_id.clone(),
+            workspace_root,
             working_directory,
             environment_variables: req.env,
             executor_config,
             mcp_servers: req.mcp_servers,
+            address_space: req.address_space,
         };
 
         let title_hint = resolved_payload
@@ -745,7 +757,11 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::stream;
     use serde_json::json;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::sync::Mutex as TokioMutex;
 
     #[test]
     fn resolve_prompt_payload_from_text_prompt() {
@@ -756,6 +772,8 @@ mod tests {
             env: std::collections::HashMap::new(),
             executor_config: None,
             mcp_servers: vec![],
+            workspace_root: None,
+            address_space: None,
         };
 
         let payload = req
@@ -786,6 +804,8 @@ mod tests {
             env: std::collections::HashMap::new(),
             executor_config: None,
             mcp_servers: vec![],
+            workspace_root: None,
+            address_space: None,
         };
 
         let payload = req
@@ -856,6 +876,88 @@ mod tests {
                 .and_then(|t| t.get("entryIndex"))
                 .and_then(|v| v.as_u64()),
             Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn start_prompt_uses_request_workspace_root_override() {
+        #[derive(Default)]
+        struct RecordingConnector {
+            contexts: Arc<TokioMutex<Vec<ExecutionContext>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentConnector for RecordingConnector {
+            fn connector_id(&self) -> &'static str {
+                "recording"
+            }
+
+            fn connector_type(&self) -> crate::connector::ConnectorType {
+                crate::connector::ConnectorType::LocalExecutor
+            }
+
+            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
+                crate::connector::ConnectorCapabilities::default()
+            }
+
+            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+                Vec::new()
+            }
+
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                context: ExecutionContext,
+            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+                self.contexts.lock().await.push(context);
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+        }
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let connector = Arc::new(RecordingConnector::default());
+        let hub = ExecutorHub::new(base.path().to_path_buf(), connector.clone());
+
+        hub.start_prompt(
+            "sess-1",
+            PromptSessionRequest {
+                prompt: Some("hello".to_string()),
+                prompt_blocks: None,
+                working_dir: Some("src".to_string()),
+                env: HashMap::new(),
+                executor_config: None,
+                mcp_servers: vec![],
+                workspace_root: Some(workspace.path().to_path_buf()),
+                address_space: None,
+            },
+        )
+        .await
+        .expect("prompt should start");
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let contexts = connector.contexts.lock().await;
+        let context = contexts.last().expect("context should be recorded");
+        assert_eq!(context.workspace_root, workspace.path().to_path_buf());
+        assert_eq!(
+            context.working_directory,
+            workspace.path().join("src")
         );
     }
 }

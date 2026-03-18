@@ -29,3 +29,6 @@ reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] 
 
 # Pi Agent 框架
 agentdash-agent = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.18"

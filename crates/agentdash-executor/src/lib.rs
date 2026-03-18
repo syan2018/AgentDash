@@ -6,6 +6,7 @@ pub mod hub;
 #[allow(unused_imports)]
 pub use connector::{
     AgentConnector, AgentDashExecutorConfig, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, ExecutorInfo, PromptPayload,
+    ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
+    ExecutionStream, ExecutorInfo, PromptPayload, RuntimeToolProvider,
 };
 pub use hub::{ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta};

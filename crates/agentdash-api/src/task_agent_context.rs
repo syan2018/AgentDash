@@ -10,12 +10,10 @@ use agentdash_injection::{
     resolve_declared_sources,
 };
 use agentdash_mcp::injection::McpInjectionConfig;
-use agentdash_relay::{
-    CommandWorkspaceFilesListPayload, CommandWorkspaceFilesReadPayload, FileEntryRelay,
-    RelayMessage, ResponseWorkspaceFilesListPayload, ResponseWorkspaceFilesReadPayload,
-};
+use agentdash_relay::FileEntryRelay;
 use serde_json::{Value, json};
 
+use crate::address_space_access::{ListOptions, ResourceRef};
 use crate::app_state::AppState;
 
 // ─── 公共抽象：可扩展的上下文构建框架 ───────────────────────────
@@ -588,10 +586,10 @@ pub async fn resolve_workspace_declared_sources(
         let order = base_order + position as i32;
         let resolved = match source.kind {
             ContextSourceKind::File => {
-                resolve_workspace_file_source(state, backend_id, workspace, source, order).await
+                resolve_workspace_file_source(state, workspace, source, order).await
             }
             ContextSourceKind::ProjectSnapshot => {
-                resolve_workspace_snapshot_source(state, backend_id, workspace, source, order).await
+                resolve_workspace_snapshot_source(state, workspace, source, order).await
             }
             _ => continue,
         };
@@ -679,111 +677,80 @@ fn normalize_workspace_backend_id(workspace: &Workspace) -> Result<&str, String>
 
 async fn resolve_workspace_file_source(
     state: &Arc<AppState>,
-    backend_id: &str,
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,
 ) -> Result<ContextFragment, String> {
     let path = normalize_source_locator_path(&source.locator)?;
-    let response = state
-        .backend_registry
-        .send_command(
-            backend_id,
-            RelayMessage::CommandWorkspaceFilesRead {
-                id: RelayMessage::new_id("ctx-file-read"),
-                payload: CommandWorkspaceFilesReadPayload {
-                    workspace_id: workspace.id.to_string(),
-                    root_path: Some(workspace.container_ref.clone()),
-                    path: path.clone(),
-                },
+    let address_space = state
+        .address_space_service
+        .session_for_workspace(workspace)?;
+    let read = state
+        .address_space_service
+        .read_text(
+            &address_space,
+            &ResourceRef {
+                mount_id: "main".to_string(),
+                path: path.clone(),
             },
         )
         .await
-        .map_err(|e| format!("relay 工作空间文件读取失败: {e}"))?;
+        .map_err(|e| format!("工作空间文件读取失败: {e}"))?;
 
-    match response {
-        RelayMessage::ResponseWorkspaceFilesRead {
-            payload:
-                Some(ResponseWorkspaceFilesReadPayload {
-                    path: resolved_path,
-                    content,
-                    ..
-                }),
-            error: None,
-            ..
-        } => Ok(ContextFragment {
-            slot: fragment_slot(&source.slot),
-            label: fragment_label(&source.kind),
-            order,
-            strategy: MergeStrategy::Append,
-            content: render_source_section(
-                source,
-                truncate_text(
-                    format_file_like_read_tool(&resolved_path, &content),
-                    source.max_chars,
-                ),
+    Ok(ContextFragment {
+        slot: fragment_slot(&source.slot),
+        label: fragment_label(&source.kind),
+        order,
+        strategy: MergeStrategy::Append,
+        content: render_source_section(
+            source,
+            truncate_text(
+                format_file_like_read_tool(&read.path, &read.content),
+                source.max_chars,
             ),
-        }),
-        RelayMessage::ResponseWorkspaceFilesRead {
-            error: Some(err), ..
-        } => Err(format!("工作空间文件读取失败: {}", err.message)),
-        other => Err(format!(
-            "远程工作空间文件读取返回了意外响应: {}",
-            other.id()
-        )),
-    }
+        ),
+    })
 }
 
 async fn resolve_workspace_snapshot_source(
     state: &Arc<AppState>,
-    backend_id: &str,
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,
 ) -> Result<ContextFragment, String> {
     let sub_path = normalize_snapshot_locator(&source.locator)?;
-    let response = state
-        .backend_registry
-        .send_command(
-            backend_id,
-            RelayMessage::CommandWorkspaceFilesList {
-                id: RelayMessage::new_id("ctx-snapshot"),
-                payload: CommandWorkspaceFilesListPayload {
-                    workspace_id: workspace.id.to_string(),
-                    root_path: Some(workspace.container_ref.clone()),
-                    path: sub_path.clone(),
-                    pattern: None,
-                },
+    let address_space = state
+        .address_space_service
+        .session_for_workspace(workspace)?;
+    let listed = state
+        .address_space_service
+        .list(
+            &address_space,
+            "main",
+            ListOptions {
+                path: sub_path.clone().unwrap_or_else(|| ".".to_string()),
+                pattern: None,
+                recursive: true,
             },
         )
         .await
-        .map_err(|e| format!("relay 项目快照读取失败: {e}"))?;
+        .map_err(|e| format!("项目快照读取失败: {e}"))?;
 
-    match response {
-        RelayMessage::ResponseWorkspaceFilesList {
-            payload: Some(ResponseWorkspaceFilesListPayload { files }),
-            error: None,
-            ..
-        } => Ok(ContextFragment {
-            slot: fragment_slot(&source.slot),
-            label: fragment_label(&source.kind),
-            order,
-            strategy: MergeStrategy::Append,
-            content: render_source_section(
-                source,
-                build_workspace_snapshot_from_entries(
-                    &workspace.container_ref,
-                    sub_path.as_deref(),
-                    &files,
-                    source.max_chars,
-                ),
+    Ok(ContextFragment {
+        slot: fragment_slot(&source.slot),
+        label: fragment_label(&source.kind),
+        order,
+        strategy: MergeStrategy::Append,
+        content: render_source_section(
+            source,
+            build_workspace_snapshot_from_entries(
+                &workspace.container_ref,
+                sub_path.as_deref(),
+                &listed.entries,
+                source.max_chars,
             ),
-        }),
-        RelayMessage::ResponseWorkspaceFilesList {
-            error: Some(err), ..
-        } => Err(format!("项目快照读取失败: {}", err.message)),
-        other => Err(format!("远程项目快照返回了意外响应: {}", other.id())),
-    }
+        ),
+    })
 }
 
 fn normalize_source_locator_path(locator: &str) -> Result<String, String> {

@@ -66,32 +66,26 @@ impl ToolExecutor {
         Err(ToolError::PathNotAccessible(workspace_root.to_string()))
     }
 
-    /// 将相对路径解析为绝对路径（基于 workspace_root）
-    fn resolve_path(
+    pub fn resolve_existing_path(
         &self,
         relative_path: &str,
         workspace_root: &str,
     ) -> Result<PathBuf, ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
-        let full = ws.join(relative_path);
+        resolve_existing_path_with_root(&ws, relative_path)
+    }
 
-        let canonical = if full.exists() {
-            std::fs::canonicalize(&full)?
-        } else {
-            // 文件可能不存在（write 操作），验证父目录
-            full.clone()
-        };
-
-        // 确保不会通过 .. 逃逸出 workspace_root
-        if !canonical.starts_with(&ws) && full.exists() {
-            return Err(ToolError::PathNotAccessible(relative_path.to_string()));
-        }
-
-        Ok(full)
+    pub fn resolve_path_for_write(
+        &self,
+        relative_path: &str,
+        workspace_root: &str,
+    ) -> Result<PathBuf, ToolError> {
+        let ws = self.validate_workspace_root(workspace_root)?;
+        resolve_path_for_write_with_root(&ws, relative_path)
     }
 
     pub async fn file_read(&self, path: &str, workspace_root: &str) -> Result<String, ToolError> {
-        let full_path = self.resolve_path(path, workspace_root)?;
+        let full_path = self.resolve_existing_path(path, workspace_root)?;
         tracing::debug!(path = %full_path.display(), "file_read");
         let content = tokio::fs::read_to_string(&full_path).await?;
         Ok(content)
@@ -103,7 +97,7 @@ impl ToolExecutor {
         content: &str,
         workspace_root: &str,
     ) -> Result<(), ToolError> {
-        let full_path = self.resolve_path(path, workspace_root)?;
+        let full_path = self.resolve_path_for_write(path, workspace_root)?;
         tracing::debug!(path = %full_path.display(), "file_write");
 
         if let Some(parent) = full_path.parent() {
@@ -153,8 +147,12 @@ impl ToolExecutor {
         pattern: Option<&str>,
         recursive: bool,
     ) -> Result<Vec<FileEntryRelay>, ToolError> {
-        let base = self.resolve_path(path, workspace_root)?;
         let ws = self.validate_workspace_root(workspace_root)?;
+        let base = if path.trim().is_empty() || path.trim() == "." {
+            ws.clone()
+        } else {
+            resolve_existing_path_with_root(&ws, path)?
+        };
 
         tracing::debug!(
             path = %base.display(),
@@ -171,6 +169,89 @@ impl ToolExecutor {
         collect_entries(&base, &ws, &glob_matcher, recursive, &mut entries).await?;
         Ok(entries)
     }
+}
+
+fn resolve_existing_path_with_root(
+    workspace_root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, ToolError> {
+    let normalized = normalize_relative_path(relative_path)?;
+    let candidate = if normalized.as_os_str().is_empty() {
+        workspace_root.to_path_buf()
+    } else {
+        workspace_root.join(normalized)
+    };
+
+    if !candidate.exists() {
+        return Err(ToolError::InvalidPath(relative_path.to_string()));
+    }
+
+    let canonical = std::fs::canonicalize(&candidate)?;
+    if !canonical.starts_with(workspace_root) {
+        return Err(ToolError::PathNotAccessible(relative_path.to_string()));
+    }
+    Ok(canonical)
+}
+
+fn resolve_path_for_write_with_root(
+    workspace_root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, ToolError> {
+    let normalized = normalize_relative_path(relative_path)?;
+    if normalized.as_os_str().is_empty() {
+        return Err(ToolError::InvalidPath(relative_path.to_string()));
+    }
+
+    let candidate = workspace_root.join(&normalized);
+    let parent = candidate
+        .parent()
+        .ok_or_else(|| ToolError::InvalidPath(relative_path.to_string()))?;
+    std::fs::create_dir_all(parent)?;
+    let canonical_parent = std::fs::canonicalize(parent)?;
+    if !canonical_parent.starts_with(workspace_root) {
+        return Err(ToolError::PathNotAccessible(relative_path.to_string()));
+    }
+    Ok(candidate)
+}
+
+fn normalize_relative_path(input: &str) -> Result<PathBuf, ToolError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed == "." {
+        return Ok(PathBuf::new());
+    }
+
+    if is_absolute_like(trimmed) {
+        return Err(ToolError::InvalidPath(trimmed.to_string()));
+    }
+
+    let mut normalized = PathBuf::new();
+    for part in trimmed.replace('\\', "/").split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            if !normalized.pop() {
+                return Err(ToolError::PathNotAccessible(trimmed.to_string()));
+            }
+            continue;
+        }
+        normalized.push(part);
+    }
+    Ok(normalized)
+}
+
+fn is_absolute_like(raw: &str) -> bool {
+    raw.starts_with('/')
+        || raw.starts_with('\\')
+        || raw.starts_with("//")
+        || raw.starts_with("\\\\")
+        || raw
+            .as_bytes()
+            .get(1)
+            .zip(raw.as_bytes().get(2))
+            .is_some_and(|(second, third)| {
+                *second == b':' && (*third == b'\\' || *third == b'/')
+            })
 }
 
 async fn collect_entries(
@@ -191,12 +272,13 @@ async fn collect_entries(
             .strip_prefix(workspace_root)
             .unwrap_or(&path)
             .to_string_lossy()
-            .to_string();
+            .replace('\\', "/");
 
         let matches = glob_matcher
             .as_ref()
-            .map(|m| {
-                m.is_match(&relative) || m.is_match(entry.file_name().to_string_lossy().as_ref())
+            .map(|matcher| {
+                matcher.is_match(&relative)
+                    || matcher.is_match(entry.file_name().to_string_lossy().as_ref())
             })
             .unwrap_or(true);
 
@@ -205,12 +287,12 @@ async fn collect_entries(
                 let metadata = entry.metadata().await.ok();
                 entries.push(FileEntryRelay {
                     path: relative,
-                    size: metadata.as_ref().map(|m| m.len()),
+                    size: metadata.as_ref().map(|item| item.len()),
                     modified_at: metadata
                         .as_ref()
-                        .and_then(|m| m.modified().ok())
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_millis() as i64),
+                        .and_then(|item| item.modified().ok())
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_millis() as i64),
                     is_dir,
                 });
             }
@@ -229,4 +311,35 @@ async fn collect_entries(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_path_for_write_blocks_escape() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let error = executor
+            .resolve_path_for_write("../escape.txt", &root)
+            .expect_err("escape should be rejected");
+        assert!(matches!(error, ToolError::PathNotAccessible(_)));
+    }
+
+    #[test]
+    fn resolve_existing_path_blocks_absolute_input() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file = temp.path().join("demo.txt");
+        std::fs::write(&file, "ok").expect("write");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let error = executor
+            .resolve_existing_path(file.to_string_lossy().as_ref(), &root)
+            .expect_err("absolute path should be rejected");
+        assert!(matches!(error, ToolError::InvalidPath(_)));
+    }
 }

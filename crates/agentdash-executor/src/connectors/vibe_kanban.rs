@@ -204,7 +204,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
 
         agent.use_approvals(Arc::new(NoopExecutorApprovalService));
 
-        let repo_context = RepoContext::new(self.workspace_root.clone(), vec![".".to_string()]);
+        let repo_context = RepoContext::new(context.workspace_root.clone(), vec![".".to_string()]);
         let mut env = ExecutionEnv::new(
             repo_context,
             false,

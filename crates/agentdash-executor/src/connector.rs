@@ -9,6 +9,8 @@ use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use agentdash_agent::DynAgentTool;
+
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,11 +111,58 @@ pub struct ExecutionContext {
     /// One prompt invocation == one turn. Used to correlate injected user message
     /// with connector-emitted updates via `_meta.agentdash.trace.turnId`.
     pub turn_id: String,
+    /// 当前执行绑定的工作空间根目录。
+    /// 对第三方 Agent，这是真正的执行仓根；对云端原生 Agent，则是 mount `main` 的物理根引用。
+    pub workspace_root: PathBuf,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentDashExecutorConfig,
     /// ACP 协议 per-session MCP Server 列表，由 Connector 负责传递给 Agent
     pub mcp_servers: Vec<McpServer>,
+    /// 会话级 Address Space 视图。云端原生 Agent 可基于它生成 provider-backed runtime tools。
+    pub address_space: Option<ExecutionAddressSpace>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMountCapability {
+    Read,
+    Write,
+    List,
+    Search,
+    Exec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionMount {
+    pub id: String,
+    pub provider: String,
+    pub backend_id: String,
+    pub root_ref: String,
+    pub capabilities: Vec<ExecutionMountCapability>,
+    pub default_write: bool,
+    pub display_name: String,
+}
+
+impl ExecutionMount {
+    pub fn supports(&self, capability: ExecutionMountCapability) -> bool {
+        self.capabilities.contains(&capability)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionAddressSpace {
+    #[serde(default)]
+    pub mounts: Vec<ExecutionMount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_mount_id: Option<String>,
+}
+
+impl ExecutionAddressSpace {
+    pub fn default_mount(&self) -> Option<&ExecutionMount> {
+        let default_id = self.default_mount_id.as_deref()?;
+        self.mounts.iter().find(|mount| mount.id == default_id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +286,14 @@ pub enum ConnectorError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+}
+
+#[async_trait]
+pub trait RuntimeToolProvider: Send + Sync {
+    async fn build_tools(
+        &self,
+        context: &ExecutionContext,
+    ) -> Result<Vec<DynAgentTool>, ConnectorError>;
 }
 
 #[async_trait]

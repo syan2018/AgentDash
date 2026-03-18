@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
-use agentdash_relay::{CommandWorkspaceFilesListPayload, RelayMessage};
 
+use crate::address_space_access::ListOptions;
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
 
@@ -107,55 +107,38 @@ pub async fn list_address_entries(
                 )));
             }
 
-            let cmd = RelayMessage::CommandWorkspaceFilesList {
-                id: RelayMessage::new_id("address-space-list"),
-                payload: CommandWorkspaceFilesListPayload {
-                    workspace_id: ws_id_str.to_string(),
-                    root_path: Some(workspace.container_ref.clone()),
-                    path: None,
-                    pattern: query.query.clone(),
-                },
-            };
-            let resp = state
-                .backend_registry
-                .send_command(backend_id, cmd)
+            let session = state
+                .address_space_service
+                .session_for_workspace(&workspace)
+                .map_err(ApiError::BadRequest)?;
+            let listed = state
+                .address_space_service
+                .list(
+                    &session,
+                    "main",
+                    ListOptions {
+                        path: ".".to_string(),
+                        pattern: query.query.clone(),
+                        recursive: true,
+                    },
+                )
                 .await
-                .map_err(|e| {
-                    ApiError::Internal(format!("relay workspace_file.entries 失败: {e}"))
-                })?;
+                .map_err(ApiError::Internal)?;
 
-            let entries = match resp {
-                RelayMessage::ResponseWorkspaceFilesList {
-                    payload: Some(payload),
-                    ..
-                } => payload
-                    .files
-                    .into_iter()
-                    .map(|entry| AddressEntry {
-                        address: entry.path.clone(),
-                        label: entry.path,
-                        entry_type: if entry.is_dir {
-                            "directory".to_string()
-                        } else {
-                            "file".to_string()
-                        },
-                    })
-                    .take(50)
-                    .collect(),
-                RelayMessage::ResponseWorkspaceFilesList {
-                    error: Some(err), ..
-                } => {
-                    return Err(ApiError::Internal(format!(
-                        "远程 workspace_file.entries 错误: {}",
-                        err.message
-                    )));
-                }
-                _ => {
-                    return Err(ApiError::Internal(
-                        "远程 workspace_file.entries 返回了意外响应".into(),
-                    ));
-                }
-            };
+            let entries = listed
+                .entries
+                .into_iter()
+                .map(|entry| AddressEntry {
+                    address: entry.path.clone(),
+                    label: entry.path,
+                    entry_type: if entry.is_dir {
+                        "directory".to_string()
+                    } else {
+                        "file".to_string()
+                    },
+                })
+                .take(50)
+                .collect();
 
             Ok(Json(ListEntriesResponse { entries }))
         }

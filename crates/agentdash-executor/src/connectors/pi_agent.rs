@@ -27,7 +27,8 @@ use agentdash_agent::{
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, ExecutorInfo, PromptPayload,
+    ExecutionMount, ExecutionMountCapability, ExecutionStream, ExecutorInfo, PromptPayload,
+    RuntimeToolProvider,
 };
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
 
@@ -36,6 +37,7 @@ pub struct PiAgentConnector {
     workspace_root: PathBuf,
     bridge: Arc<dyn LlmBridge>,
     tools: Vec<DynAgentTool>,
+    runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     system_prompt: String,
     model_id: String,
     agents: Arc<Mutex<HashMap<String, Agent>>>,
@@ -52,6 +54,7 @@ impl PiAgentConnector {
             workspace_root,
             bridge,
             tools: Vec::new(),
+            runtime_tool_provider: None,
             system_prompt: system_prompt.into(),
             model_id: model_id.into(),
             agents: Arc::new(Mutex::new(HashMap::new())),
@@ -60,6 +63,10 @@ impl PiAgentConnector {
 
     pub fn add_tool(&mut self, tool: DynAgentTool) {
         self.tools.push(tool);
+    }
+
+    pub fn set_runtime_tool_provider(&mut self, provider: Arc<dyn RuntimeToolProvider>) {
+        self.runtime_tool_provider = Some(provider);
     }
 
     fn create_agent(&self) -> Agent {
@@ -78,25 +85,51 @@ impl PiAgentConnector {
         context: &ExecutionContext,
         tool_names: &[String],
     ) -> String {
-        let current_dir_display = workspace_relative_display(
-            self.workspace_root.as_path(),
-            context.working_directory.as_path(),
-        );
         let mut sections = vec![self.system_prompt.clone()];
-        sections.push(format!(
-            "工作空间路径锚点：.\n工作空间绝对路径（仅供参考，不要直接写入工具参数）：{}\n当前工作目录（相对工作空间）：{}",
-            self.workspace_root.display(),
-            current_dir_display
-        ));
+
+        if let Some(address_space) = &context.address_space {
+            let mount_lines = address_space
+                .mounts
+                .iter()
+                .map(describe_mount)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let default_mount = address_space
+                .default_mount()
+                .map(|mount| mount.id.as_str())
+                .unwrap_or("main");
+            sections.push(format!(
+                "当前会话可访问的 Address Space 挂载如下：\n{}\n默认 mount：{}",
+                mount_lines, default_mount
+            ));
+        } else {
+            let current_dir_display =
+                workspace_relative_display(&context.workspace_root, &context.working_directory);
+            sections.push(format!(
+                "工作空间路径锚点：.\n工作空间绝对路径（仅供参考，不要直接写入工具参数）：{}\n当前工作目录（相对工作空间）：{}",
+                context.workspace_root.display(),
+                current_dir_display
+            ));
+        }
 
         if !tool_names.is_empty() {
-            sections.push(format!(
-                "你当前可调用的内置工具有：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。",
-                tool_names.join("、")
-            ));
-            sections.push(
-                "调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `F:\\...` 这类绝对路径直接写进工具参数。".to_string(),
-            );
+            if context.address_space.is_some() {
+                sections.push(format!(
+                    "你当前可调用的统一访问工具有：{}。优先使用 mounts_list / fs_read / fs_list / fs_search / fs_write / shell_exec，不要臆测文件内容。",
+                    tool_names.join("、")
+                ));
+                sections.push(
+                    "调用这些工具时，优先使用 `mount + 相对路径`。除非确有多个 mount，否则默认优先用 `main`。不要把 backend_id 或绝对路径直接写进工具参数。执行 shell 时，`cwd` 也必须是相对 mount 根目录的路径；当前目录就传 `.`。".to_string(),
+                );
+            } else {
+                sections.push(format!(
+                    "你当前可调用的内置工具有：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。",
+                    tool_names.join("、")
+                ));
+                sections.push(
+                    "调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `F:\\...` 这类绝对路径直接写进工具参数。".to_string(),
+                );
+            }
         }
 
         if !context.mcp_servers.is_empty() {
@@ -127,6 +160,25 @@ fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {
             }
         })
         .unwrap_or_else(|| path.display().to_string())
+}
+
+fn describe_mount(mount: &ExecutionMount) -> String {
+    let capabilities = mount
+        .capabilities
+        .iter()
+        .map(|capability| match capability {
+            ExecutionMountCapability::Read => "read",
+            ExecutionMountCapability::Write => "write",
+            ExecutionMountCapability::List => "list",
+            ExecutionMountCapability::Search => "search",
+            ExecutionMountCapability::Exec => "exec",
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "- {}: {}（provider={}, root_ref={}, capabilities=[{}]）",
+        mount.id, mount.display_name, mount.provider, mount.root_ref, capabilities
+    )
 }
 
 #[async_trait::async_trait]
@@ -198,8 +250,6 @@ impl AgentConnector for PiAgentConnector {
                 .unwrap_or_else(|| self.create_agent())
         };
 
-        let builtin_tools =
-            BuiltinToolset::for_workspace(context.working_directory.clone()).into_tools();
         let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
             Ok(tools) => tools,
             Err(error) => {
@@ -208,7 +258,19 @@ impl AgentConnector for PiAgentConnector {
             }
         };
         let mut runtime_tools = self.tools.clone();
-        runtime_tools.extend(builtin_tools);
+        if context.address_space.is_some() {
+            let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "当前会话提供了 address_space，但 PiAgentConnector 未配置 runtime tool provider"
+                        .to_string(),
+                )
+            })?;
+            runtime_tools.extend(provider.build_tools(&context).await?);
+        } else {
+            let builtin_tools =
+                BuiltinToolset::for_workspace(context.workspace_root.clone()).into_tools();
+            runtime_tools.extend(builtin_tools);
+        }
         runtime_tools.extend(mcp_tools);
         let tool_names = runtime_tools
             .iter()
@@ -663,10 +725,12 @@ mod tests {
         );
         let context = ExecutionContext {
             turn_id: "turn-1".to_string(),
+            workspace_root: PathBuf::from("F:/Projects/AgentDash"),
             working_directory: PathBuf::from("F:/Projects/AgentDash/crates/agentdash-agent"),
             environment_variables: HashMap::new(),
             executor_config: crate::connector::AgentDashExecutorConfig::new("PI_AGENT"),
             mcp_servers: vec![],
+            address_space: None,
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);

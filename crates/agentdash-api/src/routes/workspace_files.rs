@@ -5,6 +5,7 @@ use axum::Json;
 use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 
+use crate::address_space_access::{ListOptions, ResourceRef};
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
 
@@ -88,8 +89,7 @@ pub async fn list_files(
         return relay_list_files(
             &state,
             backend_id,
-            ws_id,
-            &workspace.container_ref,
+            &workspace,
             &pattern,
         )
         .await;
@@ -122,7 +122,7 @@ pub async fn read_file(
     if let Some(ws_id) = &req.workspace_id {
         let workspace = load_workspace_by_id(&state, ws_id).await?;
         let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
-        return relay_read_file(&state, backend_id, ws_id, &workspace.container_ref, &rel).await;
+        return relay_read_file(&state, backend_id, &workspace, &rel).await;
     }
 
     let root = state.executor_hub.workspace_root().to_path_buf();
@@ -533,104 +533,78 @@ async fn require_online_backend<'a>(
 
 async fn relay_list_files(
     state: &Arc<AppState>,
-    backend_id: &str,
-    workspace_id: &str,
-    container_ref: &str,
+    _backend_id: &str,
+    workspace: &agentdash_domain::workspace::Workspace,
     pattern: &str,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
-    use agentdash_relay::{CommandWorkspaceFilesListPayload, RelayMessage};
-
-    let cmd = RelayMessage::CommandWorkspaceFilesList {
-        id: RelayMessage::new_id("ws-files-list"),
-        payload: CommandWorkspaceFilesListPayload {
-            workspace_id: workspace_id.to_string(),
-            root_path: Some(container_ref.to_string()),
-            path: None,
-            pattern: if pattern.is_empty() {
-                None
-            } else {
-                Some(pattern.to_string())
+    let session = state
+        .address_space_service
+        .session_for_workspace(workspace)
+        .map_err(ApiError::BadRequest)?;
+    let listed = state
+        .address_space_service
+        .list(
+            &session,
+            "main",
+            ListOptions {
+                path: ".".to_string(),
+                pattern: if pattern.is_empty() {
+                    None
+                } else {
+                    Some(pattern.to_string())
+                },
+                recursive: true,
             },
-        },
-    };
-
-    let resp = state
-        .backend_registry
-        .send_command(backend_id, cmd)
+        )
         .await
-        .map_err(|e| ApiError::Internal(format!("relay workspace_files.list 失败: {e}")))?;
+        .map_err(ApiError::Internal)?;
 
-    match resp {
-        RelayMessage::ResponseWorkspaceFilesList {
-            payload: Some(p), ..
-        } => {
-            let files = p
-                .files
-                .into_iter()
-                .map(|f| {
-                    let text = is_likely_text(&f.path);
-                    FileEntry {
-                        rel_path: f.path,
-                        size: f.size.unwrap_or(0),
-                        is_text: text,
-                    }
-                })
-                .collect();
-            Ok(Json(ListFilesResponse {
-                files,
-                root: container_ref.to_string(),
-            }))
-        }
-        RelayMessage::ResponseWorkspaceFilesList { error: Some(e), .. } => Err(ApiError::Internal(
-            format!("远程文件列表错误: {}", e.message),
-        )),
-        _ => Err(ApiError::Internal("远程文件列表：意外响应类型".into())),
-    }
+    let files = listed
+        .entries
+        .into_iter()
+        .filter(|entry| !entry.is_dir)
+        .map(|entry| FileEntry {
+            rel_path: entry.path.clone(),
+            size: entry.size.unwrap_or(0),
+            is_text: is_likely_text(&entry.path),
+        })
+        .collect();
+    Ok(Json(ListFilesResponse {
+        files,
+        root: workspace.container_ref.clone(),
+    }))
 }
 
 async fn relay_read_file(
     state: &Arc<AppState>,
-    backend_id: &str,
-    workspace_id: &str,
-    container_ref: &str,
+    _backend_id: &str,
+    workspace: &agentdash_domain::workspace::Workspace,
     rel_path: &str,
 ) -> Result<Json<ReadFileResponse>, ApiError> {
-    use agentdash_relay::{CommandWorkspaceFilesReadPayload, RelayMessage};
-
-    let cmd = RelayMessage::CommandWorkspaceFilesRead {
-        id: RelayMessage::new_id("ws-files-read"),
-        payload: CommandWorkspaceFilesReadPayload {
-            workspace_id: workspace_id.to_string(),
-            root_path: Some(container_ref.to_string()),
-            path: rel_path.to_string(),
-        },
-    };
-
-    let resp = state
-        .backend_registry
-        .send_command(backend_id, cmd)
+    let session = state
+        .address_space_service
+        .session_for_workspace(workspace)
+        .map_err(ApiError::BadRequest)?;
+    let read = state
+        .address_space_service
+        .read_text(
+            &session,
+            &ResourceRef {
+                mount_id: "main".to_string(),
+                path: rel_path.to_string(),
+            },
+        )
         .await
-        .map_err(|e| ApiError::Internal(format!("relay workspace_files.read 失败: {e}")))?;
-
-    match resp {
-        RelayMessage::ResponseWorkspaceFilesRead {
-            payload: Some(p), ..
-        } => {
-            let mime = guess_mime(&p.path);
-            let size = p.content.len() as u64;
-            Ok(Json(ReadFileResponse {
-                rel_path: p.path,
-                uri: String::new(),
-                mime_type: mime,
-                content: p.content,
-                size,
-            }))
-        }
-        RelayMessage::ResponseWorkspaceFilesRead { error: Some(e), .. } => Err(ApiError::Internal(
-            format!("远程文件读取错误: {}", e.message),
-        )),
-        _ => Err(ApiError::Internal("远程文件读取：意外响应类型".into())),
-    }
+        .map_err(ApiError::Internal)?;
+    let mime = guess_mime(&read.path);
+    let size = read.content.len() as u64;
+    Ok(Json(ReadFileResponse {
+        rel_path: read.path,
+        uri: String::new(),
+        mime_type: mime,
+        content: read.content,
+        size,
+    }))
 }
 
 impl std::fmt::Display for ApiError {

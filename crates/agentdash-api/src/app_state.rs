@@ -5,6 +5,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
+use crate::address_space_access::{RelayAddressSpaceService, RelayRuntimeToolProvider};
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
@@ -51,6 +52,8 @@ pub struct AppState {
     pub contributor_registry: ContextContributorRegistry,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub address_space_registry: AddressSpaceRegistry,
+    /// 统一 Address Space 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
+    pub address_space_service: Arc<RelayAddressSpaceService>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
     /// 远程会话映射：session_id → backend_id（路由到远程后端的会话）
@@ -107,11 +110,13 @@ impl AppState {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let workspace_root = std::env::current_dir()?;
+        let backend_registry = BackendRegistry::new();
+        let address_space_service = Arc::new(RelayAddressSpaceService::new(backend_registry.clone()));
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
 
         if let Some(pi_connector) =
-            build_pi_agent_connector(&workspace_root, settings_repo.as_ref()).await
+            build_pi_agent_connector(&workspace_root, settings_repo.as_ref(), address_space_service.clone()).await
         {
             sub_connectors.push(Arc::new(pi_connector));
         }
@@ -153,7 +158,8 @@ impl AppState {
             restart_tracker,
             contributor_registry: ContextContributorRegistry::with_builtins(),
             address_space_registry: agentdash_injection::builtin_address_space_registry(),
-            backend_registry: BackendRegistry::new(),
+            address_space_service,
+            backend_registry,
             remote_sessions: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -176,6 +182,7 @@ async fn read_setting_str(repo: &dyn SettingsRepository, key: &str) -> Option<St
 async fn build_pi_agent_connector(
     workspace_root: &std::path::Path,
     settings: &dyn SettingsRepository,
+    address_space_service: Arc<RelayAddressSpaceService>,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     use agentdash_agent::{LlmBridge, RigBridge};
     use rig::client::CompletionClient as _;
@@ -214,12 +221,15 @@ async fn build_pi_agent_connector(
         let model = client.completion_model(anthropic_model);
         let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
 
-        let connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
+        let mut connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
             workspace_root.to_path_buf(),
             bridge,
             system_prompt,
             anthropic_model,
         );
+        connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
+            address_space_service,
+        )));
         tracing::info!("PiAgentConnector 已初始化（Anthropic）");
         return Some(connector);
     }
@@ -246,12 +256,15 @@ async fn build_pi_agent_connector(
     );
     let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
 
-    let connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
+    let mut connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
         workspace_root.to_path_buf(),
         bridge,
         system_prompt,
         &model_id,
     );
+    connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
+        address_space_service,
+    )));
     tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");
     Some(connector)
 }

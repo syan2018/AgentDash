@@ -170,6 +170,14 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             .is_some_and(|config| config.is_native_agent());
 
         if use_cloud_native_agent {
+            let workspace_root = workspace
+                .as_ref()
+                .map(|item| std::path::PathBuf::from(item.container_ref.clone()));
+            let address_space = workspace
+                .as_ref()
+                .map(|item| self.state.address_space_service.session_for_workspace(item))
+                .transpose()
+                .map_err(map_internal_error)?;
             let prompt_req = PromptSessionRequest {
                 prompt: None,
                 prompt_blocks: Some(built.prompt_blocks),
@@ -177,6 +185,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 env: Default::default(),
                 executor_config: resolved_config,
                 mcp_servers: built.mcp_servers,
+                workspace_root,
+                address_space,
             };
 
             let turn_id = self

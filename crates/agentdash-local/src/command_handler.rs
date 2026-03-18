@@ -133,6 +133,20 @@ impl CommandHandler {
             cfg
         });
 
+        let workspace_root = match self.tool_executor.validate_workspace_root(&payload.workspace_root)
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return RelayMessage::ResponsePrompt {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!(
+                        "workspace_root 校验失败: {error}"
+                    ))),
+                };
+            }
+        };
+
         let req = PromptSessionRequest {
             prompt: payload.prompt,
             prompt_blocks: payload.prompt_blocks.map(|v| {
@@ -146,6 +160,8 @@ impl CommandHandler {
             env: payload.env,
             executor_config,
             mcp_servers: vec![],
+            workspace_root: Some(workspace_root),
+            address_space: None,
         };
 
         tracing::info!(
@@ -364,10 +380,19 @@ impl CommandHandler {
         };
 
         let sub_path = payload.path.as_deref().unwrap_or("");
-        let dir = if sub_path.is_empty() {
-            root.clone()
-        } else {
-            root.join(sub_path)
+        let dir = match self
+            .tool_executor
+            .resolve_existing_path(sub_path, &root.to_string_lossy())
+        {
+            Ok(path) => path,
+            Err(_) if sub_path.trim().is_empty() || sub_path.trim() == "." => root.clone(),
+            Err(error) => {
+                return RelayMessage::ResponseWorkspaceFilesList {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!("路径校验失败: {error}"))),
+                };
+            }
         };
         let pattern = payload.pattern.unwrap_or_default().to_lowercase();
 
@@ -404,7 +429,19 @@ impl CommandHandler {
             }
         };
 
-        let full_path = root.join(&payload.path);
+        let full_path = match self
+            .tool_executor
+            .resolve_existing_path(&payload.path, &root.to_string_lossy())
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return RelayMessage::ResponseWorkspaceFilesRead {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!("路径校验失败: {error}"))),
+                };
+            }
+        };
         if !full_path.starts_with(&root) {
             return RelayMessage::ResponseWorkspaceFilesRead {
                 id,
@@ -476,6 +513,10 @@ impl CommandHandler {
                 .first()
                 .cloned()
                 .ok_or_else(|| "无可用的 accessible_roots".to_string())
+                .and_then(|path| {
+                    std::fs::canonicalize(&path)
+                        .map_err(|e| format!("默认 accessible_root 解析失败: {e}"))
+                })
         }
     }
 

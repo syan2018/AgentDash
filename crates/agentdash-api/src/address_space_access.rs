@@ -4,6 +4,7 @@ use std::sync::Arc;
 use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
 };
+use agentdash_agent::tools::schema_value;
 use agentdash_domain::context_container::{
     ContextContainerCapability, ContextContainerDefinition, ContextContainerProvider,
     MountDerivationPolicy,
@@ -890,7 +891,9 @@ impl AgentTool for MountsListTool {
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
         })
     }
 
@@ -960,16 +963,7 @@ impl AgentTool for FsReadTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "mount": { "type": "string" },
-                "path": { "type": "string" },
-                "start_line": { "type": "integer" },
-                "end_line": { "type": "integer" }
-            },
-            "required": ["path"]
-        })
+        schema_value::<FsReadParams>()
     }
 
     async fn execute(
@@ -1052,16 +1046,7 @@ impl AgentTool for FsWriteTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "mount": { "type": "string" },
-                "path": { "type": "string" },
-                "content": { "type": "string" },
-                "append": { "type": "boolean" }
-            },
-            "required": ["path", "content"]
-        })
+        schema_value::<FsWriteParams>()
     }
 
     async fn execute(
@@ -1131,15 +1116,7 @@ impl AgentTool for FsListTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "mount": { "type": "string" },
-                "path": { "type": "string" },
-                "recursive": { "type": "boolean" },
-                "pattern": { "type": "string" }
-            }
-        })
+        schema_value::<FsListParams>()
     }
 
     async fn execute(
@@ -1217,16 +1194,7 @@ impl AgentTool for FsSearchTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "mount": { "type": "string" },
-                "query": { "type": "string" },
-                "path": { "type": "string" },
-                "max_results": { "type": "integer" }
-            },
-            "required": ["query"]
-        })
+        schema_value::<FsSearchParams>()
     }
 
     async fn execute(
@@ -1293,16 +1261,7 @@ impl AgentTool for ShellExecTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "mount": { "type": "string" },
-                "cwd": { "type": "string" },
-                "command": { "type": "string" },
-                "timeout_secs": { "type": "integer" }
-            },
-            "required": ["command"]
-        })
+        schema_value::<ShellExecParams>()
     }
 
     async fn execute(
@@ -1668,5 +1627,62 @@ mod tests {
             .expect("task should complete")
             .expect("read should succeed");
         assert_eq!(result.content, "fn main() {}");
+    }
+
+    #[test]
+    fn runtime_tool_schemas_are_openai_compatible() {
+        let registry = BackendRegistry::new();
+        let service = Arc::new(RelayAddressSpaceService::new(registry));
+        let address_space = ExecutionAddressSpace {
+            mounts: vec![ExecutionMount {
+                id: "brief".to_string(),
+                provider: PROVIDER_INLINE_FS.to_string(),
+                backend_id: String::new(),
+                root_ref: "context://inline/brief".to_string(),
+                capabilities: vec![
+                    ExecutionMountCapability::Read,
+                    ExecutionMountCapability::List,
+                    ExecutionMountCapability::Search,
+                ],
+                default_write: false,
+                display_name: "brief".to_string(),
+                metadata: serde_json::json!({
+                    "files": {
+                        "brief.md": "hello"
+                    }
+                }),
+            }],
+            default_mount_id: Some("brief".to_string()),
+        };
+
+        let schemas = vec![
+            MountsListTool::new(service.clone(), address_space.clone()).parameters_schema(),
+            FsReadTool::new(service.clone(), address_space.clone()).parameters_schema(),
+            FsWriteTool::new(service.clone(), address_space.clone()).parameters_schema(),
+            FsListTool::new(service.clone(), address_space.clone()).parameters_schema(),
+            FsSearchTool::new(service.clone(), address_space.clone()).parameters_schema(),
+            ShellExecTool::new(service, address_space).parameters_schema(),
+        ];
+
+        for schema in schemas {
+            let properties = schema["properties"]
+                .as_object()
+                .expect("properties should be object");
+            let required = schema["required"]
+                .as_array()
+                .expect("required should be array")
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<std::collections::BTreeSet<_>>();
+
+            assert_eq!(schema["type"], "object");
+            assert_eq!(schema["additionalProperties"], false);
+            for key in properties.keys() {
+                assert!(
+                    required.contains(key.as_str()),
+                    "required should contain property `{key}`"
+                );
+            }
+        }
     }
 }

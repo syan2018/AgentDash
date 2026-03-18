@@ -72,12 +72,12 @@ pub struct UpdateStoryStatusParams {
 pub struct UpdateProjectContextConfigParams {
     #[schemars(description = "项目 UUID")]
     pub project_id: String,
-    #[schemars(description = "完整替换项目级 context_containers，需传合法 JSON 数组")]
-    pub context_containers: Option<serde_json::Value>,
-    #[schemars(description = "覆盖项目级 mount_policy，需传合法 JSON 对象")]
-    pub mount_policy: Option<serde_json::Value>,
-    #[schemars(description = "覆盖项目级 session_composition，需传合法 JSON 对象")]
-    pub session_composition: Option<serde_json::Value>,
+    #[schemars(description = "完整替换项目级 context_containers")]
+    pub context_containers: Option<Vec<ContextContainerDefinition>>,
+    #[schemars(description = "覆盖项目级 mount_policy")]
+    pub mount_policy: Option<MountDerivationPolicy>,
+    #[schemars(description = "覆盖项目级 session_composition")]
+    pub session_composition: Option<SessionComposition>,
 }
 
 // ─── Server 定义 ──────────────────────────────────────────────
@@ -374,35 +374,15 @@ impl RelayMcpServer {
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Project", &params.project_id))?;
 
-        if let Some(raw) = params.context_containers {
-            project.config.context_containers = serde_json::from_value::<
-                Vec<ContextContainerDefinition>,
-            >(raw)
-            .map_err(|error| {
-                McpError::invalid_param(
-                    "context_containers",
-                    format!("无法解析为 ContextContainerDefinition[]: {error}"),
-                )
-            })?;
+        if let Some(context_containers) = params.context_containers {
+            project.config.context_containers = context_containers;
         }
 
-        if let Some(raw) = params.mount_policy {
-            project.config.mount_policy = serde_json::from_value::<MountDerivationPolicy>(raw)
-                .map_err(|error| {
-                    McpError::invalid_param(
-                        "mount_policy",
-                        format!("无法解析为 MountDerivationPolicy: {error}"),
-                    )
-                })?;
+        if let Some(mount_policy) = params.mount_policy {
+            project.config.mount_policy = mount_policy;
         }
-        if let Some(raw) = params.session_composition {
-            project.config.session_composition = serde_json::from_value::<SessionComposition>(raw)
-                .map_err(|error| {
-                    McpError::invalid_param(
-                        "session_composition",
-                        format!("无法解析为 SessionComposition: {error}"),
-                    )
-                })?;
+        if let Some(session_composition) = params.session_composition {
+            project.config.session_composition = session_composition;
         }
 
         validate_context_containers(&project.config.context_containers)

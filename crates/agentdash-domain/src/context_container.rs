@@ -1,12 +1,13 @@
 use std::collections::BTreeSet;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 fn bool_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextContainerCapability {
     Read,
@@ -16,13 +17,13 @@ pub enum ContextContainerCapability {
     Exec,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ContextContainerFile {
     pub path: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContextContainerProvider {
     InlineFiles {
@@ -34,7 +35,7 @@ pub enum ContextContainerProvider {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ContextContainerExposure {
     #[serde(default = "bool_true")]
     pub include_in_task_sessions: bool,
@@ -54,7 +55,7 @@ impl Default for ContextContainerExposure {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ContextContainerDefinition {
     pub id: String,
     pub mount_id: String,
@@ -68,7 +69,7 @@ pub struct ContextContainerDefinition {
     pub exposure: ContextContainerExposure,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct MountDerivationPolicy {
     #[serde(default = "bool_true")]
     pub include_local_workspace: bool,

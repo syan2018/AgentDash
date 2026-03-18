@@ -1,6 +1,7 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct SessionComposition {
     pub persona_label: Option<String>,
     pub persona_prompt: Option<String>,
@@ -10,7 +11,7 @@ pub struct SessionComposition {
     pub required_context_blocks: Vec<SessionRequiredContextBlock>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct SessionRequiredContextBlock {
     pub title: String,
     pub content: String,

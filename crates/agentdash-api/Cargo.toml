@@ -36,7 +36,7 @@ tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 walkdir = "2.5"
 executors = { workspace = true }
-schemars = "1.0"
+schemars = { workspace = true }
 
 # ACP 协议（仅用于路由层的类型引用）
 agent-client-protocol = { workspace = true }

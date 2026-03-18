@@ -38,16 +38,16 @@ pub struct UpdateStoryContextParams {
     pub add_source_refs: Option<Vec<ContextSourceRefInput>>,
     #[schemars(description = "完整替换声明式上下文来源")]
     pub replace_source_refs: Option<Vec<ContextSourceRefInput>>,
-    #[schemars(description = "完整替换 Story 级 context_containers，需传合法 JSON 数组")]
-    pub replace_context_containers: Option<serde_json::Value>,
+    #[schemars(description = "完整替换 Story 级 context_containers")]
+    pub replace_context_containers: Option<Vec<ContextContainerDefinition>>,
     #[schemars(description = "完整替换 disabled_container_ids")]
     pub replace_disabled_container_ids: Option<Vec<String>>,
-    #[schemars(description = "覆盖 mount_policy_override，需传合法 JSON 对象")]
-    pub mount_policy_override: Option<serde_json::Value>,
+    #[schemars(description = "覆盖 mount_policy_override")]
+    pub mount_policy_override: Option<MountDerivationPolicy>,
     #[schemars(description = "是否清空 mount_policy_override")]
     pub clear_mount_policy_override: Option<bool>,
-    #[schemars(description = "覆盖 session_composition_override，需传合法 JSON 对象")]
-    pub session_composition_override: Option<serde_json::Value>,
+    #[schemars(description = "覆盖 session_composition_override")]
+    pub session_composition_override: Option<SessionComposition>,
     #[schemars(description = "是否清空 session_composition_override")]
     pub clear_session_composition_override: Option<bool>,
 }
@@ -297,16 +297,8 @@ impl StoryMcpServer {
             }
         }
 
-        if let Some(raw) = params.replace_context_containers {
-            story.context.context_containers = serde_json::from_value::<
-                Vec<ContextContainerDefinition>,
-            >(raw)
-            .map_err(|error| {
-                McpError::invalid_param(
-                    "replace_context_containers",
-                    format!("无法解析为 ContextContainerDefinition[]: {error}"),
-                )
-            })?;
+        if let Some(context_containers) = params.replace_context_containers {
+            story.context.context_containers = context_containers;
         }
 
         if let Some(disabled_ids) = params.replace_disabled_container_ids {
@@ -317,29 +309,15 @@ impl StoryMcpServer {
                 .collect();
         }
 
-        if let Some(raw) = params.mount_policy_override {
-            story.context.mount_policy_override = Some(
-                serde_json::from_value::<MountDerivationPolicy>(raw).map_err(|error| {
-                    McpError::invalid_param(
-                        "mount_policy_override",
-                        format!("无法解析为 MountDerivationPolicy: {error}"),
-                    )
-                })?,
-            );
+        if let Some(mount_policy_override) = params.mount_policy_override {
+            story.context.mount_policy_override = Some(mount_policy_override);
         }
 
         if params.clear_mount_policy_override.unwrap_or(false) {
             story.context.mount_policy_override = None;
         }
-        if let Some(raw) = params.session_composition_override {
-            story.context.session_composition_override = Some(
-                serde_json::from_value::<SessionComposition>(raw).map_err(|error| {
-                    McpError::invalid_param(
-                        "session_composition_override",
-                        format!("无法解析为 SessionComposition: {error}"),
-                    )
-                })?,
-            );
+        if let Some(session_composition_override) = params.session_composition_override {
+            story.context.session_composition_override = Some(session_composition_override);
         }
         if params.clear_session_composition_override.unwrap_or(false) {
             story.context.session_composition_override = None;
@@ -613,5 +591,92 @@ impl ServerHandler for StoryMcpServer {
                 self.story_id
             ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_agent::tools::sanitize_tool_schema;
+    use serde_json::Value;
+
+    #[test]
+    fn update_story_context_schema_is_openai_compatible() {
+        let tool = StoryMcpServer::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name.as_ref() == "update_story_context")
+            .expect("update_story_context tool should exist");
+        let schema = sanitize_tool_schema(Value::Object((*tool.input_schema).clone()));
+
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["additionalProperties"], false);
+
+        let properties = schema["properties"]
+            .as_object()
+            .expect("properties should be object");
+        let required = schema["required"]
+            .as_array()
+            .expect("required should be array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+
+        for key in properties.keys() {
+            assert!(
+                required.contains(key.as_str()),
+                "required 应包含属性 `{key}`"
+            );
+        }
+
+        assert_schema_objects_have_type(&schema);
+    }
+
+    fn assert_schema_objects_have_type(value: &Value) {
+        let Some(object) = value.as_object() else {
+            if let Some(items) = value.as_array() {
+                for item in items {
+                    assert_schema_objects_have_type(item);
+                }
+            }
+            return;
+        };
+
+        if object.contains_key("properties") {
+            assert!(
+                object.get("type").and_then(Value::as_str) == Some("object"),
+                "带 properties 的 schema 必须显式声明 type=object: {}",
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            );
+        }
+
+        for key in [
+            "items",
+            "additionalProperties",
+            "contains",
+            "if",
+            "then",
+            "else",
+        ] {
+            if let Some(child) = object.get(key) {
+                assert_schema_objects_have_type(child);
+            }
+        }
+
+        for key in ["$defs", "definitions", "dependentSchemas", "patternProperties"] {
+            if let Some(children) = object.get(key).and_then(Value::as_object) {
+                for child in children.values() {
+                    assert_schema_objects_have_type(child);
+                }
+            }
+        }
+
+        for key in ["anyOf", "allOf", "oneOf", "prefixItems"] {
+            if let Some(children) = object.get(key).and_then(Value::as_array) {
+                for child in children {
+                    assert_schema_objects_have_type(child);
+                }
+            }
+        }
     }
 }

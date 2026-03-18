@@ -1,2 +1,5 @@
 {"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
 {"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Address Space / relay / context / runtime tool 属于跨层能力，需要先校验边界与数据流"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "统一 Address Space / provider / runtime tool 跨层契约"}
+{"file": "docs/relay-protocol.md", "reason": "对齐 relay transport 现状与未来 provider 抽象的边界"}

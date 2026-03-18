@@ -1,2 +1,5 @@
 {"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
 {"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 cloud/local/context/runtime tool 边界是否仍有泄漏"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "检查后续实现是否统一到 mount + relative path 和 provider 抽象"}
+{"file": "docs/relay-protocol.md", "reason": "检查实现是否把 relay 继续当成 transport 而不是领域模型"}

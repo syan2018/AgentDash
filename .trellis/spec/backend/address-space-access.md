@@ -40,6 +40,16 @@ trait AddressSpaceProvider {
 }
 ```
 
+#### 2.2.1 命名注意（当前代码现状）
+
+- 当前代码里的 `agentdash-injection::AddressSpaceProvider` 仅用于暴露 address space descriptor，服务 `/api/address-spaces` 能力发现。
+- 它还不是本规范这里的统一读写 provider，不承担 `read / write / list / search / exec`。
+- 后续落地时必须显式决定是：
+  - 扩展现有 descriptor provider
+  - 另抽一层真正的 runtime provider
+  - 或重命名其中一层
+- 禁止在实现中默认把这两个同名概念视为同一层抽象，否则很容易造成“接口已存在”的误判。
+
 #### 2.3 运行时工具面
 
 必须优先收敛为稳定的小工具集合：

@@ -60,6 +60,39 @@
 - 本机 `ToolExecutor` 与 `workspace_files` 在路径规范化和越界防护上还需要进一步收紧
 - 云端原生 Agent 尚未切换到“provider + relay tool transport”的统一模型
 
+### 与当前代码核对后的结论（2026-03-18）
+
+以下结论已对照当前代码确认，不再只是设计推测：
+
+- `workspace_root` 目前确实没有真正控制第三方 Agent 的执行根目录
+  - cloud `relay_start_prompt(...)` 已把 `workspace.container_ref` 填入 `CommandPromptPayload.workspace_root`
+  - local `command_handler` 收到后只记录日志，然后直接调用已有 `ExecutorHub`
+  - `ExecutorHub` 仍基于构造时固定的 `self.workspace_root` 解析 `working_dir`
+  - local 启动时 `ExecutorHub::new(...)` 仍使用 `accessible_roots.first()` 作为固定根目录
+
+- 本机路径边界目前至少还有两个真实缺口
+  - `workspace_files.read` 当前使用 `root.join(payload.path)` 后直接做 `starts_with(root)`，检查前没有 canonicalize，`..` 场景会被误判
+  - `ToolExecutor::resolve_path` 对不存在的目标直接返回 `full.clone()`，只有目标已存在时才会做 canonical 越界校验，因此写入新文件时仍存在逃逸风险
+
+- `Address Space` 在代码里已经有一个“轻量雏形”，但还不是本任务目标里的统一访问底座
+  - `agentdash-injection::AddressSpaceProvider` 目前只负责返回 descriptor，供 `/api/address-spaces` 暴露可用空间
+  - 它还不承担 `read / write / list / search / exec` 访问责任
+  - 后续实现时需要明确这是“扩展现有 trait”还是“抽新一层 provider”，避免同名语义混淆
+
+- declared source / context provider 目前仍未真正走统一 provider
+  - `agentdash-injection::resolver` 仍直接使用 `std::fs` / `walkdir`
+  - `task_agent_context` 与 `acp_sessions` 当前会先把 `File / ProjectSnapshot` 过滤掉，再以 `workspace_root = None` 调用通用 resolver
+  - 这说明“声明式来源解析”和“workspace_files relay 读取”仍是分叉实现
+
+- PiAgent runtime tools 尚未切到统一 provider 模型
+  - `PiAgentConnector` 仍直接通过 `BuiltinToolset::for_workspace(context.working_directory.clone())` 注入本地内置工具
+  - 这条链路还没有接到 relay `command.tool.*` / 本机 `ToolExecutor`
+
+- 协议层的资源定位字段仍是分裂状态
+  - `command.prompt` / `command.tool.*` 使用 `workspace_root`
+  - `command.workspace_files.*` 使用 `root_path`
+  - 说明项目还没有真正统一到 `mount + relative path` 的定位契约
+
 ## Requirements
 
 - 定义统一的 Address Space 抽象，能够表达：
@@ -77,14 +110,14 @@
 
 ## Acceptance Criteria
 
-- [ ] 输出一版统一的 Address Space 领域模型与 provider 接口草案
-- [ ] 输出一版运行时工具模型，说明为何采用“小而稳定的标准工具集”而不是单一万能工具
-- [ ] 明确会话级 mount 方案，以及 Agent 如何访问多个 workspace / 非物理空间
-- [ ] 明确 context provider / declared source / runtime tool 三者如何共享同一套访问底座
-- [ ] 明确 relay、本机 backend、云端原生 Agent 各自的职责边界
-- [ ] 明确第一阶段最小可落地范围，以及后续阶段拆分建议
-- [ ] 明确需要先修复的当前阻塞项（例如 workspace_root 落地、路径安全校验）
-- [ ] 形成可继续拆分为实施任务的规划文档，而不是停留在概念层
+- [x] 输出一版统一的 Address Space 领域模型与 provider 接口草案
+- [x] 输出一版运行时工具模型，说明为何采用“小而稳定的标准工具集”而不是单一万能工具
+- [x] 明确会话级 mount 方案，以及 Agent 如何访问多个 workspace / 非物理空间
+- [x] 明确 context provider / declared source / runtime tool 三者如何共享同一套访问底座
+- [x] 明确 relay、本机 backend、云端原生 Agent 各自的职责边界
+- [x] 明确第一阶段最小可落地范围，以及后续阶段拆分建议
+- [x] 明确需要先修复的当前阻塞项（例如 workspace_root 落地、路径安全校验）
+- [x] 形成可继续拆分为实施任务的规划文档，而不是停留在概念层
 
 ## Design Principles
 
@@ -325,6 +358,18 @@ Agent 运行时只面对这些 mount，不再直接感知 `backend_id`。
 - 接入 Snapshot provider
 - 让它们共享同一套 mount / tool / context 模型
 
+## Gap List（设计目标 vs 当前实现）
+
+| 主题 | 当前实现 | 与目标架构的差距 | 建议阶段 |
+|------|----------|------------------|----------|
+| prompt 执行根目录 | `workspace_root` 已透过 relay 下发，但 local ExecutorHub 仍固定根目录 | 第三方 Agent 无法真正按 Task 绑定 workspace 执行 | Phase 0 |
+| 本机路径安全 | `workspace_files` 与 `ToolExecutor` 各自做校验，且都存在越界空隙 | 缺少统一的 mount/path 校验与能力边界 | Phase 0 |
+| Address Space provider | 现有 trait 只做 descriptor 暴露 | 缺少统一的读写/搜索/执行 provider 接口 | Phase 1 |
+| declared sources | 仍是本地 `std::fs` / `walkdir` 解析 | 与 relay workspace 读取、runtime tool 不能共享底座 | Phase 1 |
+| session mount | 还没有 mount table，运行时仍以单 workspace 绝对路径为主 | 无法显式表达多 workspace / 非物理空间 | Phase 2 |
+| PiAgent runtime tool | 仍依赖 `BuiltinToolset` | 没接到 provider-backed tools / relay transport | Phase 3 |
+| 非物理 workspace warp | 仅停留在设计层 | KM / Snapshot 尚无统一文件化访问模型 | Phase 4 |
+
 ## First Implementation Slice
 
 第一阶段最小可实现范围建议为：
@@ -341,6 +386,43 @@ Agent 运行时只面对这些 mount，不再直接感知 `backend_id`。
 - 一份推荐的数据模型 / trait 草案
 - 一份迁移顺序与任务拆分建议
 - 一份当前实现与目标架构之间的 gap list
+
+## Recommended Task Breakdown
+
+建议把后续落地拆成以下六个任务，并保持依赖顺序清晰：
+
+1. `fix-local-prompt-workspace-root-binding`
+   - 目标：让 relay 下发的 `workspace_root` 真正成为本机第三方 Agent 执行根目录
+   - 完成标准：`command.prompt.workspace_root` 不再只是日志字段，`working_dir` 基于该根目录解析
+
+2. `harden-local-path-boundary-validation`
+   - 目标：统一本机 `workspace_files` 与 `ToolExecutor` 的路径规范化、越界防护与错误语义
+   - 完成标准：绝对路径、`..`、不存在父目录写入等场景都不能逃逸出 mount 根目录
+
+3. `extract-address-space-provider-core`
+   - 目标：抽出真正的 `Mount / ResourceRef / AddressSpaceProvider` 核心模型
+   - 完成标准：provider 不再只是 descriptor，而是具备可复用的访问接口与能力矩阵
+
+4. `migrate-declared-sources-to-provider`
+   - 目标：让 `File / ProjectSnapshot` 与相关 declared source 读取统一改走 provider
+   - 完成标准：context provider 与 relay workspace 访问共享同一套底座
+
+5. `replace-pi-agent-builtin-tools-with-provider-tools`
+   - 目标：把 PiAgent runtime tools 从 `BuiltinToolset` 切换到 provider-backed tools
+   - 完成标准：runtime tool 的资源定位统一为 `mount + relative path`
+
+6. `design-km-provider-warp`
+   - 目标：为 KM / Snapshot 等非物理空间定义受限 VFS warp
+   - 完成标准：非物理空间能以 mount 形式接入，但不伪装成完整 POSIX 文件系统
+
+依赖关系建议为：
+
+- `fix-local-prompt-workspace-root-binding` + `harden-local-path-boundary-validation`
+  - 先完成这两个 Phase 0 阻塞项，再推进抽象层统一
+- `extract-address-space-provider-core`
+  - 是 `migrate-declared-sources-to-provider` 与 `replace-pi-agent-builtin-tools-with-provider-tools` 的前置
+- `design-km-provider-warp`
+  - 放在 provider / mount 模型稳定之后推进
 
 ## Follow-up Task Candidates
 

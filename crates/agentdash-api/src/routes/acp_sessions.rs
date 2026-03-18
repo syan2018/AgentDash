@@ -27,6 +27,10 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::task_agent_context::{
+    build_declared_source_warning_fragment, resolve_workspace_declared_sources,
+};
+
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Deserialize)]
@@ -264,13 +268,7 @@ async fn augment_prompt_request_for_owner(
         .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
     let workspace = resolve_story_workspace(state, &project).await?;
 
-    Ok(build_story_owner_prompt_request(
-        state,
-        req,
-        &story,
-        &project,
-        workspace.as_ref(),
-    ))
+    build_story_owner_prompt_request(state, req, &story, &project, workspace.as_ref()).await
 }
 
 async fn resolve_story_workspace(
@@ -293,15 +291,15 @@ async fn resolve_story_workspace(
     Ok(workspaces.into_iter().next())
 }
 
-fn build_story_owner_prompt_request(
-    state: &AppState,
+async fn build_story_owner_prompt_request(
+    state: &Arc<AppState>,
     mut req: PromptSessionRequest,
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
-) -> PromptSessionRequest {
+) -> Result<PromptSessionRequest, ApiError> {
     let (context_markdown, source_summary) =
-        build_story_context_markdown(story, project, workspace);
+        build_story_context_markdown(state, story, project, workspace).await?;
 
     let mut prefix_blocks = Vec::new();
     if !context_markdown.trim().is_empty() {
@@ -357,14 +355,15 @@ fn build_story_owner_prompt_request(
     req.mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
 
-    req
+    Ok(req)
 }
 
-fn build_story_context_markdown(
+async fn build_story_context_markdown(
+    state: &Arc<AppState>,
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
-) -> (String, Vec<String>) {
+) -> Result<(String, Vec<String>), ApiError> {
     let mut composer = ContextComposer::default();
     composer.push(
         "story",
@@ -451,22 +450,6 @@ fn build_story_context_markdown(
         );
     }
 
-    let has_workspace_fs_source = story.context.source_refs.iter().any(|source| {
-        matches!(
-            source.kind,
-            ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
-        )
-    });
-    if has_workspace_fs_source {
-        composer.push(
-            "story_context",
-            "story_workspace_source_boundary_note",
-            49,
-            MergeStrategy::Append,
-            "## Injection Notes\n- 工作空间文件类声明式来源暂未接入 local backend 解析，本次会话不会在 cloud 侧直接读取 Workspace.container_ref。".to_string(),
-        );
-    }
-
     let resolvable_sources = story
         .context
         .source_refs
@@ -507,7 +490,22 @@ fn build_story_context_markdown(
         }
     }
 
-    composer.compose()
+    let resolved_workspace_sources =
+        resolve_workspace_declared_sources(state, &story.context.source_refs, workspace, 60)
+            .await
+            .map_err(ApiError::BadRequest)?;
+    for fragment in resolved_workspace_sources.fragments {
+        composer.push_fragment(fragment);
+    }
+    if !resolved_workspace_sources.warnings.is_empty() {
+        composer.push_fragment(build_declared_source_warning_fragment(
+            "story_context_warnings",
+            69,
+            &resolved_workspace_sources.warnings,
+        ));
+    }
+
+    Ok(composer.compose())
 }
 
 fn clean_text(input: Option<&str>) -> Option<&str> {

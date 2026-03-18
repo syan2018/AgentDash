@@ -35,8 +35,9 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use crate::{
     app_state::AppState,
     task_agent_context::{
-        ContextContributor, McpContextContributor, TaskAgentBuildInput, TaskExecutionPhase,
-        build_task_agent_context,
+        ContextContributor, McpContextContributor, StaticFragmentsContributor, TaskAgentBuildInput,
+        TaskExecutionPhase, build_declared_source_warning_fragment, build_task_agent_context,
+        resolve_workspace_declared_sources,
     },
 };
 
@@ -102,6 +103,31 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             .map_err(map_internal_error)?;
 
         let mut extra_contributors: Vec<Box<dyn ContextContributor>> = Vec::new();
+        let mut declared_sources = story.context.source_refs.clone();
+        declared_sources.extend(task.agent_binding.context_sources.clone());
+        let resolved_workspace_sources = resolve_workspace_declared_sources(
+            &self.state,
+            &declared_sources,
+            workspace.as_ref(),
+            86,
+        )
+        .await
+        .map_err(TaskExecutionError::UnprocessableEntity)?;
+
+        if !resolved_workspace_sources.fragments.is_empty() {
+            extra_contributors.push(Box::new(StaticFragmentsContributor::new(
+                resolved_workspace_sources.fragments,
+            )));
+        }
+        if !resolved_workspace_sources.warnings.is_empty() {
+            extra_contributors.push(Box::new(StaticFragmentsContributor::new(vec![
+                build_declared_source_warning_fragment(
+                    "declared_source_warnings",
+                    96,
+                    &resolved_workspace_sources.warnings,
+                ),
+            ])));
+        }
 
         if let Some(base_url) = &self.state.mcp_base_url {
             let config = McpInjectionConfig::for_task(

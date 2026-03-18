@@ -1,14 +1,22 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Component, Path};
+use std::sync::Arc;
 
 use agent_client_protocol::McpServer;
-use agentdash_domain::context_source::ContextSourceKind;
+use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
 use agentdash_injection::{
-    ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesRequest,
+    ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest,
     resolve_declared_sources,
 };
 use agentdash_mcp::injection::McpInjectionConfig;
+use agentdash_relay::{
+    CommandWorkspaceFilesListPayload, CommandWorkspaceFilesReadPayload, FileEntryRelay,
+    RelayMessage, ResponseWorkspaceFilesListPayload, ResponseWorkspaceFilesReadPayload,
+};
 use serde_json::{Value, json};
+
+use crate::app_state::AppState;
 
 // ─── 公共抽象：可扩展的上下文构建框架 ───────────────────────────
 
@@ -219,24 +227,7 @@ impl ContextContributor for DeclaredSourcesContributor {
             return Contribution::fragments_only(Vec::new());
         }
 
-        let has_workspace_fs_source = sources.iter().any(|source| {
-            matches!(
-                source.kind,
-                ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
-            )
-        });
-
         let mut fragments = Vec::new();
-        if has_workspace_fs_source {
-            fragments.push(ContextFragment {
-                slot: "references",
-                label: "workspace_source_boundary_note",
-                order: 81,
-                strategy: MergeStrategy::Append,
-                content: "## Injection Notes\n- 工作空间文件类声明式来源暂未接入 local backend 解析，本次执行不会在 cloud 侧直接读取 Workspace.container_ref。".to_string(),
-            });
-        }
-
         let resolvable_sources = sources
             .iter()
             .filter(|source| {
@@ -285,6 +276,22 @@ impl ContextContributor for DeclaredSourcesContributor {
                 Contribution::fragments_only(fragments)
             }
         }
+    }
+}
+
+pub struct StaticFragmentsContributor {
+    fragments: Vec<ContextFragment>,
+}
+
+impl StaticFragmentsContributor {
+    pub fn new(fragments: Vec<ContextFragment>) -> Self {
+        Self { fragments }
+    }
+}
+
+impl ContextContributor for StaticFragmentsContributor {
+    fn contribute(&self, _input: &ContributorInput<'_>) -> Contribution {
+        Contribution::fragments_only(self.fragments.clone())
     }
 }
 
@@ -533,6 +540,413 @@ fn build_task_context_resource_block(
     })
 }
 
+pub async fn resolve_workspace_declared_sources(
+    state: &Arc<AppState>,
+    sources: &[ContextSourceRef],
+    workspace: Option<&Workspace>,
+    base_order: i32,
+) -> Result<ResolveSourcesOutput, String> {
+    let indexed_sources = sorted_sources(sources)
+        .into_iter()
+        .filter(|source| {
+            matches!(
+                source.kind,
+                ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if indexed_sources.is_empty() {
+        return Ok(ResolveSourcesOutput {
+            fragments: Vec::new(),
+            warnings: Vec::new(),
+        });
+    }
+
+    let Some(workspace) = workspace else {
+        return resolve_workspace_source_unavailable(
+            &indexed_sources,
+            "声明式来源依赖 Workspace，但当前上下文未绑定可用 Workspace",
+        );
+    };
+
+    let backend_id = match normalize_workspace_backend_id(workspace) {
+        Ok(backend_id) => backend_id,
+        Err(err) => return resolve_workspace_source_unavailable(&indexed_sources, &err),
+    };
+    if !state.backend_registry.is_online(backend_id).await {
+        return resolve_workspace_source_unavailable(
+            &indexed_sources,
+            &format!("Workspace 所属 Backend 当前不在线: {backend_id}"),
+        );
+    }
+
+    let mut fragments = Vec::new();
+    let mut warnings = Vec::new();
+
+    for (position, source) in indexed_sources.into_iter().enumerate() {
+        let order = base_order + position as i32;
+        let resolved = match source.kind {
+            ContextSourceKind::File => {
+                resolve_workspace_file_source(state, backend_id, workspace, source, order).await
+            }
+            ContextSourceKind::ProjectSnapshot => {
+                resolve_workspace_snapshot_source(state, backend_id, workspace, source, order).await
+            }
+            _ => continue,
+        };
+
+        match resolved {
+            Ok(fragment) => fragments.push(fragment),
+            Err(err) if source.required => return Err(err),
+            Err(err) => warnings.push(format!(
+                "source `{}` 已跳过: {err}",
+                display_source_label(source)
+            )),
+        }
+    }
+
+    Ok(ResolveSourcesOutput {
+        fragments,
+        warnings,
+    })
+}
+
+fn resolve_workspace_source_unavailable(
+    sources: &[&ContextSourceRef],
+    message: &str,
+) -> Result<ResolveSourcesOutput, String> {
+    if sources.iter().any(|source| source.required) {
+        return Err(message.to_string());
+    }
+    Ok(ResolveSourcesOutput {
+        fragments: Vec::new(),
+        warnings: sources
+            .iter()
+            .map(|source| {
+                format!(
+                    "source `{}` 已跳过: {message}",
+                    display_source_label(source)
+                )
+            })
+            .collect(),
+    })
+}
+
+pub fn build_declared_source_warning_fragment(
+    label: &'static str,
+    order: i32,
+    warnings: &[String],
+) -> ContextFragment {
+    ContextFragment {
+        slot: "references",
+        label,
+        order,
+        strategy: MergeStrategy::Append,
+        content: format!(
+            "## Injection Notes\n{}",
+            warnings
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    }
+}
+
+fn sorted_sources(sources: &[ContextSourceRef]) -> Vec<&ContextSourceRef> {
+    let mut indexed_sources = sources.iter().enumerate().collect::<Vec<_>>();
+    indexed_sources.sort_by(|(left_index, left), (right_index, right)| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left_index.cmp(right_index))
+    });
+    indexed_sources
+        .into_iter()
+        .map(|(_, source)| source)
+        .collect()
+}
+
+fn normalize_workspace_backend_id(workspace: &Workspace) -> Result<&str, String> {
+    let backend_id = workspace.backend_id.trim();
+    if backend_id.is_empty() {
+        Err("Workspace.backend_id 不能为空".to_string())
+    } else {
+        Ok(backend_id)
+    }
+}
+
+async fn resolve_workspace_file_source(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    workspace: &Workspace,
+    source: &ContextSourceRef,
+    order: i32,
+) -> Result<ContextFragment, String> {
+    let path = normalize_source_locator_path(&source.locator)?;
+    let response = state
+        .backend_registry
+        .send_command(
+            backend_id,
+            RelayMessage::CommandWorkspaceFilesRead {
+                id: RelayMessage::new_id("ctx-file-read"),
+                payload: CommandWorkspaceFilesReadPayload {
+                    workspace_id: workspace.id.to_string(),
+                    root_path: Some(workspace.container_ref.clone()),
+                    path: path.clone(),
+                },
+            },
+        )
+        .await
+        .map_err(|e| format!("relay 工作空间文件读取失败: {e}"))?;
+
+    match response {
+        RelayMessage::ResponseWorkspaceFilesRead {
+            payload:
+                Some(ResponseWorkspaceFilesReadPayload {
+                    path: resolved_path,
+                    content,
+                    ..
+                }),
+            error: None,
+            ..
+        } => Ok(ContextFragment {
+            slot: fragment_slot(&source.slot),
+            label: fragment_label(&source.kind),
+            order,
+            strategy: MergeStrategy::Append,
+            content: render_source_section(
+                source,
+                truncate_text(
+                    format_file_like_read_tool(&resolved_path, &content),
+                    source.max_chars,
+                ),
+            ),
+        }),
+        RelayMessage::ResponseWorkspaceFilesRead {
+            error: Some(err), ..
+        } => Err(format!("工作空间文件读取失败: {}", err.message)),
+        other => Err(format!(
+            "远程工作空间文件读取返回了意外响应: {}",
+            other.id()
+        )),
+    }
+}
+
+async fn resolve_workspace_snapshot_source(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    workspace: &Workspace,
+    source: &ContextSourceRef,
+    order: i32,
+) -> Result<ContextFragment, String> {
+    let sub_path = normalize_snapshot_locator(&source.locator)?;
+    let response = state
+        .backend_registry
+        .send_command(
+            backend_id,
+            RelayMessage::CommandWorkspaceFilesList {
+                id: RelayMessage::new_id("ctx-snapshot"),
+                payload: CommandWorkspaceFilesListPayload {
+                    workspace_id: workspace.id.to_string(),
+                    root_path: Some(workspace.container_ref.clone()),
+                    path: sub_path.clone(),
+                    pattern: None,
+                },
+            },
+        )
+        .await
+        .map_err(|e| format!("relay 项目快照读取失败: {e}"))?;
+
+    match response {
+        RelayMessage::ResponseWorkspaceFilesList {
+            payload: Some(ResponseWorkspaceFilesListPayload { files }),
+            error: None,
+            ..
+        } => Ok(ContextFragment {
+            slot: fragment_slot(&source.slot),
+            label: fragment_label(&source.kind),
+            order,
+            strategy: MergeStrategy::Append,
+            content: render_source_section(
+                source,
+                build_workspace_snapshot_from_entries(
+                    &workspace.container_ref,
+                    sub_path.as_deref(),
+                    &files,
+                    source.max_chars,
+                ),
+            ),
+        }),
+        RelayMessage::ResponseWorkspaceFilesList {
+            error: Some(err), ..
+        } => Err(format!("项目快照读取失败: {}", err.message)),
+        other => Err(format!("远程项目快照返回了意外响应: {}", other.id())),
+    }
+}
+
+fn normalize_source_locator_path(locator: &str) -> Result<String, String> {
+    let trimmed = locator.trim();
+    if trimmed.is_empty() {
+        return Err("文件来源 locator 不能为空".to_string());
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("文件来源 locator 不能是绝对路径".to_string());
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("文件来源 locator 不能包含 `..`".to_string());
+    }
+
+    Ok(trimmed.replace('\\', "/"))
+}
+
+fn normalize_snapshot_locator(locator: &str) -> Result<Option<String>, String> {
+    let trimmed = locator.trim();
+    if trimmed.is_empty() || trimmed == "." {
+        return Ok(None);
+    }
+    normalize_source_locator_path(trimmed).map(Some)
+}
+
+fn build_workspace_snapshot_from_entries(
+    workspace_root: &str,
+    sub_path: Option<&str>,
+    files: &[FileEntryRelay],
+    max_chars: Option<usize>,
+) -> String {
+    let mut summary_entries = BTreeSet::new();
+    for file in files {
+        let rel = file.path.trim_matches('/');
+        if rel.is_empty() {
+            continue;
+        }
+        let parts = rel.split('/').collect::<Vec<_>>();
+        if parts.len() == 1 {
+            summary_entries.insert(parts[0].to_string());
+            continue;
+        }
+
+        summary_entries.insert(format!("{}/", parts[0]));
+        if parts.len() == 2 {
+            summary_entries.insert(rel.to_string());
+            continue;
+        }
+        summary_entries.insert(format!("{}/{}/", parts[0], parts[1]));
+    }
+
+    let entries = summary_entries
+        .into_iter()
+        .take(48)
+        .map(|entry| format!("- {entry}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let tech_stack = detect_tech_stack_from_entries(files);
+    let root_display = sub_path
+        .map(|path| format!("{}/{}", workspace_root.trim_end_matches('/'), path))
+        .unwrap_or_else(|| workspace_root.to_string())
+        .replace('\\', "/");
+
+    truncate_text(
+        format!(
+            "## 项目快照\n- root: {}\n- tech_stack: {}\n\n## 目录摘要\n{}",
+            root_display,
+            tech_stack.join(", "),
+            entries
+        ),
+        max_chars,
+    )
+}
+
+fn detect_tech_stack_from_entries(files: &[FileEntryRelay]) -> Vec<&'static str> {
+    let paths = files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    let mut stack = Vec::new();
+    if paths.iter().any(|path| *path == "Cargo.toml") {
+        stack.push("Rust");
+    }
+    if paths.iter().any(|path| *path == "package.json") {
+        stack.push("Node.js");
+    }
+    if paths.iter().any(|path| *path == "pnpm-lock.yaml") {
+        stack.push("pnpm");
+    }
+    if paths
+        .iter()
+        .any(|path| *path == "playwright.config.ts" || *path == "playwright.config.js")
+    {
+        stack.push("Playwright");
+    }
+    if stack.is_empty() {
+        stack.push("unknown");
+    }
+    stack
+}
+
+fn format_file_like_read_tool(path: &str, content: &str) -> String {
+    let numbered = content
+        .lines()
+        .enumerate()
+        .map(|(index, line)| format!("{:>4} | {}", index + 1, line))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if numbered.is_empty() {
+        format!("文件: {}\n   1 | ", path.replace('\\', "/"))
+    } else {
+        format!("文件: {}\n{}", path.replace('\\', "/"), numbered)
+    }
+}
+
+fn truncate_text(content: String, max_chars: Option<usize>) -> String {
+    const DEFAULT_TRUNCATE_CHARS: usize = 12_000;
+    let max = max_chars.unwrap_or(DEFAULT_TRUNCATE_CHARS);
+    if content.chars().count() <= max {
+        return content;
+    }
+
+    let truncated = content.chars().take(max).collect::<String>();
+    format!("{truncated}\n\n> 内容已截断")
+}
+
+fn render_source_section(source: &ContextSourceRef, content: String) -> String {
+    let title = display_source_label(source);
+    format!("## 来源: {title}\n{content}")
+}
+
+fn display_source_label(source: &ContextSourceRef) -> &str {
+    source.label.as_deref().unwrap_or(source.locator.as_str())
+}
+
+fn fragment_label(kind: &ContextSourceKind) -> &'static str {
+    match kind {
+        ContextSourceKind::ManualText => "declared_manual_text",
+        ContextSourceKind::File => "declared_file_source",
+        ContextSourceKind::ProjectSnapshot => "declared_project_snapshot",
+        ContextSourceKind::HttpFetch => "declared_http_fetch",
+        ContextSourceKind::McpResource => "declared_mcp_resource",
+        ContextSourceKind::EntityRef => "declared_entity_ref",
+    }
+}
+
+fn fragment_slot(slot: &ContextSlot) -> &'static str {
+    match slot {
+        ContextSlot::Requirements => "requirements",
+        ContextSlot::Constraints => "constraints",
+        ContextSlot::Codebase => "codebase",
+        ContextSlot::References => "references",
+        ContextSlot::InstructionAppend => "instruction_append",
+    }
+}
+
 fn resolve_instruction_template(input: &ContributorInput<'_>) -> String {
     match input.phase {
         TaskExecutionPhase::Start => {
@@ -775,6 +1189,7 @@ mod tests {
         let workspace = Workspace {
             id: uuid::Uuid::new_v4(),
             project_id: project.id,
+            backend_id: "backend".into(),
             name: "ws".into(),
             container_ref: ".".into(),
             workspace_type: WorkspaceType::Static,
@@ -805,5 +1220,51 @@ mod tests {
             .expect("resource block text");
         assert!(context_block.contains("这是 Story 级需求摘要"));
         assert!(context_block.contains("请严格遵守接口约束"));
+    }
+
+    #[test]
+    fn snapshot_builder_keeps_directory_shape() {
+        let snapshot = build_workspace_snapshot_from_entries(
+            "/workspace/demo",
+            None,
+            &[
+                FileEntryRelay {
+                    path: "Cargo.toml".to_string(),
+                    size: None,
+                    modified_at: None,
+                    is_dir: false,
+                },
+                FileEntryRelay {
+                    path: "src/main.rs".to_string(),
+                    size: None,
+                    modified_at: None,
+                    is_dir: false,
+                },
+                FileEntryRelay {
+                    path: "src/lib.rs".to_string(),
+                    size: None,
+                    modified_at: None,
+                    is_dir: false,
+                },
+                FileEntryRelay {
+                    path: "tests/e2e/story.rs".to_string(),
+                    size: None,
+                    modified_at: None,
+                    is_dir: false,
+                },
+            ],
+            None,
+        );
+
+        assert!(snapshot.contains("Rust"));
+        assert!(snapshot.contains("- src/"));
+        assert!(snapshot.contains("- src/main.rs"));
+        assert!(snapshot.contains("- tests/e2e/"));
+    }
+
+    #[test]
+    fn file_locator_rejects_parent_dir() {
+        let err = normalize_source_locator_path("../secret.txt").expect_err("应拒绝父级目录");
+        assert!(err.contains(".."));
     }
 }

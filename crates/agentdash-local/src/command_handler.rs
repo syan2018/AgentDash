@@ -413,22 +413,45 @@ impl CommandHandler {
             };
         }
 
-        match tokio::fs::read_to_string(&full_path).await {
-            Ok(content) => {
-                const MAX_SIZE: usize = 100 * 1024;
-                let truncated = if content.len() > MAX_SIZE {
-                    content[..MAX_SIZE].to_string()
-                } else {
-                    content
+        let metadata = match tokio::fs::metadata(&full_path).await {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                return RelayMessage::ResponseWorkspaceFilesRead {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::io_error(format!("读取失败: {e}"))),
                 };
+            }
+        };
+
+        const MAX_SIZE: u64 = 100 * 1024;
+        if metadata.len() > MAX_SIZE {
+            return RelayMessage::ResponseWorkspaceFilesRead {
+                id,
+                payload: None,
+                error: Some(RelayError::io_error(format!(
+                    "文件过大: {} bytes，最大允许 {} bytes",
+                    metadata.len(),
+                    MAX_SIZE
+                ))),
+            };
+        }
+
+        match tokio::fs::read_to_string(&full_path).await {
+            Ok(content) => RelayMessage::ResponseWorkspaceFilesRead {
+                id,
+                payload: Some(ResponseWorkspaceFilesReadPayload {
+                    path: payload.path,
+                    content,
+                    encoding: "utf-8".to_string(),
+                }),
+                error: None,
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                 RelayMessage::ResponseWorkspaceFilesRead {
                     id,
-                    payload: Some(ResponseWorkspaceFilesReadPayload {
-                        path: payload.path,
-                        content: truncated,
-                        encoding: "utf-8".to_string(),
-                    }),
-                    error: None,
+                    payload: None,
+                    error: Some(RelayError::io_error("文件不是有效文本")),
                 }
             }
             Err(e) => RelayMessage::ResponseWorkspaceFilesRead {

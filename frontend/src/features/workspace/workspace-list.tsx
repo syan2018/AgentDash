@@ -58,7 +58,6 @@ function WorkspaceDetailDrawer({
     updateWorkspace,
     updateStatus,
     deleteWorkspace,
-    pickDirectory,
     error,
   } = useWorkspaceStore();
 
@@ -73,7 +72,6 @@ function WorkspaceDetailDrawer({
     mode === "detail" && workspace ? workspace.status : "pending",
   );
   const [formMessage, setFormMessage] = useState<string | null>(null);
-  const [isPickingDirectory, setIsPickingDirectory] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
 
@@ -130,22 +128,6 @@ function WorkspaceDetailDrawer({
     await deleteWorkspace(workspace.id, projectId);
     setIsDeleteConfirmOpen(false);
     onClose();
-  };
-
-  const handleBrowseDirectory = async () => {
-    setIsPickingDirectory(true);
-    setFormMessage(null);
-    try {
-      const pickedPath = await pickDirectory(containerRef);
-      if (!pickedPath) {
-        setFormMessage("已取消目录选择");
-        return;
-      }
-      setContainerRef(pickedPath);
-      setFormMessage(`已选择目录：${pickedPath}`);
-    } finally {
-      setIsPickingDirectory(false);
-    }
   };
 
   const title = mode === "create" ? "新建工作空间" : "工作空间详情";
@@ -215,18 +197,14 @@ function WorkspaceDetailDrawer({
               <input
                 value={containerRef}
                 onChange={(event) => setContainerRef(event.target.value)}
-                placeholder="目录绝对路径（ephemeral 可留空）"
+                placeholder="目标 Backend 机器上的目录绝对路径（ephemeral 可留空）"
                 className="agentdash-form-input flex-1"
               />
-              <button
-                type="button"
-                onClick={() => void handleBrowseDirectory()}
-                disabled={isPickingDirectory}
-                className="agentdash-button-secondary shrink-0 text-xs"
-              >
-                {isPickingDirectory ? "选择中" : "浏览目录"}
-              </button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              默认请手动填写目标 Backend 机器上的绝对路径。云端部署下不再提供“浏览目录”能力，
+              以避免误把 cloud 宿主机目录当成工作空间来源。
+            </p>
           </DetailSection>
 
           {workspace?.git_config && (

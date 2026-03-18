@@ -1,11 +1,7 @@
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use git2::{ErrorCode, Repository};
-use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -67,6 +63,8 @@ struct GitDetectionResult {
     branch: Option<String>,
     commit_hash: Option<String>,
 }
+
+const PICK_DIRECTORY_UNAVAILABLE_MESSAGE: &str = "当前部署不支持浏览目录；请手动输入目标 Backend 机器上的绝对路径。若后续需要“浏览当前用户机器目录”，应通过独立本机桥接能力接入，而不是复用 cloud API。";
 
 pub async fn list_workspaces(
     State(state): State<Arc<AppState>>,
@@ -219,28 +217,11 @@ pub async fn detect_git(
         return Err(ApiError::BadRequest("container_ref 不能为空".into()));
     }
 
-    if let Some(backend_id) = req.backend_id.as_deref().map(str::trim)
-        && !backend_id.is_empty()
-    {
-        let detected = detect_git_via_backend(&state, backend_id, container_ref).await?;
-        return Ok(Json(DetectGitResponse {
-            resolved_container_ref: container_ref.to_string(),
-            is_git_repo: detected.is_git_repo,
-            source_repo: detected.source_repo,
-            branch: detected.branch,
-            commit_hash: detected.commit_hash,
-        }));
-    }
-
-    let canonical_path = canonicalize_container_ref(container_ref)?;
-
-    let normalized_ref = normalize_display_path(&canonical_path);
-    let result = tokio::task::spawn_blocking(move || detect_git_impl(canonical_path))
-        .await
-        .map_err(|e| ApiError::Internal(format!("Git 识别任务异常: {e}")))??;
+    let backend_id = require_detect_git_backend_id(req.backend_id.as_deref())?;
+    let result = detect_git_via_backend(&state, backend_id, container_ref).await?;
 
     Ok(Json(DetectGitResponse {
-        resolved_container_ref: normalized_ref,
+        resolved_container_ref: container_ref.to_string(),
         is_git_repo: result.is_git_repo,
         source_repo: result.source_repo,
         branch: result.branch,
@@ -251,72 +232,16 @@ pub async fn detect_git(
 pub async fn pick_directory(
     Json(req): Json<PickDirectoryRequest>,
 ) -> Result<Json<PickDirectoryResponse>, ApiError> {
-    let initial_path = req
+    let has_initial_path = req
         .initial_path
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
-    let picked_path = tokio::task::spawn_blocking(move || {
-        let mut dialog = FileDialog::new();
-
-        if let Some(path_str) = initial_path {
-            let initial_dir = PathBuf::from(path_str);
-            if initial_dir.exists() {
-                dialog = dialog.set_directory(initial_dir);
-            }
-        }
-
-        dialog.pick_folder()
-    })
-    .await
-    .map_err(|err| ApiError::Internal(format!("目录选择任务异常: {err}")))?;
-
-    match picked_path {
-        Some(path) => {
-            let normalized = fs::canonicalize(&path)
-                .map(|value| normalize_display_path(&value))
-                .unwrap_or_else(|_| normalize_display_path(&path));
-
-            Ok(Json(PickDirectoryResponse {
-                selected: true,
-                container_ref: Some(normalized),
-            }))
-        }
-        None => Ok(Json(PickDirectoryResponse {
-            selected: false,
-            container_ref: None,
-        })),
-    }
-}
-
-fn detect_git_impl(path: PathBuf) -> Result<GitDetectionResult, ApiError> {
-    let repo = match Repository::discover(&path) {
-        Ok(repo) => repo,
-        Err(err) if err.code() == ErrorCode::NotFound => return Ok(non_git_response()),
-        Err(err) => {
-            return Err(ApiError::Internal(format!("Git 仓库识别失败: {err}")));
-        }
-    };
-
-    let source_repo = resolve_source_repo(&repo);
-
-    let head = repo.head().ok();
-    let branch = head
-        .as_ref()
-        .and_then(|item| item.shorthand())
-        .map(ToString::to_string)
-        .filter(|value| !value.is_empty());
-    let commit_hash = head
-        .as_ref()
-        .and_then(|item| item.target())
-        .map(|oid| oid.to_string());
-
-    Ok(GitDetectionResult {
-        is_git_repo: true,
-        source_repo,
-        branch,
-        commit_hash,
-    })
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    tracing::warn!(
+        has_initial_path,
+        "pick_directory 已被禁用；请改为手动输入 backend 侧绝对路径"
+    );
+    Err(pick_directory_unavailable_error())
 }
 
 async fn auto_transition_workspace_status(
@@ -437,52 +362,47 @@ async fn detect_git_via_backend(
     }
 }
 
-fn non_git_response() -> GitDetectionResult {
-    GitDetectionResult {
-        is_git_repo: false,
-        source_repo: None,
-        branch: None,
-        commit_hash: None,
-    }
+fn require_detect_git_backend_id(raw: Option<&str>) -> Result<&str, ApiError> {
+    let backend_id = raw.map(str::trim).filter(|value| !value.is_empty());
+    backend_id.ok_or_else(|| {
+        ApiError::BadRequest(
+            "detect_git 必须显式提供 backend_id；container_ref 始终表示目标 Backend 机器上的绝对路径"
+                .into(),
+        )
+    })
 }
 
-fn canonicalize_container_ref(container_ref: &str) -> Result<PathBuf, ApiError> {
-    let raw_path = PathBuf::from(container_ref);
-    let metadata = fs::metadata(&raw_path).map_err(|err| {
-        ApiError::BadRequest(format!("目录不存在或不可访问: {container_ref} ({err})"))
-    })?;
-    if !metadata.is_dir() {
-        return Err(ApiError::BadRequest(format!(
-            "路径不是目录: {container_ref}"
-        )));
-    }
-
-    fs::canonicalize(&raw_path)
-        .map_err(|err| ApiError::BadRequest(format!("目录路径无法解析: {container_ref} ({err})")))
+fn pick_directory_unavailable_error() -> ApiError {
+    ApiError::Conflict(PICK_DIRECTORY_UNAVAILABLE_MESSAGE.into())
 }
 
-fn resolve_source_repo(repo: &Repository) -> Option<String> {
-    if let Ok(origin) = repo.find_remote("origin")
-        && let Some(url) = origin.url()
-    {
-        let value = url.trim();
-        if !value.is_empty() {
-            return Some(value.to_string());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn require_detect_git_backend_id_rejects_missing_or_blank() {
+        assert!(require_detect_git_backend_id(None).is_err());
+        assert!(require_detect_git_backend_id(Some("")).is_err());
+        assert!(require_detect_git_backend_id(Some("   ")).is_err());
+        assert_eq!(
+            require_detect_git_backend_id(Some(" backend-a ")).expect("应提取 backend_id"),
+            "backend-a"
+        );
+    }
+
+    #[tokio::test]
+    async fn pick_directory_returns_explicit_conflict() {
+        let result = pick_directory(Json(PickDirectoryRequest {
+            initial_path: Some("F:/Projects".into()),
+        }))
+        .await;
+
+        match result {
+            Err(ApiError::Conflict(message)) => {
+                assert_eq!(message, PICK_DIRECTORY_UNAVAILABLE_MESSAGE);
+            }
+            other => panic!("预期 Conflict，实际得到: {:?}", other.map(|_| ())),
         }
-    }
-
-    repository_root(repo).map(normalize_display_path)
-}
-
-fn repository_root(repo: &Repository) -> Option<&Path> {
-    repo.workdir().or_else(|| repo.path().parent())
-}
-
-fn normalize_display_path(path: &Path) -> String {
-    let value = path.to_string_lossy().to_string();
-    if cfg!(windows) {
-        value.trim_start_matches(r"\\?\").to_string()
-    } else {
-        value
     }
 }

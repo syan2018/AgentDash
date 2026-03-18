@@ -108,7 +108,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       return result.container_ref?.trim() ?? null;
     } catch (e) {
       set({ error: (e as Error).message });
-      return null;
+      throw e;
     }
   },
 

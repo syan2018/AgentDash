@@ -1,0 +1,47 @@
+{
+  "id": "03-19-external-service-provider-client",
+  "name": "03-19-external-service-provider-client",
+  "title": "设计 external_service Provider Client",
+  "description": "设计外部 provider service 接入协议与第一版 client，承接企业 KM / 外部知识服务的统一访问。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P3",
+  "creator": "cursor-agent",
+  "assignee": "codex",
+  "createdAt": "2026-03-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/spec/backend/address-space-access.md",
+    ".trellis/tasks/archive/2026-03/03-18-project-virtual-workspace-provider-service/prd.md",
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-executor/src/connector.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent.rs"
+  ],
+  "notes": "该任务当前仅用于沉淀 external_service provider 的协议和 client 设计，先保持 pending/planning，不进入立即实现。重点是把企业 KM / 外部知识服务抽象为统一 provider service，而不是把企业 API 适配逻辑侵入 AgentDash 主框架。"
+}

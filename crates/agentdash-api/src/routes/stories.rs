@@ -5,8 +5,13 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
+use agentdash_domain::context_container::{
+    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+    validate_disabled_container_ids,
+};
 use agentdash_domain::context_source::ContextSourceRef;
+use agentdash_domain::project::Project;
+use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
 use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, StoryType};
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
@@ -32,6 +37,7 @@ pub struct CreateStoryRequest {
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
     pub mount_policy_override: Option<MountDerivationPolicy>,
+    pub session_composition_override: Option<SessionComposition>,
 }
 
 #[derive(Deserialize, Default)]
@@ -47,6 +53,9 @@ pub struct UpdateStoryRequest {
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
     pub mount_policy_override: Option<MountDerivationPolicy>,
+    pub clear_mount_policy_override: Option<bool>,
+    pub session_composition_override: Option<SessionComposition>,
+    pub clear_session_composition_override: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -103,6 +112,11 @@ pub async fn create_story(
 ) -> Result<Json<Story>, ApiError> {
     let project_id = Uuid::parse_str(&req.project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    let project = state
+        .project_repo
+        .get_by_id(project_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))?;
     let title = req.title.trim();
     if title.is_empty() {
         return Err(ApiError::BadRequest("Story 标题不能为空".into()));
@@ -140,6 +154,10 @@ pub async fn create_story(
     if let Some(mount_policy_override) = req.mount_policy_override {
         next_story.context.mount_policy_override = Some(mount_policy_override);
     }
+    if let Some(session_composition_override) = req.session_composition_override {
+        next_story.context.session_composition_override = Some(session_composition_override);
+    }
+    validate_story_context(&next_story, &project)?;
 
     state.story_repo.create(&next_story).await?;
     Ok(Json(next_story))
@@ -174,6 +192,11 @@ pub async fn update_story(
         .get_by_id(story_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
+    let project = state
+        .project_repo
+        .get_by_id(story.project_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
 
     if let Some(title) = req.title {
         let trimmed = title.trim();
@@ -216,6 +239,17 @@ pub async fn update_story(
     if let Some(mount_policy_override) = req.mount_policy_override {
         story.context.mount_policy_override = Some(mount_policy_override);
     }
+    if req.clear_mount_policy_override.unwrap_or(false) {
+        story.context.mount_policy_override = None;
+    }
+    if let Some(session_composition_override) = req.session_composition_override {
+        story.context.session_composition_override = Some(session_composition_override);
+    }
+    if req.clear_session_composition_override.unwrap_or(false) {
+        story.context.session_composition_override = None;
+    }
+
+    validate_story_context(&story, &project)?;
 
     state.story_repo.update(&story).await?;
     Ok(Json(story))
@@ -526,4 +560,17 @@ fn to_agent_binding(input: Option<CreateTaskAgentBindingRequest>) -> AgentBindin
     } else {
         AgentBinding::default()
     }
+}
+
+fn validate_story_context(story: &Story, project: &Project) -> Result<(), ApiError> {
+    validate_context_containers(&story.context.context_containers).map_err(ApiError::BadRequest)?;
+    validate_disabled_container_ids(
+        &story.context.disabled_container_ids,
+        &project.config.context_containers,
+    )
+    .map_err(ApiError::BadRequest)?;
+    if let Some(session_composition_override) = &story.context.session_composition_override {
+        validate_session_composition(session_composition_override).map_err(ApiError::BadRequest)?;
+    }
+    Ok(())
 }

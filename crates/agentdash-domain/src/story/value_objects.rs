@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::context_container::{ContextContainerDefinition, MountDerivationPolicy};
 use crate::context_source::ContextSourceRef;
+use crate::session_composition::SessionComposition;
 
 /// Story 状态枚举
 /// 生命周期: Created → ContextReady → Decomposed → Executing → Completed/Failed/Cancelled
@@ -66,6 +67,9 @@ pub struct StoryContext {
     /// Story 级挂载策略覆盖
     #[serde(default)]
     pub mount_policy_override: Option<MountDerivationPolicy>,
+    /// Story 级会话编排覆盖配置
+    #[serde(default)]
+    pub session_composition_override: Option<SessionComposition>,
 }
 
 /// 资源引用

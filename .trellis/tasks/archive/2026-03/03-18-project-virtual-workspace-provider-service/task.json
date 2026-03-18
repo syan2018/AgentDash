@@ -3,14 +3,14 @@
   "name": "03-18-project-virtual-workspace-provider-service",
   "title": "Project 虚拟工作空间与外部 Provider 服务规划",
   "description": "将 Project 抽象为可挂载的虚拟工作空间，设计通用可扩展 provider 服务与数据保管方案，为 KM / 企业知识服务接入提供统一接口。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "backend",
   "scope": "architecture",
   "priority": "P1",
   "creator": "cursor-agent",
   "assignee": "codex",
   "createdAt": "2026-03-18",
-  "completedAt": null,
+  "completedAt": "2026-03-19",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -44,5 +44,5 @@
     "crates/agentdash-api/src/routes/workspaces.rs",
     "crates/agentdash-executor/src/connectors/pi_agent.rs"
   ],
-  "notes": "已完成第一轮落地切片：为 `ProjectConfig` / `StoryContext` 引入结构化上下文容器与挂载派生策略，支持 `inline_fs` 内联文件容器；Task cloud-native 会话与 Story owner session 已改为从 `Project / Story / Workspace` 共同派生最终 Address Space。当前已跑通 `cargo test -p agentdash-api`。后续仍需继续补外部 provider service、前端编辑入口与更完整的权限/可见性策略。"
+  "notes": "已完成本轮主线落地并进入归档：1) 为 `ProjectConfig` / `StoryContext` 引入结构化上下文容器、挂载派生策略与 `inline_fs` provider；2) Task cloud-native 会话与 Story owner session 已统一从 `Project / Story / Workspace` 派生最终 Address Space；3) 已补齐 Project / Story 的 REST/MCP 上下文配置入口与容器校验；4) Agent 已可通过 runtime tools 直接访问派生出的内联虚拟文件系统内容。后续外部 provider client 已拆分为独立任务 `03-19-external-service-provider-client` 持续规划。"
 }

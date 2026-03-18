@@ -15,9 +15,14 @@ use uuid::Uuid;
 
 use crate::error::McpError;
 use crate::services::McpServices;
+use agentdash_domain::context_container::{
+    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+    validate_disabled_container_ids,
+};
 use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
+use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -33,6 +38,18 @@ pub struct UpdateStoryContextParams {
     pub add_source_refs: Option<Vec<ContextSourceRefInput>>,
     #[schemars(description = "完整替换声明式上下文来源")]
     pub replace_source_refs: Option<Vec<ContextSourceRefInput>>,
+    #[schemars(description = "完整替换 Story 级 context_containers，需传合法 JSON 数组")]
+    pub replace_context_containers: Option<serde_json::Value>,
+    #[schemars(description = "完整替换 disabled_container_ids")]
+    pub replace_disabled_container_ids: Option<Vec<String>>,
+    #[schemars(description = "覆盖 mount_policy_override，需传合法 JSON 对象")]
+    pub mount_policy_override: Option<serde_json::Value>,
+    #[schemars(description = "是否清空 mount_policy_override")]
+    pub clear_mount_policy_override: Option<bool>,
+    #[schemars(description = "覆盖 session_composition_override，需传合法 JSON 对象")]
+    pub session_composition_override: Option<serde_json::Value>,
+    #[schemars(description = "是否清空 session_composition_override")]
+    pub clear_session_composition_override: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -137,6 +154,15 @@ impl StoryMcpServer {
             .ok_or_else(|| McpError::not_found("Story", self.story_id))
     }
 
+    async fn load_project(&self) -> Result<agentdash_domain::project::Project, McpError> {
+        self.services
+            .project_repo
+            .get_by_id(self.project_id)
+            .await
+            .map_err(McpError::from)?
+            .ok_or_else(|| McpError::not_found("Project", self.project_id))
+    }
+
     fn into_context_source(source: ContextSourceRefInput) -> Result<ContextSourceRef, McpError> {
         let kind = match source.kind.as_str() {
             "manual_text" => ContextSourceKind::ManualText,
@@ -214,6 +240,10 @@ impl StoryMcpServer {
                 "spec_refs": story.context.spec_refs,
                 "resource_list": story.context.resource_list,
                 "source_refs": story.context.source_refs,
+                "context_containers": story.context.context_containers,
+                "disabled_container_ids": story.context.disabled_container_ids,
+                "mount_policy_override": story.context.mount_policy_override,
+                "session_composition_override": story.context.session_composition_override,
             },
         });
 
@@ -228,6 +258,7 @@ impl StoryMcpServer {
         Parameters(params): Parameters<UpdateStoryContextParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let mut story = self.load_story().await?;
+        let project = self.load_project().await?;
 
         if let Some(prd) = params.prd_doc {
             story.context.prd_doc = Some(prd);
@@ -266,6 +297,66 @@ impl StoryMcpServer {
             }
         }
 
+        if let Some(raw) = params.replace_context_containers {
+            story.context.context_containers = serde_json::from_value::<
+                Vec<ContextContainerDefinition>,
+            >(raw)
+            .map_err(|error| {
+                McpError::invalid_param(
+                    "replace_context_containers",
+                    format!("无法解析为 ContextContainerDefinition[]: {error}"),
+                )
+            })?;
+        }
+
+        if let Some(disabled_ids) = params.replace_disabled_container_ids {
+            story.context.disabled_container_ids = disabled_ids
+                .into_iter()
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect();
+        }
+
+        if let Some(raw) = params.mount_policy_override {
+            story.context.mount_policy_override = Some(
+                serde_json::from_value::<MountDerivationPolicy>(raw).map_err(|error| {
+                    McpError::invalid_param(
+                        "mount_policy_override",
+                        format!("无法解析为 MountDerivationPolicy: {error}"),
+                    )
+                })?,
+            );
+        }
+
+        if params.clear_mount_policy_override.unwrap_or(false) {
+            story.context.mount_policy_override = None;
+        }
+        if let Some(raw) = params.session_composition_override {
+            story.context.session_composition_override = Some(
+                serde_json::from_value::<SessionComposition>(raw).map_err(|error| {
+                    McpError::invalid_param(
+                        "session_composition_override",
+                        format!("无法解析为 SessionComposition: {error}"),
+                    )
+                })?,
+            );
+        }
+        if params.clear_session_composition_override.unwrap_or(false) {
+            story.context.session_composition_override = None;
+        }
+
+        validate_context_containers(&story.context.context_containers)
+            .map_err(|error| McpError::invalid_param("replace_context_containers", error))?;
+        validate_disabled_container_ids(
+            &story.context.disabled_container_ids,
+            &project.config.context_containers,
+        )
+        .map_err(|error| McpError::invalid_param("replace_disabled_container_ids", error))?;
+        if let Some(session_composition_override) = &story.context.session_composition_override {
+            validate_session_composition(session_composition_override)
+                .map_err(|error| McpError::invalid_param("session_composition_override", error))?;
+        }
+
         story.updated_at = chrono::Utc::now();
 
         self.services
@@ -275,10 +366,16 @@ impl StoryMcpServer {
             .map_err(McpError::from)?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Story {} 上下文已更新（spec_refs: {} 项, resources: {} 项）",
+            "Story {} 上下文已更新（spec_refs: {} 项, resources: {} 项, containers: {} 项, session_override: {}）",
             self.story_id,
             story.context.spec_refs.len(),
             story.context.resource_list.len(),
+            story.context.context_containers.len(),
+            if story.context.session_composition_override.is_some() {
+                "yes"
+            } else {
+                "no"
+            },
         ))]))
     }
 

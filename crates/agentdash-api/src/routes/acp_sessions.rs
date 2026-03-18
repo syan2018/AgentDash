@@ -27,6 +27,10 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::session_plan::{
+    SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
+    resolve_effective_session_composition,
+};
 use crate::task_agent_context::{
     build_declared_source_warning_fragment, resolve_workspace_declared_sources,
 };
@@ -298,8 +302,44 @@ async fn build_story_owner_prompt_request(
     project: &Project,
     workspace: Option<&Workspace>,
 ) -> Result<PromptSessionRequest, ApiError> {
-    let (context_markdown, source_summary) =
-        build_story_context_markdown(state, story, project, workspace).await?;
+    let address_space = match req.address_space.clone() {
+        Some(address_space) => Some(address_space),
+        None => {
+            let agent_type = req
+                .executor_config
+                .as_ref()
+                .map(|config| config.executor.as_str())
+                .or(project.config.default_agent_type.as_deref());
+            Some(
+                state
+                    .address_space_service
+                    .build_story_address_space(project, story, workspace, agent_type)
+                    .map_err(ApiError::BadRequest)?,
+            )
+        }
+    };
+    let effective_agent_type = req
+        .executor_config
+        .as_ref()
+        .map(|config| config.executor.as_str())
+        .or(project.config.default_agent_type.as_deref());
+    let mut effective_mcp_servers = req.mcp_servers.clone();
+    let base_url = state
+        .mcp_base_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    effective_mcp_servers
+        .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
+    let (context_markdown, source_summary) = build_story_context_markdown(
+        state,
+        story,
+        project,
+        workspace,
+        address_space.as_ref(),
+        &effective_mcp_servers,
+        effective_agent_type,
+    )
+    .await?;
 
     let mut prefix_blocks = Vec::new();
     if !context_markdown.trim().is_empty() {
@@ -352,25 +392,10 @@ async fn build_story_owner_prompt_request(
             workspace.map(|item| std::path::PathBuf::from(item.container_ref.clone()));
     }
     if req.address_space.is_none() {
-        let agent_type = req
-            .executor_config
-            .as_ref()
-            .map(|config| config.executor.as_str())
-            .or(project.config.default_agent_type.as_deref());
-        req.address_space = Some(
-            state
-                .address_space_service
-                .build_story_address_space(project, story, workspace, agent_type)
-                .map_err(ApiError::BadRequest)?,
-        );
+        req.address_space = address_space;
     }
 
-    let base_url = state
-        .mcp_base_url
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
-    req.mcp_servers
-        .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
+    req.mcp_servers = effective_mcp_servers;
 
     Ok(req)
 }
@@ -380,6 +405,9 @@ async fn build_story_context_markdown(
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
+    address_space: Option<&agentdash_executor::ExecutionAddressSpace>,
+    mcp_servers: &[agent_client_protocol::McpServer],
+    effective_agent_type: Option<&str>,
 ) -> Result<(String, Vec<String>), ApiError> {
     let mut composer = ContextComposer::default();
     composer.push(
@@ -420,6 +448,22 @@ async fn build_story_context_markdown(
                 trim_or_dash(&workspace.name),
             ),
         );
+    }
+    let effective_session_composition = resolve_effective_session_composition(project, Some(story));
+    let session_plan = build_session_plan_fragments(SessionPlanInput {
+        owner_kind: SessionPlanOwnerKind::StoryOwner,
+        phase: SessionPlanPhase::StoryOwner,
+        address_space,
+        mcp_servers,
+        session_composition: Some(&effective_session_composition),
+        agent_type: effective_agent_type,
+        preset_name: None,
+        has_custom_prompt_template: false,
+        has_initial_context: false,
+        workspace_attached: workspace.is_some(),
+    });
+    for fragment in session_plan.fragments {
+        composer.push_fragment(fragment);
     }
     if let Some(prd) = clean_text(story.context.prd_doc.as_deref()) {
         composer.push(

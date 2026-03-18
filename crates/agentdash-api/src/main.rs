@@ -10,6 +10,7 @@ mod bootstrap;
 mod relay;
 mod routes;
 mod rpc;
+mod session_plan;
 mod stream;
 mod task_agent_context;
 

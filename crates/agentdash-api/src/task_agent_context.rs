@@ -5,6 +5,7 @@ use std::sync::Arc;
 use agent_client_protocol::McpServer;
 use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
+use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{
     ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest,
     resolve_declared_sources,
@@ -15,6 +16,10 @@ use serde_json::{Value, json};
 
 use crate::address_space_access::{ListOptions, ResourceRef};
 use crate::app_state::AppState;
+use crate::session_plan::{
+    SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
+    resolve_effective_session_composition,
+};
 
 // ─── 公共抽象：可扩展的上下文构建框架 ───────────────────────────
 
@@ -430,6 +435,8 @@ pub struct TaskAgentBuildInput<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
+    pub address_space: Option<&'a ExecutionAddressSpace>,
+    pub effective_agent_type: Option<&'a str>,
     pub phase: TaskExecutionPhase,
     pub override_prompt: Option<&'a str>,
     pub additional_prompt: Option<&'a str>,
@@ -476,6 +483,37 @@ pub fn build_task_agent_context(
                 _ => context_composer.push_fragment(fragment),
             }
         }
+    }
+
+    let effective_session_composition =
+        resolve_effective_session_composition(input.project, Some(input.story));
+    let session_plan = build_session_plan_fragments(SessionPlanInput {
+        owner_kind: SessionPlanOwnerKind::TaskExecution,
+        phase: match input.phase {
+            TaskExecutionPhase::Start => SessionPlanPhase::TaskStart,
+            TaskExecutionPhase::Continue => SessionPlanPhase::TaskContinue,
+        },
+        address_space: input.address_space,
+        mcp_servers: &mcp_servers,
+        session_composition: Some(&effective_session_composition),
+        agent_type: input.effective_agent_type,
+        preset_name: input.task.agent_binding.preset_name.as_deref(),
+        has_custom_prompt_template: input
+            .task
+            .agent_binding
+            .prompt_template
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+        has_initial_context: input
+            .task
+            .agent_binding
+            .initial_context
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+        workspace_attached: input.workspace.is_some(),
+    });
+    for fragment in session_plan.fragments {
+        context_composer.push_fragment(fragment);
     }
 
     let (context_prompt, mut source_summary) = context_composer.compose();
@@ -1054,6 +1092,8 @@ mod tests {
                 story: &story,
                 project: &project,
                 workspace: None,
+                address_space: None,
+                effective_agent_type: None,
                 phase: TaskExecutionPhase::Start,
                 override_prompt: None,
                 additional_prompt: None,
@@ -1173,6 +1213,8 @@ mod tests {
                 story: &story,
                 project: &project,
                 workspace: Some(&workspace),
+                address_space: None,
+                effective_agent_type: None,
                 phase: TaskExecutionPhase::Start,
                 override_prompt: None,
                 additional_prompt: None,
@@ -1187,6 +1229,60 @@ mod tests {
             .expect("resource block text");
         assert!(context_block.contains("这是 Story 级需求摘要"));
         assert!(context_block.contains("请严格遵守接口约束"));
+    }
+
+    #[test]
+    fn address_space_summary_is_included_in_task_context() {
+        let task = Task::new(uuid::Uuid::new_v4(), "task".into(), "desc".into());
+        let story = Story::new(
+            uuid::Uuid::new_v4(),
+            "backend".into(),
+            "story".into(),
+            "story desc".into(),
+        );
+        let project = Project::new("proj".into(), "desc".into(), "backend".into());
+        let registry = ContextContributorRegistry::with_builtins();
+        let address_space = ExecutionAddressSpace {
+            mounts: vec![agentdash_executor::ExecutionMount {
+                id: "spec".to_string(),
+                provider: "inline_fs".to_string(),
+                backend_id: String::new(),
+                root_ref: "context://inline/spec".to_string(),
+                capabilities: vec![
+                    agentdash_executor::ExecutionMountCapability::Read,
+                    agentdash_executor::ExecutionMountCapability::List,
+                ],
+                default_write: false,
+                display_name: "规范容器".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("spec".to_string()),
+        };
+
+        let result = build_task_agent_context(
+            TaskAgentBuildInput {
+                task: &task,
+                story: &story,
+                project: &project,
+                workspace: None,
+                address_space: Some(&address_space),
+                effective_agent_type: Some("PI_AGENT"),
+                phase: TaskExecutionPhase::Start,
+                override_prompt: None,
+                additional_prompt: None,
+                extra_contributors: vec![],
+            },
+            &registry,
+        )
+        .expect("should build context");
+
+        let context_block = result.prompt_blocks[0]["resource"]["text"]
+            .as_str()
+            .expect("resource block text");
+        assert!(context_block.contains("## Address Space"));
+        assert!(context_block.contains("`spec`: 规范容器"));
+        assert!(context_block.contains("## Tool Visibility"));
+        assert!(context_block.contains("`mounts_list`"));
     }
 
     #[test]

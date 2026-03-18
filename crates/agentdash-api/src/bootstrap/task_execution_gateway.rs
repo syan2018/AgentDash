@@ -139,12 +139,41 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             extra_contributors.push(Box::new(McpContextContributor::new(config)));
         }
 
+        let session_id = task
+            .session_id
+            .as_deref()
+            .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
+
+        let resolved_config = resolve_task_executor_config(executor_config, task, &project)
+            .map_err(map_internal_error)?;
+
+        let use_cloud_native_agent = resolved_config
+            .as_ref()
+            .is_some_and(|config| config.is_native_agent());
+        let address_space = if use_cloud_native_agent {
+            let agent_type = resolved_config
+                .as_ref()
+                .map(|config| config.executor.as_str());
+            Some(
+                self.state
+                    .address_space_service
+                    .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
+                    .map_err(map_internal_error)?,
+            )
+        } else {
+            None
+        };
+
         let built = build_task_agent_context(
             TaskAgentBuildInput {
                 task,
                 story: &story,
                 project: &project,
                 workspace: workspace.as_ref(),
+                address_space: address_space.as_ref(),
+                effective_agent_type: resolved_config
+                    .as_ref()
+                    .map(|config| config.executor.as_str()),
                 phase: match phase {
                     ExecutionPhase::Start => TaskExecutionPhase::Start,
                     ExecutionPhase::Continue => TaskExecutionPhase::Continue,
@@ -157,31 +186,10 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         )
         .map_err(TaskExecutionError::UnprocessableEntity)?;
 
-        let session_id = task
-            .session_id
-            .as_deref()
-            .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
-
-        let resolved_config = resolve_task_executor_config(executor_config, task, &project)
-            .map_err(map_internal_error)?;
-
-        let use_cloud_native_agent = resolved_config
-            .as_ref()
-            .is_some_and(|config| config.is_native_agent());
-
         if use_cloud_native_agent {
             let workspace_root = workspace
                 .as_ref()
                 .map(|item| std::path::PathBuf::from(item.container_ref.clone()));
-            let agent_type = resolved_config
-                .as_ref()
-                .map(|config| config.executor.as_str());
-            let address_space = self
-                .state
-                .address_space_service
-                .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
-                .map(Some)
-                .map_err(map_internal_error)?;
             let prompt_req = PromptSessionRequest {
                 prompt: None,
                 prompt_blocks: Some(built.prompt_blocks),

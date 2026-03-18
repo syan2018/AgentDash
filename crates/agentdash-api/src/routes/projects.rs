@@ -5,7 +5,11 @@ use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_domain::context_container::{
+    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+};
 use agentdash_domain::project::{Project, ProjectConfig};
+use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
 use agentdash_domain::story::Story;
 use agentdash_domain::workspace::Workspace;
 
@@ -18,6 +22,9 @@ pub struct CreateProjectRequest {
     pub description: Option<String>,
     pub backend_id: String,
     pub config: Option<ProjectConfig>,
+    pub context_containers: Option<Vec<ContextContainerDefinition>>,
+    pub mount_policy: Option<MountDerivationPolicy>,
+    pub session_composition: Option<SessionComposition>,
 }
 
 #[derive(Deserialize)]
@@ -26,6 +33,9 @@ pub struct UpdateProjectRequest {
     pub description: Option<String>,
     pub backend_id: Option<String>,
     pub config: Option<ProjectConfig>,
+    pub context_containers: Option<Vec<ContextContainerDefinition>>,
+    pub mount_policy: Option<MountDerivationPolicy>,
+    pub session_composition: Option<SessionComposition>,
 }
 
 #[derive(Serialize)]
@@ -55,6 +65,16 @@ pub async fn create_project(
     if let Some(config) = req.config {
         project.config = config;
     }
+    if let Some(context_containers) = req.context_containers {
+        project.config.context_containers = context_containers;
+    }
+    if let Some(mount_policy) = req.mount_policy {
+        project.config.mount_policy = mount_policy;
+    }
+    if let Some(session_composition) = req.session_composition {
+        project.config.session_composition = session_composition;
+    }
+    validate_project_config(&project.config)?;
     state.project_repo.create(&project).await?;
     Ok(Json(project))
 }
@@ -108,6 +128,17 @@ pub async fn update_project(
     if let Some(config) = req.config {
         project.config = config;
     }
+    if let Some(context_containers) = req.context_containers {
+        project.config.context_containers = context_containers;
+    }
+    if let Some(mount_policy) = req.mount_policy {
+        project.config.mount_policy = mount_policy;
+    }
+    if let Some(session_composition) = req.session_composition {
+        project.config.session_composition = session_composition;
+    }
+
+    validate_project_config(&project.config)?;
 
     state.project_repo.update(&project).await?;
     Ok(Json(project))
@@ -137,4 +168,10 @@ pub async fn delete_project(
 
     state.project_repo.delete(project_id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
+}
+
+fn validate_project_config(config: &ProjectConfig) -> Result<(), ApiError> {
+    validate_context_containers(&config.context_containers).map_err(ApiError::BadRequest)?;
+    validate_session_composition(&config.session_composition).map_err(ApiError::BadRequest)?;
+    Ok(())
 }

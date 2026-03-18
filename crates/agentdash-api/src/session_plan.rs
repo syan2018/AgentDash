@@ -1,0 +1,693 @@
+use agent_client_protocol::McpServer;
+use agentdash_domain::project::Project;
+use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
+use agentdash_domain::story::Story;
+use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
+use agentdash_injection::{ContextFragment, MergeStrategy};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionPlanOwnerKind {
+    TaskExecution,
+    StoryOwner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionPlanPhase {
+    TaskStart,
+    TaskContinue,
+    StoryOwner,
+}
+
+pub struct SessionAddressSpaceSummary {
+    pub markdown: String,
+    pub default_mount_id: Option<String>,
+    pub mount_ids: Vec<String>,
+}
+
+pub struct SessionToolVisibilitySummary {
+    pub markdown: String,
+    pub tool_names: Vec<String>,
+}
+
+pub struct SessionPlanInput<'a> {
+    pub owner_kind: SessionPlanOwnerKind,
+    pub phase: SessionPlanPhase,
+    pub address_space: Option<&'a ExecutionAddressSpace>,
+    pub mcp_servers: &'a [McpServer],
+    pub session_composition: Option<&'a SessionComposition>,
+    pub agent_type: Option<&'a str>,
+    pub preset_name: Option<&'a str>,
+    pub has_custom_prompt_template: bool,
+    pub has_initial_context: bool,
+    pub workspace_attached: bool,
+}
+
+pub struct SessionPlanFragments {
+    pub fragments: Vec<ContextFragment>,
+}
+
+pub fn resolve_effective_session_composition(
+    project: &Project,
+    story: Option<&Story>,
+) -> SessionComposition {
+    let mut effective = project.config.session_composition.clone();
+
+    if let Some(override_config) =
+        story.and_then(|item| item.context.session_composition_override.as_ref())
+    {
+        if let Some(persona_label) = override_config.persona_label.clone() {
+            effective.persona_label = Some(persona_label);
+        }
+        if let Some(persona_prompt) = override_config.persona_prompt.clone() {
+            effective.persona_prompt = Some(persona_prompt);
+        }
+        if !override_config.workflow_steps.is_empty() {
+            effective.workflow_steps = override_config.workflow_steps.clone();
+        }
+        if !override_config.required_context_blocks.is_empty() {
+            effective.required_context_blocks = override_config.required_context_blocks.clone();
+        }
+    }
+
+    effective
+}
+
+pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanFragments {
+    let mut fragments = Vec::new();
+
+    let mount_ids = if let Some(address_space) = input.address_space {
+        let summary = summarize_address_space(address_space);
+        fragments.push(ContextFragment {
+            slot: "address_space",
+            label: "address_space_summary",
+            order: 35,
+            strategy: MergeStrategy::Append,
+            content: summary.markdown,
+        });
+        summary.mount_ids
+    } else {
+        Vec::new()
+    };
+
+    let tool_visibility = summarize_tool_visibility(input.address_space, input.mcp_servers);
+    let tool_names = tool_visibility.tool_names.clone();
+    fragments.push(ContextFragment {
+        slot: "tools",
+        label: "tool_visibility_summary",
+        order: 36,
+        strategy: MergeStrategy::Append,
+        content: tool_visibility.markdown,
+    });
+
+    fragments.push(ContextFragment {
+        slot: "persona",
+        label: "persona_summary",
+        order: 37,
+        strategy: MergeStrategy::Append,
+        content: build_persona_markdown(&input),
+    });
+
+    for (index, block) in input
+        .session_composition
+        .map(|item| item.required_context_blocks.as_slice())
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+    {
+        fragments.push(ContextFragment {
+            slot: "required_context",
+            label: "required_context_block",
+            order: 38 + index as i32,
+            strategy: MergeStrategy::Append,
+            content: build_required_context_block_markdown(block),
+        });
+    }
+
+    fragments.push(ContextFragment {
+        slot: "workflow",
+        label: "workflow_summary",
+        order: 48,
+        strategy: MergeStrategy::Append,
+        content: build_workflow_markdown(&input),
+    });
+
+    fragments.push(ContextFragment {
+        slot: "runtime_policy",
+        label: "runtime_policy_summary",
+        order: 49,
+        strategy: MergeStrategy::Append,
+        content: build_runtime_policy_markdown(&input, &tool_names, &mount_ids),
+    });
+
+    SessionPlanFragments { fragments }
+}
+
+pub fn summarize_address_space(
+    address_space: &ExecutionAddressSpace,
+) -> SessionAddressSpaceSummary {
+    let default_mount_id = address_space.default_mount_id.clone();
+    let mount_ids = address_space
+        .mounts
+        .iter()
+        .map(|mount| mount.id.clone())
+        .collect::<Vec<_>>();
+
+    let markdown = if address_space.mounts.is_empty() {
+        "## Address Space\n- 当前会话未挂载可访问的 mount".to_string()
+    } else {
+        let default_mount = default_mount_id.as_deref().unwrap_or("-");
+        let mount_lines = address_space
+            .mounts
+            .iter()
+            .map(render_mount_summary)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            "## Address Space\n- default_mount: `{default_mount}`\n- mount_count: {}\n- usage: 访问文件时优先使用 `mount + 相对路径`；如无特殊说明，默认 mount 为 `{default_mount}`。\n\n### Mounts\n{}",
+            address_space.mounts.len(),
+            mount_lines
+        )
+    };
+
+    SessionAddressSpaceSummary {
+        markdown,
+        default_mount_id,
+        mount_ids,
+    }
+}
+
+pub fn summarize_tool_visibility(
+    address_space: Option<&ExecutionAddressSpace>,
+    mcp_servers: &[McpServer],
+) -> SessionToolVisibilitySummary {
+    let mut tool_names = if let Some(address_space) = address_space {
+        runtime_address_space_tools(address_space)
+    } else {
+        vec![
+            "read_file".to_string(),
+            "write_file".to_string(),
+            "list_directory".to_string(),
+            "search".to_string(),
+            "shell".to_string(),
+        ]
+    };
+
+    let toolset_label = if address_space.is_some() {
+        "address_space_runtime"
+    } else {
+        "workspace_builtin"
+    };
+
+    let mut sections = vec![format!(
+        "## Tool Visibility\n- toolset: `{toolset_label}`\n- tools: {}\n- guidance: 优先使用当前会话声明的工具访问上下文，不要臆测文件内容、工具能力或 mounts。",
+        if tool_names.is_empty() {
+            "-".to_string()
+        } else {
+            tool_names
+                .iter()
+                .map(|tool| format!("`{tool}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    )];
+
+    if !mcp_servers.is_empty() {
+        sections.push(format!(
+            "### MCP Servers\n{}",
+            mcp_servers
+                .iter()
+                .map(render_mcp_server_summary)
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+        tool_names.push("mcp_tools".to_string());
+    }
+
+    SessionToolVisibilitySummary {
+        markdown: sections.join("\n\n"),
+        tool_names,
+    }
+}
+
+fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
+    let role_label = match input.owner_kind {
+        SessionPlanOwnerKind::TaskExecution => "task_execution",
+        SessionPlanOwnerKind::StoryOwner => "story_owner",
+    };
+    let role_description = match input.owner_kind {
+        SessionPlanOwnerKind::TaskExecution => {
+            "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报"
+        }
+        SessionPlanOwnerKind::StoryOwner => {
+            "Story 主代理，负责整理上下文、推进 Story、拆解并创建 Task"
+        }
+    };
+    let identity = input
+        .agent_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unspecified");
+    let preset_name = input
+        .preset_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+    let configured_persona_label = input
+        .session_composition
+        .and_then(|composition| composition.persona_label.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+    let configured_persona_prompt = input
+        .session_composition
+        .and_then(|composition| composition.persona_prompt.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let mut markdown = format!(
+        "## Persona\n- role: `{role_label}`\n- identity: `{identity}`\n- preset: `{preset_name}`\n- custom_prompt_template: {}\n- initial_context: {}\n- responsibility: {}",
+        yes_no(input.has_custom_prompt_template),
+        yes_no(input.has_initial_context),
+        role_description
+    );
+
+    markdown.push_str(&format!(
+        "\n- configured_persona: `{configured_persona_label}`"
+    ));
+
+    if let Some(persona_prompt) = configured_persona_prompt {
+        markdown.push_str(&format!("\n\n### Persona Prompt\n{persona_prompt}"));
+    }
+
+    markdown
+}
+
+fn build_workflow_markdown(input: &SessionPlanInput<'_>) -> String {
+    let (phase_label, default_actions) = match input.phase {
+        SessionPlanPhase::TaskStart => (
+            "task_start",
+            vec![
+                "先理解任务、Story、上下文容器与工具边界".to_string(),
+                "优先用声明的 mounts 和 tools 读取信息，不要猜测".to_string(),
+                "完成实现后明确说明验证结果与剩余风险".to_string(),
+            ],
+        ),
+        SessionPlanPhase::TaskContinue => (
+            "task_continue",
+            vec![
+                "延续现有会话上下文，优先收敛未完成项".to_string(),
+                "先核对已有 mounts、tools、上次执行状态，再继续推进".to_string(),
+                "输出本轮新增进展与下一步建议".to_string(),
+            ],
+        ),
+        SessionPlanPhase::StoryOwner => (
+            "story_owner",
+            vec![
+                "围绕 Story 目标持续补全上下文".to_string(),
+                "按需利用 MCP 与虚拟容器维护 Story/Task 编排".to_string(),
+                "拆解任务时明确每个 Task 需要的上下文、工具与工作目录".to_string(),
+            ],
+        ),
+    };
+    let configured_actions = input
+        .session_composition
+        .map(|composition| composition.workflow_steps.as_slice())
+        .unwrap_or(&[]);
+    let required_actions = if configured_actions.is_empty() {
+        default_actions
+    } else {
+        configured_actions.to_vec()
+    };
+
+    format!(
+        "## Workflow\n- phase: `{phase_label}`\n{}\n- invariant: 必须把当前会话可见的 mounts、tools、workflow 约束视为显式输入，而不是隐式假设。",
+        required_actions
+            .iter()
+            .map(|item| format!("- action: {item}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+fn build_required_context_block_markdown(block: &SessionRequiredContextBlock) -> String {
+    format!("## {}\n{}", block.title.trim(), block.content.trim())
+}
+
+fn build_runtime_policy_markdown(
+    input: &SessionPlanInput<'_>,
+    tool_names: &[String],
+    mount_ids: &[String],
+) -> String {
+    let writable_mounts = input
+        .address_space
+        .map(|address_space| {
+            address_space
+                .mounts
+                .iter()
+                .filter(|mount| mount.supports(ExecutionMountCapability::Write))
+                .map(|mount| format!("`{}`", mount.id))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let exec_mounts = input
+        .address_space
+        .map(|address_space| {
+            address_space
+                .mounts
+                .iter()
+                .filter(|mount| mount.supports(ExecutionMountCapability::Exec))
+                .map(|mount| format!("`{}`", mount.id))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let path_policy = if input.address_space.is_some() {
+        "使用 `mount + 相对路径` 访问资源"
+    } else {
+        "使用相对工作空间路径访问资源"
+    };
+
+    format!(
+        "## Runtime Policy\n- workspace_attached: {}\n- address_space_attached: {}\n- mcp_enabled: {}\n- visible_mounts: {}\n- visible_tools: {}\n- writable_mounts: {}\n- exec_mounts: {}\n- path_policy: {}",
+        yes_no(input.workspace_attached),
+        yes_no(input.address_space.is_some()),
+        yes_no(!input.mcp_servers.is_empty()),
+        display_list(mount_ids),
+        display_list(tool_names),
+        display_list(&writable_mounts),
+        display_list(&exec_mounts),
+        path_policy
+    )
+}
+
+fn render_mount_summary(mount: &ExecutionMount) -> String {
+    let capabilities = mount
+        .capabilities
+        .iter()
+        .map(render_capability)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut lines = vec![format!(
+        "- `{}`: {}（provider={}, capabilities=[{}]）",
+        mount.id,
+        fallback_display_name(mount),
+        mount.provider,
+        capabilities
+    )];
+
+    if !mount.root_ref.trim().is_empty() {
+        lines.push(format!("  - root_ref: `{}`", mount.root_ref));
+    }
+    if !mount.backend_id.trim().is_empty() {
+        lines.push(format!("  - backend_id: `{}`", mount.backend_id));
+    }
+    if mount.default_write {
+        lines.push("  - default_write: true".to_string());
+    }
+
+    if let Some(service_id) = mount
+        .metadata
+        .get("service_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+    {
+        lines.push(format!("  - service_id: `{service_id}`"));
+    }
+
+    lines.join("\n")
+}
+
+fn fallback_display_name(mount: &ExecutionMount) -> &str {
+    let trimmed = mount.display_name.trim();
+    if trimmed.is_empty() {
+        mount.id.as_str()
+    } else {
+        trimmed
+    }
+}
+
+fn render_capability(capability: &ExecutionMountCapability) -> &'static str {
+    match capability {
+        ExecutionMountCapability::Read => "read",
+        ExecutionMountCapability::Write => "write",
+        ExecutionMountCapability::List => "list",
+        ExecutionMountCapability::Search => "search",
+        ExecutionMountCapability::Exec => "exec",
+    }
+}
+
+fn runtime_address_space_tools(address_space: &ExecutionAddressSpace) -> Vec<String> {
+    let mut tools = vec![
+        "mounts_list".to_string(),
+        "fs_read".to_string(),
+        "fs_list".to_string(),
+        "fs_search".to_string(),
+    ];
+    if address_space
+        .mounts
+        .iter()
+        .any(|mount| mount.supports(ExecutionMountCapability::Write))
+    {
+        tools.push("fs_write".to_string());
+    }
+    if address_space
+        .mounts
+        .iter()
+        .any(|mount| mount.supports(ExecutionMountCapability::Exec))
+    {
+        tools.push("shell_exec".to_string());
+    }
+    tools
+}
+
+fn render_mcp_server_summary(server: &McpServer) -> String {
+    match server {
+        McpServer::Http(item) => format!("- `{}`: http `{}`", item.name, item.url),
+        McpServer::Sse(item) => format!("- `{}`: sse `{}`", item.name, item.url),
+        McpServer::Stdio(item) => {
+            format!("- `{}`: stdio `{}`", item.name, item.command.display())
+        }
+        _ => "- `unknown-mcp`: unsupported transport".to_string(),
+    }
+}
+
+fn display_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::project::Project;
+    use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
+    use agentdash_domain::story::Story;
+    use serde_json::json;
+
+    #[test]
+    fn summarize_address_space_includes_mount_details() {
+        let address_space = ExecutionAddressSpace {
+            mounts: vec![
+                ExecutionMount {
+                    id: "main".to_string(),
+                    provider: "relay_fs".to_string(),
+                    backend_id: "backend-a".to_string(),
+                    root_ref: "/workspace/repo".to_string(),
+                    capabilities: vec![
+                        ExecutionMountCapability::Read,
+                        ExecutionMountCapability::List,
+                        ExecutionMountCapability::Exec,
+                    ],
+                    default_write: false,
+                    display_name: "主工作空间".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+                ExecutionMount {
+                    id: "km".to_string(),
+                    provider: "external_service".to_string(),
+                    backend_id: String::new(),
+                    root_ref: "tenant://project/km".to_string(),
+                    capabilities: vec![
+                        ExecutionMountCapability::Read,
+                        ExecutionMountCapability::Search,
+                    ],
+                    default_write: false,
+                    display_name: "知识库".to_string(),
+                    metadata: json!({ "service_id": "km-gateway" }),
+                },
+            ],
+            default_mount_id: Some("main".to_string()),
+        };
+
+        let summary = summarize_address_space(&address_space);
+
+        assert_eq!(summary.default_mount_id.as_deref(), Some("main"));
+        assert_eq!(
+            summary.mount_ids,
+            vec!["main".to_string(), "km".to_string()]
+        );
+        assert!(summary.markdown.contains("default_mount: `main`"));
+        assert!(summary.markdown.contains("`main`: 主工作空间"));
+        assert!(summary.markdown.contains("service_id: `km-gateway`"));
+    }
+
+    #[test]
+    fn summarize_tool_visibility_includes_runtime_and_mcp_tools() {
+        let address_space = ExecutionAddressSpace {
+            mounts: vec![ExecutionMount {
+                id: "main".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend-a".to_string(),
+                root_ref: "/workspace/repo".to_string(),
+                capabilities: vec![
+                    ExecutionMountCapability::Read,
+                    ExecutionMountCapability::List,
+                    ExecutionMountCapability::Search,
+                    ExecutionMountCapability::Write,
+                    ExecutionMountCapability::Exec,
+                ],
+                default_write: true,
+                display_name: "主工作空间".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+        };
+        let mcp_servers = vec![
+            serde_json::from_value::<McpServer>(json!({
+                "type": "http",
+                "name": "agentdash-story-tools",
+                "url": "http://127.0.0.1:3001/mcp/story/123",
+                "headers": []
+            }))
+            .expect("valid mcp server"),
+        ];
+
+        let summary = summarize_tool_visibility(Some(&address_space), &mcp_servers);
+
+        assert!(summary.tool_names.contains(&"mounts_list".to_string()));
+        assert!(summary.tool_names.contains(&"fs_write".to_string()));
+        assert!(summary.tool_names.contains(&"shell_exec".to_string()));
+        assert!(summary.tool_names.contains(&"mcp_tools".to_string()));
+        assert!(summary.markdown.contains("## Tool Visibility"));
+        assert!(summary.markdown.contains("`agentdash-story-tools`"));
+    }
+
+    #[test]
+    fn build_session_plan_fragments_includes_persona_workflow_and_runtime_policy() {
+        let address_space = ExecutionAddressSpace {
+            mounts: vec![ExecutionMount {
+                id: "main".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend-a".to_string(),
+                root_ref: "/workspace/repo".to_string(),
+                capabilities: vec![
+                    ExecutionMountCapability::Read,
+                    ExecutionMountCapability::List,
+                    ExecutionMountCapability::Search,
+                ],
+                default_write: false,
+                display_name: "主工作空间".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+        };
+
+        let built = build_session_plan_fragments(SessionPlanInput {
+            owner_kind: SessionPlanOwnerKind::TaskExecution,
+            phase: SessionPlanPhase::TaskStart,
+            address_space: Some(&address_space),
+            mcp_servers: &[],
+            session_composition: Some(&SessionComposition {
+                persona_label: Some("实现代理".to_string()),
+                persona_prompt: Some("优先核对 mount 摘要，再动手实现".to_string()),
+                workflow_steps: vec![
+                    "先读取项目容器摘要".to_string(),
+                    "完成实现后回报验证结果".to_string(),
+                ],
+                required_context_blocks: vec![SessionRequiredContextBlock {
+                    title: "必读约束".to_string(),
+                    content: "所有路径必须通过 mount + 相对路径访问".to_string(),
+                }],
+            }),
+            agent_type: Some("PI_AGENT"),
+            preset_name: Some("default"),
+            has_custom_prompt_template: true,
+            has_initial_context: true,
+            workspace_attached: true,
+        });
+
+        let merged = built
+            .fragments
+            .iter()
+            .map(|fragment| fragment.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        assert!(merged.contains("## Persona"));
+        assert!(merged.contains("identity: `PI_AGENT`"));
+        assert!(merged.contains("configured_persona: `实现代理`"));
+        assert!(merged.contains("优先核对 mount 摘要，再动手实现"));
+        assert!(merged.contains("## 必读约束"));
+        assert!(merged.contains("## Workflow"));
+        assert!(merged.contains("先读取项目容器摘要"));
+        assert!(merged.contains("## Runtime Policy"));
+        assert!(merged.contains("workspace_attached: yes"));
+    }
+
+    #[test]
+    fn resolve_effective_session_composition_merges_project_default_and_story_override() {
+        let mut project = Project::new(
+            "demo".to_string(),
+            "desc".to_string(),
+            "backend".to_string(),
+        );
+        project.config.session_composition = SessionComposition {
+            persona_label: Some("项目级角色".to_string()),
+            persona_prompt: Some("默认先读项目规则".to_string()),
+            workflow_steps: vec!["项目级步骤".to_string()],
+            required_context_blocks: vec![SessionRequiredContextBlock {
+                title: "项目级上下文".to_string(),
+                content: "项目默认约束".to_string(),
+            }],
+        };
+
+        let mut story = Story::new(
+            project.id,
+            "backend".to_string(),
+            "story".to_string(),
+            "desc".to_string(),
+        );
+        story.context.session_composition_override = Some(SessionComposition {
+            persona_label: Some("故事级角色".to_string()),
+            persona_prompt: None,
+            workflow_steps: vec!["故事级步骤".to_string()],
+            required_context_blocks: vec![SessionRequiredContextBlock {
+                title: "故事级上下文".to_string(),
+                content: "故事补充说明".to_string(),
+            }],
+        });
+
+        let effective = resolve_effective_session_composition(&project, Some(&story));
+
+        assert_eq!(effective.persona_label.as_deref(), Some("故事级角色"));
+        assert_eq!(
+            effective.persona_prompt.as_deref(),
+            Some("默认先读项目规则")
+        );
+        assert_eq!(effective.workflow_steps, vec!["故事级步骤".to_string()]);
+        assert_eq!(
+            effective.required_context_blocks,
+            vec![SessionRequiredContextBlock {
+                title: "故事级上下文".to_string(),
+                content: "故事补充说明".to_string(),
+            }]
+        );
+    }
+}

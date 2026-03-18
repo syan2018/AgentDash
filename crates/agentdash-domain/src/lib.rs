@@ -4,6 +4,7 @@ pub mod context_container;
 pub mod context_source;
 pub mod project;
 pub mod session_binding;
+pub mod session_composition;
 pub mod settings;
 pub mod story;
 pub mod task;

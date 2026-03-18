@@ -13,6 +13,10 @@ use uuid::Uuid;
 
 use crate::error::McpError;
 use crate::services::McpServices;
+use agentdash_domain::context_container::{
+    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+};
+use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -62,6 +66,18 @@ pub struct UpdateStoryStatusParams {
         description = "目标状态：created / context_ready / decomposed / executing / completed / failed / cancelled"
     )]
     pub status: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UpdateProjectContextConfigParams {
+    #[schemars(description = "项目 UUID")]
+    pub project_id: String,
+    #[schemars(description = "完整替换项目级 context_containers，需传合法 JSON 数组")]
+    pub context_containers: Option<serde_json::Value>,
+    #[schemars(description = "覆盖项目级 mount_policy，需传合法 JSON 对象")]
+    pub mount_policy: Option<serde_json::Value>,
+    #[schemars(description = "覆盖项目级 session_composition，需传合法 JSON 对象")]
+    pub session_composition: Option<serde_json::Value>,
 }
 
 // ─── Server 定义 ──────────────────────────────────────────────
@@ -341,6 +357,76 @@ impl RelayMcpServer {
             "Story {} 状态已更新为 {}",
             story_id, params.status
         ))]))
+    }
+
+    #[tool(description = "更新 Project 的上下文容器与挂载策略配置")]
+    async fn update_project_context_config(
+        &self,
+        Parameters(params): Parameters<UpdateProjectContextConfigParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
+
+        let mut project = self
+            .services
+            .project_repo
+            .get_by_id(project_id)
+            .await
+            .map_err(McpError::from)?
+            .ok_or_else(|| McpError::not_found("Project", &params.project_id))?;
+
+        if let Some(raw) = params.context_containers {
+            project.config.context_containers = serde_json::from_value::<
+                Vec<ContextContainerDefinition>,
+            >(raw)
+            .map_err(|error| {
+                McpError::invalid_param(
+                    "context_containers",
+                    format!("无法解析为 ContextContainerDefinition[]: {error}"),
+                )
+            })?;
+        }
+
+        if let Some(raw) = params.mount_policy {
+            project.config.mount_policy = serde_json::from_value::<MountDerivationPolicy>(raw)
+                .map_err(|error| {
+                    McpError::invalid_param(
+                        "mount_policy",
+                        format!("无法解析为 MountDerivationPolicy: {error}"),
+                    )
+                })?;
+        }
+        if let Some(raw) = params.session_composition {
+            project.config.session_composition = serde_json::from_value::<SessionComposition>(raw)
+                .map_err(|error| {
+                    McpError::invalid_param(
+                        "session_composition",
+                        format!("无法解析为 SessionComposition: {error}"),
+                    )
+                })?;
+        }
+
+        validate_context_containers(&project.config.context_containers)
+            .map_err(|error| McpError::invalid_param("context_containers", error))?;
+        validate_session_composition(&project.config.session_composition)
+            .map_err(|error| McpError::invalid_param("session_composition", error))?;
+
+        project.updated_at = chrono::Utc::now();
+        self.services
+            .project_repo
+            .update(&project)
+            .await
+            .map_err(McpError::from)?;
+
+        let result = serde_json::json!({
+            "project_id": project.id.to_string(),
+            "context_container_count": project.config.context_containers.len(),
+            "mount_policy": project.config.mount_policy,
+            "session_composition": project.config.session_composition,
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
     }
 }
 

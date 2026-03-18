@@ -1516,7 +1516,10 @@ mod tests {
         let mount = &address_space.mounts[0];
         assert_eq!(mount.id, "shared");
         let files = inline_files_from_mount(mount).expect("inline files");
-        assert_eq!(files.get("spec.md").map(String::as_str), Some("story override"));
+        assert_eq!(
+            files.get("spec.md").map(String::as_str),
+            Some("story override")
+        );
     }
 
     #[tokio::test]

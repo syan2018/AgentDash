@@ -1,0 +1,48 @@
+{
+  "id": "03-19-unified-context-composer-and-session-plan",
+  "name": "03-19-unified-context-composer-and-session-plan",
+  "title": "设计统一 Context Composer 与会话编排器",
+  "description": "设计更完整的上下文 composer，统一编排 mounts、tools、agent 身份、强制工作流信息与声明式上下文注入。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "codex",
+  "createdAt": "2026-03-19",
+  "completedAt": "2026-03-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/spec/backend/address-space-access.md",
+    ".trellis/tasks/archive/2026-03/03-18-project-virtual-workspace-provider-service/prd.md",
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent.rs"
+  ],
+  "notes": "已完成第一版落地并进入归档：1) 新增统一 `session_plan` builder，收口 address space summary、tool visibility、persona、workflow、runtime policy 注入；2) 引入 `SessionComposition` 结构，支持 `Project` 默认配置与 `Story` 覆盖配置的分层合成；3) Task 执行链与 Story owner session 已统一消费该 planner；4) `required_context_blocks` 已作为显式上下文片段注入 prompt/resource。后续若继续扩展更细粒度工具裁剪、用户自定义身份模板和 session plan 数据对象，可在此基础上继续迭代。"
+}

@@ -1,0 +1,51 @@
+{
+  "id": "unified-address-space-agent-access",
+  "name": "unified-address-space-agent-access",
+  "title": "统一 Address Space 与 Agent 访问层规划",
+  "description": "规划统一的 Address Space / Agent 访问层，收敛运行时工具访问、声明式上下文来源、多 workspace 与非物理 workspace（如 KM 文件化视图）到同一套抽象。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-api/src/app_state.rs",
+    "crates/agentdash-api/src/task_agent_context.rs",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-local/src/command_handler.rs",
+    "crates/agentdash-local/src/tool_executor.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent.rs",
+    "crates/agentdash-relay/src/protocol.rs",
+    "docs/relay-protocol.md",
+    "docs/modules/09-relay.md"
+  ],
+  "notes": "作为统一规划母任务，覆盖 Address Space 抽象、运行时工具协议、多 workspace 挂载、KM 等非物理 workspace 的文件化映射，以及与 context provider / source resolver 的融合路径。"
+}

@@ -73,6 +73,7 @@ Agent完成 → ExecutionManager.reportCompletion(taskId)
 | Validation ↔ Orchestration | 验证失败后的重试vs暂停决策 |
 | Backend ↔ Frontend | 实时状态推送协议、断线重连 |
 | Connection ↔ State | 多后端数据隔离、会话失效 |
+| Cloud ↔ Local Address Space | mount 语义不一致、绝对路径泄漏、context 与 runtime tool 分叉 |
 <!-- PROJECT-SPECIFIC-END -->
 
 ### Step 3: Define Contracts
@@ -266,6 +267,8 @@ After implementation:
 **实现前：**
 - [ ] 确认不会绕过 StateManager 进行状态修改
 - [ ] 确认视图操作不会影响 Story/Task 核心状态
+- [ ] 若功能涉及云端/本机文件访问、上下文注入或多 workspace，先定义统一的 mount / provider / capability 边界，再决定协议与工具面
+  参考：`backend/address-space-access.md`
 
 **实现后：**
 - [ ] 验证 StateChange 历史完整记录

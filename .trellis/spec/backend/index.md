@@ -118,6 +118,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | ✅ 已更新（整洁架构分层） |
 | [Repository Pattern](./repository-pattern.md) | Repository trait 定义、依赖注入、测试 | ✅ 已创建 |
 | [ACP Meta Warp](./acp-meta-warp.md) | ACP `_meta.agentdash` 跨层契约（可扩展消息语义层） | ✅ 已更新 |
+| [Address Space Access](./address-space-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |

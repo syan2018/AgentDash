@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::context_container::{ContextContainerDefinition, MountDerivationPolicy};
 use crate::context_source::ContextSourceRef;
 
 /// Story 状态枚举
@@ -56,6 +57,15 @@ pub struct StoryContext {
     /// 声明式上下文来源
     #[serde(default)]
     pub source_refs: Vec<ContextSourceRef>,
+    /// Story 级上下文容器定义
+    #[serde(default)]
+    pub context_containers: Vec<ContextContainerDefinition>,
+    /// 显式禁用的项目级容器 ID
+    #[serde(default)]
+    pub disabled_container_ids: Vec<String>,
+    /// Story 级挂载策略覆盖
+    #[serde(default)]
+    pub mount_policy_override: Option<MountDerivationPolicy>,
 }
 
 /// 资源引用

@@ -1,9 +1,14 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
 };
-use agentdash_domain::workspace::Workspace;
+use agentdash_domain::context_container::{
+    ContextContainerCapability, ContextContainerDefinition, ContextContainerProvider,
+    MountDerivationPolicy,
+};
+use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_executor::{
     ConnectorError, ExecutionAddressSpace, ExecutionContext, ExecutionMount,
     ExecutionMountCapability, RuntimeToolProvider,
@@ -20,6 +25,8 @@ use tokio_util::sync::CancellationToken;
 use crate::relay::registry::BackendRegistry;
 
 const MAX_SEARCH_FILE_BYTES: u64 = 256 * 1024;
+const PROVIDER_RELAY_FS: &str = "relay_fs";
+const PROVIDER_INLINE_FS: &str = "inline_fs";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceRef {
@@ -74,35 +81,82 @@ impl RelayAddressSpaceService {
         &self,
         workspace: &Workspace,
     ) -> Result<ExecutionAddressSpace, String> {
-        let backend_id = workspace.backend_id.trim();
-        if backend_id.is_empty() {
-            return Err("Workspace.backend_id 不能为空".to_string());
-        }
-        if workspace.container_ref.trim().is_empty() {
-            return Err("Workspace.container_ref 不能为空".to_string());
+        Ok(ExecutionAddressSpace {
+            mounts: vec![workspace_mount_from_policy(
+                workspace,
+                &MountDerivationPolicy::default(),
+            )?],
+            default_mount_id: Some("main".to_string()),
+        })
+    }
+
+    pub fn build_task_address_space(
+        &self,
+        project: &Project,
+        story: &Story,
+        workspace: Option<&Workspace>,
+        agent_type: Option<&str>,
+    ) -> Result<ExecutionAddressSpace, String> {
+        self.build_derived_address_space(
+            project,
+            Some(story),
+            workspace,
+            agent_type,
+            SessionMountTarget::Task,
+        )
+    }
+
+    pub fn build_story_address_space(
+        &self,
+        project: &Project,
+        story: &Story,
+        workspace: Option<&Workspace>,
+        agent_type: Option<&str>,
+    ) -> Result<ExecutionAddressSpace, String> {
+        self.build_derived_address_space(
+            project,
+            Some(story),
+            workspace,
+            agent_type,
+            SessionMountTarget::Story,
+        )
+    }
+
+    fn build_derived_address_space(
+        &self,
+        project: &Project,
+        story: Option<&Story>,
+        workspace: Option<&Workspace>,
+        agent_type: Option<&str>,
+        target: SessionMountTarget,
+    ) -> Result<ExecutionAddressSpace, String> {
+        let mut mounts = Vec::new();
+        let mount_policy = story
+            .and_then(|item| item.context.mount_policy_override.clone())
+            .unwrap_or_else(|| project.config.mount_policy.clone());
+
+        if mount_policy.include_local_workspace
+            && let Some(workspace) = workspace
+        {
+            mounts.push(workspace_mount_from_policy(workspace, &mount_policy)?);
         }
 
+        for container in effective_context_containers(project, story) {
+            if !container_visible_for_target(&container, target, agent_type) {
+                continue;
+            }
+            mounts.push(build_context_container_mount(&container)?);
+        }
+
+        let default_mount_id = if mounts.iter().any(|mount| mount.id == "main") {
+            Some("main".to_string())
+        } else {
+            mounts.first().map(|mount| mount.id.clone())
+        };
+
         Ok(ExecutionAddressSpace {
-            mounts: vec![ExecutionMount {
-                id: "main".to_string(),
-                provider: "relay_fs".to_string(),
-                backend_id: backend_id.to_string(),
-                root_ref: workspace.container_ref.clone(),
-                capabilities: vec![
-                    ExecutionMountCapability::Read,
-                    ExecutionMountCapability::Write,
-                    ExecutionMountCapability::List,
-                    ExecutionMountCapability::Search,
-                    ExecutionMountCapability::Exec,
-                ],
-                default_write: true,
-                display_name: if workspace.name.trim().is_empty() {
-                    "主工作空间".to_string()
-                } else {
-                    workspace.name.clone()
-                },
-            }],
-            default_mount_id: Some("main".to_string()),
+            mounts,
+            default_mount_id,
         })
     }
 
@@ -121,6 +175,14 @@ impl RelayAddressSpaceService {
             ExecutionMountCapability::Read,
         )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
+        if mount.provider == PROVIDER_INLINE_FS {
+            let files = inline_files_from_mount(mount)?;
+            let content = files
+                .get(&path)
+                .cloned()
+                .ok_or_else(|| format!("文件不存在: {}", path))?;
+            return Ok(ReadResult { path, content });
+        }
         let response = self
             .backend_registry
             .send_command(
@@ -165,6 +227,12 @@ impl RelayAddressSpaceService {
             ExecutionMountCapability::Write,
         )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
+        if mount.provider == PROVIDER_INLINE_FS {
+            return Err(format!(
+                "mount `{}` 是只读内联容器，当前不支持写入",
+                mount.id
+            ));
+        }
         let response = self
             .backend_registry
             .send_command(
@@ -199,6 +267,16 @@ impl RelayAddressSpaceService {
     ) -> Result<ListResult, String> {
         let mount = resolve_mount(address_space, mount_id, ExecutionMountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
+        if mount.provider == PROVIDER_INLINE_FS {
+            return Ok(ListResult {
+                entries: list_inline_entries(
+                    &inline_files_from_mount(mount)?,
+                    &path,
+                    options.pattern.as_deref(),
+                    options.recursive,
+                ),
+            });
+        }
         let response = self
             .backend_registry
             .send_command(
@@ -243,6 +321,9 @@ impl RelayAddressSpaceService {
             ExecutionMountCapability::Exec,
         )?;
         let cwd = normalize_mount_relative_path(&request.cwd, true)?;
+        if mount.provider == PROVIDER_INLINE_FS {
+            return Err(format!("mount `{}` 不支持 exec", mount.id));
+        }
         let response = self
             .backend_registry
             .send_command(
@@ -331,6 +412,294 @@ impl RelayAddressSpaceService {
 
         Ok(hits)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionMountTarget {
+    Story,
+    Task,
+}
+
+fn workspace_mount_from_policy(
+    workspace: &Workspace,
+    policy: &MountDerivationPolicy,
+) -> Result<ExecutionMount, String> {
+    let backend_id = workspace.backend_id.trim();
+    if backend_id.is_empty() {
+        return Err("Workspace.backend_id 不能为空".to_string());
+    }
+    if workspace.container_ref.trim().is_empty() {
+        return Err("Workspace.container_ref 不能为空".to_string());
+    }
+
+    let capabilities = if policy.local_workspace_capabilities.is_empty() {
+        vec![
+            ExecutionMountCapability::Read,
+            ExecutionMountCapability::Write,
+            ExecutionMountCapability::List,
+            ExecutionMountCapability::Search,
+            ExecutionMountCapability::Exec,
+        ]
+    } else {
+        map_container_capabilities(&policy.local_workspace_capabilities)
+    };
+
+    Ok(ExecutionMount {
+        id: "main".to_string(),
+        provider: PROVIDER_RELAY_FS.to_string(),
+        backend_id: backend_id.to_string(),
+        root_ref: workspace.container_ref.clone(),
+        capabilities,
+        default_write: true,
+        display_name: if workspace.name.trim().is_empty() {
+            "主工作空间".to_string()
+        } else {
+            workspace.name.clone()
+        },
+        metadata: serde_json::Value::Null,
+    })
+}
+
+fn effective_context_containers(
+    project: &Project,
+    story: Option<&Story>,
+) -> Vec<ContextContainerDefinition> {
+    let mut containers = project.config.context_containers.clone();
+    if let Some(story) = story {
+        let disabled = story
+            .context
+            .disabled_container_ids
+            .iter()
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(|item| item.to_string())
+            .collect::<BTreeSet<_>>();
+        if !disabled.is_empty() {
+            containers.retain(|container| !disabled.contains(container.id.trim()));
+        }
+
+        for container in &story.context.context_containers {
+            containers.retain(|item| {
+                item.id.trim() != container.id.trim()
+                    && item.mount_id.trim() != container.mount_id.trim()
+            });
+            containers.push(container.clone());
+        }
+    }
+    containers
+}
+
+fn container_visible_for_target(
+    container: &ContextContainerDefinition,
+    target: SessionMountTarget,
+    agent_type: Option<&str>,
+) -> bool {
+    let exposure = &container.exposure;
+    let target_enabled = match target {
+        SessionMountTarget::Story => exposure.include_in_story_sessions,
+        SessionMountTarget::Task => exposure.include_in_task_sessions,
+    };
+    if !target_enabled {
+        return false;
+    }
+
+    if exposure.allowed_agent_types.is_empty() {
+        return true;
+    }
+
+    let Some(agent_type) = agent_type.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+
+    exposure
+        .allowed_agent_types
+        .iter()
+        .any(|item| item.trim().eq_ignore_ascii_case(agent_type))
+}
+
+fn build_context_container_mount(
+    container: &ContextContainerDefinition,
+) -> Result<ExecutionMount, String> {
+    let id = non_empty_trimmed(&container.mount_id, "mount_id")?.to_string();
+    let display_name = if container.display_name.trim().is_empty() {
+        container.id.trim().to_string()
+    } else {
+        container.display_name.trim().to_string()
+    };
+    let capabilities = if container.capabilities.is_empty() {
+        vec![
+            ExecutionMountCapability::Read,
+            ExecutionMountCapability::List,
+            ExecutionMountCapability::Search,
+        ]
+    } else {
+        map_container_capabilities(&container.capabilities)
+    };
+
+    let (provider, root_ref, metadata) = match &container.provider {
+        ContextContainerProvider::InlineFiles { files } => (
+            PROVIDER_INLINE_FS.to_string(),
+            format!("context://inline/{}", container.id.trim()),
+            serde_json::json!({ "files": normalize_inline_files(files)? }),
+        ),
+        ContextContainerProvider::ExternalService {
+            service_id,
+            root_ref,
+        } => (
+            "external_service".to_string(),
+            root_ref.trim().to_string(),
+            serde_json::json!({
+                "service_id": service_id.trim(),
+                "root_ref": root_ref.trim(),
+            }),
+        ),
+    };
+
+    Ok(ExecutionMount {
+        id,
+        provider,
+        backend_id: String::new(),
+        root_ref,
+        capabilities,
+        default_write: container.default_write,
+        display_name,
+        metadata,
+    })
+}
+
+fn map_container_capabilities(
+    capabilities: &[ContextContainerCapability],
+) -> Vec<ExecutionMountCapability> {
+    let mut mapped = Vec::new();
+    for capability in capabilities {
+        let next = match capability {
+            ContextContainerCapability::Read => ExecutionMountCapability::Read,
+            ContextContainerCapability::Write => ExecutionMountCapability::Write,
+            ContextContainerCapability::List => ExecutionMountCapability::List,
+            ContextContainerCapability::Search => ExecutionMountCapability::Search,
+            ContextContainerCapability::Exec => ExecutionMountCapability::Exec,
+        };
+        if !mapped.contains(&next) {
+            mapped.push(next);
+        }
+    }
+    mapped
+}
+
+fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err(format!("{field_name} 不能为空"))
+    } else {
+        Ok(trimmed)
+    }
+}
+
+fn normalize_inline_files(
+    files: &[agentdash_domain::context_container::ContextContainerFile],
+) -> Result<BTreeMap<String, String>, String> {
+    let mut normalized = BTreeMap::new();
+    for file in files {
+        let path = normalize_mount_relative_path(&file.path, false)?;
+        normalized.insert(path, file.content.clone());
+    }
+    Ok(normalized)
+}
+
+fn inline_files_from_mount(mount: &ExecutionMount) -> Result<BTreeMap<String, String>, String> {
+    let raw_files = mount
+        .metadata
+        .get("files")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    serde_json::from_value::<BTreeMap<String, String>>(raw_files)
+        .map_err(|error| format!("mount `{}` 的 inline metadata 无效: {error}", mount.id))
+}
+
+fn list_inline_entries(
+    files: &BTreeMap<String, String>,
+    base_path: &str,
+    pattern: Option<&str>,
+    recursive: bool,
+) -> Vec<FileEntryRelay> {
+    let normalized_base = base_path.trim_matches('/');
+    let mut dirs = BTreeSet::new();
+    let mut file_entries = BTreeMap::new();
+
+    for (path, content) in files {
+        let matches_base = if normalized_base.is_empty() {
+            true
+        } else {
+            path == normalized_base
+                || path
+                    .strip_prefix(normalized_base)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        if !matches_base {
+            continue;
+        }
+
+        let relative = if normalized_base.is_empty() {
+            path.as_str()
+        } else if path == normalized_base {
+            ""
+        } else {
+            path.strip_prefix(normalized_base)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .unwrap_or("")
+        };
+
+        if relative.is_empty() {
+            file_entries.insert(path.clone(), content.len() as u64);
+            continue;
+        }
+
+        let parts = relative.split('/').collect::<Vec<_>>();
+        if recursive {
+            let full_parts = path.split('/').collect::<Vec<_>>();
+            for depth in 1..full_parts.len() {
+                dirs.insert(full_parts[..depth].join("/"));
+            }
+            file_entries.insert(path.clone(), content.len() as u64);
+        } else if parts.len() == 1 {
+            file_entries.insert(path.clone(), content.len() as u64);
+        } else {
+            let dir_path = if normalized_base.is_empty() {
+                parts[0].to_string()
+            } else {
+                format!("{}/{}", normalized_base, parts[0])
+            };
+            dirs.insert(dir_path);
+        }
+    }
+
+    let normalized_pattern = pattern.map(str::trim).filter(|value| !value.is_empty());
+    let mut entries = Vec::new();
+    for dir in dirs {
+        if path_matches_pattern(&dir, normalized_pattern) {
+            entries.push(FileEntryRelay {
+                path: dir,
+                size: None,
+                modified_at: None,
+                is_dir: true,
+            });
+        }
+    }
+    for (path, size) in file_entries {
+        if path_matches_pattern(&path, normalized_pattern) {
+            entries.push(FileEntryRelay {
+                path,
+                size: Some(size),
+                modified_at: None,
+                is_dir: false,
+            });
+        }
+    }
+    entries
+}
+
+fn path_matches_pattern(path: &str, pattern: Option<&str>) -> bool {
+    pattern.is_none_or(|needle| path.contains(needle))
 }
 
 pub fn resolve_mount<'a>(
@@ -987,6 +1356,11 @@ mod tests {
     use chrono::Utc;
     use tokio::sync::mpsc;
 
+    use agentdash_domain::context_container::{
+        ContextContainerCapability, ContextContainerDefinition, ContextContainerExposure,
+        ContextContainerFile, ContextContainerProvider, MountDerivationPolicy,
+    };
+
     use crate::relay::registry::ConnectedBackend;
 
     fn sample_workspace() -> Workspace {
@@ -1001,6 +1375,32 @@ mod tests {
             git_config: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+        }
+    }
+
+    fn inline_container(
+        id: &str,
+        mount_id: &str,
+        path: &str,
+        content: &str,
+    ) -> ContextContainerDefinition {
+        ContextContainerDefinition {
+            id: id.to_string(),
+            mount_id: mount_id.to_string(),
+            display_name: id.to_string(),
+            provider: ContextContainerProvider::InlineFiles {
+                files: vec![ContextContainerFile {
+                    path: path.to_string(),
+                    content: content.to_string(),
+                }],
+            },
+            capabilities: vec![
+                ContextContainerCapability::Read,
+                ContextContainerCapability::List,
+                ContextContainerCapability::Search,
+            ],
+            default_write: false,
+            exposure: ContextContainerExposure::default(),
         }
     }
 
@@ -1020,6 +1420,178 @@ mod tests {
         assert_eq!(session.default_mount_id.as_deref(), Some("main"));
         assert_eq!(session.mounts.len(), 1);
         assert!(session.mounts[0].supports(ExecutionMountCapability::Exec));
+    }
+
+    #[test]
+    fn build_task_address_space_merges_project_story_and_workspace_policy() {
+        let registry = BackendRegistry::new();
+        let service = RelayAddressSpaceService::new(registry);
+        let mut project = agentdash_domain::project::Project::new(
+            "proj".into(),
+            "desc".into(),
+            "backend-a".into(),
+        );
+        project.config.context_containers = vec![inline_container(
+            "project-spec",
+            "spec",
+            "backend/spec.md",
+            "# spec",
+        )];
+        project.config.mount_policy = MountDerivationPolicy {
+            include_local_workspace: true,
+            local_workspace_capabilities: vec![
+                ContextContainerCapability::Read,
+                ContextContainerCapability::List,
+            ],
+        };
+
+        let mut story = agentdash_domain::story::Story::new(
+            project.id,
+            "backend-a".into(),
+            "story".into(),
+            "desc".into(),
+        );
+        story.context.context_containers = vec![inline_container(
+            "story-brief",
+            "brief",
+            "brief.md",
+            "story brief",
+        )];
+
+        let address_space = service
+            .build_task_address_space(
+                &project,
+                &story,
+                Some(&sample_workspace()),
+                Some("PI_AGENT"),
+            )
+            .expect("address space should build");
+
+        assert_eq!(address_space.default_mount_id.as_deref(), Some("main"));
+        assert_eq!(address_space.mounts.len(), 3);
+        let main = address_space
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "main")
+            .expect("main mount");
+        assert!(!main.supports(ExecutionMountCapability::Exec));
+        assert!(main.supports(ExecutionMountCapability::Read));
+        assert!(address_space.mounts.iter().any(|mount| mount.id == "spec"));
+        assert!(address_space.mounts.iter().any(|mount| mount.id == "brief"));
+    }
+
+    #[test]
+    fn story_containers_can_disable_and_override_project_defaults() {
+        let registry = BackendRegistry::new();
+        let service = RelayAddressSpaceService::new(registry);
+        let mut project = agentdash_domain::project::Project::new(
+            "proj".into(),
+            "desc".into(),
+            "backend-a".into(),
+        );
+        project.config.context_containers = vec![
+            inline_container("project-spec", "shared", "spec.md", "project spec"),
+            inline_container("project-km", "km", "index.md", "project km"),
+        ];
+
+        let mut story = agentdash_domain::story::Story::new(
+            project.id,
+            "backend-a".into(),
+            "story".into(),
+            "desc".into(),
+        );
+        story.context.disabled_container_ids = vec!["project-km".into()];
+        story.context.context_containers = vec![inline_container(
+            "story-spec",
+            "shared",
+            "spec.md",
+            "story override",
+        )];
+
+        let address_space = service
+            .build_task_address_space(&project, &story, None, Some("PI_AGENT"))
+            .expect("address space should build");
+
+        assert_eq!(address_space.mounts.len(), 1);
+        let mount = &address_space.mounts[0];
+        assert_eq!(mount.id, "shared");
+        let files = inline_files_from_mount(mount).expect("inline files");
+        assert_eq!(files.get("spec.md").map(String::as_str), Some("story override"));
+    }
+
+    #[tokio::test]
+    async fn inline_mount_supports_read_list_and_search() {
+        let registry = BackendRegistry::new();
+        let service = RelayAddressSpaceService::new(registry);
+        let address_space = ExecutionAddressSpace {
+            mounts: vec![
+                build_context_container_mount(&ContextContainerDefinition {
+                    id: "story-brief".to_string(),
+                    mount_id: "brief".to_string(),
+                    display_name: "brief".to_string(),
+                    provider: ContextContainerProvider::InlineFiles {
+                        files: vec![
+                            ContextContainerFile {
+                                path: "brief.md".to_string(),
+                                content: "hello inline mount".to_string(),
+                            },
+                            ContextContainerFile {
+                                path: "notes/todo.md".to_string(),
+                                content: "todo: verify inline search".to_string(),
+                            },
+                        ],
+                    },
+                    capabilities: vec![
+                        ContextContainerCapability::Read,
+                        ContextContainerCapability::List,
+                        ContextContainerCapability::Search,
+                    ],
+                    default_write: false,
+                    exposure: ContextContainerExposure::default(),
+                })
+                .expect("mount should build"),
+            ],
+            default_mount_id: Some("brief".to_string()),
+        };
+
+        let read = service
+            .read_text(
+                &address_space,
+                &ResourceRef {
+                    mount_id: "brief".to_string(),
+                    path: "brief.md".to_string(),
+                },
+            )
+            .await
+            .expect("inline read should succeed");
+        assert_eq!(read.content, "hello inline mount");
+
+        let listed = service
+            .list(
+                &address_space,
+                "brief",
+                ListOptions {
+                    path: ".".to_string(),
+                    pattern: None,
+                    recursive: true,
+                },
+            )
+            .await
+            .expect("inline list should succeed");
+        assert!(listed.entries.iter().any(|entry| entry.path == "brief.md"));
+        assert!(
+            listed
+                .entries
+                .iter()
+                .any(|entry| entry.path == "notes/todo.md")
+        );
+
+        let hits = service
+            .search_text(&address_space, "brief", ".", "verify", 10)
+            .await
+            .expect("inline search should succeed");
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].contains("notes/todo.md:1"));
     }
 
     #[tokio::test]

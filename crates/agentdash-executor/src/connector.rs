@@ -142,6 +142,8 @@ pub struct ExecutionMount {
     pub capabilities: Vec<ExecutionMountCapability>,
     pub default_write: bool,
     pub display_name: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub metadata: serde_json::Value,
 }
 
 impl ExecutionMount {

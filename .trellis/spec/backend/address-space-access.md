@@ -2,7 +2,7 @@
 
 ### 1. Scope / Trigger
 - **Trigger**: 当功能同时涉及云端上下文注入、本机文件访问、Agent 运行时工具调用、多 workspace 挂载或非物理 workspace（KM / Snapshot / 资源库）时，必须使用统一的 Address Space 抽象，而不是继续新增独立访问链路。
-- **影响面**: `task_agent_context`、`declared sources`、relay `workspace_files` / `tool.*`、本机 `ToolExecutor`、PiAgent runtime tools、未来 KM warp。
+- **影响面**: `task_agent_context`、`declared sources`、relay `workspace_files` / `tool.*`、本机 `ToolExecutor`、PiAgent runtime tools、`Project / Story` 级上下文容器、未来 KM warp。
 
 ---
 
@@ -91,7 +91,8 @@ trait AddressSpaceProvider {
   - `root_ref`
   - `capabilities`
   - `default_write`
-- `main` mount 代表当前 Task 绑定的执行 workspace。
+- `main` mount 代表当前 Task 绑定的执行 workspace（若策略允许暴露本地工作空间）。
+- 非物理上下文容器可由 `Project / Story` 派生进入同一份 mount table。
 - 对于只读空间（如 `spec` / `snapshot`），必须显式声明不支持 `write` / `exec`。
 
 #### 3.3 Provider 能力契约
@@ -104,6 +105,12 @@ trait AddressSpaceProvider {
 | `search` | 搜索内容/路径 | 推荐支持 | 推荐支持 |
 | `stat` | 查询元信息 | 推荐支持 | 推荐支持 |
 | `exec` | 执行命令 | 仅物理可执行 mount 支持 | 默认不支持 |
+
+补充说明：
+- 当前已落地的 provider 至少包括：
+  - `relay_fs`：通过 relay 访问本机物理工作空间
+  - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器
+- `inline_fs` 的首轮目标是让内置数据结构也能走统一 mount 模型，而不是继续散落在 prompt 拼接逻辑中。
 
 #### 3.4 relay 契约
 - relay 是访问本机 provider 的 transport，不是 mount 模型本身。
@@ -152,11 +159,12 @@ trait AddressSpaceProvider {
 ### 5. Good / Base / Bad Cases
 
 #### Good
-- Story 上下文把默认 workspace 挂为 `main`，把规范仓挂为 `spec`，Agent 同时读取两个 mount：
+- Task session 同时挂载物理工作空间、Project 级规范容器和 Story 级 brief 容器：
 
 ```json
 { "tool": "fs.read", "mount": "main", "path": "Cargo.toml" }
 { "tool": "fs.read", "mount": "spec", "path": "backend/address-space-access.md" }
+{ "tool": "fs.read", "mount": "brief", "path": "brief.md" }
 ```
 
 #### Base
@@ -186,6 +194,7 @@ trait AddressSpaceProvider {
 - 给定 `mount=main, path=foo/bar.rs`，能正确路由到目标 provider。
 - `path` 为绝对路径或含 `..` 时必须被拒绝。
 - provider 能力矩阵正确生效：无 `exec` 的 mount 不允许执行命令。
+- `inline_fs` 至少支持 `read / list / search`，且结果与 mount/path 模型一致。
 
 #### relay / local provider
 - `Task.workspace_id -> Workspace.backend_id` 路由正确。
@@ -199,6 +208,7 @@ trait AddressSpaceProvider {
 #### runtime tools
 - `mounts.list` 返回当前会话可访问的 mount 清单。
 - `fs.read/write/list/search` 使用统一的 `mount + path` 参数模型。
+- `Project / Story` 派生出的容器能和 `main` 一起进入最终 session mount table。
 
 ---
 

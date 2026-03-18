@@ -173,10 +173,14 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             let workspace_root = workspace
                 .as_ref()
                 .map(|item| std::path::PathBuf::from(item.container_ref.clone()));
-            let address_space = workspace
+            let agent_type = resolved_config
                 .as_ref()
-                .map(|item| self.state.address_space_service.session_for_workspace(item))
-                .transpose()
+                .map(|config| config.executor.as_str());
+            let address_space = self
+                .state
+                .address_space_service
+                .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
+                .map(Some)
                 .map_err(map_internal_error)?;
             let prompt_req = PromptSessionRequest {
                 prompt: None,

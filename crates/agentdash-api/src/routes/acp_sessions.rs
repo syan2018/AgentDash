@@ -347,6 +347,23 @@ async fn build_story_owner_prompt_request(
     if req.working_dir.is_none() && workspace.is_some() {
         req.working_dir = Some(".".to_string());
     }
+    if req.workspace_root.is_none() {
+        req.workspace_root =
+            workspace.map(|item| std::path::PathBuf::from(item.container_ref.clone()));
+    }
+    if req.address_space.is_none() {
+        let agent_type = req
+            .executor_config
+            .as_ref()
+            .map(|config| config.executor.as_str())
+            .or(project.config.default_agent_type.as_deref());
+        req.address_space = Some(
+            state
+                .address_space_service
+                .build_story_address_space(project, story, workspace, agent_type)
+                .map_err(ApiError::BadRequest)?,
+        );
+    }
 
     let base_url = state
         .mcp_base_url

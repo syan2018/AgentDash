@@ -44,5 +44,5 @@
     "crates/agentdash-api/src/routes/workspaces.rs",
     "crates/agentdash-executor/src/connectors/pi_agent.rs"
   ],
-  "notes": "规划将 Project 提升为可挂载虚拟工作空间的编排根节点，并设计外部 provider 服务协议与数据保管边界，为 KM / 企业知识服务的非侵入式接入做准备。"
+  "notes": "已完成第一轮落地切片：为 `ProjectConfig` / `StoryContext` 引入结构化上下文容器与挂载派生策略，支持 `inline_fs` 内联文件容器；Task cloud-native 会话与 Story owner session 已改为从 `Project / Story / Workspace` 共同派生最终 Address Space。当前已跑通 `cargo test -p agentdash-api`。后续仍需继续补外部 provider service、前端编辑入口与更完整的权限/可见性策略。"
 }

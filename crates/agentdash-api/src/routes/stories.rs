@@ -5,6 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
 use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, StoryType};
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
@@ -27,6 +28,10 @@ pub struct CreateStoryRequest {
     pub priority: Option<StoryPriority>,
     pub story_type: Option<StoryType>,
     pub tags: Option<Vec<String>>,
+    pub context_source_refs: Option<Vec<ContextSourceRef>>,
+    pub context_containers: Option<Vec<ContextContainerDefinition>>,
+    pub disabled_container_ids: Option<Vec<String>>,
+    pub mount_policy_override: Option<MountDerivationPolicy>,
 }
 
 #[derive(Deserialize, Default)]
@@ -39,6 +44,9 @@ pub struct UpdateStoryRequest {
     pub story_type: Option<StoryType>,
     pub tags: Option<Vec<String>>,
     pub context_source_refs: Option<Vec<ContextSourceRef>>,
+    pub context_containers: Option<Vec<ContextContainerDefinition>>,
+    pub disabled_container_ids: Option<Vec<String>>,
+    pub mount_policy_override: Option<MountDerivationPolicy>,
 }
 
 #[derive(Deserialize, Default)]
@@ -120,6 +128,18 @@ pub async fn create_story(
     if let Some(tags) = req.tags {
         next_story.tags = normalize_tags(tags);
     }
+    if let Some(context_source_refs) = req.context_source_refs {
+        next_story.context.source_refs = context_source_refs;
+    }
+    if let Some(context_containers) = req.context_containers {
+        next_story.context.context_containers = context_containers;
+    }
+    if let Some(disabled_container_ids) = req.disabled_container_ids {
+        next_story.context.disabled_container_ids = normalize_string_list(disabled_container_ids);
+    }
+    if let Some(mount_policy_override) = req.mount_policy_override {
+        next_story.context.mount_policy_override = Some(mount_policy_override);
+    }
 
     state.story_repo.create(&next_story).await?;
     Ok(Json(next_story))
@@ -186,6 +206,15 @@ pub async fn update_story(
     }
     if let Some(context_source_refs) = req.context_source_refs {
         story.context.source_refs = context_source_refs;
+    }
+    if let Some(context_containers) = req.context_containers {
+        story.context.context_containers = context_containers;
+    }
+    if let Some(disabled_container_ids) = req.disabled_container_ids {
+        story.context.disabled_container_ids = normalize_string_list(disabled_container_ids);
+    }
+    if let Some(mount_policy_override) = req.mount_policy_override {
+        story.context.mount_policy_override = Some(mount_policy_override);
     }
 
     state.story_repo.update(&story).await?;
@@ -471,6 +500,14 @@ fn normalize_option(value: Option<String>) -> Option<String> {
 
 fn normalize_tags(tags: Vec<String>) -> Vec<String> {
     tags.into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
         .collect()

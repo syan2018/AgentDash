@@ -8,7 +8,7 @@ pub struct BackendConfig {
     pub id: String,
     pub name: String,
     pub endpoint: String,
-    /// 鉴权令牌（预留，当前阶段可为空）
+    /// Relay 握手鉴权令牌，由云端生成并维护
     pub auth_token: Option<String>,
     /// 是否启用
     pub enabled: bool,

@@ -10,7 +10,7 @@ use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
-use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
+use agentdash_domain::backend::BackendRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -99,7 +99,6 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        ensure_default_backend(&backend_repo).await?;
 
         let settings_repo = Arc::new(SqliteSettingsRepository::new(pool));
         settings_repo
@@ -255,28 +254,4 @@ async fn build_pi_agent_connector(
     );
     tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");
     Some(connector)
-}
-
-async fn ensure_default_backend(backend_repo: &Arc<SqliteBackendRepository>) -> Result<()> {
-    let backends = backend_repo
-        .list_backends()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    if !backends.is_empty() {
-        return Ok(());
-    }
-
-    let local = BackendConfig {
-        id: "local-default".to_string(),
-        name: "本地后端".to_string(),
-        endpoint: String::new(),
-        auth_token: None,
-        enabled: true,
-        backend_type: BackendType::Local,
-    };
-    backend_repo
-        .add_backend(&local)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(())
 }

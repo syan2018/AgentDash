@@ -70,15 +70,24 @@ async function main() {
   }
 
   const serverBinary = resolveBinary('agentdash-server');
-  console.log(`[2/4] 启动 agentdash-server (:${config.serverPort})...`);
-  const server = startManagedProcess(serverBinary, [], 'agentdash-server');
+  if (!config.skipServer) {
+    console.log(`[2/4] 启动 agentdash-server (:${config.serverPort})...`);
+    startManagedProcess(serverBinary, [], 'agentdash-server');
+  } else {
+    console.log(`[2/4] 跳过 agentdash-server，等待现有服务 (:${config.serverPort})...`);
+  }
   await waitForHttpReady(config.serverPort, '/api/health', 120);
 
   if (!config.skipLocal) {
+    const backend = await ensureLocalBackendConfig(
+      config.serverPort,
+      config.backendId,
+      config.backendName
+    );
     const localBinary = resolveBinary('agentdash-local');
     const localArgs = [
       '--cloud-url', `ws://127.0.0.1:${config.serverPort}/ws/backend`,
-      '--token', 'dev',
+      '--token', backend.auth_token,
       '--accessible-roots', config.accessibleRoots,
       '--name', config.backendName,
       '--backend-id', config.backendId
@@ -89,13 +98,17 @@ async function main() {
 
     console.log('[3/4] 启动 agentdash-local...');
     startManagedProcess(localBinary, localArgs, 'agentdash-local');
-    await waitForLocalRegistration(config.serverPort, 20, 500);
+    await waitForLocalRegistration(config.serverPort, config.backendId, 20, 500);
   } else {
     console.log('[3/4] 跳过 agentdash-local（--skip-local）');
   }
 
-  console.log('[4/4] 启动前端 (:5173)...');
-  startFrontendProcess();
+  if (!config.skipFrontend) {
+    console.log('[4/4] 启动前端 (:5173)...');
+    startFrontendProcess();
+  } else {
+    console.log('[4/4] 跳过前端（--skip-frontend）');
+  }
 
   console.log('');
   console.log('  ╔══════════════════════════════════════╗');
@@ -121,7 +134,9 @@ function parseArgs(args) {
     noExecutor: false,
     serverPort: 3001,
     skipBuild: false,
-    skipLocal: false
+    skipFrontend: false,
+    skipLocal: false,
+    skipServer: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -136,6 +151,14 @@ function parseArgs(args) {
     }
     if (arg === '--skip-local') {
       result.skipLocal = true;
+      continue;
+    }
+    if (arg === '--skip-server') {
+      result.skipServer = true;
+      continue;
+    }
+    if (arg === '--skip-frontend') {
+      result.skipFrontend = true;
       continue;
     }
     if (arg === '--no-executor') {
@@ -205,6 +228,8 @@ function printHelp() {
   console.log('常用参数:');
   console.log('  --skip-build              跳过 cargo build');
   console.log('  --skip-local              只启动 server + frontend');
+  console.log('  --skip-server             不启动 server，复用现有服务');
+  console.log('  --skip-frontend           不启动前端');
   console.log('  --no-executor             local 追加 --no-executor');
   console.log('  --accessible-roots <val>  指定 accessible roots');
   console.log('  --backend-id <val>        指定 backend id');
@@ -224,8 +249,21 @@ function printBanner() {
 }
 
 async function runStep0KillPorts() {
+  const ports = [];
+  if (!config.skipServer) {
+    ports.push(config.serverPort);
+  }
+  if (!config.skipFrontend) {
+    ports.push(5173, 5174, 5175);
+  }
+
+  if (ports.length === 0) {
+    console.log('[0/4] 跳过端口预清理（当前模式无需清理）');
+    return;
+  }
+
   console.log('[0/4] 端口预清理...');
-  await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js')], {
+  await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js'), ...ports.map(String)], {
     cwd: root,
     label: 'kill-ports'
   });
@@ -316,17 +354,42 @@ async function waitForHttpReady(port, requestPath, timeoutSec) {
   throw new Error(`:${port}${requestPath} 未在 ${timeoutSec}s 内就绪`);
 }
 
-async function waitForLocalRegistration(port, maxAttempts, intervalMs) {
+async function waitForLocalRegistration(port, backendId, maxAttempts, intervalMs) {
   await sleep(500);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const data = await fetchJson(port, '/api/backends/online');
-    if (Array.isArray(data) && data.length > 0) {
-      console.log(`  [ready] local 已注册 (backend_id=${data[0].backend_id ?? 'unknown'})`);
+    const matched = Array.isArray(data)
+      ? data.find((item) => item && item.backend_id === backendId)
+      : null;
+    if (matched) {
+      console.log(`  [ready] local 已注册 (backend_id=${matched.backend_id ?? 'unknown'})`);
       return;
     }
     await sleep(intervalMs);
   }
-  console.log('  [warn] local 注册未确认，继续启动');
+  throw new Error(`local backend 未在预期时间内完成注册 (backend_id=${backendId})`);
+}
+
+async function ensureLocalBackendConfig(port, backendId, backendName) {
+  const backend = await requestJson(port, 'POST', '/api/backends', {
+    id: backendId,
+    name: backendName,
+    endpoint: '',
+    backend_type: 'local'
+  });
+
+  if (!backend || typeof backend !== 'object' || backend.__error__) {
+    const message = backend?.message || '未知错误';
+    throw new Error(`确保本地 backend 失败: ${message}`);
+  }
+
+  const token = typeof backend.auth_token === 'string' ? backend.auth_token.trim() : '';
+  if (!token) {
+    throw new Error(`backend ${backendId} 未返回可用 auth_token`);
+  }
+
+  console.log(`  [ready] backend 已确保 (backend_id=${backendId})`);
+  return backend;
 }
 
 function probeHttp(port, requestPath) {
@@ -351,12 +414,22 @@ function probeHttp(port, requestPath) {
 }
 
 function fetchJson(port, requestPath) {
+  return requestJson(port, 'GET', requestPath);
+}
+
+function requestJson(port, method, requestPath, payload = undefined) {
   return new Promise((resolve) => {
-    const req = http.get({
+    const body = payload === undefined ? null : JSON.stringify(payload);
+    const req = http.request({
       hostname: '127.0.0.1',
       port,
+      method,
       path: requestPath,
-      timeout: 2000
+      timeout: 2000,
+      headers: body ? {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      } : undefined
     }, (res) => {
       let data = '';
       res.setEncoding('utf8');
@@ -364,10 +437,18 @@ function fetchJson(port, requestPath) {
         data += chunk;
       });
       res.on('end', () => {
+        if ((res.statusCode ?? 500) < 200 || (res.statusCode ?? 500) >= 300) {
+          resolve({
+            __error__: true,
+            status: res.statusCode ?? 500,
+            message: data.trim() || `HTTP ${res.statusCode ?? 500}`
+          });
+          return;
+        }
         try {
           resolve(JSON.parse(data));
         } catch {
-          resolve(null);
+          resolve(data ? { __raw__: data } : null);
         }
       });
     });
@@ -377,6 +458,10 @@ function fetchJson(port, requestPath) {
       req.destroy();
       resolve(null);
     });
+    if (body) {
+      req.write(body);
+    }
+    req.end();
   });
 }
 

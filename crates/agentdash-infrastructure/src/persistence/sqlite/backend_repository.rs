@@ -55,7 +55,13 @@ impl BackendRepository for SqliteBackendRepository {
     async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO backends (id, name, endpoint, auth_token, enabled, backend_type)
-             VALUES (?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               endpoint = excluded.endpoint,
+               auth_token = excluded.auth_token,
+               enabled = excluded.enabled,
+               backend_type = excluded.backend_type",
         )
         .bind(&config.id)
         .bind(&config.name)
@@ -285,5 +291,27 @@ mod tests {
             .expect_err("重复 token 绑定应在查询时失败");
 
         assert!(matches!(err, DomainError::InvalidConfig(_)));
+    }
+
+    #[tokio::test]
+    async fn add_backend_overwrites_existing_backend_with_same_id() {
+        let repo = new_repo().await;
+        repo.add_backend(&backend("local-a", Some("secret-a")))
+            .await
+            .expect("应能插入 backend");
+
+        let mut updated = backend("local-a", Some("secret-b"));
+        updated.name = "renamed".to_string();
+        repo.add_backend(&updated)
+            .await
+            .expect("相同 id 应覆盖保存");
+
+        let found = repo
+            .get_backend("local-a")
+            .await
+            .expect("应能取回覆盖后的 backend");
+
+        assert_eq!(found.name, "renamed");
+        assert_eq!(found.auth_token.as_deref(), Some("secret-b"));
     }
 }

@@ -724,13 +724,14 @@ interface RelayError {
 ### 7.1 鉴权流程
 
 ```
-操作者 → POST /api/backends/register → 获得 { backend_id, token }
-       → 将 token 配置到本机启动参数
+操作者 → POST /api/backends（可省略 auth_token，由云端生成）
+       → 获得 { backend_id, auth_token }
+       → 将 auth_token 配置到本机启动参数
 本机   → WebSocket ?token=xxx → 云端验证 → 注册为 online
 ```
 
-- Token 为不透明字符串（云端生成的 UUID 或 JWT）
-- 预研阶段：云端维护 `HashMap<token, backend_id>` 即可
+- Token 为不透明字符串（当前实现为云端生成的 UUID）
+- 预研阶段：云端持久化 `Backend.auth_token -> backend_id` 绑定即可
 - 生产阶段可升级为 JWT + 刷新机制
 
 ### 7.2 权限边界

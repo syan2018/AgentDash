@@ -67,7 +67,11 @@ impl ToolExecutor {
     }
 
     /// 将相对路径解析为绝对路径（基于 workspace_root）
-    fn resolve_path(&self, relative_path: &str, workspace_root: &str) -> Result<PathBuf, ToolError> {
+    fn resolve_path(
+        &self,
+        relative_path: &str,
+        workspace_root: &str,
+    ) -> Result<PathBuf, ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
         let full = ws.join(relative_path);
 
@@ -80,19 +84,13 @@ impl ToolExecutor {
 
         // 确保不会通过 .. 逃逸出 workspace_root
         if !canonical.starts_with(&ws) && full.exists() {
-            return Err(ToolError::PathNotAccessible(
-                relative_path.to_string(),
-            ));
+            return Err(ToolError::PathNotAccessible(relative_path.to_string()));
         }
 
         Ok(full)
     }
 
-    pub async fn file_read(
-        &self,
-        path: &str,
-        workspace_root: &str,
-    ) -> Result<String, ToolError> {
+    pub async fn file_read(&self, path: &str, workspace_root: &str) -> Result<String, ToolError> {
         let full_path = self.resolve_path(path, workspace_root)?;
         tracing::debug!(path = %full_path.display(), "file_read");
         let content = tokio::fs::read_to_string(&full_path).await?;
@@ -165,7 +163,9 @@ impl ToolExecutor {
             "file_list"
         );
 
-        let glob_matcher = pattern.map(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher())).flatten();
+        let glob_matcher = pattern
+            .map(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()))
+            .flatten();
 
         let mut entries = Vec::new();
         collect_entries(&base, &ws, &glob_matcher, recursive, &mut entries).await?;
@@ -195,7 +195,9 @@ async fn collect_entries(
 
         let matches = glob_matcher
             .as_ref()
-            .map(|m| m.is_match(&relative) || m.is_match(entry.file_name().to_string_lossy().as_ref()))
+            .map(|m| {
+                m.is_match(&relative) || m.is_match(entry.file_name().to_string_lossy().as_ref())
+            })
             .unwrap_or(true);
 
         if matches || is_dir {

@@ -5,12 +5,11 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
-use agentdash_application::task_lock::TaskLockMap;
-use agentdash_application::task_restart_tracker::RestartTracker;
-use agentdash_injection::AddressSpaceRegistry;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
+use agentdash_application::task_lock::TaskLockMap;
+use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
@@ -19,13 +18,13 @@ use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
 use agentdash_executor::{AgentConnector, ExecutorHub};
 use agentdash_infrastructure::{
     SqliteBackendRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
     SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
     SqliteWorkspaceRepository,
 };
+use agentdash_injection::AddressSpaceRegistry;
 
 /// 全局应用状态
 ///
@@ -111,9 +110,6 @@ impl AppState {
         let workspace_root = std::env::current_dir()?;
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
-        sub_connectors.push(Arc::new(VibeKanbanExecutorsConnector::new(
-            workspace_root.clone(),
-        )));
 
         if let Some(pi_connector) =
             build_pi_agent_connector(&workspace_root, settings_repo.as_ref()).await

@@ -194,10 +194,7 @@ fn parse_ws_message(msg: &Message) -> Option<RelayMessage> {
 }
 
 async fn send_message(
-    write: &mut futures::stream::SplitSink<
-        WebSocketStream<MaybeTlsStream<TcpStream>>,
-        Message,
-    >,
+    write: &mut futures::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     msg: &RelayMessage,
 ) -> anyhow::Result<()> {
     let json = serde_json::to_string(msg)?;

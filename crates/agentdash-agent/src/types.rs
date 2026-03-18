@@ -61,8 +61,13 @@ pub struct AfterToolCallContext<'a> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
-    Text { text: String },
-    Image { mime_type: String, data: String },
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        data: String,
+    },
     Reasoning {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

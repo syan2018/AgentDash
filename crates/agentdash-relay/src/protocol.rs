@@ -19,7 +19,6 @@ use crate::error::RelayError;
 #[serde(tag = "type")]
 pub enum RelayMessage {
     // ── 注册 ──
-
     /// 本机 → 云端：连接后的第一条消息
     #[serde(rename = "register")]
     Register {
@@ -35,7 +34,6 @@ pub enum RelayMessage {
     },
 
     // ── 心跳 ──
-
     /// 云端 → 本机
     #[serde(rename = "ping")]
     Ping { id: String, payload: PingPayload },
@@ -45,7 +43,6 @@ pub enum RelayMessage {
     Pong { id: String, payload: PongPayload },
 
     // ── 命令（云端 → 本机）──
-
     /// 执行第三方 Agent prompt
     #[serde(rename = "command.prompt")]
     CommandPrompt {
@@ -93,7 +90,6 @@ pub enum RelayMessage {
     },
 
     // ── PiAgent Tool Call 命令（云端 → 本机）──
-
     /// 读取文件
     #[serde(rename = "command.tool.file_read")]
     CommandToolFileRead {
@@ -123,7 +119,6 @@ pub enum RelayMessage {
     },
 
     // ── 响应（本机 → 云端）──
-
     #[serde(rename = "response.prompt")]
     ResponsePrompt {
         id: String,
@@ -179,7 +174,6 @@ pub enum RelayMessage {
     },
 
     // ── PiAgent Tool Call 响应 ──
-
     #[serde(rename = "response.tool.file_read")]
     ResponseToolFileRead {
         id: String,
@@ -217,7 +211,6 @@ pub enum RelayMessage {
     },
 
     // ── 事件（本机 → 云端）──
-
     /// 能力变更通知
     #[serde(rename = "event.capabilities_changed")]
     EventCapabilitiesChanged {
@@ -247,12 +240,8 @@ pub enum RelayMessage {
     },
 
     // ── 通用错误 ──
-
     #[serde(rename = "error")]
-    Error {
-        id: String,
-        error: RelayError,
-    },
+    Error { id: String, error: RelayError },
 }
 
 impl RelayMessage {

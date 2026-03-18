@@ -23,6 +23,7 @@ interface ProjectEntity {
 
 interface WorkspaceEntity {
   id: string;
+  backend_id: string;
   name: string;
   container_ref: string;
 }

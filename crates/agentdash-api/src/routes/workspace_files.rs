@@ -83,15 +83,16 @@ pub async fn list_files(
     let pattern = query.pattern.clone().unwrap_or_default();
 
     if let Some(ws_id) = &query.workspace_id {
-        let ws_uuid = uuid::Uuid::parse_str(ws_id)
-            .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-        let workspace = state.workspace_repo.get_by_id(ws_uuid).await?
-            .ok_or_else(|| ApiError::NotFound(format!("Workspace 不存在: {ws_id}")))?;
-        let container_ref = &workspace.container_ref;
-
-        if let Some(backend_id) = state.backend_registry.find_backend_for_path(container_ref).await {
-            return relay_list_files(&state, &backend_id, ws_id, container_ref, &pattern).await;
-        }
+        let workspace = load_workspace_by_id(&state, ws_id).await?;
+        let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+        return relay_list_files(
+            &state,
+            backend_id,
+            ws_id,
+            &workspace.container_ref,
+            &pattern,
+        )
+        .await;
     }
 
     let root = state.executor_hub.workspace_root().to_path_buf();
@@ -119,15 +120,9 @@ pub async fn read_file(
     validate_path_safe(&rel)?;
 
     if let Some(ws_id) = &req.workspace_id {
-        let ws_uuid = uuid::Uuid::parse_str(ws_id)
-            .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-        let workspace = state.workspace_repo.get_by_id(ws_uuid).await?
-            .ok_or_else(|| ApiError::NotFound(format!("Workspace 不存在: {ws_id}")))?;
-        let container_ref = &workspace.container_ref;
-
-        if let Some(backend_id) = state.backend_registry.find_backend_for_path(container_ref).await {
-            return relay_read_file(&state, &backend_id, ws_id, container_ref, &rel).await;
-        }
+        let workspace = load_workspace_by_id(&state, ws_id).await?;
+        let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+        return relay_read_file(&state, backend_id, ws_id, &workspace.container_ref, &rel).await;
     }
 
     let root = state.executor_hub.workspace_root().to_path_buf();
@@ -503,6 +498,37 @@ pub(crate) fn normalize_path_display(path: &Path) -> String {
     }
 }
 
+async fn load_workspace_by_id(
+    state: &Arc<AppState>,
+    workspace_id: &str,
+) -> Result<agentdash_domain::workspace::Workspace, ApiError> {
+    let workspace_uuid = uuid::Uuid::parse_str(workspace_id)
+        .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
+    state
+        .workspace_repo
+        .get_by_id(workspace_uuid)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Workspace 不存在: {workspace_id}")))
+}
+
+async fn require_online_backend<'a>(
+    state: &Arc<AppState>,
+    backend_id: &'a str,
+) -> Result<&'a str, ApiError> {
+    let trimmed = backend_id.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Workspace.backend_id 不能为空".to_string(),
+        ));
+    }
+    if !state.backend_registry.is_online(trimmed).await {
+        return Err(ApiError::Conflict(format!(
+            "Workspace 所属 Backend 当前不在线: {trimmed}"
+        )));
+    }
+    Ok(trimmed)
+}
+
 // ─── Relay 辅助：workspace_files 转发到远程后端 ──────────────
 
 async fn relay_list_files(
@@ -520,31 +546,44 @@ async fn relay_list_files(
             workspace_id: workspace_id.to_string(),
             root_path: Some(container_ref.to_string()),
             path: None,
-            pattern: if pattern.is_empty() { None } else { Some(pattern.to_string()) },
+            pattern: if pattern.is_empty() {
+                None
+            } else {
+                Some(pattern.to_string())
+            },
         },
     };
 
-    let resp = state.backend_registry.send_command(backend_id, cmd).await
+    let resp = state
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
         .map_err(|e| ApiError::Internal(format!("relay workspace_files.list 失败: {e}")))?;
 
     match resp {
-        RelayMessage::ResponseWorkspaceFilesList { payload: Some(p), .. } => {
-            let files = p.files.into_iter().map(|f| {
-                let text = is_likely_text(&f.path);
-                FileEntry {
-                    rel_path: f.path,
-                    size: f.size.unwrap_or(0),
-                    is_text: text,
-                }
-            }).collect();
+        RelayMessage::ResponseWorkspaceFilesList {
+            payload: Some(p), ..
+        } => {
+            let files = p
+                .files
+                .into_iter()
+                .map(|f| {
+                    let text = is_likely_text(&f.path);
+                    FileEntry {
+                        rel_path: f.path,
+                        size: f.size.unwrap_or(0),
+                        is_text: text,
+                    }
+                })
+                .collect();
             Ok(Json(ListFilesResponse {
                 files,
                 root: container_ref.to_string(),
             }))
         }
-        RelayMessage::ResponseWorkspaceFilesList { error: Some(e), .. } => {
-            Err(ApiError::Internal(format!("远程文件列表错误: {}", e.message)))
-        }
+        RelayMessage::ResponseWorkspaceFilesList { error: Some(e), .. } => Err(ApiError::Internal(
+            format!("远程文件列表错误: {}", e.message),
+        )),
         _ => Err(ApiError::Internal("远程文件列表：意外响应类型".into())),
     }
 }
@@ -567,11 +606,16 @@ async fn relay_read_file(
         },
     };
 
-    let resp = state.backend_registry.send_command(backend_id, cmd).await
+    let resp = state
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
         .map_err(|e| ApiError::Internal(format!("relay workspace_files.read 失败: {e}")))?;
 
     match resp {
-        RelayMessage::ResponseWorkspaceFilesRead { payload: Some(p), .. } => {
+        RelayMessage::ResponseWorkspaceFilesRead {
+            payload: Some(p), ..
+        } => {
             let mime = guess_mime(&p.path);
             let size = p.content.len() as u64;
             Ok(Json(ReadFileResponse {
@@ -582,9 +626,9 @@ async fn relay_read_file(
                 size,
             }))
         }
-        RelayMessage::ResponseWorkspaceFilesRead { error: Some(e), .. } => {
-            Err(ApiError::Internal(format!("远程文件读取错误: {}", e.message)))
-        }
+        RelayMessage::ResponseWorkspaceFilesRead { error: Some(e), .. } => Err(ApiError::Internal(
+            format!("远程文件读取错误: {}", e.message),
+        )),
         _ => Err(ApiError::Internal("远程文件读取：意外响应类型".into())),
     }
 }

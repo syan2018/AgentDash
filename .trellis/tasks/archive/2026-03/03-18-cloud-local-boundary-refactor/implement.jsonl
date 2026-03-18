@@ -1,0 +1,15 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": "docs/relay-protocol.md", "reason": "云端与本机后端的目标通信模型与职责边界"}
+{"file": "docs/modules/09-relay.md", "reason": "中继层职责与两类 Agent 的运行位置说明"}
+{"file": "crates/agentdash-api/src/app_state.rs", "reason": "确认云端当前仍初始化本地执行器与 ExecutorHub"}
+{"file": "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs", "reason": "确认任务执行时对远程 backend 的 fallback 行为"}
+{"file": "crates/agentdash-api/src/routes/workspace_files.rs", "reason": "确认 workspace 文件读取是否回退到云端本地文件系统"}
+{"file": "crates/agentdash-api/src/routes/workspaces.rs", "reason": "确认 workspace 创建/更新/Git 探测是否仍在云端直接访问本地目录"}
+{"file": "crates/agentdash-api/src/routes/address_spaces.rs", "reason": "确认 address space 仍在云端直接遍历工作空间文件"}
+{"file": "crates/agentdash-api/src/task_agent_context.rs", "reason": "确认绝对路径 container_ref 仍被注入到执行上下文"}
+{"file": "crates/agentdash-api/src/relay/registry.rs", "reason": "确认当前路由仍依赖 accessible_roots 对路径做推断"}
+{"file": "crates/agentdash-api/src/relay/ws_handler.rs", "reason": "检查 relay 注册与鉴权实现是否完整"}
+{"file": "crates/agentdash-local/src/main.rs", "reason": "确认本机后端的标准能力边界"}
+{"file": "crates/agentdash-local/src/ws_client.rs", "reason": "确认本机后端如何接收并执行 relay 命令"}
+{"file": "crates/agentdash-local/src/tool_executor.rs", "reason": "确认 PiAgent tool call 在本机上的边界检查实现"}

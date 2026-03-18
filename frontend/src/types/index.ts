@@ -58,6 +58,7 @@ export interface GitConfig {
 export interface Workspace {
   id: string;
   project_id: string;
+  backend_id: string;
   name: string;
   container_ref: string;
   workspace_type: WorkspaceType;

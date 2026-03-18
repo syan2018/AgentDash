@@ -20,6 +20,7 @@ impl SqliteWorkspaceRepository {
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id),
+                backend_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 container_ref TEXT NOT NULL,
                 workspace_type TEXT NOT NULL DEFAULT 'git_worktree',
@@ -37,6 +38,20 @@ impl SqliteWorkspaceRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        let has_backend_id = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'backend_id'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        if has_backend_id == 0 {
+            sqlx::query("ALTER TABLE workspaces ADD COLUMN backend_id TEXT NOT NULL DEFAULT ''")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        }
+
         Ok(())
     }
 }
@@ -51,11 +66,12 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             .transpose()?;
 
         sqlx::query(
-            "INSERT INTO workspaces (id, project_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO workspaces (id, project_id, backend_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(workspace.id.to_string())
         .bind(workspace.project_id.to_string())
+        .bind(&workspace.backend_id)
         .bind(&workspace.name)
         .bind(&workspace.container_ref)
         .bind(workspace_type_to_str(&workspace.workspace_type))
@@ -72,7 +88,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Workspace>, DomainError> {
         let row = sqlx::query_as::<_, WorkspaceRow>(
-            "SELECT id, project_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at
+            "SELECT id, project_id, backend_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at
              FROM workspaces WHERE id = ?",
         )
         .bind(id.to_string())
@@ -85,7 +101,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
 
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Workspace>, DomainError> {
         let rows = sqlx::query_as::<_, WorkspaceRow>(
-            "SELECT id, project_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at
+            "SELECT id, project_id, backend_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at
              FROM workspaces WHERE project_id = ? ORDER BY created_at DESC",
         )
         .bind(project_id.to_string())
@@ -104,9 +120,10 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             .transpose()?;
 
         let result = sqlx::query(
-            "UPDATE workspaces SET name = ?, container_ref = ?, workspace_type = ?, status = ?, git_config = ?, updated_at = ?
+            "UPDATE workspaces SET backend_id = ?, name = ?, container_ref = ?, workspace_type = ?, status = ?, git_config = ?, updated_at = ?
              WHERE id = ?",
         )
+        .bind(&workspace.backend_id)
         .bind(&workspace.name)
         .bind(&workspace.container_ref)
         .bind(workspace_type_to_str(&workspace.workspace_type))
@@ -214,6 +231,7 @@ fn str_to_workspace_status(s: &str) -> WorkspaceStatus {
 struct WorkspaceRow {
     id: String,
     project_id: String,
+    backend_id: String,
     name: String,
     container_ref: String,
     workspace_type: String,
@@ -244,6 +262,7 @@ impl TryFrom<WorkspaceRow> for Workspace {
                 entity: "project",
                 id: row.project_id.clone(),
             })?,
+            backend_id: row.backend_id,
             name: row.name,
             container_ref: row.container_ref,
             workspace_type: str_to_workspace_type(&row.workspace_type),

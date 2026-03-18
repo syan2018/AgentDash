@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
+use agentdash_relay::{CommandWorkspaceFilesListPayload, RelayMessage};
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -28,7 +29,7 @@ pub async fn list_address_spaces(
     State(state): State<Arc<AppState>>,
     Query(query): Query<AddressSpacesQuery>,
 ) -> Result<Json<AddressSpacesResponse>, ApiError> {
-    let workspace_root = if let Some(ws_id_str) = &query.workspace_id {
+    let workspace_available = if let Some(ws_id_str) = &query.workspace_id {
         let ws_id = Uuid::parse_str(ws_id_str)
             .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
         state
@@ -37,14 +38,14 @@ pub async fn list_address_spaces(
             .await
             .ok()
             .flatten()
-            .map(|ws| std::path::PathBuf::from(&ws.container_ref))
+            .is_some()
     } else {
-        None
+        false
     };
 
     let has_mcp = state.mcp_base_url.is_some();
     let ctx = AddressSpaceContext {
-        workspace_root: workspace_root.as_deref(),
+        workspace_root: workspace_available.then_some(std::path::Path::new(".")),
         has_mcp,
     };
 
@@ -94,10 +95,67 @@ pub async fn list_address_entries(
                 .await
                 .map_err(|e| ApiError::Internal(e.to_string()))?
                 .ok_or_else(|| ApiError::NotFound(format!("Workspace {ws_id} 不存在")))?;
+            let backend_id = workspace.backend_id.trim();
+            if backend_id.is_empty() {
+                return Err(ApiError::BadRequest(
+                    "Workspace.backend_id 不能为空".to_string(),
+                ));
+            }
+            if !state.backend_registry.is_online(backend_id).await {
+                return Err(ApiError::Conflict(format!(
+                    "Workspace 所属 Backend 当前不在线: {backend_id}"
+                )));
+            }
 
-            let root = std::path::Path::new(&workspace.container_ref);
-            let search_query = query.query.as_deref().unwrap_or("");
-            let entries = list_workspace_file_entries(root, search_query);
+            let cmd = RelayMessage::CommandWorkspaceFilesList {
+                id: RelayMessage::new_id("address-space-list"),
+                payload: CommandWorkspaceFilesListPayload {
+                    workspace_id: ws_id_str.to_string(),
+                    root_path: Some(workspace.container_ref.clone()),
+                    path: None,
+                    pattern: query.query.clone(),
+                },
+            };
+            let resp = state
+                .backend_registry
+                .send_command(backend_id, cmd)
+                .await
+                .map_err(|e| {
+                    ApiError::Internal(format!("relay workspace_file.entries 失败: {e}"))
+                })?;
+
+            let entries = match resp {
+                RelayMessage::ResponseWorkspaceFilesList {
+                    payload: Some(payload),
+                    ..
+                } => payload
+                    .files
+                    .into_iter()
+                    .map(|entry| AddressEntry {
+                        address: entry.path.clone(),
+                        label: entry.path,
+                        entry_type: if entry.is_dir {
+                            "directory".to_string()
+                        } else {
+                            "file".to_string()
+                        },
+                    })
+                    .take(50)
+                    .collect(),
+                RelayMessage::ResponseWorkspaceFilesList {
+                    error: Some(err), ..
+                } => {
+                    return Err(ApiError::Internal(format!(
+                        "远程 workspace_file.entries 错误: {}",
+                        err.message
+                    )));
+                }
+                _ => {
+                    return Err(ApiError::Internal(
+                        "远程 workspace_file.entries 返回了意外响应".into(),
+                    ));
+                }
+            };
 
             Ok(Json(ListEntriesResponse { entries }))
         }
@@ -105,55 +163,4 @@ pub async fn list_address_entries(
             "寻址空间 '{space_id}' 不存在或不支持条目检索"
         ))),
     }
-}
-
-fn list_workspace_file_entries(root: &std::path::Path, query: &str) -> Vec<AddressEntry> {
-    let query_lower = query.to_lowercase();
-    let mut entries = Vec::new();
-
-    let walker = walkdir::WalkDir::new(root)
-        .max_depth(4)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !matches!(
-                name.as_ref(),
-                "node_modules" | "target" | ".git" | ".next" | "dist" | "__pycache__"
-            )
-        });
-
-    for entry in walker.filter_map(|e| e.ok()) {
-        if entry.path() == root {
-            continue;
-        }
-        let rel = entry
-            .path()
-            .strip_prefix(root)
-            .unwrap_or(entry.path())
-            .display()
-            .to_string()
-            .replace('\\', "/");
-
-        if !query_lower.is_empty() && !rel.to_lowercase().contains(&query_lower) {
-            continue;
-        }
-
-        let entry_type = if entry.file_type().is_dir() {
-            "directory"
-        } else {
-            "file"
-        };
-
-        entries.push(AddressEntry {
-            label: rel.clone(),
-            address: rel,
-            entry_type: entry_type.to_string(),
-        });
-
-        if entries.len() >= 50 {
-            break;
-        }
-    }
-
-    entries
 }

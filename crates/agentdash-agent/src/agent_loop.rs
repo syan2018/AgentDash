@@ -36,9 +36,8 @@ const DEFAULT_MAX_TURNS: usize = 25;
 
 /// 消息转换回调：AgentMessage[] → rig::Message[]
 /// 对齐 Pi `AgentLoopConfig.convertToLlm`
-pub type ConvertToLlmFn = Arc<
-    dyn Fn(&[AgentMessage]) -> Vec<rig::completion::Message> + Send + Sync,
->;
+pub type ConvertToLlmFn =
+    Arc<dyn Fn(&[AgentMessage]) -> Vec<rig::completion::Message> + Send + Sync>;
 
 /// 上下文变换回调：AgentMessage[] → AgentMessage[]
 /// 对齐 Pi `AgentLoopConfig.transformContext`
@@ -78,9 +77,8 @@ pub type AfterToolCallFn = Arc<
 >;
 
 /// 事件 sink —— 对齐 Pi `runAgentLoop(..., emit, ...)` 的异步事件消费模型。
-pub type AgentEventSink = Arc<
-    dyn Fn(AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync,
->;
+pub type AgentEventSink =
+    Arc<dyn Fn(AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
 
 // ─── AgentLoopConfig ────────────────────────────────────────
 
@@ -183,7 +181,10 @@ pub async fn agent_loop_continue(
             "Cannot continue: no messages in context".to_string(),
         ));
     }
-    if matches!(context.messages.last(), Some(AgentMessage::Assistant { .. })) {
+    if matches!(
+        context.messages.last(),
+        Some(AgentMessage::Assistant { .. })
+    ) {
         return Err(AgentError::ContinueError(
             "Cannot continue from message role: assistant".to_string(),
         ));
@@ -255,10 +256,9 @@ async fn run_loop(
                 }
             }
 
-            let assistant_message = stream_assistant_response(
-                context, config, bridge, emit, &tool_definitions, cancel,
-            )
-            .await?;
+            let assistant_message =
+                stream_assistant_response(context, config, bridge, emit, &tool_definitions, cancel)
+                    .await?;
             new_messages.push(assistant_message.clone());
 
             if assistant_message.is_error_or_aborted() {
@@ -401,7 +401,8 @@ impl PartialAssistantState {
     }
 
     fn reasoning_key(id: &Option<String>) -> String {
-        id.clone().unwrap_or_else(|| "__default_reasoning".to_string())
+        id.clone()
+            .unwrap_or_else(|| "__default_reasoning".to_string())
     }
 }
 
@@ -441,10 +442,7 @@ async fn stream_assistant_response(
 
     while let Some(chunk) = stream.next().await {
         if cancel.is_cancelled() {
-            stream_failure = Some(AgentMessage::error_assistant(
-                "Agent run aborted",
-                true,
-            ));
+            stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
             break;
         }
         match chunk {
@@ -462,7 +460,9 @@ async fn stream_assistant_response(
                         emit,
                         AgentEvent::MessageUpdate {
                             message: partial.message.clone(),
-                            event: AssistantStreamEvent::TextStart { content_index: index },
+                            event: AssistantStreamEvent::TextStart {
+                                content_index: index,
+                            },
                         },
                     )
                     .await;
@@ -479,7 +479,10 @@ async fn stream_assistant_response(
                     emit,
                     AgentEvent::MessageUpdate {
                         message: partial.message.clone(),
-                        event: AssistantStreamEvent::TextDelta { content_index, text },
+                        event: AssistantStreamEvent::TextDelta {
+                            content_index,
+                            text,
+                        },
                     },
                 )
                 .await;
@@ -497,30 +500,34 @@ async fn stream_assistant_response(
                     end_active_reasoning(context, emit, &mut partial).await;
                 }
 
-                let content_index = if let Some(index) = partial.reasoning_indices.get(&reasoning_key)
-                {
-                    *index
-                } else {
-                    let index = partial.content_mut().len();
-                    partial
-                        .content_mut()
-                        .push(ContentPart::reasoning("", id.clone(), signature.clone()));
-                    partial.reasoning_indices.insert(reasoning_key.clone(), index);
-                    partial.active_reasoning_id = Some(reasoning_key.clone());
-                    sync_partial(context, &partial);
-                    emit_event(
-                        emit,
-                        AgentEvent::MessageUpdate {
-                            message: partial.message.clone(),
-                            event: AssistantStreamEvent::ThinkingStart {
-                                content_index: index,
-                                id: id.clone(),
+                let content_index =
+                    if let Some(index) = partial.reasoning_indices.get(&reasoning_key) {
+                        *index
+                    } else {
+                        let index = partial.content_mut().len();
+                        partial.content_mut().push(ContentPart::reasoning(
+                            "",
+                            id.clone(),
+                            signature.clone(),
+                        ));
+                        partial
+                            .reasoning_indices
+                            .insert(reasoning_key.clone(), index);
+                        partial.active_reasoning_id = Some(reasoning_key.clone());
+                        sync_partial(context, &partial);
+                        emit_event(
+                            emit,
+                            AgentEvent::MessageUpdate {
+                                message: partial.message.clone(),
+                                event: AssistantStreamEvent::ThinkingStart {
+                                    content_index: index,
+                                    id: id.clone(),
+                                },
                             },
-                        },
-                    )
-                    .await;
-                    index
-                };
+                        )
+                        .await;
+                        index
+                    };
 
                 let delta = if let Some(ContentPart::Reasoning {
                     text: existing,
@@ -574,7 +581,8 @@ async fn stream_assistant_response(
 
                 let tool_index = if let Some(state) = partial.tool_calls.get_mut(&id) {
                     state.partial_json.push_str(&delta);
-                    if let Ok(arguments) = serde_json::from_str::<serde_json::Value>(&state.partial_json)
+                    if let Ok(arguments) =
+                        serde_json::from_str::<serde_json::Value>(&state.partial_json)
                     {
                         Some((state.index, arguments))
                     } else {
@@ -783,7 +791,10 @@ async fn end_active_text(
         emit,
         AgentEvent::MessageUpdate {
             message: partial.message.clone(),
-            event: AssistantStreamEvent::TextEnd { content_index, text },
+            event: AssistantStreamEvent::TextEnd {
+                content_index,
+                text,
+            },
         },
     )
     .await;
@@ -945,8 +956,7 @@ async fn execute_tool_calls_sequential(
         )
         .await;
 
-        let preparation =
-            prepare_tool_call(context, assistant_message, tc, config, cancel).await;
+        let preparation = prepare_tool_call(context, assistant_message, tc, config, cancel).await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
@@ -954,9 +964,16 @@ async fn execute_tool_calls_sequential(
             }
             ToolCallPreparation::Prepared { tool, args } => {
                 let executed = execute_prepared_tool_call(tc, &tool, &args, cancel, emit).await;
-                let finalized =
-                    finalize_executed_tool_call(context, assistant_message, tc, &args, executed, config, cancel)
-                        .await;
+                let finalized = finalize_executed_tool_call(
+                    context,
+                    assistant_message,
+                    tc,
+                    &args,
+                    executed,
+                    config,
+                    cancel,
+                )
+                .await;
                 results.push(
                     emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, emit).await,
                 );
@@ -1000,8 +1017,7 @@ async fn execute_tool_calls_parallel(
         )
         .await;
 
-        let preparation =
-            prepare_tool_call(context, assistant_message, tc, config, cancel).await;
+        let preparation = prepare_tool_call(context, assistant_message, tc, config, cancel).await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
@@ -1136,10 +1152,7 @@ async fn prepare_tool_call(
         }
     }
 
-    ToolCallPreparation::Prepared {
-        tool,
-        args,
-    }
+    ToolCallPreparation::Prepared { tool, args }
 }
 
 /// Phase 2: execute — 对齐 Pi `executePreparedToolCall` (agent-loop.ts:509-544)
@@ -1181,7 +1194,10 @@ async fn execute_prepared_tool_call_inner(
     cancel: CancellationToken,
     on_update: Option<ToolUpdateCallback>,
 ) -> ExecutedOutcome {
-    match tool.execute(tool_call_id, args.clone(), cancel, on_update).await {
+    match tool
+        .execute(tool_call_id, args.clone(), cancel, on_update)
+        .await
+    {
         Ok(result) => {
             let is_error = result.is_error;
             ExecutedOutcome { result, is_error }

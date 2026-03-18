@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use agent_client_protocol::McpServer;
+use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
 use agentdash_injection::{
     ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesRequest,
@@ -169,10 +170,10 @@ impl ContextContributor for CoreContextContributor {
                 order: 50,
                 strategy: MergeStrategy::Append,
                 content: format!(
-                    "## Workspace\n- id: {}\n- name: {}\n- path: {}\n- type: {:?}\n- status: {:?}",
+                    "## Workspace\n- id: {}\n- backend_id: {}\n- name: {}\n- working_dir: .\n- type: {:?}\n- status: {:?}",
                     workspace.id,
+                    trim_or_dash(&workspace.backend_id),
                     trim_or_dash(&workspace.name),
-                    workspace.container_ref,
                     workspace.workspace_type,
                     workspace.status,
                 ),
@@ -218,17 +219,42 @@ impl ContextContributor for DeclaredSourcesContributor {
             return Contribution::fragments_only(Vec::new());
         }
 
-        let workspace_root = input
-            .workspace
-            .map(|workspace| std::path::Path::new(workspace.container_ref.as_str()));
+        let has_workspace_fs_source = sources.iter().any(|source| {
+            matches!(
+                source.kind,
+                ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
+            )
+        });
+
+        let mut fragments = Vec::new();
+        if has_workspace_fs_source {
+            fragments.push(ContextFragment {
+                slot: "references",
+                label: "workspace_source_boundary_note",
+                order: 81,
+                strategy: MergeStrategy::Append,
+                content: "## Injection Notes\n- 工作空间文件类声明式来源暂未接入 local backend 解析，本次执行不会在 cloud 侧直接读取 Workspace.container_ref。".to_string(),
+            });
+        }
+
+        let resolvable_sources = sources
+            .iter()
+            .filter(|source| {
+                !matches!(
+                    source.kind,
+                    ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
 
         match resolve_declared_sources(ResolveSourcesRequest {
-            sources: &sources,
-            workspace_root,
+            sources: &resolvable_sources,
+            workspace_root: None,
             base_order: 82,
         }) {
             Ok(result) => {
-                let mut fragments = result.fragments;
+                fragments.extend(result.fragments);
                 if !result.warnings.is_empty() {
                     fragments.push(ContextFragment {
                         slot: "references",
@@ -248,13 +274,16 @@ impl ContextContributor for DeclaredSourcesContributor {
                 }
                 Contribution::fragments_only(fragments)
             }
-            Err(err) => Contribution::fragments_only(vec![ContextFragment {
-                slot: "references",
-                label: "declared_source_error",
-                order: 89,
-                strategy: MergeStrategy::Append,
-                content: format!("## Injection Error\n- 声明式上下文来源解析失败：{}", err),
-            }]),
+            Err(err) => {
+                fragments.push(ContextFragment {
+                    slot: "references",
+                    label: "declared_source_error",
+                    order: 89,
+                    strategy: MergeStrategy::Append,
+                    content: format!("## Injection Error\n- 声明式上下文来源解析失败：{}", err),
+                });
+                Contribution::fragments_only(fragments)
+            }
         }
     }
 }
@@ -268,7 +297,7 @@ impl ContextContributor for InstructionContributor {
 
         let workspace_path = input
             .workspace
-            .map(|w| w.container_ref.clone())
+            .map(|_| ".".to_string())
             .unwrap_or_else(|| ".".to_string());
 
         let template = resolve_instruction_template(input);
@@ -417,7 +446,7 @@ pub fn build_task_agent_context(
         additional_prompt: input.additional_prompt,
     };
 
-    let working_dir = input.workspace.map(|w| w.container_ref.clone());
+    let working_dir = input.workspace.map(|_| ".".to_string());
 
     let mut context_composer = ContextComposer::default();
     let mut instruction_composer = ContextComposer::default();

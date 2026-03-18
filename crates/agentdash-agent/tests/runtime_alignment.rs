@@ -5,13 +5,13 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use agentdash_agent::agent_loop::AgentLoopConfig;
 use agentdash_agent::{
-    Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage,
-    AgentTool, AgentToolError, AgentToolResult, AssistantStreamEvent, BridgeError, BridgeRequest,
+    Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
+    AgentToolError, AgentToolResult, AssistantStreamEvent, BridgeError, BridgeRequest,
     BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopReason, ToolCallInfo,
     agent_loop::AgentEventSink,
 };
-use agentdash_agent::agent_loop::AgentLoopConfig;
 use async_trait::async_trait;
 use futures::Stream;
 use rig::completion::Usage;
@@ -172,9 +172,9 @@ fn event_kind(event: &AgentEvent) -> &'static str {
 
 #[tokio::test]
 async fn agent_loop_emits_prompt_before_assistant_and_returns_new_messages() {
-    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
-        bridge_response(assistant_text("hi")),
-    ))]]);
+    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(
+        agentdash_agent::StreamChunk::Done(bridge_response(assistant_text("hi"))),
+    )]]);
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = collecting_sink(events.clone());
     let mut context = AgentContext {
@@ -221,13 +221,15 @@ async fn agent_updates_runtime_state_and_rejects_reentrancy() {
         ScriptStep::Chunk(agentdash_agent::StreamChunk::TextDelta("hel".to_string())),
         ScriptStep::Signal(first_delta_sent.clone()),
         ScriptStep::Wait(release_stream.clone()),
-        ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(assistant_text(
-            "hello",
-        )))),
+        ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+            assistant_text("hello"),
+        ))),
     ]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
 
-    let (_rx, handle) = agent.prompt(AgentMessage::user("hi")).expect("prompt should start");
+    let (_rx, handle) = agent
+        .prompt(AgentMessage::user("hi"))
+        .expect("prompt should start");
     first_delta_sent.notified().await;
 
     let state = agent.state().await;
@@ -238,7 +240,8 @@ async fn agent_updates_runtime_state_and_rejects_reentrancy() {
         Some(AgentMessage::Assistant { .. })
     ));
     assert_eq!(
-        state.stream_message
+        state
+            .stream_message
             .as_ref()
             .and_then(AgentMessage::first_text),
         Some("hel")
@@ -254,7 +257,10 @@ async fn agent_updates_runtime_state_and_rejects_reentrancy() {
     ));
 
     release_stream.notify_waiters();
-    let new_messages = handle.await.expect("task should not panic").expect("run should succeed");
+    let new_messages = handle
+        .await
+        .expect("task should not panic")
+        .expect("run should succeed");
     assert_eq!(new_messages.len(), 2);
 
     let final_state = agent.state().await;
@@ -262,7 +268,10 @@ async fn agent_updates_runtime_state_and_rejects_reentrancy() {
     assert!(final_state.stream_message.is_none());
     assert_eq!(final_state.messages.len(), 2);
     assert_eq!(
-        final_state.messages.last().and_then(AgentMessage::first_text),
+        final_state
+            .messages
+            .last()
+            .and_then(AgentMessage::first_text),
         Some("hello")
     );
 }
@@ -278,13 +287,17 @@ async fn continue_from_assistant_tail_consumes_queued_messages_one_at_a_time() {
         ))],
     ]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
-    agent.replace_messages(vec![AgentMessage::user("initial"), assistant_text("seed")])
+    agent
+        .replace_messages(vec![AgentMessage::user("initial"), assistant_text("seed")])
         .await;
     agent.steer(AgentMessage::user("steering 1")).await;
     agent.steer(AgentMessage::user("steering 2")).await;
 
     let (_rx, handle) = agent.continue_loop().expect("continue should start");
-    handle.await.expect("task should not panic").expect("run should succeed");
+    handle
+        .await
+        .expect("task should not panic")
+        .expect("run should succeed");
 
     let state = agent.state().await;
     let texts = state
@@ -311,12 +324,16 @@ async fn continue_from_assistant_tail_consumes_follow_up_messages() {
         agentdash_agent::StreamChunk::Done(bridge_response(assistant_text("after follow up"))),
     )]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
-    agent.replace_messages(vec![AgentMessage::user("initial"), assistant_text("seed")])
+    agent
+        .replace_messages(vec![AgentMessage::user("initial"), assistant_text("seed")])
         .await;
     agent.follow_up(AgentMessage::user("follow up")).await;
 
     let (_rx, handle) = agent.continue_loop().expect("continue should start");
-    handle.await.expect("task should not panic").expect("run should succeed");
+    handle
+        .await
+        .expect("task should not panic")
+        .expect("run should succeed");
 
     let state = agent.state().await;
     let texts = state
@@ -324,7 +341,10 @@ async fn continue_from_assistant_tail_consumes_follow_up_messages() {
         .iter()
         .map(|message| message.first_text().unwrap_or_default().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(texts, vec!["initial", "seed", "follow up", "after follow up"]);
+    assert_eq!(
+        texts,
+        vec!["initial", "seed", "follow up", "after follow up"]
+    );
 }
 
 #[tokio::test]
@@ -336,7 +356,10 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
     });
     let bridge = ScriptedBridge::new(vec![
         vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
-            bridge_response(assistant_tool_call("tool-1", serde_json::json!({ "value": 1 }))),
+            bridge_response(assistant_tool_call(
+                "tool-1",
+                serde_json::json!({ "value": 1 }),
+            )),
         ))],
         vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
@@ -395,8 +418,13 @@ async fn stream_errors_become_error_assistant_messages() {
     )]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
 
-    let (_rx, handle) = agent.prompt(AgentMessage::user("hi")).expect("prompt should start");
-    let new_messages = handle.await.expect("task should not panic").expect("run should succeed");
+    let (_rx, handle) = agent
+        .prompt(AgentMessage::user("hi"))
+        .expect("prompt should start");
+    let new_messages = handle
+        .await
+        .expect("task should not panic")
+        .expect("run should succeed");
 
     assert_eq!(new_messages.len(), 2);
     assert!(matches!(
@@ -425,16 +453,23 @@ async fn abort_becomes_aborted_assistant_message() {
         ScriptStep::Chunk(agentdash_agent::StreamChunk::TextDelta("hel".to_string())),
         ScriptStep::Signal(first_delta_sent.clone()),
         ScriptStep::Wait(release_stream.clone()),
-        ScriptStep::Chunk(agentdash_agent::StreamChunk::TextDelta("ignored".to_string())),
+        ScriptStep::Chunk(agentdash_agent::StreamChunk::TextDelta(
+            "ignored".to_string(),
+        )),
     ]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
 
-    let (_rx, handle) = agent.prompt(AgentMessage::user("hi")).expect("prompt should start");
+    let (_rx, handle) = agent
+        .prompt(AgentMessage::user("hi"))
+        .expect("prompt should start");
     first_delta_sent.notified().await;
     agent.abort();
     release_stream.notify_waiters();
 
-    let new_messages = handle.await.expect("task should not panic").expect("run should succeed");
+    let new_messages = handle
+        .await
+        .expect("task should not panic")
+        .expect("run should succeed");
     assert!(matches!(
         new_messages.last(),
         Some(AgentMessage::Assistant {

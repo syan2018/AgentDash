@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     ContentBlock, ContentChunk, ImageContent, SessionId, SessionNotification, SessionUpdate,
-    TextContent,
-    ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind,
+    TextContent, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
 use futures::stream::BoxStream;
 use tokio::sync::Mutex;
@@ -323,35 +322,33 @@ fn convert_event_to_notifications(
     entry_index: &mut u32,
 ) -> Vec<SessionNotification> {
     match event {
-        AgentEvent::MessageUpdate { event, .. } => {
-            match event {
-                agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
-                    if text.is_empty() {
-                        return Vec::new();
-                    }
-                    let meta = make_meta(source, turn_id, *entry_index);
-                    let chunk =
-                        ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
-                    vec![SessionNotification::new(
-                        session_id.clone(),
-                        SessionUpdate::AgentMessageChunk(chunk),
-                    )]
+        AgentEvent::MessageUpdate { event, .. } => match event {
+            agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
+                if text.is_empty() {
+                    return Vec::new();
                 }
-                agentdash_agent::types::AssistantStreamEvent::ThinkingDelta { text, .. } => {
-                    if text.is_empty() {
-                        return Vec::new();
-                    }
-                    let meta = make_meta(source, turn_id, *entry_index);
-                    let chunk =
-                        ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
-                    vec![SessionNotification::new(
-                        session_id.clone(),
-                        SessionUpdate::AgentThoughtChunk(chunk),
-                    )]
-                }
-                _ => Vec::new(),
+                let meta = make_meta(source, turn_id, *entry_index);
+                let chunk =
+                    ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                vec![SessionNotification::new(
+                    session_id.clone(),
+                    SessionUpdate::AgentMessageChunk(chunk),
+                )]
             }
-        }
+            agentdash_agent::types::AssistantStreamEvent::ThinkingDelta { text, .. } => {
+                if text.is_empty() {
+                    return Vec::new();
+                }
+                let meta = make_meta(source, turn_id, *entry_index);
+                let chunk =
+                    ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                vec![SessionNotification::new(
+                    session_id.clone(),
+                    SessionUpdate::AgentThoughtChunk(chunk),
+                )]
+            }
+            _ => Vec::new(),
+        },
 
         AgentEvent::MessageEnd { message } => {
             if let AgentMessage::Assistant {
@@ -377,16 +374,17 @@ fn convert_event_to_notifications(
 
                 let mut notifications = Vec::new();
                 if !reasoning_text.is_empty() {
-                    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(reasoning_text)))
-                        .meta(Some(meta.clone()));
+                    let chunk =
+                        ContentChunk::new(ContentBlock::Text(TextContent::new(reasoning_text)))
+                            .meta(Some(meta.clone()));
                     notifications.push(SessionNotification::new(
                         session_id.clone(),
                         SessionUpdate::AgentThoughtChunk(chunk),
                     ));
                 }
                 if !text.is_empty() {
-                    let chunk =
-                        ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                        .meta(Some(meta));
                     notifications.push(SessionNotification::new(
                         session_id.clone(),
                         SessionUpdate::AgentMessageChunk(chunk),
@@ -676,7 +674,9 @@ mod tests {
         assert!(prompt.contains("当前工作目录（相对工作空间）：crates/agentdash-agent"));
         assert!(prompt.contains("不要把 `F:\\...` 这类绝对路径直接写进工具参数"));
         assert!(prompt.contains("cwd 设为 `.`"));
-        assert!(!prompt.contains("当前工作目录（相对工作空间）：F:/Projects/AgentDash/crates/agentdash-agent"));
+        assert!(!prompt.contains(
+            "当前工作目录（相对工作空间）：F:/Projects/AgentDash/crates/agentdash-agent"
+        ));
     }
 
     struct NoopBridge;

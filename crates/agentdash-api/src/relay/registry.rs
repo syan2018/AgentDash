@@ -61,10 +61,7 @@ impl BackendRegistry {
 
     pub async fn unregister(&self, backend_id: &str) {
         self.backends.write().await.remove(backend_id);
-        self.pending
-            .write()
-            .await
-            .retain(|_, _| true); // pending requests will fail naturally when sender drops
+        self.pending.write().await.retain(|_, _| true); // pending requests will fail naturally when sender drops
         tracing::info!(backend_id = %backend_id, "本机后端已断开");
     }
 

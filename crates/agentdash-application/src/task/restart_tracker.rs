@@ -35,14 +35,9 @@ impl Default for RestartPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartDecision {
     /// 允许重试，需等待指定延迟后执行
-    Allowed {
-        attempt: u32,
-        delay: Duration,
-    },
+    Allowed { attempt: u32, delay: Duration },
     /// 拒绝重试，已达到最大重试次数
-    Denied {
-        attempts_exhausted: u32,
-    },
+    Denied { attempts_exhausted: u32 },
 }
 
 impl RestartDecision {
@@ -145,10 +140,7 @@ impl RestartTracker {
 
     /// 当前追踪的 Task 数量（诊断用）
     pub fn tracked_count(&self) -> usize {
-        self.states
-            .lock()
-            .expect("RestartTracker Mutex 中毒")
-            .len()
+        self.states.lock().expect("RestartTracker Mutex 中毒").len()
     }
 
     /// 查询指定 Task 的当前重试次数（诊断/日志用）

@@ -185,9 +185,7 @@ mod tests {
         let lock = lock_map.get_or_create(task_id);
         let _guard = lock.lock().await;
 
-        let result = lock_map
-            .try_with_lock(task_id, || async { 42 })
-            .await;
+        let result = lock_map.try_with_lock(task_id, || async { 42 }).await;
 
         assert!(result.is_err());
     }

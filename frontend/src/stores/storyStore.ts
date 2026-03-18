@@ -374,6 +374,10 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     title: String(raw.title ?? raw.name ?? '未命名 Task'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeTaskStatus(String(raw.status ?? 'pending')),
+    execution_mode:
+      raw.execution_mode === 'auto_retry' || raw.execution_mode === 'one_shot'
+        ? raw.execution_mode
+        : 'standard',
     agent_binding: mapAgentBinding(raw.agent_binding),
     artifacts: Array.isArray(raw.artifacts)
       ? raw.artifacts

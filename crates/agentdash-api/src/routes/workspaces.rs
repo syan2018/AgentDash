@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workspace::{GitConfig, Workspace, WorkspaceStatus, WorkspaceType};
+use agentdash_relay::{CommandWorkspaceDetectGitPayload, RelayMessage};
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -36,6 +37,7 @@ pub struct UpdateWorkspaceRequest {
 #[derive(Deserialize)]
 pub struct DetectGitRequest {
     pub container_ref: String,
+    pub backend_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,8 +92,8 @@ pub async fn create_workspace(
     let project_id = Uuid::parse_str(&project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    // 校验 Project 存在
-    state
+    // 读取 Project，Workspace.backend_id 默认继承 Project.backend_id。
+    let project = state
         .project_repo
         .get_by_id(project_id)
         .await?
@@ -99,9 +101,15 @@ pub async fn create_workspace(
 
     let ws_type = req.workspace_type.unwrap_or(WorkspaceType::GitWorktree);
     let (container_ref, git_config) =
-        resolve_container_and_git(req.container_ref, &ws_type).await?;
+        resolve_container_and_git(&state, &project.backend_id, req.container_ref, &ws_type).await?;
 
-    let mut workspace = Workspace::new(project_id, workspace_name, container_ref, ws_type);
+    let mut workspace = Workspace::new(
+        project_id,
+        project.backend_id,
+        workspace_name,
+        container_ref,
+        ws_type,
+    );
     workspace.git_config = git_config;
 
     state.workspace_repo.create(&workspace).await?;
@@ -164,7 +172,8 @@ pub async fn update_workspace(
         Some(next_container_ref)
     };
     let (resolved_container_ref, resolved_git_config) =
-        resolve_container_and_git(container_input, &next_type).await?;
+        resolve_container_and_git(&state, &workspace.backend_id, container_input, &next_type)
+            .await?;
 
     workspace.workspace_type = next_type;
     workspace.container_ref = resolved_container_ref;
@@ -202,11 +211,25 @@ pub async fn delete_workspace(
 }
 
 pub async fn detect_git(
+    State(state): State<Arc<AppState>>,
     Json(req): Json<DetectGitRequest>,
 ) -> Result<Json<DetectGitResponse>, ApiError> {
     let container_ref = req.container_ref.trim();
     if container_ref.is_empty() {
         return Err(ApiError::BadRequest("container_ref 不能为空".into()));
+    }
+
+    if let Some(backend_id) = req.backend_id.as_deref().map(str::trim)
+        && !backend_id.is_empty()
+    {
+        let detected = detect_git_via_backend(&state, backend_id, container_ref).await?;
+        return Ok(Json(DetectGitResponse {
+            resolved_container_ref: container_ref.to_string(),
+            is_git_repo: detected.is_git_repo,
+            source_repo: detected.source_repo,
+            branch: detected.branch,
+            commit_hash: detected.commit_hash,
+        }));
     }
 
     let canonical_path = canonicalize_container_ref(container_ref)?;
@@ -322,6 +345,8 @@ async fn auto_transition_workspace_status(
 }
 
 async fn resolve_container_and_git(
+    state: &Arc<AppState>,
+    backend_id: &str,
     container_ref: Option<String>,
     workspace_type: &WorkspaceType,
 ) -> Result<(String, Option<GitConfig>), ApiError> {
@@ -335,12 +360,8 @@ async fn resolve_container_and_git(
         return Err(ApiError::BadRequest("container_ref 不能为空".into()));
     }
 
-    let canonical_path = canonicalize_container_ref(trimmed_ref)?;
-    let normalized_ref = normalize_display_path(&canonical_path);
-
-    let detected = tokio::task::spawn_blocking(move || detect_git_impl(canonical_path))
-        .await
-        .map_err(|e| ApiError::Internal(format!("Git 识别任务异常: {e}")))??;
+    let normalized_ref = trimmed_ref.to_string();
+    let detected = detect_git_via_backend(state, backend_id, trimmed_ref).await?;
 
     if matches!(workspace_type, WorkspaceType::GitWorktree) && !detected.is_git_repo {
         return Err(ApiError::BadRequest(format!(
@@ -361,6 +382,59 @@ async fn resolve_container_and_git(
     };
 
     Ok((normalized_ref, git_config))
+}
+
+async fn detect_git_via_backend(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    container_ref: &str,
+) -> Result<GitDetectionResult, ApiError> {
+    let backend_id = backend_id.trim();
+    if backend_id.is_empty() {
+        return Err(ApiError::BadRequest("backend_id 不能为空".into()));
+    }
+    if !state.backend_registry.is_online(backend_id).await {
+        return Err(ApiError::Conflict(format!(
+            "目标 Backend 当前不在线: {backend_id}"
+        )));
+    }
+
+    let cmd = RelayMessage::CommandWorkspaceDetectGit {
+        id: RelayMessage::new_id("workspace-detect-git"),
+        payload: CommandWorkspaceDetectGitPayload {
+            path: container_ref.to_string(),
+        },
+    };
+    let resp = state
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
+        .map_err(|e| ApiError::Internal(format!("relay workspace_detect_git 失败: {e}")))?;
+
+    match resp {
+        RelayMessage::ResponseWorkspaceDetectGit {
+            payload: Some(payload),
+            error: None,
+            ..
+        } => Ok(GitDetectionResult {
+            is_git_repo: payload.is_git,
+            source_repo: payload
+                .remote_url
+                .clone()
+                .or_else(|| payload.is_git.then(|| container_ref.to_string())),
+            branch: payload.current_branch.or(payload.default_branch),
+            commit_hash: None,
+        }),
+        RelayMessage::ResponseWorkspaceDetectGit {
+            error: Some(err), ..
+        } => Err(ApiError::Internal(format!(
+            "远程 workspace_detect_git 错误: {}",
+            err.message
+        ))),
+        _ => Err(ApiError::Internal(
+            "远程 workspace_detect_git 返回了意外响应".into(),
+        )),
+    }
 }
 
 fn non_git_response() -> GitDetectionResult {

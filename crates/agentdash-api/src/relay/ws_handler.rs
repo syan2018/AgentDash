@@ -214,9 +214,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
     }
 }
 
-async fn read_next_relay(
-    rx: &mut futures::stream::SplitStream<WebSocket>,
-) -> Option<RelayMessage> {
+async fn read_next_relay(rx: &mut futures::stream::SplitStream<WebSocket>) -> Option<RelayMessage> {
     while let Some(msg) = rx.next().await {
         match msg {
             Ok(Message::Text(text)) => {

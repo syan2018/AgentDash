@@ -52,6 +52,7 @@ PROJECT = {
 
 WORKSPACES = [
     {
+        "backend_id": BACKEND["id"],
         "name": "主仓库工作区",
         "container_ref": "/workspace/agentdash-main",
         "workspace_type": "static",
@@ -59,6 +60,7 @@ WORKSPACES = [
         "git_config": None,
     },
     {
+        "backend_id": BACKEND["id"],
         "name": "前端特性分支",
         "container_ref": "/workspace/agentdash-feature-ui",
         "workspace_type": "git_worktree",
@@ -70,6 +72,7 @@ WORKSPACES = [
         },
     },
     {
+        "backend_id": BACKEND["id"],
         "name": "临时调试环境",
         "container_ref": "/tmp/agentdash-debug",
         "workspace_type": "ephemeral",
@@ -266,11 +269,12 @@ def seed_workspaces(conn: sqlite3.Connection, project_id: str) -> list[str]:
         git_config_json = json.dumps(ws_def["git_config"], ensure_ascii=False) if ws_def["git_config"] else None
 
         conn.execute(
-            """INSERT INTO workspaces (id, project_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO workspaces (id, project_id, backend_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ws_id,
                 project_id,
+                ws_def["backend_id"],
                 ws_def["name"],
                 ws_def["container_ref"],
                 ws_def["workspace_type"],

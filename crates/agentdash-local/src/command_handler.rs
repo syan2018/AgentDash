@@ -364,12 +364,15 @@ impl CommandHandler {
         };
 
         let sub_path = payload.path.as_deref().unwrap_or("");
-        let dir = if sub_path.is_empty() { root.clone() } else { root.join(sub_path) };
+        let dir = if sub_path.is_empty() {
+            root.clone()
+        } else {
+            root.join(sub_path)
+        };
         let pattern = payload.pattern.unwrap_or_default().to_lowercase();
 
-        let result = tokio::task::spawn_blocking(move || {
-            walk_files(&root, &dir, &pattern, 200)
-        }).await;
+        let result =
+            tokio::task::spawn_blocking(move || walk_files(&root, &dir, &pattern, 200)).await;
 
         match result {
             Ok(files) => RelayMessage::ResponseWorkspaceFilesList {
@@ -436,7 +439,10 @@ impl CommandHandler {
         }
     }
 
-    fn resolve_workspace_root(&self, root_path: &Option<String>) -> Result<std::path::PathBuf, String> {
+    fn resolve_workspace_root(
+        &self,
+        root_path: &Option<String>,
+    ) -> Result<std::path::PathBuf, String> {
         if let Some(rp) = root_path {
             self.tool_executor
                 .validate_workspace_root(rp)
@@ -586,14 +592,11 @@ fn walk_dir_recursive(
             out.push(FileEntryRelay {
                 path: rel,
                 size: meta.as_ref().map(|m| m.len()),
-                modified_at: meta
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .map(|t| {
-                        t.duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs() as i64
-                    }),
+                modified_at: meta.as_ref().and_then(|m| m.modified().ok()).map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64
+                }),
                 is_dir: false,
             });
         }

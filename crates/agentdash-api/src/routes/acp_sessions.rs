@@ -15,7 +15,10 @@ use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_domain::{project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace};
+use agentdash_domain::{
+    context_source::ContextSourceKind, project::Project, session_binding::SessionOwnerType,
+    story::Story, workspace::Workspace,
+};
 use agentdash_executor::{PromptSessionRequest, SessionMeta};
 use agentdash_injection::{
     ContextComposer, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
@@ -261,7 +264,13 @@ async fn augment_prompt_request_for_owner(
         .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
     let workspace = resolve_story_workspace(state, &project).await?;
 
-    Ok(build_story_owner_prompt_request(state, req, &story, &project, workspace.as_ref()))
+    Ok(build_story_owner_prompt_request(
+        state,
+        req,
+        &story,
+        &project,
+        workspace.as_ref(),
+    ))
 }
 
 async fn resolve_story_workspace(
@@ -291,7 +300,8 @@ fn build_story_owner_prompt_request(
     project: &Project,
     workspace: Option<&Workspace>,
 ) -> PromptSessionRequest {
-    let (context_markdown, source_summary) = build_story_context_markdown(story, project, workspace);
+    let (context_markdown, source_summary) =
+        build_story_context_markdown(story, project, workspace);
 
     let mut prefix_blocks = Vec::new();
     if !context_markdown.trim().is_empty() {
@@ -336,8 +346,8 @@ fn build_story_owner_prompt_request(
     req.prompt = None;
     req.prompt_blocks = Some(prefix_blocks);
 
-    if req.working_dir.is_none() {
-        req.working_dir = workspace.map(|item| item.container_ref.clone());
+    if req.working_dir.is_none() && workspace.is_some() {
+        req.working_dir = Some(".".to_string());
     }
 
     let base_url = state
@@ -388,10 +398,10 @@ fn build_story_context_markdown(
             30,
             MergeStrategy::Append,
             format!(
-                "## Workspace\n- id: {}\n- name: {}\n- path: {}",
+                "## Workspace\n- id: {}\n- backend_id: {}\n- name: {}\n- working_dir: .",
                 workspace.id,
+                trim_or_dash(&workspace.backend_id),
                 trim_or_dash(&workspace.name),
-                trim_or_dash(&workspace.container_ref)
             ),
         );
     }
@@ -441,12 +451,38 @@ fn build_story_context_markdown(
         );
     }
 
-    let workspace_root = workspace
-        .map(|item| std::path::Path::new(item.container_ref.as_str()))
-        .or(Some(std::path::Path::new(".")));
+    let has_workspace_fs_source = story.context.source_refs.iter().any(|source| {
+        matches!(
+            source.kind,
+            ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
+        )
+    });
+    if has_workspace_fs_source {
+        composer.push(
+            "story_context",
+            "story_workspace_source_boundary_note",
+            49,
+            MergeStrategy::Append,
+            "## Injection Notes\n- 工作空间文件类声明式来源暂未接入 local backend 解析，本次会话不会在 cloud 侧直接读取 Workspace.container_ref。".to_string(),
+        );
+    }
+
+    let resolvable_sources = story
+        .context
+        .source_refs
+        .iter()
+        .filter(|source| {
+            !matches!(
+                source.kind,
+                ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
     if let Ok(resolved) = resolve_declared_sources(ResolveSourcesRequest {
-        sources: &story.context.source_refs,
-        workspace_root,
+        sources: &resolvable_sources,
+        workspace_root: None,
         base_order: 50,
     }) {
         for fragment in resolved.fragments {

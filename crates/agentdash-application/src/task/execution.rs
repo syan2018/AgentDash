@@ -88,7 +88,7 @@ pub struct StartedTurn {
 pub trait TaskExecutionGateway<C>: Send + Sync {
     async fn get_task(&self, task_id: Uuid) -> Result<Task, TaskExecutionError>;
     async fn update_task(&self, task: &Task) -> Result<(), TaskExecutionError>;
-    async fn get_backend_id_for_story(&self, story_id: Uuid) -> Result<String, TaskExecutionError>;
+    async fn get_backend_id_for_task(&self, task: &Task) -> Result<String, TaskExecutionError>;
     async fn append_task_change(
         &self,
         task_id: Uuid,
@@ -149,7 +149,7 @@ pub async fn start_task<C, G: TaskExecutionGateway<C>>(
         return Err(TaskExecutionError::Conflict("该任务已有执行进行中".into()));
     }
 
-    let backend_id = gateway.get_backend_id_for_story(task.story_id).await?;
+    let backend_id = gateway.get_backend_id_for_task(&task).await?;
     let session_id = gateway.create_task_session(&task).await?;
     let previous_status = task.status.clone();
 
@@ -287,7 +287,7 @@ pub async fn continue_task<C, G: TaskExecutionGateway<C>>(
         return Err(TaskExecutionError::Conflict("该任务已有执行进行中".into()));
     }
 
-    let backend_id = gateway.get_backend_id_for_story(task.story_id).await?;
+    let backend_id = gateway.get_backend_id_for_task(&task).await?;
     let started_turn = gateway
         .start_task_turn(
             &task,
@@ -372,7 +372,7 @@ pub async fn cancel_task<C, G: TaskExecutionGateway<C>>(
         gateway.update_task(&task).await?;
 
         let backend_id = gateway
-            .get_backend_id_for_story(task.story_id)
+            .get_backend_id_for_task(&task)
             .await
             .unwrap_or_else(|_| "unknown".to_string());
 

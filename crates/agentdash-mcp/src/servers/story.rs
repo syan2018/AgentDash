@@ -306,10 +306,10 @@ impl StoryMcpServer {
                 })?;
         }
         if let Some(story_type) = params.story_type {
-            story.story_type = serde_json::from_value(serde_json::Value::String(story_type.clone()))
-                .map_err(|_| {
-                    McpError::invalid_param("story_type", format!("无效的类型: {story_type}"))
-                })?;
+            story.story_type =
+                serde_json::from_value(serde_json::Value::String(story_type.clone())).map_err(
+                    |_| McpError::invalid_param("story_type", format!("无效的类型: {story_type}")),
+                )?;
         }
         if let Some(tags) = params.tags {
             story.tags = Self::normalize_tags(tags);

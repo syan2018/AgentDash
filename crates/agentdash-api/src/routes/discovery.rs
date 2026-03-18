@@ -46,14 +46,22 @@ pub async fn get_discovery(
     let mut merged: HashMap<String, ExecutorInfoResponse> = HashMap::new();
 
     for info in connector.list_executors() {
-        let ConnectorExecutorInfo { id, name, variants, available } = info;
-        merged.insert(id.clone(), ExecutorInfoResponse {
+        let ConnectorExecutorInfo {
             id,
             name,
             variants,
             available,
-            backend_ids: Vec::new(),
-        });
+        } = info;
+        merged.insert(
+            id.clone(),
+            ExecutorInfoResponse {
+                id,
+                name,
+                variants,
+                available,
+                backend_ids: Vec::new(),
+            },
+        );
     }
 
     for backend in state.backend_registry.list_online().await {
@@ -66,13 +74,16 @@ pub async fn get_discovery(
                     existing.backend_ids.push(backend.backend_id.clone());
                 }
                 None => {
-                    merged.insert(ex.id.clone(), ExecutorInfoResponse {
-                        id: ex.id.clone(),
-                        name: ex.name.clone(),
-                        variants: ex.variants.clone(),
-                        available: ex.available,
-                        backend_ids: vec![backend.backend_id.clone()],
-                    });
+                    merged.insert(
+                        ex.id.clone(),
+                        ExecutorInfoResponse {
+                            id: ex.id.clone(),
+                            name: ex.name.clone(),
+                            variants: ex.variants.clone(),
+                            available: ex.available,
+                            backend_ids: vec![backend.backend_id.clone()],
+                        },
+                    );
                 }
             }
         }

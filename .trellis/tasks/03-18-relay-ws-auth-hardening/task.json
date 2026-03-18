@@ -1,0 +1,48 @@
+{
+  "id": "relay-ws-auth-hardening",
+  "name": "relay-ws-auth-hardening",
+  "title": "Relay WebSocket 鉴权与注册收口",
+  "description": "补齐本机后端 WebSocket token 校验、backend_id 绑定校验与错误语义，完成 relay 接入安全收口。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "relay",
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "docs/relay-protocol.md",
+    "crates/agentdash-api/src/relay/ws_handler.rs",
+    "crates/agentdash-api/src/relay/registry.rs",
+    "crates/agentdash-api/src/routes/backends.rs",
+    "crates/agentdash-local/src/ws_client.rs",
+    "crates/agentdash-relay/src/protocol.rs"
+  ],
+  "notes": "从 03-18-cloud-local-boundary-refactor 拆出。聚焦 relay 连接鉴权、安全错误语义与注册收口，不与 workspace 文件/上下文注入改造混做。"
+}

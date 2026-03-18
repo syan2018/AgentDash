@@ -1,0 +1,48 @@
+{
+  "id": "local-directory-capability-closure",
+  "name": "local-directory-capability-closure",
+  "title": "本机目录能力下沉与目录选择器收口",
+  "description": "收敛 pick_directory 等目录选择/路径探测能力，避免 cloud 正式路径继续直接操作宿主机目录。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "local-backend",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-api/src/routes/workspaces.rs",
+    "crates/agentdash-api/src/routes/address_spaces.rs",
+    "crates/agentdash-local/src/command_handler.rs",
+    "crates/agentdash-local/src/tool_executor.rs",
+    "crates/agentdash-relay/src/protocol.rs",
+    "docs/relay-protocol.md"
+  ],
+  "notes": "从 03-18-cloud-local-boundary-refactor 拆出。聚焦 pick_directory、路径探测、目录合法性校验等仍残留在 cloud 的本机目录能力下沉。"
+}

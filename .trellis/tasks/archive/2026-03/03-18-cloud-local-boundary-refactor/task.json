@@ -1,0 +1,56 @@
+{
+  "id": "cloud-local-boundary-refactor",
+  "name": "cloud-local-boundary-refactor",
+  "title": "云端/本机后端边界重构规划",
+  "description": "梳理云端后端仍保留本地访问能力的现状，明确问题边界，并制定双后端职责收敛与重构方案。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "relay",
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-18",
+  "completedAt": "2026-03-18",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/spec/backend/index.md",
+    "docs/relay-protocol.md",
+    "docs/modules/09-relay.md",
+    "crates/agentdash-api/src/app_state.rs",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-api/src/routes/workspace_files.rs",
+    "crates/agentdash-api/src/routes/workspaces.rs",
+    "crates/agentdash-api/src/routes/address_spaces.rs",
+    "crates/agentdash-api/src/task_agent_context.rs",
+    "crates/agentdash-api/src/relay/registry.rs",
+    "crates/agentdash-api/src/relay/ws_handler.rs",
+    "crates/agentdash-local/src/main.rs",
+    "crates/agentdash-local/src/ws_client.rs",
+    "crates/agentdash-local/src/tool_executor.rs"
+  ],
+  "notes": "该任务用于正式记录云端/本机边界未收敛的现状、风险与重构路径，后续实现任务应以本 PRD 作为上位设计依据。"
+}

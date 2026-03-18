@@ -66,15 +66,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             .map_err(map_domain_error)
     }
 
-    async fn get_backend_id_for_story(&self, story_id: Uuid) -> Result<String, TaskExecutionError> {
-        Ok(self
-            .state
-            .story_repo
-            .get_by_id(story_id)
-            .await
-            .map_err(map_domain_error)?
-            .map(|story| story.backend_id)
-            .unwrap_or_else(|| "unknown".to_string()))
+    async fn get_backend_id_for_task(&self, task: &Task) -> Result<String, TaskExecutionError> {
+        resolve_task_backend_id(&self.state, task).await
     }
 
     async fn append_task_change(
@@ -143,35 +136,14 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             .as_deref()
             .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
 
-        let resolved_config =
-            resolve_task_executor_config(executor_config, task, &project)
-                .map_err(map_internal_error)?;
+        let resolved_config = resolve_task_executor_config(executor_config, task, &project)
+            .map_err(map_internal_error)?;
 
-        let backend_id = &story.backend_id;
-        let is_remote = self.state.backend_registry.is_online(backend_id).await;
+        let use_cloud_native_agent = resolved_config
+            .as_ref()
+            .is_some_and(|config| config.is_native_agent());
 
-        if is_remote {
-            let turn_id = relay_start_prompt(
-                &self.state,
-                backend_id,
-                session_id,
-                &built,
-                resolved_config,
-                workspace.as_ref(),
-            )
-            .await?;
-
-            self.state
-                .remote_sessions
-                .write()
-                .await
-                .insert(session_id.to_string(), backend_id.clone());
-
-            Ok(StartedTurn {
-                turn_id,
-                context_sources: built.source_summary,
-            })
-        } else {
+        if use_cloud_native_agent {
             let prompt_req = PromptSessionRequest {
                 prompt: None,
                 prompt_blocks: Some(built.prompt_blocks),
@@ -187,6 +159,40 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 .start_prompt(session_id, prompt_req)
                 .await
                 .map_err(map_connector_error)?;
+
+            Ok(StartedTurn {
+                turn_id,
+                context_sources: built.source_summary,
+            })
+        } else {
+            let workspace = workspace.as_ref().ok_or_else(|| {
+                TaskExecutionError::BadRequest(
+                    "第三方 Agent 任务必须绑定 Workspace，且运行位置由 Workspace.backend_id 决定"
+                        .into(),
+                )
+            })?;
+            let backend_id = normalize_backend_id(&workspace.backend_id)?;
+            if !self.state.backend_registry.is_online(backend_id).await {
+                return Err(TaskExecutionError::Conflict(format!(
+                    "目标 Workspace 所属 Backend 当前不在线: {backend_id}"
+                )));
+            }
+
+            let turn_id = relay_start_prompt(
+                &self.state,
+                backend_id,
+                session_id,
+                &built,
+                resolved_config,
+                workspace,
+            )
+            .await?;
+
+            self.state
+                .remote_sessions
+                .write()
+                .await
+                .insert(session_id.to_string(), backend_id.to_string());
 
             Ok(StartedTurn {
                 turn_id,
@@ -384,7 +390,17 @@ async fn run_turn_monitor(
     let (history, mut rx) = state.executor_hub.subscribe_with_history(session_id).await;
 
     for notification in history {
-        match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification, &execution_mode).await {
+        match handle_turn_notification(
+            state,
+            task_id,
+            session_id,
+            turn_id,
+            backend_id,
+            &notification,
+            &execution_mode,
+        )
+        .await
+        {
             Ok(TurnOutcome::Continue) => {}
             Ok(outcome) => return outcome,
             Err(err) => {
@@ -402,7 +418,17 @@ async fn run_turn_monitor(
     loop {
         match rx.recv().await {
             Ok(notification) => {
-                match handle_turn_notification(state, task_id, session_id, turn_id, backend_id, &notification, &execution_mode).await {
+                match handle_turn_notification(
+                    state,
+                    task_id,
+                    session_id,
+                    turn_id,
+                    backend_id,
+                    &notification,
+                    &execution_mode,
+                )
+                .await
+                {
                     Ok(TurnOutcome::Continue) => {}
                     Ok(outcome) => return outcome,
                     Err(err) => {
@@ -517,7 +543,10 @@ enum TurnOutcome {
     /// Turn 失败且不可重试，监听结束
     Failed,
     /// Turn 失败但允许重试，需等待指定延迟后发起新 turn
-    NeedsRetry { delay: std::time::Duration, attempt: u32 },
+    NeedsRetry {
+        delay: std::time::Duration,
+        attempt: u32,
+    },
 }
 
 async fn handle_turn_notification(
@@ -589,7 +618,13 @@ async fn handle_turn_notification(
                                 }),
                             )
                             .await?;
-                            clear_task_session_binding(state, task_id, backend_id, "oneshot_completed").await;
+                            clear_task_session_binding(
+                                state,
+                                task_id,
+                                backend_id,
+                                "oneshot_completed",
+                            )
+                            .await;
                         } else {
                             state.restart_tracker.record_stable_start(task_id);
                             let _ = update_task_status(
@@ -1364,6 +1399,42 @@ fn map_connector_error(err: ConnectorError) -> TaskExecutionError {
     }
 }
 
+async fn resolve_task_backend_id(
+    state: &Arc<AppState>,
+    task: &Task,
+) -> Result<String, TaskExecutionError> {
+    if let Some(workspace_id) = task.workspace_id {
+        let workspace = state
+            .workspace_repo
+            .get_by_id(workspace_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!("Task 关联 Workspace {workspace_id} 不存在"))
+            })?;
+        return Ok(normalize_backend_id(&workspace.backend_id)?.to_string());
+    }
+
+    let story = state
+        .story_repo
+        .get_by_id(task.story_id)
+        .await
+        .map_err(map_domain_error)?
+        .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {} 不存在", task.story_id)))?;
+
+    normalize_backend_id(&story.backend_id).map(|value| value.to_string())
+}
+
+fn normalize_backend_id(raw: &str) -> Result<&str, TaskExecutionError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(TaskExecutionError::BadRequest(
+            "backend_id 不能为空".to_string(),
+        ));
+    }
+    Ok(trimmed)
+}
+
 fn resolve_task_executor_config(
     explicit: Option<agentdash_executor::AgentDashExecutorConfig>,
     task: &Task,
@@ -1428,13 +1499,8 @@ async fn relay_start_prompt(
     session_id: &str,
     built: &BuiltTaskAgentContext,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
-    workspace: Option<&Workspace>,
+    workspace: &Workspace,
 ) -> Result<String, TaskExecutionError> {
-    let workspace_root = workspace
-        .map(|ws| ws.container_ref.clone())
-        .or_else(|| built.working_dir.clone())
-        .unwrap_or_else(|| ".".to_string());
-
     let relay_config = executor_config.map(|c| ExecutorConfigRelay {
         executor: c.executor,
         variant: c.variant,
@@ -1449,7 +1515,7 @@ async fn relay_start_prompt(
             follow_up_session_id: None,
             prompt: None,
             prompt_blocks: Some(serde_json::Value::Array(built.prompt_blocks.clone())),
-            workspace_root,
+            workspace_root: workspace.container_ref.clone(),
             working_dir: built.working_dir.clone(),
             env: Default::default(),
             executor_config: relay_config,

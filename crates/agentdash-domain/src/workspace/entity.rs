@@ -13,6 +13,8 @@ pub struct Workspace {
     pub id: Uuid,
     /// 所属项目
     pub project_id: Uuid,
+    /// 物理目录所属的本机后端
+    pub backend_id: String,
     /// 显示名称
     pub name: String,
     /// 物理路径（磁盘目录）
@@ -28,6 +30,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(
         project_id: Uuid,
+        backend_id: String,
         name: String,
         container_ref: String,
         workspace_type: WorkspaceType,
@@ -36,6 +39,7 @@ impl Workspace {
         Self {
             id: Uuid::new_v4(),
             project_id,
+            backend_id,
             name,
             container_ref,
             workspace_type,

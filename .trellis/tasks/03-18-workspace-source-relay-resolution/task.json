@@ -1,0 +1,49 @@
+{
+  "id": "workspace-source-relay-resolution",
+  "name": "workspace-source-relay-resolution",
+  "title": "Workspace 声明式来源 Local 解析下沉",
+  "description": "将 Story/Task 的 workspace 文件类声明式来源改为通过目标 local backend 解析，移除 cloud 对 Workspace.container_ref 的直接解引用。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "injection",
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-api/src/task_agent_context.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-api/src/routes/workspace_files.rs",
+    "crates/agentdash-api/src/routes/address_spaces.rs",
+    "crates/agentdash-injection/src/resolver.rs",
+    "crates/agentdash-relay/src/protocol.rs",
+    "crates/agentdash-local/src/command_handler.rs"
+  ],
+  "notes": "从 03-18-cloud-local-boundary-refactor 拆出。目标是把当前被临时跳过的 workspace file / project snapshot 声明式来源，改造成真正经由 local backend 解析的正式实现。"
+}

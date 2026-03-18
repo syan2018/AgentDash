@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// Agent 结构体 — 面向使用者的高层封装
 ///
 /// 严格对齐 Pi `Agent` 类 (agent.ts:116-612)
@@ -9,7 +10,6 @@
 /// - Steering / Follow-up 队列（支持 all / one-at-a-time 出队模式）
 /// - prompt / continue 入口
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
@@ -296,8 +296,8 @@ impl Agent {
         input: impl Into<AgentMessage>,
     ) -> Result<
         (
-        EventReceiver<AgentEvent>,
-        tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
+            EventReceiver<AgentEvent>,
+            tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
         ),
         AgentError,
     > {
@@ -309,18 +309,22 @@ impl Agent {
         &mut self,
     ) -> Result<
         (
-        EventReceiver<AgentEvent>,
-        tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
+            EventReceiver<AgentEvent>,
+            tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
         ),
         AgentError,
     > {
-        self.ensure_not_running("Agent is already processing. Wait for completion before continuing.")?;
+        self.ensure_not_running(
+            "Agent is already processing. Wait for completion before continuing.",
+        )?;
 
-        let state = self
-            .try_state()
-            .ok_or_else(|| AgentError::InvalidState("Agent state is temporarily unavailable".to_string()))?;
+        let state = self.try_state().ok_or_else(|| {
+            AgentError::InvalidState("Agent state is temporarily unavailable".to_string())
+        })?;
         if state.messages.is_empty() {
-            return Err(AgentError::ContinueError("No messages to continue from".to_string()));
+            return Err(AgentError::ContinueError(
+                "No messages to continue from".to_string(),
+            ));
         }
 
         if matches!(state.messages.last(), Some(AgentMessage::Assistant { .. })) {
@@ -355,8 +359,8 @@ impl Agent {
         options: RunLoopOptions,
     ) -> Result<
         (
-        EventReceiver<AgentEvent>,
-        tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
+            EventReceiver<AgentEvent>,
+            tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
         ),
         AgentError,
     > {
@@ -459,30 +463,22 @@ impl Agent {
                 Err(error) => {
                     let error_message =
                         AgentMessage::error_assistant(error.to_string(), cancel.is_cancelled());
-                    event_sink(
-                        AgentEvent::MessageStart {
-                            message: error_message.clone(),
-                        },
-                    )
+                    event_sink(AgentEvent::MessageStart {
+                        message: error_message.clone(),
+                    })
                     .await;
-                    event_sink(
-                        AgentEvent::MessageEnd {
-                            message: error_message.clone(),
-                        },
-                    )
+                    event_sink(AgentEvent::MessageEnd {
+                        message: error_message.clone(),
+                    })
                     .await;
-                    event_sink(
-                        AgentEvent::TurnEnd {
-                            message: error_message.clone(),
-                            tool_results: vec![],
-                        },
-                    )
+                    event_sink(AgentEvent::TurnEnd {
+                        message: error_message.clone(),
+                        tool_results: vec![],
+                    })
                     .await;
-                    event_sink(
-                        AgentEvent::AgentEnd {
-                            messages: vec![error_message.clone()],
-                        },
-                    )
+                    event_sink(AgentEvent::AgentEnd {
+                        messages: vec![error_message.clone()],
+                    })
                     .await;
                     Ok(vec![error_message])
                 }
@@ -533,10 +529,7 @@ fn build_event_sink(
 }
 
 /// 按模式从队列中出队消息 — 对齐 Pi `dequeueSteeringMessages` / `dequeueFollowUpMessages`
-fn dequeue_messages(
-    queue: &Arc<Mutex<Vec<AgentMessage>>>,
-    mode: QueueMode,
-) -> Vec<AgentMessage> {
+fn dequeue_messages(queue: &Arc<Mutex<Vec<AgentMessage>>>, mode: QueueMode) -> Vec<AgentMessage> {
     queue
         .try_lock()
         .ok()
@@ -593,7 +586,11 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
             s.pending_tool_calls.remove(tool_call_id);
         }
         AgentEvent::TurnEnd { message, .. } => {
-            if let AgentMessage::Assistant { error_message: Some(err), .. } = message {
+            if let AgentMessage::Assistant {
+                error_message: Some(err),
+                ..
+            } = message
+            {
                 s.error = Some(err.clone());
             }
         }

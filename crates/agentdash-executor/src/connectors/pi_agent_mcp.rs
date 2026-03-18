@@ -6,7 +6,6 @@ use agentdash_agent::{
     tools::sanitize_tool_schema,
 };
 use async_trait::async_trait;
-use tokio_util::sync::CancellationToken;
 use rmcp::{
     ServiceExt,
     model::{CallToolRequestParams, CallToolResult, Content, ResourceContents, Tool},
@@ -15,6 +14,7 @@ use rmcp::{
         StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
     },
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::connector::ConnectorError;
 

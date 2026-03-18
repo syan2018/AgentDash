@@ -432,7 +432,11 @@ mod tests {
         .expect("tsx source should resolve");
 
         assert!(result.fragments[0].content.contains("文件: StoryPage.tsx"));
-        assert!(result.fragments[0].content.contains("1 | export function StoryPage() {"));
+        assert!(
+            result.fragments[0]
+                .content
+                .contains("1 | export function StoryPage() {")
+        );
         assert!(result.fragments[0].content.contains("2 |   return null;"));
     }
 

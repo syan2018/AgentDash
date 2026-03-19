@@ -1,0 +1,53 @@
+{
+  "id": "symphony-case-workflow-scaffold-closure",
+  "name": "symphony-case-workflow-scaffold-closure",
+  "title": "以 Symphony case 校验通用工作流脚手架完备性",
+  "description": "将 Symphony 视为验证样例而非目标实现，围绕 AgentDash 作为可集成任意工作流的 Agent 脚手架，梳理需要补齐的通用自动化编排能力、运行时契约与框架边界。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "codex",
+  "createdAt": "2026-03-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/spec/backend/address-space-access.md",
+    "docs/modules/04-orchestration.md",
+    "docs/modules/03-workspace.md",
+    "crates/agentdash-api/src/session_plan.rs",
+    "crates/agentdash-api/src/task_agent_context.rs",
+    "crates/agentdash-api/src/routes/story_sessions.rs",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-domain/src/project/value_objects.rs",
+    "crates/agentdash-domain/src/story/value_objects.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs"
+  ],
+  "notes": "本任务以 Symphony 为能力校验样例，而不是实现蓝本。讨论重点应聚焦 AgentDash 作为通用工作流脚手架还缺哪些可复用抽象、状态机、运行时契约和 orchestration 控制面，而不是补齐 Linear 或其他外部系统的特例接入。"
+}

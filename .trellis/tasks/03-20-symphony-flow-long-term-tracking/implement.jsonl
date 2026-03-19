@@ -1,0 +1,6 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "统一 Address Space 与 runtime access 契约，是长期自动化流程落地的关键底座之一"}
+{"file": "docs/modules/04-orchestration.md", "reason": "核对项目当前对编排层的原始定义，以及与长期自动化控制面的差距"}
+{"file": "crates/agentdash-api/src/session_plan.rs", "reason": "核对当前 workflow prompt / persona / required context 的表达上限"}
+{"file": "crates/agentdash-api/src/routes/story_sessions.rs", "reason": "核对 Story session 当前是否只是 companion session，而非真正的 owner workflow runtime"}

@@ -1,8 +1,8 @@
 {
   "id": "symphony-case-workflow-scaffold-closure",
   "name": "symphony-case-workflow-scaffold-closure",
-  "title": "以 Symphony case 校验通用工作流脚手架完备性",
-  "description": "将 Symphony 视为验证样例而非目标实现，围绕 AgentDash 作为可集成任意工作流的 Agent 脚手架，梳理需要补齐的通用自动化编排能力、运行时契约与框架边界。",
+  "title": "以 Trellis workflow 移植为起点校验通用工作流脚手架完备性",
+  "description": "将 Symphony 视为能力校验样例、将 Trellis workflow 视为第一条真实迁移对象，围绕 AgentDash 作为可集成任意工作流的 Agent 脚手架，梳理需要补齐的通用自动化编排能力、产品对象、运行时契约与控制面边界。",
   "status": "planning",
   "dev_type": "backend",
   "scope": "architecture",
@@ -40,6 +40,7 @@
     ".trellis/spec/backend/address-space-access.md",
     "docs/modules/04-orchestration.md",
     "docs/modules/03-workspace.md",
+    ".trellis/workflow.md",
     "crates/agentdash-api/src/session_plan.rs",
     "crates/agentdash-api/src/task_agent_context.rs",
     "crates/agentdash-api/src/routes/story_sessions.rs",
@@ -49,5 +50,5 @@
     "crates/agentdash-domain/src/story/value_objects.rs",
     "crates/agentdash-domain/src/task/value_objects.rs"
   ],
-  "notes": "本任务以 Symphony 为能力校验样例，而不是实现蓝本。讨论重点应聚焦 AgentDash 作为通用工作流脚手架还缺哪些可复用抽象、状态机、运行时契约和 orchestration 控制面，而不是补齐 Linear 或其他外部系统的特例接入。"
+  "notes": "本任务以 Symphony 为能力校验样例，而不是实现蓝本；以 Trellis workflow 为第一条真实迁移对象，而不是继续抽象层空转。讨论重点应聚焦 AgentDash 作为通用工作流脚手架还缺哪些可复用抽象、产品对象、状态机、运行时契约和 orchestration 控制面，并优先回答 Workflow 如何作为全局共享资产被 Project 收纳、分发给不同 Agent 行为，以及第一条最值得跑通的主航道 workflow 应该如何定义。"
 }

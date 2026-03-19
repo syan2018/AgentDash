@@ -1,0 +1,54 @@
+{
+  "id": "symphony-flow-long-term-tracking",
+  "name": "symphony-flow-long-term-tracking",
+  "title": "长期实现 Symphony 类流程目标跟踪",
+  "description": "单独跟踪 AgentDash 后续如何逐步具备承载 Symphony 类长期自动化流程的能力，作为长期目标线，不与通用工作流产品讨论 task 混用。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "codex",
+  "createdAt": "2026-03-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/workflow.md",
+    ".trellis/spec/backend/address-space-access.md",
+    "docs/modules/04-orchestration.md",
+    "docs/modules/03-workspace.md",
+    "docs/modules/05-execution.md",
+    "crates/agentdash-api/src/session_plan.rs",
+    "crates/agentdash-api/src/routes/story_sessions.rs",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-domain/src/project/value_objects.rs",
+    "crates/agentdash-domain/src/story/value_objects.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs"
+  ],
+  "notes": "这是独立于“通用工作流脚手架讨论”的长期目标跟踪 task。它聚焦 AgentDash 后续如何逐步具备承载 Symphony 类长期自动化流程的能力，但不要求复刻其外部系统集成或产品表面形态。当前讨论沉淀的核心结论包括：Workflow 应作为全局维护、团队共享、可被 Project 收纳与分发的资产；AgentDash 不只是任务管理器，也应作为团队上下文平台；近期最值得先跑通的第一条真实 workflow 不是 Symphony issue loop，而是 Trellis Dev Workflow；长期则需要逐步补齐 Workflow、Run、Automation Control Plane、Managed Workspace Lifecycle、Story Owner Session 与 workflow 级 observability。"
+}

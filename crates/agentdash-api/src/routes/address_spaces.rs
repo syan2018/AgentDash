@@ -32,7 +32,7 @@ pub async fn list_address_spaces(
     let workspace_available = if let Some(ws_id_str) = &query.workspace_id {
         let ws_id = Uuid::parse_str(ws_id_str)
             .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-        state
+        state.repos
             .workspace_repo
             .get_by_id(ws_id)
             .await
@@ -43,13 +43,13 @@ pub async fn list_address_spaces(
         false
     };
 
-    let has_mcp = state.mcp_base_url.is_some();
+    let has_mcp = state.config.mcp_base_url.is_some();
     let ctx = AddressSpaceContext {
         workspace_root: workspace_available.then_some(std::path::Path::new(".")),
         has_mcp,
     };
 
-    let spaces = state.address_space_registry.available_spaces(&ctx);
+    let spaces = state.services.address_space_registry.available_spaces(&ctx);
 
     Ok(Json(AddressSpacesResponse { spaces }))
 }
@@ -89,7 +89,7 @@ pub async fn list_address_entries(
             })?;
             let ws_id = Uuid::parse_str(ws_id_str)
                 .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-            let workspace = state
+            let workspace = state.repos
                 .workspace_repo
                 .get_by_id(ws_id)
                 .await
@@ -101,17 +101,17 @@ pub async fn list_address_entries(
                     "Workspace.backend_id 不能为空".to_string(),
                 ));
             }
-            if !state.backend_registry.is_online(backend_id).await {
+            if !state.services.backend_registry.is_online(backend_id).await {
                 return Err(ApiError::Conflict(format!(
                     "Workspace 所属 Backend 当前不在线: {backend_id}"
                 )));
             }
 
-            let session = state
+            let session = state.services
                 .address_space_service
                 .session_for_workspace(&workspace)
                 .map_err(ApiError::BadRequest)?;
-            let listed = state
+            let listed = state.services
                 .address_space_service
                 .list(
                     &session,

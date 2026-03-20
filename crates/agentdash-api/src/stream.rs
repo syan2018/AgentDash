@@ -36,7 +36,7 @@ pub async fn event_stream(
     let stream = async_stream::stream! {
         let mut cursor = match resume_from {
             Some(value) => value,
-            None => state.story_repo.latest_event_id().await.unwrap_or(0),
+            None => state.repos.story_repo.latest_event_id().await.unwrap_or(0),
         };
         let mut replayed = 0usize;
 
@@ -59,7 +59,7 @@ pub async fn event_stream(
             }
         }
 
-        let latest_event_id = state.story_repo.latest_event_id().await.unwrap_or(cursor);
+        let latest_event_id = state.repos.story_repo.latest_event_id().await.unwrap_or(cursor);
         cursor = cursor.max(latest_event_id);
         if let Some(event) = build_sse_event(&StreamEvent::Connected { last_event_id: cursor }, Some(cursor)) {
             yield Ok(event);
@@ -126,7 +126,7 @@ pub async fn event_stream_ndjson(
     let stream = async_stream::stream! {
         let mut cursor = match resume_from {
             Some(value) => value,
-            None => state.story_repo.latest_event_id().await.unwrap_or(0),
+            None => state.repos.story_repo.latest_event_id().await.unwrap_or(0),
         };
         let mut replayed = 0usize;
 
@@ -147,7 +147,7 @@ pub async fn event_stream_ndjson(
             }
         }
 
-        let latest_event_id = state.story_repo.latest_event_id().await.unwrap_or(cursor);
+        let latest_event_id = state.repos.story_repo.latest_event_id().await.unwrap_or(cursor);
         cursor = cursor.max(latest_event_id);
         if let Some(line) = to_ndjson_line(&StreamEvent::Connected { last_event_id: cursor }) {
             yield Ok::<Bytes, std::convert::Infallible>(line);
@@ -208,7 +208,7 @@ pub async fn get_events_since(
     State(state): State<Arc<AppState>>,
     Path(since_id): Path<i64>,
 ) -> Result<Json<Vec<StateChange>>, ApiError> {
-    let changes = state.story_repo.get_changes_since(since_id, 1000).await?;
+    let changes = state.repos.story_repo.get_changes_since(since_id, 1000).await?;
     Ok(Json(changes))
 }
 
@@ -257,7 +257,7 @@ async fn load_state_changes_since(
     let mut all = Vec::new();
 
     loop {
-        let batch = state
+        let batch = state.repos
             .story_repo
             .get_changes_since(cursor, STREAM_BATCH_LIMIT)
             .await?;

@@ -89,7 +89,7 @@ pub async fn list_files(
         return relay_list_files(&state, backend_id, &workspace, &pattern).await;
     }
 
-    let root = state.executor_hub.workspace_root().to_path_buf();
+    let root = state.services.executor_hub.workspace_root().to_path_buf();
     let pattern_lower = pattern.to_lowercase();
 
     let files =
@@ -97,7 +97,7 @@ pub async fn list_files(
             .await
             .map_err(|e| ApiError::Internal(format!("文件列表任务异常: {e}")))?;
 
-    let root_display = normalize_path_display(state.executor_hub.workspace_root());
+    let root_display = normalize_path_display(state.services.executor_hub.workspace_root());
 
     Ok(Json(ListFilesResponse {
         files,
@@ -119,7 +119,7 @@ pub async fn read_file(
         return relay_read_file(&state, backend_id, &workspace, &rel).await;
     }
 
-    let root = state.executor_hub.workspace_root().to_path_buf();
+    let root = state.services.executor_hub.workspace_root().to_path_buf();
 
     let abs_path = root.join(&rel);
     let canonical = tokio::fs::canonicalize(&abs_path)
@@ -174,7 +174,7 @@ pub async fn batch_read_files(
         )));
     }
 
-    let root = state.executor_hub.workspace_root().to_path_buf();
+    let root = state.services.executor_hub.workspace_root().to_path_buf();
     let canonical_root = tokio::fs::canonicalize(&root)
         .await
         .map_err(|e| ApiError::Internal(format!("根目录解析失败: {e}")))?;
@@ -498,7 +498,7 @@ async fn load_workspace_by_id(
 ) -> Result<agentdash_domain::workspace::Workspace, ApiError> {
     let workspace_uuid = uuid::Uuid::parse_str(workspace_id)
         .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-    state
+    state.repos
         .workspace_repo
         .get_by_id(workspace_uuid)
         .await?
@@ -515,7 +515,7 @@ async fn require_online_backend<'a>(
             "Workspace.backend_id 不能为空".to_string(),
         ));
     }
-    if !state.backend_registry.is_online(trimmed).await {
+    if !state.services.backend_registry.is_online(trimmed).await {
         return Err(ApiError::Conflict(format!(
             "Workspace 所属 Backend 当前不在线: {trimmed}"
         )));
@@ -531,11 +531,11 @@ async fn relay_list_files(
     workspace: &agentdash_domain::workspace::Workspace,
     pattern: &str,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
-    let session = state
+    let session = state.services
         .address_space_service
         .session_for_workspace(workspace)
         .map_err(ApiError::BadRequest)?;
-    let listed = state
+    let listed = state.services
         .address_space_service
         .list(
             &session,
@@ -575,11 +575,11 @@ async fn relay_read_file(
     workspace: &agentdash_domain::workspace::Workspace,
     rel_path: &str,
 ) -> Result<Json<ReadFileResponse>, ApiError> {
-    let session = state
+    let session = state.services
         .address_space_service
         .session_for_workspace(workspace)
         .map_err(ApiError::BadRequest)?;
-    let read = state
+    let read = state.services
         .address_space_service
         .read_text(
             &session,

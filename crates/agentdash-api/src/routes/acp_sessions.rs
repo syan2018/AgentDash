@@ -15,25 +15,18 @@ use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_application::story::context_builder::{
+    StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
+};
 use agentdash_domain::{
-    context_source::ContextSourceKind, project::Project, session_binding::SessionOwnerType,
+    project::Project, session_binding::SessionOwnerType,
     story::Story, workspace::Workspace,
 };
 use agentdash_executor::{PromptSessionRequest, SessionMeta};
-use agentdash_injection::{
-    ContextComposer, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
-};
 use agentdash_mcp::injection::McpInjectionConfig;
 use serde::Serialize;
-use serde_json::json;
 
-use crate::session_plan::{
-    SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
-    resolve_effective_session_composition,
-};
-use crate::task_agent_context::{
-    build_declared_source_warning_fragment, resolve_workspace_declared_sources,
-};
+use crate::task_agent_context::resolve_workspace_declared_sources;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -61,7 +54,7 @@ pub async fn list_sessions(
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id_str}")))?;
 
-        let bindings = state
+        let bindings = state.repos
             .session_binding_repo
             .list_by_owner(owner_type, owner_id)
             .await
@@ -69,7 +62,7 @@ pub async fn list_sessions(
 
         let mut sessions = Vec::with_capacity(bindings.len());
         for binding in &bindings {
-            if let Ok(Some(meta)) = state
+            if let Ok(Some(meta)) = state.services
                 .executor_hub
                 .get_session_meta(&binding.session_id)
                 .await
@@ -80,14 +73,14 @@ pub async fn list_sessions(
         return Ok(Json(sessions));
     }
 
-    let mut sessions = state
+    let mut sessions = state.services
         .executor_hub
         .list_sessions()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if query.exclude_bound.unwrap_or(false) {
-        let bound_ids = state
+        let bound_ids = state.repos
             .session_binding_repo
             .list_bound_session_ids()
             .await
@@ -111,7 +104,7 @@ pub async fn create_session(
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionMeta>, ApiError> {
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
-    let meta = state
+    let meta = state.services
         .executor_hub
         .create_session(&title)
         .await
@@ -123,7 +116,7 @@ pub async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionMeta>, ApiError> {
-    let meta = state
+    let meta = state.services
         .executor_hub
         .get_session_meta(&session_id)
         .await
@@ -150,7 +143,7 @@ pub async fn get_session_bindings(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<SessionBindingOwnerResponse>>, ApiError> {
-    let bindings = state
+    let bindings = state.repos
         .session_binding_repo
         .list_by_session(&session_id)
         .await
@@ -164,7 +157,7 @@ pub async fn get_session_bindings(
 
         match binding.owner_type {
             SessionOwnerType::Story => {
-                if let Some(story) = state
+                if let Some(story) = state.repos
                     .story_repo
                     .get_by_id(binding.owner_id)
                     .await
@@ -175,7 +168,7 @@ pub async fn get_session_bindings(
                 }
             }
             SessionOwnerType::Task => {
-                if let Some(task) = state
+                if let Some(task) = state.repos
                     .task_repo
                     .get_by_id(binding.owner_id)
                     .await
@@ -208,7 +201,7 @@ pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
+    state.services
         .executor_hub
         .delete_session(&session_id)
         .await
@@ -224,7 +217,7 @@ pub async fn prompt_session(
     Json(req): Json<PromptSessionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let req = augment_prompt_request_for_owner(&state, &session_id, req).await?;
-    let turn_id = state
+    let turn_id = state.services
         .executor_hub
         .start_prompt(&session_id, req)
         .await
@@ -245,7 +238,7 @@ async fn augment_prompt_request_for_owner(
     session_id: &str,
     req: PromptSessionRequest,
 ) -> Result<PromptSessionRequest, ApiError> {
-    let bindings = state
+    let bindings = state.repos
         .session_binding_repo
         .list_by_session(session_id)
         .await
@@ -258,13 +251,13 @@ async fn augment_prompt_request_for_owner(
         return Ok(req);
     };
 
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(binding.owner_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(story.project_id)
         .await
@@ -280,14 +273,14 @@ async fn resolve_story_workspace(
     project: &Project,
 ) -> Result<Option<Workspace>, ApiError> {
     if let Some(workspace_id) = project.config.default_workspace_id {
-        return state
+        return state.repos
             .workspace_repo
             .get_by_id(workspace_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()));
     }
 
-    let workspaces = state
+    let workspaces = state.repos
         .workspace_repo
         .list_by_project(project.id)
         .await
@@ -311,7 +304,7 @@ async fn build_story_owner_prompt_request(
                 .map(|config| config.executor.as_str())
                 .or(project.config.default_agent_type.as_deref());
             Some(
-                state
+                state.services
                     .address_space_service
                     .build_story_address_space(project, story, workspace, agent_type)
                     .map_err(ApiError::BadRequest)?,
@@ -324,65 +317,41 @@ async fn build_story_owner_prompt_request(
         .map(|config| config.executor.as_str())
         .or(project.config.default_agent_type.as_deref());
     let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = state
+    let base_url = state.config
         .mcp_base_url
         .clone()
         .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
     effective_mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
+
+    let resolved_workspace_sources =
+        resolve_workspace_declared_sources(state, &story.context.source_refs, workspace, 60)
+            .await
+            .map_err(ApiError::BadRequest)?;
+
     let (context_markdown, source_summary) = build_story_context_markdown(
-        state,
-        story,
-        project,
-        workspace,
-        address_space.as_ref(),
-        &effective_mcp_servers,
-        effective_agent_type,
-    )
-    .await?;
-
-    let mut prefix_blocks = Vec::new();
-    if !context_markdown.trim().is_empty() {
-        prefix_blocks.push(json!({
-            "type": "resource",
-            "resource": {
-                "uri": format!("agentdash://story-context/{}", story.id),
-                "mimeType": "text/markdown",
-                "text": context_markdown,
-            }
-        }));
-    }
-
-    let story_instruction = format!(
-        "## Instruction\n你是该 Story 的主代理。请围绕 Story 进行分析、补充上下文、拆解并创建 Task。\n\n可优先使用 Story MCP 工具直接更新 Story、维护上下文引用，并在创建 Task 时为 Task Agent 分配合适的上下文引用。\n\n当前来源摘要：{}",
-        if source_summary.is_empty() {
-            "-".to_string()
-        } else {
-            source_summary.join(", ")
-        }
+        StoryContextBuildInput {
+            story,
+            project,
+            workspace,
+            address_space: address_space.as_ref(),
+            mcp_servers: &effective_mcp_servers,
+            effective_agent_type,
+            workspace_source_fragments: resolved_workspace_sources.fragments,
+            workspace_source_warnings: resolved_workspace_sources.warnings,
+        },
     );
-    prefix_blocks.push(json!({
-        "type": "text",
-        "text": story_instruction,
-    }));
 
-    let user_blocks = match (req.prompt.take(), req.prompt_blocks.take()) {
-        (Some(prompt), None) => vec![json!({
-            "type": "text",
-            "text": prompt,
-        })],
-        (None, Some(blocks)) => blocks,
-        (Some(prompt), Some(mut blocks)) => {
-            let mut merged = vec![json!({ "type": "text", "text": prompt })];
-            merged.append(&mut blocks);
-            merged
-        }
-        (None, None) => Vec::new(),
-    };
+    let prompt_blocks = build_story_owner_prompt_blocks(
+        story.id,
+        context_markdown,
+        &source_summary,
+        req.prompt.take(),
+        req.prompt_blocks.take(),
+    );
 
-    prefix_blocks.extend(user_blocks);
     req.prompt = None;
-    req.prompt_blocks = Some(prefix_blocks);
+    req.prompt_blocks = Some(prompt_blocks);
 
     if req.working_dir.is_none() && workspace.is_some() {
         req.working_dir = Some(".".to_string());
@@ -400,196 +369,11 @@ async fn build_story_owner_prompt_request(
     Ok(req)
 }
 
-async fn build_story_context_markdown(
-    state: &Arc<AppState>,
-    story: &Story,
-    project: &Project,
-    workspace: Option<&Workspace>,
-    address_space: Option<&agentdash_executor::ExecutionAddressSpace>,
-    mcp_servers: &[agent_client_protocol::McpServer],
-    effective_agent_type: Option<&str>,
-) -> Result<(String, Vec<String>), ApiError> {
-    let mut composer = ContextComposer::default();
-    composer.push(
-        "story",
-        "story_core",
-        10,
-        MergeStrategy::Append,
-        format!(
-            "## Story\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
-            story.id,
-            trim_or_dash(&story.title),
-            trim_or_dash(&story.description),
-            story.status
-        ),
-    );
-    composer.push(
-        "project",
-        "project_core",
-        20,
-        MergeStrategy::Append,
-        format!(
-            "## Project\n- id: {}\n- name: {}\n- backend_id: {}",
-            project.id,
-            trim_or_dash(&project.name),
-            trim_or_dash(&project.backend_id)
-        ),
-    );
-    if let Some(workspace) = workspace {
-        composer.push(
-            "workspace",
-            "workspace_context",
-            30,
-            MergeStrategy::Append,
-            format!(
-                "## Workspace\n- id: {}\n- backend_id: {}\n- name: {}\n- working_dir: .",
-                workspace.id,
-                trim_or_dash(&workspace.backend_id),
-                trim_or_dash(&workspace.name),
-            ),
-        );
-    }
-    let effective_session_composition = resolve_effective_session_composition(project, Some(story));
-    let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_kind: SessionPlanOwnerKind::StoryOwner,
-        phase: SessionPlanPhase::StoryOwner,
-        address_space,
-        mcp_servers,
-        session_composition: Some(&effective_session_composition),
-        agent_type: effective_agent_type,
-        preset_name: None,
-        has_custom_prompt_template: false,
-        has_initial_context: false,
-        workspace_attached: workspace.is_some(),
-    });
-    for fragment in session_plan.fragments {
-        composer.push_fragment(fragment);
-    }
-    if let Some(prd) = clean_text(story.context.prd_doc.as_deref()) {
-        composer.push(
-            "story_context",
-            "story_prd",
-            40,
-            MergeStrategy::Append,
-            format!("## Story PRD\n{prd}"),
-        );
-    }
-    if !story.context.spec_refs.is_empty() {
-        composer.push(
-            "story_context",
-            "story_spec_refs",
-            41,
-            MergeStrategy::Append,
-            format!(
-                "## Spec Refs\n{}",
-                story
-                    .context
-                    .spec_refs
-                    .iter()
-                    .map(|item| format!("- {item}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-        );
-    }
-    if !story.context.resource_list.is_empty() {
-        composer.push(
-            "story_context",
-            "story_resources",
-            42,
-            MergeStrategy::Append,
-            format!(
-                "## Resources\n{}",
-                story
-                    .context
-                    .resource_list
-                    .iter()
-                    .map(|item| format!("- [{}] {} ({})", item.resource_type, item.name, item.uri))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-        );
-    }
-
-    let resolvable_sources = story
-        .context
-        .source_refs
-        .iter()
-        .filter(|source| {
-            !matches!(
-                source.kind,
-                ContextSourceKind::File | ContextSourceKind::ProjectSnapshot
-            )
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if let Ok(resolved) = resolve_declared_sources(ResolveSourcesRequest {
-        sources: &resolvable_sources,
-        workspace_root: None,
-        base_order: 50,
-    }) {
-        for fragment in resolved.fragments {
-            composer.push_fragment(fragment);
-        }
-        if !resolved.warnings.is_empty() {
-            composer.push(
-                "story_context",
-                "story_context_warnings",
-                59,
-                MergeStrategy::Append,
-                format!(
-                    "## Injection Notes\n{}",
-                    resolved
-                        .warnings
-                        .iter()
-                        .map(|item| format!("- {item}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ),
-            );
-        }
-    }
-
-    let resolved_workspace_sources =
-        resolve_workspace_declared_sources(state, &story.context.source_refs, workspace, 60)
-            .await
-            .map_err(ApiError::BadRequest)?;
-    for fragment in resolved_workspace_sources.fragments {
-        composer.push_fragment(fragment);
-    }
-    if !resolved_workspace_sources.warnings.is_empty() {
-        composer.push_fragment(build_declared_source_warning_fragment(
-            "story_context_warnings",
-            69,
-            &resolved_workspace_sources.warnings,
-        ));
-    }
-
-    Ok(composer.compose())
-}
-
-fn clean_text(input: Option<&str>) -> Option<&str> {
-    input.and_then(|text| {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    })
-}
-
-fn trim_or_dash(text: &str) -> &str {
-    let trimmed = text.trim();
-    if trimmed.is_empty() { "-" } else { trimmed }
-}
-
 pub async fn cancel_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
+    state.services
         .executor_hub
         .cancel(&session_id)
         .await
@@ -618,7 +402,7 @@ pub async fn acp_session_stream_sse(
         "ACP 会话流连接建立（SSE）"
     );
 
-    let (history, mut rx) = state.executor_hub.subscribe_with_history(&session_id).await;
+    let (history, mut rx) = state.services.executor_hub.subscribe_with_history(&session_id).await;
     let start_index = std::cmp::min(last_event_id as usize, history.len());
     let replayed = history.len().saturating_sub(start_index);
     tracing::info!(
@@ -682,7 +466,7 @@ pub async fn acp_session_stream_ndjson(
         "ACP 会话流连接建立（NDJSON）"
     );
 
-    let (history, mut rx) = state.executor_hub.subscribe_with_history(&session_id).await;
+    let (history, mut rx) = state.services.executor_hub.subscribe_with_history(&session_id).await;
     let start_index = std::cmp::min(resume_from as usize, history.len());
     let replayed = history.len().saturating_sub(start_index);
     tracing::info!(

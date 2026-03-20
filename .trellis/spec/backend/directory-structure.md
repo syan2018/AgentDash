@@ -46,34 +46,69 @@ src/
 
 ```
 crates/
-├── agentdash-api/               # Interface Layer (HTTP)
+├── agentdash-api/               # Interface Layer (HTTP) — 薄 Transport 层
 │   └── src/
 │       ├── main.rs              # Axum 启动入口
-│       ├── app_state.rs         # 依赖注入配置（Arc<dyn Repository>）
+│       ├── app_state.rs         # 依赖注入（RepositorySet / ServiceSet / TaskRuntime / AppConfig）
 │       ├── routes.rs            # 路由注册
 │       ├── rpc.rs               # ApiError 统一错误处理
 │       ├── stream.rs            # 全局事件流（SSE + NDJSON）
-│       └── routes/              # 路由处理函数（只处理 HTTP）
+│       ├── dto/                 # Response DTO — 隔离 Domain 实体与 API 契约
+│       │   ├── mod.rs
+│       │   ├── project.rs       # ProjectResponse, ProjectDetailResponse
+│       │   ├── story.rs         # StoryResponse
+│       │   ├── task.rs          # TaskResponse
+│       │   └── workspace.rs     # WorkspaceResponse
+│       ├── session_plan.rs      # re-export → application
+│       ├── task_agent_context.rs # re-export → application（保留 workspace 源解析）
+│       ├── address_space_access.rs # RelayAddressSpaceService + RelayRuntimeToolProvider
+│       ├── bootstrap/
+│       │   ├── task_execution_gateway.rs  # 薄适配器（调用 application 层纯函数）
+│       │   └── task_state_reconcile.rs
+│       ├── relay/               # WebSocket 后端中继
+│       │   ├── registry.rs
+│       │   └── ws_handler.rs
+│       └── routes/              # 路由处理函数（解析入参→调用用例→映射 DTO）
 │           ├── health.rs
-│           ├── projects.rs       # Project CRUD
-│           ├── workspaces.rs     # Workspace CRUD + 状态管理
+│           ├── projects.rs
+│           ├── workspaces.rs
 │           ├── backends.rs
 │           ├── stories.rs
 │           ├── acp_sessions.rs
+│           ├── story_sessions.rs
+│           ├── task_execution.rs
+│           ├── settings.rs
+│           ├── address_spaces.rs
+│           ├── workspace_files.rs
 │           ├── discovery.rs
 │           └── discovered_options.rs
 │
-├── agentdash-application/       # Application Layer (用例编排) — 规划中
+├── agentdash-application/       # Application Layer (用例编排) ✅ 已填充
 │   └── src/
 │       ├── lib.rs
-│       ├── use_cases/           # 用例实现
-│       │   ├── story/
-│       │   │   ├── create_story.rs
-│       │   │   └── decompose_story.rs
-│       │   └── task/
-│       │       └── create_task.rs
-│       └── services/            # 应用服务
-│           └── story_service.rs
+│       ├── session_plan.rs      # 会话编排解析与片段构建
+│       ├── context/             # Agent 上下文构建框架
+│       │   ├── mod.rs
+│       │   ├── contributor.rs   # ContextContributor trait + Registry
+│       │   ├── builtins.rs      # 5 个内置 Contributor 实现
+│       │   └── builder.rs       # build_task_agent_context 入口
+│       ├── task/                # Task 执行相关纯逻辑
+│       │   ├── mod.rs
+│       │   ├── artifact.rs      # Tool call artifact 构建
+│       │   ├── config.rs        # 执行器/Agent 配置解析
+│       │   ├── meta.rs          # ACP meta 构建与 turn 事件解析
+│       │   ├── execution.rs     # TaskExecutionGateway trait
+│       │   ├── lock.rs          # Per-Task 异步锁
+│       │   ├── restart_tracker.rs # 重启追踪器
+│       │   └── state_reconciler.rs # 启动时状态修复
+│       ├── address_space/       # 寻址空间组装（mount/path/types）
+│       │   ├── mod.rs
+│       │   ├── mount.rs         # ExecutionMount 派生与 Address Space 组装
+│       │   ├── path.rs          # Mount 解析与路径归一化
+│       │   └── types.rs         # ResourceRef, ListOptions, ExecRequest 等值类型
+│       └── story/               # Story Owner Session 编排
+│           ├── mod.rs
+│           └── context_builder.rs # build_story_context_markdown / prompt_blocks
 │
 ├── agentdash-domain/            # Domain Layer (核心业务)
 │   └── src/
@@ -82,24 +117,27 @@ crates/
 │       │   ├── error.rs         # DomainError
 │       │   └── events.rs        # 领域事件 trait
 │       ├── project/
-│       │   ├── entity.rs        # Project 实体（项目容器）
+│       │   ├── entity.rs        # Project 实体
 │       │   ├── repository.rs    # ProjectRepository trait
 │       │   └── value_objects.rs # ProjectConfig, AgentPreset
 │       ├── workspace/
-│       │   ├── entity.rs        # Workspace 实体（物理工作空间）
+│       │   ├── entity.rs        # Workspace 实体
 │       │   ├── repository.rs    # WorkspaceRepository trait
 │       │   └── value_objects.rs # WorkspaceType, WorkspaceStatus, GitConfig
 │       ├── story/
-│       │   ├── entity.rs        # Story 实体（含 project_id）
-│       │   ├── repository.rs    # StoryRepository trait (Port)
+│       │   ├── entity.rs        # Story 实体
+│       │   ├── repository.rs    # StoryRepository trait
 │       │   └── value_objects.rs # StoryStatus, StoryContext, StateChange
 │       ├── task/
-│       │   ├── entity.rs        # Task 实体（含 workspace_id, AgentBinding）
-│       │   ├── repository.rs    # TaskRepository trait（完整 CRUD）
+│       │   ├── entity.rs        # Task 实体
+│       │   ├── repository.rs    # TaskRepository trait
 │       │   └── value_objects.rs # TaskStatus, AgentBinding, Artifact
-│       └── backend/
-│           ├── entity.rs
-│           └── repository.rs
+│       ├── backend/
+│       │   ├── entity.rs
+│       │   └── repository.rs
+│       ├── context_container.rs # 上下文容器定义与验证
+│       ├── context_source.rs    # 声明式上下文来源
+│       └── session_composition.rs # 会话编排配置
 │
 ├── agentdash-infrastructure/    # Infrastructure Layer (技术实现)
 │   └── src/
@@ -107,28 +145,34 @@ crates/
 │       └── persistence/
 │           └── sqlite/
 │               ├── mod.rs
-│               ├── project_repository.rs   # impl ProjectRepository
-│               ├── workspace_repository.rs # impl WorkspaceRepository
-│               ├── story_repository.rs    # impl StoryRepository
-│               ├── task_repository.rs     # impl TaskRepository
-│               └── backend_repository.rs  # impl BackendRepository
+│               ├── project_repository.rs
+│               ├── workspace_repository.rs
+│               ├── story_repository.rs
+│               ├── task_repository.rs
+│               ├── backend_repository.rs
+│               ├── session_binding_repository.rs
+│               └── settings_repository.rs
 │
-├── agentdash-executor/          # Infrastructure Layer (Connectors)
+├── agentdash-executor/          # Infrastructure Layer (执行引擎)
 │   └── src/
 │       ├── lib.rs
-│       ├── connector.rs         # AgentConnector trait (Port)
+│       ├── connector.rs         # AgentConnector trait
 │       ├── hub.rs               # ExecutorHub
 │       ├── adapters/
 │       │   └── normalized_to_acp.rs
 │       └── connectors/
 │           ├── mod.rs
-│           ├── vibe_kanban.rs
+│           ├── pi_agent.rs      # 内置 AI Agent 连接器
+│           ├── pi_agent_mcp.rs  # MCP 工具桥接
+│           ├── composite.rs     # 多连接器组合
 │           └── remote_acp.rs
 │
-└── agentdash-coordinator/       # ⚠️ 遗留，待整合到 infrastructure
-    └── src/
-        ├── config.rs
-        └── manager.rs           # CoordinatorManager（直接操作数据库）
+├── agentdash-injection/         # Context Injection (声明式上下文解析)
+├── agentdash-mcp/               # MCP Server 实现
+├── agentdash-relay/             # WebSocket Relay 协议
+├── agentdash-acp-meta/          # ACP 元数据 TypeScript 绑定
+├── agentdash-agent/             # Agent 运行时核心
+└── agentdash-local/             # 本机后端执行器
 ```
 
 ### 关键 API 端点
@@ -192,12 +236,12 @@ Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 
 | 分层 | Crate | 职责 | 允许依赖 | 状态 |
 |------|-------|------|----------|------|
-| **Interface** | `agentdash-api` | HTTP路由、DTO、中间件 | application, domain | ✅ 已创建 |
-| **Application** | `agentdash-application` | 用例编排、事务管理、应用服务 | domain | ⏳ 规划中 |
-| **Domain** | `agentdash-domain` | 实体、值对象、Repository接口、领域事件 | 无外部库（仅async-trait等基础库） | ✅ 已创建 |
-| **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor` | Repository实现、外部API、消息队列 | domain | ✅ 已创建 |
+| **Interface** | `agentdash-api` | HTTP 路由、DTO/Assembler、中间件、错误映射 | application, domain | ✅ |
+| **Application** | `agentdash-application` | 用例编排：session plan / context / task / address space / story | domain, injection, executor, mcp | ✅ 已填充 |
+| **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部库（仅 async-trait 等基础库） | ✅ |
+| **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor`, `agentdash-relay` | Repository 实现、连接器、WebSocket 中继 | domain | ✅ |
 
-> **注意**：Application 层目前嵌入在 `agentdash-api` 中（简单业务逻辑直接写在路由中）。当业务逻辑复杂后，**必须**提取到独立的 `agentdash-application` crate 中。
+> Application 层（`agentdash-application`）已包含 session plan 构建、context contributor 框架、task 执行纯逻辑、address space 组装、story owner 编排等核心用例。API 层只保留请求解析→调用用例→映射 DTO 的协调职责。
 
 #### Repository 模式约定
 
@@ -222,17 +266,15 @@ impl StoryRepository for SqliteStoryRepository {
 }
 ```
 
-**依赖注入配置**：
+**依赖注入配置**（按职责分组）：
 ```rust
 // agentdash-api/src/app_state.rs
 pub struct AppState {
-    pub project_repo: Arc<dyn ProjectRepository>,
-    pub workspace_repo: Arc<dyn WorkspaceRepository>,
-    pub story_repo: Arc<dyn StoryRepository>,
-    pub task_repo: Arc<dyn TaskRepository>,
-    pub backend_repo: Arc<dyn BackendRepository>,
-    pub executor_hub: ExecutorHub,
-    pub connector: Arc<dyn AgentConnector>,
+    pub repos: RepositorySet,         // 8 个 Repository trait 对象
+    pub services: ServiceSet,         // executor_hub, connector, address_space, backend_registry 等
+    pub task_runtime: TaskRuntime,    // lock_map, restart_tracker
+    pub config: AppConfig,            // mcp_base_url 等配置
+    pub remote_sessions: Arc<RwLock<HashMap<String, String>>>,
 }
 ```
 
@@ -332,7 +374,7 @@ cargo test --workspace   ✅ 通过
 ```
 
 **后续优化**：
-- [ ] 创建 `agentdash-application` crate — 当业务逻辑复杂时提取 Use Case
+- [x] 创建 `agentdash-application` crate — 2026-03-20 解耦重构完成
 - [ ] 整合 `agentdash-coordinator` 到 `agentdash-infrastructure`
 - [ ] 补充领域层单元测试
 - [ ] 修复 minor clippy 警告
@@ -358,4 +400,19 @@ Project (1) → (*) Story
 Story (1)   → (*) Task
 Workspace (1) ← (*) Task
 ```
+
+**2026-03-20: API / Application 解耦重构**
+
+将 ~5640 行业务逻辑从 `agentdash-api` 迁移到 `agentdash-application`，完成 6 个阶段：
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| 1 | Session Plan + Context Composition → application | ✅ |
+| 2 | Task Execution Gateway 纯逻辑 → application/task/ | ✅ |
+| 3 | Address Space Access 三重职责拆分 | ✅ |
+| 4 | Story Owner Session 编排 → application/story/ | ✅ |
+| 5 | 引入 Response DTO / Assembler 层 (api/dto/) | ✅ |
+| 6 | AppState 瘦身 → RepositorySet / ServiceSet / TaskRuntime / AppConfig | ✅ |
+
+详见 `.trellis/tasks/03-19-decouple-api-domain-business-orchestration/plan.md`。
 <!-- PROJECT-SPECIFIC-END -->

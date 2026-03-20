@@ -6,9 +6,17 @@ license.workspace = true
 
 [dependencies]
 agentdash-domain = { workspace = true }
+agentdash-injection = { workspace = true }
+agentdash-executor = { workspace = true }
+agentdash-mcp = { workspace = true }
+agentdash-relay = { workspace = true }
+agent-client-protocol = { workspace = true }
+agentdash-acp-meta = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 async-trait = "0.1"

@@ -1,0 +1,112 @@
+use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
+
+pub fn resolve_mount<'a>(
+    address_space: &'a ExecutionAddressSpace,
+    mount_id: &str,
+    capability: ExecutionMountCapability,
+) -> Result<&'a ExecutionMount, String> {
+    let mount = address_space
+        .mounts
+        .iter()
+        .find(|mount| mount.id == mount_id)
+        .ok_or_else(|| format!("mount 不存在: {mount_id}"))?;
+    if !mount.supports(capability) {
+        return Err(format!("mount `{}` 不支持该能力", mount.id));
+    }
+    Ok(mount)
+}
+
+pub fn resolve_mount_id(
+    address_space: &ExecutionAddressSpace,
+    mount: Option<&str>,
+) -> Result<String, String> {
+    if let Some(mount_id) = mount.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(mount_id.to_string());
+    }
+    address_space
+        .default_mount_id
+        .clone()
+        .or_else(|| address_space.mounts.first().map(|mount| mount.id.clone()))
+        .ok_or_else(|| "当前会话没有可用 mount".to_string())
+}
+
+pub fn capability_name(capability: &ExecutionMountCapability) -> &'static str {
+    match capability {
+        ExecutionMountCapability::Read => "read",
+        ExecutionMountCapability::Write => "write",
+        ExecutionMountCapability::List => "list",
+        ExecutionMountCapability::Search => "search",
+        ExecutionMountCapability::Exec => "exec",
+    }
+}
+
+pub fn normalize_mount_relative_path(input: &str, allow_empty: bool) -> Result<String, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed == "." {
+        return if allow_empty {
+            Ok(String::new())
+        } else {
+            Err("路径不能为空".to_string())
+        };
+    }
+
+    if is_absolute_like(trimmed) {
+        return Err("路径必须是相对于 mount 根目录的相对路径".to_string());
+    }
+
+    let mut parts = Vec::new();
+    for part in trimmed.replace('\\', "/").split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            if parts.pop().is_none() {
+                return Err("路径越界：不允许访问 mount 之外的路径".to_string());
+            }
+            continue;
+        }
+        parts.push(part.to_string());
+    }
+
+    if parts.is_empty() {
+        if allow_empty {
+            Ok(String::new())
+        } else {
+            Err("路径不能为空".to_string())
+        }
+    } else {
+        Ok(parts.join("/"))
+    }
+}
+
+fn is_absolute_like(raw: &str) -> bool {
+    raw.starts_with('/')
+        || raw.starts_with('\\')
+        || raw.starts_with("//")
+        || raw.starts_with("\\\\")
+        || raw
+            .as_bytes()
+            .get(1)
+            .zip(raw.as_bytes().get(2))
+            .is_some_and(|(second, third)| *second == b':' && (*third == b'\\' || *third == b'/'))
+}
+
+pub fn join_root_ref(root_ref: &str, relative_path: &str) -> String {
+    if relative_path.is_empty() {
+        return root_ref.to_string();
+    }
+
+    let use_backslash = root_ref.contains('\\');
+    let root = root_ref.trim_end_matches(['/', '\\']);
+    let rel = if use_backslash {
+        relative_path.replace('/', "\\")
+    } else {
+        relative_path.replace('\\', "/")
+    };
+
+    if use_backslash {
+        format!("{root}\\{rel}")
+    } else {
+        format!("{root}/{rel}")
+    }
+}

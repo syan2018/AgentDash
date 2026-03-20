@@ -7,6 +7,7 @@ use tracing_subscriber::EnvFilter;
 mod address_space_access;
 mod app_state;
 mod bootstrap;
+mod dto;
 mod relay;
 mod routes;
 mod rpc;

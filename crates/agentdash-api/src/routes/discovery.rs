@@ -36,7 +36,7 @@ pub struct DiscoveryResponse {
 pub async fn get_discovery(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<DiscoveryResponse>, ApiError> {
-    let connector = &state.connector;
+    let connector = &state.services.connector;
     let connector_info = ConnectorInfoResponse {
         id: connector.connector_id().to_string(),
         connector_type: connector.connector_type(),
@@ -64,7 +64,7 @@ pub async fn get_discovery(
         );
     }
 
-    for backend in state.backend_registry.list_online().await {
+    for backend in state.services.backend_registry.list_online().await {
         for ex in &backend.capabilities.executors {
             match merged.get_mut(&ex.id) {
                 Some(existing) => {

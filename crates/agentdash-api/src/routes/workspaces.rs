@@ -9,6 +9,7 @@ use agentdash_domain::workspace::{GitConfig, Workspace, WorkspaceStatus, Workspa
 use agentdash_relay::{CommandWorkspaceDetectGitPayload, RelayMessage};
 
 use crate::app_state::AppState;
+use crate::dto::WorkspaceResponse;
 use crate::rpc::ApiError;
 
 #[derive(Deserialize)]
@@ -69,19 +70,19 @@ const PICK_DIRECTORY_UNAVAILABLE_MESSAGE: &str = "当前部署不支持浏览目
 pub async fn list_workspaces(
     State(state): State<Arc<AppState>>,
     AxumPath(project_id): AxumPath<String>,
-) -> Result<Json<Vec<Workspace>>, ApiError> {
+) -> Result<Json<Vec<WorkspaceResponse>>, ApiError> {
     let project_id = Uuid::parse_str(&project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    let workspaces = state.workspace_repo.list_by_project(project_id).await?;
-    Ok(Json(workspaces))
+    let workspaces = state.repos.workspace_repo.list_by_project(project_id).await?;
+    Ok(Json(workspaces.into_iter().map(WorkspaceResponse::from).collect()))
 }
 
 pub async fn create_workspace(
     State(state): State<Arc<AppState>>,
     AxumPath(project_id): AxumPath<String>,
     Json(req): Json<CreateWorkspaceRequest>,
-) -> Result<Json<Workspace>, ApiError> {
+) -> Result<Json<WorkspaceResponse>, ApiError> {
     let workspace_name = req.name.trim().to_string();
     if workspace_name.is_empty() {
         return Err(ApiError::BadRequest("工作空间名称不能为空".into()));
@@ -91,7 +92,7 @@ pub async fn create_workspace(
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
     // 读取 Project，Workspace.backend_id 默认继承 Project.backend_id。
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(project_id)
         .await?
@@ -110,38 +111,38 @@ pub async fn create_workspace(
     );
     workspace.git_config = git_config;
 
-    state.workspace_repo.create(&workspace).await?;
+    state.repos.workspace_repo.create(&workspace).await?;
     auto_transition_workspace_status(&state, workspace.id).await?;
     workspace.status = WorkspaceStatus::Ready;
 
-    Ok(Json(workspace))
+    Ok(Json(WorkspaceResponse::from(workspace)))
 }
 
 pub async fn get_workspace(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-) -> Result<Json<Workspace>, ApiError> {
+) -> Result<Json<WorkspaceResponse>, ApiError> {
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    let workspace = state
+    let workspace = state.repos
         .workspace_repo
         .get_by_id(workspace_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Workspace {id} 不存在")))?;
 
-    Ok(Json(workspace))
+    Ok(Json(WorkspaceResponse::from(workspace)))
 }
 
 pub async fn update_workspace(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
     Json(req): Json<UpdateWorkspaceRequest>,
-) -> Result<Json<Workspace>, ApiError> {
+) -> Result<Json<WorkspaceResponse>, ApiError> {
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    let mut workspace = state
+    let mut workspace = state.repos
         .workspace_repo
         .get_by_id(workspace_id)
         .await?
@@ -177,8 +178,8 @@ pub async fn update_workspace(
     workspace.container_ref = resolved_container_ref;
     workspace.git_config = resolved_git_config;
 
-    state.workspace_repo.update(&workspace).await?;
-    Ok(Json(workspace))
+    state.repos.workspace_repo.update(&workspace).await?;
+    Ok(Json(WorkspaceResponse::from(workspace)))
 }
 
 pub async fn update_workspace_status(
@@ -189,7 +190,7 @@ pub async fn update_workspace_status(
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    state
+    state.repos
         .workspace_repo
         .update_status(workspace_id, req.status)
         .await?;
@@ -204,7 +205,7 @@ pub async fn delete_workspace(
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    state.workspace_repo.delete(workspace_id).await?;
+    state.repos.workspace_repo.delete(workspace_id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
@@ -248,19 +249,19 @@ async fn auto_transition_workspace_status(
     state: &Arc<AppState>,
     workspace_id: Uuid,
 ) -> Result<(), ApiError> {
-    state
+    state.repos
         .workspace_repo
         .update_status(workspace_id, WorkspaceStatus::Preparing)
         .await?;
 
-    match state
+    match state.repos
         .workspace_repo
         .update_status(workspace_id, WorkspaceStatus::Ready)
         .await
     {
         Ok(()) => Ok(()),
         Err(err) => {
-            let _ = state
+            let _ = state.repos
                 .workspace_repo
                 .update_status(workspace_id, WorkspaceStatus::Error)
                 .await;
@@ -318,7 +319,7 @@ async fn detect_git_via_backend(
     if backend_id.is_empty() {
         return Err(ApiError::BadRequest("backend_id 不能为空".into()));
     }
-    if !state.backend_registry.is_online(backend_id).await {
+    if !state.services.backend_registry.is_online(backend_id).await {
         return Err(ApiError::Conflict(format!(
             "目标 Backend 当前不在线: {backend_id}"
         )));
@@ -330,7 +331,7 @@ async fn detect_git_via_backend(
             path: container_ref.to_string(),
         },
     };
-    let resp = state
+    let resp = state.services
         .backend_registry
         .send_command(backend_id, cmd)
         .await

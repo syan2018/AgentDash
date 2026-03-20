@@ -5,6 +5,8 @@ use agentdash_domain::context_container::{ContextContainerDefinition, MountDeriv
 use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::task::{Task, TaskStatus};
 use agentdash_mcp::injection::McpInjectionConfig;
+
+use crate::dto::TaskResponse;
 use axum::{
     Json,
     extract::{Path, State},
@@ -172,12 +174,12 @@ pub async fn continue_task(
 pub async fn cancel_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Task>, ApiError> {
+) -> Result<Json<TaskResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
     let task = execute_cancel_task(state, task_id)
         .await
         .map_err(map_task_execution_error)?;
-    Ok(Json(task))
+    Ok(Json(TaskResponse::from(task)))
 }
 
 pub async fn get_task_session(
@@ -213,11 +215,11 @@ async fn build_task_session_context_response(
     state: &Arc<AppState>,
     task_id: Uuid,
 ) -> Option<BuiltTaskSessionContextResponse> {
-    let task = state.task_repo.get_by_id(task_id).await.ok()??;
-    let story = state.story_repo.get_by_id(task.story_id).await.ok()??;
-    let project = state.project_repo.get_by_id(story.project_id).await.ok()??;
+    let task = state.repos.task_repo.get_by_id(task_id).await.ok()??;
+    let story = state.repos.story_repo.get_by_id(task.story_id).await.ok()??;
+    let project = state.repos.project_repo.get_by_id(story.project_id).await.ok()??;
     let workspace = if let Some(ws_id) = task.workspace_id {
-        state.workspace_repo.get_by_id(ws_id).await.ok()?
+        state.repos.workspace_repo.get_by_id(ws_id).await.ok()?
     } else {
         None
     };
@@ -232,7 +234,7 @@ async fn build_task_session_context_response(
         .as_ref()
         .is_some_and(|config| config.is_native_agent());
     let address_space = if use_address_space {
-        state
+        state.services
             .address_space_service
             .build_task_address_space(&project, &story, workspace.as_ref(), effective_agent_type)
             .ok()
@@ -245,7 +247,7 @@ async fn build_task_session_context_response(
         .clone()
         .unwrap_or_else(|| project.config.mount_policy.clone());
     let effective_session_composition = resolve_effective_session_composition(&project, Some(&story));
-    let mcp_servers = state
+    let mcp_servers = state.config
         .mcp_base_url
         .as_ref()
         .map(|base_url| {

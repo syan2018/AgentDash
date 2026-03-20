@@ -35,8 +35,8 @@ pub struct BackendWithStatus {
 pub async fn list_backends(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<BackendWithStatus>>, ApiError> {
-    let backends = state.backend_repo.list_backends().await?;
-    let online_list = state.backend_registry.list_online().await;
+    let backends = state.repos.backend_repo.list_backends().await?;
+    let online_list = state.services.backend_registry.list_online().await;
     let mut result = Vec::with_capacity(backends.len() + online_list.len());
 
     let mut seen_ids = std::collections::HashSet::new();
@@ -78,7 +78,7 @@ pub async fn list_backends(
 pub async fn list_online_backends(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<OnlineBackendInfo>>, ApiError> {
-    let online = state.backend_registry.list_online().await;
+    let online = state.services.backend_registry.list_online().await;
     Ok(Json(online))
 }
 
@@ -86,7 +86,7 @@ pub async fn get_backend(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<BackendConfig>, ApiError> {
-    let backend = state.backend_repo.get_backend(&id).await?;
+    let backend = state.repos.backend_repo.get_backend(&id).await?;
     Ok(Json(backend))
 }
 
@@ -106,7 +106,7 @@ pub async fn add_backend(
 
     let endpoint = req.endpoint.trim().to_string();
     let requested_token = normalize_optional_string(req.auth_token);
-    let existing = match state.backend_repo.get_backend(id).await {
+    let existing = match state.repos.backend_repo.get_backend(id).await {
         Ok(config) => Some(config),
         Err(DomainError::NotFound { .. }) => None,
         Err(err) => {
@@ -114,7 +114,7 @@ pub async fn add_backend(
         }
     };
     let auth_token = resolve_backend_auth_token(
-        state.backend_repo.as_ref(),
+        state.repos.backend_repo.as_ref(),
         id,
         requested_token,
         existing.as_ref(),
@@ -132,7 +132,7 @@ pub async fn add_backend(
             _ => BackendType::Local,
         },
     };
-    state.backend_repo.add_backend(&config).await?;
+    state.repos.backend_repo.add_backend(&config).await?;
     Ok(Json(config))
 }
 
@@ -291,6 +291,6 @@ pub async fn remove_backend(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state.backend_repo.remove_backend(&id).await?;
+    state.repos.backend_repo.remove_backend(&id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }

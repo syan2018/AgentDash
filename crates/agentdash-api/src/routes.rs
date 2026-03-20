@@ -29,10 +29,10 @@ use crate::stream;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
     let mcp_services = Arc::new(McpServices {
-        project_repo: state.project_repo.clone(),
-        story_repo: state.story_repo.clone(),
-        task_repo: state.task_repo.clone(),
-        workspace_repo: state.workspace_repo.clone(),
+        project_repo: state.repos.project_repo.clone(),
+        story_repo: state.repos.story_repo.clone(),
+        task_repo: state.repos.task_repo.clone(),
+        workspace_repo: state.repos.workspace_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services).build();
 

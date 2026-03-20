@@ -27,10 +27,8 @@ use agentdash_infrastructure::{
 };
 use agentdash_injection::AddressSpaceRegistry;
 
-/// 全局应用状态
-///
-/// 通过 Axum 的 State extractor 注入到各路由处理函数中。
-pub struct AppState {
+/// 持久化层端口 — 所有 Repository trait 对象的集合
+pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
@@ -39,23 +37,46 @@ pub struct AppState {
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
+}
+
+/// 应用服务集合 — 执行引擎、连接器与各类注册表
+pub struct ServiceSet {
     pub executor_hub: ExecutorHub,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
-    /// MCP 服务基础 URL（用于向 Agent 注入 MCP 端点信息）
-    pub mcp_base_url: Option<String>,
-    /// Per-Task 异步操作锁，确保同一 Task 的生命周期操作串行执行
-    pub task_lock_map: TaskLockMap,
-    /// Per-Task 重启追踪器，控制失败后的自动重试策略
-    pub restart_tracker: RestartTracker,
-    /// 上下文贡献者注册表 — 持有常驻贡献者（Core/Binding/DeclaredSources/Instruction 等）
-    pub contributor_registry: ContextContributorRegistry,
-    /// 寻址空间注册表 — 持有可用的资源引用能力提供者
-    pub address_space_registry: AddressSpaceRegistry,
     /// 统一 Address Space 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
     pub address_space_service: Arc<RelayAddressSpaceService>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
+    /// 上下文贡献者注册表 — 持有常驻贡献者（Core/Binding/DeclaredSources/Instruction 等）
+    pub contributor_registry: ContextContributorRegistry,
+    /// 寻址空间注册表 — 持有可用的资源引用能力提供者
+    pub address_space_registry: AddressSpaceRegistry,
+}
+
+/// Task 执行运行时状态 — 并发锁与重试控制
+pub struct TaskRuntime {
+    /// Per-Task 异步操作锁，确保同一 Task 的生命周期操作串行执行
+    pub lock_map: TaskLockMap,
+    /// Per-Task 重启追踪器，控制失败后的自动重试策略
+    pub restart_tracker: RestartTracker,
+}
+
+/// 应用级配置
+pub struct AppConfig {
+    /// MCP 服务基础 URL（用于向 Agent 注入 MCP 端点信息）
+    pub mcp_base_url: Option<String>,
+}
+
+/// 全局应用状态
+///
+/// 通过 Axum 的 State extractor 注入到各路由处理函数中。
+/// 按职责分为 4 个子集：repos / services / task_runtime / config。
+pub struct AppState {
+    pub repos: RepositorySet,
+    pub services: ServiceSet,
+    pub task_runtime: TaskRuntime,
+    pub config: AppConfig,
     /// 远程会话映射：session_id → backend_id（路由到远程后端的会话）
     pub remote_sessions: Arc<RwLock<HashMap<String, String>>>,
 }
@@ -148,23 +169,31 @@ impl AppState {
         });
 
         Ok(Self {
-            project_repo,
-            workspace_repo,
-            story_repo,
-            task_repo: task_repo.clone(),
-            sqlite_task_repo: task_repo,
-            session_binding_repo,
-            backend_repo,
-            settings_repo,
-            executor_hub,
-            connector,
-            mcp_base_url,
-            task_lock_map: TaskLockMap::new(),
-            restart_tracker,
-            contributor_registry: ContextContributorRegistry::with_builtins(),
-            address_space_registry: agentdash_injection::builtin_address_space_registry(),
-            address_space_service,
-            backend_registry,
+            repos: RepositorySet {
+                project_repo,
+                workspace_repo,
+                story_repo,
+                task_repo: task_repo.clone(),
+                sqlite_task_repo: task_repo,
+                session_binding_repo,
+                backend_repo,
+                settings_repo,
+            },
+            services: ServiceSet {
+                executor_hub,
+                connector,
+                address_space_service,
+                backend_registry,
+                contributor_registry: ContextContributorRegistry::with_builtins(),
+                address_space_registry: agentdash_injection::builtin_address_space_registry(),
+            },
+            task_runtime: TaskRuntime {
+                lock_map: TaskLockMap::new(),
+                restart_tracker,
+            },
+            config: AppConfig {
+                mcp_base_url,
+            },
             remote_sessions: Arc::new(RwLock::new(HashMap::new())),
         })
     }

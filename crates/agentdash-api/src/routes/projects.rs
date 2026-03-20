@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::context_container::{
@@ -10,10 +10,9 @@ use agentdash_domain::context_container::{
 };
 use agentdash_domain::project::{Project, ProjectConfig};
 use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
-use agentdash_domain::story::Story;
-use agentdash_domain::workspace::Workspace;
 
 use crate::app_state::AppState;
+use crate::dto::{ProjectDetailResponse, ProjectResponse};
 use crate::rpc::ApiError;
 
 #[derive(Deserialize)]
@@ -38,25 +37,17 @@ pub struct UpdateProjectRequest {
     pub session_composition: Option<SessionComposition>,
 }
 
-#[derive(Serialize)]
-pub struct ProjectDetailResponse {
-    #[serde(flatten)]
-    pub project: Project,
-    pub workspaces: Vec<Workspace>,
-    pub stories: Vec<Story>,
-}
-
 pub async fn list_projects(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<Project>>, ApiError> {
-    let projects = state.project_repo.list_all().await?;
-    Ok(Json(projects))
+) -> Result<Json<Vec<ProjectResponse>>, ApiError> {
+    let projects = state.repos.project_repo.list_all().await?;
+    Ok(Json(projects.into_iter().map(ProjectResponse::from).collect()))
 }
 
 pub async fn create_project(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateProjectRequest>,
-) -> Result<Json<Project>, ApiError> {
+) -> Result<Json<ProjectResponse>, ApiError> {
     let mut project = Project::new(
         req.name,
         req.description.unwrap_or_default(),
@@ -75,8 +66,8 @@ pub async fn create_project(
         project.config.session_composition = session_composition;
     }
     validate_project_config(&project.config)?;
-    state.project_repo.create(&project).await?;
-    Ok(Json(project))
+    state.repos.project_repo.create(&project).await?;
+    Ok(Json(ProjectResponse::from(project)))
 }
 
 pub async fn get_project(
@@ -86,31 +77,27 @@ pub async fn get_project(
     let project_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(project_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Project {id} 不存在")))?;
 
-    let workspaces = state.workspace_repo.list_by_project(project_id).await?;
-    let stories = state.story_repo.list_by_project(project_id).await?;
+    let workspaces = state.repos.workspace_repo.list_by_project(project_id).await?;
+    let stories = state.repos.story_repo.list_by_project(project_id).await?;
 
-    Ok(Json(ProjectDetailResponse {
-        project,
-        workspaces,
-        stories,
-    }))
+    Ok(Json(ProjectDetailResponse::new(project, workspaces, stories)))
 }
 
 pub async fn update_project(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<UpdateProjectRequest>,
-) -> Result<Json<Project>, ApiError> {
+) -> Result<Json<ProjectResponse>, ApiError> {
     let project_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    let mut project = state
+    let mut project = state.repos
         .project_repo
         .get_by_id(project_id)
         .await?
@@ -140,8 +127,8 @@ pub async fn update_project(
 
     validate_project_config(&project.config)?;
 
-    state.project_repo.update(&project).await?;
-    Ok(Json(project))
+    state.repos.project_repo.update(&project).await?;
+    Ok(Json(ProjectResponse::from(project)))
 }
 
 pub async fn delete_project(
@@ -152,21 +139,21 @@ pub async fn delete_project(
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
     // 先删除 Project 下的 Task/Story/Workspace，再删除 Project 本身，避免外键约束失败
-    let stories = state.story_repo.list_by_project(project_id).await?;
+    let stories = state.repos.story_repo.list_by_project(project_id).await?;
     for story in stories {
-        let tasks = state.task_repo.list_by_story(story.id).await?;
+        let tasks = state.repos.task_repo.list_by_story(story.id).await?;
         for task in tasks {
-            state.task_repo.delete(task.id).await?;
+            state.repos.task_repo.delete(task.id).await?;
         }
-        state.story_repo.delete(story.id).await?;
+        state.repos.story_repo.delete(story.id).await?;
     }
 
-    let workspaces = state.workspace_repo.list_by_project(project_id).await?;
+    let workspaces = state.repos.workspace_repo.list_by_project(project_id).await?;
     for workspace in workspaces {
-        state.workspace_repo.delete(workspace.id).await?;
+        state.repos.workspace_repo.delete(workspace.id).await?;
     }
 
-    state.project_repo.delete(project_id).await?;
+    state.repos.project_repo.delete(project_id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 

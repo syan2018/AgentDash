@@ -27,7 +27,7 @@ pub async fn discovered_options_stream(
     State(state): State<Arc<AppState>>,
     Query(q): Query<DiscoveredOptionsQuery>,
 ) -> impl IntoResponse {
-    let connector = state.connector.clone();
+    let connector = state.services.connector.clone();
 
     let stream = async_stream::stream! {
         // 先发 Ready

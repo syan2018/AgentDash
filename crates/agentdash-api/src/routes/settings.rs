@@ -69,7 +69,7 @@ pub async fn list_settings(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListSettingsQuery>,
 ) -> Result<Json<Vec<SettingResponse>>, ApiError> {
-    let settings = state.settings_repo.list(query.category.as_deref()).await?;
+    let settings = state.repos.settings_repo.list(query.category.as_deref()).await?;
 
     let responses: Vec<SettingResponse> = settings
         .into_iter()
@@ -122,7 +122,7 @@ pub async fn update_settings(
 
     let updated_keys: Vec<String> = entries.iter().map(|(k, _)| k.clone()).collect();
 
-    state.settings_repo.set_batch(&entries).await?;
+    state.repos.settings_repo.set_batch(&entries).await?;
 
     Ok(Json(UpdateSettingsResponse {
         updated: updated_keys,
@@ -137,7 +137,7 @@ pub async fn delete_setting(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let deleted = state.settings_repo.delete(&key).await?;
+    let deleted = state.repos.settings_repo.delete(&key).await?;
 
     if deleted {
         Ok(StatusCode::NO_CONTENT)

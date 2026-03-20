@@ -16,6 +16,7 @@ use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, Sto
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
 use crate::app_state::AppState;
+use crate::dto::{StoryResponse, TaskResponse};
 use crate::rpc::ApiError;
 
 #[derive(Deserialize)]
@@ -88,31 +89,29 @@ pub struct UpdateTaskRequest {
 pub async fn list_stories(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListStoriesQuery>,
-) -> Result<Json<Vec<Story>>, ApiError> {
-    if let Some(project_id) = &query.project_id {
+) -> Result<Json<Vec<StoryResponse>>, ApiError> {
+    let stories = if let Some(project_id) = &query.project_id {
         let pid = Uuid::parse_str(project_id)
             .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
-        let stories = state.story_repo.list_by_project(pid).await?;
-        return Ok(Json(stories));
-    }
+        state.repos.story_repo.list_by_project(pid).await?
+    } else if let Some(backend_id) = &query.backend_id {
+        state.repos.story_repo.list_by_backend(backend_id).await?
+    } else {
+        return Err(ApiError::BadRequest(
+            "需要 backend_id 或 project_id 参数".into(),
+        ));
+    };
 
-    if let Some(backend_id) = &query.backend_id {
-        let stories = state.story_repo.list_by_backend(backend_id).await?;
-        return Ok(Json(stories));
-    }
-
-    Err(ApiError::BadRequest(
-        "需要 backend_id 或 project_id 参数".into(),
-    ))
+    Ok(Json(stories.into_iter().map(StoryResponse::from).collect()))
 }
 
 pub async fn create_story(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateStoryRequest>,
-) -> Result<Json<Story>, ApiError> {
+) -> Result<Json<StoryResponse>, ApiError> {
     let project_id = Uuid::parse_str(&req.project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(project_id)
         .await?
@@ -159,40 +158,40 @@ pub async fn create_story(
     }
     validate_story_context(&next_story, &project)?;
 
-    state.story_repo.create(&next_story).await?;
-    Ok(Json(next_story))
+    state.repos.story_repo.create(&next_story).await?;
+    Ok(Json(StoryResponse::from(next_story)))
 }
 
 pub async fn get_story(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Story>, ApiError> {
+) -> Result<Json<StoryResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(story_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
 
-    Ok(Json(story))
+    Ok(Json(StoryResponse::from(story)))
 }
 
 pub async fn update_story(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<UpdateStoryRequest>,
-) -> Result<Json<Story>, ApiError> {
+) -> Result<Json<StoryResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
-    let mut story = state
+    let mut story = state.repos
         .story_repo
         .get_by_id(story_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(story.project_id)
         .await?
@@ -251,8 +250,8 @@ pub async fn update_story(
 
     validate_story_context(&story, &project)?;
 
-    state.story_repo.update(&story).await?;
-    Ok(Json(story))
+    state.repos.story_repo.update(&story).await?;
+    Ok(Json(StoryResponse::from(story)))
 }
 
 pub async fn delete_story(
@@ -262,16 +261,16 @@ pub async fn delete_story(
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(story_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
 
-    let tasks = state.task_repo.list_by_story(story_id).await?;
+    let tasks = state.repos.task_repo.list_by_story(story_id).await?;
     for task in &tasks {
-        state.task_repo.delete(task.id).await?;
-        state
+        state.repos.task_repo.delete(task.id).await?;
+        state.repos
             .story_repo
             .append_change(
                 task.id,
@@ -287,9 +286,9 @@ pub async fn delete_story(
             .ok();
     }
 
-    state.story_repo.delete(story_id).await?;
+    state.repos.story_repo.delete(story_id).await?;
 
-    state
+    state.repos
         .story_repo
         .append_change(
             story_id,
@@ -309,18 +308,18 @@ pub async fn delete_story(
 pub async fn list_tasks(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<Task>>, ApiError> {
+) -> Result<Json<Vec<TaskResponse>>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
-    let tasks = state.task_repo.list_by_story(story_id).await?;
-    Ok(Json(tasks))
+    let tasks = state.repos.task_repo.list_by_story(story_id).await?;
+    Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))
 }
 
 pub async fn create_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<CreateTaskRequest>,
-) -> Result<Json<Task>, ApiError> {
+) -> Result<Json<TaskResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
@@ -329,13 +328,13 @@ pub async fn create_task(
         return Err(ApiError::BadRequest("Task 标题不能为空".into()));
     }
 
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(story_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
 
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(story.project_id)
         .await?
@@ -348,7 +347,7 @@ pub async fn create_task(
             let ws_id = Uuid::parse_str(raw.trim())
                 .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-            let workspace = state
+            let workspace = state.repos
                 .workspace_repo
                 .get_by_id(ws_id)
                 .await?
@@ -398,39 +397,39 @@ pub async fn create_task(
     task.workspace_id = workspace_id;
     task.agent_binding = agent_binding;
 
-    state
+    state.repos
         .sqlite_task_repo
         .create_task_with_story_update(&task)
         .await?;
 
-    Ok(Json(task))
+    Ok(Json(TaskResponse::from(task)))
 }
 
 pub async fn get_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Task>, ApiError> {
+) -> Result<Json<TaskResponse>, ApiError> {
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
 
-    let task = state
+    let task = state.repos
         .task_repo
         .get_by_id(task_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
 
-    Ok(Json(task))
+    Ok(Json(TaskResponse::from(task)))
 }
 
 pub async fn update_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<UpdateTaskRequest>,
-) -> Result<Json<Task>, ApiError> {
+) -> Result<Json<TaskResponse>, ApiError> {
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
 
-    let mut task = state
+    let mut task = state.repos
         .task_repo
         .get_by_id(task_id)
         .await?
@@ -438,7 +437,7 @@ pub async fn update_task(
 
     let old_status = task.status.clone();
 
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(task.story_id)
         .await?
@@ -465,7 +464,7 @@ pub async fn update_task(
         } else {
             let ws_id = Uuid::parse_str(normalized)
                 .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
-            let workspace = state
+            let workspace = state.repos
                 .workspace_repo
                 .get_by_id(ws_id)
                 .await?
@@ -483,14 +482,14 @@ pub async fn update_task(
         task.agent_binding = to_agent_binding(Some(agent_binding_req));
     }
 
-    state.task_repo.update(&task).await?;
+    state.repos.task_repo.update(&task).await?;
 
     let change_kind = if task.status != old_status {
         ChangeKind::TaskStatusChanged
     } else {
         ChangeKind::TaskUpdated
     };
-    state
+    state.repos
         .story_repo
         .append_change(
             task.id,
@@ -501,7 +500,7 @@ pub async fn update_task(
         .await
         .ok();
 
-    Ok(Json(task))
+    Ok(Json(TaskResponse::from(task)))
 }
 
 pub async fn delete_task(
@@ -511,12 +510,12 @@ pub async fn delete_task(
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
 
-    state
+    state.repos
         .sqlite_task_repo
         .delete_task_with_story_update(task_id)
         .await?;
 
-    state.restart_tracker.clear(task_id);
+    state.task_runtime.restart_tracker.clear(task_id);
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }

@@ -1,18 +1,20 @@
 use std::sync::Arc;
 
 use agent_client_protocol::{
-    Meta, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate, ToolCall,
-    ToolCallStatus,
-};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
-    parse_agentdash_meta,
+    SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
 };
 use agentdash_application::task_execution::{
     ContinueTaskCommand, ContinueTaskResult, ExecutionPhase, SessionOverview, StartTaskCommand,
     StartTaskResult, StartedTurn, TaskExecutionError, TaskExecutionGateway, TaskSessionResult,
 };
 use agentdash_application::task_restart_tracker::RestartDecision;
+use agentdash_application::task::artifact::{
+    build_tool_call_patch, build_tool_call_update_patch, upsert_tool_execution_artifact,
+};
+use agentdash_application::task::config::resolve_task_executor_config;
+use agentdash_application::task::meta::{
+    build_task_lifecycle_meta, parse_turn_event, turn_matches,
+};
 use agentdash_domain::{
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
@@ -26,12 +28,12 @@ use agentdash_relay::{
     ResponsePromptPayload,
 };
 use async_trait::async_trait;
-use serde::Serialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use agentdash_mcp::injection::McpInjectionConfig;
 
+use crate::task_agent_context::BuiltTaskAgentContext;
 use crate::{
     app_state::AppState,
     task_agent_context::{
@@ -60,7 +62,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
     }
 
     async fn update_task(&self, task: &Task) -> Result<(), TaskExecutionError> {
-        self.state
+        self.state.repos
             .task_repo
             .update(task)
             .await
@@ -129,7 +131,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             ])));
         }
 
-        if let Some(base_url) = &self.state.mcp_base_url {
+        if let Some(base_url) = &self.state.config.mcp_base_url {
             let config = McpInjectionConfig::for_task(
                 base_url.clone(),
                 story.project_id,
@@ -155,7 +157,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 .as_ref()
                 .map(|config| config.executor.as_str());
             Some(
-                self.state
+                self.state.services
                     .address_space_service
                     .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
                     .map_err(map_internal_error)?,
@@ -182,7 +184,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 additional_prompt,
                 extra_contributors,
             },
-            &self.state.contributor_registry,
+            &self.state.services.contributor_registry,
         )
         .map_err(TaskExecutionError::UnprocessableEntity)?;
 
@@ -202,7 +204,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             };
 
             let turn_id = self
-                .state
+                .state.services
                 .executor_hub
                 .start_prompt(session_id, prompt_req)
                 .await
@@ -220,7 +222,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 )
             })?;
             let backend_id = normalize_backend_id(&workspace.backend_id)?;
-            if !self.state.backend_registry.is_online(backend_id).await {
+            if !self.state.services.backend_registry.is_online(backend_id).await {
                 return Err(TaskExecutionError::Conflict(format!(
                     "目标 Workspace 所属 Backend 当前不在线: {backend_id}"
                 )));
@@ -260,7 +262,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
         })?;
         let binding = SessionBinding::new(session_id.to_string(), owner_type, owner_id, label);
-        self.state
+        self.state.repos
             .session_binding_repo
             .create(&binding)
             .await
@@ -279,7 +281,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         if let Some(backend_id) = remote_backend {
             relay_cancel(&self.state, &backend_id, session_id).await
         } else {
-            self.state
+            self.state.services
                 .executor_hub
                 .cancel(session_id)
                 .await
@@ -292,7 +294,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         session_id: &str,
     ) -> Result<Option<SessionOverview>, TaskExecutionError> {
         let meta = self
-            .state
+            .state.services
             .executor_hub
             .get_session_meta(session_id)
             .await
@@ -339,8 +341,8 @@ pub async fn execute_start_task(
     override_prompt: Option<String>,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<StartTaskResult, TaskExecutionError> {
-    state
-        .task_lock_map
+    state.task_runtime
+        .lock_map
         .with_lock(task_id, || async {
             let gateway = AppStateTaskExecutionGateway::new(state.clone());
             agentdash_application::task_execution::start_task(
@@ -362,8 +364,8 @@ pub async fn execute_continue_task(
     additional_prompt: Option<String>,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<ContinueTaskResult, TaskExecutionError> {
-    state
-        .task_lock_map
+    state.task_runtime
+        .lock_map
         .with_lock(task_id, || async {
             let gateway = AppStateTaskExecutionGateway::new(state.clone());
             agentdash_application::task_execution::continue_task(
@@ -383,8 +385,8 @@ pub async fn execute_cancel_task(
     state: Arc<AppState>,
     task_id: Uuid,
 ) -> Result<Task, TaskExecutionError> {
-    let result = state
-        .task_lock_map
+    let result = state.task_runtime
+        .lock_map
         .with_lock(task_id, || async {
             let gateway = AppStateTaskExecutionGateway::new(state.clone());
             agentdash_application::task_execution::cancel_task(&gateway, task_id).await
@@ -392,7 +394,7 @@ pub async fn execute_cancel_task(
         .await;
 
     if result.is_ok() {
-        state.restart_tracker.clear(task_id);
+        state.task_runtime.restart_tracker.clear(task_id);
     }
 
     result
@@ -430,12 +432,12 @@ async fn run_turn_monitor(
     turn_id: &str,
     backend_id: &str,
 ) -> TurnOutcome {
-    let execution_mode = match state.task_repo.get_by_id(task_id).await {
+    let execution_mode = match state.repos.task_repo.get_by_id(task_id).await {
         Ok(Some(task)) => task.execution_mode,
         _ => TaskExecutionMode::Standard,
     };
 
-    let (history, mut rx) = state.executor_hub.subscribe_with_history(session_id).await;
+    let (history, mut rx) = state.services.executor_hub.subscribe_with_history(session_id).await;
 
     for notification in history {
         match handle_turn_notification(
@@ -674,7 +676,7 @@ async fn handle_turn_notification(
                             )
                             .await;
                         } else {
-                            state.restart_tracker.record_stable_start(task_id);
+                            state.task_runtime.restart_tracker.record_stable_start(task_id);
                             let _ = update_task_status(
                                 state,
                                 task_id,
@@ -733,7 +735,7 @@ async fn resolve_failure_outcome(
 ) -> Result<TurnOutcome, agentdash_domain::DomainError> {
     match execution_mode {
         TaskExecutionMode::AutoRetry => {
-            let decision = state.restart_tracker.report_failure(task_id);
+            let decision = state.task_runtime.restart_tracker.report_failure(task_id);
             match decision {
                 RestartDecision::Allowed { attempt, delay } => {
                     tracing::info!(
@@ -854,7 +856,7 @@ async fn clear_task_session_binding(
     reason: &str,
 ) {
     let result: Result<(), agentdash_domain::DomainError> = async {
-        let mut task = match state.task_repo.get_by_id(task_id).await? {
+        let mut task = match state.repos.task_repo.get_by_id(task_id).await? {
             Some(task) => task,
             None => return Ok(()),
         };
@@ -866,8 +868,8 @@ async fn clear_task_session_binding(
             return Ok(());
         }
 
-        state.task_repo.update(&task).await?;
-        state
+        state.repos.task_repo.update(&task).await?;
+        state.repos
             .story_repo
             .append_change(
                 task.id,
@@ -913,7 +915,7 @@ async fn persist_tool_call_artifact(
     backend_id: &str,
     reason: &str,
 ) -> Result<(), agentdash_domain::DomainError> {
-    let mut task = match state.task_repo.get_by_id(task_id).await? {
+    let mut task = match state.repos.task_repo.get_by_id(task_id).await? {
         Some(task) => task,
         None => return Ok(()),
     };
@@ -924,7 +926,7 @@ async fn persist_tool_call_artifact(
         return Ok(());
     }
 
-    state.task_repo.update(&task).await?;
+    state.repos.task_repo.update(&task).await?;
     append_task_change(
         state,
         task.id,
@@ -945,64 +947,6 @@ async fn persist_tool_call_artifact(
     Ok(())
 }
 
-fn upsert_tool_execution_artifact(
-    task: &mut Task,
-    session_id: &str,
-    turn_id: &str,
-    tool_call_id: &str,
-    mut patch: Map<String, Value>,
-) -> bool {
-    let now = chrono::Utc::now();
-    let now_str = now.to_rfc3339();
-
-    patch.insert("session_id".to_string(), json!(session_id));
-    patch.insert("turn_id".to_string(), json!(turn_id));
-    patch.insert("tool_call_id".to_string(), json!(tool_call_id));
-    patch.insert("updated_at".to_string(), json!(now_str));
-
-    if let Some(index) = task
-        .artifacts
-        .iter()
-        .position(|item| is_same_tool_execution_artifact(item, turn_id, tool_call_id))
-    {
-        let artifact = &mut task.artifacts[index];
-        let before = artifact.content.clone();
-        let mut content = artifact.content.as_object().cloned().unwrap_or_default();
-        for (key, value) in patch {
-            if key == "started_at" && content.contains_key("started_at") {
-                continue;
-            }
-            content.insert(key, value);
-        }
-        if !content.contains_key("started_at") {
-            content.insert("started_at".to_string(), json!(now_str));
-        }
-        let next = Value::Object(content);
-        if before == next {
-            return false;
-        }
-        artifact.content = next;
-        return true;
-    }
-
-    if !patch.contains_key("started_at") {
-        patch.insert("started_at".to_string(), json!(now_str));
-    }
-
-    task.artifacts.push(Artifact {
-        id: Uuid::new_v4(),
-        artifact_type: ArtifactType::ToolExecution,
-        content: Value::Object(patch),
-        created_at: now,
-    });
-    true
-}
-
-fn is_same_tool_execution_artifact(artifact: &Artifact, turn_id: &str, tool_call_id: &str) -> bool {
-    artifact.artifact_type == ArtifactType::ToolExecution
-        && artifact.content.get("turn_id").and_then(Value::as_str) == Some(turn_id)
-        && artifact.content.get("tool_call_id").and_then(Value::as_str) == Some(tool_call_id)
-}
 
 async fn persist_turn_failure_artifact(
     state: &Arc<AppState>,
@@ -1012,7 +956,7 @@ async fn persist_turn_failure_artifact(
     turn_id: &str,
     error_message: &str,
 ) -> Result<(), agentdash_domain::DomainError> {
-    let mut task = match state.task_repo.get_by_id(task_id).await? {
+    let mut task = match state.repos.task_repo.get_by_id(task_id).await? {
         Some(task) => task,
         None => return Ok(()),
     };
@@ -1030,7 +974,7 @@ async fn persist_turn_failure_artifact(
         created_at: chrono::Utc::now(),
     });
 
-    state.task_repo.update(&task).await?;
+    state.repos.task_repo.update(&task).await?;
     append_task_change(
         state,
         task.id,
@@ -1058,7 +1002,7 @@ async fn bind_executor_session_id(
     turn_id: &str,
     executor_session_id: &str,
 ) -> Result<(), agentdash_domain::DomainError> {
-    let Some(mut task) = state.task_repo.get_by_id(task_id).await? else {
+    let Some(mut task) = state.repos.task_repo.get_by_id(task_id).await? else {
         return Ok(());
     };
 
@@ -1067,7 +1011,7 @@ async fn bind_executor_session_id(
     }
 
     task.executor_session_id = Some(executor_session_id.to_string());
-    state.task_repo.update(&task).await?;
+    state.repos.task_repo.update(&task).await?;
 
     append_task_change(
         state,
@@ -1095,7 +1039,7 @@ async fn sync_task_executor_session_binding_from_hub(
     session_id: &str,
     turn_id: &str,
 ) -> Result<(), agentdash_domain::DomainError> {
-    let meta = match state.executor_hub.get_session_meta(session_id).await {
+    let meta = match state.services.executor_hub.get_session_meta(session_id).await {
         Ok(Some(meta)) => meta,
         Ok(None) => return Ok(()),
         Err(err) => {
@@ -1133,7 +1077,7 @@ async fn update_task_status(
     reason: &str,
     context: Value,
 ) -> Result<bool, agentdash_domain::DomainError> {
-    let mut task = match state.task_repo.get_by_id(task_id).await? {
+    let mut task = match state.repos.task_repo.get_by_id(task_id).await? {
         Some(task) => task,
         None => return Ok(false),
     };
@@ -1144,7 +1088,7 @@ async fn update_task_status(
 
     let previous_status = task.status.clone();
     task.status = next_status.clone();
-    state.task_repo.update(&task).await?;
+    state.repos.task_repo.update(&task).await?;
 
     append_task_change(
         state,
@@ -1174,14 +1118,12 @@ async fn append_task_change(
     kind: ChangeKind,
     payload: Value,
 ) -> Result<(), agentdash_domain::DomainError> {
-    state
+    state.repos
         .story_repo
         .append_change(task_id, kind, payload, backend_id)
         .await
 }
 
-/// 将 Task 侧生命周期事件桥接到对应 ACP session 流，便于后续 inbox 等场景复用。
-/// 当前常规会话 UI 保持静默渲染（不直接展示这类系统事件卡片）。
 async fn bridge_task_status_event_to_session(
     state: &Arc<AppState>,
     session_id: &str,
@@ -1190,27 +1132,13 @@ async fn bridge_task_status_event_to_session(
     message: &str,
     data: Value,
 ) {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-
-    let mut event = AgentDashEventV1::new(event_type);
-    event.severity = Some("info".to_string());
-    event.message = Some(message.to_string());
-    event.data = Some(data);
-
-    let source = AgentDashSourceV1::new("agentdash-task-execution", "api_task_route");
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace))
-        .event(Some(event));
-    let meta = merge_agentdash_meta(None, &agentdash);
-
+    let meta = build_task_lifecycle_meta(turn_id, event_type, message, data);
     let notification = SessionNotification::new(
         SessionId::new(session_id.to_string()),
         SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
     );
 
-    if let Err(err) = state
+    if let Err(err) = state.services
         .executor_hub
         .inject_notification(session_id, notification)
         .await
@@ -1225,142 +1153,10 @@ async fn bridge_task_status_event_to_session(
     }
 }
 
-fn turn_matches(meta: Option<&Meta>, expected_turn_id: &str) -> bool {
-    let Some(meta) = meta else {
-        return false;
-    };
-    parse_agentdash_meta(meta)
-        .and_then(|m| m.trace.and_then(|trace| trace.turn_id))
-        .as_deref()
-        == Some(expected_turn_id)
-}
 
-fn parse_turn_event(
-    meta: Option<&Meta>,
-    expected_turn_id: &str,
-) -> Option<(String, Option<String>)> {
-    let parsed = parse_agentdash_meta(meta?)?;
-    let trace = parsed.trace?;
-    let turn_id = trace.turn_id?;
-    if turn_id != expected_turn_id {
-        return None;
-    }
-    let event = parsed.event?;
-    Some((event.r#type, event.message))
-}
-
-fn build_tool_call_patch(tool_call: &ToolCall) -> Map<String, Value> {
-    let mut patch = Map::new();
-    patch.insert("title".to_string(), json!(tool_call.title));
-    patch.insert("kind".to_string(), json!(enum_to_string(&tool_call.kind)));
-    patch.insert(
-        "status".to_string(),
-        json!(tool_status_to_string(tool_call.status)),
-    );
-
-    if !tool_call.content.is_empty() {
-        let content = serde_json::to_value(&tool_call.content).unwrap_or_else(|_| json!([]));
-        patch.insert("content".to_string(), content.clone());
-        patch.insert("output_preview".to_string(), json!(preview_value(&content)));
-    }
-    if !tool_call.locations.is_empty() {
-        patch.insert(
-            "locations".to_string(),
-            serde_json::to_value(&tool_call.locations).unwrap_or_else(|_| json!([])),
-        );
-    }
-    if let Some(raw_input) = tool_call.raw_input.clone() {
-        patch.insert("raw_input".to_string(), raw_input.clone());
-        patch.insert(
-            "input_preview".to_string(),
-            json!(preview_value(&raw_input)),
-        );
-    }
-    if let Some(raw_output) = tool_call.raw_output.clone() {
-        patch.insert("raw_output".to_string(), raw_output.clone());
-        patch.insert(
-            "output_preview".to_string(),
-            json!(preview_value(&raw_output)),
-        );
-    }
-
-    patch
-}
-
-fn build_tool_call_update_patch(
-    update: &agent_client_protocol::ToolCallUpdate,
-) -> Map<String, Value> {
-    let mut patch = Map::new();
-    if let Some(title) = update.fields.title.clone() {
-        patch.insert("title".to_string(), json!(title));
-    }
-    if let Some(kind) = update.fields.kind {
-        patch.insert("kind".to_string(), json!(enum_to_string(&kind)));
-    }
-    if let Some(status) = update.fields.status {
-        patch.insert("status".to_string(), json!(tool_status_to_string(status)));
-    }
-    if let Some(content) = update.fields.content.clone() {
-        let content_value = serde_json::to_value(content).unwrap_or_else(|_| json!([]));
-        patch.insert("content".to_string(), content_value.clone());
-        patch.insert(
-            "output_preview".to_string(),
-            json!(preview_value(&content_value)),
-        );
-    }
-    if let Some(locations) = update.fields.locations.clone() {
-        patch.insert(
-            "locations".to_string(),
-            serde_json::to_value(locations).unwrap_or_else(|_| json!([])),
-        );
-    }
-    if let Some(raw_input) = update.fields.raw_input.clone() {
-        patch.insert("raw_input".to_string(), raw_input.clone());
-        patch.insert(
-            "input_preview".to_string(),
-            json!(preview_value(&raw_input)),
-        );
-    }
-    if let Some(raw_output) = update.fields.raw_output.clone() {
-        patch.insert("raw_output".to_string(), raw_output.clone());
-        patch.insert(
-            "output_preview".to_string(),
-            json!(preview_value(&raw_output)),
-        );
-    }
-    patch
-}
-
-fn preview_value(value: &Value) -> String {
-    let raw = value.to_string();
-    const MAX_LEN: usize = 240;
-    if raw.len() <= MAX_LEN {
-        raw
-    } else {
-        let shortened: String = raw.chars().take(MAX_LEN).collect();
-        format!("{shortened}...")
-    }
-}
-
-fn tool_status_to_string(status: ToolCallStatus) -> &'static str {
-    match status {
-        ToolCallStatus::Pending => "pending",
-        ToolCallStatus::InProgress => "in_progress",
-        ToolCallStatus::Completed => "completed",
-        ToolCallStatus::Failed => "failed",
-        _ => "pending",
-    }
-}
-
-fn enum_to_string<T: Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|raw| raw.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "other".to_string())
-}
 
 async fn get_task(state: &Arc<AppState>, task_id: Uuid) -> Result<Task, TaskExecutionError> {
-    state
+    state.repos
         .task_repo
         .get_by_id(task_id)
         .await
@@ -1372,7 +1168,7 @@ async fn load_related_context(
     state: &Arc<AppState>,
     task: &Task,
 ) -> Result<(Story, Project, Option<Workspace>), TaskExecutionError> {
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(task.story_id)
         .await
@@ -1381,7 +1177,7 @@ async fn load_related_context(
             TaskExecutionError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id))
         })?;
 
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(story.project_id)
         .await
@@ -1392,7 +1188,7 @@ async fn load_related_context(
 
     let workspace = if let Some(ws_id) = task.workspace_id {
         Some(
-            state
+            state.repos
                 .workspace_repo
                 .get_by_id(ws_id)
                 .await
@@ -1413,7 +1209,7 @@ async fn create_task_session(
     task: &Task,
 ) -> Result<SessionMeta, TaskExecutionError> {
     let title = format!("Task: {}", task.title.trim());
-    state
+    state.services
         .executor_hub
         .create_session(title.trim())
         .await
@@ -1453,7 +1249,7 @@ async fn resolve_task_backend_id(
 ) -> Result<String, TaskExecutionError> {
     // 优先级：Workspace.backend_id → Story.backend_id → Project.backend_id
     if let Some(workspace_id) = task.workspace_id {
-        let workspace = state
+        let workspace = state.repos
             .workspace_repo
             .get_by_id(workspace_id)
             .await
@@ -1466,7 +1262,7 @@ async fn resolve_task_backend_id(
         }
     }
 
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(task.story_id)
         .await
@@ -1477,7 +1273,7 @@ async fn resolve_task_backend_id(
         return Ok(bid.to_string());
     }
 
-    let project = state
+    let project = state.repos
         .project_repo
         .get_by_id(story.project_id)
         .await
@@ -1502,83 +1298,10 @@ fn normalize_backend_id(raw: &str) -> Result<&str, TaskExecutionError> {
     Ok(trimmed)
 }
 
-fn resolve_task_executor_config(
-    explicit: Option<agentdash_executor::AgentDashExecutorConfig>,
-    task: &Task,
-    project: &Project,
-) -> Result<Option<agentdash_executor::AgentDashExecutorConfig>, TaskExecutionError> {
-    if explicit.is_some() {
-        return Ok(explicit);
-    }
-
-    resolve_task_agent_config(task, project)
-}
-
-pub(crate) fn resolve_task_agent_config(
-    task: &Task,
-    project: &Project,
-) -> Result<Option<agentdash_executor::AgentDashExecutorConfig>, TaskExecutionError> {
-    // 优先使用 Task 上的 agent_type
-    if let Some(agent_type) = normalize_option_string(task.agent_binding.agent_type.clone()) {
-        return Ok(Some(agentdash_executor::AgentDashExecutorConfig::new(
-            agent_type,
-        )));
-    }
-
-    // 通过 preset_name 查找预设，同时合并 preset.config 中的扩展字段
-    if let Some(preset_name) = normalize_option_string(task.agent_binding.preset_name.clone()) {
-        let preset = project
-            .config
-            .agent_presets
-            .iter()
-            .find(|item| item.name == preset_name)
-            .ok_or_else(|| {
-                TaskExecutionError::BadRequest(format!("Project 中不存在预设: {preset_name}"))
-            })?;
-        let agent_type = normalize_option_string(Some(preset.agent_type.clone()));
-        let Some(agent_type) = agent_type else {
-            return Ok(None);
-        };
-        let mut config = agentdash_executor::AgentDashExecutorConfig::new(agent_type);
-        if let Some(obj) = preset.config.as_object() {
-            if let Some(v) = obj.get("variant").and_then(|v| v.as_str()) {
-                config.variant = normalize_option_string(Some(v.to_string()));
-            }
-            if let Some(v) = obj.get("model_id").and_then(|v| v.as_str()) {
-                config.model_id = normalize_option_string(Some(v.to_string()));
-            }
-            if let Some(v) = obj.get("agent_id").and_then(|v| v.as_str()) {
-                config.agent_id = normalize_option_string(Some(v.to_string()));
-            }
-            if let Some(v) = obj.get("reasoning_id").and_then(|v| v.as_str()) {
-                config.reasoning_id = normalize_option_string(Some(v.to_string()));
-            }
-            if let Some(v) = obj.get("permission_policy").and_then(|v| v.as_str()) {
-                config.permission_policy = normalize_option_string(Some(v.to_string()));
-            }
-        }
-        return Ok(Some(config));
-    }
-
-    // 最后回退到 project.config.default_agent_type
-    Ok(normalize_option_string(project.config.default_agent_type.clone())
-        .map(agentdash_executor::AgentDashExecutorConfig::new))
-}
-
-fn normalize_option_string(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
+/// Re-export for backward compat within api crate
+pub(crate) use agentdash_application::task::config::resolve_task_agent_config;
 
 // ─── 远程中继辅助函数 ──────────────────────────────────────
-
-use crate::task_agent_context::BuiltTaskAgentContext;
 
 async fn relay_start_prompt(
     state: &Arc<AppState>,
@@ -1616,7 +1339,7 @@ async fn relay_start_prompt(
         "中继 command.prompt → 远程后端"
     );
 
-    let resp = state
+    let resp = state.services
         .backend_registry
         .send_command(backend_id, cmd)
         .await
@@ -1659,7 +1382,7 @@ async fn relay_cancel(
         },
     };
 
-    let resp = state
+    let resp = state.services
         .backend_registry
         .send_command(backend_id, cmd)
         .await

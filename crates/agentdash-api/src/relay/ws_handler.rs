@@ -27,7 +27,7 @@ pub async fn ws_backend_handler(
         .unwrap_or_default();
 
     let authorized_backend =
-        match authorize_backend_token(state.backend_repo.as_ref(), &token).await {
+        match authorize_backend_token(state.repos.backend_repo.as_ref(), &token).await {
             Ok(config) => config,
             Err(err) => return err.into_response(),
         };
@@ -111,7 +111,7 @@ async fn handle_backend_connection(
         connected_at: chrono::Utc::now(),
     };
 
-    if let Err(err) = state.backend_registry.try_register(connected).await {
+    if let Err(err) = state.services.backend_registry.try_register(connected).await {
         let error = match err {
             RegisterBackendError::AlreadyOnline { backend_id } => {
                 RelayError::conflict(format!("backend `{backend_id}` 已在线，拒绝重复注册"))
@@ -137,7 +137,7 @@ async fn handle_backend_connection(
         },
     };
     if send_relay(&mut ws_tx, &ack).await.is_err() {
-        state.backend_registry.unregister(&bid).await;
+        state.services.backend_registry.unregister(&bid).await;
         return;
     }
 
@@ -188,7 +188,7 @@ async fn handle_backend_connection(
         }
     }
 
-    state.backend_registry.unregister(&bid).await;
+    state.services.backend_registry.unregister(&bid).await;
 }
 
 async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: RelayMessage) {
@@ -207,7 +207,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         | RelayMessage::ResponseToolFileWrite { .. }
         | RelayMessage::ResponseToolShellExec { .. }
         | RelayMessage::ResponseToolFileList { .. } => {
-            if !state.backend_registry.resolve_response(&msg).await {
+            if !state.services.backend_registry.resolve_response(&msg).await {
                 tracing::warn!(
                     backend_id = %backend_id,
                     msg_id = %msg.id(),
@@ -220,7 +220,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 payload.notification.clone(),
             ) {
                 Ok(notification) => {
-                    if let Err(err) = state
+                    if let Err(err) = state.services
                         .executor_hub
                         .inject_notification(&payload.session_id, notification)
                         .await

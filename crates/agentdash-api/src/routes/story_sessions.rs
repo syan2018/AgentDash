@@ -86,7 +86,7 @@ pub async fn list_story_sessions(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
 
-    let bindings = state
+    let bindings = state.repos
         .session_binding_repo
         .list_by_owner(SessionOwnerType::Story, story_uuid)
         .await?;
@@ -94,7 +94,7 @@ pub async fn list_story_sessions(
     let mut responses: Vec<SessionBindingResponse> = Vec::with_capacity(bindings.len());
     for binding in &bindings {
         let mut resp = SessionBindingResponse::from_binding(binding);
-        if let Ok(Some(meta)) = state
+        if let Ok(Some(meta)) = state.services
             .executor_hub
             .get_session_meta(&binding.session_id)
             .await
@@ -120,14 +120,14 @@ pub async fn get_story_session(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
 
-    let story = state
+    let story = state.repos
         .story_repo
         .get_by_id(story_uuid)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
 
-    let bindings = state
+    let bindings = state.repos
         .session_binding_repo
         .list_by_owner(SessionOwnerType::Story, story_uuid)
         .await?;
@@ -136,7 +136,7 @@ pub async fn get_story_session(
         .find(|item| item.id == binding_uuid)
         .ok_or_else(|| ApiError::NotFound(format!("Story Session binding {binding_id} 不存在")))?;
 
-    let meta = state
+    let meta = state.services
         .executor_hub
         .get_session_meta(&binding.session_id)
         .await
@@ -179,7 +179,7 @@ pub async fn create_story_session(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
 
-    state
+    state.repos
         .story_repo
         .get_by_id(story_uuid)
         .await
@@ -195,7 +195,7 @@ pub async fn create_story_session(
             ));
         }
         (Some(sid), None) => {
-            state
+            state.services
                 .executor_hub
                 .get_session_meta(&sid)
                 .await
@@ -205,7 +205,7 @@ pub async fn create_story_session(
         }
         (None, title) => {
             let title = title.unwrap_or_else(|| "Story 伴随会话".to_string());
-            let meta = state
+            let meta = state.services
                 .executor_hub
                 .create_session(&title)
                 .await
@@ -220,10 +220,10 @@ pub async fn create_story_session(
         story_uuid,
         &label,
     );
-    state.session_binding_repo.create(&binding).await?;
+    state.repos.session_binding_repo.create(&binding).await?;
 
     let mut resp = SessionBindingResponse::from_binding(&binding);
-    if let Ok(Some(meta)) = state.executor_hub.get_session_meta(&session_id).await {
+    if let Ok(Some(meta)) = state.services.executor_hub.get_session_meta(&session_id).await {
         resp.session_title = Some(meta.title);
         resp.session_updated_at = Some(meta.updated_at);
     }
@@ -243,7 +243,7 @@ pub async fn unbind_story_session(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
 
-    state.session_binding_repo.delete(binding_uuid).await?;
+    state.repos.session_binding_repo.delete(binding_uuid).await?;
 
     Ok(Json(serde_json::json!({
         "unbound": true,
@@ -255,10 +255,10 @@ async fn build_story_session_context_response(
     state: &Arc<AppState>,
     story: &agentdash_domain::story::Story,
 ) -> Option<BuiltStorySessionContextResponse> {
-    let project = state.project_repo.get_by_id(story.project_id).await.ok()??;
+    let project = state.repos.project_repo.get_by_id(story.project_id).await.ok()??;
     let workspace = resolve_story_workspace(state, &project).await.ok()?;
     let default_agent_type = normalize_optional_string(project.config.default_agent_type.clone());
-    let address_space = state
+    let address_space = state.services
         .address_space_service
         .build_story_address_space(
             &project,
@@ -273,7 +273,7 @@ async fn build_story_session_context_response(
         .clone()
         .unwrap_or_else(|| project.config.mount_policy.clone());
     let effective_session_composition = resolve_effective_session_composition(&project, Some(story));
-    let mcp_servers = state
+    let mcp_servers = state.config
         .mcp_base_url
         .as_ref()
         .map(|base_url| {
@@ -319,14 +319,14 @@ async fn resolve_story_workspace(
     project: &Project,
 ) -> Result<Option<Workspace>, ApiError> {
     if let Some(workspace_id) = project.config.default_workspace_id {
-        return state
+        return state.repos
             .workspace_repo
             .get_by_id(workspace_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()));
     }
 
-    let workspaces = state
+    let workspaces = state.repos
         .workspace_repo
         .list_by_project(project.id)
         .await

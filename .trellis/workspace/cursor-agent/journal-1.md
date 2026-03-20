@@ -85,3 +85,35 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: refactor(backend): API/Domain 解耦 6 阶段重构
+
+**Date**: 2026-03-20
+**Task**: refactor(backend): API/Domain 解耦 6 阶段重构
+
+### Summary
+
+完成 6 阶段 API/Application 层解耦重构，将 ~5640 行业务逻辑从 agentdash-api 迁移到 agentdash-application，引入 DTO 层和 AppState 语义分组
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3c95186` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -38,7 +38,9 @@ function cloneContainer(
           },
     capabilities: [...container.capabilities],
     exposure: {
-      ...container.exposure,
+      include_in_project_sessions: container.exposure.include_in_project_sessions ?? true,
+      include_in_task_sessions: container.exposure.include_in_task_sessions ?? true,
+      include_in_story_sessions: container.exposure.include_in_story_sessions ?? true,
       allowed_agent_types: [...container.exposure.allowed_agent_types],
     },
   };
@@ -83,6 +85,7 @@ function createDefaultContainer(): ContextContainerDefinition {
     capabilities: ["read", "list"],
     default_write: false,
     exposure: {
+      include_in_project_sessions: true,
       include_in_task_sessions: true,
       include_in_story_sessions: true,
       allowed_agent_types: [],
@@ -337,7 +340,11 @@ export function ContextContainersEditor({
                             },
                           }))
                         }
-                        disabled={isSaving || container.provider.files.length <= 1}
+                        disabled={
+                          isSaving
+                          || container.provider.kind !== "inline_files"
+                          || container.provider.files.length <= 1
+                        }
                         className="rounded-[8px] border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
                       >
                         删除文件
@@ -467,6 +474,24 @@ export function ContextContainersEditor({
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
                 Exposure
               </p>
+              <label className="flex items-center gap-2 text-xs text-foreground">
+                <input
+                  type="checkbox"
+                  checked={container.exposure.include_in_project_sessions}
+                  onChange={(event) =>
+                    updateContainerAt(index, (current) => ({
+                      ...current,
+                      exposure: {
+                        ...current.exposure,
+                        include_in_project_sessions: event.target.checked,
+                      },
+                    }))
+                  }
+                  disabled={isSaving}
+                  className="h-4 w-4 rounded border-border"
+                />
+                包含在 Project Sessions
+              </label>
               <label className="flex items-center gap-2 text-xs text-foreground">
                 <input
                   type="checkbox"

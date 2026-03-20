@@ -380,16 +380,16 @@ const upsertStoryInList = (stories: Story[], story: Story): Story[] => {
 
 const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
   id: String(raw.id ?? ''),
-  session_id: String(raw.sessionId ?? raw.session_id ?? ''),
-  owner_type: (raw.ownerType ?? raw.owner_type ?? 'story') as SessionBinding['owner_type'],
-  owner_id: String(raw.ownerId ?? raw.owner_id ?? ''),
+  session_id: String(raw.session_id ?? ''),
+  owner_type: (raw.owner_type ?? 'story') as SessionBinding['owner_type'],
+  owner_id: String(raw.owner_id ?? ''),
   label: String(raw.label ?? ''),
-  created_at: String(raw.createdAt ?? raw.created_at ?? new Date().toISOString()),
-  session_title: raw.sessionTitle != null || raw.session_title != null
-    ? String(raw.sessionTitle ?? raw.session_title)
+  created_at: String(raw.created_at ?? new Date().toISOString()),
+  session_title: raw.session_title != null
+    ? String(raw.session_title)
     : undefined,
-  session_updated_at: raw.sessionUpdatedAt != null || raw.session_updated_at != null
-    ? Number(raw.sessionUpdatedAt ?? raw.session_updated_at)
+  session_updated_at: raw.session_updated_at != null
+    ? Number(raw.session_updated_at)
     : undefined,
 });
 

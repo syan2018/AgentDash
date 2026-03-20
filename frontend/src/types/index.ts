@@ -37,6 +37,7 @@ export type ContextContainerProvider =
   | { kind: "external_service"; service_id: string; root_ref: string };
 
 export interface ContextContainerExposure {
+  include_in_project_sessions: boolean;
   include_in_task_sessions: boolean;
   include_in_story_sessions: boolean;
   allowed_agent_types: string[];
@@ -97,6 +98,7 @@ export interface TaskSessionMcpServerSummary {
 
 export interface TaskSessionToolVisibilitySummary {
   markdown: string;
+  resolved: boolean;
   toolset_label: string;
   tool_names: string[];
   mcp_servers: TaskSessionMcpServerSummary[];
@@ -160,7 +162,9 @@ export interface TaskSessionContextSnapshot {
   effective: SessionEffectiveContext;
 }
 
-export interface StorySessionContextSnapshot extends SessionContextSnapshot {}
+export interface StorySessionContextSnapshot extends SessionContextSnapshot {
+  executor: TaskSessionExecutorSummary;
+}
 
 export interface StorySessionInfo {
   binding_id: string;
@@ -169,6 +173,24 @@ export interface StorySessionInfo {
   last_activity: number | null;
   address_space: ExecutionAddressSpace | null;
   context_snapshot: StorySessionContextSnapshot | null;
+}
+
+export interface ProjectSessionContextSnapshot {
+  agent_key: string;
+  agent_display_name: string;
+  executor: TaskSessionExecutorSummary;
+  project_defaults: SessionProjectDefaults;
+  effective: SessionEffectiveContext;
+  shared_context_mounts: ProjectAgentMount[];
+}
+
+export interface ProjectSessionInfo {
+  binding_id: string;
+  session_id: string;
+  session_title: string | null;
+  last_activity: number | null;
+  address_space: ExecutionAddressSpace | null;
+  context_snapshot: ProjectSessionContextSnapshot | null;
 }
 
 // ─── Project ──────────────────────────────────────────
@@ -196,6 +218,50 @@ export interface Project {
   config: ProjectConfig;
   created_at: string;
   updated_at: string;
+}
+
+export type ProjectAgentWritebackMode = "read_only" | "confirm_before_write";
+
+export interface ProjectAgentExecutor {
+  executor: string;
+  variant?: string | null;
+  model_id?: string | null;
+  agent_id?: string | null;
+  reasoning_id?: string | null;
+  permission_policy?: string | null;
+}
+
+export interface ProjectAgentMount {
+  container_id: string;
+  mount_id: string;
+  display_name: string;
+  writable: boolean;
+}
+
+export interface ProjectAgentSession {
+  binding_id: string;
+  session_id: string;
+  session_title: string | null;
+  last_activity: number | null;
+}
+
+export interface ProjectAgentSummary {
+  key: string;
+  display_name: string;
+  description: string;
+  executor: ProjectAgentExecutor;
+  preset_name?: string | null;
+  source: string;
+  writeback_mode: ProjectAgentWritebackMode;
+  shared_context_mounts: ProjectAgentMount[];
+  session?: ProjectAgentSession | null;
+}
+
+export interface OpenProjectAgentSessionResult {
+  created: boolean;
+  session_id: string;
+  binding_id: string;
+  agent: ProjectAgentSummary;
 }
 
 // ─── Workspace ────────────────────────────────────────
@@ -308,7 +374,7 @@ export interface Task {
 
 // ─── SessionBinding ─────────────────────────────────
 
-export type SessionOwnerType = "story" | "task";
+export type SessionOwnerType = "project" | "story" | "task";
 
 export interface SessionBinding {
   id: string;
@@ -328,6 +394,10 @@ export interface SessionTaskContext {
 
 export type SessionReturnTarget =
   | {
+      owner_type: "project";
+      project_id: string;
+    }
+  | {
       owner_type: "story";
       story_id: string;
     }
@@ -345,12 +415,20 @@ export interface SessionBindingOwner {
   label: string;
   created_at: string;
   owner_title?: string | null;
+  project_id?: string | null;
   story_id?: string | null;
   task_id?: string | null;
 }
 
+export interface ProjectSessionAgentContext {
+  agent_key: string;
+  display_name: string;
+  executor_hint?: string | null;
+}
+
 export interface SessionNavigationState {
   task_context?: SessionTaskContext;
+  project_agent?: ProjectSessionAgentContext;
   return_to?: SessionReturnTarget;
 }
 

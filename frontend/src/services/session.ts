@@ -4,22 +4,26 @@ import type { SessionBindingOwner } from "../types";
 function mapSessionBindingOwner(raw: Record<string, unknown>): SessionBindingOwner {
   return {
     id: String(raw.id ?? ""),
-    session_id: String(raw.sessionId ?? raw.session_id ?? ""),
-    owner_type: String(raw.ownerType ?? raw.owner_type ?? "story") as SessionBindingOwner["owner_type"],
-    owner_id: String(raw.ownerId ?? raw.owner_id ?? ""),
+    session_id: String(raw.session_id ?? ""),
+    owner_type: String(raw.owner_type ?? "story") as SessionBindingOwner["owner_type"],
+    owner_id: String(raw.owner_id ?? ""),
     label: String(raw.label ?? ""),
-    created_at: String(raw.createdAt ?? raw.created_at ?? new Date().toISOString()),
+    created_at: String(raw.created_at ?? new Date().toISOString()),
     owner_title:
-      raw.ownerTitle != null || raw.owner_title != null
-        ? String(raw.ownerTitle ?? raw.owner_title)
+      raw.owner_title != null
+        ? String(raw.owner_title)
+        : null,
+    project_id:
+      raw.project_id != null
+        ? String(raw.project_id)
         : null,
     story_id:
-      raw.storyId != null || raw.story_id != null
-        ? String(raw.storyId ?? raw.story_id)
+      raw.story_id != null
+        ? String(raw.story_id)
         : null,
     task_id:
-      raw.taskId != null || raw.task_id != null
-        ? String(raw.taskId ?? raw.task_id)
+      raw.task_id != null
+        ? String(raw.task_id)
         : null,
   };
 }

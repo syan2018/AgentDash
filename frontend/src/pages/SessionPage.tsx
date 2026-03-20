@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { SessionChatView, type PromptTemplate } from "../features/acp-session";
 import { fetchSessionBindings } from "../services/session";
+import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { useStoryStore } from "../stores/storyStore";
 import type {
@@ -9,6 +10,8 @@ import type {
   ContextContainerDefinition,
   ExecutionAddressSpace,
   MountDerivationPolicy,
+  ProjectSessionAgentContext,
+  ProjectSessionInfo,
   SessionContextSnapshot,
   SessionBindingOwner,
   SessionNavigationState,
@@ -79,10 +82,353 @@ const EXECUTOR_SOURCE_LABELS: Record<string, string> = {
   "task.agent_binding.agent_type": "Task 显式 agent_type",
   "task.agent_binding.preset_name": "Task 预设",
   "project.config.default_agent_type": "Project 默认 Agent",
+  "session.meta.executor_config": "当前 Session 实际执行器",
   unresolved: "未解析",
 };
 
-function SessionContextPanel({
+interface ContextFolderItem {
+  id: string;
+  title: string;
+  mount: string;
+  writable: boolean;
+}
+
+function describeExecutorSource(source: string): string {
+  if (EXECUTOR_SOURCE_LABELS[source]) {
+    return EXECUTOR_SOURCE_LABELS[source];
+  }
+  if (source.startsWith("project.config.agent_presets[")) {
+    return "Project Agent 预设";
+  }
+  return source;
+}
+
+function resolveEffectiveStoryContextFolders(
+  story: Story,
+  contextSnapshot?: SessionContextSnapshot | null,
+): ContextFolderItem[] {
+  if (!contextSnapshot) {
+    return story.context.context_containers.map((container) => ({
+      id: container.id,
+      title: container.display_name || container.mount_id || container.id,
+      mount: container.mount_id,
+      writable: container.default_write || container.capabilities.includes("write"),
+    }));
+  }
+
+  const disabled = new Set(contextSnapshot.story_overrides.disabled_container_ids);
+  const effective = [...contextSnapshot.project_defaults.context_containers]
+    .filter((container) => !disabled.has(container.id));
+
+  for (const container of contextSnapshot.story_overrides.context_containers) {
+    const filtered = effective.filter((item) => item.id !== container.id && item.mount_id !== container.mount_id);
+    filtered.push(container);
+    effective.splice(0, effective.length, ...filtered);
+  }
+
+  return effective.map((container) => ({
+    id: container.id,
+    title: container.display_name || container.mount_id || container.id,
+    mount: container.mount_id,
+    writable: container.default_write || container.capabilities.includes("write"),
+  }));
+}
+
+function resolveProjectContextFolders(
+  projectSessionInfo?: ProjectSessionInfo | null,
+): ContextFolderItem[] {
+  const mounts = projectSessionInfo?.context_snapshot?.shared_context_mounts ?? [];
+  return mounts.map((mount) => ({
+    id: mount.container_id || mount.mount_id,
+    title: mount.display_name || mount.mount_id || mount.container_id,
+    mount: mount.mount_id,
+    writable: mount.writable,
+  }));
+}
+
+function ContextPanelShell({
+  title,
+  subtitle,
+  badges,
+  isOpen,
+  onToggle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  badges: string[];
+  isOpen: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="shrink-0 border-b border-border">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-5 py-3 text-left transition-colors hover:bg-secondary/20"
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
+            <svg
+              className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <span>协作上下文</span>
+          </div>
+          <p className="mt-1 text-sm font-semibold text-foreground">{title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+        </div>
+        {badges.length > 0 && (
+          <div className="ml-4 flex flex-wrap justify-end gap-1.5">
+            {badges.map((badge) => (
+              <span
+                key={badge}
+                className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground"
+              >
+                {badge}
+              </span>
+            ))}
+          </div>
+        )}
+      </button>
+
+      {isOpen && (
+        <div className="max-h-[42vh] space-y-3 overflow-y-auto border-t border-border bg-secondary/10 px-5 py-4">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SurfaceCard({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
+      <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
+        {eyebrow}
+      </p>
+      <h3 className="mt-1 text-sm font-semibold text-foreground">{title}</h3>
+      <div className="mt-2">{children}</div>
+    </section>
+  );
+}
+
+function AgentSummarySurfaceCard({
+  label,
+  executor,
+  helperText,
+}: {
+  label: string;
+  executor?: TaskSessionExecutorSummary | null;
+  helperText: string;
+}) {
+  return (
+    <SurfaceCard eyebrow="当前协作 Agent" title={label}>
+      {executor ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-border bg-secondary/60 px-2 py-1 text-[11px] font-medium text-foreground">
+              {executor.executor ?? "未解析"}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {describeExecutorSource(executor.source)}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            {executor.preset_name && <span>预设：{executor.preset_name}</span>}
+            {executor.variant && <span>variant：{executor.variant}</span>}
+            {executor.model_id && <span>model：{executor.model_id}</span>}
+            {executor.permission_policy && <span>权限：{executor.permission_policy}</span>}
+          </div>
+          {executor.resolution_error && (
+            <p className="mt-2 text-[11px] text-destructive">{executor.resolution_error}</p>
+          )}
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">当前还没有解析到稳定的 Agent 执行信息。</p>
+      )}
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{helperText}</p>
+    </SurfaceCard>
+  );
+}
+
+function SharedFoldersSurfaceCard({
+  folders,
+  emptyText,
+  helperText,
+}: {
+  folders: ContextFolderItem[];
+  emptyText: string;
+  helperText: string;
+}) {
+  return (
+    <SurfaceCard eyebrow="共享资料" title={folders.length > 0 ? `${folders.length} 个可见目录` : "暂无共享资料"}>
+      {folders.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {folders.map((folder, index) => (
+            <span
+              key={`${folder.id || folder.mount}-${index}`}
+              className="rounded-[10px] border border-border bg-secondary/40 px-2.5 py-1 text-xs text-foreground/85"
+            >
+              {folder.title}
+              <span className="ml-1 font-mono text-[10px] text-muted-foreground">/{folder.mount}</span>
+              {folder.writable && (
+                <span className="ml-1 text-[10px] text-amber-600">可写</span>
+              )}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">{emptyText}</p>
+      )}
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{helperText}</p>
+    </SurfaceCard>
+  );
+}
+
+function SessionBehaviorSurfaceCard({
+  composition,
+  emptyText,
+}: {
+  composition?: SessionComposition | null;
+  emptyText: string;
+}) {
+  const hasContent = composition ? hasCompositionContent(composition) : false;
+  return (
+    <SurfaceCard eyebrow="当前会话行为" title={composition?.persona_label || "默认协作方式"}>
+      {hasContent && composition ? (
+        <div className="space-y-2">
+          {composition.persona_prompt && (
+            <p className="text-xs leading-5 text-muted-foreground">
+              {composition.persona_prompt.length > 140
+                ? `${composition.persona_prompt.slice(0, 140)}…`
+                : composition.persona_prompt}
+            </p>
+          )}
+          {composition.workflow_steps.length > 0 && (
+            <div>
+              <p className="text-[11px] text-muted-foreground">工作流步骤</p>
+              <ol className="mt-1 space-y-1 pl-4 text-xs text-foreground/85">
+                {composition.workflow_steps.map((step, index) => (
+                  <li key={`${step}-${index}`} className="list-decimal">
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+          {composition.required_context_blocks.length > 0 && (
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              需要固定带上的上下文块：{composition.required_context_blocks.map((block) => block.title).join("、")}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">{emptyText}</p>
+      )}
+    </SurfaceCard>
+  );
+}
+
+function StorySourceSummaryCard({
+  story,
+  contextSnapshot,
+}: {
+  story: Story;
+  contextSnapshot?: SessionContextSnapshot | null;
+}) {
+  const projectCount = contextSnapshot?.project_defaults.context_containers.length ?? 0;
+  const storyCount = contextSnapshot?.story_overrides.context_containers.length ?? story.context.context_containers.length;
+  const disabledCount = contextSnapshot?.story_overrides.disabled_container_ids.length ?? story.context.disabled_container_ids.length;
+
+  return (
+    <SurfaceCard eyebrow="上下文来源" title="Project 默认 + Story 定向整理">
+      <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          Project 默认 {projectCount}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          Story 追加 {storyCount}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          已禁用 {disabledCount}
+        </span>
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+        用户面看到的是最终可协作的资料目录；Project 默认负责提供基础背景，Story 只补充当前需求真正相关的上下文。
+      </p>
+    </SurfaceCard>
+  );
+}
+
+function TechnicalOverviewCard({
+  runtimePolicy,
+  toolVisibility,
+  addressSpace,
+  extraBadges = [],
+}: {
+  runtimePolicy: SessionContextSnapshot["effective"]["runtime_policy"];
+  toolVisibility: SessionContextSnapshot["effective"]["tool_visibility"];
+  addressSpace?: ExecutionAddressSpace | null;
+  extraBadges?: string[];
+}) {
+  const badges = [
+    toolVisibility.resolved ? "工具面已解析" : "工具面未解析",
+    runtimePolicy.workspace_attached ? "已附着 workspace" : "未附着 workspace",
+    runtimePolicy.mcp_enabled ? "MCP 已启用" : "MCP 未启用",
+    addressSpace?.mounts.length ? `${addressSpace.mounts.length} 个运行时 mount` : "无运行时 mount",
+    ...extraBadges,
+  ];
+
+  return (
+    <SurfaceCard eyebrow="技术摘要" title="仅保留会影响当前交互判断的运行状态">
+      <div className="flex flex-wrap gap-2">
+        {badges.map((badge) => (
+          <span
+            key={badge}
+            className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground"
+          >
+            {badge}
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+        路径规则：{runtimePolicy.path_policy}
+      </p>
+      {!toolVisibility.resolved && (
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+          当前还没有解析出最终运行时工具面，因此不会把推测能力展示成事实。
+        </p>
+      )}
+    </SurfaceCard>
+  );
+}
+
+function RawDiagnosticsSection({ children }: { children: ReactNode }) {
+  return (
+    <details className="rounded-[12px] border border-dashed border-border bg-background/60 px-3 py-2">
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+        查看原始结构化诊断信息
+      </summary>
+      <div className="mt-3 space-y-3">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+function StorySessionContextPanel({
   story,
   contextSnapshot,
   executorSummary,
@@ -97,120 +443,83 @@ function SessionContextPanel({
   isOpen: boolean;
   onToggle: () => void;
 }) {
-  const projectDefaults = contextSnapshot?.project_defaults ?? null;
-  const storyOverrides = contextSnapshot?.story_overrides ?? null;
-  const effective = contextSnapshot?.effective ?? null;
-  const effectiveComposition = effective?.session_composition ?? story.context.session_composition_override ?? null;
-  const projectContainerCount = projectDefaults?.context_containers.length ?? 0;
-  const storyContainerCount = storyOverrides?.context_containers.length ?? story.context.context_containers.length;
-  const mountCount = addressSpace?.mounts.length ?? 0;
+  const effectiveComposition = contextSnapshot?.effective.session_composition
+    ?? story.context.session_composition_override
+    ?? null;
+  const folders = resolveEffectiveStoryContextFolders(story, contextSnapshot);
+  const badges = [
+    `${folders.length} 个资料目录`,
+    effectiveComposition?.persona_label ? `Persona · ${effectiveComposition.persona_label}` : "",
+    effectiveComposition && effectiveComposition.workflow_steps.length > 0
+      ? `${effectiveComposition.workflow_steps.length} 个协作步骤`
+      : "",
+  ].filter((item): item is string => Boolean(item));
 
   return (
-    <div className="shrink-0 border-b border-border">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between px-5 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary/25"
-      >
-        <div className="flex items-center gap-2">
-          <svg
-            className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="font-medium">运行上下文</span>
-          <span className="text-muted-foreground/60">· {story.title}</span>
-          {projectContainerCount > 0 && (
-            <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600">
-              项目 {projectContainerCount} 容器
-            </span>
-          )}
-          {storyContainerCount > 0 && (
-            <span className="rounded-full border border-rose-400/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">
-              Story {storyContainerCount} 容器
-            </span>
-          )}
-          {effectiveComposition?.persona_label && (
-            <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-600">
-              🎭 {effectiveComposition.persona_label}
-            </span>
-          )}
-          {effectiveComposition && effectiveComposition.workflow_steps.length > 0 && (
-            <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">
-              📋 {effectiveComposition.workflow_steps.length} 步
-            </span>
-          )}
-          {mountCount > 0 && (
-            <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-              💾 {mountCount} mount
-            </span>
-          )}
-        </div>
-      </button>
+    <ContextPanelShell
+      title={story.title}
+      subtitle="这条会话会把 Project 默认上下文与当前 Story 的补充资料整理成可直接协作的工作面。"
+      badges={badges}
+      isOpen={isOpen}
+      onToggle={onToggle}
+    >
+      <div className="grid gap-3 lg:grid-cols-3">
+        <AgentSummarySurfaceCard
+          label={executorSummary?.executor || "Story 会话 Agent"}
+          executor={executorSummary}
+          helperText="这里强调的是用户当前实际协作的 Agent，而不是所有潜在的执行器配置来源。"
+        />
+        <SharedFoldersSurfaceCard
+          folders={folders}
+          emptyText="当前 Story 还没有整理出额外共享资料目录。"
+          helperText="这些目录才是对用户真正可见的上下文表面，底层 provider / mount 细节默认不直接暴露。"
+        />
+        <SessionBehaviorSurfaceCard
+          composition={effectiveComposition}
+          emptyText="当前会话没有显式 persona 或工作流要求，会按普通协作对话方式运行。"
+        />
+      </div>
 
-      {isOpen && (
-        <div className="max-h-[40vh] space-y-3 overflow-y-auto border-t border-border bg-secondary/10 px-5 py-4">
-          <InheritanceRules
-            story={story}
-            contextSnapshot={contextSnapshot}
-            executorSummary={executorSummary}
-          />
+      <StorySourceSummaryCard story={story} contextSnapshot={contextSnapshot} />
 
+      <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium text-foreground">
+          技术详情与来源说明
+        </summary>
+        <div className="mt-3 space-y-3">
+          {contextSnapshot && (
+            <TechnicalOverviewCard
+              runtimePolicy={contextSnapshot.effective.runtime_policy}
+              toolVisibility={contextSnapshot.effective.tool_visibility}
+              addressSpace={addressSpace}
+              extraBadges={[
+                `${contextSnapshot.project_defaults.context_containers.length} 个 Project 容器`,
+                `${contextSnapshot.story_overrides.context_containers.length} 个 Story 追加容器`,
+              ]}
+            />
+          )}
+          {executorSummary && <ExecutorSummaryCard executor={executorSummary} />}
           {contextSnapshot ? (
-            <>
-              {executorSummary && <ExecutorSummaryCard executor={executorSummary} />}
+            <RawDiagnosticsSection>
               <ContainerGroup
                 title="Project 默认容器"
-                containers={projectDefaults?.context_containers ?? []}
+                containers={contextSnapshot.project_defaults.context_containers}
                 emptyText="Project 未配置容器"
               />
-              {projectDefaults && (
-                <MountPolicyCard
-                  title="Project 默认挂载策略"
-                  policy={projectDefaults.mount_policy}
-                />
-              )}
-              {projectDefaults && (
-                <SessionCompositionCard
-                  title="Project 默认会话编排"
-                  composition={projectDefaults.session_composition}
-                />
-              )}
               <ContainerGroup
                 title="Story 追加容器"
-                containers={storyOverrides?.context_containers ?? []}
+                containers={contextSnapshot.story_overrides.context_containers}
                 emptyText="Story 未追加容器"
               />
-              <DisabledContainerCard
-                ids={storyOverrides?.disabled_container_ids ?? story.context.disabled_container_ids}
-              />
-              {storyOverrides?.mount_policy_override && (
-                <MountPolicyCard
-                  title="Story 挂载策略覆盖"
-                  policy={storyOverrides.mount_policy_override}
-                />
-              )}
-              {storyOverrides?.session_composition_override && (
-                <SessionCompositionCard
-                  title="Story 会话编排覆盖"
-                  composition={storyOverrides.session_composition_override}
-                />
-              )}
-              {effective && (
-                <>
-                  <MountPolicyCard title="当前生效挂载策略" policy={effective.mount_policy} />
-                  <SessionCompositionCard
-                    title="当前生效会话编排"
-                    composition={effective.session_composition}
-                  />
-                  <ToolVisibilityCard summary={effective.tool_visibility} />
-                  <RuntimePolicyCard summary={effective.runtime_policy} />
-                </>
-              )}
-            </>
+              <DisabledContainerCard ids={contextSnapshot.story_overrides.disabled_container_ids} />
+              <MountPolicyCard title="当前生效挂载策略" policy={contextSnapshot.effective.mount_policy} />
+              <SessionCompositionCard title="当前生效会话编排" composition={contextSnapshot.effective.session_composition} />
+              <ToolVisibilityCard summary={contextSnapshot.effective.tool_visibility} />
+              <RuntimePolicyCard summary={contextSnapshot.effective.runtime_policy} />
+              <AddressSpaceCard addressSpace={addressSpace} />
+            </RawDiagnosticsSection>
           ) : (
-            <>
+            <RawDiagnosticsSection>
               <ContainerGroup
                 title="Story 级容器"
                 containers={story.context.context_containers}
@@ -218,72 +527,106 @@ function SessionContextPanel({
               />
               <DisabledContainerCard ids={story.context.disabled_container_ids} />
               {story.context.mount_policy_override && (
-                <MountPolicyCard
-                  title="Story 挂载策略覆盖"
-                  policy={story.context.mount_policy_override}
-                />
+                <MountPolicyCard title="Story 挂载策略覆盖" policy={story.context.mount_policy_override} />
               )}
               {story.context.session_composition_override && (
-                <SessionCompositionCard
-                  title="Story 会话编排覆盖"
-                  composition={story.context.session_composition_override}
-                />
+                <SessionCompositionCard title="Story 会话编排覆盖" composition={story.context.session_composition_override} />
               )}
-            </>
+              <AddressSpaceCard addressSpace={addressSpace} />
+            </RawDiagnosticsSection>
           )}
-
-          <AddressSpaceCard addressSpace={addressSpace} />
         </div>
-      )}
-    </div>
+      </details>
+    </ContextPanelShell>
   );
 }
 
-function InheritanceRules({
-  story,
-  contextSnapshot,
-  executorSummary,
+function ProjectSessionContextPanel({
+  projectName,
+  projectSessionInfo,
+  addressSpace,
+  isOpen,
+  onToggle,
 }: {
-  story: Story;
-  contextSnapshot?: SessionContextSnapshot | null;
-  executorSummary?: TaskSessionExecutorSummary | null;
+  projectName: string;
+  projectSessionInfo: ProjectSessionInfo;
+  addressSpace?: ExecutionAddressSpace | null;
+  isOpen: boolean;
+  onToggle: () => void;
 }) {
-  const disabledCount = contextSnapshot?.story_overrides.disabled_container_ids.length ?? story.context.disabled_container_ids.length;
+  const snapshot = projectSessionInfo.context_snapshot;
+  const folders = resolveProjectContextFolders(projectSessionInfo);
+  const composition = snapshot?.effective.session_composition ?? null;
+  const badges = [
+    snapshot?.agent_display_name ? `Agent · ${snapshot.agent_display_name}` : "",
+    `${folders.length} 个共享目录`,
+    composition?.persona_label ? `Persona · ${composition.persona_label}` : "",
+  ].filter((item): item is string => Boolean(item));
 
   return (
-    <div className="rounded-[10px] border border-border bg-background/70 px-3 py-3">
-      <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">传递规则</p>
-      <ol className="space-y-1.5 pl-4 text-[11px] leading-5 text-foreground/80">
-        <li className="list-decimal">
-          {executorSummary ? (
-            <>
-              Agent 身份按 `Task agent_type → Task preset → Project 默认 Agent` 解析。
-              当前来源：
-              <span className="font-medium text-foreground">
-                {EXECUTOR_SOURCE_LABELS[executorSummary.source] ?? executorSummary.source}
-              </span>
-            </>
-          ) : (
-            <>
-              Story 伴随会话没有固定的 Task Agent 绑定。
-              运行时会优先采用“本次发送时显式选择的 executor”，未指定时再回退到
-              <span className="font-medium text-foreground"> Project 默认 Agent </span>
-              作为基线。
-            </>
+    <ContextPanelShell
+      title={projectName}
+      subtitle="Project 会话默认用于沉淀跨 Story 的背景资料、共享目录和长期协作习惯。"
+      badges={badges}
+      isOpen={isOpen}
+      onToggle={onToggle}
+    >
+      <div className="grid gap-3 lg:grid-cols-3">
+        <AgentSummarySurfaceCard
+          label={snapshot?.agent_display_name || "Project Agent"}
+          executor={snapshot?.executor}
+          helperText="Project Session 绑定的是一个明确的协作 Agent，后续 Story 会话可以低存在感地继承它的默认做法。"
+        />
+        <SharedFoldersSurfaceCard
+          folders={folders}
+          emptyText="当前 Project Session 还没有对用户暴露可用共享目录。"
+          helperText="共享上下文默认表达成近似文件系统的目录，而不是 provider、mount policy 或权限矩阵。"
+        />
+        <SessionBehaviorSurfaceCard
+          composition={composition}
+          emptyText="当前 Project 没有为这个 Agent 定义额外的 persona 或固定工作流。"
+        />
+      </div>
+
+      <SurfaceCard eyebrow="使用定位" title="项目级知识维护入口">
+        <p className="text-xs leading-6 text-muted-foreground">
+          这类会话更适合维护长期背景、共识说明、参考资料和后续 Story 都可能复用的共享上下文，而不是直接暴露编排实现细节。
+        </p>
+      </SurfaceCard>
+
+      <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium text-foreground">
+          技术详情与来源说明
+        </summary>
+        <div className="mt-3 space-y-3">
+          {snapshot && (
+            <TechnicalOverviewCard
+              runtimePolicy={snapshot.effective.runtime_policy}
+              toolVisibility={snapshot.effective.tool_visibility}
+              addressSpace={addressSpace}
+              extraBadges={[
+                `${snapshot.project_defaults.context_containers.length} 个 Project 容器`,
+              ]}
+            />
           )}
-        </li>
-        <li className="list-decimal">
-          容器候选集先取 Project 默认容器，再叠加 Story 追加容器；如果 Story 禁用了项目容器，会先从候选集中移除。
-          当前禁用数：<span className="font-medium text-foreground">{disabledCount}</span>
-        </li>
-        <li className="list-decimal">
-          挂载策略与会话编排都遵循“Project 默认 + Story 非空覆盖”的规则，最终生效结果以本面板的“当前生效”区块为准。
-        </li>
-        <li className="list-decimal">
-          运行时 mounts、工具可见性和路径规则最后由 Address Space 与 MCP 注入共同决定，所以它们属于最内层的 Session Runtime 结果。
-        </li>
-      </ol>
-    </div>
+          {snapshot?.executor && <ExecutorSummaryCard executor={snapshot.executor} />}
+          {snapshot && (
+            <RawDiagnosticsSection>
+              <ContainerGroup
+                title="Project 默认容器"
+                containers={snapshot.project_defaults.context_containers}
+                emptyText="Project 未配置容器"
+              />
+              <MountPolicyCard title="Project 默认挂载策略" policy={snapshot.project_defaults.mount_policy} />
+              <SessionCompositionCard title="Project 默认会话编排" composition={snapshot.project_defaults.session_composition} />
+              <ToolVisibilityCard summary={snapshot.effective.tool_visibility} />
+              <RuntimePolicyCard summary={snapshot.effective.runtime_policy} />
+              <AddressSpaceCard addressSpace={addressSpace} />
+            </RawDiagnosticsSection>
+          )}
+        </div>
+      </details>
+    </ContextPanelShell>
   );
 }
 
@@ -295,7 +638,7 @@ function ExecutorSummaryCard({ executor }: { executor: TaskSessionExecutorSummar
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium text-foreground">{executor.executor ?? "未解析"}</span>
           <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {EXECUTOR_SOURCE_LABELS[executor.source] ?? executor.source}
+            {describeExecutorSource(executor.source)}
           </span>
           {executor.preset_name && (
             <span className="rounded-[4px] bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -426,6 +769,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const selectProject = useProjectStore((state) => state.selectProject);
+  const fetchProjectSessionInfo = useProjectStore((state) => state.fetchProjectSessionInfo);
   const fetchTaskSession = useStoryStore((state) => state.fetchTaskSession);
   const fetchStorySessionInfo = useStoryStore((state) => state.fetchStorySessionInfo);
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
@@ -434,6 +779,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const [taskAgentBinding, setTaskAgentBinding] = useState<AgentBinding | null>(null);
   const [sessionAddressSpace, setSessionAddressSpace] = useState<ExecutionAddressSpace | null>(null);
   const [sessionContextSnapshot, setSessionContextSnapshot] = useState<SessionContextSnapshot | null>(null);
+  const [projectSessionInfo, setProjectSessionInfo] = useState<ProjectSessionInfo | null>(null);
   const [taskExecutorSummary, setTaskExecutorSummary] = useState<TaskSessionExecutorSummary | null>(null);
   const [sessionBindings, setSessionBindings] = useState<SessionBindingOwner[]>([]);
 
@@ -443,6 +789,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   );
   const taskIdFromQuery = searchParams.get("task_id")?.trim() || "";
   const taskContextFromRoute = routeState?.task_context ?? null;
+  const projectAgentContext = (routeState?.project_agent ?? null) as ProjectSessionAgentContext | null;
   const returnTarget = routeState?.return_to ?? null;
   const routeTaskIdHint = taskContextFromRoute?.task_id ?? taskIdFromQuery;
 
@@ -478,7 +825,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const sessionOwnerBinding = useMemo(() => {
     if (sessionBindings.length === 0) return null;
     return (
-      sessionBindings.find((b) => b.owner_type === "story")
+      sessionBindings.find((b) => b.owner_type === "project")
+      ?? sessionBindings.find((b) => b.owner_type === "story")
       ?? sessionBindings.find((b) => b.owner_type === "task")
       ?? sessionBindings[0]
       ?? null
@@ -496,12 +844,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         if (!taskSession) {
           setSessionAddressSpace(null);
           setSessionContextSnapshot(null);
+          setProjectSessionInfo(null);
           setTaskExecutorSummary(null);
           return;
         }
         setTaskAgentBinding(taskSession.agent_binding);
         setSessionAddressSpace(taskSession.address_space ?? null);
         setSessionContextSnapshot(taskSession.context_snapshot ?? null);
+        setProjectSessionInfo(null);
         setTaskExecutorSummary(taskSession.context_snapshot?.executor ?? null);
       })();
       return () => { cancelled = true; };
@@ -512,16 +862,38 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       && sessionOwnerBinding.story_id
       && sessionOwnerBinding.id
     ) {
+      const storyId = sessionOwnerBinding.story_id;
+      const bindingId = sessionOwnerBinding.id;
       void (async () => {
         const storySession = await fetchStorySessionInfo(
-          sessionOwnerBinding.story_id,
-          sessionOwnerBinding.id,
+          storyId,
+          bindingId,
         );
         if (cancelled) return;
         setTaskAgentBinding(null);
         setSessionAddressSpace(storySession?.address_space ?? null);
         setSessionContextSnapshot(storySession?.context_snapshot ?? null);
-        setTaskExecutorSummary(null);
+        setProjectSessionInfo(null);
+        setTaskExecutorSummary(storySession?.context_snapshot?.executor ?? null);
+      })();
+      return () => { cancelled = true; };
+    }
+
+    if (
+      sessionOwnerBinding?.owner_type === "project"
+      && sessionOwnerBinding.project_id
+      && sessionOwnerBinding.id
+    ) {
+      const projectId = sessionOwnerBinding.project_id;
+      const bindingId = sessionOwnerBinding.id;
+      void (async () => {
+        const info = await fetchProjectSessionInfo(projectId, bindingId);
+        if (cancelled) return;
+        setTaskAgentBinding(null);
+        setSessionContextSnapshot(null);
+        setProjectSessionInfo(info);
+        setSessionAddressSpace(info?.address_space ?? null);
+        setTaskExecutorSummary(info?.context_snapshot?.executor ?? null);
       })();
       return () => { cancelled = true; };
     }
@@ -529,9 +901,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     setTaskAgentBinding(null);
     setSessionAddressSpace(null);
     setSessionContextSnapshot(null);
+    setProjectSessionInfo(null);
     setTaskExecutorSummary(null);
     return () => { cancelled = true; };
-  }, [fetchStorySessionInfo, fetchTaskSession, sessionOwnerBinding, taskIdHint]);
+  }, [fetchProjectSessionInfo, fetchStorySessionInfo, fetchTaskSession, sessionOwnerBinding, taskIdHint]);
 
   // 按需加载关联 Story 的上下文信息
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
@@ -539,6 +912,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const ownerStoryId = sessionOwnerBinding?.story_id ?? null;
   const [ownerStory, setOwnerStory] = useState<Story | null>(null);
   const [isContextPanelOpen, setIsContextPanelOpen] = useState(false);
+  const ownerProjectName = sessionOwnerBinding?.owner_type === "project"
+    ? sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id
+    : "";
 
   useEffect(() => {
     if (!ownerStoryId) { setOwnerStory(null); return; }
@@ -554,6 +930,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const effectiveReturnTarget = useMemo(() => {
     if (returnTarget) return returnTarget;
+    if (sessionOwnerBinding?.owner_type === "project") {
+      return {
+        owner_type: "project" as const,
+        project_id: sessionOwnerBinding.project_id ?? sessionOwnerBinding.owner_id,
+      };
+    }
     if (!sessionOwnerBinding?.story_id) return null;
     if (sessionOwnerBinding.owner_type === "story") {
       return { owner_type: "story" as const, story_id: sessionOwnerBinding.story_id };
@@ -564,7 +946,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   // ─── 页面级回调 ───────────────────────────────────────
 
-  const executorHint = taskAgentBinding?.agent_type ?? taskExecutorSummary?.executor ?? null;
+  const executorHint = taskAgentBinding?.agent_type
+    ?? projectAgentContext?.executor_hint
+    ?? projectSessionInfo?.context_snapshot?.executor.executor
+    ?? taskExecutorSummary?.executor
+    ?? null;
 
   const handleCreateSession = useCallback(async (title: string) => {
     const meta = await createNew(title);
@@ -589,20 +975,29 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
+    if (effectiveReturnTarget.owner_type === "project") {
+      selectProject(effectiveReturnTarget.project_id);
+      navigate("/");
+      return;
+    }
     if (effectiveReturnTarget.owner_type === "task") {
       const state: StoryNavigationState = { open_task_id: effectiveReturnTarget.task_id };
       navigate(`/story/${effectiveReturnTarget.story_id}`, { state });
       return;
     }
     navigate(`/story/${effectiveReturnTarget.story_id}`);
-  }, [effectiveReturnTarget, navigate]);
+  }, [effectiveReturnTarget, navigate, selectProject]);
 
   const handleCopySessionId = useCallback(async () => {
     if (!currentSessionId) return;
     try { await navigator.clipboard.writeText(currentSessionId); } catch { /* noop */ }
   }, [currentSessionId]);
 
-  const backButtonLabel = effectiveReturnTarget?.owner_type === "task" ? "返回任务" : "返回 Story";
+  const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
+    ? "返回项目"
+    : effectiveReturnTarget?.owner_type === "task"
+      ? "返回任务"
+      : "返回 Story";
   const hasSession = currentSessionId !== null;
 
   // ─── owner binding 信息条（作为 inputPrefix 传入 ChatView）
@@ -615,13 +1010,23 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       <span>
         已绑定：{sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id}
       </span>
-      {sessionOwnerBinding.story_id && (
+      {sessionOwnerBinding.owner_type === "project" && projectSessionInfo?.context_snapshot?.agent_display_name && (
+        <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-foreground/80">
+          Agent · {projectSessionInfo.context_snapshot.agent_display_name}
+        </span>
+      )}
+      {(sessionOwnerBinding.project_id || sessionOwnerBinding.story_id) && (
         <button
           type="button"
           onClick={handleBackToOwner}
           className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] transition-colors hover:bg-secondary hover:text-foreground"
         >
-          打开关联{sessionOwnerBinding.owner_type === "task" ? "任务" : "Story"}
+          打开关联
+          {sessionOwnerBinding.owner_type === "project"
+            ? "项目"
+            : sessionOwnerBinding.owner_type === "task"
+              ? "任务"
+              : "Story"}
         </button>
       )}
     </div>
@@ -661,15 +1066,28 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         </div>
       </header>
 
-      {/* 上下文摘要面板（当有关联 Story 且包含容器/编排信息时展示） */}
-      {ownerStory && (hasStoryContextInfo(ownerStory) || sessionContextSnapshot != null || (sessionAddressSpace && sessionAddressSpace.mounts.length > 0)) && (
-        <SessionContextPanel
+      {projectSessionInfo?.context_snapshot && (
+        <ProjectSessionContextPanel
+          projectName={ownerProjectName}
+          projectSessionInfo={projectSessionInfo}
+          addressSpace={sessionAddressSpace}
+          isOpen={isContextPanelOpen}
+          onToggle={() => setIsContextPanelOpen((value) => !value)}
+        />
+      )}
+
+      {!projectSessionInfo?.context_snapshot && ownerStory && (
+        hasStoryContextInfo(ownerStory)
+        || sessionContextSnapshot != null
+        || (sessionAddressSpace && sessionAddressSpace.mounts.length > 0)
+      ) && (
+        <StorySessionContextPanel
           story={ownerStory}
           contextSnapshot={sessionContextSnapshot}
           executorSummary={taskExecutorSummary}
           addressSpace={sessionAddressSpace}
           isOpen={isContextPanelOpen}
-          onToggle={() => setIsContextPanelOpen((v) => !v)}
+          onToggle={() => setIsContextPanelOpen((value) => !value)}
         />
       )}
 
@@ -758,16 +1176,25 @@ function ToolVisibilityCard({ summary }: { summary: SessionContextSnapshot["effe
       <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">当前工具可见性</p>
       <div className="rounded-[8px] border border-border bg-background/60 px-2.5 py-2 text-xs">
         <div className="flex flex-wrap items-center gap-2">
+          <span className={summary.resolved ? "text-emerald-600" : "text-amber-600"}>
+            {summary.resolved ? "✓ 已解析" : "△ 未解析"}
+          </span>
           <span className="text-muted-foreground">toolset:</span>
           <span className="font-mono text-foreground/80">{summary.toolset_label}</span>
         </div>
-        <div className="mt-1 flex flex-wrap gap-1">
-          {summary.tool_names.map((tool) => (
-            <span key={tool} className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-              {tool}
-            </span>
-          ))}
-        </div>
+        {summary.tool_names.length > 0 ? (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {summary.tool_names.map((tool) => (
+              <span key={tool} className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {tool}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+            当前还没有解析出最终运行时工具面，因此这里不会再把推测值伪装成“当前可见工具”。
+          </p>
+        )}
         {summary.mcp_servers.length > 0 && (
           <div className="mt-2 space-y-1">
             {summary.mcp_servers.map((server) => (
@@ -876,8 +1303,9 @@ function describeContainerProvider(container: ContextContainerDefinition): strin
 
 function describeExposure(container: ContextContainerDefinition): string {
   const targets: string[] = [];
-  if (container.exposure.include_in_story_sessions) targets.push("story");
-  if (container.exposure.include_in_task_sessions) targets.push("task");
+  if (container.exposure.include_in_project_sessions ?? true) targets.push("project");
+  if (container.exposure.include_in_story_sessions ?? true) targets.push("story");
+  if (container.exposure.include_in_task_sessions ?? true) targets.push("task");
   return targets.length > 0 ? targets.join("/") : "none";
 }
 

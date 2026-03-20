@@ -3,9 +3,7 @@ name: record-session
 description: "Method 1: Simple parameters"
 ---
 
-[!] **Prerequisite**: This skill should only be used AFTER the human has tested and committed the code.
-
-**AI must NOT execute git commit** - only read history (`git log`, `git status`, `git diff`).
+[!] **Prerequisite**: This skill should be used after code has been tested and the relevant history is ready to record.
 
 ---
 

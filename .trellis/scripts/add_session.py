@@ -12,14 +12,26 @@ from __future__ import annotations
 
 import sys
 
-# IMPORTANT: Force stdout to use UTF-8 on Windows
-# This fixes UnicodeEncodeError when outputting non-ASCII characters
-if sys.platform == "win32":
-    import io as _io
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    elif hasattr(sys.stdout, "detach"):
-        sys.stdout = _io.TextIOWrapper(sys.stdout.detach(), encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+def _configure_stdio_utf8() -> None:
+    """Force UTF-8 stdio on Windows.
+
+    PowerShell 管道默认编码不稳定；如果只修 stdout，不修 stdin/stderr，
+    通过 stdin 传入的中文仍然可能在进入脚本前后被破坏。
+    """
+    if sys.platform != "win32":
+        return
+
+    streams = ("stdin", "stdout", "stderr")
+    for name in streams:
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+
+_configure_stdio_utf8()
 
 import argparse
 import re
@@ -303,6 +315,8 @@ def _auto_commit_workspace(repo_root: Path) -> None:
         cwd=repo_root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if commit_result.returncode == 0:
         print(f"[OK] Auto-committed: {commit_msg}", file=sys.stderr)
@@ -422,7 +436,7 @@ def main() -> int:
         if content_path.is_file():
             extra_content = content_path.read_text(encoding="utf-8")
     elif not sys.stdin.isatty():
-        extra_content = sys.stdin.read()
+        extra_content = sys.stdin.read().lstrip("\ufeff")
 
     return add_session(
         args.title, args.commit, args.summary, extra_content,

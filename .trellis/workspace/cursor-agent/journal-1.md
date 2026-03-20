@@ -178,3 +178,52 @@
 ### Next Steps
 
 - 可继续梳理哪些接口属于业务 DTO、哪些属于外部协议桥接例外，避免后续新路由再次出现命名风格漂移
+
+
+## Session 5: Trellis workflow 平台化与收尾验证
+
+**Date**: 2026-03-21
+**Task**: Trellis workflow 平台化与收尾验证
+
+### Summary
+
+完成 Trellis workflow 的领域建模、API 与前端闭环；补齐全量前端 lint/typecheck/test、后端 check/test；归档已完成 workflow tasks，并保留 Playwright 实机验证结果。
+
+### Main Changes
+
+- 后端新增完整 workflow 主干：
+  - `WorkflowDefinition / WorkflowAssignment / WorkflowRun` 领域模型
+  - SQLite workflow 仓储
+  - workflow catalog / run application service
+  - workflow DTO 与 API 路由
+- 前端把 workflow 正式接到现有主干 UI：
+  - Project 详情抽屉新增 `Workflow` tab
+  - TaskDrawer 新增 `Workflow 执行` 面板
+  - 通过 `SessionBinding` 把 Task session 与 workflow phase 串联
+- 修复历史前端检查问题：
+  - 清理 `context-config-editor` 的 Fast Refresh 导出问题
+  - 移除多处 `react-hooks/set-state-in-effect` lint 违规
+  - 将已完成的 03-20 workflow 任务归档到 `.trellis/tasks/archive/2026-03/`
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `087dde7` | feat(workflow): 平台化 Trellis workflow 并打通前端闭环 |
+
+### Testing
+
+- [OK] `pnpm --filter frontend lint`
+- [OK] `pnpm --filter frontend exec tsc --noEmit`
+- [OK] `pnpm --filter frontend test`
+- [OK] `cargo check`
+- [OK] `cargo test -p agentdash-application workflow -- --nocapture`
+- [OK] Playwright 实机验证 Project 默认 workflow 绑定、Task run 启动、`Start` 完成、`Implement` 挂接 session binding 成功
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

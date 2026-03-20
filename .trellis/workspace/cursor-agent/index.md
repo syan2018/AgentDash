@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-03-20
+- **Total Sessions**: 5
+- **Last Active**: 2026-03-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 5 | 2026-03-21 | Trellis workflow 平台化与收尾验证 | `087dde7` |
 | 4 | 2026-03-20 | Project Agent / Session 产品面压缩与 API 契约统一 | `d452101`, `2ace093`, `c1151ae` |
 | 3 | 2026-03-20 | refactor(backend): API/Domain 解耦 6 阶段重构 | `3c95186` |
 | 2 | 2026-03-19 | 收口虚拟容器与统一会话编排 | `1884714` |

@@ -1,0 +1,41 @@
+{
+  "id": "project-agent-template-shared-context",
+  "name": "project-agent-template-shared-context",
+  "title": "梳理 Project 级 Agent 模板与共享上下文迭代",
+  "description": "围绕 Project 级多 Agent 模板、共享上下文维护、Project 直聊入口与 Story 默认模板继承，梳理后续产品与架构迭代方向。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": ""
+}

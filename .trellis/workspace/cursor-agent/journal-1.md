@@ -98,17 +98,32 @@
 
 ### Main Changes
 
+| Phase | 内容 | 产出 |
+|-------|------|------|
+| 1 | Session Plan + Context Composition | `application/session_plan.rs` + `application/context/` |
+| 2 | Task Execution Gateway 纯逻辑 | `application/task/artifact.rs` + `config.rs` + `meta.rs` |
+| 3 | Address Space 三重拆分 | `application/address_space/` (mount/path/types) |
+| 4 | Story Owner Session 编排 | `application/story/context_builder.rs` |
+| 5 | Response DTO 层 | `api/dto/` (Project/Story/Task/WorkspaceResponse) |
+| 6 | AppState 瘦身 | RepositorySet / ServiceSet / TaskRuntime / AppConfig |
 
+**关键文件**:
+- 新增 20 个文件（application 层模块 + DTO）
+- 修改 25 个文件（API 层引用更新）
+- 净变化: +3513 / -3637 行
 
 ### Git Commits
 
 | Hash | Message |
 |------|---------|
-| `3c95186` | (see git log) |
+| `3c95186` | refactor(backend): 解耦 API 与 Domain 业务编排 — 6 阶段重构完成 |
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `cargo check --workspace` 通过
+- [OK] `cargo test --workspace` 112 个测试全部通过
+- [OK] `cargo clippy --no-deps` 无新增 warning
+- [OK] 前端 DTO 兼容性验证：JSON 输出结构与前端 TypeScript interface 完全一致
 
 ### Status
 
@@ -116,4 +131,5 @@
 
 ### Next Steps
 
-- None - task complete
+- 待清理预先存在的 clippy warnings（agentdash-agent, agentdash-relay, agentdash-acp-meta）
+- 后续可进一步将 resolve_workspace_declared_sources 从 API 下沉到 application

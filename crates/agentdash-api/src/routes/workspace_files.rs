@@ -498,7 +498,8 @@ async fn load_workspace_by_id(
 ) -> Result<agentdash_domain::workspace::Workspace, ApiError> {
     let workspace_uuid = uuid::Uuid::parse_str(workspace_id)
         .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-    state.repos
+    state
+        .repos
         .workspace_repo
         .get_by_id(workspace_uuid)
         .await?
@@ -531,11 +532,13 @@ async fn relay_list_files(
     workspace: &agentdash_domain::workspace::Workspace,
     pattern: &str,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
-    let session = state.services
+    let session = state
+        .services
         .address_space_service
         .session_for_workspace(workspace)
         .map_err(ApiError::BadRequest)?;
-    let listed = state.services
+    let listed = state
+        .services
         .address_space_service
         .list(
             &session,
@@ -575,11 +578,13 @@ async fn relay_read_file(
     workspace: &agentdash_domain::workspace::Workspace,
     rel_path: &str,
 ) -> Result<Json<ReadFileResponse>, ApiError> {
-    let session = state.services
+    let session = state
+        .services
         .address_space_service
         .session_for_workspace(workspace)
         .map_err(ApiError::BadRequest)?;
-    let read = state.services
+    let read = state
+        .services
         .address_space_service
         .read_text(
             &session,

@@ -74,8 +74,17 @@ pub async fn list_workspaces(
     let project_id = Uuid::parse_str(&project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    let workspaces = state.repos.workspace_repo.list_by_project(project_id).await?;
-    Ok(Json(workspaces.into_iter().map(WorkspaceResponse::from).collect()))
+    let workspaces = state
+        .repos
+        .workspace_repo
+        .list_by_project(project_id)
+        .await?;
+    Ok(Json(
+        workspaces
+            .into_iter()
+            .map(WorkspaceResponse::from)
+            .collect(),
+    ))
 }
 
 pub async fn create_workspace(
@@ -92,7 +101,8 @@ pub async fn create_workspace(
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
     // 读取 Project，Workspace.backend_id 默认继承 Project.backend_id。
-    let project = state.repos
+    let project = state
+        .repos
         .project_repo
         .get_by_id(project_id)
         .await?
@@ -125,7 +135,8 @@ pub async fn get_workspace(
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    let workspace = state.repos
+    let workspace = state
+        .repos
         .workspace_repo
         .get_by_id(workspace_id)
         .await?
@@ -142,7 +153,8 @@ pub async fn update_workspace(
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    let mut workspace = state.repos
+    let mut workspace = state
+        .repos
         .workspace_repo
         .get_by_id(workspace_id)
         .await?
@@ -190,7 +202,8 @@ pub async fn update_workspace_status(
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    state.repos
+    state
+        .repos
         .workspace_repo
         .update_status(workspace_id, req.status)
         .await?;
@@ -249,19 +262,22 @@ async fn auto_transition_workspace_status(
     state: &Arc<AppState>,
     workspace_id: Uuid,
 ) -> Result<(), ApiError> {
-    state.repos
+    state
+        .repos
         .workspace_repo
         .update_status(workspace_id, WorkspaceStatus::Preparing)
         .await?;
 
-    match state.repos
+    match state
+        .repos
         .workspace_repo
         .update_status(workspace_id, WorkspaceStatus::Ready)
         .await
     {
         Ok(()) => Ok(()),
         Err(err) => {
-            let _ = state.repos
+            let _ = state
+                .repos
                 .workspace_repo
                 .update_status(workspace_id, WorkspaceStatus::Error)
                 .await;
@@ -331,7 +347,8 @@ async fn detect_git_via_backend(
             path: container_ref.to_string(),
         },
     };
-    let resp = state.services
+    let resp = state
+        .services
         .backend_registry
         .send_command(backend_id, cmd)
         .await

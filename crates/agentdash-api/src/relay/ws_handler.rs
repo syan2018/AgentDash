@@ -111,7 +111,12 @@ async fn handle_backend_connection(
         connected_at: chrono::Utc::now(),
     };
 
-    if let Err(err) = state.services.backend_registry.try_register(connected).await {
+    if let Err(err) = state
+        .services
+        .backend_registry
+        .try_register(connected)
+        .await
+    {
         let error = match err {
             RegisterBackendError::AlreadyOnline { backend_id } => {
                 RelayError::conflict(format!("backend `{backend_id}` 已在线，拒绝重复注册"))
@@ -220,7 +225,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 payload.notification.clone(),
             ) {
                 Ok(notification) => {
-                    if let Err(err) = state.services
+                    if let Err(err) = state
+                        .services
                         .executor_hub
                         .inject_notification(&payload.session_id, notification)
                         .await

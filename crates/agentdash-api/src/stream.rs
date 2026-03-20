@@ -208,7 +208,11 @@ pub async fn get_events_since(
     State(state): State<Arc<AppState>>,
     Path(since_id): Path<i64>,
 ) -> Result<Json<Vec<StateChange>>, ApiError> {
-    let changes = state.repos.story_repo.get_changes_since(since_id, 1000).await?;
+    let changes = state
+        .repos
+        .story_repo
+        .get_changes_since(since_id, 1000)
+        .await?;
     Ok(Json(changes))
 }
 
@@ -257,7 +261,8 @@ async fn load_state_changes_since(
     let mut all = Vec::new();
 
     loop {
-        let batch = state.repos
+        let batch = state
+            .repos
             .story_repo
             .get_changes_since(cursor, STREAM_BATCH_LIMIT)
             .await?;

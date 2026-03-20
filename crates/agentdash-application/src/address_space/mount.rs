@@ -15,6 +15,7 @@ pub const PROVIDER_INLINE_FS: &str = "inline_fs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMountTarget {
+    Project,
     Story,
     Task,
 }
@@ -146,6 +147,7 @@ pub fn container_visible_for_target(
 ) -> bool {
     let exposure = &container.exposure;
     let target_enabled = match target {
+        SessionMountTarget::Project => exposure.include_in_project_sessions,
         SessionMountTarget::Story => exposure.include_in_story_sessions,
         SessionMountTarget::Task => exposure.include_in_task_sessions,
     };

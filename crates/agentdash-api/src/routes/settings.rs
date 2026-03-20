@@ -69,7 +69,11 @@ pub async fn list_settings(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListSettingsQuery>,
 ) -> Result<Json<Vec<SettingResponse>>, ApiError> {
-    let settings = state.repos.settings_repo.list(query.category.as_deref()).await?;
+    let settings = state
+        .repos
+        .settings_repo
+        .list(query.category.as_deref())
+        .await?;
 
     let responses: Vec<SettingResponse> = settings
         .into_iter()

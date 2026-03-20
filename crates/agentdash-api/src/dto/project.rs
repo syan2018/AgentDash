@@ -46,7 +46,10 @@ impl ProjectDetailResponse {
     pub fn new(project: Project, workspaces: Vec<Workspace>, stories: Vec<Story>) -> Self {
         Self {
             project: ProjectResponse::from(project),
-            workspaces: workspaces.into_iter().map(WorkspaceResponse::from).collect(),
+            workspaces: workspaces
+                .into_iter()
+                .map(WorkspaceResponse::from)
+                .collect(),
             stories: stories.into_iter().map(StoryResponse::from).collect(),
         }
     }

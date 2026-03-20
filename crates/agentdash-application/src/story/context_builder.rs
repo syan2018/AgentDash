@@ -3,7 +3,8 @@ use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{
-    ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
+    ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesRequest,
+    resolve_declared_sources,
 };
 use serde_json::json;
 
@@ -29,9 +30,7 @@ pub struct StoryContextBuildInput<'a> {
 ///
 /// 此函数不依赖任何基础设施，所有需要基础设施（仓库、中继）的数据
 /// 由调用方预先获取并通过 `StoryContextBuildInput` 传入。
-pub fn build_story_context_markdown(
-    input: StoryContextBuildInput<'_>,
-) -> (String, Vec<String>) {
+pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (String, Vec<String>) {
     let mut composer = ContextComposer::default();
 
     composer.push(
@@ -248,7 +247,11 @@ pub fn build_story_owner_prompt_blocks(
 fn clean_text(input: Option<&str>) -> Option<&str> {
     input.and_then(|text| {
         let trimmed = text.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     })
 }
 

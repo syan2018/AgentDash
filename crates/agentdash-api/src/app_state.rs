@@ -191,9 +191,7 @@ impl AppState {
                 lock_map: TaskLockMap::new(),
                 restart_tracker,
             },
-            config: AppConfig {
-                mcp_base_url,
-            },
+            config: AppConfig { mcp_base_url },
             remote_sessions: Arc::new(RwLock::new(HashMap::new())),
         })
     }

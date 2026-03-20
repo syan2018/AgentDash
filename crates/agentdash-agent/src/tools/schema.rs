@@ -51,7 +51,12 @@ fn sanitize_schema_in_place(schema: &mut Value) {
         }
     }
 
-    for keyword in ["$defs", "definitions", "dependentSchemas", "patternProperties"] {
+    for keyword in [
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "patternProperties",
+    ] {
         if let Some(values) = map.get_mut(keyword).and_then(Value::as_object_mut) {
             for value in values.values_mut() {
                 sanitize_schema_in_place(value);
@@ -152,7 +157,12 @@ fn inline_local_refs_in_combinators(schema: &mut Value, root: &Value) {
         }
     }
 
-    for key in ["$defs", "definitions", "dependentSchemas", "patternProperties"] {
+    for key in [
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "patternProperties",
+    ] {
         if let Some(children) = map.get_mut(key).and_then(Value::as_object_mut) {
             for child in children.values_mut() {
                 inline_local_refs_in_combinators(child, root);
@@ -172,7 +182,10 @@ fn extract_local_ref(value: &Value) -> Option<&str> {
     if object.len() != 1 {
         return None;
     }
-    object.get("$ref")?.as_str().filter(|reference| reference.starts_with('#'))
+    object
+        .get("$ref")?
+        .as_str()
+        .filter(|reference| reference.starts_with('#'))
 }
 
 fn resolve_local_ref(root: &Value, reference: &str) -> Option<Value> {
@@ -348,9 +361,10 @@ mod tests {
 
         assert!(schema.get("$schema").is_none());
         assert!(schema.get("title").is_none());
-        assert!(defs
-            .values()
-            .all(|value| value.get("title").is_none() && value.get("default").is_none()));
+        assert!(
+            defs.values()
+                .all(|value| value.get("title").is_none() && value.get("default").is_none())
+        );
         assert!(schema["properties"]["count"].get("format").is_none());
         assert_eq!(kind_schema["enum"], serde_json::json!(["inline"]));
         assert!(kind_schema.get("const").is_none());

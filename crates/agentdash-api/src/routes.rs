@@ -4,6 +4,8 @@ pub mod backends;
 pub mod discovered_options;
 pub mod discovery;
 pub mod health;
+pub mod project_agents;
+pub mod project_sessions;
 pub mod projects;
 pub mod settings;
 pub mod stories;
@@ -49,6 +51,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .put(projects::update_project)
                 .delete(projects::delete_project),
         )
+        .route(
+            "/projects/{id}/agents",
+            get(project_agents::list_project_agents),
+        )
+        .route(
+            "/projects/{id}/agents/{agent_key}/session",
+            post(project_agents::open_project_agent_session),
+        )
+        .route(
+            "/projects/{id}/sessions/{binding_id}",
+            get(project_sessions::get_project_session),
+        )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(
             "/projects/{project_id}/workspaces",
@@ -86,8 +100,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/stories/{id}/sessions/{binding_id}",
-            get(story_sessions::get_story_session)
-                .delete(story_sessions::unbind_story_session),
+            get(story_sessions::get_story_session).delete(story_sessions::unbind_story_session),
         )
         .route(
             "/stories/{id}/tasks",

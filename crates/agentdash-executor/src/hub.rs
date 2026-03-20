@@ -242,6 +242,8 @@ pub struct SessionMeta {
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
 }
 
@@ -303,6 +305,7 @@ impl ExecutorHub {
             title: title.to_string(),
             created_at: now,
             updated_at: now,
+            executor_config: None,
             executor_session_id: None,
         };
         self.store.write_meta(&meta).await?;
@@ -465,10 +468,12 @@ impl ExecutorHub {
                 title: title_hint.clone(),
                 created_at: now,
                 updated_at: now,
+                executor_config: None,
                 executor_session_id: None,
             },
         };
         session_meta.updated_at = now;
+        session_meta.executor_config = Some(context.executor_config.clone());
         if session_meta.title.trim().is_empty() {
             session_meta.title = title_hint;
         }

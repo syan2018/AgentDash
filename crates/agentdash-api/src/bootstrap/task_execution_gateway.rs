@@ -1,13 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol::{
-    SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-};
-use agentdash_application::task_execution::{
-    ContinueTaskCommand, ContinueTaskResult, ExecutionPhase, SessionOverview, StartTaskCommand,
-    StartTaskResult, StartedTurn, TaskExecutionError, TaskExecutionGateway, TaskSessionResult,
-};
-use agentdash_application::task_restart_tracker::RestartDecision;
+use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
 use agentdash_application::task::artifact::{
     build_tool_call_patch, build_tool_call_update_patch, upsert_tool_execution_artifact,
 };
@@ -15,6 +8,11 @@ use agentdash_application::task::config::resolve_task_executor_config;
 use agentdash_application::task::meta::{
     build_task_lifecycle_meta, parse_turn_event, turn_matches,
 };
+use agentdash_application::task_execution::{
+    ContinueTaskCommand, ContinueTaskResult, ExecutionPhase, SessionOverview, StartTaskCommand,
+    StartTaskResult, StartedTurn, TaskExecutionError, TaskExecutionGateway, TaskSessionResult,
+};
+use agentdash_application::task_restart_tracker::RestartDecision;
 use agentdash_domain::{
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
@@ -62,7 +60,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
     }
 
     async fn update_task(&self, task: &Task) -> Result<(), TaskExecutionError> {
-        self.state.repos
+        self.state
+            .repos
             .task_repo
             .update(task)
             .await
@@ -157,7 +156,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 .as_ref()
                 .map(|config| config.executor.as_str());
             Some(
-                self.state.services
+                self.state
+                    .services
                     .address_space_service
                     .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
                     .map_err(map_internal_error)?,
@@ -204,7 +204,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             };
 
             let turn_id = self
-                .state.services
+                .state
+                .services
                 .executor_hub
                 .start_prompt(session_id, prompt_req)
                 .await
@@ -222,7 +223,13 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 )
             })?;
             let backend_id = normalize_backend_id(&workspace.backend_id)?;
-            if !self.state.services.backend_registry.is_online(backend_id).await {
+            if !self
+                .state
+                .services
+                .backend_registry
+                .is_online(backend_id)
+                .await
+            {
                 return Err(TaskExecutionError::Conflict(format!(
                     "目标 Workspace 所属 Backend 当前不在线: {backend_id}"
                 )));
@@ -262,7 +269,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
         })?;
         let binding = SessionBinding::new(session_id.to_string(), owner_type, owner_id, label);
-        self.state.repos
+        self.state
+            .repos
             .session_binding_repo
             .create(&binding)
             .await
@@ -281,7 +289,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         if let Some(backend_id) = remote_backend {
             relay_cancel(&self.state, &backend_id, session_id).await
         } else {
-            self.state.services
+            self.state
+                .services
                 .executor_hub
                 .cancel(session_id)
                 .await
@@ -294,7 +303,8 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         session_id: &str,
     ) -> Result<Option<SessionOverview>, TaskExecutionError> {
         let meta = self
-            .state.services
+            .state
+            .services
             .executor_hub
             .get_session_meta(session_id)
             .await
@@ -341,7 +351,8 @@ pub async fn execute_start_task(
     override_prompt: Option<String>,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<StartTaskResult, TaskExecutionError> {
-    state.task_runtime
+    state
+        .task_runtime
         .lock_map
         .with_lock(task_id, || async {
             let gateway = AppStateTaskExecutionGateway::new(state.clone());
@@ -364,7 +375,8 @@ pub async fn execute_continue_task(
     additional_prompt: Option<String>,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
 ) -> Result<ContinueTaskResult, TaskExecutionError> {
-    state.task_runtime
+    state
+        .task_runtime
         .lock_map
         .with_lock(task_id, || async {
             let gateway = AppStateTaskExecutionGateway::new(state.clone());
@@ -385,7 +397,8 @@ pub async fn execute_cancel_task(
     state: Arc<AppState>,
     task_id: Uuid,
 ) -> Result<Task, TaskExecutionError> {
-    let result = state.task_runtime
+    let result = state
+        .task_runtime
         .lock_map
         .with_lock(task_id, || async {
             let gateway = AppStateTaskExecutionGateway::new(state.clone());
@@ -437,7 +450,11 @@ async fn run_turn_monitor(
         _ => TaskExecutionMode::Standard,
     };
 
-    let (history, mut rx) = state.services.executor_hub.subscribe_with_history(session_id).await;
+    let (history, mut rx) = state
+        .services
+        .executor_hub
+        .subscribe_with_history(session_id)
+        .await;
 
     for notification in history {
         match handle_turn_notification(
@@ -676,7 +693,10 @@ async fn handle_turn_notification(
                             )
                             .await;
                         } else {
-                            state.task_runtime.restart_tracker.record_stable_start(task_id);
+                            state
+                                .task_runtime
+                                .restart_tracker
+                                .record_stable_start(task_id);
                             let _ = update_task_status(
                                 state,
                                 task_id,
@@ -869,7 +889,8 @@ async fn clear_task_session_binding(
         }
 
         state.repos.task_repo.update(&task).await?;
-        state.repos
+        state
+            .repos
             .story_repo
             .append_change(
                 task.id,
@@ -946,7 +967,6 @@ async fn persist_tool_call_artifact(
 
     Ok(())
 }
-
 
 async fn persist_turn_failure_artifact(
     state: &Arc<AppState>,
@@ -1039,7 +1059,12 @@ async fn sync_task_executor_session_binding_from_hub(
     session_id: &str,
     turn_id: &str,
 ) -> Result<(), agentdash_domain::DomainError> {
-    let meta = match state.services.executor_hub.get_session_meta(session_id).await {
+    let meta = match state
+        .services
+        .executor_hub
+        .get_session_meta(session_id)
+        .await
+    {
         Ok(Some(meta)) => meta,
         Ok(None) => return Ok(()),
         Err(err) => {
@@ -1118,7 +1143,8 @@ async fn append_task_change(
     kind: ChangeKind,
     payload: Value,
 ) -> Result<(), agentdash_domain::DomainError> {
-    state.repos
+    state
+        .repos
         .story_repo
         .append_change(task_id, kind, payload, backend_id)
         .await
@@ -1138,7 +1164,8 @@ async fn bridge_task_status_event_to_session(
         SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
     );
 
-    if let Err(err) = state.services
+    if let Err(err) = state
+        .services
         .executor_hub
         .inject_notification(session_id, notification)
         .await
@@ -1153,10 +1180,9 @@ async fn bridge_task_status_event_to_session(
     }
 }
 
-
-
 async fn get_task(state: &Arc<AppState>, task_id: Uuid) -> Result<Task, TaskExecutionError> {
-    state.repos
+    state
+        .repos
         .task_repo
         .get_by_id(task_id)
         .await
@@ -1168,7 +1194,8 @@ async fn load_related_context(
     state: &Arc<AppState>,
     task: &Task,
 ) -> Result<(Story, Project, Option<Workspace>), TaskExecutionError> {
-    let story = state.repos
+    let story = state
+        .repos
         .story_repo
         .get_by_id(task.story_id)
         .await
@@ -1177,7 +1204,8 @@ async fn load_related_context(
             TaskExecutionError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id))
         })?;
 
-    let project = state.repos
+    let project = state
+        .repos
         .project_repo
         .get_by_id(story.project_id)
         .await
@@ -1188,7 +1216,8 @@ async fn load_related_context(
 
     let workspace = if let Some(ws_id) = task.workspace_id {
         Some(
-            state.repos
+            state
+                .repos
                 .workspace_repo
                 .get_by_id(ws_id)
                 .await
@@ -1209,7 +1238,8 @@ async fn create_task_session(
     task: &Task,
 ) -> Result<SessionMeta, TaskExecutionError> {
     let title = format!("Task: {}", task.title.trim());
-    state.services
+    state
+        .services
         .executor_hub
         .create_session(title.trim())
         .await
@@ -1249,7 +1279,8 @@ async fn resolve_task_backend_id(
 ) -> Result<String, TaskExecutionError> {
     // 优先级：Workspace.backend_id → Story.backend_id → Project.backend_id
     if let Some(workspace_id) = task.workspace_id {
-        let workspace = state.repos
+        let workspace = state
+            .repos
             .workspace_repo
             .get_by_id(workspace_id)
             .await
@@ -1262,7 +1293,8 @@ async fn resolve_task_backend_id(
         }
     }
 
-    let story = state.repos
+    let story = state
+        .repos
         .story_repo
         .get_by_id(task.story_id)
         .await
@@ -1273,16 +1305,14 @@ async fn resolve_task_backend_id(
         return Ok(bid.to_string());
     }
 
-    let project = state.repos
+    let project = state
+        .repos
         .project_repo
         .get_by_id(story.project_id)
         .await
         .map_err(map_domain_error)?
         .ok_or_else(|| {
-            TaskExecutionError::NotFound(format!(
-                "Story 所属 Project {} 不存在",
-                story.project_id
-            ))
+            TaskExecutionError::NotFound(format!("Story 所属 Project {} 不存在", story.project_id))
         })?;
 
     normalize_backend_id(&project.backend_id).map(|value| value.to_string())
@@ -1339,7 +1369,8 @@ async fn relay_start_prompt(
         "中继 command.prompt → 远程后端"
     );
 
-    let resp = state.services
+    let resp = state
+        .services
         .backend_registry
         .send_command(backend_id, cmd)
         .await
@@ -1382,7 +1413,8 @@ async fn relay_cancel(
         },
     };
 
-    let resp = state.services
+    let resp = state
+        .services
         .backend_registry
         .send_command(backend_id, cmd)
         .await

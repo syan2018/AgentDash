@@ -32,7 +32,8 @@ pub async fn list_address_spaces(
     let workspace_available = if let Some(ws_id_str) = &query.workspace_id {
         let ws_id = Uuid::parse_str(ws_id_str)
             .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-        state.repos
+        state
+            .repos
             .workspace_repo
             .get_by_id(ws_id)
             .await
@@ -89,7 +90,8 @@ pub async fn list_address_entries(
             })?;
             let ws_id = Uuid::parse_str(ws_id_str)
                 .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-            let workspace = state.repos
+            let workspace = state
+                .repos
                 .workspace_repo
                 .get_by_id(ws_id)
                 .await
@@ -107,11 +109,13 @@ pub async fn list_address_entries(
                 )));
             }
 
-            let session = state.services
+            let session = state
+                .services
                 .address_space_service
                 .session_for_workspace(&workspace)
                 .map_err(ApiError::BadRequest)?;
-            let listed = state.services
+            let listed = state
+                .services
                 .address_space_service
                 .list(
                     &session,

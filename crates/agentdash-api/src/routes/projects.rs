@@ -41,7 +41,9 @@ pub async fn list_projects(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ProjectResponse>>, ApiError> {
     let projects = state.repos.project_repo.list_all().await?;
-    Ok(Json(projects.into_iter().map(ProjectResponse::from).collect()))
+    Ok(Json(
+        projects.into_iter().map(ProjectResponse::from).collect(),
+    ))
 }
 
 pub async fn create_project(
@@ -77,16 +79,23 @@ pub async fn get_project(
     let project_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    let project = state.repos
+    let project = state
+        .repos
         .project_repo
         .get_by_id(project_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Project {id} 不存在")))?;
 
-    let workspaces = state.repos.workspace_repo.list_by_project(project_id).await?;
+    let workspaces = state
+        .repos
+        .workspace_repo
+        .list_by_project(project_id)
+        .await?;
     let stories = state.repos.story_repo.list_by_project(project_id).await?;
 
-    Ok(Json(ProjectDetailResponse::new(project, workspaces, stories)))
+    Ok(Json(ProjectDetailResponse::new(
+        project, workspaces, stories,
+    )))
 }
 
 pub async fn update_project(
@@ -97,7 +106,8 @@ pub async fn update_project(
     let project_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    let mut project = state.repos
+    let mut project = state
+        .repos
         .project_repo
         .get_by_id(project_id)
         .await?
@@ -148,7 +158,11 @@ pub async fn delete_project(
         state.repos.story_repo.delete(story.id).await?;
     }
 
-    let workspaces = state.repos.workspace_repo.list_by_project(project_id).await?;
+    let workspaces = state
+        .repos
+        .workspace_repo
+        .list_by_project(project_id)
+        .await?;
     for workspace in workspaces {
         state.repos.workspace_repo.delete(workspace.id).await?;
     }

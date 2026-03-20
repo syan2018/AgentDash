@@ -15,17 +15,20 @@ use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_application::project::context_builder::{
+    ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
+};
 use agentdash_application::story::context_builder::{
     StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
 };
 use agentdash_domain::{
-    project::Project, session_binding::SessionOwnerType,
-    story::Story, workspace::Workspace,
+    project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
 use agentdash_executor::{PromptSessionRequest, SessionMeta};
 use agentdash_mcp::injection::McpInjectionConfig;
 use serde::Serialize;
 
+use super::project_agents::{resolve_project_agent_bridge, resolve_project_workspace};
 use crate::task_agent_context::resolve_workspace_declared_sources;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
@@ -54,7 +57,8 @@ pub async fn list_sessions(
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id_str}")))?;
 
-        let bindings = state.repos
+        let bindings = state
+            .repos
             .session_binding_repo
             .list_by_owner(owner_type, owner_id)
             .await
@@ -62,7 +66,8 @@ pub async fn list_sessions(
 
         let mut sessions = Vec::with_capacity(bindings.len());
         for binding in &bindings {
-            if let Ok(Some(meta)) = state.services
+            if let Ok(Some(meta)) = state
+                .services
                 .executor_hub
                 .get_session_meta(&binding.session_id)
                 .await
@@ -73,14 +78,16 @@ pub async fn list_sessions(
         return Ok(Json(sessions));
     }
 
-    let mut sessions = state.services
+    let mut sessions = state
+        .services
         .executor_hub
         .list_sessions()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if query.exclude_bound.unwrap_or(false) {
-        let bound_ids = state.repos
+        let bound_ids = state
+            .repos
             .session_binding_repo
             .list_bound_session_ids()
             .await
@@ -104,7 +111,8 @@ pub async fn create_session(
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionMeta>, ApiError> {
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
-    let meta = state.services
+    let meta = state
+        .services
         .executor_hub
         .create_session(&title)
         .await
@@ -116,7 +124,8 @@ pub async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionMeta>, ApiError> {
-    let meta = state.services
+    let meta = state
+        .services
         .executor_hub
         .get_session_meta(&session_id)
         .await
@@ -126,7 +135,7 @@ pub async fn get_session(
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct SessionBindingOwnerResponse {
     pub id: String,
     pub session_id: String,
@@ -135,15 +144,46 @@ pub struct SessionBindingOwnerResponse {
     pub label: String,
     pub created_at: String,
     pub owner_title: Option<String>,
+    pub project_id: Option<String>,
     pub story_id: Option<String>,
     pub task_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_binding_owner_response_serializes_as_snake_case() {
+        let value = serde_json::to_value(SessionBindingOwnerResponse {
+            id: "binding-1".to_string(),
+            session_id: "sess-1".to_string(),
+            owner_type: "project".to_string(),
+            owner_id: "project-1".to_string(),
+            label: "project_agent:default".to_string(),
+            created_at: "2026-03-20T00:00:00Z".to_string(),
+            owner_title: Some("AgentDash".to_string()),
+            project_id: Some("project-1".to_string()),
+            story_id: None,
+            task_id: None,
+        })
+        .expect("serialize session binding owner response");
+
+        assert!(value.get("session_id").is_some());
+        assert!(value.get("owner_title").is_some());
+        assert!(value.get("project_id").is_some());
+        assert!(value.get("sessionId").is_none());
+        assert!(value.get("ownerTitle").is_none());
+        assert!(value.get("projectId").is_none());
+    }
 }
 
 pub async fn get_session_bindings(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<SessionBindingOwnerResponse>>, ApiError> {
-    let bindings = state.repos
+    let bindings = state
+        .repos
         .session_binding_repo
         .list_by_session(&session_id)
         .await
@@ -152,12 +192,26 @@ pub async fn get_session_bindings(
     let mut responses = Vec::with_capacity(bindings.len());
     for binding in bindings {
         let mut owner_title = None;
+        let mut project_id = None;
         let mut story_id = None;
         let mut task_id = None;
 
         match binding.owner_type {
+            SessionOwnerType::Project => {
+                if let Some(project) = state
+                    .repos
+                    .project_repo
+                    .get_by_id(binding.owner_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                {
+                    owner_title = Some(project.name);
+                    project_id = Some(project.id.to_string());
+                }
+            }
             SessionOwnerType::Story => {
-                if let Some(story) = state.repos
+                if let Some(story) = state
+                    .repos
                     .story_repo
                     .get_by_id(binding.owner_id)
                     .await
@@ -168,7 +222,8 @@ pub async fn get_session_bindings(
                 }
             }
             SessionOwnerType::Task => {
-                if let Some(task) = state.repos
+                if let Some(task) = state
+                    .repos
                     .task_repo
                     .get_by_id(binding.owner_id)
                     .await
@@ -189,6 +244,7 @@ pub async fn get_session_bindings(
             label: binding.label,
             created_at: binding.created_at.to_rfc3339(),
             owner_title,
+            project_id,
             story_id,
             task_id,
         });
@@ -201,7 +257,8 @@ pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state.services
+    state
+        .services
         .executor_hub
         .delete_session(&session_id)
         .await
@@ -217,7 +274,8 @@ pub async fn prompt_session(
     Json(req): Json<PromptSessionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let req = augment_prompt_request_for_owner(&state, &session_id, req).await?;
-    let turn_id = state.services
+    let turn_id = state
+        .services
         .executor_hub
         .start_prompt(&session_id, req)
         .await
@@ -238,54 +296,53 @@ async fn augment_prompt_request_for_owner(
     session_id: &str,
     req: PromptSessionRequest,
 ) -> Result<PromptSessionRequest, ApiError> {
-    let bindings = state.repos
+    let bindings = state
+        .repos
         .session_binding_repo
         .list_by_session(session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let Some(binding) = bindings
+    if let Some(binding) = bindings
         .iter()
         .find(|binding| binding.owner_type == SessionOwnerType::Story)
-    else {
-        return Ok(req);
-    };
-
-    let story = state.repos
-        .story_repo
-        .get_by_id(binding.owner_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
-    let project = state.repos
-        .project_repo
-        .get_by_id(story.project_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
-    let workspace = resolve_story_workspace(state, &project).await?;
-
-    build_story_owner_prompt_request(state, req, &story, &project, workspace.as_ref()).await
-}
-
-async fn resolve_story_workspace(
-    state: &Arc<AppState>,
-    project: &Project,
-) -> Result<Option<Workspace>, ApiError> {
-    if let Some(workspace_id) = project.config.default_workspace_id {
-        return state.repos
-            .workspace_repo
-            .get_by_id(workspace_id)
+    {
+        let story = state
+            .repos
+            .story_repo
+            .get_by_id(binding.owner_id)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()));
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
+        let project = state
+            .repos
+            .project_repo
+            .get_by_id(story.project_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
+        let workspace = resolve_project_workspace(state, &project).await?;
+
+        return build_story_owner_prompt_request(state, req, &story, &project, workspace.as_ref())
+            .await;
     }
 
-    let workspaces = state.repos
-        .workspace_repo
-        .list_by_project(project.id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(workspaces.into_iter().next())
+    if let Some(binding) = bindings
+        .iter()
+        .find(|binding| binding.owner_type == SessionOwnerType::Project)
+    {
+        let project = state
+            .repos
+            .project_repo
+            .get_by_id(binding.owner_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", binding.owner_id)))?;
+
+        return build_project_owner_prompt_request(state, req, &project, &binding.label).await;
+    }
+
+    Ok(req)
 }
 
 async fn build_story_owner_prompt_request(
@@ -304,7 +361,8 @@ async fn build_story_owner_prompt_request(
                 .map(|config| config.executor.as_str())
                 .or(project.config.default_agent_type.as_deref());
             Some(
-                state.services
+                state
+                    .services
                     .address_space_service
                     .build_story_address_space(project, story, workspace, agent_type)
                     .map_err(ApiError::BadRequest)?,
@@ -317,7 +375,8 @@ async fn build_story_owner_prompt_request(
         .map(|config| config.executor.as_str())
         .or(project.config.default_agent_type.as_deref());
     let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = state.config
+    let base_url = state
+        .config
         .mcp_base_url
         .clone()
         .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
@@ -329,18 +388,16 @@ async fn build_story_owner_prompt_request(
             .await
             .map_err(ApiError::BadRequest)?;
 
-    let (context_markdown, source_summary) = build_story_context_markdown(
-        StoryContextBuildInput {
-            story,
-            project,
-            workspace,
-            address_space: address_space.as_ref(),
-            mcp_servers: &effective_mcp_servers,
-            effective_agent_type,
-            workspace_source_fragments: resolved_workspace_sources.fragments,
-            workspace_source_warnings: resolved_workspace_sources.warnings,
-        },
-    );
+    let (context_markdown, source_summary) = build_story_context_markdown(StoryContextBuildInput {
+        story,
+        project,
+        workspace,
+        address_space: address_space.as_ref(),
+        mcp_servers: &effective_mcp_servers,
+        effective_agent_type,
+        workspace_source_fragments: resolved_workspace_sources.fragments,
+        workspace_source_warnings: resolved_workspace_sources.warnings,
+    });
 
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
@@ -369,11 +426,92 @@ async fn build_story_owner_prompt_request(
     Ok(req)
 }
 
+async fn build_project_owner_prompt_request(
+    state: &Arc<AppState>,
+    mut req: PromptSessionRequest,
+    project: &Project,
+    binding_label: &str,
+) -> Result<PromptSessionRequest, ApiError> {
+    let agent_key = binding_label
+        .trim()
+        .strip_prefix("project_agent:")
+        .unwrap_or_default();
+    let project_agent = resolve_project_agent_bridge(project, agent_key)
+        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
+    let workspace = resolve_project_workspace(state, project).await?;
+
+    let effective_executor_config = req
+        .executor_config
+        .clone()
+        .unwrap_or_else(|| project_agent.executor_config.clone());
+    let effective_agent_type = Some(effective_executor_config.executor.as_str());
+    let address_space = match req.address_space.clone() {
+        Some(address_space) => Some(address_space),
+        None => Some(
+            state
+                .services
+                .address_space_service
+                .build_project_address_space(project, workspace.as_ref(), effective_agent_type)
+                .map_err(ApiError::BadRequest)?,
+        ),
+    };
+
+    let mut effective_mcp_servers = req.mcp_servers.clone();
+    let base_url = state
+        .config
+        .mcp_base_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    effective_mcp_servers
+        .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
+
+    let (context_markdown, source_summary) =
+        build_project_context_markdown(ProjectContextBuildInput {
+            project,
+            workspace: workspace.as_ref(),
+            address_space: address_space.as_ref(),
+            mcp_servers: &effective_mcp_servers,
+            effective_agent_type,
+            preset_name: project_agent.preset_name.as_deref(),
+            agent_display_name: project_agent.display_name.as_str(),
+        });
+    let prompt_blocks = build_project_owner_prompt_blocks(
+        project.id,
+        context_markdown,
+        &source_summary,
+        req.prompt.take(),
+        req.prompt_blocks.take(),
+    );
+
+    req.prompt = None;
+    req.prompt_blocks = Some(prompt_blocks);
+
+    if req.working_dir.is_none() && workspace.is_some() {
+        req.working_dir = Some(".".to_string());
+    }
+    if req.workspace_root.is_none() {
+        req.workspace_root = workspace
+            .as_ref()
+            .map(|item| std::path::PathBuf::from(item.container_ref.clone()));
+    }
+    if req.address_space.is_none() {
+        req.address_space = address_space;
+    }
+    if req.executor_config.is_none() {
+        req.executor_config = Some(effective_executor_config);
+    }
+
+    req.mcp_servers = effective_mcp_servers;
+
+    Ok(req)
+}
+
 pub async fn cancel_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state.services
+    state
+        .services
         .executor_hub
         .cancel(&session_id)
         .await
@@ -402,7 +540,11 @@ pub async fn acp_session_stream_sse(
         "ACP 会话流连接建立（SSE）"
     );
 
-    let (history, mut rx) = state.services.executor_hub.subscribe_with_history(&session_id).await;
+    let (history, mut rx) = state
+        .services
+        .executor_hub
+        .subscribe_with_history(&session_id)
+        .await;
     let start_index = std::cmp::min(last_event_id as usize, history.len());
     let replayed = history.len().saturating_sub(start_index);
     tracing::info!(
@@ -466,7 +608,11 @@ pub async fn acp_session_stream_ndjson(
         "ACP 会话流连接建立（NDJSON）"
     );
 
-    let (history, mut rx) = state.services.executor_hub.subscribe_with_history(&session_id).await;
+    let (history, mut rx) = state
+        .services
+        .executor_hub
+        .subscribe_with_history(&session_id)
+        .await;
     let start_index = std::cmp::min(resume_from as usize, history.len());
     let replayed = history.len().saturating_sub(start_index);
     tracing::info!(

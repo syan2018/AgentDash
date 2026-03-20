@@ -663,7 +663,12 @@ mod tests {
             }
         }
 
-        for key in ["$defs", "definitions", "dependentSchemas", "patternProperties"] {
+        for key in [
+            "$defs",
+            "definitions",
+            "dependentSchemas",
+            "patternProperties",
+        ] {
             if let Some(children) = object.get(key).and_then(Value::as_object) {
                 for child in children.values() {
                     assert_schema_objects_have_type(child);

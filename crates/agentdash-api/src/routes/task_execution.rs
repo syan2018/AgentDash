@@ -7,6 +7,7 @@ use agentdash_domain::task::{Task, TaskStatus};
 use agentdash_mcp::injection::McpInjectionConfig;
 
 use crate::dto::TaskResponse;
+use agentdash_executor::AgentDashExecutorConfig;
 use axum::{
     Json,
     extract::{Path, State},
@@ -23,8 +24,7 @@ use crate::{
     rpc::ApiError,
     session_plan::{
         SessionRuntimePolicySummary, SessionToolVisibilitySummary,
-        resolve_effective_session_composition, summarize_runtime_policy,
-        summarize_tool_visibility,
+        resolve_effective_session_composition, summarize_runtime_policy, summarize_tool_visibility,
     },
 };
 
@@ -99,6 +99,25 @@ pub struct TaskSessionExecutorSummary {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution_error: Option<String>,
+}
+
+pub(crate) fn build_session_executor_summary(
+    resolved_config: Option<&AgentDashExecutorConfig>,
+    preset_name: Option<String>,
+    source: impl Into<String>,
+    resolution_error: Option<String>,
+) -> TaskSessionExecutorSummary {
+    TaskSessionExecutorSummary {
+        executor: resolved_config.map(|config| config.executor.clone()),
+        variant: resolved_config.and_then(|config| config.variant.clone()),
+        model_id: resolved_config.and_then(|config| config.model_id.clone()),
+        agent_id: resolved_config.and_then(|config| config.agent_id.clone()),
+        reasoning_id: resolved_config.and_then(|config| config.reasoning_id.clone()),
+        permission_policy: resolved_config.and_then(|config| config.permission_policy.clone()),
+        preset_name,
+        source: source.into(),
+        resolution_error,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -216,8 +235,18 @@ async fn build_task_session_context_response(
     task_id: Uuid,
 ) -> Option<BuiltTaskSessionContextResponse> {
     let task = state.repos.task_repo.get_by_id(task_id).await.ok()??;
-    let story = state.repos.story_repo.get_by_id(task.story_id).await.ok()??;
-    let project = state.repos.project_repo.get_by_id(story.project_id).await.ok()??;
+    let story = state
+        .repos
+        .story_repo
+        .get_by_id(task.story_id)
+        .await
+        .ok()??;
+    let project = state
+        .repos
+        .project_repo
+        .get_by_id(story.project_id)
+        .await
+        .ok()??;
     let workspace = if let Some(ws_id) = task.workspace_id {
         state.repos.workspace_repo.get_by_id(ws_id).await.ok()?
     } else {
@@ -229,12 +258,15 @@ async fn build_task_session_context_response(
         Ok(config) => (config, None),
         Err(err) => (None, Some(err.to_string())),
     };
-    let effective_agent_type = resolved_config.as_ref().map(|config| config.executor.as_str());
+    let effective_agent_type = resolved_config
+        .as_ref()
+        .map(|config| config.executor.as_str());
     let use_address_space = resolved_config
         .as_ref()
         .is_some_and(|config| config.is_native_agent());
     let address_space = if use_address_space {
-        state.services
+        state
+            .services
             .address_space_service
             .build_task_address_space(&project, &story, workspace.as_ref(), effective_agent_type)
             .ok()
@@ -246,14 +278,21 @@ async fn build_task_session_context_response(
         .mount_policy_override
         .clone()
         .unwrap_or_else(|| project.config.mount_policy.clone());
-    let effective_session_composition = resolve_effective_session_composition(&project, Some(&story));
-    let mcp_servers = state.config
+    let effective_session_composition =
+        resolve_effective_session_composition(&project, Some(&story));
+    let mcp_servers = state
+        .config
         .mcp_base_url
         .as_ref()
         .map(|base_url| {
             vec![
-                McpInjectionConfig::for_task(base_url.clone(), story.project_id, task.story_id, task.id)
-                    .to_acp_mcp_server(),
+                McpInjectionConfig::for_task(
+                    base_url.clone(),
+                    story.project_id,
+                    task.story_id,
+                    task.id,
+                )
+                .to_acp_mcp_server(),
             ]
         })
         .unwrap_or_default();
@@ -268,23 +307,16 @@ async fn build_task_session_context_response(
     Some(BuiltTaskSessionContextResponse {
         address_space,
         context_snapshot: Some(TaskSessionContextSnapshot {
-            executor: TaskSessionExecutorSummary {
-                executor: resolved_config.as_ref().map(|config| config.executor.clone()),
-                variant: resolved_config.as_ref().and_then(|config| config.variant.clone()),
-                model_id: resolved_config.as_ref().and_then(|config| config.model_id.clone()),
-                agent_id: resolved_config.as_ref().and_then(|config| config.agent_id.clone()),
-                reasoning_id: resolved_config
-                    .as_ref()
-                    .and_then(|config| config.reasoning_id.clone()),
-                permission_policy: resolved_config
-                    .as_ref()
-                    .and_then(|config| config.permission_policy.clone()),
+            executor: build_session_executor_summary(
+                resolved_config.as_ref(),
                 preset_name,
-                source: executor_source,
+                executor_source,
                 resolution_error,
-            },
+            ),
             project_defaults: SessionProjectDefaults {
-                default_agent_type: normalize_optional_string(project.config.default_agent_type.clone()),
+                default_agent_type: normalize_optional_string(
+                    project.config.default_agent_type.clone(),
+                ),
                 context_containers: project.config.context_containers.clone(),
                 mount_policy: project.config.mount_policy.clone(),
                 session_composition: project.config.session_composition.clone(),
@@ -339,7 +371,7 @@ fn resolve_task_executor_source(
     "unresolved"
 }
 
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
+pub(crate) fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value.and_then(|item| {
         let trimmed = item.trim();
         if trimmed.is_empty() {

@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 
-use agentdash_domain::context_source::{ContextSourceKind};
+use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_injection::{
     ContextFragment, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
 };
 use agentdash_mcp::injection::McpInjectionConfig;
 
-use super::contributor::{
-    ContributorInput, ContextContributor, Contribution, TaskExecutionPhase,
-};
+use super::contributor::{ContextContributor, Contribution, ContributorInput, TaskExecutionPhase};
 
 // ─── 文本工具 ────────────────────────────────────────────────
 

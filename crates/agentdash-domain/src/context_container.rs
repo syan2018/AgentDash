@@ -38,6 +38,8 @@ pub enum ContextContainerProvider {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ContextContainerExposure {
     #[serde(default = "bool_true")]
+    pub include_in_project_sessions: bool,
+    #[serde(default = "bool_true")]
     pub include_in_task_sessions: bool,
     #[serde(default = "bool_true")]
     pub include_in_story_sessions: bool,
@@ -48,6 +50,7 @@ pub struct ContextContainerExposure {
 impl Default for ContextContainerExposure {
     fn default() -> Self {
         Self {
+            include_in_project_sessions: true,
             include_in_task_sessions: true,
             include_in_story_sessions: true,
             allowed_agent_types: Vec::new(),

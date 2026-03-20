@@ -138,10 +138,12 @@ async fn resolve_workspace_file_source(
     order: i32,
 ) -> Result<ContextFragment, String> {
     let path = normalize_source_locator_path(&source.locator)?;
-    let address_space = state.services
+    let address_space = state
+        .services
         .address_space_service
         .session_for_workspace(workspace)?;
-    let read = state.services
+    let read = state
+        .services
         .address_space_service
         .read_text(
             &address_space,
@@ -175,10 +177,12 @@ async fn resolve_workspace_snapshot_source(
     order: i32,
 ) -> Result<ContextFragment, String> {
     let sub_path = normalize_snapshot_locator(&source.locator)?;
-    let address_space = state.services
+    let address_space = state
+        .services
         .address_space_service
         .session_for_workspace(workspace)?;
-    let listed = state.services
+    let listed = state
+        .services
         .address_space_service
         .list(
             &address_space,

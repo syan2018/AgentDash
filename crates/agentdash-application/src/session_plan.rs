@@ -8,12 +8,14 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanOwnerKind {
+    ProjectAgent,
     TaskExecution,
     StoryOwner,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanPhase {
+    ProjectAgent,
     TaskStart,
     TaskContinue,
     StoryOwner,
@@ -35,6 +37,7 @@ pub struct SessionMcpServerSummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionToolVisibilitySummary {
     pub markdown: String,
+    pub resolved: bool,
     pub toolset_label: String,
     pub tool_names: Vec<String>,
     pub mcp_servers: Vec<SessionMcpServerSummary>,
@@ -208,37 +211,34 @@ pub fn summarize_tool_visibility(
     address_space: Option<&ExecutionAddressSpace>,
     mcp_servers: &[McpServer],
 ) -> SessionToolVisibilitySummary {
-    let mut tool_names = if let Some(address_space) = address_space {
-        runtime_address_space_tools(address_space)
-    } else {
-        vec![
-            "read_file".to_string(),
-            "write_file".to_string(),
-            "list_directory".to_string(),
-            "search".to_string(),
-            "shell".to_string(),
-        ]
-    };
+    let resolved = address_space.is_some();
+    let mut tool_names = address_space
+        .map(runtime_address_space_tools)
+        .unwrap_or_default();
 
-    let toolset_label = if address_space.is_some() {
+    let toolset_label = if resolved {
         "address_space_runtime".to_string()
     } else {
-        "workspace_builtin".to_string()
+        "runtime_unresolved".to_string()
     };
     let mcp_server_summaries = summarize_mcp_servers(mcp_servers);
 
-    let mut sections = vec![format!(
-        "## Tool Visibility\n- toolset: `{toolset_label}`\n- tools: {}\n- guidance: 优先使用当前会话声明的工具访问上下文，不要臆测文件内容、工具能力或 mounts。",
-        if tool_names.is_empty() {
-            "-".to_string()
-        } else {
-            tool_names
-                .iter()
-                .map(|tool| format!("`{tool}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        }
-    )];
+    let mut sections = vec![if resolved {
+        format!(
+            "## Tool Visibility\n- resolved: yes\n- toolset: `{toolset_label}`\n- tools: {}\n- guidance: 优先使用当前会话声明的工具访问上下文，不要臆测文件内容、工具能力或 mounts。",
+            if tool_names.is_empty() {
+                "-".to_string()
+            } else {
+                tool_names
+                    .iter()
+                    .map(|tool| format!("`{tool}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        )
+    } else {
+        "## Tool Visibility\n- resolved: no\n- toolset: `runtime_unresolved`\n- tools: -\n- guidance: 当前未解析出最终运行时工具面，不要把推测值包装成当前会话已确认可见的工具。".to_string()
+    }];
 
     if !mcp_server_summaries.is_empty() {
         sections.push(format!(
@@ -254,6 +254,7 @@ pub fn summarize_tool_visibility(
 
     SessionToolVisibilitySummary {
         markdown: sections.join("\n\n"),
+        resolved,
         toolset_label,
         tool_names,
         mcp_servers: mcp_server_summaries,
@@ -262,10 +263,14 @@ pub fn summarize_tool_visibility(
 
 fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
     let role_label = match input.owner_kind {
+        SessionPlanOwnerKind::ProjectAgent => "project_agent",
         SessionPlanOwnerKind::TaskExecution => "task_execution",
         SessionPlanOwnerKind::StoryOwner => "story_owner",
     };
     let role_description = match input.owner_kind {
+        SessionPlanOwnerKind::ProjectAgent => {
+            "Project 级协作代理，负责维护项目共享上下文、整理资料、沉淀决策并辅助后续 Story 准备"
+        }
         SessionPlanOwnerKind::TaskExecution => {
             "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报"
         }
@@ -315,6 +320,14 @@ fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
 
 fn build_workflow_markdown(input: &SessionPlanInput<'_>) -> String {
     let (phase_label, default_actions) = match input.phase {
+        SessionPlanPhase::ProjectAgent => (
+            "project_agent",
+            vec![
+                "先理解项目目标、共享上下文与当前可见 mounts".to_string(),
+                "优先把项目资料组织为用户可理解的资料目录，而不是暴露底层运行时细节".to_string(),
+                "需要沉淀共享上下文时，明确说明写入位置、内容结构与后续复用方式".to_string(),
+            ],
+        ),
         SessionPlanPhase::TaskStart => (
             "task_start",
             vec![
@@ -400,8 +413,10 @@ pub fn summarize_runtime_policy(
         .unwrap_or_default();
     let path_policy = if address_space.is_some() {
         "使用 `mount + 相对路径` 访问资源".to_string()
-    } else {
+    } else if workspace_attached {
         "使用相对工作空间路径访问资源".to_string()
+    } else {
+        "运行时路径规则尚未解析".to_string()
     };
 
     let markdown = format!(
@@ -648,6 +663,7 @@ mod tests {
 
         let summary = summarize_tool_visibility(Some(&address_space), &mcp_servers);
 
+        assert!(summary.resolved);
         assert!(summary.tool_names.contains(&"mounts_list".to_string()));
         assert!(summary.tool_names.contains(&"fs_write".to_string()));
         assert!(summary.tool_names.contains(&"shell_exec".to_string()));
@@ -716,6 +732,42 @@ mod tests {
         assert!(merged.contains("先读取项目容器摘要"));
         assert!(merged.contains("## Runtime Policy"));
         assert!(merged.contains("workspace_attached: yes"));
+    }
+
+    #[test]
+    fn summarize_tool_visibility_marks_runtime_as_unresolved_without_fake_tools() {
+        let summary = summarize_tool_visibility(None, &[]);
+
+        assert!(!summary.resolved);
+        assert_eq!(summary.toolset_label, "runtime_unresolved");
+        assert!(summary.tool_names.is_empty());
+        assert!(summary.markdown.contains("resolved: no"));
+    }
+
+    #[test]
+    fn summarize_tool_visibility_with_only_mcp_keeps_runtime_unresolved() {
+        let mcp_servers = vec![
+            serde_json::from_value::<McpServer>(json!({
+                "type": "http",
+                "name": "agentdash-project-tools",
+                "url": "http://127.0.0.1:3001/mcp/project/123",
+                "headers": []
+            }))
+            .expect("valid mcp server"),
+        ];
+
+        let summary = summarize_tool_visibility(None, &mcp_servers);
+
+        assert!(!summary.resolved);
+        assert_eq!(summary.toolset_label, "runtime_unresolved");
+        assert_eq!(summary.tool_names, vec!["mcp_tools".to_string()]);
+        assert!(!summary.tool_names.iter().any(|tool| tool == "read_file"));
+        assert!(!summary.tool_names.iter().any(|tool| tool == "write_file"));
+        assert!(!summary.tool_names.iter().any(|tool| tool == "list_directory"));
+        assert!(!summary.tool_names.iter().any(|tool| tool == "search"));
+        assert!(!summary.tool_names.iter().any(|tool| tool == "shell"));
+        assert!(summary.markdown.contains("resolved: no"));
+        assert!(summary.markdown.contains("`agentdash-project-tools`"));
     }
 
     #[test]

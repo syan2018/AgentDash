@@ -3,7 +3,7 @@ use agentdash_injection::{ContextComposer, ContextFragment, MergeStrategy};
 use serde_json::{Value, json};
 
 use super::contributor::{
-    BuiltTaskAgentContext, ContributorInput, ContextContributorRegistry, TaskAgentBuildInput,
+    BuiltTaskAgentContext, ContextContributorRegistry, ContributorInput, TaskAgentBuildInput,
     TaskExecutionPhase,
 };
 use crate::session_plan::{

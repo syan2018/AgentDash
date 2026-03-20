@@ -59,18 +59,10 @@ pub fn upsert_tool_execution_artifact(
     true
 }
 
-fn is_same_tool_execution_artifact(
-    artifact: &Artifact,
-    turn_id: &str,
-    tool_call_id: &str,
-) -> bool {
+fn is_same_tool_execution_artifact(artifact: &Artifact, turn_id: &str, tool_call_id: &str) -> bool {
     artifact.artifact_type == ArtifactType::ToolExecution
         && artifact.content.get("turn_id").and_then(Value::as_str) == Some(turn_id)
-        && artifact
-            .content
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            == Some(tool_call_id)
+        && artifact.content.get("tool_call_id").and_then(Value::as_str) == Some(tool_call_id)
 }
 
 pub fn build_tool_call_patch(tool_call: &ToolCall) -> Map<String, Value> {

@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/tasks/03-20-project-agent-template-shared-context/prd.md", "reason": "本迭代的产品规划与对象边界"}
+{"file": ".trellis/tasks/03-20-project-agent-template-shared-context/implementation-guide.md", "reason": "本迭代的实施顺序与落地切片"}

@@ -121,7 +121,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Address Space Access](./address-space-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
+| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | ✅ 已更新（含业务 API DTO 命名契约） |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Relay Protocol](../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
 

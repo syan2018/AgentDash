@@ -124,6 +124,37 @@ const mapStory = (raw: Record<string, unknown>): Story => {
 };
 ```
 
+### 业务 API 映射边界
+
+- 前端业务类型以 `frontend/src/types/index.ts` 为准，字段名统一 `snake_case`
+- store/service mapper 只负责：
+  - `unknown -> typed object`
+  - 状态值归一化
+  - null / array / number 等基础运行时校验
+- store/service mapper 不负责：
+  - 同时兼容 `camelCase` + `snake_case`
+  - 猜测后端字段别名
+  - 用双字段读取掩盖后端 DTO 契约错误
+
+```ts
+// ✅ 正确：只接受规范字段
+const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
+  id: String(raw.id ?? ''),
+  session_id: String(raw.session_id ?? ''),
+  owner_type: String(raw.owner_type ?? 'story') as SessionBinding['owner_type'],
+  owner_id: String(raw.owner_id ?? ''),
+  created_at: String(raw.created_at ?? new Date().toISOString()),
+});
+
+// ❌ 错误：把后端契约漂移长期固化在前端
+const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
+  session_id: String(raw.sessionId ?? raw.session_id ?? ''),
+  owner_type: String(raw.ownerType ?? raw.owner_type ?? 'story') as SessionBinding['owner_type'],
+});
+```
+
+当 mapper 开始出现 `fooBar ?? foo_bar` 时，应回到后端 DTO 修复，而不是继续扩写前端兼容层。
+
 ### 状态值归一化
 
 后端可能返回旧版状态名，前端映射函数负责归一化：

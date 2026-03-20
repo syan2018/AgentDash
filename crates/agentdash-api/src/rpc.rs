@@ -54,3 +54,22 @@ impl From<agentdash_domain::DomainError> for ApiError {
         }
     }
 }
+
+impl From<agentdash_application::workflow::WorkflowApplicationError> for ApiError {
+    fn from(err: agentdash_application::workflow::WorkflowApplicationError) -> Self {
+        match err {
+            agentdash_application::workflow::WorkflowApplicationError::BadRequest(message) => {
+                ApiError::BadRequest(message)
+            }
+            agentdash_application::workflow::WorkflowApplicationError::NotFound(message) => {
+                ApiError::NotFound(message)
+            }
+            agentdash_application::workflow::WorkflowApplicationError::Conflict(message) => {
+                ApiError::Conflict(message)
+            }
+            agentdash_application::workflow::WorkflowApplicationError::Internal(message) => {
+                ApiError::Internal(message)
+            }
+        }
+    }
+}

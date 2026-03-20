@@ -193,6 +193,121 @@ export interface ProjectSessionInfo {
   context_snapshot: ProjectSessionContextSnapshot | null;
 }
 
+// ─── Workflow ─────────────────────────────────────────
+
+export type WorkflowTargetKind = "project" | "story" | "task";
+
+export type WorkflowAgentRole =
+  | "project_context_maintainer"
+  | "story_lifecycle_companion"
+  | "task_execution_worker"
+  | "review_agent"
+  | "record_agent";
+
+export type WorkflowPhaseCompletionMode =
+  | "manual"
+  | "session_ended"
+  | "checklist_passed";
+
+export type WorkflowRunStatus =
+  | "draft"
+  | "ready"
+  | "running"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type WorkflowPhaseExecutionStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export type WorkflowRecordArtifactType =
+  | "session_summary"
+  | "journal_update"
+  | "archive_suggestion"
+  | "phase_note";
+
+export interface WorkflowContextBinding {
+  path: string;
+  reason: string;
+}
+
+export interface WorkflowPhaseDefinition {
+  key: string;
+  title: string;
+  description: string;
+  context_bindings: WorkflowContextBinding[];
+  requires_session: boolean;
+  completion_mode: WorkflowPhaseCompletionMode;
+}
+
+export interface WorkflowRecordPolicy {
+  emit_summary: boolean;
+  emit_journal_update: boolean;
+  emit_archive_suggestion: boolean;
+}
+
+export interface WorkflowDefinition {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  target_kind: WorkflowTargetKind;
+  version: number;
+  enabled: boolean;
+  phases: WorkflowPhaseDefinition[];
+  record_policy: WorkflowRecordPolicy;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowAssignment {
+  id: string;
+  project_id: string;
+  workflow_id: string;
+  role: WorkflowAgentRole;
+  enabled: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowPhaseState {
+  phase_key: string;
+  status: WorkflowPhaseExecutionStatus;
+  session_binding_id?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  summary?: string | null;
+}
+
+export interface WorkflowRecordArtifact {
+  id: string;
+  artifact_type: WorkflowRecordArtifactType;
+  title: string;
+  content: string;
+  created_at: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflow_id: string;
+  target_kind: WorkflowTargetKind;
+  target_id: string;
+  status: WorkflowRunStatus;
+  current_phase_key?: string | null;
+  phase_states: WorkflowPhaseState[];
+  record_artifacts: WorkflowRecordArtifact[];
+  created_at: string;
+  updated_at: string;
+  last_activity_at: string;
+}
+
 // ─── Project ──────────────────────────────────────────
 
 export interface AgentPreset {

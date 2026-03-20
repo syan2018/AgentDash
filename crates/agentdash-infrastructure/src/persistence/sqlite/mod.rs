@@ -4,6 +4,7 @@ mod session_binding_repository;
 mod settings_repository;
 mod story_repository;
 mod task_repository;
+mod workflow_repository;
 mod workspace_repository;
 
 pub use backend_repository::SqliteBackendRepository;
@@ -12,4 +13,5 @@ pub use session_binding_repository::SqliteSessionBindingRepository;
 pub use settings_repository::SqliteSettingsRepository;
 pub use story_repository::SqliteStoryRepository;
 pub use task_repository::SqliteTaskRepository;
+pub use workflow_repository::SqliteWorkflowRepository;
 pub use workspace_repository::SqliteWorkspaceRepository;

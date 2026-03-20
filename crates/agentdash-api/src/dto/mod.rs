@@ -5,9 +5,11 @@
 mod project;
 mod story;
 mod task;
+mod workflow;
 mod workspace;
 
 pub use project::*;
 pub use story::*;
 pub use task::*;
+pub use workflow::*;
 pub use workspace::*;

@@ -15,9 +15,11 @@ import {
   normalizeAgentBinding,
 } from "./agent-binding";
 import { TaskAgentSessionPanel } from "./task-agent-session-panel";
+import { TaskWorkflowPanel } from "../workflow/task-workflow-panel";
 
 interface TaskDrawerProps {
   task: Task | null;
+  projectId: string;
   workspaces: Workspace[];
   projectConfig?: ProjectConfig;
   onTaskUpdated: (task: Task) => void;
@@ -61,6 +63,7 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
 
 export function TaskDrawer({
   task,
+  projectId,
   workspaces,
   projectConfig,
   onTaskUpdated,
@@ -268,6 +271,13 @@ export function TaskDrawer({
                   }}
                 />
               </div>
+            </DetailSection>
+
+            <DetailSection
+              title="Workflow 执行"
+              description="把 Task Session 正式挂到结构化 workflow run，并在当前抽屉里推进阶段。"
+            >
+              <TaskWorkflowPanel task={task} projectId={projectId} />
             </DetailSection>
 
             <DetailSection

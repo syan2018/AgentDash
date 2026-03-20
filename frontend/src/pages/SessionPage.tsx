@@ -56,6 +56,8 @@ const defaultPromptTemplates: PromptTemplate[] = [
   },
 ];
 
+const EMPTY_SESSION_BINDINGS: SessionBindingOwner[] = [];
+
 // ─── SessionPage ────────────────────────────────────────
 
 interface SessionPageProps {
@@ -775,13 +777,20 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const fetchStorySessionInfo = useStoryStore((state) => state.fetchStorySessionInfo);
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
 
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(propSessionId ?? null);
-  const [taskAgentBinding, setTaskAgentBinding] = useState<AgentBinding | null>(null);
-  const [sessionAddressSpace, setSessionAddressSpace] = useState<ExecutionAddressSpace | null>(null);
-  const [sessionContextSnapshot, setSessionContextSnapshot] = useState<SessionContextSnapshot | null>(null);
-  const [projectSessionInfo, setProjectSessionInfo] = useState<ProjectSessionInfo | null>(null);
-  const [taskExecutorSummary, setTaskExecutorSummary] = useState<TaskSessionExecutorSummary | null>(null);
-  const [sessionBindings, setSessionBindings] = useState<SessionBindingOwner[]>([]);
+  const [loadedSessionBindings, setLoadedSessionBindings] = useState<SessionBindingOwner[]>([]);
+  const [loadedSessionContext, setLoadedSessionContext] = useState<{
+    source_key: string;
+    task_agent_binding: AgentBinding | null;
+    address_space: ExecutionAddressSpace | null;
+    context_snapshot: SessionContextSnapshot | null;
+    project_session_info: ProjectSessionInfo | null;
+    task_executor_summary: TaskSessionExecutorSummary | null;
+  } | null>(null);
+  const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
+    story_id: string;
+    story: Story | null;
+  } | null>(null);
+  const [isContextPanelOpen, setIsContextPanelOpen] = useState(false);
 
   const routeState = useMemo(
     () => (location.state as SessionNavigationState | null) ?? null,
@@ -792,35 +801,31 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const projectAgentContext = (routeState?.project_agent ?? null) as ProjectSessionAgentContext | null;
   const returnTarget = routeState?.return_to ?? null;
   const routeTaskIdHint = taskContextFromRoute?.task_id ?? taskIdFromQuery;
+  const currentSessionId = propSessionId ?? null;
 
   // ─── session ID 同步 ──────────────────────────────────
 
   useEffect(() => {
-    setCurrentSessionId(propSessionId ?? null);
     setActiveSessionId(propSessionId ?? null);
   }, [propSessionId, setActiveSessionId]);
-
-  // ─── task agent binding 加载 ──────────────────────────
-
-  useEffect(() => {
-    setTaskAgentBinding(taskContextFromRoute?.agent_binding ?? null);
-  }, [taskContextFromRoute?.agent_binding, propSessionId]);
 
   // ─── session bindings（用于 owner 展示） ──────────────
 
   useEffect(() => {
-    if (!currentSessionId) { setSessionBindings([]); return; }
+    if (!currentSessionId) return;
     let cancelled = false;
     void (async () => {
       try {
         const bindings = await fetchSessionBindings(currentSessionId);
-        if (!cancelled) setSessionBindings(bindings);
+        if (!cancelled) setLoadedSessionBindings(bindings);
       } catch {
-        if (!cancelled) setSessionBindings([]);
+        if (!cancelled) setLoadedSessionBindings([]);
       }
     })();
     return () => { cancelled = true; };
   }, [currentSessionId]);
+
+  const sessionBindings = currentSessionId ? loadedSessionBindings : EMPTY_SESSION_BINDINGS;
 
   const sessionOwnerBinding = useMemo(() => {
     if (sessionBindings.length === 0) return null;
@@ -834,6 +839,27 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [sessionBindings]);
   const taskIdHint = routeTaskIdHint || sessionOwnerBinding?.task_id || "";
 
+  const sessionContextSourceKey = useMemo(() => {
+    if (taskIdHint) {
+      return `task:${taskIdHint}`;
+    }
+    if (
+      sessionOwnerBinding?.owner_type === "story"
+      && sessionOwnerBinding.story_id
+      && sessionOwnerBinding.id
+    ) {
+      return `story:${sessionOwnerBinding.story_id}:${sessionOwnerBinding.id}`;
+    }
+    if (
+      sessionOwnerBinding?.owner_type === "project"
+      && sessionOwnerBinding.project_id
+      && sessionOwnerBinding.id
+    ) {
+      return `project:${sessionOwnerBinding.project_id}:${sessionOwnerBinding.id}`;
+    }
+    return null;
+  }, [sessionOwnerBinding, taskIdHint]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -841,18 +867,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       void (async () => {
         const taskSession = await fetchTaskSession(taskIdHint);
         if (cancelled) return;
-        if (!taskSession) {
-          setSessionAddressSpace(null);
-          setSessionContextSnapshot(null);
-          setProjectSessionInfo(null);
-          setTaskExecutorSummary(null);
-          return;
-        }
-        setTaskAgentBinding(taskSession.agent_binding);
-        setSessionAddressSpace(taskSession.address_space ?? null);
-        setSessionContextSnapshot(taskSession.context_snapshot ?? null);
-        setProjectSessionInfo(null);
-        setTaskExecutorSummary(taskSession.context_snapshot?.executor ?? null);
+        setLoadedSessionContext({
+          source_key: `task:${taskIdHint}`,
+          task_agent_binding: taskSession?.agent_binding ?? null,
+          address_space: taskSession?.address_space ?? null,
+          context_snapshot: taskSession?.context_snapshot ?? null,
+          project_session_info: null,
+          task_executor_summary: taskSession?.context_snapshot?.executor ?? null,
+        });
       })();
       return () => { cancelled = true; };
     }
@@ -870,11 +892,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           bindingId,
         );
         if (cancelled) return;
-        setTaskAgentBinding(null);
-        setSessionAddressSpace(storySession?.address_space ?? null);
-        setSessionContextSnapshot(storySession?.context_snapshot ?? null);
-        setProjectSessionInfo(null);
-        setTaskExecutorSummary(storySession?.context_snapshot?.executor ?? null);
+        setLoadedSessionContext({
+          source_key: `story:${storyId}:${bindingId}`,
+          task_agent_binding: null,
+          address_space: storySession?.address_space ?? null,
+          context_snapshot: storySession?.context_snapshot ?? null,
+          project_session_info: null,
+          task_executor_summary: storySession?.context_snapshot?.executor ?? null,
+        });
       })();
       return () => { cancelled = true; };
     }
@@ -889,44 +914,65 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       void (async () => {
         const info = await fetchProjectSessionInfo(projectId, bindingId);
         if (cancelled) return;
-        setTaskAgentBinding(null);
-        setSessionContextSnapshot(null);
-        setProjectSessionInfo(info);
-        setSessionAddressSpace(info?.address_space ?? null);
-        setTaskExecutorSummary(info?.context_snapshot?.executor ?? null);
+        setLoadedSessionContext({
+          source_key: `project:${projectId}:${bindingId}`,
+          task_agent_binding: null,
+          address_space: info?.address_space ?? null,
+          context_snapshot: null,
+          project_session_info: info,
+          task_executor_summary: info?.context_snapshot?.executor ?? null,
+        });
       })();
       return () => { cancelled = true; };
     }
 
-    setTaskAgentBinding(null);
-    setSessionAddressSpace(null);
-    setSessionContextSnapshot(null);
-    setProjectSessionInfo(null);
-    setTaskExecutorSummary(null);
     return () => { cancelled = true; };
   }, [fetchProjectSessionInfo, fetchStorySessionInfo, fetchTaskSession, sessionOwnerBinding, taskIdHint]);
+
+  const activeSessionContext = loadedSessionContext?.source_key === sessionContextSourceKey
+    ? loadedSessionContext
+    : null;
+  const taskAgentBinding = taskContextFromRoute?.agent_binding
+    ?? activeSessionContext?.task_agent_binding
+    ?? null;
+  const sessionAddressSpace = activeSessionContext?.address_space ?? null;
+  const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
+  const projectSessionInfo = activeSessionContext?.project_session_info ?? null;
+  const taskExecutorSummary = activeSessionContext?.task_executor_summary ?? null;
 
   // 按需加载关联 Story 的上下文信息
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const stories = useStoryStore((s) => s.stories);
   const ownerStoryId = sessionOwnerBinding?.story_id ?? null;
-  const [ownerStory, setOwnerStory] = useState<Story | null>(null);
-  const [isContextPanelOpen, setIsContextPanelOpen] = useState(false);
   const ownerProjectName = sessionOwnerBinding?.owner_type === "project"
     ? sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id
     : "";
 
   useEffect(() => {
-    if (!ownerStoryId) { setOwnerStory(null); return; }
-    const cached = stories.find((s) => s.id === ownerStoryId);
-    if (cached) { setOwnerStory(cached); return; }
+    const cached = ownerStoryId ? stories.find((story) => story.id === ownerStoryId) : null;
+    if (!ownerStoryId || cached) return;
     let cancelled = false;
     void (async () => {
       const result = await fetchStoryById(ownerStoryId);
-      if (!cancelled) setOwnerStory(result);
+      if (!cancelled) {
+        setLoadedOwnerStory({
+          story_id: ownerStoryId,
+          story: result,
+        });
+      }
     })();
     return () => { cancelled = true; };
   }, [ownerStoryId, stories, fetchStoryById]);
+
+  const ownerStory = useMemo(() => {
+    if (!ownerStoryId) return null;
+    const cached = stories.find((story) => story.id === ownerStoryId);
+    if (cached) return cached;
+    if (loadedOwnerStory?.story_id === ownerStoryId) {
+      return loadedOwnerStory.story;
+    }
+    return null;
+  }, [loadedOwnerStory, ownerStoryId, stories]);
 
   const effectiveReturnTarget = useMemo(() => {
     if (returnTarget) return returnTarget;
@@ -958,7 +1004,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [createNew]);
 
   const handleSessionIdChange = useCallback((id: string) => {
-    setCurrentSessionId(id);
     setActiveSessionId(id);
     navigate(`/session/${id}`, { replace: true });
   }, [navigate, setActiveSessionId]);
@@ -968,7 +1013,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [reloadSessions]);
 
   const handleNewSession = useCallback(() => {
-    setCurrentSessionId(null);
     setActiveSessionId(null);
     navigate("/session", { replace: true });
   }, [navigate, setActiveSessionId]);
@@ -1053,7 +1097,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           {hasSession && (
             <>
               <span className="hidden rounded-full border border-border bg-secondary px-2.5 py-1 text-xs font-mono text-muted-foreground lg:inline">
-                {currentSessionId!.slice(0, 12)}…
+                {currentSessionId.slice(0, 12)}…
               </span>
               <button type="button" onClick={() => void handleCopySessionId()} className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="复制 Session ID">
                 复制

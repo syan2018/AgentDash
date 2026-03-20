@@ -41,9 +41,11 @@ import {
   DisabledContainerIdsEditor,
   MountPolicyEditor,
   SessionCompositionEditor,
+} from "../components/context-config-editor";
+import {
   createDefaultMountPolicy,
   createDefaultSessionComposition,
-} from "../components/context-config-editor";
+} from "../components/context-config-defaults";
 
 // Story 优先级选项
 const priorityOptions: { value: StoryPriority; label: string }[] = [
@@ -129,10 +131,6 @@ function OptionalMountPolicyOverrideEditor({
 }) {
   const [isCreating, setIsCreating] = useState(false);
 
-  useEffect(() => {
-    if (value) setIsCreating(false);
-  }, [value]);
-
   if (!value && !isCreating) {
     return (
       <div className="space-y-2">
@@ -161,7 +159,11 @@ function OptionalMountPolicyOverrideEditor({
         {value ? (
           <button
             type="button"
-            onClick={() => void onClear()}
+            onClick={() => {
+              void onClear().then(() => {
+                setIsCreating(false);
+              });
+            }}
             disabled={isSaving}
             className="agentdash-button-secondary"
           >
@@ -195,10 +197,6 @@ function OptionalSessionCompositionOverrideEditor({
 }) {
   const [isCreating, setIsCreating] = useState(false);
 
-  useEffect(() => {
-    if (value) setIsCreating(false);
-  }, [value]);
-
   if (!value && !isCreating) {
     return (
       <div className="space-y-2">
@@ -227,7 +225,11 @@ function OptionalSessionCompositionOverrideEditor({
         {value ? (
           <button
             type="button"
-            onClick={() => void onClear()}
+            onClick={() => {
+              void onClear().then(() => {
+                setIsCreating(false);
+              });
+            }}
             disabled={isSaving}
             className="agentdash-button-secondary"
           >
@@ -1502,6 +1504,7 @@ export function StoryPage() {
       <TaskDrawer
         key={selectedTask?.id ?? "no-task-selected"}
         task={selectedTask}
+        projectId={story.project_id}
         workspaces={workspaces}
         projectConfig={currentProject?.config}
         onTaskUpdated={handleTaskUpdated}

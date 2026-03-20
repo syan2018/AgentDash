@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/tasks/03-20-symphony-flow-long-term-tracking/trellis-dev-workflow-golden-path.md", "reason": "黄金路径阶段与目标对象定义"}
+{"file": ".trellis/tasks/03-20-symphony-flow-long-term-tracking/execution-roadmap.md", "reason": "黄金路径总执行路线"}
+{"file": "crates/agentdash-api/src/routes/project_sessions.rs", "reason": "Project Session 已有承接能力"}
+{"file": "crates/agentdash-api/src/routes/story_sessions.rs", "reason": "Story Session 已有承接能力"}
+{"file": "crates/agentdash-api/src/routes/task_execution.rs", "reason": "Task Session 与执行入口现状"}

@@ -1,0 +1,31 @@
+{
+  "id": "workflow-definition-and-assignment-model",
+  "name": "workflow-definition-and-assignment-model",
+  "title": "Workflow 定义与分配模型",
+  "description": "定义 WorkflowDefinition / WorkflowAssignment 的最小领域模型与接口边界。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-20",
+  "completedAt": "2026-03-21",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 4,
+  "next_action": [],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/tasks/03-20-symphony-flow-long-term-tracking/execution-roadmap.md",
+    ".trellis/tasks/03-20-symphony-flow-long-term-tracking/trellis-dev-workflow-golden-path.md",
+    "crates/agentdash-domain/src/project/value_objects.rs",
+    "crates/agentdash-domain/src/session_binding/entity.rs",
+    "crates/agentdash-domain/src/story/value_objects.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs"
+  ],
+  "notes": "已完成 workflow definition / assignment / run 主干接线，并已补齐前端接入、真实 Playwright 验证与模块说明文档。当前该 task 可视为完成。"
+}

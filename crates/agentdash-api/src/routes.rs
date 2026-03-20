@@ -11,6 +11,7 @@ pub mod settings;
 pub mod stories;
 pub mod story_sessions;
 pub mod task_execution;
+pub mod workflows;
 pub mod workspace_files;
 pub mod workspaces;
 
@@ -62,6 +63,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{id}/sessions/{binding_id}",
             get(project_sessions::get_project_session),
+        )
+        .route(
+            "/projects/{id}/workflow-assignments",
+            get(workflows::list_project_workflow_assignments)
+                .post(workflows::create_project_workflow_assignment),
         )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(
@@ -116,6 +122,26 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/tasks/{id}/continue", post(task_execution::continue_task))
         .route("/tasks/{id}/cancel", post(task_execution::cancel_task))
         .route("/tasks/{id}/session", get(task_execution::get_task_session))
+        // Workflow
+        .route("/workflows", get(workflows::list_workflows))
+        .route(
+            "/workflows/bootstrap/trellis-dev",
+            post(workflows::bootstrap_trellis_workflow),
+        )
+        .route("/workflows/runs", post(workflows::start_workflow_run))
+        .route("/workflow-runs/{id}", get(workflows::get_workflow_run))
+        .route(
+            "/workflow-runs/targets/{target_kind}/{target_id}",
+            get(workflows::list_workflow_runs_by_target),
+        )
+        .route(
+            "/workflow-runs/{id}/phases/{phase_key}/activate",
+            post(workflows::activate_workflow_phase),
+        )
+        .route(
+            "/workflow-runs/{id}/phases/{phase_key}/complete",
+            post(workflows::complete_workflow_phase),
+        )
         // Backend
         .route(
             "/backends",

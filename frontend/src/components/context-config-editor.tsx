@@ -1,22 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type {
-  ContextContainerCapability,
   ContextContainerDefinition,
   MountDerivationPolicy,
   SessionComposition,
   SessionRequiredContextBlock,
 } from "../types";
-
-export const CONTEXT_CAPABILITY_OPTIONS: Array<{
-  value: ContextContainerCapability;
-  label: string;
-}> = [
-  { value: "read", label: "读" },
-  { value: "write", label: "写" },
-  { value: "list", label: "列" },
-  { value: "search", label: "搜" },
-  { value: "exec", label: "执行" },
-];
+import { CONTEXT_CAPABILITY_OPTIONS } from "./context-config-defaults";
 
 const READONLY_PROVIDER_HINT = "当前 provider 首轮仅支持只读能力，write / exec / default_write 会被禁用。";
 
@@ -93,22 +82,6 @@ function createDefaultContainer(): ContextContainerDefinition {
   };
 }
 
-export function createDefaultMountPolicy(): MountDerivationPolicy {
-  return {
-    include_local_workspace: true,
-    local_workspace_capabilities: [],
-  };
-}
-
-export function createDefaultSessionComposition(): SessionComposition {
-  return {
-    persona_label: null,
-    persona_prompt: null,
-    workflow_steps: [],
-    required_context_blocks: [],
-  };
-}
-
 function parseAgentTypeList(value: string): string[] {
   const seen = new Set<string>();
   const parsed: string[] = [];
@@ -176,11 +149,26 @@ export function ContextContainersEditor({
   emptyText = "暂无容器",
   onSave,
 }: ContextContainersEditorProps) {
-  const [draft, setDraft] = useState<ContextContainerDefinition[]>(() => value.map(cloneContainer));
+  return (
+    <ContextContainersEditorForm
+      key={JSON.stringify(value)}
+      value={value}
+      isSaving={isSaving}
+      addLabel={addLabel}
+      emptyText={emptyText}
+      onSave={onSave}
+    />
+  );
+}
 
-  useEffect(() => {
-    setDraft(value.map(cloneContainer));
-  }, [value]);
+function ContextContainersEditorForm({
+  value,
+  isSaving = false,
+  addLabel = "添加容器",
+  emptyText = "暂无容器",
+  onSave,
+}: ContextContainersEditorProps) {
+  const [draft, setDraft] = useState<ContextContainerDefinition[]>(() => value.map(cloneContainer));
 
   const isDirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(value),
@@ -613,11 +601,27 @@ export function DisabledContainerIdsEditor({
   isSaving = false,
   onSave,
 }: DisabledContainerIdsEditorProps) {
-  const [draft, setDraft] = useState<string[]>(() => [...value]);
+  return (
+    <DisabledContainerIdsEditorForm
+      key={JSON.stringify({
+        value,
+        available_ids: availableContainers.map((container) => container.id),
+      })}
+      value={value}
+      availableContainers={availableContainers}
+      isSaving={isSaving}
+      onSave={onSave}
+    />
+  );
+}
 
-  useEffect(() => {
-    setDraft([...value]);
-  }, [value]);
+function DisabledContainerIdsEditorForm({
+  value,
+  availableContainers,
+  isSaving = false,
+  onSave,
+}: DisabledContainerIdsEditorProps) {
+  const [draft, setDraft] = useState<string[]>(() => [...value]);
 
   const isDirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(value),
@@ -713,11 +717,22 @@ export function MountPolicyEditor({
   isSaving = false,
   onSave,
 }: MountPolicyEditorProps) {
-  const [draft, setDraft] = useState<MountDerivationPolicy>(() => cloneMountPolicy(value));
+  return (
+    <MountPolicyEditorForm
+      key={JSON.stringify(value)}
+      value={value}
+      isSaving={isSaving}
+      onSave={onSave}
+    />
+  );
+}
 
-  useEffect(() => {
-    setDraft(cloneMountPolicy(value));
-  }, [value]);
+function MountPolicyEditorForm({
+  value,
+  isSaving = false,
+  onSave,
+}: MountPolicyEditorProps) {
+  const [draft, setDraft] = useState<MountDerivationPolicy>(() => cloneMountPolicy(value));
 
   const isDirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(value),
@@ -809,13 +824,23 @@ export function SessionCompositionEditor({
   isSaving = false,
   onSave,
 }: SessionCompositionEditorProps) {
+  return (
+    <SessionCompositionEditorForm
+      key={JSON.stringify(value)}
+      value={value}
+      isSaving={isSaving}
+      onSave={onSave}
+    />
+  );
+}
+
+function SessionCompositionEditorForm({
+  value,
+  isSaving = false,
+  onSave,
+}: SessionCompositionEditorProps) {
   const [draft, setDraft] = useState<SessionComposition>(() => cloneSessionComposition(value));
   const [workflowDraft, setWorkflowDraft] = useState(() => joinWorkflowSteps(value.workflow_steps));
-
-  useEffect(() => {
-    setDraft(cloneSessionComposition(value));
-    setWorkflowDraft(joinWorkflowSteps(value.workflow_steps));
-  }, [value]);
 
   const isDirty = useMemo(
     () =>

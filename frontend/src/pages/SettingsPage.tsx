@@ -15,10 +15,6 @@ function readVal(settings: { key: string; value: unknown }[], key: string, fallb
   return String(entry.value);
 }
 
-function isMasked(settings: { key: string; masked: boolean }[], key: string): boolean {
-  return settings.find((s) => s.key === key)?.masked ?? false;
-}
-
 // ---------------------------------------------------------------------------
 // Toast
 // ---------------------------------------------------------------------------
@@ -86,23 +82,49 @@ function LlmSection({
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
-  const [apiKey, setApiKey] = useState("");
-  const [apiKeyTouched, setApiKeyTouched] = useState(false);
-  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
-  const [model, setModel] = useState("gpt-4o");
-  const [wireApi, setWireApi] = useState<"responses" | "completions">("responses");
+  const seed = {
+    apiKey: readVal(settings, "llm.openai.api_key"),
+    baseUrl: readVal(settings, "llm.openai.base_url", "https://api.openai.com/v1"),
+    model: readVal(settings, "llm.openai.default_model", "gpt-4o"),
+    wireApi: (() => {
+      const wire = readVal(settings, "llm.openai.wire_api", "responses");
+      return wire === "completions" || wire === "responses" ? wire : "responses";
+    })() as "responses" | "completions",
+  };
 
-  // 从 store 同步初始值
-  useEffect(() => {
-    const maskedKey = isMasked(settings, "llm.openai.api_key");
-    if (!apiKeyTouched) {
-      setApiKey(maskedKey ? readVal(settings, "llm.openai.api_key") : readVal(settings, "llm.openai.api_key"));
-    }
-    setBaseUrl(readVal(settings, "llm.openai.base_url", "https://api.openai.com/v1"));
-    setModel(readVal(settings, "llm.openai.default_model", "gpt-4o"));
-    const wire = readVal(settings, "llm.openai.wire_api", "responses");
-    if (wire === "completions" || wire === "responses") setWireApi(wire);
-  }, [settings, apiKeyTouched]);
+  return (
+    <LlmSectionForm
+      key={JSON.stringify(seed)}
+      initialApiKey={seed.apiKey}
+      initialBaseUrl={seed.baseUrl}
+      initialModel={seed.model}
+      initialWireApi={seed.wireApi}
+      saving={saving}
+      onSave={onSave}
+    />
+  );
+}
+
+function LlmSectionForm({
+  initialApiKey,
+  initialBaseUrl,
+  initialModel,
+  initialWireApi,
+  saving,
+  onSave,
+}: {
+  initialApiKey: string;
+  initialBaseUrl: string;
+  initialModel: string;
+  initialWireApi: "responses" | "completions";
+  saving: boolean;
+  onSave: (updates: SettingUpdate[]) => void;
+}) {
+  const [apiKey, setApiKey] = useState(initialApiKey);
+  const [apiKeyTouched, setApiKeyTouched] = useState(false);
+  const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
+  const [model, setModel] = useState(initialModel);
+  const [wireApi, setWireApi] = useState<"responses" | "completions">(initialWireApi);
 
   const handleSave = () => {
     const updates: SettingUpdate[] = [
@@ -188,15 +210,40 @@ function AgentSection({
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [temperature, setTemperature] = useState("0.7");
-  const [maxTurns, setMaxTurns] = useState("25");
+  const seed = {
+    systemPrompt: readVal(settings, "agent.pi.system_prompt"),
+    temperature: readVal(settings, "agent.pi.temperature", "0.7"),
+    maxTurns: readVal(settings, "agent.pi.max_turns", "25"),
+  };
 
-  useEffect(() => {
-    setSystemPrompt(readVal(settings, "agent.pi.system_prompt"));
-    setTemperature(readVal(settings, "agent.pi.temperature", "0.7"));
-    setMaxTurns(readVal(settings, "agent.pi.max_turns", "25"));
-  }, [settings]);
+  return (
+    <AgentSectionForm
+      key={JSON.stringify(seed)}
+      initialSystemPrompt={seed.systemPrompt}
+      initialTemperature={seed.temperature}
+      initialMaxTurns={seed.maxTurns}
+      saving={saving}
+      onSave={onSave}
+    />
+  );
+}
+
+function AgentSectionForm({
+  initialSystemPrompt,
+  initialTemperature,
+  initialMaxTurns,
+  saving,
+  onSave,
+}: {
+  initialSystemPrompt: string;
+  initialTemperature: string;
+  initialMaxTurns: string;
+  saving: boolean;
+  onSave: (updates: SettingUpdate[]) => void;
+}) {
+  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
+  const [temperature, setTemperature] = useState(initialTemperature);
+  const [maxTurns, setMaxTurns] = useState(initialMaxTurns);
 
   const handleSave = () => {
     onSave([
@@ -259,11 +306,26 @@ function ExecutorSection({
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
-  const [executor, setExecutor] = useState("");
+  return (
+    <ExecutorSectionForm
+      key={readVal(settings, "executor.default.executor")}
+      initialExecutor={readVal(settings, "executor.default.executor")}
+      saving={saving}
+      onSave={onSave}
+    />
+  );
+}
 
-  useEffect(() => {
-    setExecutor(readVal(settings, "executor.default.executor"));
-  }, [settings]);
+function ExecutorSectionForm({
+  initialExecutor,
+  saving,
+  onSave,
+}: {
+  initialExecutor: string;
+  saving: boolean;
+  onSave: (updates: SettingUpdate[]) => void;
+}) {
+  const [executor, setExecutor] = useState(initialExecutor);
 
   const handleSave = () => {
     onSave([{ key: "executor.default.executor", value: executor }]);

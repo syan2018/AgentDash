@@ -1,0 +1,4 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": "crates/agentdash-domain/src/project/value_objects.rs", "reason": "Project 现有配置模型与 workflow 收纳边界"}
+{"file": ".trellis/tasks/03-20-symphony-flow-long-term-tracking/execution-roadmap.md", "reason": "workflow 建模阶段路线"}

@@ -1,0 +1,32 @@
+{
+  "id": "trellis-workflow-platformization",
+  "name": "trellis-workflow-platformization",
+  "title": "Trellis Workflow 平台化映射",
+  "description": "把 Trellis 现有 workflow 元素映射为 AgentDash 平台对象、phase 规则和 artifact 契约。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-20",
+  "completedAt": "2026-03-21",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 4,
+  "next_action": [],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/workflow.md",
+    ".trellis/tasks/03-19-symphony-case-workflow-scaffold-closure/implementation-strategy.md",
+    ".trellis/tasks/03-20-symphony-flow-long-term-tracking/execution-roadmap.md",
+    ".trellis/tasks/03-20-trellis-workflow-platformization/platform-mapping.md",
+    "crates/agentdash-application/src/session_plan.rs",
+    "crates/agentdash-domain/src/session_binding/entity.rs",
+    "frontend/src/pages/SessionPage.tsx"
+  ],
+  "notes": "平台映射文档已完成，并已被后续 definition / run / frontend 接线实现验证。当前该设计任务可视为完成。"
+}

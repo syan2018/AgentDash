@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": "crates/agentdash-application/src/session_plan.rs", "reason": "现有 session phase/context 注入模式"}
+{"file": ".trellis/tasks/03-20-symphony-flow-long-term-tracking/execution-roadmap.md", "reason": "第一阶段执行路线与边界"}
+{"file": ".trellis/tasks/03-20-trellis-workflow-platformization/platform-mapping.md", "reason": "Trellis 元素到平台对象的正式映射"}

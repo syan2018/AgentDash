@@ -17,13 +17,16 @@ use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
+use agentdash_domain::workflow::{
+    WorkflowAssignmentRepository, WorkflowDefinitionRepository, WorkflowRunRepository,
+};
 use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::{AgentConnector, ExecutorHub};
 use agentdash_infrastructure::{
     SqliteBackendRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
     SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
-    SqliteWorkspaceRepository,
+    SqliteWorkflowRepository, SqliteWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceRegistry;
 
@@ -37,6 +40,9 @@ pub struct RepositorySet {
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
+    pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
+    pub workflow_run_repo: Arc<dyn WorkflowRunRepository>,
 }
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
@@ -124,8 +130,14 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        let settings_repo = Arc::new(SqliteSettingsRepository::new(pool));
+        let settings_repo = Arc::new(SqliteSettingsRepository::new(pool.clone()));
         settings_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let workflow_repo = Arc::new(SqliteWorkflowRepository::new(pool));
+        workflow_repo
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -178,6 +190,9 @@ impl AppState {
                 session_binding_repo,
                 backend_repo,
                 settings_repo,
+                workflow_definition_repo: workflow_repo.clone(),
+                workflow_assignment_repo: workflow_repo.clone(),
+                workflow_run_repo: workflow_repo,
             },
             services: ServiceSet {
                 executor_hub,

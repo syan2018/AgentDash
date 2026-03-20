@@ -4,6 +4,7 @@ pub mod project;
 pub mod session_plan;
 pub mod story;
 pub mod task;
+pub mod workflow;
 
 pub use task::execution as task_execution;
 pub use task::lock as task_lock;

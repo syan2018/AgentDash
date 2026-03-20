@@ -39,6 +39,8 @@
   "relatedFiles": [
     ".trellis/workflow.md",
     ".trellis/spec/backend/address-space-access.md",
+    ".trellis/tasks/03-20-symphony-flow-long-term-tracking/execution-roadmap.md",
+    ".trellis/tasks/03-20-symphony-flow-long-term-tracking/trellis-dev-workflow-golden-path.md",
     "docs/modules/04-orchestration.md",
     "docs/modules/03-workspace.md",
     "docs/modules/05-execution.md",
@@ -50,5 +52,5 @@
     "crates/agentdash-domain/src/story/value_objects.rs",
     "crates/agentdash-domain/src/task/value_objects.rs"
   ],
-  "notes": "这是独立于“通用工作流脚手架讨论”的长期目标跟踪 task。它聚焦 AgentDash 后续如何逐步具备承载 Symphony 类长期自动化流程的能力，但不要求复刻其外部系统集成或产品表面形态。当前讨论沉淀的核心结论包括：Workflow 应作为全局维护、团队共享、可被 Project 收纳与分发的资产；AgentDash 不只是任务管理器，也应作为团队上下文平台；近期最值得先跑通的第一条真实 workflow 不是 Symphony issue loop，而是 Trellis Dev Workflow；长期则需要逐步补齐 Workflow、Run、Automation Control Plane、Managed Workspace Lifecycle、Story Owner Session 与 workflow 级 observability。"
+  "notes": "这是独立于“通用工作流脚手架讨论”的长期目标跟踪 task。它聚焦 AgentDash 后续如何逐步具备承载 Symphony 类长期自动化流程的能力，但不要求复刻其外部系统集成或产品表面形态。当前讨论沉淀的核心结论包括：Workflow 应作为全局维护、团队共享、可被 Project 收纳与分发的资产；AgentDash 不只是任务管理器，也应作为团队上下文平台；近期最值得先跑通的第一条真实 workflow 不是 Symphony issue loop，而是 Trellis Dev Workflow；当前已补充 trellis-dev-workflow-golden-path.md 与 execution-roadmap.md，并拆出第一批 3 个实施 task。"
 }

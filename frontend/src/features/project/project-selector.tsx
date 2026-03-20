@@ -19,9 +19,12 @@ import {
   ContextContainersEditor,
   MountPolicyEditor,
   SessionCompositionEditor,
+} from "../../components/context-config-editor";
+import {
   createDefaultMountPolicy,
   createDefaultSessionComposition,
-} from "../../components/context-config-editor";
+} from "../../components/context-config-defaults";
+import { ProjectWorkflowPanel } from "../workflow/project-workflow-panel";
 
 interface ProjectSelectorProps {
   projects: Project[];
@@ -172,7 +175,7 @@ function ProjectContextTab({ project, onError }: { project: Project; onError: (m
   );
 }
 
-type ProjectDetailTab = "base" | "config" | "context" | "workspaces";
+type ProjectDetailTab = "base" | "config" | "context" | "workflow" | "workspaces";
 
 interface ProjectDetailDrawerProps {
   open: boolean;
@@ -350,6 +353,17 @@ function ProjectDetailDrawer({
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab("workflow")}
+              className={`rounded-t-[10px] px-5 py-3 text-sm transition-colors ${
+                activeTab === "workflow"
+                  ? "border border-border border-b-background bg-background font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Workflow
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab("workspaces")}
               className={`rounded-t-[10px] px-5 py-3 text-sm transition-colors ${
                 activeTab === "workspaces"
@@ -443,6 +457,12 @@ function ProjectDetailDrawer({
               project={project}
               onError={setFormError}
             />
+          )}
+
+          {activeTab === "workflow" && (
+            <DetailSection title="Workflow 平台">
+              <ProjectWorkflowPanel projectId={project.id} />
+            </DetailSection>
           )}
 
           {activeTab === "workspaces" && (

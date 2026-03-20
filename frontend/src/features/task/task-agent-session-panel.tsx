@@ -131,8 +131,6 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     return () => { cancelled = true; };
   }, [hasSession, refreshTask, task.id]);
 
-  useEffect(() => { setCancelError(null); }, [task.id]);
-
   const toolStats = useMemo(() => countToolStats(task.artifacts), [task.artifacts]);
   const defaultPrompt = useMemo(() => buildDefaultPrompt(task), [task]);
 

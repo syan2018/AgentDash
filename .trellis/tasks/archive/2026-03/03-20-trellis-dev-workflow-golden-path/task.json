@@ -1,0 +1,32 @@
+{
+  "id": "trellis-dev-workflow-golden-path",
+  "name": "trellis-dev-workflow-golden-path",
+  "title": "Trellis Dev Workflow 黄金路径",
+  "description": "基于前置建模，跑通 AgentDash 第一条真实 workflow：Trellis Dev Workflow。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "productization",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-20",
+  "completedAt": "2026-03-21",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 4,
+  "next_action": [],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/tasks/03-20-symphony-flow-long-term-tracking/execution-roadmap.md",
+    ".trellis/tasks/03-20-symphony-flow-long-term-tracking/trellis-dev-workflow-golden-path.md",
+    "crates/agentdash-application/src/session_plan.rs",
+    "crates/agentdash-api/src/routes/project_sessions.rs",
+    "crates/agentdash-api/src/routes/story_sessions.rs",
+    "crates/agentdash-api/src/routes/task_execution.rs",
+    "frontend/src/pages/SessionPage.tsx"
+  ],
+  "notes": "已完成 Trellis Dev Workflow 的最小黄金路径：Project 默认绑定、Task run 启动、phase 推进、session binding 挂接、record artifact 展示，并已通过 Playwright 真实页面验证。"
+}

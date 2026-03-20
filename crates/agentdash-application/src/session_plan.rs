@@ -763,7 +763,12 @@ mod tests {
         assert_eq!(summary.tool_names, vec!["mcp_tools".to_string()]);
         assert!(!summary.tool_names.iter().any(|tool| tool == "read_file"));
         assert!(!summary.tool_names.iter().any(|tool| tool == "write_file"));
-        assert!(!summary.tool_names.iter().any(|tool| tool == "list_directory"));
+        assert!(
+            !summary
+                .tool_names
+                .iter()
+                .any(|tool| tool == "list_directory")
+        );
         assert!(!summary.tool_names.iter().any(|tool| tool == "search"));
         assert!(!summary.tool_names.iter().any(|tool| tool == "shell"));
         assert!(summary.markdown.contains("resolved: no"));

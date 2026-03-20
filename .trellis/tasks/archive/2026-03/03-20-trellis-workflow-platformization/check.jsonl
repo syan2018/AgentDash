@@ -1,0 +1,3 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".trellis/tasks/03-20-trellis-workflow-platformization/platform-mapping.md", "reason": "检查映射是否完整覆盖 phase/object/artifact"}

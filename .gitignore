@@ -44,3 +44,7 @@ __pycache__/
 
 test-results/
 playwright-report/
+
+# 本地调试与外部参考仓产物
+output/
+references/codex/

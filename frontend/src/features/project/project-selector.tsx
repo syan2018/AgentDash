@@ -1,5 +1,10 @@
 import { useState } from "react";
-import type { BackendConfig, Project, ProjectConfig, Workspace } from "../../types";
+import type {
+  BackendConfig,
+  Project,
+  ProjectConfig,
+  Workspace,
+} from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -10,6 +15,13 @@ import {
   DetailPanel,
   DetailSection,
 } from "../../components/ui/detail-panel";
+import {
+  ContextContainersEditor,
+  MountPolicyEditor,
+  SessionCompositionEditor,
+  createDefaultMountPolicy,
+  createDefaultSessionComposition,
+} from "../../components/context-config-editor";
 
 interface ProjectSelectorProps {
   projects: Project[];
@@ -90,7 +102,77 @@ function ProjectCreateDrawer({ open, backends, onClose }: ProjectCreateDrawerPro
   );
 }
 
-type ProjectDetailTab = "base" | "config" | "workspaces";
+// ─── 上下文编排 Tab ──────────────────────────────────
+
+function ProjectContextTab({ project, onError }: { project: Project; onError: (msg: string | null) => void }) {
+  const { updateProject } = useProjectStore();
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const containers = project.config.context_containers ?? [];
+  const mountPolicy = project.config.mount_policy ?? createDefaultMountPolicy();
+  const composition = project.config.session_composition ?? createDefaultSessionComposition();
+
+  const persistProjectContext = async (
+    payload: Parameters<typeof updateProject>[1],
+    successMessage: string,
+  ) => {
+    setIsSaving(true);
+    setMessage(null);
+    onError(null);
+    try {
+      const result = await updateProject(project.id, payload);
+      if (!result) {
+        onError("保存失败");
+        return;
+      }
+      setMessage(successMessage);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <DetailSection title="上下文容器">
+        <p className="text-xs text-muted-foreground">
+          这里维护 Project 默认层：容器 provider、capabilities、session exposure 与 allowed_agent_types 都从这里起步。
+        </p>
+        <ContextContainersEditor
+          value={containers}
+          isSaving={isSaving}
+          emptyText="暂无项目级容器"
+          onSave={(next) => persistProjectContext({ context_containers: next }, "已保存 Project 容器")}
+        />
+      </DetailSection>
+
+      <DetailSection title="挂载策略">
+        <p className="text-xs text-muted-foreground">
+          这部分决定默认是否挂本地 workspace，以及 workspace mount 能暴露哪些能力。
+        </p>
+        <MountPolicyEditor
+          value={mountPolicy}
+          isSaving={isSaving}
+          onSave={(next) => persistProjectContext({ mount_policy: next }, "已保存挂载策略")}
+        />
+      </DetailSection>
+
+      <DetailSection title="会话编排默认配置">
+        <p className="text-xs text-muted-foreground">
+          Persona、workflow 与 required_context_blocks 会作为默认会话编排，后续允许 Story 只覆盖其中一部分。
+        </p>
+        <SessionCompositionEditor
+          value={composition}
+          isSaving={isSaving}
+          onSave={(next) => persistProjectContext({ session_composition: next }, "已保存默认会话编排")}
+        />
+      </DetailSection>
+
+      {message && <p className="text-xs text-emerald-600">{message}</p>}
+    </div>
+  );
+}
+
+type ProjectDetailTab = "base" | "config" | "context" | "workspaces";
 
 interface ProjectDetailDrawerProps {
   open: boolean;
@@ -187,6 +269,9 @@ function ProjectDetailDrawer({
       default_agent_type: defaultAgentType.trim() || null,
       default_workspace_id: defaultWorkspaceId || null,
       agent_presets: parsedPresets,
+      context_containers: project.config.context_containers ?? [],
+      mount_policy: project.config.mount_policy ?? { include_local_workspace: true, local_workspace_capabilities: [] },
+      session_composition: project.config.session_composition ?? { workflow_steps: [], required_context_blocks: [] },
     });
     if (!saved) return;
 
@@ -251,6 +336,17 @@ function ProjectDetailDrawer({
               }`}
             >
               项目配置
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("context")}
+              className={`rounded-t-[10px] px-5 py-3 text-sm transition-colors ${
+                activeTab === "context"
+                  ? "border border-border border-b-background bg-background font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              上下文编排
             </button>
             <button
               type="button"
@@ -340,6 +436,13 @@ function ProjectDetailDrawer({
                 </button>
               </div>
             </DetailSection>
+          )}
+
+          {activeTab === "context" && (
+            <ProjectContextTab
+              project={project}
+              onError={setFormError}
+            />
           )}
 
           {activeTab === "workspaces" && (

@@ -7,6 +7,12 @@ import type {
   StateChange,
   SessionBinding,
   ContextSourceRef,
+  ContextContainerDefinition,
+  ExecutionAddressSpace,
+  MountDerivationPolicy,
+  SessionComposition,
+  StorySessionInfo,
+  TaskSessionContextSnapshot,
 } from '../types';
 import { api } from '../api/client';
 
@@ -25,6 +31,8 @@ export interface TaskSessionInfo {
   agent_binding: AgentBinding;
   session_title: string | null;
   last_activity: number | null;
+  address_space: ExecutionAddressSpace | null;
+  context_snapshot: TaskSessionContextSnapshot | null;
 }
 
 export interface CreateStorySessionInput {
@@ -67,6 +75,12 @@ interface StoryState {
       story_type?: Story["story_type"];
       tags?: string[];
       context_source_refs?: ContextSourceRef[];
+      context_containers?: ContextContainerDefinition[];
+      disabled_container_ids?: string[];
+      mount_policy_override?: MountDerivationPolicy | null;
+      clear_mount_policy_override?: boolean;
+      session_composition_override?: SessionComposition | null;
+      clear_session_composition_override?: boolean;
     },
   ) => Promise<Story | null>;
   deleteStory: (storyId: string) => Promise<void>;
@@ -98,6 +112,7 @@ interface StoryState {
   cancelTaskExecution: (taskId: string) => Promise<Task | null>;
   refreshTask: (taskId: string) => Promise<Task | null>;
   fetchTaskSession: (taskId: string) => Promise<TaskSessionInfo | null>;
+  fetchStorySessionInfo: (storyId: string, bindingId: string) => Promise<StorySessionInfo | null>;
   deleteTask: (taskId: string, storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
@@ -202,7 +217,16 @@ const toBackendTaskStatus = (status: Task["status"]): string => {
   }
 };
 
-const defaultContext: StoryContext = { prd_doc: null, spec_refs: [], resource_list: [], source_refs: [] };
+const defaultContext: StoryContext = {
+  prd_doc: null,
+  spec_refs: [],
+  resource_list: [],
+  source_refs: [],
+  context_containers: [],
+  disabled_container_ids: [],
+  mount_policy_override: null,
+  session_composition_override: null,
+};
 
 const normalizeStoryPriority = (value: string): Story['priority'] => {
   switch (value) {
@@ -252,6 +276,14 @@ const mapStory = (raw: Record<string, unknown>): Story => {
         spec_refs: Array.isArray(ctx.spec_refs) ? ctx.spec_refs as string[] : [],
         resource_list: Array.isArray(ctx.resource_list) ? ctx.resource_list as StoryContext['resource_list'] : [],
         source_refs: Array.isArray(ctx.source_refs) ? ctx.source_refs as ContextSourceRef[] : [],
+        context_containers: Array.isArray(ctx.context_containers)
+          ? ctx.context_containers as ContextContainerDefinition[]
+          : [],
+        disabled_container_ids: Array.isArray(ctx.disabled_container_ids)
+          ? ctx.disabled_container_ids as string[]
+          : [],
+        mount_policy_override: (ctx.mount_policy_override as MountDerivationPolicy) ?? null,
+        session_composition_override: (ctx.session_composition_override as SessionComposition) ?? null,
       };
     }
   }
@@ -610,6 +642,25 @@ export const useStoryStore = create<StoryState>((set) => ({
         agent_binding: mapAgentBinding(raw.agent_binding),
         session_title: raw.session_title ? String(raw.session_title) : null,
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
+        address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
+        context_snapshot: (raw.context_snapshot as TaskSessionContextSnapshot) ?? null,
+      };
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  fetchStorySessionInfo: async (storyId, bindingId) => {
+    try {
+      const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}/sessions/${bindingId}`);
+      return {
+        binding_id: String(raw.binding_id ?? bindingId),
+        session_id: String(raw.session_id ?? ''),
+        session_title: raw.session_title ? String(raw.session_title) : null,
+        last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
+        address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
+        context_snapshot: (raw.context_snapshot as StorySessionInfo['context_snapshot']) ?? null,
       };
     } catch (e) {
       set({ error: (e as Error).message });

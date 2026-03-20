@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import type { Project, ProjectConfig } from '../types';
+import type {
+  ContextContainerDefinition,
+  MountDerivationPolicy,
+  Project,
+  ProjectConfig,
+  SessionComposition,
+} from '../types';
 import { api } from '../api/client';
 
 interface ProjectState {
@@ -10,8 +16,16 @@ interface ProjectState {
 
   fetchProjects: () => Promise<void>;
   createProject: (name: string, description: string, backendId: string, config?: Partial<ProjectConfig>) => Promise<Project | null>;
-  updateProject: (id: string, payload: { name?: string; description?: string; backend_id?: string; config?: ProjectConfig }) => Promise<Project | null>;
-  updateProjectConfig: (id: string, config: ProjectConfig) => Promise<Project | null>;
+  updateProject: (id: string, payload: {
+    name?: string;
+    description?: string;
+    backend_id?: string;
+    config?: ProjectConfig;
+    context_containers?: ContextContainerDefinition[];
+    mount_policy?: MountDerivationPolicy;
+    session_composition?: SessionComposition;
+  }) => Promise<Project | null>;
+  updateProjectConfig: (id: string, config: Partial<ProjectConfig>) => Promise<Project | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
 }
@@ -41,7 +55,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         name,
         description,
         backend_id: backendId,
-        config: config ?? { agent_presets: [] },
+        config: config ?? {
+          agent_presets: [],
+          context_containers: [],
+          mount_policy: { include_local_workspace: true, local_workspace_capabilities: [] },
+          session_composition: { workflow_steps: [], required_context_blocks: [] },
+        },
       });
       set((s) => ({
         projects: [project, ...s.projects],

@@ -4,7 +4,9 @@ import type {
   AgentBinding,
   ContextSourceKind,
   ContextSourceRef,
+  MountDerivationPolicy,
   ProjectConfig,
+  SessionComposition,
   Story,
   StoryNavigationState,
   StoryStatus,
@@ -34,6 +36,14 @@ import {
   DetailMenu,
   DetailSection,
 } from "../components/ui/detail-panel";
+import {
+  ContextContainersEditor,
+  DisabledContainerIdsEditor,
+  MountPolicyEditor,
+  SessionCompositionEditor,
+  createDefaultMountPolicy,
+  createDefaultSessionComposition,
+} from "../components/context-config-editor";
 
 // Story 优先级选项
 const priorityOptions: { value: StoryPriority; label: string }[] = [
@@ -102,6 +112,140 @@ function contextSummary(sourceRefs: ContextSourceRef[]) {
     counts.set(ref.kind, (counts.get(ref.kind) ?? 0) + 1);
   }
   return counts;
+}
+
+// ─── Story 覆盖层辅助编辑器 ───────────────────────────
+
+function OptionalMountPolicyOverrideEditor({
+  value,
+  isSaving,
+  onSave,
+  onClear,
+}: {
+  value: MountDerivationPolicy | null;
+  isSaving: boolean;
+  onSave: (next: MountDerivationPolicy) => Promise<unknown>;
+  onClear: () => Promise<unknown>;
+}) {
+  const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    if (value) setIsCreating(false);
+  }, [value]);
+
+  if (!value && !isCreating) {
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">
+          当前没有显式挂载策略覆盖，将直接继承 Project 默认挂载策略。
+        </p>
+        <button
+          type="button"
+          onClick={() => setIsCreating(true)}
+          className="agentdash-button-secondary"
+        >
+          新建挂载策略覆盖
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <MountPolicyEditor
+        value={value ?? createDefaultMountPolicy()}
+        isSaving={isSaving}
+        onSave={onSave}
+      />
+      <div className="flex items-center gap-2">
+        {value ? (
+          <button
+            type="button"
+            onClick={() => void onClear()}
+            disabled={isSaving}
+            className="agentdash-button-secondary"
+          >
+            清空覆盖
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsCreating(false)}
+            disabled={isSaving}
+            className="agentdash-button-secondary"
+          >
+            取消
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OptionalSessionCompositionOverrideEditor({
+  value,
+  isSaving,
+  onSave,
+  onClear,
+}: {
+  value: SessionComposition | null;
+  isSaving: boolean;
+  onSave: (next: SessionComposition) => Promise<unknown>;
+  onClear: () => Promise<unknown>;
+}) {
+  const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    if (value) setIsCreating(false);
+  }, [value]);
+
+  if (!value && !isCreating) {
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">
+          当前没有显式会话编排覆盖，将继承 Project 默认的 persona / workflow / required_context_blocks。
+        </p>
+        <button
+          type="button"
+          onClick={() => setIsCreating(true)}
+          className="agentdash-button-secondary"
+        >
+          新建会话编排覆盖
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <SessionCompositionEditor
+        value={value ?? createDefaultSessionComposition()}
+        isSaving={isSaving}
+        onSave={onSave}
+      />
+      <div className="flex items-center gap-2">
+        {value ? (
+          <button
+            type="button"
+            onClick={() => void onClear()}
+            disabled={isSaving}
+            className="agentdash-button-secondary"
+          >
+            清空覆盖
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsCreating(false)}
+            disabled={isSaving}
+            className="agentdash-button-secondary"
+          >
+            取消
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // 状态流转操作按钮组
@@ -430,6 +574,7 @@ function ContextPanel({
   const [addingText, setAddingText] = useState(false);
   const [newTextLabel, setNewTextLabel] = useState("");
   const [newTextContent, setNewTextContent] = useState("");
+  const inheritedProjectContainers = projectConfig?.context_containers ?? [];
 
   const filePicker = useAddressSpacePicker({
     spaceId: "workspace_file",
@@ -446,13 +591,14 @@ function ContextPanel({
 
   const hasLegacyContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
 
-  const persistSourceRefs = useCallback(async (nextRefs: ContextSourceRef[], successMsg: string) => {
+  const persistStoryContext = useCallback(async (
+    payload: Parameters<typeof updateStory>[1],
+    successMsg: string,
+  ) => {
     setIsSaving(true);
     setMessage(null);
     try {
-      const updated = await updateStory(story.id, {
-        context_source_refs: nextRefs,
-      });
+      const updated = await updateStory(story.id, payload);
       if (!updated) {
         setMessage(error ?? "保存失败");
         return false;
@@ -463,6 +609,12 @@ function ContextPanel({
       setIsSaving(false);
     }
   }, [updateStory, story.id, error]);
+
+  const persistSourceRefs = useCallback(
+    async (nextRefs: ContextSourceRef[], successMsg: string) =>
+      persistStoryContext({ context_source_refs: nextRefs }, successMsg),
+    [persistStoryContext],
+  );
 
   const handleRemoveSource = useCallback(async (index: number) => {
     const next = sourceRefs.filter((_, i) => i !== index);
@@ -566,8 +718,82 @@ function ContextPanel({
         </div>
       )}
 
+      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            Story 追加容器
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            这里追加的是 Story 覆盖层容器，只影响当前 Story 派生出来的会话。
+          </p>
+        </div>
+        <ContextContainersEditor
+          value={ctx.context_containers}
+          isSaving={isSaving}
+          addLabel="添加 Story 容器"
+          emptyText="暂无 Story 级容器"
+          onSave={(next) => persistStoryContext({ context_containers: next }, "已保存 Story 容器")}
+        />
+      </div>
+
+      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            禁用 Project 容器
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            这里不是删除 Project 默认容器，而是只在当前 Story 的继承链里把它们摘掉。
+          </p>
+        </div>
+        <DisabledContainerIdsEditor
+          value={ctx.disabled_container_ids}
+          availableContainers={inheritedProjectContainers}
+          isSaving={isSaving}
+          onSave={(next) => persistStoryContext({ disabled_container_ids: next }, "已保存禁用容器列表")}
+        />
+      </div>
+
+      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            挂载策略覆盖
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            只有当前 Story 需要偏离 Project 默认挂载规则时，才在这里建立 override。
+          </p>
+        </div>
+        <OptionalMountPolicyOverrideEditor
+          value={ctx.mount_policy_override ?? null}
+          isSaving={isSaving}
+          onSave={(next) => persistStoryContext({ mount_policy_override: next }, "已保存挂载策略覆盖")}
+          onClear={() => persistStoryContext({ clear_mount_policy_override: true }, "已清空挂载策略覆盖")}
+        />
+      </div>
+
+      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            会话编排覆盖
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Story 可以只覆盖 persona / workflow / required_context_blocks 中确实需要变化的部分。
+          </p>
+        </div>
+        <OptionalSessionCompositionOverrideEditor
+          value={ctx.session_composition_override ?? null}
+          isSaving={isSaving}
+          onSave={(next) => persistStoryContext({ session_composition_override: next }, "已保存会话编排覆盖")}
+          onClear={() => persistStoryContext({ clear_session_composition_override: true }, "已清空会话编排覆盖")}
+        />
+      </div>
+
       {/* 空态 */}
-      {sourceRefs.length === 0 && !hasLegacyContent && (
+      {sourceRefs.length === 0
+        && !hasLegacyContent
+        && ctx.context_containers.length === 0
+        && ctx.disabled_container_ids.length === 0
+        && !ctx.mount_policy_override
+        && !ctx.session_composition_override && (
         <p className="py-3 text-center text-xs text-muted-foreground/70">
           暂无上下文源
         </p>
@@ -1207,6 +1433,16 @@ export function StoryPage() {
                 {story.context.prd_doc && (
                   <span className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px]">
                     PRD
+                  </span>
+                )}
+                {story.context.context_containers.length > 0 && (
+                  <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600">
+                    📦 {story.context.context_containers.length} 容器
+                  </span>
+                )}
+                {story.context.session_composition_override && (
+                  <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-600">
+                    🎭 编排覆盖
                   </span>
                 )}
               </div>

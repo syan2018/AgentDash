@@ -86,7 +86,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/stories/{id}/sessions/{binding_id}",
-            axum::routing::delete(story_sessions::unbind_story_session),
+            get(story_sessions::get_story_session)
+                .delete(story_sessions::unbind_story_session),
         )
         .route(
             "/stories/{id}/tasks",

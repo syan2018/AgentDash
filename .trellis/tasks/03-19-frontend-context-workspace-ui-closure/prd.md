@@ -74,12 +74,47 @@
 
 ## Acceptance Criteria
 
-- [ ] 明确 Story / Session / Task 页面当前缺失的上下文编排可视化能力清单。
-- [ ] 明确 `context_containers / mount_policy / session_composition` 的前端展示模型。
-- [ ] 明确 Project / Story 的正式编辑入口方案。
-- [ ] 明确 Session 页面如何展示 mounts、tools、persona、workflow、runtime policy。
-- [ ] 明确前端 types / store / services 需要补齐的字段与边界。
-- [ ] 明确前端实施优先级与切片建议，能直接拆成后续实现任务。
+- [x] 明确 Story / Session / Task 页面当前缺失的上下文编排可视化能力清单。
+- [x] 明确 `context_containers / mount_policy / session_composition` 的前端展示模型。
+- [x] 明确 Project / Story 的正式编辑入口方案。
+- [x] 明确 Session 页面如何展示 mounts、tools、persona、workflow、runtime policy。
+- [x] 明确前端 types / store / services 需要补齐的字段与边界。
+- [x] 明确前端实施优先级与切片建议，能直接拆成后续实现任务。
+
+## Completion Summary
+
+本任务已从“前端补全规划”推进到首轮可用实现，并完成以下收口：
+
+- 新增 [context-flow.md](./context-flow.md)，明确 `Project 默认 -> Story 覆盖 -> Task Agent 解析 -> Session Runtime` 的统一传递规则。
+- `SessionPage` 已支持按继承链展示运行上下文：
+  - `Project 默认容器 / 挂载策略 / 会话编排`
+  - `Story 追加容器 / disabled_container_ids / mount_policy_override / session_composition_override`
+  - `当前生效` 的 tool visibility / runtime policy
+  - `Runtime Address Space`
+- `Task Session` 已返回结构化 `context_snapshot + address_space`，并对齐真实执行时是否启用 native address space 的判定。
+- `Story Session` 已补齐独立的结构化上下文快照接口，Story owner 会话在独立会话页里也能看到同粒度的来源解释。
+- `Project` 上下文编排页已补齐正式结构化编辑入口：
+  - `context_containers`
+  - `mount_policy`
+  - `session_composition`
+  - 覆盖 `provider / capabilities / exposure / allowed_agent_types / required_context_blocks`
+- `Story` 上下文页已补齐正式结构化编辑入口：
+  - `context_containers`
+  - `disabled_container_ids`
+  - `mount_policy_override`
+  - `session_composition_override`
+  - 覆盖 `provider / capabilities / exposure / allowed_agent_types / required_context_blocks`
+- 前端共享类型与 store 已系统性扩展，接住 `address_space / context_snapshot / Story session detail`，不再在页面层临时拼字段。
+
+## Boundary Notes
+
+本任务现在可以视为“前端承接上下文编排与虚拟工作空间补全”的正式完结版本，但仍有一条更深的调试增强链路没有纳入本次 blocking scope：
+
+- 会话内逐条工具调用对应了哪个 mount
+- 当前回答最终依赖了哪些具体 mounts / tools
+- Story / Task MCP 写回结果的逐次审计回显
+
+这些能力更接近高级 session inspector / execution trace，属于后续增强切片，而不是本任务完成与否的前置条件。
 
 ## Proposed Scope
 
@@ -172,4 +207,3 @@ Task / Story session 中，应能快速看到：
 - `frontend/src/features/task/task-agent-session-panel.tsx`
 - `frontend/src/stores/storyStore.ts`
 - `frontend/src/types/index.ts`
-

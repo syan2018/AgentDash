@@ -3,14 +3,14 @@
   "name": "03-19-frontend-context-workspace-ui-closure",
   "title": "前端承接上下文编排与虚拟工作空间补全",
   "description": "围绕 Project / Story / Task 新增的虚拟容器、会话编排、Address Space 与 MCP 编辑能力，规划并补齐前端承接层。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "frontend",
   "scope": "productization",
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": "codex",
   "createdAt": "2026-03-19",
-  "completedAt": null,
+  "completedAt": "2026-03-20",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -46,5 +46,5 @@
     "frontend/src/stores/storyStore.ts",
     "frontend/src/types/index.ts"
   ],
-  "notes": "该任务关注前端如何承接已经落地的后端能力，而不是重新定义后端模型。重点是把虚拟 mounts、session composition、Story/Task MCP 编辑能力与任务执行反馈变成可见、可编辑、可验证的产品界面。"
+  "notes": "已完成首轮正式收口：1) SessionPage 支持按 `Project 默认 -> Story 覆盖 -> 当前生效 -> Runtime` 展示上下文链路；2) Project / Story 两侧都补齐了结构化编辑入口，覆盖 provider、capabilities、exposure、allowed_agent_types、required_context_blocks、disabled_container_ids 与 override 配置；3) Task Session 与 Story Session 都返回结构化 `context_snapshot`，前端 store/types 已接住 `address_space` 与 session detail；4) `context-flow.md` 固化了前端从最外层到最内层的上下文传递规则。逐工具调用级别的 mount trace / MCP 写回审计仍属于后续增强，不阻塞本任务完成。"
 }

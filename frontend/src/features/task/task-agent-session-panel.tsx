@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { SessionChatView } from "../acp-session";
 import { promptSession, type ExecutorConfig } from "../../services/executor";
-import type { Artifact, SessionNavigationState, Task } from "../../types";
+import type { Artifact, ContextSourceRef, SessionNavigationState, Task } from "../../types";
 import { useStoryStore } from "../../stores/storyStore";
 
 interface TaskAgentSessionPanelProps {
@@ -39,6 +39,46 @@ function buildDefaultPrompt(task: Task): string {
   const template = task.agent_binding?.prompt_template?.trim();
   if (template) return template;
   return task.description?.trim() ?? "";
+}
+
+const SOURCE_KIND_ICONS: Record<string, string> = {
+  file: "📄",
+  manual_text: "📝",
+  project_snapshot: "📸",
+  http_fetch: "🌐",
+  mcp_resource: "🔌",
+  entity_ref: "🔗",
+};
+
+function ContextSourcesSummary({ sources }: { sources: ContextSourceRef[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <svg className={`h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        {sources.length} 个上下文源已注入
+      </button>
+      {expanded && (
+        <div className="mt-1.5 space-y-1 pl-1">
+          {sources.map((src, i) => (
+            <div key={`${src.kind}-${i}`} className="flex items-center gap-1.5 text-[11px]">
+              <span>{SOURCE_KIND_ICONS[src.kind] ?? "📎"}</span>
+              <span className="text-muted-foreground">{src.label?.trim() || src.kind}</span>
+              <span className="flex-1 truncate text-muted-foreground/60" title={src.locator}>
+                {src.locator}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── 主组件 ────────────────────────────────────────────
@@ -103,20 +143,45 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
   const handleCustomSend = useCallback(async (
     sid: string | null,
     prompt: string,
-    _execConfig?: ExecutorConfig,
+    execConfig?: ExecutorConfig,
   ) => {
     if (!sid) {
+      // 前置校验：检查 Task 上下文完整性
+      const binding = task.agent_binding;
+      const hasAgent = Boolean(
+        binding?.agent_type?.trim() || binding?.preset_name?.trim(),
+      );
+      if (!hasAgent) {
+        throw new Error(
+          "Task 未指定 Agent 类型或预设，请先在 Task 详情中配置 Agent 绑定",
+        );
+      }
+
+      const payload: { override_prompt?: string; executor_config?: Record<string, unknown> } = {};
+      if (prompt) payload.override_prompt = prompt;
+      if (execConfig?.executor) {
+        payload.executor_config = {
+          executor: execConfig.executor,
+          ...(execConfig.variant && { variant: execConfig.variant }),
+          ...(execConfig.model_id && { model_id: execConfig.model_id }),
+          ...(execConfig.reasoning_id && { reasoning_id: execConfig.reasoning_id }),
+          ...(execConfig.permission_policy && { permission_policy: execConfig.permission_policy }),
+        };
+      }
       const updated = await startTaskExecution(
         task.id,
-        prompt ? { override_prompt: prompt } : undefined,
+        Object.keys(payload).length > 0 ? payload : undefined,
       );
       if (updated) onTaskUpdatedRef.current(updated);
       else throw new Error("启动执行失败");
     } else {
       if (!prompt) return;
-      await promptSession(sid, { prompt });
+      await promptSession(sid, {
+        prompt,
+        ...(execConfig && { executorConfig: execConfig }),
+      });
     }
-  }, [startTaskExecution, task.id]);
+  }, [startTaskExecution, task.id, task.agent_binding]);
 
   const handleTurnEnd = useCallback(() => {
     void (async () => {
@@ -207,9 +272,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
             <p className="text-xs leading-relaxed text-foreground/80">{task.description}</p>
           )}
           {contextSources.length > 0 && (
-            <p className="text-[11px] text-muted-foreground">
-              {contextSources.length} 个上下文源已注入
-            </p>
+            <ContextSourcesSummary sources={contextSources} />
           )}
         </div>
       )}

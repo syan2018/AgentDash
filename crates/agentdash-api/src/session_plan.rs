@@ -4,6 +4,7 @@ use agentdash_domain::session_composition::{SessionComposition, SessionRequiredC
 use agentdash_domain::story::Story;
 use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
 use agentdash_injection::{ContextFragment, MergeStrategy};
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanOwnerKind {
@@ -24,9 +25,32 @@ pub struct SessionAddressSpaceSummary {
     pub mount_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMcpServerSummary {
+    pub name: String,
+    pub transport: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionToolVisibilitySummary {
     pub markdown: String,
+    pub toolset_label: String,
     pub tool_names: Vec<String>,
+    pub mcp_servers: Vec<SessionMcpServerSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionRuntimePolicySummary {
+    pub markdown: String,
+    pub workspace_attached: bool,
+    pub address_space_attached: bool,
+    pub mcp_enabled: bool,
+    pub visible_mounts: Vec<String>,
+    pub visible_tools: Vec<String>,
+    pub writable_mounts: Vec<String>,
+    pub exec_mounts: Vec<String>,
+    pub path_policy: String,
 }
 
 pub struct SessionPlanInput<'a> {
@@ -75,7 +99,7 @@ pub fn resolve_effective_session_composition(
 pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanFragments {
     let mut fragments = Vec::new();
 
-    let mount_ids = if let Some(address_space) = input.address_space {
+    if let Some(address_space) = input.address_space {
         let summary = summarize_address_space(address_space);
         fragments.push(ContextFragment {
             slot: "address_space",
@@ -84,10 +108,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
             strategy: MergeStrategy::Append,
             content: summary.markdown,
         });
-        summary.mount_ids
-    } else {
-        Vec::new()
-    };
+    }
 
     let tool_visibility = summarize_tool_visibility(input.address_space, input.mcp_servers);
     let tool_names = tool_visibility.tool_names.clone();
@@ -131,12 +152,18 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         content: build_workflow_markdown(&input),
     });
 
+    let runtime_policy = summarize_runtime_policy(
+        input.workspace_attached,
+        input.address_space,
+        input.mcp_servers,
+        &tool_names,
+    );
     fragments.push(ContextFragment {
         slot: "runtime_policy",
         label: "runtime_policy_summary",
         order: 49,
         strategy: MergeStrategy::Append,
-        content: build_runtime_policy_markdown(&input, &tool_names, &mount_ids),
+        content: runtime_policy.markdown,
     });
 
     SessionPlanFragments { fragments }
@@ -194,10 +221,11 @@ pub fn summarize_tool_visibility(
     };
 
     let toolset_label = if address_space.is_some() {
-        "address_space_runtime"
+        "address_space_runtime".to_string()
     } else {
-        "workspace_builtin"
+        "workspace_builtin".to_string()
     };
+    let mcp_server_summaries = summarize_mcp_servers(mcp_servers);
 
     let mut sections = vec![format!(
         "## Tool Visibility\n- toolset: `{toolset_label}`\n- tools: {}\n- guidance: 优先使用当前会话声明的工具访问上下文，不要臆测文件内容、工具能力或 mounts。",
@@ -212,10 +240,10 @@ pub fn summarize_tool_visibility(
         }
     )];
 
-    if !mcp_servers.is_empty() {
+    if !mcp_server_summaries.is_empty() {
         sections.push(format!(
             "### MCP Servers\n{}",
-            mcp_servers
+            mcp_server_summaries
                 .iter()
                 .map(render_mcp_server_summary)
                 .collect::<Vec<_>>()
@@ -226,7 +254,9 @@ pub fn summarize_tool_visibility(
 
     SessionToolVisibilitySummary {
         markdown: sections.join("\n\n"),
+        toolset_label,
         tool_names,
+        mcp_servers: mcp_server_summaries,
     }
 }
 
@@ -334,13 +364,21 @@ fn build_required_context_block_markdown(block: &SessionRequiredContextBlock) ->
     format!("## {}\n{}", block.title.trim(), block.content.trim())
 }
 
-fn build_runtime_policy_markdown(
-    input: &SessionPlanInput<'_>,
+pub fn summarize_runtime_policy(
+    workspace_attached: bool,
+    address_space: Option<&ExecutionAddressSpace>,
+    mcp_servers: &[McpServer],
     tool_names: &[String],
-    mount_ids: &[String],
-) -> String {
-    let writable_mounts = input
-        .address_space
+) -> SessionRuntimePolicySummary {
+    let mount_ids = address_space
+        .map(|item| {
+            item.mounts
+                .iter()
+                .map(|mount| mount.id.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let writable_mounts = address_space
         .map(|address_space| {
             address_space
                 .mounts
@@ -350,8 +388,7 @@ fn build_runtime_policy_markdown(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let exec_mounts = input
-        .address_space
+    let exec_mounts = address_space
         .map(|address_space| {
             address_space
                 .mounts
@@ -361,23 +398,35 @@ fn build_runtime_policy_markdown(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let path_policy = if input.address_space.is_some() {
-        "使用 `mount + 相对路径` 访问资源"
+    let path_policy = if address_space.is_some() {
+        "使用 `mount + 相对路径` 访问资源".to_string()
     } else {
-        "使用相对工作空间路径访问资源"
+        "使用相对工作空间路径访问资源".to_string()
     };
 
-    format!(
+    let markdown = format!(
         "## Runtime Policy\n- workspace_attached: {}\n- address_space_attached: {}\n- mcp_enabled: {}\n- visible_mounts: {}\n- visible_tools: {}\n- writable_mounts: {}\n- exec_mounts: {}\n- path_policy: {}",
-        yes_no(input.workspace_attached),
-        yes_no(input.address_space.is_some()),
-        yes_no(!input.mcp_servers.is_empty()),
-        display_list(mount_ids),
+        yes_no(workspace_attached),
+        yes_no(address_space.is_some()),
+        yes_no(!mcp_servers.is_empty()),
+        display_list(&mount_ids),
         display_list(tool_names),
         display_list(&writable_mounts),
         display_list(&exec_mounts),
         path_policy
-    )
+    );
+
+    SessionRuntimePolicySummary {
+        markdown,
+        workspace_attached,
+        address_space_attached: address_space.is_some(),
+        mcp_enabled: !mcp_servers.is_empty(),
+        visible_mounts: mount_ids,
+        visible_tools: tool_names.to_vec(),
+        writable_mounts,
+        exec_mounts,
+        path_policy,
+    }
 }
 
 fn render_mount_summary(mount: &ExecutionMount) -> String {
@@ -460,22 +509,50 @@ fn runtime_address_space_tools(address_space: &ExecutionAddressSpace) -> Vec<Str
     tools
 }
 
-fn render_mcp_server_summary(server: &McpServer) -> String {
-    match server {
-        McpServer::Http(item) => format!("- `{}`: http `{}`", item.name, item.url),
-        McpServer::Sse(item) => format!("- `{}`: sse `{}`", item.name, item.url),
-        McpServer::Stdio(item) => {
-            format!("- `{}`: stdio `{}`", item.name, item.command.display())
-        }
-        _ => "- `unknown-mcp`: unsupported transport".to_string(),
-    }
+fn summarize_mcp_servers(mcp_servers: &[McpServer]) -> Vec<SessionMcpServerSummary> {
+    mcp_servers
+        .iter()
+        .map(|server| match server {
+            McpServer::Http(item) => SessionMcpServerSummary {
+                name: item.name.clone(),
+                transport: "http".to_string(),
+                target: item.url.to_string(),
+            },
+            McpServer::Sse(item) => SessionMcpServerSummary {
+                name: item.name.clone(),
+                transport: "sse".to_string(),
+                target: item.url.to_string(),
+            },
+            McpServer::Stdio(item) => SessionMcpServerSummary {
+                name: item.name.clone(),
+                transport: "stdio".to_string(),
+                target: item.command.display().to_string(),
+            },
+            _ => SessionMcpServerSummary {
+                name: "unknown-mcp".to_string(),
+                transport: "unsupported".to_string(),
+                target: "-".to_string(),
+            },
+        })
+        .collect()
 }
 
-fn display_list(items: &[String]) -> String {
+fn render_mcp_server_summary(server: &SessionMcpServerSummary) -> String {
+    format!(
+        "- `{}`: {} `{}`",
+        server.name, server.transport, server.target
+    )
+}
+
+fn display_list<T: AsRef<str>>(items: &[T]) -> String {
     if items.is_empty() {
         "-".to_string()
     } else {
-        items.join(", ")
+        items
+            .iter()
+            .map(|item| item.as_ref().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 

@@ -1,0 +1,47 @@
+{
+  "id": "unified-hook-matcher-rule-engine",
+  "name": "unified-hook-matcher-rule-engine",
+  "title": "统一 Hook matcher 与 rule engine",
+  "description": "把当前 workflow phase 生成的 hook policy 收敛为统一 matcher/rule engine，让 workflow、task、story、global builtin hook 共用同一套执行面。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-03-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/tasks/03-21-pi-agent-dynamic-hook-context/prd.md",
+    "crates/agentdash-api/src/execution_hooks.rs",
+    "crates/agentdash-executor/src/hooks.rs",
+    "crates/agentdash-api/src/workflow_runtime.rs",
+    "crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json"
+  ],
+  "notes": "目标是让 workflow 退化成声明层，把 policy/matcher/rule evaluation 收敛成统一引擎，为 task/story/project/global builtin hook 做好接入底座。"
+}

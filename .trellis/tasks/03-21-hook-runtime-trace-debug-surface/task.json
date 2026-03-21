@@ -1,0 +1,47 @@
+{
+  "id": "hook-runtime-trace-debug-surface",
+  "name": "hook-runtime-trace-debug-surface",
+  "title": "Hook runtime trace 与调试面板",
+  "description": "增强 Hook Runtime 的 trace/diagnostics 可观测性，在前端提供 trigger 命中、决策原因、revision 刷新来源等调试面板。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "observability",
+  "priority": "P2",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-03-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "frontend/src/pages/SessionPage.tsx",
+    "frontend/src/services/session.ts",
+    "frontend/src/types/index.ts",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-executor/src/hooks.rs"
+  ],
+  "notes": "当前会话页已经有 hook runtime surface；下一步要补的是 per-trigger trace/debug，而不是继续堆静态 metadata。"
+}

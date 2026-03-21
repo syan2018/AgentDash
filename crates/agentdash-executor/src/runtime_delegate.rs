@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::hooks::{
     HookConstraint, HookContextFragment, HookEvaluationQuery, HookSessionRuntimeSnapshot,
-    HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
+    HookTraceEntry, HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
 };
 
 pub struct HookRuntimeDelegate {
@@ -25,6 +25,9 @@ impl HookRuntimeDelegate {
     async fn evaluate(
         &self,
         trigger: HookTrigger,
+        tool_name: Option<String>,
+        tool_call_id: Option<String>,
+        subagent_type: Option<String>,
         payload: Option<serde_json::Value>,
     ) -> Result<EvaluatedResolution, AgentRuntimeError> {
         let snapshot = self.hook_session.snapshot();
@@ -34,9 +37,9 @@ impl HookRuntimeDelegate {
                 session_id: self.hook_session.session_id().to_string(),
                 trigger: trigger.clone(),
                 turn_id: None,
-                tool_name: None,
-                tool_call_id: None,
-                subagent_type: None,
+                tool_name,
+                tool_call_id,
+                subagent_type,
                 snapshot: Some(snapshot.clone()),
                 payload,
             })
@@ -60,6 +63,32 @@ impl HookRuntimeDelegate {
             runtime: self.hook_session.runtime_snapshot(),
         })
     }
+
+    fn record_trace(
+        &self,
+        trigger: HookTrigger,
+        decision: impl Into<String>,
+        tool_name: Option<String>,
+        tool_call_id: Option<String>,
+        subagent_type: Option<String>,
+        evaluated: &EvaluatedResolution,
+    ) {
+        self.hook_session.append_trace(HookTraceEntry {
+            sequence: self.hook_session.next_trace_sequence(),
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+            revision: evaluated.runtime.revision,
+            trigger,
+            decision: decision.into(),
+            tool_name,
+            tool_call_id,
+            subagent_type,
+            matched_rule_keys: evaluated.resolution.matched_rule_keys.clone(),
+            refresh_snapshot: evaluated.resolution.refresh_snapshot,
+            block_reason: evaluated.resolution.block_reason.clone(),
+            completion: evaluated.resolution.completion.clone(),
+            diagnostics: evaluated.resolution.diagnostics.clone(),
+        });
+    }
 }
 
 #[async_trait]
@@ -72,11 +101,28 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         let evaluated = self
             .evaluate(
                 HookTrigger::UserPromptSubmit,
+                None,
+                None,
+                None,
                 Some(serde_json::json!({
                     "message_count": input.context.messages.len(),
                 })),
             )
             .await?;
+        self.record_trace(
+            HookTrigger::UserPromptSubmit,
+            if evaluated.resolution.context_fragments.is_empty()
+                && evaluated.resolution.constraints.is_empty()
+            {
+                "noop"
+            } else {
+                "context_injected"
+            },
+            None,
+            None,
+            None,
+            &evaluated,
+        );
         let mut messages = input.context.messages;
         if let Some(message) = build_hook_injection_message(
             &evaluated.snapshot,
@@ -93,41 +139,50 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         input: BeforeToolCallInput,
         _cancel: CancellationToken,
     ) -> Result<ToolCallDecision, AgentRuntimeError> {
-        let snapshot = self.hook_session.snapshot();
-        let resolution = self
-            .hook_session
-            .evaluate(HookEvaluationQuery {
-                session_id: self.hook_session.session_id().to_string(),
-                trigger: HookTrigger::BeforeTool,
-                turn_id: None,
-                tool_name: Some(input.tool_call.name.clone()),
-                tool_call_id: Some(input.tool_call.id.clone()),
-                subagent_type: None,
-                snapshot: Some(snapshot),
-                payload: Some(serde_json::json!({
+        let tool_name = input.tool_call.name.clone();
+        let tool_call_id = input.tool_call.id.clone();
+        let evaluated = self
+            .evaluate(
+                HookTrigger::BeforeTool,
+                Some(tool_name.clone()),
+                Some(tool_call_id.clone()),
+                None,
+                Some(serde_json::json!({
                     "args": input.args,
                 })),
-            })
-            .await
-            .map_err(map_runtime_error)?;
+            )
+            .await?;
 
-        if resolution.refresh_snapshot {
-            self.hook_session
-                .refresh(SessionHookRefreshQuery {
-                    session_id: self.hook_session.session_id().to_string(),
-                    turn_id: None,
-                    reason: Some(format!("before_tool:{}", input.tool_call.name)),
-                })
-                .await
-                .map_err(map_runtime_error)?;
-        }
-
-        if let Some(reason) = resolution.block_reason {
+        if let Some(reason) = evaluated.resolution.block_reason.clone() {
+            self.record_trace(
+                HookTrigger::BeforeTool,
+                "deny",
+                Some(tool_name),
+                Some(tool_call_id),
+                None,
+                &evaluated,
+            );
             return Ok(ToolCallDecision::Deny { reason });
         }
-        if let Some(args) = resolution.rewritten_tool_input {
+        if let Some(args) = evaluated.resolution.rewritten_tool_input.clone() {
+            self.record_trace(
+                HookTrigger::BeforeTool,
+                "rewrite",
+                Some(tool_name),
+                Some(tool_call_id),
+                None,
+                &evaluated,
+            );
             return Ok(ToolCallDecision::Rewrite { args, note: None });
         }
+        self.record_trace(
+            HookTrigger::BeforeTool,
+            "allow",
+            Some(tool_name),
+            Some(tool_call_id),
+            None,
+            &evaluated,
+        );
         Ok(ToolCallDecision::Allow)
     }
 
@@ -136,40 +191,38 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         input: AfterToolCallInput,
         _cancel: CancellationToken,
     ) -> Result<AfterToolCallEffects, AgentRuntimeError> {
-        let snapshot = self.hook_session.snapshot();
-        let resolution = self
-            .hook_session
-            .evaluate(HookEvaluationQuery {
-                session_id: self.hook_session.session_id().to_string(),
-                trigger: HookTrigger::AfterTool,
-                turn_id: None,
-                tool_name: Some(input.tool_call.name.clone()),
-                tool_call_id: Some(input.tool_call.id.clone()),
-                subagent_type: None,
-                snapshot: Some(snapshot),
-                payload: Some(serde_json::json!({
+        let tool_name = input.tool_call.name.clone();
+        let tool_call_id = input.tool_call.id.clone();
+        let evaluated = self
+            .evaluate(
+                HookTrigger::AfterTool,
+                Some(tool_name.clone()),
+                Some(tool_call_id.clone()),
+                None,
+                Some(serde_json::json!({
                     "args": input.args,
                     "result": input.result,
                     "is_error": input.is_error,
                 })),
-            })
-            .await
-            .map_err(map_runtime_error)?;
-
-        if resolution.refresh_snapshot {
-            self.hook_session
-                .refresh(SessionHookRefreshQuery {
-                    session_id: self.hook_session.session_id().to_string(),
-                    turn_id: None,
-                    reason: Some(format!("after_tool:{}", input.tool_call.name)),
-                })
-                .await
-                .map_err(map_runtime_error)?;
-        }
+            )
+            .await?;
+        self.record_trace(
+            HookTrigger::AfterTool,
+            if evaluated.resolution.refresh_snapshot {
+                "refresh_requested"
+            } else {
+                "effects_applied"
+            },
+            Some(tool_name),
+            Some(tool_call_id),
+            None,
+            &evaluated,
+        );
 
         Ok(AfterToolCallEffects {
-            refresh_snapshot: resolution.refresh_snapshot,
-            diagnostics: resolution
+            refresh_snapshot: evaluated.resolution.refresh_snapshot,
+            diagnostics: evaluated
+                .resolution
                 .diagnostics
                 .into_iter()
                 .map(|entry| entry.summary)
@@ -186,12 +239,29 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         let evaluated = self
             .evaluate(
                 HookTrigger::AfterTurn,
+                None,
+                None,
+                None,
                 Some(serde_json::json!({
                     "assistant_message": input.message,
                     "tool_results": input.tool_results,
                 })),
             )
             .await?;
+        self.record_trace(
+            HookTrigger::AfterTurn,
+            if evaluated.resolution.context_fragments.is_empty()
+                && evaluated.resolution.constraints.is_empty()
+            {
+                "noop"
+            } else {
+                "steering_injected"
+            },
+            None,
+            None,
+            None,
+            &evaluated,
+        );
 
         let steering = build_hook_steering_messages(
             &evaluated.snapshot,
@@ -221,6 +291,9 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         let evaluated = self
             .evaluate(
                 HookTrigger::BeforeStop,
+                None,
+                None,
+                None,
                 Some(serde_json::json!({
                     "message_count": input.context.messages.len(),
                 })),
@@ -235,9 +308,25 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         );
 
         if steering.is_empty() {
+            self.record_trace(
+                HookTrigger::BeforeStop,
+                "stop",
+                None,
+                None,
+                None,
+                &evaluated,
+            );
             return Ok(StopDecision::Stop);
         }
 
+        self.record_trace(
+            HookTrigger::BeforeStop,
+            "continue",
+            None,
+            None,
+            None,
+            &evaluated,
+        );
         Ok(StopDecision::Continue {
             steering,
             follow_up: Vec::new(),

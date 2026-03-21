@@ -3,36 +3,19 @@
   "name": "workflow-phase-completion-closure",
   "title": "Workflow phase 推进与 completion 闭环",
   "description": "统一 session_ended/manual/checklist_passed 三种 completion_mode 的运行态信号、phase 完成证据与 workflow run 推进闭环。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "backend",
   "scope": "architecture",
   "priority": "P1",
   "creator": "codex",
   "assignee": "codex",
   "createdAt": "2026-03-21",
-  "completedAt": null,
-  "branch": null,
+  "completedAt": "2026-03-21",
+  "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
-  "next_action": [
-    {
-      "phase": 1,
-      "action": "implement"
-    },
-    {
-      "phase": 2,
-      "action": "check"
-    },
-    {
-      "phase": 3,
-      "action": "finish"
-    },
-    {
-      "phase": 4,
-      "action": "create-pr"
-    }
-  ],
+  "current_phase": 4,
+  "next_action": [],
   "commit": null,
   "pr_url": null,
   "subtasks": [],
@@ -42,5 +25,5 @@
     "crates/agentdash-application/src/workflow/run.rs",
     "crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json"
   ],
-  "notes": "重点是 completion evidence、phase reconcile 与 workflow run 推进闭环，而不是继续在 route/gateway 层补零散自动完成逻辑。"
+  "notes": "已引入 workflow completion signal/evidence 纯逻辑，并把 checklist/session_ended 的 phase 推进闭环接入 hook provider 与 workflow route reconcile。session terminal 事件现在会在 ExecutorHub 结束时主动触发 hook completion。"
 }

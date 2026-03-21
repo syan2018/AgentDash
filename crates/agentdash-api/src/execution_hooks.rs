@@ -1,6 +1,11 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use agentdash_application::workflow::{
+    CompleteWorkflowPhaseCommand, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
+    WorkflowRunService, WorkflowSessionTerminalState, completion_mode_tag,
+    evaluate_phase_completion,
+};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
@@ -12,9 +17,10 @@ use agentdash_domain::workflow::{
     WorkflowRunRepository, WorkflowRunStatus, WorkflowTargetKind,
 };
 use agentdash_executor::{
-    ExecutionHookProvider, HookConstraint, HookContextFragment, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookOwnerSummary, HookPolicy, HookResolution, HookTrigger,
-    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    ExecutionHookProvider, HookCompletionStatus, HookConstraint, HookContextFragment,
+    HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary, HookPolicy,
+    HookResolution, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -214,6 +220,140 @@ impl AppExecutionHookProvider {
             phase,
         }))
     }
+
+    async fn apply_completion_decision(
+        &self,
+        snapshot: &SessionHookSnapshot,
+        decision: WorkflowCompletionDecision,
+        resolution: &mut HookResolution,
+    ) -> Result<(), HookError> {
+        let source_summary = active_workflow_source_summary(snapshot);
+        resolution
+            .diagnostics
+            .extend(decision.evidence.iter().map(|evidence| HookDiagnosticEntry {
+                code: evidence.code.clone(),
+                summary: evidence.summary.clone(),
+                detail: evidence.detail.clone(),
+                source_summary: source_summary.clone(),
+            }));
+
+        let Some(locator) = active_workflow_locator(snapshot) else {
+            resolution.completion = Some(HookCompletionStatus {
+                mode: decision.completion_mode.clone(),
+                satisfied: decision.satisfied,
+                advanced: false,
+                reason: decision
+                    .blocking_reason
+                    .or(decision.summary)
+                    .unwrap_or_else(|| "当前没有可推进的 active workflow".to_string()),
+            });
+            return Ok(());
+        };
+
+        if !decision.should_complete_phase {
+            resolution.completion = Some(HookCompletionStatus {
+                mode: decision.completion_mode,
+                satisfied: decision.satisfied,
+                advanced: false,
+                reason: decision
+                    .blocking_reason
+                    .or(decision.summary)
+                    .unwrap_or_else(|| "completion 条件尚未满足".to_string()),
+            });
+            return Ok(());
+        }
+
+        let run = self
+            .workflow_run_repo
+            .get_by_id(locator.run_id)
+            .await
+            .map_err(map_hook_error)?;
+        let Some(run) = run else {
+            resolution.completion = Some(HookCompletionStatus {
+                mode: decision.completion_mode,
+                satisfied: true,
+                advanced: false,
+                reason: format!("workflow run {} 已不存在，无法推进", locator.run_id),
+            });
+            resolution.diagnostics.push(HookDiagnosticEntry {
+                code: "workflow_run_missing_for_completion".to_string(),
+                summary: "Hook 发现 workflow run 已不存在，无法写回 completion".to_string(),
+                detail: Some(locator.run_id.to_string()),
+                source_summary,
+            });
+            return Ok(());
+        };
+
+        if run.current_phase_key.as_deref() != Some(locator.phase_key.as_str()) {
+            resolution.completion = Some(HookCompletionStatus {
+                mode: decision.completion_mode,
+                satisfied: true,
+                advanced: false,
+                reason: format!(
+                    "workflow 已离开当前 phase（当前为 {:?}），无需重复推进",
+                    run.current_phase_key
+                ),
+            });
+            return Ok(());
+        }
+
+        let completion_summary = decision.summary.clone();
+        let service = WorkflowRunService::new(
+            self.workflow_definition_repo.as_ref(),
+            self.workflow_run_repo.as_ref(),
+        );
+        match service
+            .complete_phase(CompleteWorkflowPhaseCommand {
+                run_id: locator.run_id,
+                phase_key: locator.phase_key.clone(),
+                summary: completion_summary.clone(),
+                record_artifacts: vec![],
+            })
+            .await
+        {
+            Ok(_) => {
+                resolution.refresh_snapshot = true;
+                resolution.completion = Some(HookCompletionStatus {
+                    mode: decision.completion_mode,
+                    satisfied: true,
+                    advanced: true,
+                    reason: completion_summary.unwrap_or_else(|| {
+                        "Hook Runtime 已把当前 phase 推进到下一阶段".to_string()
+                    }),
+                });
+                resolution.diagnostics.push(HookDiagnosticEntry {
+                    code: "workflow_phase_advanced_by_hook".to_string(),
+                    summary: format!(
+                        "Hook Runtime 已推进 workflow run {} 的 phase `{}`",
+                        locator.run_id, locator.phase_key
+                    ),
+                    detail: None,
+                    source_summary,
+                });
+            }
+            Err(error) => {
+                resolution.completion = Some(HookCompletionStatus {
+                    mode: decision.completion_mode,
+                    satisfied: true,
+                    advanced: false,
+                    reason: format!("completion 条件满足，但推进 phase 失败：{error}"),
+                });
+                resolution.diagnostics.push(HookDiagnosticEntry {
+                    code: "workflow_phase_advance_failed".to_string(),
+                    summary: "Hook Runtime 尝试推进 workflow phase 失败".to_string(),
+                    detail: Some(error.to_string()),
+                    source_summary,
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+struct ActiveWorkflowLocator {
+    run_id: Uuid,
+    phase_key: String,
 }
 
 #[async_trait]
@@ -337,7 +477,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             "run_status": workflow_run_status_tag(workflow.run.status),
                             "phase_key": workflow.phase.key,
                             "phase_title": workflow.phase.title,
-                            "completion_mode": workflow_phase_completion_mode_tag(workflow.phase.completion_mode),
+                            "completion_mode": completion_mode_tag(workflow.phase.completion_mode),
                             "requires_session": workflow.phase.requires_session,
                         }),
                     );
@@ -425,19 +565,75 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 resolution.context_fragments = snapshot.context_fragments.clone();
                 resolution.constraints = snapshot.constraints.clone();
             }
-            HookTrigger::BeforeTool => {
-                evaluate_before_tool(&snapshot, &query, &mut resolution);
-            }
-            HookTrigger::AfterTool => {
-                evaluate_after_tool(&snapshot, &query, &mut resolution);
-            }
-            HookTrigger::AfterTurn => {
-                evaluate_after_turn(&snapshot, &query, &mut resolution);
+            HookTrigger::BeforeTool | HookTrigger::AfterTool | HookTrigger::AfterTurn => {
+                apply_hook_rules(
+                    HookEvaluationContext {
+                        snapshot: &snapshot,
+                        query: &query,
+                    },
+                    &mut resolution,
+                );
             }
             HookTrigger::BeforeStop => {
-                evaluate_before_stop(&snapshot, &query, &mut resolution);
+                apply_hook_rules(
+                    HookEvaluationContext {
+                        snapshot: &snapshot,
+                        query: &query,
+                    },
+                    &mut resolution,
+                );
+                if let Some(completion_mode) = workflow_completion_mode(&snapshot) {
+                    let decision = evaluate_phase_completion(
+                        parse_completion_mode_tag(completion_mode),
+                        &WorkflowCompletionSignalSet {
+                            task_status: active_task_status(&snapshot).map(ToString::to_string),
+                            ..WorkflowCompletionSignalSet::default()
+                        },
+                    );
+                    resolution.matched_rule_keys.push(format!(
+                        "completion:{}:{}",
+                        workflow_phase_key(&snapshot).unwrap_or("unknown"),
+                        completion_mode
+                    ));
+                    self.apply_completion_decision(&snapshot, decision, &mut resolution)
+                        .await?;
+                }
             }
-            HookTrigger::BeforeSubagentDispatch | HookTrigger::AfterSubagentDispatch => {}
+            HookTrigger::SessionTerminal => {
+                if let Some(completion_mode) = workflow_completion_mode(&snapshot) {
+                    let decision = evaluate_phase_completion(
+                        parse_completion_mode_tag(completion_mode),
+                        &WorkflowCompletionSignalSet {
+                            session_terminal_state: parse_session_terminal_state(
+                                query.payload.as_ref(),
+                            ),
+                            session_terminal_message: query
+                                .payload
+                                .as_ref()
+                                .and_then(|value| value.get("message"))
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToString::to_string),
+                            ..WorkflowCompletionSignalSet::default()
+                        },
+                    );
+                    resolution.matched_rule_keys.push(format!(
+                        "completion:{}:{}",
+                        workflow_phase_key(&snapshot).unwrap_or("unknown"),
+                        completion_mode
+                    ));
+                    self.apply_completion_decision(&snapshot, decision, &mut resolution)
+                        .await?;
+                }
+            }
+            HookTrigger::BeforeSubagentDispatch | HookTrigger::AfterSubagentDispatch => {
+                resolution.diagnostics.push(HookDiagnosticEntry {
+                    code: "subagent_hook_not_implemented".to_string(),
+                    summary: "当前 session 已预留 subagent hook trigger，但尚未接入正式 dispatch runtime"
+                        .to_string(),
+                    detail: query.subagent_type.clone(),
+                    source_summary: active_workflow_source_summary(&snapshot),
+                });
+            }
         }
 
         Ok(resolution)
@@ -491,18 +687,6 @@ fn workflow_run_status_tag(status: WorkflowRunStatus) -> &'static str {
         WorkflowRunStatus::Completed => "completed",
         WorkflowRunStatus::Failed => "failed",
         WorkflowRunStatus::Cancelled => "cancelled",
-    }
-}
-
-fn workflow_phase_completion_mode_tag(
-    mode: agentdash_domain::workflow::WorkflowPhaseCompletionMode,
-) -> &'static str {
-    match mode {
-        agentdash_domain::workflow::WorkflowPhaseCompletionMode::Manual => "manual",
-        agentdash_domain::workflow::WorkflowPhaseCompletionMode::SessionEnded => "session_ended",
-        agentdash_domain::workflow::WorkflowPhaseCompletionMode::ChecklistPassed => {
-            "checklist_passed"
-        }
     }
 }
 
@@ -561,6 +745,42 @@ fn active_workflow_source_summary(snapshot: &SessionHookSnapshot) -> Vec<String>
     summary
 }
 
+fn active_workflow_locator(snapshot: &SessionHookSnapshot) -> Option<ActiveWorkflowLocator> {
+    let run_id = snapshot
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("active_workflow"))
+        .and_then(|value| value.get("run_id"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())?;
+    let phase_key = workflow_phase_key(snapshot)?.to_string();
+    Some(ActiveWorkflowLocator { run_id, phase_key })
+}
+
+fn parse_completion_mode_tag(mode: &str) -> agentdash_domain::workflow::WorkflowPhaseCompletionMode {
+    match mode {
+        "session_ended" => agentdash_domain::workflow::WorkflowPhaseCompletionMode::SessionEnded,
+        "checklist_passed" => {
+            agentdash_domain::workflow::WorkflowPhaseCompletionMode::ChecklistPassed
+        }
+        _ => agentdash_domain::workflow::WorkflowPhaseCompletionMode::Manual,
+    }
+}
+
+fn parse_session_terminal_state(
+    payload: Option<&serde_json::Value>,
+) -> Option<WorkflowSessionTerminalState> {
+    match payload
+        .and_then(|value| value.get("terminal_state"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("completed") => Some(WorkflowSessionTerminalState::Completed),
+        Some("failed") => Some(WorkflowSessionTerminalState::Failed),
+        Some("interrupted") => Some(WorkflowSessionTerminalState::Interrupted),
+        _ => None,
+    }
+}
+
 fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> {
     let mut policies = vec![HookPolicy {
         key: format!(
@@ -569,12 +789,12 @@ fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> 
         ),
         description: format!(
             "当前 phase 使用 `{}` 作为完成语义。",
-            workflow_phase_completion_mode_tag(workflow.phase.completion_mode)
+            completion_mode_tag(workflow.phase.completion_mode)
         ),
         payload: Some(serde_json::json!({
             "workflow_key": workflow.definition.key,
             "phase_key": workflow.phase.key,
-            "completion_mode": workflow_phase_completion_mode_tag(workflow.phase.completion_mode),
+            "completion_mode": completion_mode_tag(workflow.phase.completion_mode),
             "requires_session": workflow.phase.requires_session,
         })),
     }];
@@ -632,178 +852,280 @@ fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> 
     policies
 }
 
-fn evaluate_before_tool(
-    snapshot: &SessionHookSnapshot,
-    query: &HookEvaluationQuery,
-    resolution: &mut HookResolution,
-) {
-    let Some(tool_name) = query.tool_name.as_deref() else {
-        return;
-    };
+struct HookEvaluationContext<'a> {
+    snapshot: &'a SessionHookSnapshot,
+    query: &'a HookEvaluationQuery,
+}
 
-    if is_update_task_status_tool(tool_name) {
-        if let Some(next_status) = extract_tool_arg(query.payload.as_ref(), "status") {
-            if workflow_phase_key(snapshot) == Some("implement") && next_status == "completed" {
-                resolution.block_reason = Some(
-                    "当前处于 Implement phase，请先完成实现说明并把 Task 状态更新为 awaiting_verification，而不是直接 completed。"
-                        .to_string(),
-                );
-                resolution.diagnostics.push(HookDiagnosticEntry {
-                    code: "before_tool_task_status_blocked".to_string(),
-                    summary: "Hook 阻止了 Implement phase 期间直接 completed 的状态更新"
-                        .to_string(),
-                    detail: Some("expected_status=awaiting_verification".to_string()),
-                    source_summary: active_workflow_source_summary(snapshot),
-                });
-                return;
-            }
+struct NormalizedHookRule {
+    key: &'static str,
+    trigger: HookTrigger,
+    matches: fn(&HookEvaluationContext<'_>) -> bool,
+    apply: fn(&HookEvaluationContext<'_>, &mut HookResolution),
+}
 
-            if workflow_completion_mode(snapshot) == Some("checklist_passed")
-                && matches!(next_status, "awaiting_verification" | "completed")
-            {
-                resolution.refresh_snapshot = true;
-                resolution.diagnostics.push(HookDiagnosticEntry {
-                    code: "before_tool_checklist_completion_signal".to_string(),
-                    summary: format!(
-                        "捕获到 checklist completion 信号：Task 即将更新为 `{next_status}`"
-                    ),
-                    detail: None,
-                    source_summary: active_workflow_source_summary(snapshot),
-                });
-            }
+fn apply_hook_rules(ctx: HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+    for rule in normalized_hook_rules() {
+        if rule.trigger != ctx.query.trigger {
+            continue;
+        }
+        if !(rule.matches)(&ctx) {
+            continue;
+        }
+        resolution.matched_rule_keys.push(rule.key.to_string());
+        (rule.apply)(&ctx, resolution);
+        if resolution.block_reason.is_some() && matches!(ctx.query.trigger, HookTrigger::BeforeTool)
+        {
+            break;
         }
     }
+}
 
-    if is_report_artifact_tool(tool_name)
-        && workflow_phase_key(snapshot) == Some("implement")
+fn normalized_hook_rules() -> &'static [NormalizedHookRule] {
+    &[
+        NormalizedHookRule {
+            key: "workflow_phase:implement:block_completed_status",
+            trigger: HookTrigger::BeforeTool,
+            matches: rule_matches_implement_completed_status_block,
+            apply: rule_apply_implement_completed_status_block,
+        },
+        NormalizedHookRule {
+            key: "workflow_phase:checklist:status_signal_refresh",
+            trigger: HookTrigger::BeforeTool,
+            matches: rule_matches_checklist_status_signal,
+            apply: rule_apply_checklist_status_signal,
+        },
+        NormalizedHookRule {
+            key: "workflow_phase:implement:block_record_artifact",
+            trigger: HookTrigger::BeforeTool,
+            matches: rule_matches_implement_record_artifact_block,
+            apply: rule_apply_implement_record_artifact_block,
+        },
+        NormalizedHookRule {
+            key: "workflow_runtime:after_tool_refresh",
+            trigger: HookTrigger::AfterTool,
+            matches: rule_matches_after_tool_refresh,
+            apply: rule_apply_after_tool_refresh,
+        },
+        NormalizedHookRule {
+            key: "workflow_phase:check:after_turn_summary_constraint",
+            trigger: HookTrigger::AfterTurn,
+            matches: rule_matches_check_phase_after_turn_summary,
+            apply: rule_apply_check_phase_after_turn_summary,
+        },
+        NormalizedHookRule {
+            key: "workflow_completion:session_ended:notice",
+            trigger: HookTrigger::BeforeStop,
+            matches: rule_matches_session_ended_notice,
+            apply: rule_apply_session_ended_notice,
+        },
+        NormalizedHookRule {
+            key: "workflow_completion:checklist_pending:stop_gate",
+            trigger: HookTrigger::BeforeStop,
+            matches: rule_matches_checklist_pending_gate,
+            apply: rule_apply_checklist_pending_gate,
+        },
+        NormalizedHookRule {
+            key: "workflow_completion:manual:notice",
+            trigger: HookTrigger::BeforeStop,
+            matches: rule_matches_manual_notice,
+            apply: rule_apply_manual_notice,
+        },
+    ]
+}
+
+fn rule_matches_implement_completed_status_block(ctx: &HookEvaluationContext<'_>) -> bool {
+    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
+        return false;
+    };
+    is_update_task_status_tool(tool_name)
+        && workflow_phase_key(ctx.snapshot) == Some("implement")
+        && extract_tool_arg(ctx.query.payload.as_ref(), "status") == Some("completed")
+}
+
+fn rule_apply_implement_completed_status_block(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
+    resolution.block_reason = Some(
+        "当前处于 Implement phase，请先完成实现说明并把 Task 状态更新为 awaiting_verification，而不是直接 completed。"
+            .to_string(),
+    );
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_tool_task_status_blocked".to_string(),
+        summary: "Hook 阻止了 Implement phase 期间直接 completed 的状态更新".to_string(),
+        detail: Some("expected_status=awaiting_verification".to_string()),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+}
+
+fn rule_matches_checklist_status_signal(ctx: &HookEvaluationContext<'_>) -> bool {
+    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
+        return false;
+    };
+    is_update_task_status_tool(tool_name)
+        && workflow_completion_mode(ctx.snapshot) == Some("checklist_passed")
         && matches!(
-            extract_tool_arg(query.payload.as_ref(), "artifact_type"),
+            extract_tool_arg(ctx.query.payload.as_ref(), "status"),
+            Some("awaiting_verification" | "completed")
+        )
+}
+
+fn rule_apply_checklist_status_signal(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
+    let next_status = extract_tool_arg(ctx.query.payload.as_ref(), "status").unwrap_or("unknown");
+    resolution.refresh_snapshot = true;
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_tool_checklist_completion_signal".to_string(),
+        summary: format!("捕获到 checklist completion 信号：Task 即将更新为 `{next_status}`"),
+        detail: None,
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+}
+
+fn rule_matches_implement_record_artifact_block(ctx: &HookEvaluationContext<'_>) -> bool {
+    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
+        return false;
+    };
+    is_report_artifact_tool(tool_name)
+        && workflow_phase_key(ctx.snapshot) == Some("implement")
+        && matches!(
+            extract_tool_arg(ctx.query.payload.as_ref(), "artifact_type"),
             Some("session_summary" | "archive_suggestion")
         )
-    {
-        resolution.block_reason = Some(
-            "当前处于 Implement phase，不应提前产出 session_summary / archive_suggestion 类记录产物，请先完成实现阶段。"
-                .to_string(),
-        );
-        resolution.diagnostics.push(HookDiagnosticEntry {
-            code: "before_tool_record_artifact_blocked".to_string(),
-            summary: "Hook 阻止了 Implement phase 的提前归档型产物上报".to_string(),
-            detail: None,
-            source_summary: active_workflow_source_summary(snapshot),
-        });
-    }
 }
 
-fn evaluate_after_tool(
-    snapshot: &SessionHookSnapshot,
-    query: &HookEvaluationQuery,
+fn rule_apply_implement_record_artifact_block(
+    ctx: &HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
 ) {
-    let Some(tool_name) = query.tool_name.as_deref() else {
-        return;
+    resolution.block_reason = Some(
+        "当前处于 Implement phase，不应提前产出 session_summary / archive_suggestion 类记录产物，请先完成实现阶段。"
+            .to_string(),
+    );
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_tool_record_artifact_blocked".to_string(),
+        summary: "Hook 阻止了 Implement phase 的提前归档型产物上报".to_string(),
+        detail: None,
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+}
+
+fn rule_matches_after_tool_refresh(ctx: &HookEvaluationContext<'_>) -> bool {
+    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
+        return false;
     };
-    if tool_call_failed(query.payload.as_ref()) {
-        return;
-    }
-
-    if is_update_task_status_tool(tool_name) || is_report_artifact_tool(tool_name) {
-        resolution.refresh_snapshot = true;
-        resolution.diagnostics.push(HookDiagnosticEntry {
-            code: "after_tool_runtime_refresh".to_string(),
-            summary: format!(
-                "工具 `{tool_name}` 可能改变 workflow/hook 观察面，已请求刷新 snapshot"
-            ),
-            detail: None,
-            source_summary: active_workflow_source_summary(snapshot),
-        });
-    }
+    !tool_call_failed(ctx.query.payload.as_ref())
+        && (is_update_task_status_tool(tool_name) || is_report_artifact_tool(tool_name))
 }
 
-fn evaluate_after_turn(
-    snapshot: &SessionHookSnapshot,
-    _query: &HookEvaluationQuery,
-    resolution: &mut HookResolution,
-) {
-    if workflow_phase_key(snapshot) == Some("check") {
-        resolution.constraints.push(HookConstraint {
-            key: "after_turn:check_phase_summary".to_string(),
-            description:
-                "Check phase 的阶段性输出应明确写出发现的问题、已修复项、剩余风险与未覆盖验证。"
-                    .to_string(),
-            source_summary: active_workflow_source_summary(snapshot),
-        });
-    }
+fn rule_apply_after_tool_refresh(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+    let tool_name = ctx.query.tool_name.as_deref().unwrap_or("unknown_tool");
+    resolution.refresh_snapshot = true;
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "after_tool_runtime_refresh".to_string(),
+        summary: format!("工具 `{tool_name}` 可能改变 workflow/hook 观察面，已请求刷新 snapshot"),
+        detail: None,
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
 }
 
-fn evaluate_before_stop(
-    snapshot: &SessionHookSnapshot,
-    _query: &HookEvaluationQuery,
+fn rule_matches_check_phase_after_turn_summary(ctx: &HookEvaluationContext<'_>) -> bool {
+    workflow_phase_key(ctx.snapshot) == Some("check")
+}
+
+fn rule_apply_check_phase_after_turn_summary(
+    ctx: &HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
 ) {
-    match workflow_completion_mode(snapshot) {
-        Some("session_ended") => {
-            resolution.diagnostics.push(HookDiagnosticEntry {
-                code: "before_stop_session_ended".to_string(),
-                summary: "当前 workflow phase 允许在 session 结束时自然完成".to_string(),
-                detail: None,
-                source_summary: vec!["workflow_completion_mode:session_ended".to_string()],
-            });
-        }
-        Some("checklist_passed") => {
-            if matches!(
-                active_task_status(snapshot),
-                Some("awaiting_verification" | "completed")
-            ) {
-                resolution.diagnostics.push(HookDiagnosticEntry {
-                    code: "before_stop_checklist_satisfied".to_string(),
-                    summary: "Checklist completion 条件已满足，允许结束当前 session".to_string(),
-                    detail: active_task_status(snapshot)
-                        .map(|status| format!("task_status={status}")),
-                    source_summary: active_workflow_source_summary(snapshot),
-                });
-                return;
-            }
+    resolution.constraints.push(HookConstraint {
+        key: "after_turn:check_phase_summary".to_string(),
+        description:
+            "Check phase 的阶段性输出应明确写出发现的问题、已修复项、剩余风险与未覆盖验证。"
+                .to_string(),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+}
 
-            resolution.context_fragments.push(HookContextFragment {
-                slot: "workflow".to_string(),
-                label: "before_stop_checklist_gate".to_string(),
-                content: [
-                    "## Session Stop Gate",
-                    "- 当前 workflow phase 使用 `checklist_passed` 完成语义。",
-                    "- 结束前请先补齐验证结论、剩余风险，并把 Task 状态至少更新为 `awaiting_verification`。",
-                    "- 如果还存在未验证项，不要直接结束本轮 session。",
-                ]
-                .join("\n"),
-                source_summary: active_workflow_source_summary(snapshot),
-            });
-            resolution.constraints.push(HookConstraint {
-                key: "before_stop:checklist_pending".to_string(),
-                description:
-                    "当前 phase 还未满足 checklist_passed 条件；请先给出验证/风险结论并更新 Task 状态，再结束 session。"
-                        .to_string(),
-                source_summary: active_workflow_source_summary(snapshot),
-            });
-            resolution.diagnostics.push(HookDiagnosticEntry {
-                code: "before_stop_checklist_pending".to_string(),
-                summary:
-                    "当前 workflow phase 尚未满足 checklist completion 条件，Hook 要求继续 loop"
-                        .to_string(),
-                detail: active_task_status(snapshot)
-                    .map(|status| format!("current_task_status={status}")),
-                source_summary: active_workflow_source_summary(snapshot),
-            });
-        }
-        Some("manual") => {
-            resolution.diagnostics.push(HookDiagnosticEntry {
-                code: "before_stop_manual_phase".to_string(),
-                summary: "当前 workflow phase 使用 manual completion，不会由 Hook 自动推进 phase"
-                    .to_string(),
-                detail: None,
-                source_summary: active_workflow_source_summary(snapshot),
-            });
-        }
-        Some(_) | None => {}
-    }
+fn rule_matches_session_ended_notice(ctx: &HookEvaluationContext<'_>) -> bool {
+    workflow_completion_mode(ctx.snapshot) == Some("session_ended")
+}
+
+fn rule_apply_session_ended_notice(_ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_stop_session_ended".to_string(),
+        summary: "当前 workflow phase 允许在 session 结束时自然完成".to_string(),
+        detail: None,
+        source_summary: vec!["workflow_completion_mode:session_ended".to_string()],
+    });
+    resolution.completion.get_or_insert(HookCompletionStatus {
+        mode: "session_ended".to_string(),
+        satisfied: false,
+        advanced: false,
+        reason: "当前 phase 需要等待 session 真正进入终态，再由 runtime 推进".to_string(),
+    });
+}
+
+fn rule_matches_checklist_pending_gate(ctx: &HookEvaluationContext<'_>) -> bool {
+    workflow_completion_mode(ctx.snapshot) == Some("checklist_passed")
+        && !matches!(
+            active_task_status(ctx.snapshot),
+            Some("awaiting_verification" | "completed")
+        )
+}
+
+fn rule_apply_checklist_pending_gate(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
+    resolution.context_fragments.push(HookContextFragment {
+        slot: "workflow".to_string(),
+        label: "before_stop_checklist_gate".to_string(),
+        content: [
+            "## Session Stop Gate",
+            "- 当前 workflow phase 使用 `checklist_passed` 完成语义。",
+            "- 结束前请先补齐验证结论、剩余风险，并把 Task 状态至少更新为 `awaiting_verification`。",
+            "- 如果还存在未验证项，不要直接结束本轮 session。",
+        ]
+        .join("\n"),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+    resolution.constraints.push(HookConstraint {
+        key: "before_stop:checklist_pending".to_string(),
+        description:
+            "当前 phase 还未满足 checklist_passed 条件；请先给出验证/风险结论并更新 Task 状态，再结束 session。"
+                .to_string(),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_stop_checklist_pending".to_string(),
+        summary: "当前 workflow phase 尚未满足 checklist completion 条件，Hook 要求继续 loop"
+            .to_string(),
+        detail: active_task_status(ctx.snapshot).map(|status| format!("current_task_status={status}")),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+}
+
+fn rule_matches_manual_notice(ctx: &HookEvaluationContext<'_>) -> bool {
+    workflow_completion_mode(ctx.snapshot) == Some("manual")
+}
+
+fn rule_apply_manual_notice(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_stop_manual_phase".to_string(),
+        summary: "当前 workflow phase 使用 manual completion，不会由 Hook 自动推进 phase"
+            .to_string(),
+        detail: None,
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+    resolution.completion.get_or_insert(HookCompletionStatus {
+        mode: "manual".to_string(),
+        satisfied: false,
+        advanced: false,
+        reason: "manual phase 需要显式推进".to_string(),
+    });
 }
 
 fn extract_tool_arg<'a>(payload: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {
@@ -928,9 +1250,20 @@ mod tests {
             })),
         };
 
-        evaluate_before_tool(&snapshot, &query, &mut resolution);
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
 
         assert!(resolution.block_reason.is_some());
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"workflow_phase:implement:block_completed_status".to_string())
+        );
         assert!(
             resolution
                 .diagnostics
@@ -954,10 +1287,21 @@ mod tests {
             payload: None,
         };
 
-        evaluate_before_stop(&snapshot, &query, &mut resolution);
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
 
         assert!(!resolution.context_fragments.is_empty());
         assert!(!resolution.constraints.is_empty());
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"workflow_completion:checklist_pending:stop_gate".to_string())
+        );
         assert!(
             resolution
                 .diagnostics
@@ -970,27 +1314,19 @@ mod tests {
     fn before_stop_allows_checklist_completion_when_task_ready() {
         let snapshot =
             snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
-        let mut resolution = HookResolution::default();
-        let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
-            trigger: HookTrigger::BeforeStop,
-            turn_id: None,
-            tool_name: None,
-            tool_call_id: None,
-            subagent_type: None,
-            snapshot: None,
-            payload: None,
-        };
+        let decision = evaluate_phase_completion(
+            parse_completion_mode_tag("checklist_passed"),
+            &WorkflowCompletionSignalSet {
+                task_status: active_task_status(&snapshot).map(ToString::to_string),
+                ..WorkflowCompletionSignalSet::default()
+            },
+        );
 
-        evaluate_before_stop(&snapshot, &query, &mut resolution);
-
-        assert!(resolution.context_fragments.is_empty());
-        assert!(resolution.constraints.is_empty());
-        assert!(
-            resolution
-                .diagnostics
-                .iter()
-                .any(|entry| entry.code == "before_stop_checklist_satisfied")
+        assert!(decision.satisfied);
+        assert!(decision.should_complete_phase);
+        assert_eq!(
+            decision.summary.as_deref(),
+            Some("Task 状态已进入 `awaiting_verification`，满足 checklist_passed completion")
         );
     }
 }

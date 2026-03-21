@@ -89,6 +89,8 @@ pub struct HookSessionRuntimeSnapshot {
     pub snapshot: SessionHookSnapshot,
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
+    #[serde(default)]
+    pub trace: Vec<HookTraceEntry>,
 }
 
 pub struct HookSessionRuntime {
@@ -96,7 +98,9 @@ pub struct HookSessionRuntime {
     provider: Arc<dyn ExecutionHookProvider>,
     snapshot: RwLock<SessionHookSnapshot>,
     diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
+    trace: RwLock<Vec<HookTraceEntry>>,
     revision: AtomicU64,
+    trace_sequence: AtomicU64,
 }
 
 impl std::fmt::Debug for HookSessionRuntime {
@@ -106,6 +110,7 @@ impl std::fmt::Debug for HookSessionRuntime {
             .field("revision", &self.revision())
             .field("snapshot", &self.snapshot())
             .field("diagnostics_count", &self.diagnostics().len())
+            .field("trace_count", &self.trace().len())
             .finish()
     }
 }
@@ -122,7 +127,9 @@ impl HookSessionRuntime {
             provider,
             snapshot: RwLock::new(snapshot),
             diagnostics: RwLock::new(diagnostics),
+            trace: RwLock::new(Vec::new()),
             revision: AtomicU64::new(1),
+            trace_sequence: AtomicU64::new(0),
         }
     }
 
@@ -148,12 +155,20 @@ impl HookSessionRuntime {
         self.revision.load(Ordering::SeqCst)
     }
 
+    pub fn trace(&self) -> Vec<HookTraceEntry> {
+        self.trace
+            .read()
+            .expect("hook trace read lock poisoned")
+            .clone()
+    }
+
     pub fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot {
         HookSessionRuntimeSnapshot {
             session_id: self.session_id.clone(),
             revision: self.revision(),
             snapshot: self.snapshot(),
             diagnostics: self.diagnostics(),
+            trace: self.trace(),
         }
     }
 
@@ -204,6 +219,19 @@ impl HookSessionRuntime {
             guard.push(entry);
         }
     }
+
+    pub fn append_trace(&self, trace: HookTraceEntry) {
+        let mut guard = self.trace.write().expect("hook trace write lock poisoned");
+        guard.push(trace);
+        if guard.len() > 200 {
+            let drain_count = guard.len() - 200;
+            guard.drain(0..drain_count);
+        }
+    }
+
+    pub fn next_trace_sequence(&self) -> u64 {
+        self.trace_sequence.fetch_add(1, Ordering::SeqCst) + 1
+    }
 }
 
 pub type SharedHookSessionRuntime = Arc<HookSessionRuntime>;
@@ -245,6 +273,7 @@ pub enum HookTrigger {
     AfterTool,
     AfterTurn,
     BeforeStop,
+    SessionTerminal,
     BeforeSubagentDispatch,
     AfterSubagentDispatch,
 }
@@ -281,10 +310,49 @@ pub struct HookResolution {
     pub policies: Vec<HookPolicy>,
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
+    #[serde(default)]
+    pub matched_rule_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<HookCompletionStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewritten_tool_input: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookCompletionStatus {
+    pub mode: String,
+    pub satisfied: bool,
+    pub advanced: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookTraceEntry {
+    pub sequence: u64,
+    pub timestamp_ms: i64,
+    pub revision: u64,
+    pub trigger: HookTrigger,
+    pub decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    #[serde(default)]
+    pub matched_rule_keys: Vec<String>,
+    #[serde(default)]
+    pub refresh_snapshot: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<HookCompletionStatus>,
+    #[serde(default)]
+    pub diagnostics: Vec<HookDiagnosticEntry>,
 }
 
 #[derive(Debug, Error)]

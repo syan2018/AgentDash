@@ -9,8 +9,9 @@ use uuid::Uuid;
 
 use agentdash_application::workflow::{
     ActivateWorkflowPhaseCommand, AssignWorkflowCommand, CompleteWorkflowPhaseCommand,
-    StartWorkflowRunCommand, WorkflowCatalogService, WorkflowRecordArtifactDraft,
-    WorkflowRunService, build_builtin_workflow_definition, list_builtin_workflow_templates,
+    StartWorkflowRunCommand, WorkflowCatalogService, WorkflowCompletionSignalSet,
+    WorkflowRecordArtifactDraft, WorkflowRunService, WorkflowSessionTerminalState,
+    build_builtin_workflow_definition, evaluate_phase_completion, list_builtin_workflow_templates,
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{
@@ -436,27 +437,30 @@ async fn reconcile_workflow_run_runtime(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     let summary = match execution_state {
-        SessionExecutionState::Completed { .. } => Some(format!(
-            "关联 session `{}` 已结束，phase 自动完成",
-            binding.session_id
-        )),
-        SessionExecutionState::Failed { message, .. } => Some(match message {
-            Some(message) if !message.trim().is_empty() => format!(
-                "关联 session `{}` 以失败终态结束：{}",
-                binding.session_id, message
-            ),
-            _ => format!("关联 session `{}` 以失败终态结束", binding.session_id),
-        }),
-        SessionExecutionState::Interrupted { .. } => Some(format!(
-            "关联 session `{}` 已终止，phase 自动完成",
-            binding.session_id
-        )),
-        SessionExecutionState::Idle | SessionExecutionState::Running { .. } => None,
+        SessionExecutionState::Completed { .. } => WorkflowCompletionSignalSet {
+            session_terminal_state: Some(WorkflowSessionTerminalState::Completed),
+            session_terminal_message: None,
+            ..WorkflowCompletionSignalSet::default()
+        },
+        SessionExecutionState::Failed { message, .. } => WorkflowCompletionSignalSet {
+            session_terminal_state: Some(WorkflowSessionTerminalState::Failed),
+            session_terminal_message: message,
+            ..WorkflowCompletionSignalSet::default()
+        },
+        SessionExecutionState::Interrupted { .. } => WorkflowCompletionSignalSet {
+            session_terminal_state: Some(WorkflowSessionTerminalState::Interrupted),
+            session_terminal_message: Some(format!("关联 session `{}` 已终止", binding.session_id)),
+            ..WorkflowCompletionSignalSet::default()
+        },
+        SessionExecutionState::Idle | SessionExecutionState::Running { .. } => {
+            WorkflowCompletionSignalSet::default()
+        }
     };
+    let decision = evaluate_phase_completion(phase_definition.completion_mode, &summary);
 
-    let Some(summary) = summary else {
+    if !decision.should_complete_phase {
         return Ok(run);
-    };
+    }
 
     let service = WorkflowRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
@@ -466,7 +470,7 @@ async fn reconcile_workflow_run_runtime(
         .complete_phase(CompleteWorkflowPhaseCommand {
             run_id: run.id,
             phase_key: current_phase_key,
-            summary: Some(summary),
+            summary: decision.summary,
             record_artifacts: vec![],
         })
         .await?;

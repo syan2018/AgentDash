@@ -626,6 +626,29 @@ export interface HookDiagnosticEntry {
   source_summary: string[];
 }
 
+export interface HookCompletionStatus {
+  mode: string;
+  satisfied: boolean;
+  advanced: boolean;
+  reason: string;
+}
+
+export interface HookTraceEntry {
+  sequence: number;
+  timestamp_ms: number;
+  revision: number;
+  trigger: string;
+  decision: string;
+  tool_name?: string | null;
+  tool_call_id?: string | null;
+  subagent_type?: string | null;
+  matched_rule_keys: string[];
+  refresh_snapshot: boolean;
+  block_reason?: string | null;
+  completion?: HookCompletionStatus | null;
+  diagnostics: HookDiagnosticEntry[];
+}
+
 export interface ActiveWorkflowHookMetadata {
   workflow_id: string;
   workflow_key: string;
@@ -658,6 +681,7 @@ export interface HookSessionRuntimeInfo {
   revision: number;
   snapshot: SessionHookSnapshot;
   diagnostics: HookDiagnosticEntry[];
+  trace: HookTraceEntry[];
 }
 
 export interface ProjectSessionAgentContext {

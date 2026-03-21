@@ -10,6 +10,7 @@ import type {
   AgentBinding,
   ContextContainerDefinition,
   ExecutionAddressSpace,
+  HookTraceEntry,
   HookSessionRuntimeInfo,
   MountDerivationPolicy,
   ProjectSessionAgentContext,
@@ -497,6 +498,9 @@ function HookRuntimeSurfaceCard({
         <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
           diagnostics: {hookRuntime.diagnostics.length}
         </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          trace: {hookRuntime.trace.length}
+        </span>
       </div>
       {snapshot.tags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -608,6 +612,98 @@ function HookRuntimeDiagnosticsCard({
   );
 }
 
+function HookRuntimeTraceCard({
+  hookRuntime,
+}: {
+  hookRuntime: HookSessionRuntimeInfo;
+}) {
+  return (
+    <SurfaceCard eyebrow="Hook Trace" title="最近触发记录">
+      {hookRuntime.trace.length > 0 ? (
+        <div className="space-y-2">
+          {hookRuntime.trace
+            .slice()
+            .reverse()
+            .map((entry) => (
+              <HookTraceEntryCard key={`${entry.sequence}-${entry.revision}`} entry={entry} />
+            ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">当前还没有记录到 Hook trigger trace。</p>
+      )}
+    </SurfaceCard>
+  );
+}
+
+function HookTraceEntryCard({ entry }: { entry: HookTraceEntry }) {
+  const timestamp = Number.isFinite(entry.timestamp_ms)
+    ? new Date(entry.timestamp_ms).toLocaleTimeString("zh-CN", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+    : "-";
+  const completionStatus = entry.completion
+    ? entry.completion.advanced
+      ? "已推进"
+      : entry.completion.satisfied
+        ? "已满足"
+        : "未满足"
+    : null;
+
+  return (
+    <div className="rounded-[10px] border border-border bg-background/70 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+          #{entry.sequence}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+          {entry.trigger}
+        </span>
+        <span className="text-xs font-medium text-foreground/90">{entry.decision}</span>
+        <span className="text-[11px] text-muted-foreground">
+          rev {entry.revision} · {timestamp}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {entry.tool_name && <span>tool: {entry.tool_name}</span>}
+        {entry.tool_call_id && <span>call: {entry.tool_call_id}</span>}
+        {entry.refresh_snapshot && <span>已刷新 snapshot</span>}
+      </div>
+      {entry.completion && completionStatus && (
+        <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+          completion: {entry.completion.mode} · {completionStatus} · {entry.completion.reason}
+        </p>
+      )}
+      {entry.block_reason && (
+        <p className="mt-2 text-[11px] leading-5 text-destructive">{entry.block_reason}</p>
+      )}
+      {entry.matched_rule_keys.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {entry.matched_rule_keys.map((ruleKey) => (
+            <span
+              key={ruleKey}
+              className="rounded-full border border-border bg-secondary/40 px-2 py-1 text-[10px] text-muted-foreground"
+            >
+              {ruleKey}
+            </span>
+          ))}
+        </div>
+      )}
+      {entry.diagnostics.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {entry.diagnostics.map((diagnostic, index) => (
+            <p key={`${diagnostic.code}-${index}`} className="text-[11px] leading-5 text-muted-foreground">
+              {diagnostic.code}: {diagnostic.summary}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RawDiagnosticsSection({ children }: { children: ReactNode }) {
   return (
     <details className="rounded-[12px] border border-dashed border-border bg-background/60 px-3 py-2">
@@ -680,6 +776,7 @@ function StorySessionContextPanel({
         <WorkflowRuntimeSurfaceCard workflowRuntime={contextSnapshot.workflow_runtime} />
       )}
       {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
+      {hookRuntime && <HookRuntimeTraceCard hookRuntime={hookRuntime} />}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-foreground">
@@ -800,6 +897,7 @@ function ProjectSessionContextPanel({
         <WorkflowRuntimeSurfaceCard workflowRuntime={snapshot.workflow_runtime} />
       )}
       {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
+      {hookRuntime && <HookRuntimeTraceCard hookRuntime={hookRuntime} />}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-foreground">

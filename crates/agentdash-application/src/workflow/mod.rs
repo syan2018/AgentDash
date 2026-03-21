@@ -1,9 +1,15 @@
 mod catalog;
+mod completion;
 mod definition;
 mod error;
 mod run;
 
 pub use catalog::{AssignWorkflowCommand, WorkflowCatalogService};
+pub use completion::{
+    WorkflowCompletionDecision, WorkflowCompletionEvidence, WorkflowCompletionSignalSet,
+    WorkflowSessionTerminalState, completion_mode_tag, evaluate_phase_completion,
+    session_terminal_state_tag,
+};
 pub use definition::{
     BuiltinWorkflowTemplate, TRELLIS_DEV_PROJECT_TEMPLATE_KEY, TRELLIS_DEV_STORY_TEMPLATE_KEY,
     TRELLIS_DEV_TASK_TEMPLATE_KEY, build_builtin_workflow_definition,

@@ -22,7 +22,8 @@ use agent_client_protocol::McpServer;
 use crate::connector::ExecutionAddressSpace;
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
 use crate::hooks::{
-    ExecutionHookProvider, HookSessionRuntime, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    ExecutionHookProvider, HookSessionRuntime, HookTraceEntry, HookTrigger,
+    SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -510,7 +511,7 @@ impl ExecutorHub {
             executor_config,
             mcp_servers: req.mcp_servers,
             address_space: req.address_space,
-            hook_session,
+            hook_session: hook_session.clone(),
         };
 
         let title_hint = resolved_payload
@@ -604,11 +605,14 @@ impl ExecutorHub {
         };
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
+        let hook_session_for_spawn = hook_session;
 
         let turn_id_for_spawn = turn_id.clone();
         tokio::spawn(async move {
             let mut terminal_notification: Option<SessionNotification> = None;
             let mut last_executor_session_id: Option<String> = None;
+            let mut terminal_success = true;
+            let mut terminal_message: Option<String> = None;
             while let Some(next) = stream.next().await {
                 match next {
                     Ok(notification) => {
@@ -639,12 +643,14 @@ impl ExecutorHub {
                     }
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
+                        terminal_success = false;
+                        terminal_message = Some(e.to_string());
                         terminal_notification = Some(build_turn_terminal_notification(
                             &session_id,
                             &source,
                             &turn_id_for_spawn,
                             false,
-                            Some(e.to_string()),
+                            terminal_message.clone(),
                         ));
                         break;
                     }
@@ -657,13 +663,74 @@ impl ExecutorHub {
                     &source,
                     &turn_id_for_spawn,
                     true,
-                    None,
+                    terminal_message.clone(),
                 ));
             }
 
             if let Some(done) = terminal_notification {
                 let _ = store.append(&session_id, &done).await;
                 let _ = tx.send(done);
+            }
+
+            if let Some(hook_session) = hook_session_for_spawn {
+                match hook_session
+                    .evaluate(crate::hooks::HookEvaluationQuery {
+                        session_id: session_id.clone(),
+                        trigger: HookTrigger::SessionTerminal,
+                        turn_id: Some(turn_id_for_spawn.clone()),
+                        tool_name: None,
+                        tool_call_id: None,
+                        subagent_type: None,
+                        snapshot: Some(hook_session.snapshot()),
+                        payload: Some(serde_json::json!({
+                            "terminal_state": if terminal_success { "completed" } else { "failed" },
+                            "message": terminal_message,
+                        })),
+                    })
+                    .await
+                {
+                    Ok(resolution) => {
+                        if resolution.refresh_snapshot {
+                            let _ = hook_session
+                                .refresh(SessionHookRefreshQuery {
+                                    session_id: session_id.clone(),
+                                    turn_id: Some(turn_id_for_spawn.clone()),
+                                    reason: Some("trigger:session_terminal".to_string()),
+                                })
+                                .await;
+                        }
+                        hook_session.append_trace(HookTraceEntry {
+                            sequence: hook_session.next_trace_sequence(),
+                            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                            revision: hook_session.revision(),
+                            trigger: HookTrigger::SessionTerminal,
+                            decision: if resolution
+                                .completion
+                                .as_ref()
+                                .is_some_and(|completion| completion.advanced)
+                            {
+                                "phase_advanced".to_string()
+                            } else {
+                                "terminal_observed".to_string()
+                            },
+                            tool_name: None,
+                            tool_call_id: None,
+                            subagent_type: None,
+                            matched_rule_keys: resolution.matched_rule_keys,
+                            refresh_snapshot: resolution.refresh_snapshot,
+                            block_reason: resolution.block_reason,
+                            completion: resolution.completion,
+                            diagnostics: resolution.diagnostics,
+                        });
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %error,
+                            "session terminal hook 评估失败"
+                        );
+                    }
+                }
             }
 
             // 执行完成后标记 running = false，允许下一轮

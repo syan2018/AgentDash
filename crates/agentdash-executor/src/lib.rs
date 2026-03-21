@@ -14,7 +14,8 @@ pub use connector::{
 pub use hooks::{
     ExecutionHookProvider, HookConstraint, HookContextFragment, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookOwnerSummary, HookPolicy, HookResolution, HookSessionRuntime,
-    HookSessionRuntimeSnapshot, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    HookSessionRuntimeSnapshot, HookTraceEntry, HookTrigger, HookCompletionStatus,
+    NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 pub use hub::{ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta};

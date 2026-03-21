@@ -145,6 +145,13 @@ impl PiAgentConnector {
             ));
         }
 
+        if let Some(hook_session) = &context.hook_session {
+            let hook_sections = build_hook_runtime_sections(hook_session.as_ref());
+            if !hook_sections.is_empty() {
+                sections.extend(hook_sections);
+            }
+        }
+
         sections.join("\n\n")
     }
 }
@@ -179,6 +186,56 @@ fn describe_mount(mount: &ExecutionMount) -> String {
         "- {}: {}（provider={}, root_ref={}, capabilities=[{}]）",
         mount.id, mount.display_name, mount.provider, mount.root_ref, capabilities
     )
+}
+
+fn build_hook_runtime_sections(hook_session: &crate::hooks::HookSessionRuntime) -> Vec<String> {
+    let mut sections = Vec::new();
+
+    if !hook_session.snapshot.owners.is_empty() {
+        let owner_lines = hook_session
+            .snapshot
+            .owners
+            .iter()
+            .map(|owner| {
+                let label = owner.label.as_deref().unwrap_or(owner.owner_id.as_str());
+                format!("- {}: {}", owner.owner_type, label)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(format!("当前会话 Hook 归属如下：\n{}", owner_lines));
+    }
+
+    let fragment_sections = hook_session
+        .snapshot
+        .context_fragments
+        .iter()
+        .filter_map(|fragment| {
+            let content = fragment.content.trim();
+            if content.is_empty() {
+                None
+            } else {
+                Some(content.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
+    if !fragment_sections.is_empty() {
+        sections.push(fragment_sections.join("\n\n"));
+    }
+
+    if !hook_session.snapshot.constraints.is_empty() {
+        sections.push(format!(
+            "## Dynamic Hook Constraints\n{}",
+            hook_session
+                .snapshot
+                .constraints
+                .iter()
+                .map(|constraint| format!("- {}", constraint.description))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    sections
 }
 
 #[async_trait::async_trait]

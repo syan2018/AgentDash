@@ -375,6 +375,9 @@ async fn build_story_owner_prompt_request(
         .as_ref()
         .map(|config| config.executor.as_str())
         .or(project.config.default_agent_type.as_deref());
+    let use_hook_workflow_runtime = effective_agent_type
+        .map(agentdash_executor::AgentDashExecutorConfig::new)
+        .is_some_and(|config| config.is_native_agent());
     let mut effective_mcp_servers = req.mcp_servers.clone();
     let base_url = state
         .config
@@ -400,42 +403,46 @@ async fn build_story_owner_prompt_request(
             workspace_source_fragments: resolved_workspace_sources.fragments,
             workspace_source_warnings: resolved_workspace_sources.warnings,
         });
-    let workflow_instruction = resolve_workflow_runtime_injection(
-        state,
-        WorkflowRuntimeContext {
-            target_kind: agentdash_domain::workflow::WorkflowTargetKind::Story,
-            target_id: story.id,
-            project,
-            story: Some(story),
-            task: None,
-            workspace,
-        },
-    )
-    .await
-    .map(|runtime| {
-        source_summary.extend(runtime.source_summary);
-        let mut instruction: Option<String> = None;
-        for fragment in runtime.context_fragments {
-            match fragment.slot {
-                "instruction" | "instruction_append" => {
-                    instruction = Some(match instruction {
-                        Some(existing) if !existing.trim().is_empty() => {
-                            format!("{existing}\n\n{}", fragment.content)
+    let workflow_instruction = if use_hook_workflow_runtime {
+        None
+    } else {
+        resolve_workflow_runtime_injection(
+            state,
+            WorkflowRuntimeContext {
+                target_kind: agentdash_domain::workflow::WorkflowTargetKind::Story,
+                target_id: story.id,
+                project,
+                story: Some(story),
+                task: None,
+                workspace,
+            },
+        )
+        .await
+        .map(|runtime| {
+            source_summary.extend(runtime.source_summary);
+            let mut instruction: Option<String> = None;
+            for fragment in runtime.context_fragments {
+                match fragment.slot {
+                    "instruction" | "instruction_append" => {
+                        instruction = Some(match instruction {
+                            Some(existing) if !existing.trim().is_empty() => {
+                                format!("{existing}\n\n{}", fragment.content)
+                            }
+                            _ => fragment.content,
+                        });
+                    }
+                    _ => {
+                        if !fragment.content.trim().is_empty() {
+                            context_markdown.push_str("\n\n");
+                            context_markdown.push_str(&fragment.content);
                         }
-                        _ => fragment.content,
-                    });
-                }
-                _ => {
-                    if !fragment.content.trim().is_empty() {
-                        context_markdown.push_str("\n\n");
-                        context_markdown.push_str(&fragment.content);
                     }
                 }
             }
-        }
-        instruction
-    })
-    .flatten();
+            instruction
+        })
+        .flatten()
+    };
 
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
@@ -483,6 +490,7 @@ async fn build_project_owner_prompt_request(
         .executor_config
         .clone()
         .unwrap_or_else(|| project_agent.executor_config.clone());
+    let use_hook_workflow_runtime = effective_executor_config.is_native_agent();
     let effective_agent_type = Some(effective_executor_config.executor.as_str());
     let address_space = match req.address_space.clone() {
         Some(address_space) => Some(address_space),
@@ -514,42 +522,46 @@ async fn build_project_owner_prompt_request(
             preset_name: project_agent.preset_name.as_deref(),
             agent_display_name: project_agent.display_name.as_str(),
         });
-    let workflow_instruction = resolve_workflow_runtime_injection(
-        state,
-        WorkflowRuntimeContext {
-            target_kind: agentdash_domain::workflow::WorkflowTargetKind::Project,
-            target_id: project.id,
-            project,
-            story: None,
-            task: None,
-            workspace: workspace.as_ref(),
-        },
-    )
-    .await
-    .map(|runtime| {
-        source_summary.extend(runtime.source_summary);
-        let mut instruction: Option<String> = None;
-        for fragment in runtime.context_fragments {
-            match fragment.slot {
-                "instruction" | "instruction_append" => {
-                    instruction = Some(match instruction {
-                        Some(existing) if !existing.trim().is_empty() => {
-                            format!("{existing}\n\n{}", fragment.content)
+    let workflow_instruction = if use_hook_workflow_runtime {
+        None
+    } else {
+        resolve_workflow_runtime_injection(
+            state,
+            WorkflowRuntimeContext {
+                target_kind: agentdash_domain::workflow::WorkflowTargetKind::Project,
+                target_id: project.id,
+                project,
+                story: None,
+                task: None,
+                workspace: workspace.as_ref(),
+            },
+        )
+        .await
+        .map(|runtime| {
+            source_summary.extend(runtime.source_summary);
+            let mut instruction: Option<String> = None;
+            for fragment in runtime.context_fragments {
+                match fragment.slot {
+                    "instruction" | "instruction_append" => {
+                        instruction = Some(match instruction {
+                            Some(existing) if !existing.trim().is_empty() => {
+                                format!("{existing}\n\n{}", fragment.content)
+                            }
+                            _ => fragment.content,
+                        });
+                    }
+                    _ => {
+                        if !fragment.content.trim().is_empty() {
+                            context_markdown.push_str("\n\n");
+                            context_markdown.push_str(&fragment.content);
                         }
-                        _ => fragment.content,
-                    });
-                }
-                _ => {
-                    if !fragment.content.trim().is_empty() {
-                        context_markdown.push_str("\n\n");
-                        context_markdown.push_str(&fragment.content);
                     }
                 }
             }
-        }
-        instruction
-    })
-    .flatten();
+            instruction
+        })
+        .flatten()
+    };
     let prompt_blocks = build_project_owner_prompt_blocks(
         project.id,
         context_markdown,

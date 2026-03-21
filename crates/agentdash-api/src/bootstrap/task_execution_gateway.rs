@@ -141,24 +141,6 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             extra_contributors.push(Box::new(McpContextContributor::new(config)));
         }
 
-        if let Some(workflow_runtime) = resolve_workflow_runtime_injection(
-            &self.state,
-            WorkflowRuntimeContext {
-                target_kind: agentdash_domain::workflow::WorkflowTargetKind::Task,
-                target_id: task.id,
-                project: &project,
-                story: Some(&story),
-                task: Some(task),
-                workspace: workspace.as_ref(),
-            },
-        )
-        .await
-        {
-            extra_contributors.push(Box::new(StaticFragmentsContributor::new(
-                workflow_runtime.context_fragments,
-            )));
-        }
-
         let session_id = task
             .session_id
             .as_deref()
@@ -166,10 +148,30 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
 
         let resolved_config = resolve_task_executor_config(executor_config, task, &project)
             .map_err(map_internal_error)?;
-
         let use_cloud_native_agent = resolved_config
             .as_ref()
             .is_some_and(|config| config.is_native_agent());
+
+        if !use_cloud_native_agent {
+            if let Some(workflow_runtime) = resolve_workflow_runtime_injection(
+                &self.state,
+                WorkflowRuntimeContext {
+                    target_kind: agentdash_domain::workflow::WorkflowTargetKind::Task,
+                    target_id: task.id,
+                    project: &project,
+                    story: Some(&story),
+                    task: Some(task),
+                    workspace: workspace.as_ref(),
+                },
+            )
+            .await
+            {
+                extra_contributors.push(Box::new(StaticFragmentsContributor::new(
+                    workflow_runtime.context_fragments,
+                )));
+            }
+        }
+
         let address_space = if use_cloud_native_agent {
             let agent_type = resolved_config
                 .as_ref()

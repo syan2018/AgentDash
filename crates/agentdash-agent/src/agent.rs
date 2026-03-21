@@ -21,8 +21,8 @@ use crate::agent_loop::{
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
 use crate::types::{
-    AgentContext, AgentError, AgentEvent, AgentMessage, AgentState, DynAgentTool, ThinkingLevel,
-    ToolExecutionMode,
+    AgentContext, AgentError, AgentEvent, AgentMessage, AgentState, DynAgentRuntimeDelegate,
+    DynAgentTool, ThinkingLevel, ToolExecutionMode,
 };
 
 // ─── QueueMode ──────────────────────────────────────────────
@@ -69,6 +69,9 @@ pub struct AgentConfig {
 
     /// 工具执行后钩子
     pub after_tool_call: Option<AfterToolCallFn>,
+
+    /// 统一运行时委托
+    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
 }
 
 impl Default for AgentConfig {
@@ -86,6 +89,7 @@ impl Default for AgentConfig {
             tool_execution: ToolExecutionMode::default(),
             before_tool_call: None,
             after_tool_call: None,
+            runtime_delegate: None,
         }
     }
 }
@@ -422,6 +426,7 @@ impl Agent {
             tool_execution: self.config.tool_execution,
             before_tool_call: self.config.before_tool_call.clone(),
             after_tool_call: self.config.after_tool_call.clone(),
+            runtime_delegate: self.config.runtime_delegate.clone(),
             get_steering_messages: Some(Arc::new(move || {
                 if skip_initial_steering_poll.swap(false, Ordering::SeqCst) {
                     return Vec::new();

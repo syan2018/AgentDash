@@ -55,6 +55,129 @@ pub struct AfterToolCallContext<'a> {
     pub context: &'a AgentContext,
 }
 
+#[derive(Debug, Clone)]
+pub struct TransformContextInput {
+    pub context: AgentContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransformContextOutput {
+    pub messages: Vec<AgentMessage>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BeforeToolCallInput {
+    pub assistant_message: AgentMessage,
+    pub tool_call: ToolCallInfo,
+    pub args: serde_json::Value,
+    pub context: AgentContext,
+}
+
+#[derive(Debug, Clone)]
+pub enum ToolCallDecision {
+    Allow,
+    Deny {
+        reason: String,
+    },
+    Ask {
+        reason: String,
+    },
+    Rewrite {
+        args: serde_json::Value,
+        note: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct AfterToolCallInput {
+    pub assistant_message: AgentMessage,
+    pub tool_call: ToolCallInfo,
+    pub args: serde_json::Value,
+    pub result: AgentToolResult,
+    pub is_error: bool,
+    pub context: AgentContext,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AfterToolCallEffects {
+    pub content: Option<Vec<ContentPart>>,
+    pub details: Option<serde_json::Value>,
+    pub is_error: Option<bool>,
+    pub refresh_snapshot: bool,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AfterTurnInput {
+    pub context: AgentContext,
+    pub message: AgentMessage,
+    pub tool_results: Vec<AgentMessage>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TurnControlDecision {
+    pub steering: Vec<AgentMessage>,
+    pub follow_up: Vec<AgentMessage>,
+    pub refresh_snapshot: bool,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BeforeStopInput {
+    pub context: AgentContext,
+}
+
+#[derive(Debug, Clone)]
+pub enum StopDecision {
+    Stop,
+    Continue {
+        steering: Vec<AgentMessage>,
+        follow_up: Vec<AgentMessage>,
+        reason: Option<String>,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum AgentRuntimeError {
+    #[error("{0}")]
+    Runtime(String),
+}
+
+#[async_trait]
+pub trait AgentRuntimeDelegate: Send + Sync {
+    async fn transform_context(
+        &self,
+        input: TransformContextInput,
+        cancel: CancellationToken,
+    ) -> Result<TransformContextOutput, AgentRuntimeError>;
+
+    async fn before_tool_call(
+        &self,
+        input: BeforeToolCallInput,
+        cancel: CancellationToken,
+    ) -> Result<ToolCallDecision, AgentRuntimeError>;
+
+    async fn after_tool_call(
+        &self,
+        input: AfterToolCallInput,
+        cancel: CancellationToken,
+    ) -> Result<AfterToolCallEffects, AgentRuntimeError>;
+
+    async fn after_turn(
+        &self,
+        input: AfterTurnInput,
+        cancel: CancellationToken,
+    ) -> Result<TurnControlDecision, AgentRuntimeError>;
+
+    async fn before_stop(
+        &self,
+        input: BeforeStopInput,
+        cancel: CancellationToken,
+    ) -> Result<StopDecision, AgentRuntimeError>;
+}
+
+pub type DynAgentRuntimeDelegate = std::sync::Arc<dyn AgentRuntimeDelegate>;
+
 // ─── ContentPart ────────────────────────────────────────────
 
 /// 内容片段。相比旧实现，增加 reasoning 支持，用于更完整地贴近 Pi assistant 内容模型。
@@ -359,10 +482,21 @@ pub type DynAgentTool = Arc<dyn AgentTool>;
 
 // ─── AgentContext ───────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct AgentContext {
     pub system_prompt: String,
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<DynAgentTool>,
+}
+
+impl std::fmt::Debug for AgentContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentContext")
+            .field("system_prompt", &self.system_prompt)
+            .field("messages_count", &self.messages.len())
+            .field("tools_count", &self.tools.len())
+            .finish()
+    }
 }
 
 // ─── AgentState ─────────────────────────────────────────────
@@ -494,4 +628,6 @@ pub enum AgentError {
     ContinueError(String),
     #[error("{0}")]
     InvalidState(String),
+    #[error("运行时委托错误: {0}")]
+    RuntimeDelegate(String),
 }

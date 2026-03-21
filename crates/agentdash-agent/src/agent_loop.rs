@@ -25,9 +25,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
 use crate::types::{
-    AfterToolCallContext, AfterToolCallResult, AgentContext, AgentError, AgentEvent, AgentMessage,
-    AgentToolResult, AssistantStreamEvent, BeforeToolCallContext, BeforeToolCallResult,
-    ContentPart, DynAgentTool, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback,
+    AfterToolCallContext, AfterToolCallInput, AfterToolCallResult, AfterTurnInput, AgentContext,
+    AgentError, AgentEvent, AgentMessage, AgentToolResult, AssistantStreamEvent, BeforeStopInput,
+    BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, ContentPart,
+    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolCallDecision, ToolCallInfo,
+    ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
 };
 
 const DEFAULT_MAX_TURNS: usize = 25;
@@ -113,6 +115,9 @@ pub struct AgentLoopConfig {
     /// 工具执行后钩子
     /// 对齐 Pi `afterToolCall`。可覆盖工具执行结果。
     pub after_tool_call: Option<AfterToolCallFn>,
+
+    /// 统一运行时委托
+    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
 }
 
 impl Default for AgentLoopConfig {
@@ -128,6 +133,7 @@ impl Default for AgentLoopConfig {
             tool_execution: ToolExecutionMode::default(),
             before_tool_call: None,
             after_tool_call: None,
+            runtime_delegate: None,
         }
     }
 }
@@ -215,6 +221,7 @@ async fn run_loop(
     let mut turn_count: usize = 0;
     let mut first_turn = true;
     let mut pending_messages = poll_steering(config);
+    let mut pending_follow_up_messages: Vec<AgentMessage> = Vec::new();
 
     loop {
         let mut has_more_tool_calls = true;
@@ -308,19 +315,55 @@ async fn run_loop(
             emit_event(
                 emit,
                 AgentEvent::TurnEnd {
-                    message: assistant_message,
-                    tool_results,
+                    message: assistant_message.clone(),
+                    tool_results: tool_results.clone(),
                 },
             )
             .await;
 
-            pending_messages = poll_steering(config);
+            if let Some(decision) =
+                run_after_turn_delegate(config, context, &assistant_message, &tool_results, cancel)
+                    .await?
+            {
+                if !decision.steering.is_empty() {
+                    pending_messages.extend(decision.steering);
+                }
+                if !decision.follow_up.is_empty() {
+                    pending_follow_up_messages.extend(decision.follow_up);
+                }
+            }
+
+            let mut newly_polled_steering = poll_steering(config);
+            pending_messages.append(&mut newly_polled_steering);
+        }
+
+        if !pending_follow_up_messages.is_empty() {
+            pending_messages = std::mem::take(&mut pending_follow_up_messages);
+            continue;
         }
 
         let follow_ups = poll_follow_up(config);
         if !follow_ups.is_empty() {
             pending_messages = follow_ups;
             continue;
+        }
+
+        if let Some(stop_decision) = run_before_stop_delegate(config, context, cancel).await? {
+            match stop_decision {
+                StopDecision::Stop => {}
+                StopDecision::Continue {
+                    mut steering,
+                    mut follow_up,
+                    ..
+                } => {
+                    if steering.is_empty() && follow_up.is_empty() {
+                        break;
+                    }
+                    pending_messages.append(&mut steering);
+                    pending_messages.append(&mut follow_up);
+                    continue;
+                }
+            }
         }
 
         break;
@@ -338,6 +381,52 @@ async fn run_loop(
 
 async fn emit_event(emit: &AgentEventSink, event: AgentEvent) {
     emit(event).await;
+}
+
+async fn run_after_turn_delegate(
+    config: &AgentLoopConfig,
+    context: &AgentContext,
+    assistant_message: &AgentMessage,
+    tool_results: &[AgentMessage],
+    cancel: &CancellationToken,
+) -> Result<Option<crate::types::TurnControlDecision>, AgentError> {
+    let Some(delegate) = config.runtime_delegate.as_ref() else {
+        return Ok(None);
+    };
+
+    delegate
+        .after_turn(
+            AfterTurnInput {
+                context: context.clone(),
+                message: assistant_message.clone(),
+                tool_results: tool_results.to_vec(),
+            },
+            cancel.clone(),
+        )
+        .await
+        .map(Some)
+        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))
+}
+
+async fn run_before_stop_delegate(
+    config: &AgentLoopConfig,
+    context: &AgentContext,
+    cancel: &CancellationToken,
+) -> Result<Option<StopDecision>, AgentError> {
+    let Some(delegate) = config.runtime_delegate.as_ref() else {
+        return Ok(None);
+    };
+
+    delegate
+        .before_stop(
+            BeforeStopInput {
+                context: context.clone(),
+            },
+            cancel.clone(),
+        )
+        .await
+        .map(Some)
+        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))
 }
 
 /// 对齐 Pi `streamAssistantResponse` (agent-loop.ts:238-331)
@@ -414,7 +503,18 @@ async fn stream_assistant_response(
     tool_definitions: &[ToolDefinition],
     cancel: &CancellationToken,
 ) -> Result<AgentMessage, AgentError> {
-    let messages_for_llm = if let Some(ref transform) = config.transform_context {
+    let messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
+        delegate
+            .transform_context(
+                TransformContextInput {
+                    context: context.clone(),
+                },
+                cancel.clone(),
+            )
+            .await
+            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?
+            .messages
+    } else if let Some(ref transform) = config.transform_context {
         transform(context.messages.clone(), cancel.clone()).await
     } else {
         context.messages.clone()
@@ -1120,7 +1220,7 @@ async fn prepare_tool_call(
         }
     };
 
-    let args = match validate_tool_call_arguments(&tool, tc) {
+    let mut args = match validate_tool_call_arguments(&tool, tc) {
         Ok(args) => args,
         Err(error) => {
             return ToolCallPreparation::Immediate {
@@ -1129,6 +1229,47 @@ async fn prepare_tool_call(
             };
         }
     };
+
+    if let Some(delegate) = config.runtime_delegate.as_ref() {
+        let input = BeforeToolCallInput {
+            assistant_message: assistant_message.clone(),
+            tool_call: tc.clone(),
+            args: args.clone(),
+            context: context.clone(),
+        };
+        let decision = match delegate.before_tool_call(input, cancel.clone()).await {
+            Ok(decision) => decision,
+            Err(error) => {
+                return ToolCallPreparation::Immediate {
+                    result: error_tool_result(format!(
+                        "runtime delegate before_tool_call 失败: {error}"
+                    )),
+                    is_error: true,
+                };
+            }
+        };
+
+        match decision {
+            ToolCallDecision::Allow => {}
+            ToolCallDecision::Deny { reason } | ToolCallDecision::Ask { reason } => {
+                return ToolCallPreparation::Immediate {
+                    result: error_tool_result(reason),
+                    is_error: true,
+                };
+            }
+            ToolCallDecision::Rewrite {
+                args: rewritten, ..
+            } => match validate_tool_arguments(&tool, &tc.name, &rewritten) {
+                Ok(validated) => args = validated,
+                Err(error) => {
+                    return ToolCallPreparation::Immediate {
+                        result: error_tool_result(error),
+                        is_error: true,
+                    };
+                }
+            },
+        }
+    }
 
     // 对齐 Pi: beforeToolCall 钩子
     if let Some(ref hook) = config.before_tool_call {
@@ -1224,6 +1365,39 @@ async fn finalize_executed_tool_call(
     let mut result = executed.result;
     let mut is_error = executed.is_error;
 
+    if let Some(delegate) = config.runtime_delegate.as_ref() {
+        let input = AfterToolCallInput {
+            assistant_message: assistant_message.clone(),
+            tool_call: tc.clone(),
+            args: args.clone(),
+            result: result.clone(),
+            is_error,
+            context: context.clone(),
+        };
+
+        match delegate.after_tool_call(input, cancel.clone()).await {
+            Ok(effects) => {
+                if let Some(content) = effects.content {
+                    result.content = content;
+                }
+                if let Some(details) = effects.details {
+                    result.details = Some(details);
+                }
+                if let Some(err) = effects.is_error {
+                    is_error = err;
+                }
+            }
+            Err(error) => {
+                return ExecutedOutcome {
+                    result: error_tool_result(format!(
+                        "runtime delegate after_tool_call 失败: {error}"
+                    )),
+                    is_error: true,
+                };
+            }
+        }
+    }
+
     if let Some(ref hook) = config.after_tool_call {
         let ctx = AfterToolCallContext {
             assistant_message,
@@ -1256,19 +1430,27 @@ fn validate_tool_call_arguments(
     tool: &DynAgentTool,
     tc: &ToolCallInfo,
 ) -> Result<serde_json::Value, String> {
+    validate_tool_arguments(tool, &tc.name, &tc.arguments)
+}
+
+fn validate_tool_arguments(
+    tool: &DynAgentTool,
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let schema = tool.parameters_schema();
     let validator = validator_for(&schema)
-        .map_err(|error| format!("Tool {} schema is invalid: {error}", tc.name))?;
+        .map_err(|error| format!("Tool {} schema is invalid: {error}", tool_name))?;
     let errors = validator
-        .iter_errors(&tc.arguments)
+        .iter_errors(args)
         .map(|error| error.to_string())
         .collect::<Vec<_>>();
     if errors.is_empty() {
-        Ok(tc.arguments.clone())
+        Ok(args.clone())
     } else {
         Err(format!(
             "Tool {} arguments are invalid: {}",
-            tc.name,
+            tool_name,
             errors.join("; ")
         ))
     }

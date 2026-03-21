@@ -731,6 +731,7 @@ mod tests {
             executor_config: crate::connector::AgentDashExecutorConfig::new("PI_AGENT"),
             mcp_servers: vec![],
             address_space: None,
+            hook_session: None,
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);

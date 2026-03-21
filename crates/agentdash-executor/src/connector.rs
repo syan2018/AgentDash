@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin, str::FromStr};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, str::FromStr, sync::Arc};
 
 use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use agentdash_agent::DynAgentTool;
+
+use crate::hooks::HookSessionRuntime;
 
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -121,6 +123,9 @@ pub struct ExecutionContext {
     pub mcp_servers: Vec<McpServer>,
     /// 会话级 Address Space 视图。云端原生 Agent 可基于它生成 provider-backed runtime tools。
     pub address_space: Option<ExecutionAddressSpace>,
+    /// 会话级 Hook Runtime 快照。
+    /// 当前阶段仅作为执行层承载位，后续由 ExecutorHub / Hook provider 正式填充。
+    pub hook_session: Option<Arc<HookSessionRuntime>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

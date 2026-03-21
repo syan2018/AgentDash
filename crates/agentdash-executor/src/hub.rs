@@ -451,6 +451,7 @@ impl ExecutorHub {
             executor_config,
             mcp_servers: req.mcp_servers,
             address_space: req.address_space,
+            hook_session: None,
         };
 
         let title_hint = resolved_payload

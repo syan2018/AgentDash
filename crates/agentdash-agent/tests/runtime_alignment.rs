@@ -9,7 +9,8 @@ use agentdash_agent::agent_loop::AgentLoopConfig;
 use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
     AgentToolError, AgentToolResult, AssistantStreamEvent, BridgeError, BridgeRequest,
-    BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopReason, ToolCallInfo,
+    BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopReason, ToolApprovalOutcome,
+    ToolCallInfo,
     agent_loop::AgentEventSink,
 };
 use async_trait::async_trait;
@@ -166,6 +167,8 @@ fn event_kind(event: &AgentEvent) -> &'static str {
         AgentEvent::MessageEnd { .. } => "message_end",
         AgentEvent::ToolExecutionStart { .. } => "tool_execution_start",
         AgentEvent::ToolExecutionUpdate { .. } => "tool_execution_update",
+        AgentEvent::ToolExecutionPendingApproval { .. } => "tool_execution_pending_approval",
+        AgentEvent::ToolExecutionApprovalResolved { .. } => "tool_execution_approval_resolved",
         AgentEvent::ToolExecutionEnd { .. } => "tool_execution_end",
     }
 }
@@ -497,4 +500,141 @@ fn assistant_stream_event_type_is_tool_call_delta_complete() {
         delta: "{\"value\":\"x\"}".to_string(),
     };
     assert!(matches!(event, AssistantStreamEvent::ToolCallDelta { .. }));
+}
+
+#[tokio::test]
+async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
+    let executed = Arc::new(AtomicUsize::new(0));
+    let tool: DynAgentTool = Arc::new(RecordingTool {
+        executed: executed.clone(),
+    });
+    let approval_requested = Arc::new(Notify::new());
+    let release_approval = Arc::new(Notify::new());
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_tool_call(
+                "tool-approval-1",
+                serde_json::json!({ "value": "x" }),
+            )),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("收到拒绝，改走别的方案")),
+        ))],
+    ]);
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        tools: vec![tool],
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = collecting_sink(events.clone());
+
+    let approval_requested_for_cfg = approval_requested.clone();
+    let release_approval_for_cfg = release_approval.clone();
+    let config = AgentLoopConfig {
+        runtime_delegate: Some(Arc::new(RejectingRuntimeDelegate)),
+        await_tool_approval: Some(Arc::new(move |_request, _cancel| {
+            let approval_requested = approval_requested_for_cfg.clone();
+            let release_approval = release_approval_for_cfg.clone();
+            Box::pin(async move {
+                approval_requested.notify_waiters();
+                release_approval.notified().await;
+                ToolApprovalOutcome::Rejected {
+                    reason: Some("用户拒绝执行该工具".to_string()),
+                }
+            })
+        })),
+        ..AgentLoopConfig::default()
+    };
+
+    let run = tokio::spawn(async move {
+        agentdash_agent::agent_loop::agent_loop(
+            vec![AgentMessage::user("run tool")],
+            &mut context,
+            &config,
+            &bridge,
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+    });
+
+    approval_requested.notified().await;
+    release_approval.notify_waiters();
+
+    let new_messages = run
+        .await
+        .expect("task should not panic")
+        .expect("agent loop should succeed");
+
+    assert_eq!(executed.load(Ordering::SeqCst), 0);
+    assert!(new_messages.iter().any(|message| {
+        matches!(
+            message,
+            AgentMessage::ToolResult { is_error: true, details: Some(details), .. }
+                if details.get("approval_state").and_then(serde_json::Value::as_str) == Some("rejected")
+        )
+    }));
+
+    let kinds = events
+        .lock()
+        .await
+        .iter()
+        .map(event_kind)
+        .collect::<Vec<_>>();
+    assert!(kinds.contains(&"tool_execution_pending_approval"));
+    assert!(kinds.contains(&"tool_execution_approval_resolved"));
+    assert!(!kinds.contains(&"tool_execution_end"));
+}
+
+#[derive(Clone)]
+struct RejectingRuntimeDelegate;
+
+#[async_trait]
+impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
+    async fn transform_context(
+        &self,
+        input: agentdash_agent::TransformContextInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::TransformContextOutput {
+            messages: input.context.messages,
+        })
+    }
+
+    async fn before_tool_call(
+        &self,
+        _input: agentdash_agent::BeforeToolCallInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::ToolCallDecision, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::ToolCallDecision::Ask {
+            reason: "需要用户审批".to_string(),
+            args: None,
+            details: Some(serde_json::json!({ "source": "unit_test" })),
+        })
+    }
+
+    async fn after_tool_call(
+        &self,
+        _input: agentdash_agent::AfterToolCallInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::AfterToolCallEffects, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::AfterToolCallEffects::default())
+    }
+
+    async fn after_turn(
+        &self,
+        _input: agentdash_agent::AfterTurnInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::TurnControlDecision, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::TurnControlDecision::default())
+    }
+
+    async fn before_stop(
+        &self,
+        _input: agentdash_agent::BeforeStopInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::StopDecision, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::StopDecision::Stop)
+    }
 }

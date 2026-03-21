@@ -28,8 +28,9 @@ use crate::types::{
     AfterToolCallContext, AfterToolCallInput, AfterToolCallResult, AfterTurnInput, AgentContext,
     AgentError, AgentEvent, AgentMessage, AgentToolResult, AssistantStreamEvent, BeforeStopInput,
     BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, ContentPart,
-    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolCallDecision, ToolCallInfo,
-    ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
+    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolApprovalOutcome,
+    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback,
+    TransformContextInput,
 };
 
 const DEFAULT_MAX_TURNS: usize = 25;
@@ -78,6 +79,16 @@ pub type AfterToolCallFn = Arc<
         + Sync,
 >;
 
+/// 工具审批等待回调
+pub type AwaitToolApprovalFn = Arc<
+    dyn Fn(
+            ToolApprovalRequest,
+            CancellationToken,
+        ) -> Pin<Box<dyn Future<Output = ToolApprovalOutcome> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// 事件 sink —— 对齐 Pi `runAgentLoop(..., emit, ...)` 的异步事件消费模型。
 pub type AgentEventSink =
     Arc<dyn Fn(AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
@@ -116,6 +127,9 @@ pub struct AgentLoopConfig {
     /// 对齐 Pi `afterToolCall`。可覆盖工具执行结果。
     pub after_tool_call: Option<AfterToolCallFn>,
 
+    /// 工具审批等待
+    pub await_tool_approval: Option<AwaitToolApprovalFn>,
+
     /// 统一运行时委托
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
 }
@@ -133,6 +147,7 @@ impl Default for AgentLoopConfig {
             tool_execution: ToolExecutionMode::default(),
             before_tool_call: None,
             after_tool_call: None,
+            await_tool_approval: None,
             runtime_delegate: None,
         }
     }
@@ -1062,6 +1077,41 @@ async fn execute_tool_calls_sequential(
             ToolCallPreparation::Immediate { result, is_error } => {
                 results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
             }
+            ToolCallPreparation::AwaitApproval {
+                tool,
+                args,
+                reason,
+                details,
+            } => {
+                match await_tool_approval(tc, &args, &reason, details, config, emit, cancel).await {
+                    ApprovalResolution::Approved => {
+                        let executed =
+                            execute_prepared_tool_call(tc, &tool, &args, cancel, emit).await;
+                        let finalized = finalize_executed_tool_call(
+                            context,
+                            assistant_message,
+                            tc,
+                            &args,
+                            executed,
+                            config,
+                            cancel,
+                        )
+                        .await;
+                        results.push(
+                            emit_tool_call_outcome(
+                                tc,
+                                &finalized.result,
+                                finalized.is_error,
+                                emit,
+                            )
+                            .await,
+                        );
+                    }
+                    ApprovalResolution::Rejected { result } => {
+                        results.push(emit_tool_result_message(tc, &result, emit).await);
+                    }
+                }
+            }
             ToolCallPreparation::Prepared { tool, args } => {
                 let executed = execute_prepared_tool_call(tc, &tool, &args, cancel, emit).await;
                 let finalized = finalize_executed_tool_call(
@@ -1122,6 +1172,25 @@ async fn execute_tool_calls_parallel(
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
                 results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
+            }
+            ToolCallPreparation::AwaitApproval {
+                tool,
+                args,
+                reason,
+                details,
+            } => {
+                match await_tool_approval(tc, &args, &reason, details, config, emit, cancel).await {
+                    ApprovalResolution::Approved => {
+                        runnable.push(PreparedEntry {
+                            tc: tc.clone(),
+                            tool,
+                            args,
+                        });
+                    }
+                    ApprovalResolution::Rejected { result } => {
+                        results.push(emit_tool_result_message(tc, &result, emit).await);
+                    }
+                }
             }
             ToolCallPreparation::Prepared { tool, args } => {
                 runnable.push(PreparedEntry {
@@ -1187,6 +1256,13 @@ enum ToolCallPreparation {
         result: AgentToolResult,
         is_error: bool,
     },
+    /// 等待用户审批后再决定是否执行
+    AwaitApproval {
+        tool: DynAgentTool,
+        args: serde_json::Value,
+        reason: String,
+        details: Option<serde_json::Value>,
+    },
     /// 准备就绪，可以执行
     Prepared {
         tool: DynAgentTool,
@@ -1251,10 +1327,42 @@ async fn prepare_tool_call(
 
         match decision {
             ToolCallDecision::Allow => {}
-            ToolCallDecision::Deny { reason } | ToolCallDecision::Ask { reason } => {
+            ToolCallDecision::Deny { reason } => {
                 return ToolCallPreparation::Immediate {
                     result: error_tool_result(reason),
                     is_error: true,
+                };
+            }
+            ToolCallDecision::Ask {
+                reason,
+                args: approval_args,
+                details,
+            } => {
+                if config.await_tool_approval.is_none() {
+                    return ToolCallPreparation::Immediate {
+                        result: error_tool_result(
+                            "runtime delegate 请求审批，但当前 Agent 未配置审批等待能力",
+                        ),
+                        is_error: true,
+                    };
+                }
+                let args = match approval_args {
+                    Some(rewritten) => match validate_tool_arguments(&tool, &tc.name, &rewritten) {
+                        Ok(validated) => validated,
+                        Err(error) => {
+                            return ToolCallPreparation::Immediate {
+                                result: error_tool_result(error),
+                                is_error: true,
+                            };
+                        }
+                    },
+                    None => args,
+                };
+                return ToolCallPreparation::AwaitApproval {
+                    tool,
+                    args,
+                    reason,
+                    details,
                 };
             }
             ToolCallDecision::Rewrite {
@@ -1481,13 +1589,21 @@ async fn emit_tool_call_outcome(
     )
     .await;
 
+    emit_tool_result_message(tc, result, emit).await
+}
+
+async fn emit_tool_result_message(
+    tc: &ToolCallInfo,
+    result: &AgentToolResult,
+    emit: &AgentEventSink,
+) -> AgentMessage {
     let tool_result_msg = AgentMessage::tool_result_full(
         &tc.id,
         tc.call_id.clone(),
         Some(tc.name.clone()),
         result.content.clone(),
         result.details.clone(),
-        is_error,
+        result.is_error,
     );
 
     emit_event(
@@ -1513,6 +1629,102 @@ fn error_tool_result(message: impl Into<String>) -> AgentToolResult {
         content: vec![ContentPart::text(message)],
         is_error: true,
         details: None,
+    }
+}
+
+enum ApprovalResolution {
+    Approved,
+    Rejected {
+        result: AgentToolResult,
+    },
+}
+
+async fn await_tool_approval(
+    tc: &ToolCallInfo,
+    args: &serde_json::Value,
+    reason: &str,
+    details: Option<serde_json::Value>,
+    config: &AgentLoopConfig,
+    emit: &AgentEventSink,
+    cancel: &CancellationToken,
+) -> ApprovalResolution {
+    emit_event(
+        emit,
+        AgentEvent::ToolExecutionPendingApproval {
+            tool_call_id: tc.id.clone(),
+            tool_name: tc.name.clone(),
+            args: args.clone(),
+            reason: reason.to_string(),
+            details: details.clone(),
+        },
+    )
+    .await;
+
+    let Some(await_approval) = config.await_tool_approval.as_ref() else {
+        return ApprovalResolution::Rejected {
+            result: approval_rejected_tool_result(Some(
+                "当前 Agent 未配置审批等待能力".to_string(),
+            )),
+        };
+    };
+
+    match await_approval(
+        ToolApprovalRequest {
+            tool_call: tc.clone(),
+            args: args.clone(),
+            reason: reason.to_string(),
+            details,
+        },
+        cancel.clone(),
+    )
+    .await
+    {
+        ToolApprovalOutcome::Approved => {
+            emit_event(
+                emit,
+                AgentEvent::ToolExecutionApprovalResolved {
+                    tool_call_id: tc.id.clone(),
+                    tool_name: tc.name.clone(),
+                    args: args.clone(),
+                    approved: true,
+                    reason: None,
+                },
+            )
+            .await;
+            ApprovalResolution::Approved
+        }
+        ToolApprovalOutcome::Rejected { reason } => {
+            emit_event(
+                emit,
+                AgentEvent::ToolExecutionApprovalResolved {
+                    tool_call_id: tc.id.clone(),
+                    tool_name: tc.name.clone(),
+                    args: args.clone(),
+                    approved: false,
+                    reason: reason.clone(),
+                },
+            )
+            .await;
+            ApprovalResolution::Rejected {
+                result: approval_rejected_tool_result(reason),
+            }
+        }
+    }
+}
+
+fn approval_rejected_tool_result(reason: Option<String>) -> AgentToolResult {
+    let message = reason
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("工具执行未获批准：{value}"))
+        .unwrap_or_else(|| "工具执行未获批准".to_string());
+    AgentToolResult {
+        content: vec![ContentPart::text(message)],
+        is_error: true,
+        details: Some(serde_json::json!({
+            "approval_state": "rejected",
+            "reason": reason,
+        })),
     }
 }
 

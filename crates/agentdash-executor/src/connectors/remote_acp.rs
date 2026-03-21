@@ -82,4 +82,25 @@ impl AgentConnector for RemoteAcpConnector {
             "远程 ACP 连接器尚未实现".to_string(),
         ))
     }
+
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Err(ConnectorError::ConnectionFailed(
+            "远程 ACP 连接器尚未实现工具审批".to_string(),
+        ))
+    }
+
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Err(ConnectorError::ConnectionFailed(
+            "远程 ACP 连接器尚未实现工具审批".to_string(),
+        ))
+    }
 }

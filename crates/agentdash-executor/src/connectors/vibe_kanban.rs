@@ -354,4 +354,25 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         }
         Ok(())
     }
+
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Err(ConnectorError::Runtime(
+            "当前 vibe-kanban 执行器尚未接入正式审批恢复链路".to_string(),
+        ))
+    }
+
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Err(ConnectorError::Runtime(
+            "当前 vibe-kanban 执行器尚未接入正式审批恢复链路".to_string(),
+        ))
+    }
 }

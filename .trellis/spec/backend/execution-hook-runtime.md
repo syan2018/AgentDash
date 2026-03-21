@@ -166,7 +166,7 @@ pub struct HookSessionRuntimeSnapshot {
 | Trigger | 必须行为 |
 |---|---|
 | `SessionStart` / `UserPromptSubmit` | 返回当前应注入的 `context_fragments + constraints + policies` |
-| `BeforeTool` | 可以 `Allow / Deny / Ask / Rewrite`，不得异步观测后再补救 |
+| `BeforeTool` | 可以 `Allow / Deny / Ask / Rewrite`，其中 `Ask` 必须在当前 tool call 边界同步挂起等待审批，不得退化成“先报错，下一轮再猜” |
 | `AfterTool` | 可以附加 diagnostics，并决定是否 `refresh_snapshot` |
 | `AfterTurn` | 可以追加 steering / constraints / follow-up |
 | `BeforeStop` | 必须在 loop 退出前同步返回 stop gate 决策 |
@@ -203,6 +203,29 @@ pub struct HookSessionRuntimeSnapshot {
 - `diagnostics`：session runtime 命中记录
 - `trace`：per-trigger 的运行态轨迹，必须能看到 trigger / decision / matched_rule_keys / refresh / completion
 - 若某条 policy / diagnostic / constraint 来自 workflow 或 global builtin，前端应能直接看到来源标签，而不是只剩自然语言描述
+
+#### 3.5.1 Ask / Approval / Resume 契约
+
+当前项目已经把 `Ask` 推进为正式的人机审批链路：
+
+- Hook provider / runtime delegate 负责在 `BeforeTool` 返回 `Ask`
+- `agentdash-agent` 负责：
+  - 产出 pending approval 事件
+  - 在当前 tool call 边界等待审批结果
+  - 审批通过后继续执行同一个 tool call
+  - 审批拒绝后产出结构化 `tool_result` 并继续 loop
+- `agentdash-executor` / `agentdash-api` 负责暴露审批控制面：
+  - `POST /api/sessions/{id}/tool-approvals/{tool_call_id}/approve`
+  - `POST /api/sessions/{id}/tool-approvals/{tool_call_id}/reject`
+- 前端会话流必须满足：
+  - `tool_call_update.status=pending` 表示等待审批
+  - 用户可以直接在工具卡片中点击批准/拒绝
+  - 若 `rawOutput.approval_state=rejected`，即使 ACP 标准状态仍为 `failed`，UI 也要渲染为“已拒绝执行”
+
+当前默认 Ask 来源：
+
+- `global_builtin:supervised_tool_approval`
+- 当 `permission_policy=SUPERVISED` 时，执行/编辑/删除/移动类工具会进入审批
 
 #### 3.6 Companion / Subagent Dispatch 契约
 
@@ -251,10 +274,13 @@ pub struct HookSessionRuntimeSnapshot {
 | `BeforeTool` 命中 implement phase 且尝试直接 `completed` | 同步拒绝 | `ToolCallDecision::Deny` |
 | `BeforeTool` 命中 `shell_exec.cwd` 绝对工作区路径 | 同步改写为相对 workspace root | `ToolCallDecision::Rewrite` |
 | `BeforeTool` 命中 implement phase 且尝试上报 `session_summary` / `archive_suggestion` | 同步拒绝 | `ToolCallDecision::Deny` |
+| `BeforeTool` 命中 `permission_policy=SUPERVISED` 且工具属于执行/编辑类 | 同步挂起等待审批 | `ToolCallDecision::Ask` |
 | `AfterTool` 命中会改变 task/workflow 观察面的工具 | 请求刷新 snapshot | `refresh_snapshot = true` |
 | `BeforeStop` 命中 `session_ended` | 允许自然结束 | 仅 diagnostics，不阻止退出 |
 | `BeforeStop` 命中 `checklist_passed` 且 task 未达成 | 注入 stop gate，继续 loop | 返回 steering/constraints |
 | `BeforeStop` 命中 `checklist_passed` 且 task 已 `awaiting_verification/completed` | 允许结束 | diagnostics 标记 satisfied |
+| 用户批准 pending tool call | 原 tool call 继续执行 | `tool_call_update(status=in_progress)` |
+| 用户拒绝 pending tool call | 原 tool call 不执行，但 loop 继续推进 | `tool_result.details.approval_state=rejected` |
 | `companion_dispatch` 命中 `BeforeSubagentDispatch` deny | 同步拒绝派发 | `AgentToolError::ExecutionFailed` |
 | `companion_complete` 在非 companion session 调用 | 同步拒绝回流 | `当前 session 不是通过 companion_dispatch 建立的上下文` |
 | `companion_complete` 回流到仍持有 hook runtime 的父 session | 同步触发 `SubagentResult` | trace + diagnostics 同步可见 |
@@ -292,6 +318,7 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 - `execution_hooks` 单测：
   - implement phase 阻止直接 `completed`
   - `shell_exec` 绝对 `cwd` 会在 hook runtime 中被 rewrite
+  - `permission_policy=SUPERVISED` 时，执行类工具会返回 approval request
   - checklist phase 未满足时 `before_stop` 注入 gate
   - checklist phase 满足时 `before_stop` 允许结束
   - `BeforeSubagentDispatch` 会继承 runtime context / constraints
@@ -303,9 +330,15 @@ frontend 展示实际生效的 policies/diagnostics/source registry
   - `agentdash-agent`
   - `agentdash-executor`
   - `agentdash-api`
+- `agentdash-agent` 单测：
+  - `Ask` 会进入 pending approval
+  - reject 时不真正执行工具，但会产出结构化 rejection tool_result
 - 前端构建/类型：
   - `pnpm --filter frontend exec tsc --noEmit`
   - `pnpm --filter frontend build`
+- 前端测试：
+  - pending approval 工具卡片会显示审批按钮
+  - `approval_state=rejected` 会渲染为“已拒绝”
 - 联调：
   - `GET /api/sessions/{id}/hook-runtime` 返回 `policies + metadata + diagnostics`
   - 会话页能看到 `policies: N` 与具体 policy 列表

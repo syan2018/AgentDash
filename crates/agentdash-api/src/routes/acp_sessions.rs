@@ -628,6 +628,49 @@ pub async fn cancel_session(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RejectToolApprovalRequest {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+pub async fn approve_tool_call(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, tool_call_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .services
+        .executor_hub
+        .approve_tool_call(&session_id, &tool_call_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "approved": true,
+        "sessionId": session_id,
+        "toolCallId": tool_call_id,
+    })))
+}
+
+pub async fn reject_tool_call(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, tool_call_id)): Path<(String, String)>,
+    Json(req): Json<RejectToolApprovalRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .services
+        .executor_hub
+        .reject_tool_call(&session_id, &tool_call_id, req.reason.clone())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "rejected": true,
+        "sessionId": session_id,
+        "toolCallId": tool_call_id,
+    })))
+}
+
 /// ACP 会话流（Streaming HTTP / SSE）
 pub async fn acp_session_stream_sse(
     State(state): State<Arc<AppState>>,

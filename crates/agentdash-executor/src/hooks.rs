@@ -297,6 +297,8 @@ pub struct SessionHookSnapshotQuery {
     #[serde(default)]
     pub executor: Option<String>,
     #[serde(default)]
+    pub permission_policy: Option<String>,
+    #[serde(default)]
     pub working_directory: Option<String>,
     #[serde(default)]
     pub workspace_root: Option<String>,
@@ -370,7 +372,17 @@ pub struct HookResolution {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewritten_tool_input: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_request: Option<HookApprovalRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookApprovalRequest {
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -73,6 +73,26 @@ pub struct BeforeToolCallInput {
     pub context: AgentContext,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ToolApprovalRequest {
+    pub tool_call: ToolCallInfo,
+    pub args: serde_json::Value,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub enum ToolApprovalOutcome {
+    Approved,
+    Rejected {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum ToolCallDecision {
     Allow,
@@ -81,6 +101,8 @@ pub enum ToolCallDecision {
     },
     Ask {
         reason: String,
+        args: Option<serde_json::Value>,
+        details: Option<serde_json::Value>,
     },
     Rewrite {
         args: serde_json::Value,
@@ -428,6 +450,22 @@ pub enum AgentEvent {
         tool_name: String,
         args: serde_json::Value,
         partial_result: serde_json::Value,
+    },
+    ToolExecutionPendingApproval {
+        tool_call_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<serde_json::Value>,
+    },
+    ToolExecutionApprovalResolved {
+        tool_call_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+        approved: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     ToolExecutionEnd {
         tool_call_id: String,

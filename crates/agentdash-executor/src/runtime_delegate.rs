@@ -164,6 +164,21 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             );
             return Ok(ToolCallDecision::Deny { reason });
         }
+        if let Some(approval_request) = evaluated.resolution.approval_request.clone() {
+            self.record_trace(
+                HookTrigger::BeforeTool,
+                "ask",
+                Some(tool_name),
+                Some(tool_call_id),
+                None,
+                &evaluated,
+            );
+            return Ok(ToolCallDecision::Ask {
+                reason: approval_request.reason,
+                args: evaluated.resolution.rewritten_tool_input.clone(),
+                details: approval_request.details,
+            });
+        }
         if let Some(args) = evaluated.resolution.rewritten_tool_input.clone() {
             self.record_trace(
                 HookTrigger::BeforeTool,

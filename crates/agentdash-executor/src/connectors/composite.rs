@@ -128,4 +128,42 @@ impl AgentConnector for CompositeConnector {
         }
         Ok(())
     }
+
+    async fn approve_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        let mut last_error: Option<ConnectorError> = None;
+        for connector in &self.connectors {
+            match connector.approve_tool_call(session_id, tool_call_id).await {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            ConnectorError::Runtime("当前没有可处理工具审批的连接器".to_string())
+        }))
+    }
+
+    async fn reject_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        let mut last_error: Option<ConnectorError> = None;
+        for connector in &self.connectors {
+            match connector
+                .reject_tool_call(session_id, tool_call_id, reason.clone())
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            ConnectorError::Runtime("当前没有可处理工具审批的连接器".to_string())
+        }))
+    }
 }

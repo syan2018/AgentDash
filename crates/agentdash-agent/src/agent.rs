@@ -11,18 +11,18 @@ use std::sync::Arc;
 /// - prompt / continue 入口
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::{
-    self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, BeforeToolCallFn, ConvertToLlmFn,
-    TransformContextFn,
+    self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, AwaitToolApprovalFn,
+    BeforeToolCallFn, ConvertToLlmFn, TransformContextFn,
 };
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AgentState, DynAgentRuntimeDelegate,
-    DynAgentTool, ThinkingLevel, ToolExecutionMode,
+    DynAgentTool, ThinkingLevel, ToolApprovalOutcome, ToolApprovalRequest, ToolExecutionMode,
 };
 
 // ─── QueueMode ──────────────────────────────────────────────
@@ -111,10 +111,16 @@ pub struct Agent {
     state: Arc<Mutex<AgentState>>,
     steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
     follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    pending_approvals: Arc<Mutex<std::collections::HashMap<String, PendingApprovalEntry>>>,
     cancel: Option<CancellationToken>,
     idle_notify: Arc<Notify>,
     /// 持久化事件发送端 — 对齐 Pi `Agent.listeners` 多订阅者模型
     persistent_event_tx: Option<event_stream::EventSender<AgentEvent>>,
+}
+
+struct PendingApprovalEntry {
+    responder: oneshot::Sender<ToolApprovalOutcome>,
+    request: ToolApprovalRequest,
 }
 
 impl Agent {
@@ -130,6 +136,7 @@ impl Agent {
             state: Arc::new(Mutex::new(state)),
             steering_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
+            pending_approvals: Arc::new(Mutex::new(std::collections::HashMap::new())),
             cancel: None,
             idle_notify: Arc::new(Notify::new()),
             persistent_event_tx: None,
@@ -251,6 +258,51 @@ impl Agent {
             || !self.follow_up_queue.lock().await.is_empty()
     }
 
+    pub async fn pending_tool_approvals(&self) -> Vec<ToolApprovalRequest> {
+        self.pending_approvals
+            .lock()
+            .await
+            .values()
+            .map(|entry| entry.request.clone())
+            .collect()
+    }
+
+    pub async fn approve_tool_call(&self, tool_call_id: &str) -> Result<(), AgentError> {
+        let Some(entry) = self.pending_approvals.lock().await.remove(tool_call_id) else {
+            return Err(AgentError::InvalidState(format!(
+                "tool_call `{tool_call_id}` 当前没有待审批请求"
+            )));
+        };
+        entry
+            .responder
+            .send(ToolApprovalOutcome::Approved)
+            .map_err(|_| {
+                AgentError::InvalidState(format!(
+                    "tool_call `{tool_call_id}` 的审批请求已经失效"
+                ))
+            })
+    }
+
+    pub async fn reject_tool_call(
+        &self,
+        tool_call_id: &str,
+        reason: Option<String>,
+    ) -> Result<(), AgentError> {
+        let Some(entry) = self.pending_approvals.lock().await.remove(tool_call_id) else {
+            return Err(AgentError::InvalidState(format!(
+                "tool_call `{tool_call_id}` 当前没有待审批请求"
+            )));
+        };
+        entry
+            .responder
+            .send(ToolApprovalOutcome::Rejected { reason })
+            .map_err(|_| {
+                AgentError::InvalidState(format!(
+                    "tool_call `{tool_call_id}` 的审批请求已经失效"
+                ))
+            })
+    }
+
     // ── 取消 ──
 
     /// 取消当前正在执行的 agent loop — 对齐 Pi `abort()`
@@ -291,6 +343,7 @@ impl Agent {
         }
         self.steering_queue.lock().await.clear();
         self.follow_up_queue.lock().await.clear();
+        self.pending_approvals.lock().await.clear();
         self.cancel = None;
     }
 
@@ -390,6 +443,7 @@ impl Agent {
         let bridge = self.bridge.clone();
         let steering_queue = self.steering_queue.clone();
         let follow_up_queue = self.follow_up_queue.clone();
+        let pending_approvals = self.pending_approvals.clone();
         let steering_mode = self.config.steering_mode;
         let follow_up_mode = self.config.follow_up_mode;
         let idle_notify = self.idle_notify.clone();
@@ -430,6 +484,7 @@ impl Agent {
             tool_execution: self.config.tool_execution,
             before_tool_call: self.config.before_tool_call.clone(),
             after_tool_call: self.config.after_tool_call.clone(),
+            await_tool_approval: Some(build_tool_approval_waiter(pending_approvals)),
             runtime_delegate: self.config.runtime_delegate.clone(),
             get_steering_messages: Some(Arc::new(move || {
                 if skip_initial_steering_poll.swap(false, Ordering::SeqCst) {
@@ -518,6 +573,37 @@ impl Agent {
     }
 }
 
+fn build_tool_approval_waiter(
+    pending_approvals: Arc<Mutex<std::collections::HashMap<String, PendingApprovalEntry>>>,
+) -> AwaitToolApprovalFn {
+    Arc::new(move |request: ToolApprovalRequest, cancel: CancellationToken| {
+        let pending_approvals = pending_approvals.clone();
+        Box::pin(async move {
+            let tool_call_id = request.tool_call.id.clone();
+            let (tx, rx) = oneshot::channel();
+            pending_approvals.lock().await.insert(
+                tool_call_id.clone(),
+                PendingApprovalEntry {
+                    responder: tx,
+                    request,
+                },
+            );
+
+            let outcome = tokio::select! {
+                _ = cancel.cancelled() => ToolApprovalOutcome::Rejected {
+                    reason: Some("执行已取消，审批等待结束".to_string()),
+                },
+                resolved = rx => resolved.unwrap_or(ToolApprovalOutcome::Rejected {
+                    reason: Some("审批请求已失效".to_string()),
+                }),
+            };
+
+            pending_approvals.lock().await.remove(&tool_call_id);
+            outcome
+        })
+    })
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct RunLoopOptions {
     skip_initial_steering_poll: bool,
@@ -590,6 +676,18 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
         }
         AgentEvent::ToolExecutionStart { tool_call_id, .. } => {
             s.pending_tool_calls.insert(tool_call_id.clone());
+        }
+        AgentEvent::ToolExecutionPendingApproval { tool_call_id, .. } => {
+            s.pending_tool_calls.insert(tool_call_id.clone());
+        }
+        AgentEvent::ToolExecutionApprovalResolved {
+            tool_call_id,
+            approved,
+            ..
+        } => {
+            if !approved {
+                s.pending_tool_calls.remove(tool_call_id);
+            }
         }
         AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
             s.pending_tool_calls.remove(tool_call_id);

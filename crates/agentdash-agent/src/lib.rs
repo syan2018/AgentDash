@@ -19,6 +19,7 @@ pub use types::{
     AgentRuntimeError, AgentState, AgentTool, AgentToolError, AgentToolResult,
     AssistantStreamEvent, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
     BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool, StopDecision,
-    StopReason, ThinkingLevel, TokenUsage, ToolCallDecision, ToolCallInfo, ToolExecutionMode,
-    ToolUpdateCallback, TransformContextInput, TransformContextOutput, TurnControlDecision,
+    StopReason, ThinkingLevel, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest,
+    ToolCallDecision, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback,
+    TransformContextInput, TransformContextOutput, TurnControlDecision,
 };

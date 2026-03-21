@@ -17,9 +17,10 @@ use agentdash_domain::workflow::{
     WorkflowRunRepository, WorkflowRunStatus, WorkflowTargetKind,
 };
 use agentdash_executor::{
-    ExecutionHookProvider, HookCompletionStatus, HookConstraint, HookContextFragment,
-    HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary,
-    HookPolicy, HookResolution, HookSourceLayer, HookSourceRef, HookTrigger,
+    ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,
+    HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError,
+    HookEvaluationQuery, HookOwnerSummary, HookPolicy, HookResolution, HookSourceLayer,
+    HookSourceRef, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
 };
 use async_trait::async_trait;
@@ -476,6 +477,7 @@ fn global_builtin_hook_contribution() -> HookContributionSet {
             "hook_source:global_builtin".to_string(),
             "hook_builtin:runtime_trace".to_string(),
             "hook_builtin:workspace_path_safety".to_string(),
+            "hook_builtin:supervised_tool_approval".to_string(),
         ],
         policies: vec![
             HookPolicy {
@@ -493,8 +495,20 @@ fn global_builtin_hook_contribution() -> HookContributionSet {
                     "shell_exec 在命中工作区内绝对 cwd 时，可由全局 builtin hook 自动 rewrite 为相对路径。"
                         .to_string(),
                 source_summary,
-                source_refs,
+                source_refs: source_refs.clone(),
                 payload: None,
+            },
+            HookPolicy {
+                key: "global_builtin:supervised_tool_approval".to_string(),
+                description:
+                    "当当前会话 permission_policy=SUPERVISED 时，编辑/执行类工具会在运行前进入人工审批。"
+                        .to_string(),
+                source_summary: source_summary_from_refs(&source_refs),
+                source_refs,
+                payload: Some(serde_json::json!({
+                    "permission_policy": "SUPERVISED",
+                    "approval_tool_classes": ["execute", "edit", "delete", "move"],
+                })),
             },
         ],
         ..HookContributionSet::default()
@@ -526,6 +540,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 "turn_id": query.turn_id,
                 "connector_id": query.connector_id,
                 "executor": query.executor,
+                "permission_policy": query.permission_policy,
                 "working_directory": query.working_directory,
                 "workspace_root": query.workspace_root,
             })),
@@ -691,6 +706,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             turn_id: query.turn_id,
             connector_id: None,
             executor: None,
+            permission_policy: None,
             working_directory: None,
             workspace_root: None,
             owners: Vec::new(),
@@ -870,6 +886,26 @@ fn workflow_completion_mode(snapshot: &SessionHookSnapshot) -> Option<&str> {
         .and_then(|value| value.get("active_workflow"))
         .and_then(|value| value.get("completion_mode"))
         .and_then(serde_json::Value::as_str)
+}
+
+fn session_permission_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
+    snapshot
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("permission_policy"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn requires_supervised_tool_approval(tool_name: &str) -> bool {
+    let normalized = tool_name.to_ascii_lowercase();
+    normalized.ends_with("shell_exec")
+        || normalized.ends_with("shell")
+        || normalized.ends_with("write_file")
+        || normalized.ends_with("fs_write")
+        || normalized.contains("delete")
+        || normalized.contains("remove")
+        || normalized.contains("move")
+        || normalized.contains("rename")
 }
 
 fn workflow_phase_key(snapshot: &SessionHookSnapshot) -> Option<&str> {
@@ -1099,6 +1135,12 @@ fn normalized_hook_rules() -> &'static [NormalizedHookRule] {
             apply: rule_apply_implement_record_artifact_block,
         },
         NormalizedHookRule {
+            key: "global_builtin:supervised:ask_tool_approval",
+            trigger: HookTrigger::BeforeTool,
+            matches: rule_matches_supervised_tool_approval,
+            apply: rule_apply_supervised_tool_approval,
+        },
+        NormalizedHookRule {
             key: "workflow_runtime:after_tool_refresh",
             trigger: HookTrigger::AfterTool,
             matches: rule_matches_after_tool_refresh,
@@ -1250,6 +1292,15 @@ fn rule_matches_implement_record_artifact_block(ctx: &HookEvaluationContext<'_>)
         )
 }
 
+fn rule_matches_supervised_tool_approval(ctx: &HookEvaluationContext<'_>) -> bool {
+    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
+        return false;
+    };
+    session_permission_policy(ctx.snapshot)
+        .is_some_and(|policy| policy.eq_ignore_ascii_case("SUPERVISED"))
+        && requires_supervised_tool_approval(tool_name)
+}
+
 fn rule_apply_implement_record_artifact_block(
     ctx: &HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
@@ -1264,6 +1315,33 @@ fn rule_apply_implement_record_artifact_block(
         detail: None,
         source_summary: active_workflow_source_summary(ctx.snapshot),
         source_refs: active_workflow_source_refs(ctx.snapshot),
+    });
+}
+
+fn rule_apply_supervised_tool_approval(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
+    let tool_name = ctx.query.tool_name.as_deref().unwrap_or("unknown_tool");
+    resolution.approval_request = Some(HookApprovalRequest {
+        reason: format!(
+            "当前会话使用 SUPERVISED 权限策略，执行 `{tool_name}` 前需要用户审批。"
+        ),
+        details: Some(serde_json::json!({
+            "policy": "supervised_tool_approval",
+            "permission_policy": session_permission_policy(ctx.snapshot).unwrap_or("SUPERVISED"),
+            "tool_name": tool_name,
+        })),
+    });
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_tool_requires_approval".to_string(),
+        summary: format!("Hook 要求在执行 `{tool_name}` 前进入人工审批"),
+        detail: Some("permission_policy=SUPERVISED".to_string()),
+        source_summary: vec![
+            "global_builtin:supervised_tool_approval".to_string(),
+            format!("tool:{tool_name}"),
+        ],
+        source_refs: global_builtin_sources(),
     });
 }
 
@@ -1658,6 +1736,17 @@ mod tests {
         snapshot
     }
 
+    fn snapshot_with_supervised_policy() -> SessionHookSnapshot {
+        SessionHookSnapshot {
+            session_id: "sess-supervised".to_string(),
+            metadata: Some(serde_json::json!({
+                "workspace_root": "F:/Projects/AgentDash",
+                "permission_policy": "SUPERVISED",
+            })),
+            ..SessionHookSnapshot::default()
+        }
+    }
+
     #[test]
     fn before_tool_blocks_completed_during_implement_phase() {
         let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
@@ -1903,6 +1992,48 @@ mod tests {
             runtime.trace[0]
                 .matched_rule_keys
                 .contains(&"tool:shell_exec:rewrite_absolute_cwd".to_string())
+        );
+    }
+
+    #[test]
+    fn before_tool_supervised_policy_requests_approval() {
+        let snapshot = snapshot_with_supervised_policy();
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeTool,
+            turn_id: Some("turn-approval-1".to_string()),
+            tool_name: Some("shell_exec".to_string()),
+            tool_call_id: Some("call-shell-approval".to_string()),
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "args": {
+                    "cwd": ".",
+                    "command": "cargo test"
+                }
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert_eq!(
+            resolution
+                .approval_request
+                .as_ref()
+                .map(|request| request.reason.as_str()),
+            Some("当前会话使用 SUPERVISED 权限策略，执行 `shell_exec` 前需要用户审批。")
+        );
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"global_builtin:supervised:ask_tool_approval".to_string())
         );
     }
 

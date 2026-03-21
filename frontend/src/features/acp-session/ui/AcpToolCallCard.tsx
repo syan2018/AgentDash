@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import type { SessionUpdate, ToolKind, ToolCallContent } from "@agentclientprotocol/sdk";
+import { approveToolCall, rejectToolCall } from "../../../services/executor";
 
 /**
  * 扩展的工具调用状态：SDK 标准 + Zed 扩展（canceled/rejected）。
@@ -20,14 +21,18 @@ export interface AcpToolCallCardProps {
   update: SessionUpdate;
   isPendingApproval?: boolean;
   compact?: boolean;
+  sessionId?: string;
 }
 
 export function AcpToolCallCard({
   update,
   isPendingApproval,
   compact = false,
+  sessionId,
 }: AcpToolCallCardProps) {
   const [expanded, setExpanded] = useState(isPendingApproval);
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const toolCallInfo = (() => {
     if (update.sessionUpdate === "tool_call") {
@@ -60,8 +65,35 @@ export function AcpToolCallCard({
   const { toolCallId, title, kind, status, rawInput, rawOutput, content } =
     toolCallInfo;
 
-  const statusConfig = getStatusConfig(status, isPendingApproval);
+  const displayStatus = resolveDisplayStatus(status, rawOutput);
+  const statusConfig = getStatusConfig(displayStatus, isPendingApproval);
   const kindConfig = getKindConfig(kind);
+
+  const handleApprove = async () => {
+    if (!sessionId || isSubmittingApproval) return;
+    setApprovalError(null);
+    setIsSubmittingApproval(true);
+    try {
+      await approveToolCall(sessionId, toolCallId);
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : "审批失败");
+    } finally {
+      setIsSubmittingApproval(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!sessionId || isSubmittingApproval) return;
+    setApprovalError(null);
+    setIsSubmittingApproval(true);
+    try {
+      await rejectToolCall(sessionId, toolCallId);
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : "拒绝失败");
+    } finally {
+      setIsSubmittingApproval(false);
+    }
+  };
 
   if (compact) {
     return (
@@ -80,7 +112,7 @@ export function AcpToolCallCard({
       className={`rounded-[12px] border ${statusConfig.borderColor} bg-background transition-colors ${
         isPendingApproval
           ? "ring-2 ring-warning/20"
-          : status === "failed" || status === "canceled" || status === "rejected"
+          : displayStatus === "failed" || displayStatus === "canceled" || displayStatus === "rejected"
             ? "opacity-90"
             : ""
       }`}
@@ -121,12 +153,39 @@ export function AcpToolCallCard({
             </div>
           )}
 
-          {(status === "canceled" || status === "rejected") && (
+          {(displayStatus === "canceled" || displayStatus === "rejected") && (
             <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/70 p-2.5 text-sm text-muted-foreground">
               <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]">
-                {status === "canceled" ? "STOP" : "NO"}
+                {displayStatus === "canceled" ? "STOP" : "NO"}
               </span>
-              <span>{status === "canceled" ? "已取消执行" : "已拒绝执行"}</span>
+              <span>{displayStatus === "canceled" ? "已取消执行" : "已拒绝执行"}</span>
+            </div>
+          )}
+
+          {isPendingApproval && sessionId && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => { void handleApprove(); }}
+                disabled={isSubmittingApproval}
+                className="rounded-[10px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm text-success transition-colors hover:bg-success/15 disabled:opacity-50"
+              >
+                {isSubmittingApproval ? "处理中…" : "批准"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleReject(); }}
+                disabled={isSubmittingApproval}
+                className="rounded-[10px] border border-warning/30 bg-warning/10 px-3 py-1.5 text-sm text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
+              >
+                拒绝
+              </button>
+            </div>
+          )}
+
+          {approvalError && (
+            <div className="rounded-[10px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+              {approvalError}
             </div>
           )}
 
@@ -166,6 +225,21 @@ export function AcpToolCallCard({
       )}
     </div>
   );
+}
+
+function resolveDisplayStatus(
+  status: ExtendedToolCallStatus,
+  rawOutput: unknown,
+): ExtendedToolCallStatus {
+  if (
+    rawOutput &&
+    typeof rawOutput === "object" &&
+    "approval_state" in rawOutput &&
+    (rawOutput as { approval_state?: unknown }).approval_state === "rejected"
+  ) {
+    return "rejected";
+  }
+  return status;
 }
 
 function ContentBlockView({ content }: { content: ToolCallContent }) {

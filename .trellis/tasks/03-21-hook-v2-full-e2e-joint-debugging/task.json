@@ -3,7 +3,7 @@
   "name": "hook-v2-full-e2e-joint-debugging",
   "title": "Hook v2 最终全链路联调",
   "description": "作为 Hook v2 计划的最终里程碑，要求真实打通主 session、hook 控制、companion 行为、结果回流与前端 trace/debug surface。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "fullstack",
   "scope": "verification",
   "priority": "P1",
@@ -14,12 +14,8 @@
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
+  "current_phase": 1,
   "next_action": [
-    {
-      "phase": 1,
-      "action": "implement"
-    },
     {
       "phase": 2,
       "action": "check"
@@ -43,5 +39,5 @@
     "crates/agentdash-executor/src/hub.rs",
     ".trellis/tasks/03-21-complete-hook-runtime-v2-program/task.json"
   ],
-  "notes": "这是 Hook v2 的最终完成标识任务。只有它完成后，总任务 `complete-hook-runtime-v2-program` 才允许标记 completed。"
+  "notes": "目前 companion return-channel 与 Ask/Approval/Resume 的主链代码已接通，并通过后端/前端单测与构建验证。剩余目标是进行真实前后端联调、验证审批按钮到 session 流更新的完整交互，并以此作为总任务关闭条件。"
 }

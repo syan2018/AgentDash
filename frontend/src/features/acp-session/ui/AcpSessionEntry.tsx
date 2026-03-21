@@ -37,12 +37,13 @@ import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
   streamingEntryId?: string | null;
+  sessionId?: string | null;
 }
 
-export function AcpSessionEntry({ item, streamingEntryId }: AcpSessionEntryProps) {
+export function AcpSessionEntry({ item, streamingEntryId, sessionId }: AcpSessionEntryProps) {
   if (isAggregatedGroup(item)) {
     if (item.aggregationType === "file_edit") {
-      return <AggregatedDiffGroupEntry group={item} />;
+      return <AggregatedDiffGroupEntry group={item} sessionId={sessionId} />;
     }
     return <AggregatedToolGroupEntry group={item} />;
   }
@@ -52,13 +53,21 @@ export function AcpSessionEntry({ item, streamingEntryId }: AcpSessionEntryProps
   }
 
   if (isDisplayEntry(item)) {
-    return <SingleEntry entry={item} isStreaming={item.id === streamingEntryId} />;
+    return <SingleEntry entry={item} isStreaming={item.id === streamingEntryId} sessionId={sessionId} />;
   }
 
   return null;
 }
 
-function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; isStreaming?: boolean }) {
+function SingleEntry({
+  entry,
+  isStreaming = false,
+  sessionId,
+}: {
+  entry: AcpDisplayEntry;
+  isStreaming?: boolean;
+  sessionId?: string | null;
+}) {
   const { update, isPendingApproval } = entry;
 
   switch (update.sessionUpdate) {
@@ -109,6 +118,7 @@ function SingleEntry({ entry, isStreaming = false }: { entry: AcpDisplayEntry; i
         <AcpToolCallCard
           update={update}
           isPendingApproval={isPendingApproval}
+          sessionId={sessionId ?? undefined}
         />
       );
 
@@ -246,7 +256,13 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
   );
 }
 
-function AggregatedDiffGroupEntry({ group }: { group: AggregatedEntryGroup }) {
+function AggregatedDiffGroupEntry({
+  group,
+  sessionId,
+}: {
+  group: AggregatedEntryGroup;
+  sessionId?: string | null;
+}) {
   const filePath = group.filePath ?? "未知文件";
   const { entries } = group;
 
@@ -268,6 +284,7 @@ function AggregatedDiffGroupEntry({ group }: { group: AggregatedEntryGroup }) {
             update={entry.update}
             isPendingApproval={entry.isPendingApproval}
             compact
+            sessionId={sessionId ?? undefined}
           />
         ))}
       </div>

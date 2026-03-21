@@ -413,6 +413,37 @@ impl AgentConnector for PiAgentConnector {
         }
         Ok(())
     }
+
+    async fn approve_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        let agents = self.agents.lock().await;
+        let agent = agents.get(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!("session `{session_id}` 当前没有活跃的 Pi Agent"))
+        })?;
+        agent
+            .approve_tool_call(tool_call_id)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))
+    }
+
+    async fn reject_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        let agents = self.agents.lock().await;
+        let agent = agents.get(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!("session `{session_id}` 当前没有活跃的 Pi Agent"))
+        })?;
+        agent
+            .reject_tool_call(tool_call_id, reason)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))
+    }
 }
 
 fn describe_mcp_server(server: &agent_client_protocol::McpServer) -> String {
@@ -570,6 +601,70 @@ fn convert_event_to_notifications(
                 if !content.is_empty() {
                     fields.content = Some(content);
                 }
+            }
+
+            let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
+            update.meta = Some(meta);
+
+            vec![SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::ToolCallUpdate(update),
+            )]
+        }
+
+        AgentEvent::ToolExecutionPendingApproval {
+            tool_call_id,
+            reason,
+            details,
+            ..
+        } => {
+            let meta = make_meta(source, turn_id, *entry_index);
+            let mut fields = ToolCallUpdateFields::default();
+            fields.status = Some(ToolCallStatus::Pending);
+            fields.raw_output = Some(serde_json::json!({
+                "approval_state": "pending",
+                "reason": reason,
+                "details": details,
+            }));
+            fields.content = Some(vec![ToolCallContent::from(ContentBlock::Text(
+                TextContent::new(format!("等待审批：{reason}")),
+            ))]);
+
+            let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
+            update.meta = Some(meta);
+
+            vec![SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::ToolCallUpdate(update),
+            )]
+        }
+
+        AgentEvent::ToolExecutionApprovalResolved {
+            tool_call_id,
+            approved,
+            reason,
+            ..
+        } => {
+            let meta = make_meta(source, turn_id, *entry_index);
+            let mut fields = ToolCallUpdateFields::default();
+            fields.status = Some(if *approved {
+                ToolCallStatus::InProgress
+            } else {
+                ToolCallStatus::Failed
+            });
+            fields.raw_output = Some(serde_json::json!({
+                "approval_state": if *approved { "approved" } else { "rejected" },
+                "reason": reason,
+            }));
+            if !approved {
+                fields.content = Some(vec![ToolCallContent::from(ContentBlock::Text(
+                    TextContent::new(
+                        reason
+                            .as_deref()
+                            .map(|value| format!("审批被拒绝：{value}"))
+                            .unwrap_or_else(|| "审批被拒绝".to_string()),
+                    ),
+                ))]);
             }
 
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
@@ -749,6 +844,43 @@ mod tests {
                 assert_eq!(update.fields.raw_output, Some(raw_result));
                 let content = update.fields.content.clone().expect("content should exist");
                 assert_eq!(content.len(), 1);
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pending_approval_event_maps_to_tool_call_update() {
+        let event = AgentEvent::ToolExecutionPendingApproval {
+            tool_call_id: "tool-approval-1".to_string(),
+            tool_name: "shell_exec".to_string(),
+            args: serde_json::json!({ "command": "cargo test", "cwd": "." }),
+            reason: "需要用户审批".to_string(),
+            details: Some(serde_json::json!({ "policy": "supervised_tool_approval" })),
+        };
+
+        let mut entry_index = 0;
+        let notifications = convert_event_to_notifications(
+            &event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        match &notifications[0].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
+                assert_eq!(
+                    update
+                        .fields
+                        .raw_output
+                        .as_ref()
+                        .and_then(|value| value.get("approval_state"))
+                        .and_then(serde_json::Value::as_str),
+                    Some("pending")
+                );
             }
             other => panic!("unexpected session update: {other:?}"),
         }

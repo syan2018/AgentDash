@@ -35,3 +35,42 @@ export async function promptSession(sessionId: string, req: PromptSessionRequest
     throw new Error(text || `promptSession failed: HTTP ${res.status}`);
   }
 }
+
+export async function approveToolCall(sessionId: string, toolCallId: string): Promise<void> {
+  const res = await fetch(
+    buildApiPath(
+      `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/approve`,
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `approveToolCall failed: HTTP ${res.status}`);
+  }
+}
+
+export async function rejectToolCall(
+  sessionId: string,
+  toolCallId: string,
+  reason?: string,
+): Promise<void> {
+  const res = await fetch(
+    buildApiPath(
+      `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/reject`,
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `rejectToolCall failed: HTTP ${res.status}`);
+  }
+}

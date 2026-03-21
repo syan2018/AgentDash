@@ -183,6 +183,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/prompt", post(acp_sessions::prompt_session))
         .route("/sessions/{id}/cancel", post(acp_sessions::cancel_session))
         .route(
+            "/sessions/{id}/tool-approvals/{tool_call_id}/approve",
+            post(acp_sessions::approve_tool_call),
+        )
+        .route(
+            "/sessions/{id}/tool-approvals/{tool_call_id}/reject",
+            post(acp_sessions::reject_tool_call),
+        )
+        .route(
             "/acp/sessions/{id}/stream",
             get(acp_sessions::acp_session_stream_sse),
         )

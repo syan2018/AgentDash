@@ -329,4 +329,17 @@ pub trait AgentConnector: Send + Sync {
     ) -> Result<ExecutionStream, ConnectorError>;
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError>;
+
+    async fn approve_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+    ) -> Result<(), ConnectorError>;
+
+    async fn reject_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        reason: Option<String>,
+    ) -> Result<(), ConnectorError>;
 }

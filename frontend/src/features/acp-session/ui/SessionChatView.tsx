@@ -555,7 +555,11 @@ export function SessionChatView({
             {streamPrefixContent}
             {displayItems.map((item) => (
               <div key={getItemKey(item)}>
-                <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
+                <AcpSessionEntry
+                  item={item}
+                  streamingEntryId={streamingEntryId}
+                  sessionId={sessionId}
+                />
               </div>
             ))}
           </div>

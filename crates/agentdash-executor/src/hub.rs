@@ -516,6 +516,7 @@ impl ExecutorHub {
                 session_id,
                 &turn_id,
                 executor_config.executor.as_str(),
+                executor_config.permission_policy.as_deref(),
                 workspace_root.as_path(),
                 working_directory.as_path(),
             )
@@ -822,6 +823,25 @@ impl ExecutorHub {
     pub async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
         self.connector.cancel(session_id).await
     }
+
+    pub async fn approve_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        self.connector.approve_tool_call(session_id, tool_call_id).await
+    }
+
+    pub async fn reject_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        self.connector
+            .reject_tool_call(session_id, tool_call_id, reason)
+            .await
+    }
 }
 
 impl ExecutorHub {
@@ -830,6 +850,7 @@ impl ExecutorHub {
         session_id: &str,
         turn_id: &str,
         executor: &str,
+        permission_policy: Option<&str>,
         workspace_root: &Path,
         working_directory: &Path,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
@@ -843,6 +864,7 @@ impl ExecutorHub {
                 turn_id: Some(turn_id.to_string()),
                 connector_id: Some(self.connector.connector_id().to_string()),
                 executor: Some(executor.to_string()),
+                permission_policy: permission_policy.map(ToString::to_string),
                 working_directory: Some(working_directory.to_string_lossy().replace('\\', "/")),
                 workspace_root: Some(workspace_root.to_string_lossy().replace('\\', "/")),
                 owners: Vec::new(),
@@ -1147,6 +1169,23 @@ mod tests {
             }
 
             async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
                 Ok(())
             }
         }

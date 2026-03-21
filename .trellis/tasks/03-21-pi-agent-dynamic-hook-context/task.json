@@ -40,6 +40,10 @@
     "references/Trellis/README.md",
     "references/Trellis/.claude/hooks/session-start.py",
     "references/Trellis/.claude/hooks/inject-subagent-context.py",
+    "crates/agentdash-agent/src/agent.rs",
+    "crates/agentdash-agent/src/agent_loop.rs",
+    "crates/agentdash-agent/src/types.rs",
+    "crates/agentdash-executor/src/connector.rs",
     "crates/agentdash-api/src/workflow_runtime.rs",
     "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
     "crates/agentdash-api/src/routes/acp_sessions.rs",
@@ -47,5 +51,5 @@
     "crates/agentdash-executor/src/hub.rs",
     "crates/agentdash-agent/agent-design/RUST_PI_HYBRID_DESIGN.md"
   ],
-  "notes": "这个 task 聚焦 Pi Agent 后续如何具备真正的 hook runtime：会话启动时注入、工具前后动态介入、伴随 agent / subagent 上下文继承、基于状态与目标对象自动切换上下文。它与当前 workflow 数据驱动重构是强相关但不同层级的工作：当前 workflow runtime 解决的是平台内 phase 注入，后续 hook 机制要解决的是更细粒度、更接近 Claude Code / Trellis 的动态伴随行为。"
+  "notes": "这个 task 已更新为正式架构计划：Hook Runtime 需要严格区分信息面与控制面。Workflow Runtime 不再被视作 Hook 引擎，而是 Hook 信息来源之一。agent_loop 继续保持 Pi 对齐的纯 runtime 内核，但需要暴露同步控制边界供 Hook 决策及时返回；业务信息查询、snapshot 缓存、diagnostics 与 provider 组合放在 executor/api 层完成。当前优先路线是：1) 在 agentdash-agent 引入统一 AgentRuntimeDelegate 并补 after_turn / before_stop；2) 在 agentdash-executor 建立 ExecutionHookProvider + HookSessionRuntime；3) 收敛 Task/Story/Project 当前散落的 augment prompt 逻辑到统一 provider；4) 再推进 tool control 与 companion/subagent dispatch。"
 }

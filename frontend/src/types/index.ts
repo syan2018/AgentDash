@@ -591,6 +591,75 @@ export interface SessionBindingOwner {
   task_id?: string | null;
 }
 
+export interface HookOwnerSummary {
+  owner_type: string;
+  owner_id: string;
+  label?: string | null;
+  project_id?: string | null;
+  story_id?: string | null;
+  task_id?: string | null;
+}
+
+export interface HookContextFragment {
+  slot: string;
+  label: string;
+  content: string;
+  source_summary: string[];
+}
+
+export interface HookConstraint {
+  key: string;
+  description: string;
+  source_summary: string[];
+}
+
+export interface HookPolicy {
+  key: string;
+  description: string;
+  payload?: Record<string, unknown> | null;
+}
+
+export interface HookDiagnosticEntry {
+  code: string;
+  summary: string;
+  detail?: string | null;
+  source_summary: string[];
+}
+
+export interface ActiveWorkflowHookMetadata {
+  workflow_id: string;
+  workflow_key: string;
+  workflow_name: string;
+  run_id: string;
+  run_status: string;
+  phase_key: string;
+  phase_title: string;
+  completion_mode: string;
+  requires_session: boolean;
+}
+
+export interface HookRuntimeMetadata {
+  active_workflow?: ActiveWorkflowHookMetadata | null;
+}
+
+export interface SessionHookSnapshot {
+  session_id: string;
+  owners: HookOwnerSummary[];
+  tags: string[];
+  context_fragments: HookContextFragment[];
+  constraints: HookConstraint[];
+  policies: HookPolicy[];
+  diagnostics: HookDiagnosticEntry[];
+  metadata?: HookRuntimeMetadata | null;
+}
+
+export interface HookSessionRuntimeInfo {
+  session_id: string;
+  revision: number;
+  snapshot: SessionHookSnapshot;
+  diagnostics: HookDiagnosticEntry[];
+}
+
 export interface ProjectSessionAgentContext {
   agent_key: string;
   display_name: string;

@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicU64, Ordering},
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -78,12 +81,129 @@ pub struct SessionHookSnapshot {
     pub metadata: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct HookSessionRuntime {
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookSessionRuntimeSnapshot {
     pub session_id: String,
-    pub snapshot: SessionHookSnapshot,
-    pub diagnostics: Vec<HookDiagnosticEntry>,
     pub revision: u64,
+    pub snapshot: SessionHookSnapshot,
+    #[serde(default)]
+    pub diagnostics: Vec<HookDiagnosticEntry>,
+}
+
+pub struct HookSessionRuntime {
+    session_id: String,
+    provider: Arc<dyn ExecutionHookProvider>,
+    snapshot: RwLock<SessionHookSnapshot>,
+    diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
+    revision: AtomicU64,
+}
+
+impl std::fmt::Debug for HookSessionRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HookSessionRuntime")
+            .field("session_id", &self.session_id)
+            .field("revision", &self.revision())
+            .field("snapshot", &self.snapshot())
+            .field("diagnostics_count", &self.diagnostics().len())
+            .finish()
+    }
+}
+
+impl HookSessionRuntime {
+    pub fn new(
+        session_id: String,
+        provider: Arc<dyn ExecutionHookProvider>,
+        snapshot: SessionHookSnapshot,
+    ) -> Self {
+        let diagnostics = snapshot.diagnostics.clone();
+        Self {
+            session_id,
+            provider,
+            snapshot: RwLock::new(snapshot),
+            diagnostics: RwLock::new(diagnostics),
+            revision: AtomicU64::new(1),
+        }
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub fn snapshot(&self) -> SessionHookSnapshot {
+        self.snapshot
+            .read()
+            .expect("hook snapshot read lock poisoned")
+            .clone()
+    }
+
+    pub fn diagnostics(&self) -> Vec<HookDiagnosticEntry> {
+        self.diagnostics
+            .read()
+            .expect("hook diagnostics read lock poisoned")
+            .clone()
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision.load(Ordering::SeqCst)
+    }
+
+    pub fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot {
+        HookSessionRuntimeSnapshot {
+            session_id: self.session_id.clone(),
+            revision: self.revision(),
+            snapshot: self.snapshot(),
+            diagnostics: self.diagnostics(),
+        }
+    }
+
+    pub async fn refresh(
+        &self,
+        query: SessionHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        let snapshot = self.provider.refresh_session_snapshot(query).await?;
+        self.replace_snapshot(snapshot.clone());
+        Ok(snapshot)
+    }
+
+    pub async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
+        let resolution = self.provider.evaluate_hook(query).await?;
+        self.append_diagnostics(resolution.diagnostics.clone());
+        Ok(resolution)
+    }
+
+    pub fn replace_snapshot(&self, snapshot: SessionHookSnapshot) {
+        {
+            let mut guard = self
+                .snapshot
+                .write()
+                .expect("hook snapshot write lock poisoned");
+            *guard = snapshot.clone();
+        }
+        self.append_diagnostics(snapshot.diagnostics);
+        self.revision.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn append_diagnostics<I>(&self, entries: I)
+    where
+        I: IntoIterator<Item = HookDiagnosticEntry>,
+    {
+        let mut guard = self
+            .diagnostics
+            .write()
+            .expect("hook diagnostics write lock poisoned");
+        for entry in entries {
+            if guard.iter().any(|existing| {
+                existing.code == entry.code
+                    && existing.summary == entry.summary
+                    && existing.detail == entry.detail
+                    && existing.source_summary == entry.source_summary
+            }) {
+                continue;
+            }
+            guard.push(entry);
+        }
+    }
 }
 
 pub type SharedHookSessionRuntime = Arc<HookSessionRuntime>;

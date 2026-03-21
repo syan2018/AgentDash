@@ -31,6 +31,7 @@ use crate::connector::{
     RuntimeToolProvider,
 };
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
+use crate::runtime_delegate::HookRuntimeDelegate;
 
 pub struct PiAgentConnector {
     #[allow(dead_code)]
@@ -189,11 +190,11 @@ fn describe_mount(mount: &ExecutionMount) -> String {
 }
 
 fn build_hook_runtime_sections(hook_session: &crate::hooks::HookSessionRuntime) -> Vec<String> {
+    let snapshot = hook_session.snapshot();
     let mut sections = Vec::new();
 
-    if !hook_session.snapshot.owners.is_empty() {
-        let owner_lines = hook_session
-            .snapshot
+    if !snapshot.owners.is_empty() {
+        let owner_lines = snapshot
             .owners
             .iter()
             .map(|owner| {
@@ -205,28 +206,41 @@ fn build_hook_runtime_sections(hook_session: &crate::hooks::HookSessionRuntime) 
         sections.push(format!("当前会话 Hook 归属如下：\n{}", owner_lines));
     }
 
-    let fragment_sections = hook_session
-        .snapshot
-        .context_fragments
-        .iter()
-        .filter_map(|fragment| {
-            let content = fragment.content.trim();
-            if content.is_empty() {
-                None
-            } else {
-                Some(content.to_string())
-            }
-        })
-        .collect::<Vec<_>>();
-    if !fragment_sections.is_empty() {
-        sections.push(fragment_sections.join("\n\n"));
+    if !snapshot.tags.is_empty() {
+        sections.push(format!("当前 Hook tags：{}", snapshot.tags.join("、")));
     }
 
-    if !hook_session.snapshot.constraints.is_empty() {
+    if !snapshot.constraints.is_empty() {
         sections.push(format!(
-            "## Dynamic Hook Constraints\n{}",
-            hook_session
-                .snapshot
+            "当前存在 {} 条运行时流程约束，详细内容会由 Hook Runtime 在每次 LLM 调用前动态注入。",
+            snapshot.constraints.len()
+        ));
+    }
+
+    let diagnostics = hook_session.diagnostics();
+    if !diagnostics.is_empty() {
+        sections.push(format!(
+            "当前已记录 {} 条 Hook 诊断信息，前端可进一步查看细节。",
+            diagnostics.len()
+        ));
+    }
+
+    if !snapshot.context_fragments.is_empty() {
+        sections.push(format!(
+            "当前存在 {} 个可动态注入的 Hook context fragment。",
+            snapshot.context_fragments.len()
+        ));
+    }
+
+    sections.push(format!(
+        "Hook runtime revision: {}",
+        hook_session.revision()
+    ));
+
+    if !snapshot.constraints.is_empty() {
+        sections.push(format!(
+            "## Hook Constraint Summary\n{}",
+            snapshot
                 .constraints
                 .iter()
                 .map(|constraint| format!("- {}", constraint.description))
@@ -335,6 +349,7 @@ impl AgentConnector for PiAgentConnector {
             .collect::<Vec<_>>();
         agent.set_tools(runtime_tools);
         agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
+        agent.set_runtime_delegate(context.hook_session.clone().map(HookRuntimeDelegate::new));
 
         let (event_rx, join_handle) = agent
             .prompt(AgentMessage::user(&prompt_text))

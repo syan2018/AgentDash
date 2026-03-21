@@ -25,7 +25,7 @@ use agentdash_application::story::context_builder::{
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
-use agentdash_executor::{PromptSessionRequest, SessionMeta};
+use agentdash_executor::{HookSessionRuntimeSnapshot, PromptSessionRequest, SessionMeta};
 use agentdash_mcp::injection::McpInjectionConfig;
 use serde::Serialize;
 
@@ -133,6 +133,24 @@ pub async fn get_session(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
     Ok(Json(meta))
+}
+
+pub async fn get_session_hook_runtime(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<Json<HookSessionRuntimeSnapshot>, ApiError> {
+    let runtime = state
+        .services
+        .executor_hub
+        .get_hook_session_runtime(&session_id)
+        .await
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "session {} 当前没有可用的 hook runtime",
+                session_id
+            ))
+        })?;
+    Ok(Json(runtime.runtime_snapshot()))
 }
 
 #[derive(Debug, Serialize)]

@@ -172,6 +172,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(acp_sessions::get_session).delete(acp_sessions::delete_session),
         )
         .route(
+            "/sessions/{id}/hook-runtime",
+            get(acp_sessions::get_session_hook_runtime),
+        )
+        .route(
             "/sessions/{id}/bindings",
             get(acp_sessions::get_session_bindings),
         )

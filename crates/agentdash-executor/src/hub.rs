@@ -747,12 +747,11 @@ impl ExecutorHub {
                 ConnectorError::Runtime(format!("加载会话 Hook snapshot 失败: {error}"))
             })?;
 
-        Ok(Some(Arc::new(HookSessionRuntime {
-            session_id: session_id.to_string(),
-            diagnostics: snapshot.diagnostics.clone(),
+        Ok(Some(Arc::new(HookSessionRuntime::new(
+            session_id.to_string(),
+            provider.clone(),
             snapshot,
-            revision: 1,
-        })))
+        ))))
     }
 }
 

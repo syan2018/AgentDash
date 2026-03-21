@@ -3,6 +3,7 @@ pub mod connector;
 pub mod connectors;
 pub mod hooks;
 pub mod hub;
+mod runtime_delegate;
 
 #[allow(unused_imports)]
 pub use connector::{
@@ -13,7 +14,7 @@ pub use connector::{
 pub use hooks::{
     ExecutionHookProvider, HookConstraint, HookContextFragment, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookOwnerSummary, HookPolicy, HookResolution, HookSessionRuntime,
-    HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    HookSessionRuntimeSnapshot, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
+    SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 pub use hub::{ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta};

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { SessionChatView, type PromptTemplate } from "../features/acp-session";
-import { fetchSessionBindings } from "../services/session";
+import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { useStoryStore } from "../stores/storyStore";
 import type {
+  ActiveWorkflowHookMetadata,
   AgentBinding,
   ContextContainerDefinition,
   ExecutionAddressSpace,
+  HookSessionRuntimeInfo,
   MountDerivationPolicy,
   ProjectSessionAgentContext,
   ProjectSessionInfo,
@@ -470,6 +472,122 @@ function WorkflowRuntimeSurfaceCard({
   );
 }
 
+function HookRuntimeSurfaceCard({
+  hookRuntime,
+}: {
+  hookRuntime: HookSessionRuntimeInfo;
+}) {
+  const { snapshot } = hookRuntime;
+  const activeWorkflow = snapshot.metadata?.active_workflow ?? null;
+  return (
+    <SurfaceCard eyebrow="运行中 Hook Runtime" title={`revision ${hookRuntime.revision}`}>
+      <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          owners: {snapshot.owners.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          constraints: {snapshot.constraints.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          fragments: {snapshot.context_fragments.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          diagnostics: {hookRuntime.diagnostics.length}
+        </span>
+      </div>
+      {snapshot.tags.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {snapshot.tags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-full border border-border bg-background px-2 py-1 text-[10px] text-muted-foreground"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+      {activeWorkflow && <HookRuntimeWorkflowMetaCard metadata={activeWorkflow} />}
+      {snapshot.constraints.length > 0 && (
+        <div className="mt-3 space-y-1 text-xs leading-5 text-foreground/85">
+          {snapshot.constraints.map((constraint) => (
+            <p key={constraint.key}>- {constraint.description}</p>
+          ))}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+        这里显示的是执行层真实加载并参与 loop 的 session 级 hook snapshot，而不是 owner 级静态上下文推导。
+      </p>
+    </SurfaceCard>
+  );
+}
+
+function HookRuntimeWorkflowMetaCard({
+  metadata,
+}: {
+  metadata: ActiveWorkflowHookMetadata;
+}) {
+  return (
+    <div className="mt-3 rounded-[10px] border border-border bg-background/70 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-foreground">
+          {metadata.workflow_name} / {metadata.phase_title}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+          run: {metadata.run_status}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+          completion: {metadata.completion_mode}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+          {metadata.requires_session ? "需要 session" : "不依赖 session"}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+        <span className="rounded-full border border-border bg-background px-2 py-1">
+          workflow_id: {metadata.workflow_id}
+        </span>
+        <span className="rounded-full border border-border bg-background px-2 py-1">
+          run_id: {metadata.run_id}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HookRuntimeDiagnosticsCard({
+  hookRuntime,
+}: {
+  hookRuntime: HookSessionRuntimeInfo;
+}) {
+  return (
+    <SurfaceCard eyebrow="Hook 诊断" title="运行时命中记录">
+      {hookRuntime.diagnostics.length > 0 ? (
+        <div className="space-y-2">
+          {hookRuntime.diagnostics.map((entry, index) => (
+            <div
+              key={`${entry.code}-${index}`}
+              className="rounded-[10px] border border-border bg-background/70 px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+                  {entry.code}
+                </span>
+                <span className="text-xs text-foreground/85">{entry.summary}</span>
+              </div>
+              {entry.detail && (
+                <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{entry.detail}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">当前还没有记录到额外的 Hook 诊断。</p>
+      )}
+    </SurfaceCard>
+  );
+}
+
 function RawDiagnosticsSection({ children }: { children: ReactNode }) {
   return (
     <details className="rounded-[12px] border border-dashed border-border bg-background/60 px-3 py-2">
@@ -488,6 +606,7 @@ function StorySessionContextPanel({
   contextSnapshot,
   executorSummary,
   addressSpace,
+  hookRuntime,
   isOpen,
   onToggle,
 }: {
@@ -495,6 +614,7 @@ function StorySessionContextPanel({
   contextSnapshot?: SessionContextSnapshot | null;
   executorSummary?: TaskSessionExecutorSummary | null;
   addressSpace?: ExecutionAddressSpace | null;
+  hookRuntime?: HookSessionRuntimeInfo | null;
   isOpen: boolean;
   onToggle: () => void;
 }) {
@@ -539,6 +659,7 @@ function StorySessionContextPanel({
       {contextSnapshot?.workflow_runtime && (
         <WorkflowRuntimeSurfaceCard workflowRuntime={contextSnapshot.workflow_runtime} />
       )}
+      {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-foreground">
@@ -575,6 +696,7 @@ function StorySessionContextPanel({
               <ToolVisibilityCard summary={contextSnapshot.effective.tool_visibility} />
               <RuntimePolicyCard summary={contextSnapshot.effective.runtime_policy} />
               <AddressSpaceCard addressSpace={addressSpace} />
+              {hookRuntime && <HookRuntimeDiagnosticsCard hookRuntime={hookRuntime} />}
             </RawDiagnosticsSection>
           ) : (
             <RawDiagnosticsSection>
@@ -591,6 +713,7 @@ function StorySessionContextPanel({
                 <SessionCompositionCard title="Story 会话编排覆盖" composition={story.context.session_composition_override} />
               )}
               <AddressSpaceCard addressSpace={addressSpace} />
+              {hookRuntime && <HookRuntimeDiagnosticsCard hookRuntime={hookRuntime} />}
             </RawDiagnosticsSection>
           )}
         </div>
@@ -603,12 +726,14 @@ function ProjectSessionContextPanel({
   projectName,
   projectSessionInfo,
   addressSpace,
+  hookRuntime,
   isOpen,
   onToggle,
 }: {
   projectName: string;
   projectSessionInfo: ProjectSessionInfo;
   addressSpace?: ExecutionAddressSpace | null;
+  hookRuntime?: HookSessionRuntimeInfo | null;
   isOpen: boolean;
   onToggle: () => void;
 }) {
@@ -654,6 +779,7 @@ function ProjectSessionContextPanel({
       {snapshot?.workflow_runtime && (
         <WorkflowRuntimeSurfaceCard workflowRuntime={snapshot.workflow_runtime} />
       )}
+      {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-foreground">
@@ -683,6 +809,7 @@ function ProjectSessionContextPanel({
               <ToolVisibilityCard summary={snapshot.effective.tool_visibility} />
               <RuntimePolicyCard summary={snapshot.effective.runtime_policy} />
               <AddressSpaceCard addressSpace={addressSpace} />
+              {hookRuntime && <HookRuntimeDiagnosticsCard hookRuntime={hookRuntime} />}
             </RawDiagnosticsSection>
           )}
         </div>
@@ -837,6 +964,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
 
   const [loadedSessionBindings, setLoadedSessionBindings] = useState<SessionBindingOwner[]>([]);
+  const [loadedHookRuntime, setLoadedHookRuntime] = useState<HookSessionRuntimeInfo | null>(null);
   const [loadedSessionContext, setLoadedSessionContext] = useState<{
     source_key: string;
     task_agent_binding: AgentBinding | null;
@@ -879,6 +1007,23 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         if (!cancelled) setLoadedSessionBindings(bindings);
       } catch {
         if (!cancelled) setLoadedSessionBindings([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentSessionId]);
+
+  useEffect(() => {
+    if (!currentSessionId) {
+      setLoadedHookRuntime(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const runtime = await fetchSessionHookRuntime(currentSessionId);
+        if (!cancelled) setLoadedHookRuntime(runtime);
+      } catch {
+        if (!cancelled) setLoadedHookRuntime(null);
       }
     })();
     return () => { cancelled = true; };
@@ -1069,7 +1214,16 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const handleMessageSent = useCallback(() => {
     void reloadSessions();
-  }, [reloadSessions]);
+    if (!currentSessionId) return;
+    void (async () => {
+      try {
+        const runtime = await fetchSessionHookRuntime(currentSessionId);
+        setLoadedHookRuntime(runtime);
+      } catch {
+        setLoadedHookRuntime(null);
+      }
+    })();
+  }, [currentSessionId, reloadSessions]);
 
   const handleNewSession = useCallback(() => {
     setActiveSessionId(null);
@@ -1174,6 +1328,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           projectName={ownerProjectName}
           projectSessionInfo={projectSessionInfo}
           addressSpace={sessionAddressSpace}
+          hookRuntime={loadedHookRuntime}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />
@@ -1189,6 +1344,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           contextSnapshot={sessionContextSnapshot}
           executorSummary={taskExecutorSummary}
           addressSpace={sessionAddressSpace}
+          hookRuntime={loadedHookRuntime}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />

@@ -172,6 +172,10 @@ impl Agent {
         }
     }
 
+    pub fn set_runtime_delegate(&mut self, delegate: Option<DynAgentRuntimeDelegate>) {
+        self.config.runtime_delegate = delegate;
+    }
+
     pub async fn messages(&self) -> Vec<AgentMessage> {
         self.state.lock().await.messages.clone()
     }

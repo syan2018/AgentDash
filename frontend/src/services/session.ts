@@ -1,5 +1,5 @@
 import { buildApiPath } from "../api/origin";
-import type { SessionBindingOwner } from "../types";
+import type { HookSessionRuntimeInfo, SessionBindingOwner } from "../types";
 
 function mapSessionBindingOwner(raw: Record<string, unknown>): SessionBindingOwner {
   return {
@@ -79,4 +79,11 @@ export async function fetchSessionBindings(id: string): Promise<SessionBindingOw
   if (!res.ok) throw new Error(`获取会话绑定失败: HTTP ${res.status}`);
   const raw = await res.json() as Record<string, unknown>[];
   return raw.map(mapSessionBindingOwner);
+}
+
+export async function fetchSessionHookRuntime(id: string): Promise<HookSessionRuntimeInfo | null> {
+  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/hook-runtime`));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 Hook Runtime 失败: HTTP ${res.status}`);
+  return res.json();
 }

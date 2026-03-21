@@ -13,7 +13,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_executor::{
     ExecutionHookProvider, HookConstraint, HookContextFragment, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookOwnerSummary, HookResolution, SessionHookRefreshQuery,
+    HookEvaluationQuery, HookOwnerSummary, HookResolution, HookTrigger, SessionHookRefreshQuery,
     SessionHookSnapshot, SessionHookSnapshotQuery,
 };
 use async_trait::async_trait;
@@ -295,6 +295,27 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     source_summary: source_summary.clone(),
                 });
 
+                if let Some(metadata) = snapshot
+                    .metadata
+                    .as_mut()
+                    .and_then(|value| value.as_object_mut())
+                {
+                    metadata.insert(
+                        "active_workflow".to_string(),
+                        serde_json::json!({
+                            "workflow_id": workflow.definition.id,
+                            "workflow_key": workflow.definition.key,
+                            "workflow_name": workflow.definition.name,
+                            "run_id": workflow.run.id,
+                            "run_status": workflow_run_status_tag(workflow.run.status),
+                            "phase_key": workflow.phase.key,
+                            "phase_title": workflow.phase.title,
+                            "completion_mode": workflow_phase_completion_mode_tag(workflow.phase.completion_mode),
+                            "requires_session": workflow.phase.requires_session,
+                        }),
+                    );
+                }
+
                 snapshot.context_fragments.push(HookContextFragment {
                     slot: "workflow".to_string(),
                     label: "active_workflow_phase".to_string(),
@@ -351,28 +372,48 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
     }
 
     async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
-        let diagnostics = query
-            .snapshot
-            .as_ref()
-            .map(|snapshot| {
-                snapshot
-                    .diagnostics
-                    .iter()
-                    .filter(|entry| {
-                        matches!(
-                            entry.code.as_str(),
-                            "workflow_phase_resolved" | "session_binding_found"
-                        )
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        Ok(HookResolution {
-            diagnostics,
+        let snapshot = query.snapshot.unwrap_or_else(|| SessionHookSnapshot {
+            session_id: query.session_id.clone(),
+            ..SessionHookSnapshot::default()
+        });
+        let mut resolution = HookResolution {
+            diagnostics: snapshot
+                .diagnostics
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        entry.code.as_str(),
+                        "workflow_phase_resolved" | "session_binding_found"
+                    )
+                })
+                .cloned()
+                .collect(),
             ..HookResolution::default()
-        })
+        };
+
+        match query.trigger {
+            HookTrigger::SessionStart | HookTrigger::UserPromptSubmit => {
+                resolution.context_fragments = snapshot.context_fragments.clone();
+                resolution.constraints = snapshot.constraints.clone();
+            }
+            HookTrigger::BeforeStop => {
+                if workflow_completion_mode(&snapshot) == Some("session_ended") {
+                    resolution.diagnostics.push(HookDiagnosticEntry {
+                        code: "before_stop_session_ended".to_string(),
+                        summary: "当前 workflow phase 允许在 session 结束时自然完成".to_string(),
+                        detail: None,
+                        source_summary: vec!["workflow_completion_mode:session_ended".to_string()],
+                    });
+                }
+            }
+            HookTrigger::BeforeTool
+            | HookTrigger::AfterTool
+            | HookTrigger::AfterTurn
+            | HookTrigger::BeforeSubagentDispatch
+            | HookTrigger::AfterSubagentDispatch => {}
+        }
+
+        Ok(resolution)
     }
 }
 
@@ -423,6 +464,27 @@ fn workflow_run_status_tag(status: WorkflowRunStatus) -> &'static str {
         WorkflowRunStatus::Failed => "failed",
         WorkflowRunStatus::Cancelled => "cancelled",
     }
+}
+
+fn workflow_phase_completion_mode_tag(
+    mode: agentdash_domain::workflow::WorkflowPhaseCompletionMode,
+) -> &'static str {
+    match mode {
+        agentdash_domain::workflow::WorkflowPhaseCompletionMode::Manual => "manual",
+        agentdash_domain::workflow::WorkflowPhaseCompletionMode::SessionEnded => "session_ended",
+        agentdash_domain::workflow::WorkflowPhaseCompletionMode::ChecklistPassed => {
+            "checklist_passed"
+        }
+    }
+}
+
+fn workflow_completion_mode(snapshot: &SessionHookSnapshot) -> Option<&str> {
+    snapshot
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("active_workflow"))
+        .and_then(|value| value.get("completion_mode"))
+        .and_then(serde_json::Value::as_str)
 }
 
 fn build_phase_summary_markdown(workflow: &ResolvedWorkflowPhase) -> String {

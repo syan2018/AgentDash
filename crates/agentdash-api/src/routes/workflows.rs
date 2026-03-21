@@ -12,11 +12,11 @@ use agentdash_application::workflow::{
     StartWorkflowRunCommand, WorkflowCatalogService, WorkflowRecordArtifactDraft,
     WorkflowRunService, build_builtin_workflow_definition, list_builtin_workflow_templates,
 };
-use agentdash_executor::SessionExecutionState;
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{
     WorkflowAgentRole, WorkflowRecordArtifactType, WorkflowRun, WorkflowTargetKind,
 };
+use agentdash_executor::SessionExecutionState;
 
 use crate::app_state::AppState;
 use crate::dto::{
@@ -389,7 +389,10 @@ async fn reconcile_workflow_run_runtime(
         .ok_or_else(|| {
             ApiError::NotFound(format!("workflow_definition {} 不存在", run.workflow_id))
         })?;
-    let Some(phase_definition) = definition.phases.iter().find(|item| item.key == current_phase_key)
+    let Some(phase_definition) = definition
+        .phases
+        .iter()
+        .find(|item| item.key == current_phase_key)
     else {
         return Ok(run);
     };

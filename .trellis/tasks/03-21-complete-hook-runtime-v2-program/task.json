@@ -1,0 +1,47 @@
+{
+  "id": "complete-hook-runtime-v2-program",
+  "name": "complete-hook-runtime-v2-program",
+  "title": "Pi Agent 完整 Hook Runtime v2 计划总任务",
+  "description": "推进 Hook v2 的完整能力：来源合并、动态上下文、companion 切片与回流、Ask/Approval，以及最终联调闭环。该任务只能在最终联调完成后才允许关闭。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-03-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/tasks/03-21-hook-v2-source-merge-and-governance/task.json",
+    ".trellis/tasks/03-21-hook-v2-companion-context-slicing-and-return-channel/task.json",
+    ".trellis/tasks/03-21-hook-v2-ask-approval-and-resume-flow/task.json",
+    ".trellis/tasks/03-21-hook-v2-full-e2e-joint-debugging/task.json",
+    ".trellis/spec/backend/execution-hook-runtime.md"
+  ],
+  "notes": "这是后续 Hook v2 的总任务。完成标识不是局部代码完成，而是最终全链路联调 task 完成；在那之前，这个 task 必须保持 planning/in_progress。"
+}

@@ -1,0 +1,45 @@
+{
+  "id": "hook-v2-source-merge-and-governance",
+  "name": "hook-v2-source-merge-and-governance",
+  "title": "Hook v2 来源合并与治理",
+  "description": "建立 Hook v2 的多来源声明、优先级与合并治理模型，让 workflow/builtin/project/story/task/session 等来源都能被正式解释与追踪。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-03-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-api/src/execution_hooks.rs",
+    "crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json",
+    ".trellis/spec/backend/execution-hook-runtime.md"
+  ],
+  "notes": "这是 Hook v2 的基础任务之一。目标是把规则来源和合并策略平台化，避免当前框架继续长成新的硬编码 hook engine。"
+}

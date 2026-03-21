@@ -1,0 +1,45 @@
+{
+  "id": "hook-v2-ask-approval-and-resume-flow",
+  "name": "hook-v2-ask-approval-and-resume-flow",
+  "title": "Hook v2 Ask 审批与恢复执行链路",
+  "description": "把 Hook 决策中的 Ask 推进为正式的人机审批链路，支持 pending approval、approve/reject、resume 与 trace 对齐。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "interaction",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-03-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-agent/src/types.rs",
+    "crates/agentdash-executor/src/runtime_delegate.rs",
+    "frontend/src/pages/SessionPage.tsx"
+  ],
+  "notes": "这是 Claude Code 风格工具审批的重要组成部分。没有 Ask/Approval/Resume，Hook 机制仍然不完整。"
+}

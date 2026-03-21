@@ -14,6 +14,7 @@ mod rpc;
 mod session_plan;
 mod stream;
 mod task_agent_context;
+mod workflow_runtime;
 
 use app_state::AppState;
 

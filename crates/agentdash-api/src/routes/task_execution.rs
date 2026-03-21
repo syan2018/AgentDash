@@ -26,6 +26,9 @@ use crate::{
         SessionRuntimePolicySummary, SessionToolVisibilitySummary,
         resolve_effective_session_composition, summarize_runtime_policy, summarize_tool_visibility,
     },
+    workflow_runtime::{
+        WorkflowRuntimeContext, WorkflowRuntimeSnapshot, resolve_workflow_runtime_injection,
+    },
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -85,6 +88,8 @@ pub struct TaskSessionContextSnapshot {
     pub project_defaults: SessionProjectDefaults,
     pub story_overrides: SessionStoryOverrides,
     pub effective: SessionEffectiveContext,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_runtime: Option<WorkflowRuntimeSnapshot>,
 }
 
 #[derive(Debug, Serialize)]
@@ -303,6 +308,19 @@ async fn build_task_session_context_response(
         &mcp_servers,
         &tool_visibility.tool_names,
     );
+    let workflow_runtime = resolve_workflow_runtime_injection(
+        state,
+        WorkflowRuntimeContext {
+            target_kind: agentdash_domain::workflow::WorkflowTargetKind::Task,
+            target_id: task.id,
+            project: &project,
+            story: Some(&story),
+            task: Some(&task),
+            workspace: workspace.as_ref(),
+        },
+    )
+    .await
+    .map(|item| item.snapshot);
 
     Some(BuiltTaskSessionContextResponse {
         address_space,
@@ -333,6 +351,7 @@ async fn build_task_session_context_response(
                 tool_visibility,
                 runtime_policy,
             },
+            workflow_runtime,
         }),
     })
 }

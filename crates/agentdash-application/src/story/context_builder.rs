@@ -201,6 +201,7 @@ pub fn build_story_owner_prompt_blocks(
     story_id: uuid::Uuid,
     context_markdown: String,
     source_summary: &[String],
+    workflow_instruction: Option<String>,
     original_prompt: Option<String>,
     original_prompt_blocks: Option<Vec<serde_json::Value>>,
 ) -> Vec<serde_json::Value> {
@@ -228,6 +229,15 @@ pub fn build_story_owner_prompt_blocks(
         "type": "text",
         "text": story_instruction,
     }));
+    if let Some(workflow_instruction) = workflow_instruction
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        prefix_blocks.push(json!({
+            "type": "text",
+            "text": workflow_instruction,
+        }));
+    }
 
     let user_blocks = match (original_prompt, original_prompt_blocks) {
         (Some(prompt), None) => vec![json!({ "type": "text", "text": prompt })],

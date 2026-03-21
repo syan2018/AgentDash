@@ -5,29 +5,33 @@ import type {
   WorkflowAssignment,
   WorkflowDefinition,
   WorkflowRecordArtifactType,
+  WorkflowTemplate,
   WorkflowRun,
   WorkflowTargetKind,
 } from "../types";
 import {
   activateWorkflowPhase,
   assignProjectWorkflow,
-  bootstrapTrellisWorkflow,
+  bootstrapWorkflowTemplate,
   completeWorkflowPhase,
   fetchProjectWorkflowAssignments,
   fetchWorkflowDefinitions,
+  fetchWorkflowTemplates,
   fetchWorkflowRunsByTarget,
   startWorkflowRun,
 } from "../services/workflow";
 
 interface WorkflowState {
+  templates: WorkflowTemplate[];
   definitions: WorkflowDefinition[];
   assignmentsByProjectId: Record<string, WorkflowAssignment[]>;
   runsByTargetKey: Record<string, WorkflowRun[]>;
   isLoading: boolean;
   error: string | null;
 
+  fetchTemplates: () => Promise<WorkflowTemplate[]>;
   fetchDefinitions: (targetKind?: WorkflowTargetKind) => Promise<WorkflowDefinition[]>;
-  bootstrapTrellis: (targetKind: WorkflowTargetKind) => Promise<WorkflowDefinition | null>;
+  bootstrapTemplate: (builtinKey: string) => Promise<WorkflowDefinition | null>;
   fetchProjectAssignments: (projectId: string) => Promise<WorkflowAssignment[]>;
   assignWorkflowToProject: (input: {
     project_id: string;
@@ -91,11 +95,27 @@ function upsertRun(
 }
 
 export const useWorkflowStore = create<WorkflowState>((set) => ({
+  templates: [],
   definitions: [],
   assignmentsByProjectId: {},
   runsByTargetKey: {},
   isLoading: false,
   error: null,
+
+  fetchTemplates: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const templates = await fetchWorkflowTemplates();
+      set({
+        templates,
+        isLoading: false,
+      });
+      return templates;
+    } catch (error) {
+      set({ error: (error as Error).message, isLoading: false });
+      return [];
+    }
+  },
 
   fetchDefinitions: async (targetKind) => {
     set({ isLoading: true, error: null });
@@ -120,10 +140,10 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
     }
   },
 
-  bootstrapTrellis: async (targetKind) => {
+  bootstrapTemplate: async (builtinKey) => {
     set({ isLoading: true, error: null });
     try {
-      const definition = await bootstrapTrellisWorkflow(targetKind);
+      const definition = await bootstrapWorkflowTemplate(builtinKey);
       set((state) => ({
         definitions: upsertDefinition(state.definitions, definition),
         isLoading: false,

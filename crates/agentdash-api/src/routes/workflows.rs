@@ -10,25 +10,25 @@ use uuid::Uuid;
 use agentdash_application::workflow::{
     ActivateWorkflowPhaseCommand, AssignWorkflowCommand, CompleteWorkflowPhaseCommand,
     StartWorkflowRunCommand, WorkflowCatalogService, WorkflowRecordArtifactDraft,
-    WorkflowRunService, build_trellis_dev_workflow_definition,
+    WorkflowRunService, build_builtin_workflow_definition, list_builtin_workflow_templates,
 };
+use agentdash_executor::SessionExecutionState;
+use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{
-    WorkflowAgentRole, WorkflowRecordArtifactType, WorkflowTargetKind,
+    WorkflowAgentRole, WorkflowRecordArtifactType, WorkflowRun, WorkflowTargetKind,
 };
 
 use crate::app_state::AppState;
-use crate::dto::{WorkflowAssignmentResponse, WorkflowDefinitionResponse, WorkflowRunResponse};
+use crate::dto::{
+    WorkflowAssignmentResponse, WorkflowDefinitionResponse, WorkflowRunResponse,
+    WorkflowTemplateResponse,
+};
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {
     pub target_kind: Option<WorkflowTargetKind>,
     pub enabled_only: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BootstrapTrellisWorkflowRequest {
-    pub target_kind: WorkflowTargetKind,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,16 +89,26 @@ pub async fn list_workflows(
     ))
 }
 
-pub async fn bootstrap_trellis_workflow(
+pub async fn list_workflow_templates() -> Result<Json<Vec<WorkflowTemplateResponse>>, ApiError> {
+    let templates = list_builtin_workflow_templates().map_err(ApiError::BadRequest)?;
+    Ok(Json(
+        templates
+            .into_iter()
+            .map(WorkflowTemplateResponse::from)
+            .collect(),
+    ))
+}
+
+pub async fn bootstrap_workflow_template(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<BootstrapTrellisWorkflowRequest>,
+    Path(builtin_key): Path<String>,
 ) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.workflow_assignment_repo.as_ref(),
     );
     let definition =
-        build_trellis_dev_workflow_definition(req.target_kind).map_err(ApiError::BadRequest)?;
+        build_builtin_workflow_definition(&builtin_key).map_err(ApiError::BadRequest)?;
     let saved = service.upsert_definition(definition).await?;
 
     Ok(Json(WorkflowDefinitionResponse::from(saved)))
@@ -155,6 +165,8 @@ pub async fn start_workflow_run(
     State(state): State<Arc<AppState>>,
     Json(req): Json<StartWorkflowRunRequest>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
+    let target_id = parse_uuid_required(&req.target_id, "target_id")?;
+    ensure_workflow_target_exists(&state, req.target_kind, target_id).await?;
     let service = WorkflowRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.workflow_run_repo.as_ref(),
@@ -164,7 +176,7 @@ pub async fn start_workflow_run(
             workflow_id: parse_optional_uuid(req.workflow_id.as_deref(), "workflow_id")?,
             workflow_key: req.workflow_key.and_then(normalize_optional_string),
             target_kind: req.target_kind,
-            target_id: parse_uuid_required(&req.target_id, "target_id")?,
+            target_id,
         })
         .await?;
 
@@ -182,6 +194,7 @@ pub async fn get_workflow_run(
         .get_by_id(run_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("workflow_run {run_id} 不存在")))?;
+    let run = reconcile_workflow_run_runtime(&state, run).await?;
 
     Ok(Json(WorkflowRunResponse::from(run)))
 }
@@ -197,9 +210,16 @@ pub async fn list_workflow_runs_by_target(
         .workflow_run_repo
         .list_by_target(target_kind, target_id)
         .await?;
+    let mut resolved_runs = Vec::with_capacity(runs.len());
+    for run in runs {
+        resolved_runs.push(reconcile_workflow_run_runtime(&state, run).await?);
+    }
 
     Ok(Json(
-        runs.into_iter().map(WorkflowRunResponse::from).collect(),
+        resolved_runs
+            .into_iter()
+            .map(WorkflowRunResponse::from)
+            .collect(),
     ))
 }
 
@@ -209,6 +229,12 @@ pub async fn activate_workflow_phase(
     Json(req): Json<ActivateWorkflowPhaseRequest>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
+    let existing_run = load_workflow_run(&state, run_id).await?;
+    if let Some(binding_id) =
+        parse_optional_uuid(req.session_binding_id.as_deref(), "session_binding_id")?
+    {
+        ensure_session_binding_matches_run(&state, binding_id, &existing_run).await?;
+    }
     let service = WorkflowRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.workflow_run_repo.as_ref(),
@@ -233,6 +259,16 @@ pub async fn complete_workflow_phase(
     Json(req): Json<CompleteWorkflowPhaseRequest>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
+    let existing_run = load_workflow_run(&state, run_id).await?;
+    if let Some(phase_state) = existing_run
+        .phase_states
+        .iter()
+        .find(|item| item.phase_key == phase_key)
+    {
+        if let Some(binding_id) = phase_state.session_binding_id {
+            ensure_session_binding_matches_run(&state, binding_id, &existing_run).await?;
+        }
+    }
     let service = WorkflowRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.workflow_run_repo.as_ref(),
@@ -266,6 +302,172 @@ async fn ensure_project_exists(state: &Arc<AppState>, project_id: Uuid) -> Resul
     } else {
         Err(ApiError::NotFound(format!("Project {project_id} 不存在")))
     }
+}
+
+async fn ensure_workflow_target_exists(
+    state: &Arc<AppState>,
+    target_kind: WorkflowTargetKind,
+    target_id: Uuid,
+) -> Result<(), ApiError> {
+    let exists = match target_kind {
+        WorkflowTargetKind::Project => state
+            .repos
+            .project_repo
+            .get_by_id(target_id)
+            .await?
+            .is_some(),
+        WorkflowTargetKind::Story => state.repos.story_repo.get_by_id(target_id).await?.is_some(),
+        WorkflowTargetKind::Task => state.repos.task_repo.get_by_id(target_id).await?.is_some(),
+    };
+
+    if exists {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound(format!(
+            "workflow target 不存在: kind={target_kind:?}, id={target_id}"
+        )))
+    }
+}
+
+async fn load_workflow_run(state: &Arc<AppState>, run_id: Uuid) -> Result<WorkflowRun, ApiError> {
+    state
+        .repos
+        .workflow_run_repo
+        .get_by_id(run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_run 不存在: {run_id}")))
+}
+
+async fn ensure_session_binding_matches_run(
+    state: &Arc<AppState>,
+    binding_id: Uuid,
+    run: &WorkflowRun,
+) -> Result<(), ApiError> {
+    let binding = state
+        .repos
+        .session_binding_repo
+        .list_by_owner(target_owner_type(run.target_kind), run.target_id)
+        .await?
+        .into_iter()
+        .find(|item| item.id == binding_id)
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "session_binding `{binding_id}` 不属于当前 workflow target"
+            ))
+        })?;
+
+    if binding.owner_id != run.target_id || binding.owner_type != target_owner_type(run.target_kind)
+    {
+        return Err(ApiError::BadRequest(format!(
+            "session_binding `{binding_id}` 与 workflow target 不匹配"
+        )));
+    }
+
+    Ok(())
+}
+
+fn target_owner_type(target_kind: WorkflowTargetKind) -> SessionOwnerType {
+    match target_kind {
+        WorkflowTargetKind::Project => SessionOwnerType::Project,
+        WorkflowTargetKind::Story => SessionOwnerType::Story,
+        WorkflowTargetKind::Task => SessionOwnerType::Task,
+    }
+}
+
+async fn reconcile_workflow_run_runtime(
+    state: &Arc<AppState>,
+    run: WorkflowRun,
+) -> Result<WorkflowRun, ApiError> {
+    let Some(current_phase_key) = run.current_phase_key.clone() else {
+        return Ok(run);
+    };
+    let definition = state
+        .repos
+        .workflow_definition_repo
+        .get_by_id(run.workflow_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("workflow_definition {} 不存在", run.workflow_id))
+        })?;
+    let Some(phase_definition) = definition.phases.iter().find(|item| item.key == current_phase_key)
+    else {
+        return Ok(run);
+    };
+
+    if phase_definition.completion_mode
+        != agentdash_domain::workflow::WorkflowPhaseCompletionMode::SessionEnded
+    {
+        return Ok(run);
+    }
+
+    let Some(phase_state) = run
+        .phase_states
+        .iter()
+        .find(|item| item.phase_key == current_phase_key)
+    else {
+        return Ok(run);
+    };
+    if phase_state.status != agentdash_domain::workflow::WorkflowPhaseExecutionStatus::Running {
+        return Ok(run);
+    }
+
+    let Some(binding_id) = phase_state.session_binding_id else {
+        return Ok(run);
+    };
+    let binding = state
+        .repos
+        .session_binding_repo
+        .list_by_owner(target_owner_type(run.target_kind), run.target_id)
+        .await?
+        .into_iter()
+        .find(|item| item.id == binding_id);
+    let Some(binding) = binding else {
+        return Ok(run);
+    };
+
+    let execution_state = state
+        .services
+        .executor_hub
+        .inspect_session_execution_state(&binding.session_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    let summary = match execution_state {
+        SessionExecutionState::Completed { .. } => Some(format!(
+            "关联 session `{}` 已结束，phase 自动完成",
+            binding.session_id
+        )),
+        SessionExecutionState::Failed { message, .. } => Some(match message {
+            Some(message) if !message.trim().is_empty() => format!(
+                "关联 session `{}` 以失败终态结束：{}",
+                binding.session_id, message
+            ),
+            _ => format!("关联 session `{}` 以失败终态结束", binding.session_id),
+        }),
+        SessionExecutionState::Interrupted { .. } => Some(format!(
+            "关联 session `{}` 已终止，phase 自动完成",
+            binding.session_id
+        )),
+        SessionExecutionState::Idle | SessionExecutionState::Running { .. } => None,
+    };
+
+    let Some(summary) = summary else {
+        return Ok(run);
+    };
+
+    let service = WorkflowRunService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.workflow_run_repo.as_ref(),
+    );
+    let run = service
+        .complete_phase(CompleteWorkflowPhaseCommand {
+            run_id: run.id,
+            phase_key: current_phase_key,
+            summary: Some(summary),
+            record_artifacts: vec![],
+        })
+        .await?;
+    Ok(run)
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {

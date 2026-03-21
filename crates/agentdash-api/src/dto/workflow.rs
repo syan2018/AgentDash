@@ -1,12 +1,14 @@
+use agentdash_application::workflow::BuiltinWorkflowTemplate;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    WorkflowAgentRole, WorkflowAssignment, WorkflowContextBinding, WorkflowDefinition,
-    WorkflowPhaseCompletionMode, WorkflowPhaseDefinition, WorkflowPhaseExecutionStatus,
-    WorkflowPhaseState, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowRecordPolicy,
-    WorkflowRun, WorkflowRunStatus, WorkflowTargetKind,
+    WorkflowAgentRole, WorkflowAssignment, WorkflowContextBinding, WorkflowContextBindingKind,
+    WorkflowDefinition, WorkflowPhaseCompletionMode, WorkflowPhaseDefinition,
+    WorkflowPhaseExecutionStatus, WorkflowPhaseState, WorkflowRecordArtifact,
+    WorkflowRecordArtifactType, WorkflowRecordPolicy, WorkflowRun, WorkflowRunStatus,
+    WorkflowTargetKind,
 };
 
 #[derive(Debug, Serialize)]
@@ -25,13 +27,36 @@ pub struct WorkflowDefinitionResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkflowTemplateResponse {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub target_kind: WorkflowTargetKind,
+    pub recommended_role: WorkflowAgentRole,
+    pub phases: Vec<WorkflowPhaseDefinitionResponse>,
+    pub record_policy: WorkflowRecordPolicy,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkflowPhaseDefinitionResponse {
     pub key: String,
     pub title: String,
     pub description: String,
-    pub context_bindings: Vec<WorkflowContextBinding>,
+    pub agent_instructions: Vec<String>,
+    pub context_bindings: Vec<WorkflowContextBindingResponse>,
     pub requires_session: bool,
     pub completion_mode: WorkflowPhaseCompletionMode,
+    pub default_artifact_type: Option<WorkflowRecordArtifactType>,
+    pub default_artifact_title: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowContextBindingResponse {
+    pub kind: WorkflowContextBindingKind,
+    pub locator: String,
+    pub reason: String,
+    pub required: bool,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,15 +123,44 @@ impl From<WorkflowDefinition> for WorkflowDefinitionResponse {
     }
 }
 
+impl From<BuiltinWorkflowTemplate> for WorkflowTemplateResponse {
+    fn from(value: BuiltinWorkflowTemplate) -> Self {
+        Self {
+            key: value.key,
+            name: value.name,
+            description: value.description,
+            target_kind: value.target_kind,
+            recommended_role: value.recommended_role,
+            phases: value.phases.into_iter().map(Into::into).collect(),
+            record_policy: value.record_policy,
+        }
+    }
+}
+
 impl From<WorkflowPhaseDefinition> for WorkflowPhaseDefinitionResponse {
     fn from(value: WorkflowPhaseDefinition) -> Self {
         Self {
             key: value.key,
             title: value.title,
             description: value.description,
-            context_bindings: value.context_bindings,
+            agent_instructions: value.agent_instructions,
+            context_bindings: value.context_bindings.into_iter().map(Into::into).collect(),
             requires_session: value.requires_session,
             completion_mode: value.completion_mode,
+            default_artifact_type: value.default_artifact_type,
+            default_artifact_title: value.default_artifact_title,
+        }
+    }
+}
+
+impl From<WorkflowContextBinding> for WorkflowContextBindingResponse {
+    fn from(value: WorkflowContextBinding) -> Self {
+        Self {
+            kind: value.kind,
+            locator: value.locator,
+            reason: value.reason,
+            required: value.required,
+            title: value.title,
         }
     }
 }

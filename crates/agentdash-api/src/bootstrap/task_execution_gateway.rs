@@ -39,6 +39,7 @@ use crate::{
         TaskExecutionPhase, build_declared_source_warning_fragment, build_task_agent_context,
         resolve_workspace_declared_sources,
     },
+    workflow_runtime::{WorkflowRuntimeContext, resolve_workflow_runtime_injection},
 };
 
 pub struct AppStateTaskExecutionGateway {
@@ -138,6 +139,24 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 task.id,
             );
             extra_contributors.push(Box::new(McpContextContributor::new(config)));
+        }
+
+        if let Some(workflow_runtime) = resolve_workflow_runtime_injection(
+            &self.state,
+            WorkflowRuntimeContext {
+                target_kind: agentdash_domain::workflow::WorkflowTargetKind::Task,
+                target_id: task.id,
+                project: &project,
+                story: Some(&story),
+                task: Some(task),
+                workspace: workspace.as_ref(),
+            },
+        )
+        .await
+        {
+            extra_contributors.push(Box::new(StaticFragmentsContributor::new(
+                workflow_runtime.context_fragments,
+            )));
         }
 
         let session_id = task

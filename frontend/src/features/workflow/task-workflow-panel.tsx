@@ -4,7 +4,10 @@ import type {
   SessionBindingOwner,
   Task,
   WorkflowAssignment,
+  WorkflowContextBinding,
   WorkflowDefinition,
+  WorkflowPhaseCompletionMode,
+  WorkflowPhaseDefinition,
   WorkflowPhaseState,
   WorkflowRecordArtifactType,
   WorkflowRun,
@@ -14,6 +17,20 @@ import { fetchSessionBindings } from "../../services/session";
 
 const EMPTY_ASSIGNMENTS: WorkflowAssignment[] = [];
 const EMPTY_RUNS: WorkflowRun[] = [];
+
+const COMPLETION_MODE_LABEL: Record<WorkflowPhaseCompletionMode, string> = {
+  manual: "手动完成",
+  session_ended: "会话结束后完成",
+  checklist_passed: "检查通过后完成",
+};
+
+const BINDING_KIND_LABEL: Record<WorkflowContextBinding["kind"], string> = {
+  document_path: "文档",
+  runtime_context: "运行时上下文",
+  checklist: "检查清单",
+  journal_target: "记录目标",
+  action_ref: "动作引用",
+};
 
 function findDefinition(definitions: WorkflowDefinition[], workflowId: string): WorkflowDefinition | null {
   return definitions.find((item) => item.id === workflowId) ?? null;
@@ -39,6 +56,7 @@ function phaseBadgeClass(status: WorkflowPhaseState["status"]) {
 }
 
 function buildCompletionArtifacts(
+  phase: WorkflowPhaseDefinition | null,
   phaseKey: string,
   summary: string,
 ): Array<{
@@ -48,21 +66,13 @@ function buildCompletionArtifacts(
 }> {
   const trimmed = summary.trim();
   if (!trimmed) return [];
-
-  if (phaseKey === "record") {
-    return [
-      {
-        artifact_type: "session_summary",
-        title: "Record 阶段总结",
-        content: trimmed,
-      },
-    ];
-  }
+  const artifactType = phase?.default_artifact_type ?? "phase_note";
+  const artifactTitle = phase?.default_artifact_title?.trim() || `${phaseKey} 阶段记录`;
 
   return [
     {
-      artifact_type: "phase_note",
-      title: `${phaseKey} 阶段记录`,
+      artifact_type: artifactType,
+      title: artifactTitle,
       content: trimmed,
     },
   ];
@@ -116,7 +126,7 @@ export function TaskWorkflowPanel({
     void fetchDefinitions("task");
     void fetchProjectAssignments(projectId);
     void fetchRunsByTarget("task", task.id);
-  }, [fetchDefinitions, fetchProjectAssignments, fetchRunsByTarget, projectId, task.id]);
+  }, [fetchDefinitions, fetchProjectAssignments, fetchRunsByTarget, projectId, task.id, task.status, task.session_id]);
 
   useEffect(() => {
     if (!task.session_id) {
@@ -213,7 +223,11 @@ export function TaskWorkflowPanel({
       run_id: activeRun.id,
       phase_key: activeRun.current_phase_key,
       summary,
-      record_artifacts: buildCompletionArtifacts(activeRun.current_phase_key, summary),
+      record_artifacts: buildCompletionArtifacts(
+        currentPhaseDefinition,
+        activeRun.current_phase_key,
+        summary,
+      ),
     });
     if (run) {
       setPhaseSummary("");
@@ -228,7 +242,7 @@ export function TaskWorkflowPanel({
           <div>
             <p className="text-sm font-medium text-foreground">Workflow Run</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              这里把 Task 执行会话正式挂到 Trellis workflow phase 上，而不是只依赖 prompt 约定。
+              这里把 Task 执行会话正式挂到 workflow phase 上，并让阶段约束真正进入 Agent prompt。
             </p>
           </div>
           <button
@@ -333,6 +347,32 @@ export function TaskWorkflowPanel({
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {currentPhaseDefinition?.description ?? "当前阶段暂无说明"}
               </p>
+              {currentPhaseDefinition && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                    完成方式: {COMPLETION_MODE_LABEL[currentPhaseDefinition.completion_mode]}
+                  </span>
+                  {currentPhaseDefinition.context_bindings.map((binding, index) => (
+                    <span
+                      key={`${binding.locator}-${index}`}
+                      className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground"
+                      title={`${binding.reason} · ${binding.locator}`}
+                    >
+                      {BINDING_KIND_LABEL[binding.kind]}: {binding.title?.trim() || binding.locator}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {currentPhaseDefinition?.agent_instructions.length ? (
+                <div className="mt-3 rounded-[10px] border border-border bg-secondary/20 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">自动注入给 Agent 的阶段约束</p>
+                  <div className="mt-2 space-y-1 text-xs leading-5 text-foreground/80">
+                    {currentPhaseDefinition.agent_instructions.map((instruction, index) => (
+                      <p key={`${currentPhaseDefinition.key}-instruction-${index}`}>- {instruction}</p>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {currentPhaseDefinition?.requires_session && !task.session_id && (
                 <p className="mt-2 text-xs text-amber-700">
                   该阶段要求先有 Task Session。请先在上方“Agent 执行会话”里启动任务执行。

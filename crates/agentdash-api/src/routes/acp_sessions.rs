@@ -14,6 +14,7 @@ use serde::Deserialize;
 use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
+use crate::workflow_runtime::{WorkflowRuntimeContext, resolve_workflow_runtime_injection};
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
@@ -388,21 +389,59 @@ async fn build_story_owner_prompt_request(
             .await
             .map_err(ApiError::BadRequest)?;
 
-    let (context_markdown, source_summary) = build_story_context_markdown(StoryContextBuildInput {
-        story,
-        project,
-        workspace,
-        address_space: address_space.as_ref(),
-        mcp_servers: &effective_mcp_servers,
-        effective_agent_type,
-        workspace_source_fragments: resolved_workspace_sources.fragments,
-        workspace_source_warnings: resolved_workspace_sources.warnings,
-    });
+    let (mut context_markdown, mut source_summary) =
+        build_story_context_markdown(StoryContextBuildInput {
+            story,
+            project,
+            workspace,
+            address_space: address_space.as_ref(),
+            mcp_servers: &effective_mcp_servers,
+            effective_agent_type,
+            workspace_source_fragments: resolved_workspace_sources.fragments,
+            workspace_source_warnings: resolved_workspace_sources.warnings,
+        });
+    let workflow_instruction = resolve_workflow_runtime_injection(
+        state,
+        WorkflowRuntimeContext {
+            target_kind: agentdash_domain::workflow::WorkflowTargetKind::Story,
+            target_id: story.id,
+            project,
+            story: Some(story),
+            task: None,
+            workspace,
+        },
+    )
+    .await
+    .map(|runtime| {
+        source_summary.extend(runtime.source_summary);
+        let mut instruction: Option<String> = None;
+        for fragment in runtime.context_fragments {
+            match fragment.slot {
+                "instruction" | "instruction_append" => {
+                    instruction = Some(match instruction {
+                        Some(existing) if !existing.trim().is_empty() => {
+                            format!("{existing}\n\n{}", fragment.content)
+                        }
+                        _ => fragment.content,
+                    });
+                }
+                _ => {
+                    if !fragment.content.trim().is_empty() {
+                        context_markdown.push_str("\n\n");
+                        context_markdown.push_str(&fragment.content);
+                    }
+                }
+            }
+        }
+        instruction
+    })
+    .flatten();
 
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
         context_markdown,
         &source_summary,
+        workflow_instruction,
         req.prompt.take(),
         req.prompt_blocks.take(),
     );
@@ -465,7 +504,7 @@ async fn build_project_owner_prompt_request(
     effective_mcp_servers
         .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
 
-    let (context_markdown, source_summary) =
+    let (mut context_markdown, mut source_summary) =
         build_project_context_markdown(ProjectContextBuildInput {
             project,
             workspace: workspace.as_ref(),
@@ -475,10 +514,47 @@ async fn build_project_owner_prompt_request(
             preset_name: project_agent.preset_name.as_deref(),
             agent_display_name: project_agent.display_name.as_str(),
         });
+    let workflow_instruction = resolve_workflow_runtime_injection(
+        state,
+        WorkflowRuntimeContext {
+            target_kind: agentdash_domain::workflow::WorkflowTargetKind::Project,
+            target_id: project.id,
+            project,
+            story: None,
+            task: None,
+            workspace: workspace.as_ref(),
+        },
+    )
+    .await
+    .map(|runtime| {
+        source_summary.extend(runtime.source_summary);
+        let mut instruction: Option<String> = None;
+        for fragment in runtime.context_fragments {
+            match fragment.slot {
+                "instruction" | "instruction_append" => {
+                    instruction = Some(match instruction {
+                        Some(existing) if !existing.trim().is_empty() => {
+                            format!("{existing}\n\n{}", fragment.content)
+                        }
+                        _ => fragment.content,
+                    });
+                }
+                _ => {
+                    if !fragment.content.trim().is_empty() {
+                        context_markdown.push_str("\n\n");
+                        context_markdown.push_str(&fragment.content);
+                    }
+                }
+            }
+        }
+        instruction
+    })
+    .flatten();
     let prompt_blocks = build_project_owner_prompt_blocks(
         project.id,
         context_markdown,
         &source_summary,
+        workflow_instruction,
         req.prompt.take(),
         req.prompt_blocks.take(),
     );

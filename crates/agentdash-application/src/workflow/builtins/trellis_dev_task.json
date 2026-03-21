@@ -1,0 +1,123 @@
+{
+  "key": "trellis_dev_task",
+  "name": "Trellis Dev Workflow / Task",
+  "description": "把 Trellis 研发流程提炼为平台内可复用的 Task 执行 workflow，覆盖 Start / Implement / Check / Record 四阶段。",
+  "target_kind": "task",
+  "recommended_role": "task_execution_worker",
+  "record_policy": {
+    "emit_summary": true,
+    "emit_journal_update": true,
+    "emit_archive_suggestion": true
+  },
+  "phases": [
+    {
+      "key": "start",
+      "title": "Start",
+      "description": "识别目标对象、读取 workflow / PRD / spec，并生成初始上下文集。",
+      "agent_instructions": [
+        "当前处于 Start phase，先吸收需求、规则与上下文，再进入编码或验证。",
+        "如果关键输入缺失，应先明确缺口与风险，不要假设未给出的约束。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "document_path",
+          "locator": ".trellis/workflow.md",
+          "reason": "workflow 总规则",
+          "required": true,
+          "title": "Workflow 总规则"
+        },
+        {
+          "kind": "document_path",
+          "locator": ".trellis/spec/backend/index.md",
+          "reason": "后端开发规范入口",
+          "required": true,
+          "title": "Backend Spec Index"
+        }
+      ],
+      "requires_session": false,
+      "completion_mode": "manual",
+      "default_artifact_type": "phase_note",
+      "default_artifact_title": "阶段记录"
+    },
+    {
+      "key": "implement",
+      "title": "Implement",
+      "description": "进入执行会话并推进开发，按当前任务上下文完成实现。",
+      "agent_instructions": [
+        "当前处于 Implement phase，优先完成实现，不要提前切换到复盘或归档。",
+        "输出应包含关键改动、验证结果以及剩余待确认点。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "runtime_context",
+          "locator": "task_execution_context",
+          "reason": "当前 Task 的执行上下文",
+          "required": true,
+          "title": "Task Execution Context"
+        }
+      ],
+      "requires_session": true,
+      "completion_mode": "session_ended",
+      "default_artifact_type": "phase_note",
+      "default_artifact_title": "阶段记录"
+    },
+    {
+      "key": "check",
+      "title": "Check",
+      "description": "绑定 check context，执行 review、checklist 与质量确认。",
+      "agent_instructions": [
+        "当前处于 Check phase，默认先审查和验证，再决定是否需要补充修改。",
+        "发现问题时优先直接修复，并说明剩余风险与未覆盖项。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "checklist",
+          "locator": "task_review_checklist",
+          "reason": "Task 级检查清单",
+          "required": true,
+          "title": "Task Review Checklist"
+        },
+        {
+          "kind": "runtime_context",
+          "locator": "task_execution_context",
+          "reason": "当前 Task 的执行上下文",
+          "required": true,
+          "title": "Task Execution Context"
+        }
+      ],
+      "requires_session": true,
+      "completion_mode": "checklist_passed",
+      "default_artifact_type": "phase_note",
+      "default_artifact_title": "阶段记录"
+    },
+    {
+      "key": "record",
+      "title": "Record",
+      "description": "生成 session summary、journal suggestion 与 archive suggestion。",
+      "agent_instructions": [
+        "当前处于 Record phase，不再扩展实现，重点沉淀总结、后续建议与归档动作。",
+        "记录内容要面向下一位协作者，便于继续接手。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "journal_target",
+          "locator": "workspace_journal",
+          "reason": "历史记录沉淀位置",
+          "required": false,
+          "title": "Workspace Journal"
+        },
+        {
+          "kind": "action_ref",
+          "locator": "workflow_archive_action",
+          "reason": "归档建议与归档动作",
+          "required": false,
+          "title": "Archive Action"
+        }
+      ],
+      "requires_session": false,
+      "completion_mode": "manual",
+      "default_artifact_type": "session_summary",
+      "default_artifact_title": "阶段总结"
+    }
+  ]
+}

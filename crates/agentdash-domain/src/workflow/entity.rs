@@ -269,19 +269,27 @@ impl WorkflowRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::value_objects::{WorkflowContextBinding, WorkflowPhaseCompletionMode};
+    use crate::workflow::value_objects::{
+        WorkflowContextBinding, WorkflowContextBindingKind, WorkflowPhaseCompletionMode,
+    };
 
     fn phase(key: &str) -> WorkflowPhaseDefinition {
         WorkflowPhaseDefinition {
             key: key.to_string(),
             title: key.to_string(),
             description: "desc".to_string(),
+            agent_instructions: vec![],
             context_bindings: vec![WorkflowContextBinding {
-                path: ".trellis/workflow.md".to_string(),
+                kind: WorkflowContextBindingKind::DocumentPath,
+                locator: ".trellis/workflow.md".to_string(),
                 reason: "workflow".to_string(),
+                required: true,
+                title: None,
             }],
             requires_session: true,
             completion_mode: WorkflowPhaseCompletionMode::Manual,
+            default_artifact_type: None,
+            default_artifact_title: None,
         }
     }
 

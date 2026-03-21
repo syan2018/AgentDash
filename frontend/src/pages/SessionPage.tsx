@@ -19,6 +19,7 @@ import type {
   Story,
   StoryNavigationState,
   TaskSessionExecutorSummary,
+  WorkflowRuntimeSnapshot,
 } from "../types";
 
 // ─── Prompt 模板 ────────────────────────────────────────
@@ -417,6 +418,58 @@ function TechnicalOverviewCard({
   );
 }
 
+function WorkflowRuntimeSurfaceCard({
+  workflowRuntime,
+}: {
+  workflowRuntime: WorkflowRuntimeSnapshot;
+}) {
+  const phase = workflowRuntime.current_phase;
+  return (
+    <SurfaceCard eyebrow="当前流程钩子" title={`${workflowRuntime.workflow_name} · ${phase.title}`}>
+      <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          phase: {phase.key}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          completion: {phase.completion_mode}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          {phase.requires_session ? "需要 session" : "不依赖 session"}
+        </span>
+      </div>
+      {phase.agent_instructions.length > 0 && (
+        <div className="mt-2 space-y-1 text-xs leading-5 text-foreground/85">
+          {phase.agent_instructions.map((instruction, index) => (
+            <p key={`${phase.key}-instruction-${index}`}>- {instruction}</p>
+          ))}
+        </div>
+      )}
+      {phase.bindings.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {phase.bindings.map((binding, index) => (
+            <span
+              key={`${binding.locator}-${index}`}
+              className={`rounded-[10px] border px-2.5 py-1 text-[11px] ${
+                binding.resolved
+                  ? "border-emerald-300/40 bg-emerald-500/10 text-emerald-700"
+                  : binding.required
+                    ? "border-amber-300/40 bg-amber-500/10 text-amber-700"
+                    : "border-border bg-secondary/40 text-muted-foreground"
+              }`}
+              title={`${binding.reason} · ${binding.summary}`}
+            >
+              {(binding.title?.trim() || binding.locator)} · {binding.resolved ? "已注入" : "待补齐"}
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+        这里展示的是当前会话真实生效的 workflow phase 约束，不只是静态模板说明。
+      </p>
+    </SurfaceCard>
+  );
+}
+
 function RawDiagnosticsSection({ children }: { children: ReactNode }) {
   return (
     <details className="rounded-[12px] border border-dashed border-border bg-background/60 px-3 py-2">
@@ -483,6 +536,9 @@ function StorySessionContextPanel({
       </div>
 
       <StorySourceSummaryCard story={story} contextSnapshot={contextSnapshot} />
+      {contextSnapshot?.workflow_runtime && (
+        <WorkflowRuntimeSurfaceCard workflowRuntime={contextSnapshot.workflow_runtime} />
+      )}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-foreground">
@@ -595,6 +651,9 @@ function ProjectSessionContextPanel({
           这类会话更适合维护长期背景、共识说明、参考资料和后续 Story 都可能复用的共享上下文，而不是直接暴露编排实现细节。
         </p>
       </SurfaceCard>
+      {snapshot?.workflow_runtime && (
+        <WorkflowRuntimeSurfaceCard workflowRuntime={snapshot.workflow_runtime} />
+      )}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-foreground">

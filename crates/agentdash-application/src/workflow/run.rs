@@ -256,7 +256,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::workflow::{TRELLIS_DEV_WORKFLOW_KEY, build_trellis_dev_workflow_definition};
+    use crate::workflow::{TRELLIS_DEV_TASK_TEMPLATE_KEY, build_builtin_workflow_definition};
 
     #[derive(Default)]
     struct MemoryWorkflowRunStore {
@@ -392,7 +392,7 @@ mod tests {
     async fn start_run_by_workflow_key_creates_ready_run() {
         let store = MemoryWorkflowRunStore::default();
         let definition =
-            build_trellis_dev_workflow_definition(WorkflowTargetKind::Task).expect("definition");
+            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
         WorkflowDefinitionRepository::create(&store, &definition)
             .await
             .expect("store definition");
@@ -401,7 +401,7 @@ mod tests {
         let run = service
             .start_run(StartWorkflowRunCommand {
                 workflow_id: None,
-                workflow_key: Some(TRELLIS_DEV_WORKFLOW_KEY.to_string()),
+                workflow_key: Some(TRELLIS_DEV_TASK_TEMPLATE_KEY.to_string()),
                 target_kind: WorkflowTargetKind::Task,
                 target_id: Uuid::new_v4(),
             })
@@ -417,7 +417,7 @@ mod tests {
     async fn start_run_rejects_duplicate_active_run_for_same_target() {
         let store = MemoryWorkflowRunStore::default();
         let definition =
-            build_trellis_dev_workflow_definition(WorkflowTargetKind::Task).expect("definition");
+            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
         WorkflowDefinitionRepository::create(&store, &definition)
             .await
             .expect("store definition");
@@ -451,7 +451,7 @@ mod tests {
     async fn activate_phase_requires_session_binding_for_session_phase() {
         let store = MemoryWorkflowRunStore::default();
         let definition =
-            build_trellis_dev_workflow_definition(WorkflowTargetKind::Task).expect("definition");
+            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
         WorkflowDefinitionRepository::create(&store, &definition)
             .await
             .expect("store definition");
@@ -492,7 +492,7 @@ mod tests {
     async fn complete_phase_persists_record_artifacts_and_advances() {
         let store = MemoryWorkflowRunStore::default();
         let definition =
-            build_trellis_dev_workflow_definition(WorkflowTargetKind::Task).expect("definition");
+            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
         WorkflowDefinitionRepository::create(&store, &definition)
             .await
             .expect("store definition");

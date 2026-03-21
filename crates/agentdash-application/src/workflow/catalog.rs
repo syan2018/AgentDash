@@ -140,7 +140,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::workflow::build_trellis_dev_workflow_definition;
+    use crate::workflow::{TRELLIS_DEV_TASK_TEMPLATE_KEY, build_builtin_workflow_definition};
 
     #[derive(Default)]
     struct MemoryWorkflowCatalogStore {
@@ -285,14 +285,14 @@ mod tests {
 
         let created = service
             .upsert_definition(
-                build_trellis_dev_workflow_definition(WorkflowTargetKind::Task)
+                build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY)
                     .expect("definition"),
             )
             .await
             .expect("create definition");
 
         let mut replacement =
-            build_trellis_dev_workflow_definition(WorkflowTargetKind::Task).expect("definition");
+            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
         replacement.description = "new description".to_string();
 
         let updated = service
@@ -311,13 +311,13 @@ mod tests {
         let service = WorkflowCatalogService::new(&store, &store);
         let workflow_a = service
             .upsert_definition(
-                build_trellis_dev_workflow_definition(WorkflowTargetKind::Task)
+                build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY)
                     .expect("definition"),
             )
             .await
             .expect("workflow a");
         let mut workflow_b =
-            build_trellis_dev_workflow_definition(WorkflowTargetKind::Task).expect("definition");
+            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
         workflow_b.key = "trellis_dev_workflow_v2".to_string();
         workflow_b.name = "Trellis Dev Workflow V2".to_string();
         let workflow_b = service

@@ -7,8 +7,8 @@ pub use repository::{
     WorkflowAssignmentRepository, WorkflowDefinitionRepository, WorkflowRunRepository,
 };
 pub use value_objects::{
-    WorkflowAgentRole, WorkflowContextBinding, WorkflowPhaseCompletionMode,
-    WorkflowPhaseDefinition, WorkflowPhaseExecutionStatus, WorkflowPhaseState,
-    WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowRecordPolicy, WorkflowRunStatus,
-    WorkflowTargetKind, validate_workflow_definition,
+    WorkflowAgentRole, WorkflowContextBinding, WorkflowContextBindingKind,
+    WorkflowPhaseCompletionMode, WorkflowPhaseDefinition, WorkflowPhaseExecutionStatus,
+    WorkflowPhaseState, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowRecordPolicy,
+    WorkflowRunStatus, WorkflowTargetKind, validate_workflow_definition,
 };

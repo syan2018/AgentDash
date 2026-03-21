@@ -2,6 +2,7 @@ import { api } from "../api/client";
 import type {
   WorkflowAgentRole,
   WorkflowAssignment,
+  WorkflowContextBindingKind,
   WorkflowDefinition,
   WorkflowPhaseCompletionMode,
   WorkflowPhaseDefinition,
@@ -10,6 +11,7 @@ import type {
   WorkflowRecordArtifact,
   WorkflowRecordArtifactType,
   WorkflowRecordPolicy,
+  WorkflowTemplate,
   WorkflowRun,
   WorkflowRunStatus,
   WorkflowTargetKind,
@@ -29,6 +31,19 @@ function normalizeWorkflowAgentRole(value: string): WorkflowAgentRole {
       return value;
     default:
       return "task_execution_worker";
+  }
+}
+
+function normalizeWorkflowContextBindingKind(value: string): WorkflowContextBindingKind {
+  switch (value) {
+    case "document_path":
+    case "runtime_context":
+    case "checklist":
+    case "journal_target":
+    case "action_ref":
+      return value;
+    default:
+      return "document_path";
   }
 }
 
@@ -89,16 +104,28 @@ function mapWorkflowPhaseDefinition(raw: Record<string, unknown>): WorkflowPhase
     key: String(raw.key ?? ""),
     title: String(raw.title ?? ""),
     description: String(raw.description ?? ""),
+    agent_instructions: Array.isArray(raw.agent_instructions)
+      ? raw.agent_instructions.filter((item): item is string => typeof item === "string")
+      : [],
     context_bindings: Array.isArray(raw.context_bindings)
       ? raw.context_bindings
           .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
           .map((item) => ({
-            path: String(item.path ?? ""),
+            kind: normalizeWorkflowContextBindingKind(String(item.kind ?? "document_path")),
+            locator: String(item.locator ?? ""),
             reason: String(item.reason ?? ""),
+            required: item.required !== false,
+            title: item.title != null ? String(item.title) : null,
           }))
       : [],
     requires_session: Boolean(raw.requires_session),
     completion_mode: normalizePhaseCompletionMode(String(raw.completion_mode ?? "manual")),
+    default_artifact_type:
+      raw.default_artifact_type != null
+        ? normalizeWorkflowRecordArtifactType(String(raw.default_artifact_type))
+        : null,
+    default_artifact_title:
+      raw.default_artifact_title != null ? String(raw.default_artifact_title) : null,
   };
 }
 
@@ -159,6 +186,22 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
   };
 }
 
+export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTemplate {
+  return {
+    key: String(raw.key ?? ""),
+    name: String(raw.name ?? "未命名 Workflow Template"),
+    description: String(raw.description ?? ""),
+    target_kind: normalizeWorkflowTargetKind(String(raw.target_kind ?? "task")),
+    recommended_role: normalizeWorkflowAgentRole(String(raw.recommended_role ?? "task_execution_worker")),
+    phases: Array.isArray(raw.phases)
+      ? raw.phases
+          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+          .map(mapWorkflowPhaseDefinition)
+      : [],
+    record_policy: mapWorkflowRecordPolicy(raw.record_policy),
+  };
+}
+
 export function mapWorkflowAssignment(raw: Record<string, unknown>): WorkflowAssignment {
   return {
     id: String(raw.id ?? ""),
@@ -202,10 +245,16 @@ export async function fetchWorkflowDefinitions(targetKind?: WorkflowTargetKind):
   return raw.map(mapWorkflowDefinition);
 }
 
-export async function bootstrapTrellisWorkflow(targetKind: WorkflowTargetKind): Promise<WorkflowDefinition> {
-  const raw = await api.post<Record<string, unknown>>("/workflows/bootstrap/trellis-dev", {
-    target_kind: targetKind,
-  });
+export async function fetchWorkflowTemplates(): Promise<WorkflowTemplate[]> {
+  const raw = await api.get<Record<string, unknown>[]>("/workflow-templates");
+  return raw.map(mapWorkflowTemplate);
+}
+
+export async function bootstrapWorkflowTemplate(builtinKey: string): Promise<WorkflowDefinition> {
+  const raw = await api.post<Record<string, unknown>>(
+    `/workflow-templates/${encodeURIComponent(builtinKey)}/bootstrap`,
+    {},
+  );
   return mapWorkflowDefinition(raw);
 }
 

@@ -115,6 +115,7 @@ function mapProjectSessionInfo(raw: Record<string, unknown>, fallbackBindingId: 
         executor: (rawSnapshot.executor as NonNullable<ProjectSessionInfo['context_snapshot']>['executor']) ?? { source: 'unresolved' },
         project_defaults: rawSnapshot.project_defaults as NonNullable<ProjectSessionInfo['context_snapshot']>['project_defaults'],
         effective: rawSnapshot.effective as NonNullable<ProjectSessionInfo['context_snapshot']>['effective'],
+        workflow_runtime: (rawSnapshot.workflow_runtime as NonNullable<ProjectSessionInfo['context_snapshot']>['workflow_runtime']) ?? null,
         shared_context_mounts: rawSharedMounts.map((mount) => ({
           container_id: String(mount.container_id ?? ''),
           mount_id: String(mount.mount_id ?? ''),

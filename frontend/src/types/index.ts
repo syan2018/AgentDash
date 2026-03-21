@@ -149,10 +149,40 @@ export interface SessionEffectiveContext {
   runtime_policy: TaskSessionRuntimePolicySummary;
 }
 
+export interface WorkflowResolvedBindingSnapshot {
+  kind: WorkflowContextBindingKind;
+  locator: string;
+  reason: string;
+  required: boolean;
+  title?: string | null;
+  resolved: boolean;
+  summary: string;
+}
+
+export interface WorkflowRuntimePhaseSnapshot {
+  key: string;
+  title: string;
+  description: string;
+  requires_session: boolean;
+  completion_mode: WorkflowPhaseCompletionMode;
+  agent_instructions: string[];
+  bindings: WorkflowResolvedBindingSnapshot[];
+}
+
+export interface WorkflowRuntimeSnapshot {
+  run_id: string;
+  workflow_id: string;
+  workflow_key: string;
+  workflow_name: string;
+  run_status: WorkflowRunStatus;
+  current_phase: WorkflowRuntimePhaseSnapshot;
+}
+
 export interface SessionContextSnapshot {
   project_defaults: SessionProjectDefaults;
   story_overrides: SessionStoryOverrides;
   effective: SessionEffectiveContext;
+  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface TaskSessionContextSnapshot {
@@ -160,10 +190,12 @@ export interface TaskSessionContextSnapshot {
   project_defaults: SessionProjectDefaults;
   story_overrides: SessionStoryOverrides;
   effective: SessionEffectiveContext;
+  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface StorySessionContextSnapshot extends SessionContextSnapshot {
   executor: TaskSessionExecutorSummary;
+  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface StorySessionInfo {
@@ -182,6 +214,7 @@ export interface ProjectSessionContextSnapshot {
   project_defaults: SessionProjectDefaults;
   effective: SessionEffectiveContext;
   shared_context_mounts: ProjectAgentMount[];
+  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface ProjectSessionInfo {
@@ -203,6 +236,13 @@ export type WorkflowAgentRole =
   | "task_execution_worker"
   | "review_agent"
   | "record_agent";
+
+export type WorkflowContextBindingKind =
+  | "document_path"
+  | "runtime_context"
+  | "checklist"
+  | "journal_target"
+  | "action_ref";
 
 export type WorkflowPhaseCompletionMode =
   | "manual"
@@ -233,23 +273,39 @@ export type WorkflowRecordArtifactType =
   | "phase_note";
 
 export interface WorkflowContextBinding {
-  path: string;
+  kind: WorkflowContextBindingKind;
+  locator: string;
   reason: string;
+  required: boolean;
+  title?: string | null;
 }
 
 export interface WorkflowPhaseDefinition {
   key: string;
   title: string;
   description: string;
+  agent_instructions: string[];
   context_bindings: WorkflowContextBinding[];
   requires_session: boolean;
   completion_mode: WorkflowPhaseCompletionMode;
+  default_artifact_type?: WorkflowRecordArtifactType | null;
+  default_artifact_title?: string | null;
 }
 
 export interface WorkflowRecordPolicy {
   emit_summary: boolean;
   emit_journal_update: boolean;
   emit_archive_suggestion: boolean;
+}
+
+export interface WorkflowTemplate {
+  key: string;
+  name: string;
+  description: string;
+  target_kind: WorkflowTargetKind;
+  recommended_role: WorkflowAgentRole;
+  phases: WorkflowPhaseDefinition[];
+  record_policy: WorkflowRecordPolicy;
 }
 
 export interface WorkflowDefinition {

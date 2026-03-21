@@ -125,8 +125,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Workflow
         .route("/workflows", get(workflows::list_workflows))
         .route(
-            "/workflows/bootstrap/trellis-dev",
-            post(workflows::bootstrap_trellis_workflow),
+            "/workflow-templates",
+            get(workflows::list_workflow_templates),
+        )
+        .route(
+            "/workflow-templates/{builtin_key}/bootstrap",
+            post(workflows::bootstrap_workflow_template),
         )
         .route("/workflows/runs", post(workflows::start_workflow_run))
         .route("/workflow-runs/{id}", get(workflows::get_workflow_run))

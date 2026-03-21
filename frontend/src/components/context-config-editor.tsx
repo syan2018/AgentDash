@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type {
+  ContextContainerCapability,
   ContextContainerDefinition,
   MountDerivationPolicy,
   SessionComposition,

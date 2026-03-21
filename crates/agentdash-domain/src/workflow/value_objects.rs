@@ -21,10 +21,25 @@ pub enum WorkflowAgentRole {
     RecordAgent,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowContextBindingKind {
+    DocumentPath,
+    RuntimeContext,
+    Checklist,
+    JournalTarget,
+    ActionRef,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct WorkflowContextBinding {
-    pub path: String,
+    pub kind: WorkflowContextBindingKind,
+    pub locator: String,
     pub reason: String,
+    #[serde(default = "bool_true")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -41,10 +56,16 @@ pub struct WorkflowPhaseDefinition {
     pub title: String,
     pub description: String,
     #[serde(default)]
+    pub agent_instructions: Vec<String>,
+    #[serde(default)]
     pub context_bindings: Vec<WorkflowContextBinding>,
     #[serde(default)]
     pub requires_session: bool,
     pub completion_mode: WorkflowPhaseCompletionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_artifact_type: Option<WorkflowRecordArtifactType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_artifact_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -171,9 +192,9 @@ pub fn validate_workflow_definition(
             ));
         }
         for (binding_index, binding) in phase.context_bindings.iter().enumerate() {
-            if binding.path.trim().is_empty() {
+            if binding.locator.trim().is_empty() {
                 return Err(format!(
-                    "workflow.phases[{index}].context_bindings[{binding_index}].path 不能为空"
+                    "workflow.phases[{index}].context_bindings[{binding_index}].locator 不能为空"
                 ));
             }
             if binding.reason.trim().is_empty() {
@@ -200,12 +221,18 @@ mod tests {
             key: key.to_string(),
             title: key.to_string(),
             description: "desc".to_string(),
+            agent_instructions: vec![],
             context_bindings: vec![WorkflowContextBinding {
-                path: ".trellis/workflow.md".to_string(),
+                kind: WorkflowContextBindingKind::DocumentPath,
+                locator: ".trellis/workflow.md".to_string(),
                 reason: "workflow".to_string(),
+                required: true,
+                title: None,
             }],
             requires_session: false,
             completion_mode: WorkflowPhaseCompletionMode::Manual,
+            default_artifact_type: None,
+            default_artifact_title: None,
         }
     }
 

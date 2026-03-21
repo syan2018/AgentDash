@@ -1,0 +1,109 @@
+{
+  "key": "trellis_dev_story",
+  "name": "Trellis Dev Workflow / Story",
+  "description": "把 Trellis 研发流程投射到 Story 级协作，覆盖 Start / Implement / Check / Record 四阶段。",
+  "target_kind": "story",
+  "recommended_role": "story_lifecycle_companion",
+  "record_policy": {
+    "emit_summary": true,
+    "emit_journal_update": true,
+    "emit_archive_suggestion": false
+  },
+  "phases": [
+    {
+      "key": "start",
+      "title": "Start",
+      "description": "识别 Story 目标、读取 PRD / workflow / spec，并生成初始上下文集。",
+      "agent_instructions": [
+        "当前处于 Start phase，先澄清需求、边界和验收标准，再推进拆解或实现。",
+        "如果 PRD 或关键引用不完整，应先补全上下文再继续。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "document_path",
+          "locator": ".trellis/workflow.md",
+          "reason": "workflow 总规则",
+          "required": true,
+          "title": "Workflow 总规则"
+        },
+        {
+          "kind": "runtime_context",
+          "locator": "story_prd",
+          "reason": "需求目标与验收条件",
+          "required": true,
+          "title": "Story PRD"
+        }
+      ],
+      "requires_session": false,
+      "completion_mode": "manual",
+      "default_artifact_type": "phase_note",
+      "default_artifact_title": "阶段记录"
+    },
+    {
+      "key": "implement",
+      "title": "Implement",
+      "description": "在 Story 级上下文内推进方案梳理、拆解与执行准备。",
+      "agent_instructions": [
+        "当前处于 Implement phase，重点是完善 Story 上下文、拆解任务和准备执行面。",
+        "保持 Story 与后续 Task 的上下文衔接，避免只给出抽象建议。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "runtime_context",
+          "locator": "story_context_snapshot",
+          "reason": "Story 级共享上下文",
+          "required": true,
+          "title": "Story Context Snapshot"
+        }
+      ],
+      "requires_session": true,
+      "completion_mode": "session_ended",
+      "default_artifact_type": "phase_note",
+      "default_artifact_title": "阶段记录"
+    },
+    {
+      "key": "check",
+      "title": "Check",
+      "description": "复核 Story 级需求、约束与待执行项是否清晰。",
+      "agent_instructions": [
+        "当前处于 Check phase，先确认需求、约束和任务拆解是否足够清晰再推进。",
+        "发现缺口时优先补齐 Story 上下文，而不是直接跳过。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "checklist",
+          "locator": "story_review_checklist",
+          "reason": "Story 级检查清单",
+          "required": true,
+          "title": "Story Review Checklist"
+        }
+      ],
+      "requires_session": true,
+      "completion_mode": "checklist_passed",
+      "default_artifact_type": "phase_note",
+      "default_artifact_title": "阶段记录"
+    },
+    {
+      "key": "record",
+      "title": "Record",
+      "description": "沉淀 Story 级总结与后续建议。",
+      "agent_instructions": [
+        "当前处于 Record phase，沉淀 Story 的结论、后续动作和交接说明。",
+        "记录要能帮助后续 Task 或下一次会话快速恢复上下文。"
+      ],
+      "context_bindings": [
+        {
+          "kind": "journal_target",
+          "locator": "workspace_journal",
+          "reason": "历史记录沉淀位置",
+          "required": false,
+          "title": "Workspace Journal"
+        }
+      ],
+      "requires_session": false,
+      "completion_mode": "manual",
+      "default_artifact_type": "session_summary",
+      "default_artifact_title": "阶段总结"
+    }
+  ]
+}

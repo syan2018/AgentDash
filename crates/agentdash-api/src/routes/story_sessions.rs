@@ -18,6 +18,9 @@ use crate::{
     session_plan::{
         resolve_effective_session_composition, summarize_runtime_policy, summarize_tool_visibility,
     },
+    workflow_runtime::{
+        WorkflowRuntimeContext, WorkflowRuntimeSnapshot, resolve_workflow_runtime_injection,
+    },
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
@@ -28,6 +31,8 @@ pub struct StorySessionContextSnapshot {
     pub project_defaults: SessionProjectDefaults,
     pub story_overrides: SessionStoryOverrides,
     pub effective: SessionEffectiveContext,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_runtime: Option<WorkflowRuntimeSnapshot>,
 }
 
 #[derive(Debug, Serialize)]
@@ -376,6 +381,19 @@ async fn build_story_session_context_response(
         &mcp_servers,
         &tool_visibility.tool_names,
     );
+    let workflow_runtime = resolve_workflow_runtime_injection(
+        state,
+        WorkflowRuntimeContext {
+            target_kind: agentdash_domain::workflow::WorkflowTargetKind::Story,
+            target_id: story.id,
+            project: &project,
+            story: Some(story),
+            task: None,
+            workspace: workspace.as_ref(),
+        },
+    )
+    .await
+    .map(|item| item.snapshot);
 
     Some(BuiltStorySessionContextResponse {
         address_space,
@@ -410,6 +428,7 @@ async fn build_story_session_context_response(
                 tool_visibility,
                 runtime_policy,
             },
+            workflow_runtime,
         }),
     })
 }

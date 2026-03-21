@@ -13,7 +13,7 @@ pub use connector::{
 pub use hooks::{
     ExecutionHookProvider, HookConstraint, HookContextFragment, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookOwnerSummary, HookPolicy, HookResolution, HookSessionRuntime,
-    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
-    SharedHookSessionRuntime,
+    HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 pub use hub::{ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta};

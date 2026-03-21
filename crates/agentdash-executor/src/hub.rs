@@ -21,6 +21,9 @@ use agent_client_protocol::McpServer;
 
 use crate::connector::ExecutionAddressSpace;
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
+use crate::hooks::{
+    ExecutionHookProvider, HookSessionRuntime, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -251,6 +254,7 @@ pub struct SessionMeta {
 pub struct ExecutorHub {
     workspace_root: PathBuf,
     connector: Arc<dyn AgentConnector>,
+    hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
     store: SessionStore,
 }
@@ -258,6 +262,7 @@ pub struct ExecutorHub {
 struct SessionRuntime {
     tx: broadcast::Sender<SessionNotification>,
     running: bool,
+    hook_session: Option<SharedHookSessionRuntime>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,10 +285,19 @@ pub enum SessionExecutionState {
 
 impl ExecutorHub {
     pub fn new(workspace_root: PathBuf, connector: Arc<dyn AgentConnector>) -> Self {
+        Self::new_with_hooks(workspace_root, connector, None)
+    }
+
+    pub fn new_with_hooks(
+        workspace_root: PathBuf,
+        connector: Arc<dyn AgentConnector>,
+        hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
+    ) -> Self {
         let store = SessionStore::new(workspace_root.join(".agentdash").join("sessions"));
         Self {
             workspace_root,
             connector,
+            hook_provider,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             store,
         }
@@ -388,9 +402,23 @@ impl ExecutorHub {
         let mut sessions = self.sessions.lock().await;
         let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
             let (tx, _rx) = broadcast::channel(1024);
-            SessionRuntime { tx, running: false }
+            SessionRuntime {
+                tx,
+                running: false,
+                hook_session: None,
+            }
         });
         runtime.tx.subscribe()
+    }
+
+    pub async fn get_hook_session_runtime(
+        &self,
+        session_id: &str,
+    ) -> Option<SharedHookSessionRuntime> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(session_id)
+            .and_then(|runtime| runtime.hook_session.clone())
     }
 
     /// 多轮对话：同一 session 允许多次调用，但同一时间只允许一次活跃执行。
@@ -419,7 +447,11 @@ impl ExecutorHub {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = broadcast::channel(1024);
-                SessionRuntime { tx, running: false }
+                SessionRuntime {
+                    tx,
+                    running: false,
+                    hook_session: None,
+                }
             });
             if runtime.running {
                 return Err(ConnectorError::Runtime(
@@ -443,6 +475,33 @@ impl ExecutorHub {
         // 该 turn_id 必须在“用户消息注入”和“连接器流”之间保持一致，便于前端归并。
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
 
+        let hook_session = match self
+            .load_session_hook_runtime(
+                session_id,
+                &turn_id,
+                executor_config.executor.as_str(),
+                working_directory.as_path(),
+            )
+            .await
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let mut sessions = self.sessions.lock().await;
+                if let Some(runtime) = sessions.get_mut(session_id) {
+                    runtime.running = false;
+                    runtime.hook_session = None;
+                }
+                return Err(error);
+            }
+        };
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(runtime) = sessions.get_mut(session_id) {
+                runtime.hook_session = hook_session.clone();
+            }
+        }
+
         let context = ExecutionContext {
             turn_id: turn_id.clone(),
             workspace_root,
@@ -451,7 +510,7 @@ impl ExecutorHub {
             executor_config,
             mcp_servers: req.mcp_servers,
             address_space: req.address_space,
-            hook_session: None,
+            hook_session,
         };
 
         let title_hint = resolved_payload
@@ -523,7 +582,7 @@ impl ExecutorHub {
         let _ = store.append(&sid, &started).await;
         let _ = tx.send(started);
 
-        let mut stream = self
+        let mut stream = match self
             .connector
             .prompt(
                 session_id,
@@ -531,7 +590,18 @@ impl ExecutorHub {
                 &resolved_payload.prompt_payload,
                 context,
             )
-            .await?;
+            .await
+        {
+            Ok(stream) => stream,
+            Err(error) => {
+                let mut sessions = self.sessions.lock().await;
+                if let Some(runtime) = sessions.get_mut(session_id) {
+                    runtime.running = false;
+                    runtime.hook_session = None;
+                }
+                return Err(error);
+            }
+        };
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
 
@@ -632,7 +702,11 @@ impl ExecutorHub {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = broadcast::channel(1024);
-                SessionRuntime { tx, running: false }
+                SessionRuntime {
+                    tx,
+                    running: false,
+                    hook_session: None,
+                }
             });
             runtime.tx.clone()
         };
@@ -643,6 +717,42 @@ impl ExecutorHub {
 
     pub async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
         self.connector.cancel(session_id).await
+    }
+}
+
+impl ExecutorHub {
+    async fn load_session_hook_runtime(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        executor: &str,
+        working_directory: &Path,
+    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+        let Some(provider) = self.hook_provider.as_ref() else {
+            return Ok(None);
+        };
+
+        let snapshot = provider
+            .load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: session_id.to_string(),
+                turn_id: Some(turn_id.to_string()),
+                connector_id: Some(self.connector.connector_id().to_string()),
+                executor: Some(executor.to_string()),
+                working_directory: Some(working_directory.to_string_lossy().replace('\\', "/")),
+                owners: Vec::new(),
+                tags: Vec::new(),
+            })
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!("加载会话 Hook snapshot 失败: {error}"))
+            })?;
+
+        Ok(Some(Arc::new(HookSessionRuntime {
+            session_id: session_id.to_string(),
+            diagnostics: snapshot.diagnostics.clone(),
+            snapshot,
+            revision: 1,
+        })))
     }
 }
 

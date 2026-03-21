@@ -187,3 +187,36 @@ pub trait ExecutionHookProvider: Send + Sync {
 
     async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
 }
+
+#[derive(Debug, Default)]
+pub struct NoopExecutionHookProvider;
+
+#[async_trait]
+impl ExecutionHookProvider for NoopExecutionHookProvider {
+    async fn load_session_snapshot(
+        &self,
+        query: SessionHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        Ok(SessionHookSnapshot {
+            session_id: query.session_id,
+            ..SessionHookSnapshot::default()
+        })
+    }
+
+    async fn refresh_session_snapshot(
+        &self,
+        query: SessionHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        Ok(SessionHookSnapshot {
+            session_id: query.session_id,
+            ..SessionHookSnapshot::default()
+        })
+    }
+
+    async fn evaluate_hook(
+        &self,
+        _query: HookEvaluationQuery,
+    ) -> Result<HookResolution, HookError> {
+        Ok(HookResolution::default())
+    }
+}

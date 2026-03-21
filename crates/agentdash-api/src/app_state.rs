@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::address_space_access::{RelayAddressSpaceService, RelayRuntimeToolProvider};
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
+use crate::execution_hooks::AppExecutionHookProvider;
 use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_application::task_lock::TaskLockMap;
@@ -160,7 +161,16 @@ impl AppState {
         }
 
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let executor_hub = ExecutorHub::new(workspace_root, connector.clone());
+        let hook_provider = Arc::new(AppExecutionHookProvider::new(
+            project_repo.clone(),
+            story_repo.clone(),
+            task_repo.clone(),
+            session_binding_repo.clone(),
+            workflow_repo.clone(),
+            workflow_repo.clone(),
+        ));
+        let executor_hub =
+            ExecutorHub::new_with_hooks(workspace_root, connector.clone(), Some(hook_provider));
         let restart_tracker = RestartTracker::default();
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();

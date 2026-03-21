@@ -8,6 +8,7 @@ mod address_space_access;
 mod app_state;
 mod bootstrap;
 mod dto;
+mod execution_hooks;
 mod relay;
 mod routes;
 mod rpc;

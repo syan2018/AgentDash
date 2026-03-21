@@ -381,6 +381,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 "connector_id": query.connector_id,
                 "executor": query.executor,
                 "working_directory": query.working_directory,
+                "workspace_root": query.workspace_root,
             })),
         };
 
@@ -533,6 +534,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             connector_id: None,
             executor: None,
             working_directory: None,
+            workspace_root: None,
             owners: Vec::new(),
             tags: Vec::new(),
         })
@@ -728,6 +730,14 @@ fn active_task_status(snapshot: &SessionHookSnapshot) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
 }
 
+fn snapshot_workspace_root(snapshot: &SessionHookSnapshot) -> Option<&str> {
+    snapshot
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("workspace_root"))
+        .and_then(serde_json::Value::as_str)
+}
+
 fn active_workflow_source_summary(snapshot: &SessionHookSnapshot) -> Vec<String> {
     let mut summary = Vec::new();
     if let Some(workflow_key) = snapshot
@@ -884,6 +894,12 @@ fn apply_hook_rules(ctx: HookEvaluationContext<'_>, resolution: &mut HookResolut
 fn normalized_hook_rules() -> &'static [NormalizedHookRule] {
     &[
         NormalizedHookRule {
+            key: "tool:shell_exec:rewrite_absolute_cwd",
+            trigger: HookTrigger::BeforeTool,
+            matches: rule_matches_shell_exec_absolute_cwd_rewrite,
+            apply: rule_apply_shell_exec_absolute_cwd_rewrite,
+        },
+        NormalizedHookRule {
             key: "workflow_phase:implement:block_completed_status",
             trigger: HookTrigger::BeforeTool,
             matches: rule_matches_implement_completed_status_block,
@@ -953,6 +969,41 @@ fn rule_matches_implement_completed_status_block(ctx: &HookEvaluationContext<'_>
     is_update_task_status_tool(tool_name)
         && workflow_phase_key(ctx.snapshot) == Some("implement")
         && extract_tool_arg(ctx.query.payload.as_ref(), "status") == Some("completed")
+}
+
+fn rule_matches_shell_exec_absolute_cwd_rewrite(ctx: &HookEvaluationContext<'_>) -> bool {
+    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
+        return false;
+    };
+    tool_name.ends_with("shell_exec")
+        && shell_exec_rewritten_args(ctx.snapshot, ctx.query.payload.as_ref()).is_some()
+}
+
+fn rule_apply_shell_exec_absolute_cwd_rewrite(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
+    let Some(rewritten_args) = shell_exec_rewritten_args(ctx.snapshot, ctx.query.payload.as_ref())
+    else {
+        return;
+    };
+    let rewritten_cwd = rewritten_args
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(".")
+        .to_string();
+
+    resolution.rewritten_tool_input = Some(rewritten_args);
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_tool_shell_exec_cwd_rewritten".to_string(),
+        summary: "Hook 已把 shell_exec 的绝对 cwd 改写为相对 workspace root 的路径"
+            .to_string(),
+        detail: Some(format!("rewritten_cwd={rewritten_cwd}")),
+        source_summary: vec![
+            "tool:shell_exec".to_string(),
+            "hook_rewrite:absolute_cwd".to_string(),
+        ],
+    });
 }
 
 fn rule_apply_implement_completed_status_block(
@@ -1206,6 +1257,53 @@ fn extract_tool_arg<'a>(payload: Option<&'a serde_json::Value>, key: &str) -> Op
         .and_then(serde_json::Value::as_str)
 }
 
+fn shell_exec_rewritten_args(
+    snapshot: &SessionHookSnapshot,
+    payload: Option<&serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let workspace_root = snapshot_workspace_root(snapshot)?;
+    let cwd = extract_tool_arg(payload, "cwd")?;
+    if !std::path::Path::new(cwd).is_absolute() {
+        return None;
+    }
+
+    let rewritten_cwd = absolutize_cwd_to_workspace_relative(workspace_root, cwd)?;
+    let mut args = payload?.get("args")?.clone();
+    args.as_object_mut()?.insert(
+        "cwd".to_string(),
+        serde_json::Value::String(rewritten_cwd),
+    );
+    Some(args)
+}
+
+fn absolutize_cwd_to_workspace_relative(workspace_root: &str, cwd: &str) -> Option<String> {
+    let display_root = normalize_path_display_for_hook(workspace_root);
+    let display_cwd = normalize_path_display_for_hook(cwd);
+    let normalized_root = display_root.to_ascii_lowercase();
+    let normalized_cwd = display_cwd.to_ascii_lowercase();
+    if normalized_root.is_empty() || normalized_cwd.is_empty() {
+        return None;
+    }
+    if normalized_cwd == normalized_root {
+        return Some(".".to_string());
+    }
+
+    let prefix = format!("{normalized_root}/");
+    normalized_cwd.strip_prefix(&prefix).and_then(|_| {
+        display_cwd
+            .get(prefix.len()..)
+            .map(|suffix| suffix.trim_matches('/').to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn normalize_path_display_for_hook(path: &str) -> String {
+    path.replace('\\', "/")
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+}
+
 fn tool_call_failed(payload: Option<&serde_json::Value>) -> bool {
     payload
         .and_then(|value| value.get("is_error"))
@@ -1267,6 +1365,17 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use agentdash_agent::{
+        AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
+    };
+    use agentdash_executor::{
+        ExecutionHookProvider, HookError, HookSessionRuntime, HookSessionRuntimeSnapshot,
+        HookRuntimeDelegate, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery,
+    };
+    use async_trait::async_trait;
+    use tokio_util::sync::CancellationToken;
 
     fn snapshot_with_workflow(
         phase_key: &str,
@@ -1276,6 +1385,7 @@ mod tests {
         let mut snapshot = SessionHookSnapshot {
             session_id: "sess-test".to_string(),
             metadata: Some(serde_json::json!({
+                "workspace_root": "F:/Projects/AgentDash",
                 "active_workflow": {
                     "workflow_key": "trellis_dev_task",
                     "phase_key": phase_key,
@@ -1344,6 +1454,55 @@ mod tests {
     }
 
     #[test]
+    fn before_tool_rewrites_shell_exec_absolute_cwd_to_workspace_relative() {
+        let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeTool,
+            turn_id: None,
+            tool_name: Some("shell_exec".to_string()),
+            tool_call_id: Some("call-shell-1".to_string()),
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "args": {
+                    "cwd": "F:\\Projects\\AgentDash\\crates\\agentdash-agent",
+                    "command": "cargo test"
+                }
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert_eq!(
+            resolution
+                .rewritten_tool_input
+                .as_ref()
+                .and_then(|value| value.get("cwd"))
+                .and_then(serde_json::Value::as_str),
+            Some("crates/agentdash-agent")
+        );
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"tool:shell_exec:rewrite_absolute_cwd".to_string())
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "before_tool_shell_exec_cwd_rewritten")
+        );
+    }
+
+    #[test]
     fn before_stop_requires_checklist_completion_when_task_not_ready() {
         let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("running"));
         let mut resolution = HookResolution::default();
@@ -1398,6 +1557,106 @@ mod tests {
         assert_eq!(
             decision.summary.as_deref(),
             Some("Task 状态已进入 `awaiting_verification`，满足 checklist_passed completion")
+        );
+    }
+
+    #[derive(Clone)]
+    struct RuleEngineTestProvider {
+        snapshot: SessionHookSnapshot,
+    }
+
+    #[async_trait]
+    impl ExecutionHookProvider for RuleEngineTestProvider {
+        async fn load_session_snapshot(
+            &self,
+            _query: SessionHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(self.snapshot.clone())
+        }
+
+        async fn refresh_session_snapshot(
+            &self,
+            _query: SessionHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(self.snapshot.clone())
+        }
+
+        async fn evaluate_hook(
+            &self,
+            query: HookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            let snapshot = query.snapshot.clone().unwrap_or_else(|| self.snapshot.clone());
+            let mut resolution = HookResolution::default();
+            apply_hook_rules(
+                HookEvaluationContext {
+                    snapshot: &snapshot,
+                    query: &query,
+                },
+                &mut resolution,
+            );
+            Ok(resolution)
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_delegate_before_tool_rewrite_records_trace() {
+        let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            snapshot.session_id.clone(),
+            Arc::new(RuleEngineTestProvider {
+                snapshot: snapshot.clone(),
+            }),
+            snapshot,
+        ));
+        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+
+        let decision = delegate
+            .before_tool_call(
+                BeforeToolCallInput {
+                    assistant_message: AgentMessage::assistant("准备执行 shell"),
+                    tool_call: ToolCallInfo {
+                        id: "call-shell-1".to_string(),
+                        call_id: None,
+                        name: "shell_exec".to_string(),
+                        arguments: serde_json::json!({
+                            "cwd": "F:\\Projects\\AgentDash\\crates\\agentdash-agent",
+                            "command": "cargo test"
+                        }),
+                    },
+                    args: serde_json::json!({
+                        "cwd": "F:\\Projects\\AgentDash\\crates\\agentdash-agent",
+                        "command": "cargo test"
+                    }),
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![],
+                        tools: vec![],
+                    },
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("before_tool_call 应返回 rewrite");
+
+        match decision {
+            ToolCallDecision::Rewrite { args, note } => {
+                assert!(note.is_none());
+                assert_eq!(
+                    args.get("cwd").and_then(serde_json::Value::as_str),
+                    Some("crates/agentdash-agent")
+                );
+            }
+            other => panic!("期望 Rewrite，实际得到 {other:?}"),
+        }
+
+        let runtime: HookSessionRuntimeSnapshot = hook_session.runtime_snapshot();
+        assert_eq!(runtime.trace.len(), 1);
+        assert_eq!(runtime.trace[0].trigger, HookTrigger::BeforeTool);
+        assert_eq!(runtime.trace[0].decision, "rewrite");
+        assert!(
+            runtime.trace[0]
+                .matched_rule_keys
+                .contains(&"tool:shell_exec:rewrite_absolute_cwd".to_string())
         );
     }
 

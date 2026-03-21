@@ -3,36 +3,19 @@
   "name": "hook-e2e-and-data-cleanup",
   "title": "Hook E2E 回归与脏数据清理",
   "description": "补齐 deny/rewrite/stop gate 的 E2E 回归测试，并清理旧 workflow definition 与当前已识别的乱码/脏数据问题。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "fullstack",
   "scope": "quality",
   "priority": "P2",
   "creator": "codex",
   "assignee": "codex",
   "createdAt": "2026-03-21",
-  "completedAt": null,
-  "branch": null,
+  "completedAt": "2026-03-21",
+  "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
-  "next_action": [
-    {
-      "phase": 1,
-      "action": "implement"
-    },
-    {
-      "phase": 2,
-      "action": "check"
-    },
-    {
-      "phase": 3,
-      "action": "finish"
-    },
-    {
-      "phase": 4,
-      "action": "create-pr"
-    }
-  ],
+  "current_phase": 4,
+  "next_action": [],
   "commit": null,
   "pr_url": null,
   "subtasks": [],
@@ -42,5 +25,5 @@
     "crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json",
     "AGENTS.md"
   ],
-  "notes": "这不是单纯测试 task，也包含旧 workflow definition 清理和乱码链路排查，目标是为后续 hook 机制演进扫清历史脏状态。"
+  "notes": "已完成 deny/rewrite/stop gate 回归与数据清理：补了 execution_hooks + runtime delegate 全链测试、前端 Hook Runtime policy/diagnostics/trace 渲染测试，Sqlite workflow repository 会自动清理损坏 definition row；乱码链路说明继续沉淀在 AGENTS.md。"
 }

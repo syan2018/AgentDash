@@ -78,6 +78,44 @@ impl SqliteWorkflowRepository {
 
         Ok(())
     }
+
+    async fn parse_definition_row(
+        &self,
+        row: WorkflowDefinitionRow,
+    ) -> Result<Option<WorkflowDefinition>, DomainError> {
+        let row_id = row.id.clone();
+        let row_key = row.key.clone();
+        match WorkflowDefinition::try_from(row) {
+            Ok(definition) => Ok(Some(definition)),
+            Err(error) => {
+                tracing::warn!(
+                    workflow_definition_id = %row_id,
+                    workflow_definition_key = %row_key,
+                    error = %error,
+                    "检测到损坏的 workflow_definition，已自动清理"
+                );
+                sqlx::query("DELETE FROM workflow_definitions WHERE id = ?")
+                    .bind(&row_id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                Ok(None)
+            }
+        }
+    }
+
+    async fn collect_valid_definitions(
+        &self,
+        rows: Vec<WorkflowDefinitionRow>,
+    ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        let mut definitions = Vec::with_capacity(rows.len());
+        for row in rows {
+            if let Some(definition) = self.parse_definition_row(row).await? {
+                definitions.push(definition);
+            }
+        }
+        Ok(definitions)
+    }
 }
 
 #[async_trait::async_trait]
@@ -116,7 +154,10 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        row.map(TryInto::try_into).transpose()
+        match row {
+            Some(row) => self.parse_definition_row(row).await,
+            None => Ok(None),
+        }
     }
 
     async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
@@ -129,7 +170,10 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        row.map(TryInto::try_into).transpose()
+        match row {
+            Some(row) => self.parse_definition_row(row).await,
+            None => Ok(None),
+        }
     }
 
     async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
@@ -141,7 +185,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        rows.into_iter().map(TryInto::try_into).collect()
+        self.collect_valid_definitions(rows).await
     }
 
     async fn list_enabled(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
@@ -153,7 +197,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        rows.into_iter().map(TryInto::try_into).collect()
+        self.collect_valid_definitions(rows).await
     }
 
     async fn list_by_target_kind(
@@ -169,7 +213,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        rows.into_iter().map(TryInto::try_into).collect()
+        self.collect_valid_definitions(rows).await
     }
 
     async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
@@ -562,4 +606,132 @@ fn parse_time(raw: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(raw)
         .map(|value| value.with_timezone(&chrono::Utc))
         .unwrap_or_else(|_| chrono::Utc::now())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::workflow::{
+        WorkflowContextBinding, WorkflowContextBindingKind, WorkflowDefinition,
+        WorkflowPhaseCompletionMode, WorkflowPhaseDefinition, WorkflowTargetKind,
+    };
+
+    const TEST_WORKFLOW_KEY: &str = "trellis_dev_task";
+
+    async fn new_repo() -> SqliteWorkflowRepository {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteWorkflowRepository::new(pool);
+        repo.initialize().await.expect("应能初始化 workflow schema");
+        repo
+    }
+
+    fn phase(key: &str) -> WorkflowPhaseDefinition {
+        WorkflowPhaseDefinition {
+            key: key.to_string(),
+            title: key.to_string(),
+            description: "desc".to_string(),
+            agent_instructions: vec![],
+            context_bindings: vec![WorkflowContextBinding {
+                kind: WorkflowContextBindingKind::DocumentPath,
+                locator: ".trellis/workflow.md".to_string(),
+                reason: "workflow".to_string(),
+                required: true,
+                title: None,
+            }],
+            requires_session: true,
+            completion_mode: WorkflowPhaseCompletionMode::Manual,
+            default_artifact_type: None,
+            default_artifact_title: None,
+        }
+    }
+
+    fn valid_definition() -> WorkflowDefinition {
+        WorkflowDefinition::new(
+            TEST_WORKFLOW_KEY,
+            "Trellis Dev Workflow / Task",
+            "valid workflow definition",
+            WorkflowTargetKind::Task,
+            vec![phase("start"), phase("implement")],
+        )
+        .expect("应能构建 workflow definition")
+    }
+
+    #[tokio::test]
+    async fn get_by_key_cleans_up_corrupted_workflow_definition_row() {
+        let repo = new_repo().await;
+        let row_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO workflow_definitions
+            (id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(row_id.to_string())
+        .bind("legacy_bad_workflow")
+        .bind("Legacy Bad Workflow")
+        .bind("corrupted phases payload")
+        .bind("\"task\"")
+        .bind(1_i32)
+        .bind(true)
+        .bind("{\"legacy\":true}")
+        .bind("{\"emit_summary\":true}")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&repo.pool)
+        .await
+        .expect("应能插入损坏 workflow row");
+
+        let definition = repo
+            .get_by_key("legacy_bad_workflow")
+            .await
+            .expect("查询时应自动清理损坏 row");
+
+        assert!(definition.is_none());
+
+        let remaining: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM workflow_definitions WHERE id = ?")
+                .bind(row_id.to_string())
+                .fetch_one(&repo.pool)
+                .await
+                .expect("应能查询剩余行数");
+        assert_eq!(remaining.0, 0);
+    }
+
+    #[tokio::test]
+    async fn list_all_keeps_valid_definitions_and_skips_corrupted_rows() {
+        let repo = new_repo().await;
+        let valid = valid_definition();
+        WorkflowDefinitionRepository::create(&repo, &valid)
+            .await
+            .expect("应能插入有效 definition");
+
+        sqlx::query(
+            "INSERT INTO workflow_definitions
+            (id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind("legacy_corrupted_definition")
+        .bind("Legacy Corrupted Definition")
+        .bind("corrupted record_policy payload")
+        .bind("\"task\"")
+        .bind(1_i32)
+        .bind(true)
+        .bind(serde_json::to_string(&valid.phases).expect("serialize phases"))
+        .bind("\"bad_policy\"")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&repo.pool)
+        .await
+        .expect("应能插入损坏 row");
+
+        let definitions = repo
+            .list_all()
+            .await
+            .expect("列举 definitions 时应跳过并清理坏数据");
+
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].key, TEST_WORKFLOW_KEY);
+    }
 }

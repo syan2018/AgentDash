@@ -167,6 +167,7 @@ pub struct HookSessionRuntimeSnapshot {
 
 当前已落地的 policy 示例：
 
+- `tool:shell_exec:rewrite_absolute_cwd`
 - `workflow:*:*:completion_mode`
 - `workflow:*:*:task_status_gate`
 - `workflow:*:*:record_gate`
@@ -205,6 +206,7 @@ pub struct HookSessionRuntimeSnapshot {
 |---|---|---|
 | session 无可用 hook runtime | API 返回 404 | `session {id} 当前没有可用的 hook runtime` |
 | `BeforeTool` 命中 implement phase 且尝试直接 `completed` | 同步拒绝 | `ToolCallDecision::Deny` |
+| `BeforeTool` 命中 `shell_exec.cwd` 绝对工作区路径 | 同步改写为相对 workspace root | `ToolCallDecision::Rewrite` |
 | `BeforeTool` 命中 implement phase 且尝试上报 `session_summary` / `archive_suggestion` | 同步拒绝 | `ToolCallDecision::Deny` |
 | `AfterTool` 命中会改变 task/workflow 观察面的工具 | 请求刷新 snapshot | `refresh_snapshot = true` |
 | `BeforeStop` 命中 `session_ended` | 允许自然结束 | 仅 diagnostics，不阻止退出 |
@@ -242,6 +244,7 @@ frontend 展示实际生效的 policies/diagnostics
 
 - `execution_hooks` 单测：
   - implement phase 阻止直接 `completed`
+  - `shell_exec` 绝对 `cwd` 会在 hook runtime 中被 rewrite
   - checklist phase 未满足时 `before_stop` 注入 gate
   - checklist phase 满足时 `before_stop` 允许结束
   - `BeforeSubagentDispatch` 会继承 runtime context / constraints

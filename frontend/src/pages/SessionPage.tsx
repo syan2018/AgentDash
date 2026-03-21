@@ -473,7 +473,7 @@ function WorkflowRuntimeSurfaceCard({
   );
 }
 
-function HookRuntimeSurfaceCard({
+export function HookRuntimeSurfaceCard({
   hookRuntime,
 }: {
   hookRuntime: HookSessionRuntimeInfo;
@@ -579,7 +579,7 @@ function HookRuntimeWorkflowMetaCard({
   );
 }
 
-function HookRuntimeDiagnosticsCard({
+export function HookRuntimeDiagnosticsCard({
   hookRuntime,
 }: {
   hookRuntime: HookSessionRuntimeInfo;
@@ -612,7 +612,7 @@ function HookRuntimeDiagnosticsCard({
   );
 }
 
-function HookRuntimeTraceCard({
+export function HookRuntimeTraceCard({
   hookRuntime,
 }: {
   hookRuntime: HookSessionRuntimeInfo;
@@ -1131,10 +1131,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId]);
 
   useEffect(() => {
-    if (!currentSessionId) {
-      setLoadedHookRuntime(null);
-      return;
-    }
+    if (!currentSessionId) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -1168,6 +1165,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId]);
 
   const sessionBindings = currentSessionId ? loadedSessionBindings : EMPTY_SESSION_BINDINGS;
+  const activeHookRuntime = loadedHookRuntime?.session_id === currentSessionId
+    ? loadedHookRuntime
+    : null;
 
   const sessionOwnerBinding = useMemo(() => {
     if (sessionBindings.length === 0) return null;
@@ -1466,7 +1466,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           projectName={ownerProjectName}
           projectSessionInfo={projectSessionInfo}
           addressSpace={sessionAddressSpace}
-          hookRuntime={loadedHookRuntime}
+          hookRuntime={activeHookRuntime}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />
@@ -1482,7 +1482,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           contextSnapshot={sessionContextSnapshot}
           executorSummary={taskExecutorSummary}
           addressSpace={sessionAddressSpace}
-          hookRuntime={loadedHookRuntime}
+          hookRuntime={activeHookRuntime}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />

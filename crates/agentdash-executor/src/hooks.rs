@@ -249,6 +249,8 @@ pub struct SessionHookSnapshotQuery {
     #[serde(default)]
     pub working_directory: Option<String>,
     #[serde(default)]
+    pub workspace_root: Option<String>,
+    #[serde(default)]
     pub owners: Vec<HookOwnerSummary>,
     #[serde(default)]
     pub tags: Vec<String>,

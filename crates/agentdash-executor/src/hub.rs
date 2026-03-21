@@ -481,6 +481,7 @@ impl ExecutorHub {
                 session_id,
                 &turn_id,
                 executor_config.executor.as_str(),
+                workspace_root.as_path(),
                 working_directory.as_path(),
             )
             .await
@@ -793,6 +794,7 @@ impl ExecutorHub {
         session_id: &str,
         turn_id: &str,
         executor: &str,
+        workspace_root: &Path,
         working_directory: &Path,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
         let Some(provider) = self.hook_provider.as_ref() else {
@@ -806,6 +808,7 @@ impl ExecutorHub {
                 connector_id: Some(self.connector.connector_id().to_string()),
                 executor: Some(executor.to_string()),
                 working_directory: Some(working_directory.to_string_lossy().replace('\\', "/")),
+                workspace_root: Some(workspace_root.to_string_lossy().replace('\\', "/")),
                 owners: Vec::new(),
                 tags: Vec::new(),
             })

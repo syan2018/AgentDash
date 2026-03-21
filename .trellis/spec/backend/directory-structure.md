@@ -158,6 +158,8 @@ crates/
 │       ├── lib.rs
 │       ├── connector.rs         # AgentConnector trait
 │       ├── hub.rs               # ExecutorHub
+│       ├── hooks.rs             # Hook runtime port / snapshot / resolution
+│       ├── runtime_delegate.rs  # HookSessionRuntime -> AgentRuntimeDelegate 适配
 │       ├── adapters/
 │       │   └── normalized_to_acp.rs
 │       └── connectors/
@@ -171,7 +173,7 @@ crates/
 ├── agentdash-mcp/               # MCP Server 实现
 ├── agentdash-relay/             # WebSocket Relay 协议
 ├── agentdash-acp-meta/          # ACP 元数据 TypeScript 绑定
-├── agentdash-agent/             # Agent 运行时核心
+├── agentdash-agent/             # Agent 运行时核心（纯 loop + runtime delegate seam）
 └── agentdash-local/             # 本机后端执行器
 ```
 
@@ -242,6 +244,28 @@ Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor`, `agentdash-relay` | Repository 实现、连接器、WebSocket 中继 | domain | ✅ |
 
 > Application 层（`agentdash-application`）已包含 session plan 构建、context contributor 框架、task 执行纯逻辑、address space 组装、story owner 编排等核心用例。API 层只保留请求解析→调用用例→映射 DTO 的协调职责。
+
+#### Hook Runtime 分层约定
+
+跨层 Hook Runtime 必须遵守以下目录/职责边界：
+
+- `agentdash-agent`
+  - 只保留 `AgentRuntimeDelegate`、`ToolCallDecision`、`StopDecision` 等纯 runtime seam
+  - 不直接访问 workflow/task/story/project/repository
+- `agentdash-executor`
+  - 负责 `ExecutionHookProvider` port、`HookSessionRuntime`、`runtime_delegate.rs`
+  - 持有 session 级 snapshot / diagnostics / revision
+- `agentdash-api`
+  - 实现 `AppExecutionHookProvider`
+  - 负责从业务对象解析 snapshot / policy / resolution
+
+禁止把 Hook 逻辑写回：
+
+- route/gateway prompt augment 特化代码
+- `agent_loop` 内部 repo 查询
+- workflow runtime 巨石 if/else 中心
+
+参考：`backend/execution-hook-runtime.md`
 
 #### Repository 模式约定
 

@@ -3,36 +3,19 @@
   "name": "hook-v2-companion-context-slicing-and-return-channel",
   "title": "Hook v2 companion 上下文切片与结果回流",
   "description": "将第一版 companion_dispatch 升级为正式 companion 机制：支持上下文切片、继承降级、结构化结果回流以及主 session 的采纳策略。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "fullstack",
   "scope": "execution",
   "priority": "P1",
   "creator": "codex",
   "assignee": "codex",
   "createdAt": "2026-03-21",
-  "completedAt": null,
-  "branch": null,
+  "completedAt": "2026-03-22",
+  "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
-  "next_action": [
-    {
-      "phase": 1,
-      "action": "implement"
-    },
-    {
-      "phase": 2,
-      "action": "check"
-    },
-    {
-      "phase": 3,
-      "action": "finish"
-    },
-    {
-      "phase": 4,
-      "action": "create-pr"
-    }
-  ],
+  "current_phase": 4,
+  "next_action": [],
   "commit": null,
   "pr_url": null,
   "subtasks": [],
@@ -42,5 +25,5 @@
     "crates/agentdash-executor/src/hub.rs",
     "frontend/src/pages/SessionPage.tsx"
   ],
-  "notes": "这是完整 companion 能力的核心任务。当前仅完成 dispatch 生命周期与默认继承，后续需要正式的 slicing、return channel 和 adoption。"
+  "notes": "已完成 companion v2 第一阶段：dispatch 支持 slice_mode/adoption_mode，执行层会把继承切片写入 companion session meta，并通过 companion_complete 打通结构化结果回流；父 session hook runtime 已支持 SubagentResult trace/diagnostic，前端也已展示 companion 派发与回流事件。"
 }

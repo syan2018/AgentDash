@@ -3,15 +3,19 @@
 /// 值类型、路径工具和 Mount 推导逻辑已迁移到 `agentdash_application::address_space`。
 use std::sync::Arc;
 
+use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
 use agentdash_agent::tools::schema_value;
 use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
 };
+use agentdash_acp_meta::{
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+};
 use agentdash_domain::session_binding::{SessionBinding, SessionBindingRepository, SessionOwnerType};
 use agentdash_executor::{
-    AgentDashExecutorConfig, ConnectorError, ExecutionAddressSpace, ExecutionContext,
-    ExecutionMountCapability, ExecutorHub, HookEvaluationQuery, HookTraceEntry, HookTrigger,
-    PromptSessionRequest, RuntimeToolProvider, SessionHookRefreshQuery,
+    AgentDashExecutorConfig, CompanionSessionContext, ConnectorError, ExecutionAddressSpace,
+    ExecutionContext, ExecutionMountCapability, ExecutorHub, HookEvaluationQuery, HookTraceEntry,
+    HookTrigger, PromptSessionRequest, RuntimeToolProvider, SessionHookRefreshQuery,
 };
 use agentdash_relay::{
     RelayMessage, ToolFileListPayload, ToolFileReadPayload, ToolFileWritePayload,
@@ -19,7 +23,7 @@ use agentdash_relay::{
 };
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -421,6 +425,10 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 self.executor_hub_handle.clone(),
                 context,
             )) as DynAgentTool,
+            Arc::new(CompanionCompleteTool::new(
+                self.executor_hub_handle.clone(),
+                context,
+            )) as DynAgentTool,
         ])
     }
 }
@@ -440,6 +448,7 @@ struct CompanionDispatchTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
     current_session_id: Option<String>,
+    current_turn_id: String,
     current_executor_config: AgentDashExecutorConfig,
     workspace_root: std::path::PathBuf,
     working_dir: String,
@@ -461,6 +470,7 @@ impl CompanionDispatchTool {
                 .hook_session
                 .as_ref()
                 .map(|session| session.session_id().to_string()),
+            current_turn_id: context.turn_id.clone(),
             current_executor_config: context.executor_config.clone(),
             workspace_root: context.workspace_root.clone(),
             working_dir: relative_working_dir(context),
@@ -471,6 +481,25 @@ impl CompanionDispatchTool {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum CompanionSliceMode {
+    #[default]
+    Compact,
+    Full,
+    WorkflowOnly,
+    ConstraintsOnly,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum CompanionAdoptionMode {
+    #[default]
+    Suggestion,
+    FollowUpRequired,
+    BlockingReview,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 struct CompanionDispatchParams {
     pub prompt: String,
@@ -478,6 +507,65 @@ struct CompanionDispatchParams {
     pub title: Option<String>,
     pub auto_create: Option<bool>,
     pub wait_for_completion: Option<bool>,
+    pub slice_mode: Option<CompanionSliceMode>,
+    pub adoption_mode: Option<CompanionAdoptionMode>,
+    pub max_fragments: Option<usize>,
+    pub max_constraints: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct CompanionDispatchSlice {
+    mode: CompanionSliceMode,
+    fragments: Vec<agentdash_executor::HookContextFragment>,
+    constraints: Vec<agentdash_executor::HookConstraint>,
+    inherited_fragment_labels: Vec<String>,
+    inherited_constraint_keys: Vec<String>,
+    omitted_fragment_count: usize,
+    omitted_constraint_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct CompanionDispatchPlan {
+    dispatch_id: String,
+    companion_label: String,
+    parent_session_id: String,
+    parent_turn_id: String,
+    adoption_mode: CompanionAdoptionMode,
+    slice: CompanionDispatchSlice,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CompanionCompleteParams {
+    pub summary: String,
+    pub status: Option<String>,
+    #[schemars(default)]
+    pub findings: Vec<String>,
+    #[schemars(default)]
+    pub follow_ups: Vec<String>,
+    #[schemars(default)]
+    pub artifact_refs: Vec<String>,
+}
+
+#[derive(Clone)]
+struct CompanionCompleteTool {
+    executor_hub_handle: SharedExecutorHubHandle,
+    current_session_id: Option<String>,
+    current_turn_id: String,
+}
+
+impl CompanionCompleteTool {
+    fn new(executor_hub_handle: SharedExecutorHubHandle, context: &ExecutionContext) -> Self {
+        Self {
+            executor_hub_handle,
+            current_session_id: context
+                .hook_session
+                .as_ref()
+                .map(|session| session.session_id().to_string()),
+            current_turn_id: context.turn_id.clone(),
+        }
+    }
 }
 
 #[async_trait]
@@ -531,15 +619,20 @@ impl AgentTool for CompanionDispatchTool {
             .companion_label
             .clone()
             .unwrap_or_else(|| "companion".to_string());
+        let slice_mode = params.slice_mode.unwrap_or_default();
+        let adoption_mode = params.adoption_mode.unwrap_or_default();
 
         let before_resolution = evaluate_subagent_hook(
             hook_session.as_ref(),
             HookTrigger::BeforeSubagentDispatch,
+            Some(self.current_turn_id.clone()),
             &companion_label,
             Some(serde_json::json!({
                 "prompt": params.prompt,
                 "companion_label": companion_label,
                 "auto_create": params.auto_create.unwrap_or(true),
+                "slice_mode": slice_mode,
+                "adoption_mode": adoption_mode,
             })),
         )
         .await
@@ -555,6 +648,18 @@ impl AgentTool for CompanionDispatchTool {
             );
             return Err(AgentToolError::ExecutionFailed(reason));
         }
+
+        let dispatch_plan = build_companion_dispatch_plan(
+            hook_session.as_ref(),
+            &before_resolution,
+            &current_session_id,
+            &self.current_turn_id,
+            &companion_label,
+            slice_mode,
+            adoption_mode,
+            params.max_fragments,
+            params.max_constraints,
+        );
         record_subagent_trace(
             hook_session.as_ref(),
             HookTrigger::BeforeSubagentDispatch,
@@ -582,11 +687,24 @@ impl AgentTool for CompanionDispatchTool {
             AgentToolError::ExecutionFailed("ExecutorHub 尚未完成初始化，无法执行 companion dispatch".to_string())
         })?;
 
-        let final_prompt = build_companion_dispatch_prompt(
-            hook_session.as_ref(),
-            &before_resolution,
-            &params.prompt,
-        );
+        let companion_context = CompanionSessionContext {
+            dispatch_id: dispatch_plan.dispatch_id.clone(),
+            parent_session_id: current_session_id.clone(),
+            parent_turn_id: self.current_turn_id.clone(),
+            companion_label: companion_label.clone(),
+            slice_mode: format!("{slice_mode:?}").to_ascii_lowercase(),
+            adoption_mode: format!("{adoption_mode:?}").to_ascii_lowercase(),
+            inherited_fragment_labels: dispatch_plan.slice.inherited_fragment_labels.clone(),
+            inherited_constraint_keys: dispatch_plan.slice.inherited_constraint_keys.clone(),
+        };
+        let _ = executor_hub
+            .update_session_meta(&target_binding.session_id, |meta| {
+                meta.companion_context = Some(companion_context.clone());
+            })
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+        let final_prompt = build_companion_dispatch_prompt(&dispatch_plan, &params.prompt);
         let turn_id = executor_hub
             .start_prompt_with_follow_up(
                 &target_binding.session_id,
@@ -605,13 +723,39 @@ impl AgentTool for CompanionDispatchTool {
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
+        let child_notification = build_companion_event_notification(
+            &target_binding.session_id,
+            &turn_id,
+            "companion_dispatch_registered",
+            format!("收到来自主 session 的 `{companion_label}` 派发任务"),
+            serde_json::json!({
+                "dispatch_id": dispatch_plan.dispatch_id,
+                "parent_session_id": current_session_id,
+                "parent_turn_id": self.current_turn_id,
+                "companion_label": companion_label,
+                "slice_mode": slice_mode,
+                "adoption_mode": adoption_mode,
+                "inherited_fragment_labels": dispatch_plan.slice.inherited_fragment_labels,
+                "inherited_constraint_keys": dispatch_plan.slice.inherited_constraint_keys,
+            }),
+        );
+        let _ = executor_hub
+            .inject_notification(&target_binding.session_id, child_notification)
+            .await;
+
         let after_resolution = evaluate_subagent_hook(
             hook_session.as_ref(),
             HookTrigger::AfterSubagentDispatch,
+            Some(self.current_turn_id.clone()),
             &companion_label,
             Some(serde_json::json!({
+                "dispatch_id": dispatch_plan.dispatch_id,
                 "companion_session_id": target_binding.session_id,
                 "turn_id": turn_id,
+                "slice_mode": slice_mode,
+                "adoption_mode": adoption_mode,
+                "fragment_count": dispatch_plan.slice.fragments.len(),
+                "constraint_count": dispatch_plan.slice.constraints.len(),
             })),
         )
         .await
@@ -626,14 +770,19 @@ impl AgentTool for CompanionDispatchTool {
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "已派发到 companion session。\n- label: {}\n- session_id: {}\n- turn_id: {}\n- 当前为异步执行，可在对应会话中继续观察结果。",
-                companion_label, target_binding.session_id, turn_id
+                "已派发到 companion session。\n- label: {}\n- session_id: {}\n- turn_id: {}\n- slice_mode: {:?}\n- adoption_mode: {:?}\n- 当前为异步执行，可在对应会话中继续观察结果，并要求其通过 companion_complete 回传结果。",
+                companion_label, target_binding.session_id, turn_id, slice_mode, adoption_mode
             ))],
             is_error: false,
             details: Some(serde_json::json!({
                 "companion_label": companion_label,
                 "companion_session_id": target_binding.session_id,
                 "turn_id": turn_id,
+                "dispatch_id": dispatch_plan.dispatch_id,
+                "slice_mode": slice_mode,
+                "adoption_mode": adoption_mode,
+                "inherited_fragment_labels": dispatch_plan.slice.inherited_fragment_labels,
+                "inherited_constraint_keys": dispatch_plan.slice.inherited_constraint_keys,
                 "matched_rule_keys": after_resolution.matched_rule_keys,
             })),
         })
@@ -692,6 +841,130 @@ impl CompanionDispatchTool {
     }
 }
 
+#[async_trait]
+impl AgentTool for CompanionCompleteTool {
+    fn name(&self) -> &str {
+        "companion_complete"
+    }
+
+    fn description(&self) -> &str {
+        "把当前 companion session 的结构化结果回传给主 session，供主 Agent 采纳或继续推进"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<CompanionCompleteParams>()
+    }
+
+    async fn execute(
+        &self,
+        _: &str,
+        args: serde_json::Value,
+        _: CancellationToken,
+        _: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        let params: CompanionCompleteParams = serde_json::from_value(args)
+            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+        if params.summary.trim().is_empty() {
+            return Err(AgentToolError::InvalidArguments(
+                "summary 不能为空".to_string(),
+            ));
+        }
+
+        let current_session_id = self.current_session_id.clone().ok_or_else(|| {
+            AgentToolError::ExecutionFailed("当前 session 没有可识别的上下文，无法回传 companion 结果".to_string())
+        })?;
+        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
+            AgentToolError::ExecutionFailed("ExecutorHub 尚未完成初始化，无法回传 companion 结果".to_string())
+        })?;
+        let session_meta = executor_hub
+            .get_session_meta(&current_session_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed("当前 session 不存在，无法回传 companion 结果".to_string())
+            })?;
+        let companion_context = session_meta.companion_context.ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前 session 不是通过 companion_dispatch 建立的上下文，无法使用 companion_complete".to_string(),
+            )
+        })?;
+
+        let status = normalize_companion_result_status(params.status.as_deref())?;
+        let payload = serde_json::json!({
+            "dispatch_id": companion_context.dispatch_id,
+            "companion_label": companion_context.companion_label,
+            "companion_session_id": current_session_id,
+            "companion_turn_id": self.current_turn_id,
+            "parent_session_id": companion_context.parent_session_id,
+            "parent_turn_id": companion_context.parent_turn_id,
+            "slice_mode": companion_context.slice_mode,
+            "adoption_mode": companion_context.adoption_mode,
+            "status": status,
+            "summary": params.summary.trim(),
+            "findings": params.findings,
+            "follow_ups": params.follow_ups,
+            "artifact_refs": params.artifact_refs,
+        });
+
+        if let Some(parent_hook_session) = executor_hub
+            .get_hook_session_runtime(&companion_context.parent_session_id)
+            .await
+        {
+            let resolution = evaluate_subagent_hook(
+                parent_hook_session.as_ref(),
+                HookTrigger::SubagentResult,
+                Some(companion_context.parent_turn_id.clone()),
+                &companion_context.companion_label,
+                Some(payload.clone()),
+            )
+            .await
+            .map_err(AgentToolError::ExecutionFailed)?;
+            record_subagent_trace(
+                parent_hook_session.as_ref(),
+                HookTrigger::SubagentResult,
+                "result_returned",
+                &companion_context.companion_label,
+                &resolution,
+            );
+        }
+
+        let parent_notification = build_companion_event_notification(
+            &companion_context.parent_session_id,
+            &companion_context.parent_turn_id,
+            "companion_result_available",
+            format!(
+                "Companion `{}` 已回传结果，等待主 session 采纳",
+                companion_context.companion_label
+            ),
+            payload.clone(),
+        );
+        executor_hub
+            .inject_notification(&companion_context.parent_session_id, parent_notification)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+        let child_notification = build_companion_event_notification(
+            &current_session_id,
+            &self.current_turn_id,
+            "companion_result_returned",
+            "已将当前 companion 结果回传到主 session".to_string(),
+            payload.clone(),
+        );
+        let _ = executor_hub
+            .inject_notification(&current_session_id, child_notification)
+            .await;
+
+        Ok(AgentToolResult {
+            content: vec![ContentPart::text(format!(
+                "已把 companion 结果回传到主 session。\n- parent_session_id: {}\n- dispatch_id: {}\n- status: {}",
+                companion_context.parent_session_id, companion_context.dispatch_id, status
+            ))],
+            is_error: false,
+            details: Some(payload),
+        })
+    }
+}
+
 fn relative_working_dir(context: &ExecutionContext) -> String {
     context
         .working_directory
@@ -710,6 +983,7 @@ fn relative_working_dir(context: &ExecutionContext) -> String {
 async fn evaluate_subagent_hook(
     hook_session: &agentdash_executor::HookSessionRuntime,
     trigger: HookTrigger,
+    turn_id: Option<String>,
     subagent_type: &str,
     payload: Option<serde_json::Value>,
 ) -> Result<agentdash_executor::HookResolution, String> {
@@ -717,7 +991,7 @@ async fn evaluate_subagent_hook(
         .evaluate(HookEvaluationQuery {
             session_id: hook_session.session_id().to_string(),
             trigger: trigger.clone(),
-            turn_id: None,
+            turn_id: turn_id.clone(),
             tool_name: None,
             tool_call_id: None,
             subagent_type: Some(subagent_type.to_string()),
@@ -731,7 +1005,7 @@ async fn evaluate_subagent_hook(
         hook_session
             .refresh(SessionHookRefreshQuery {
                 session_id: hook_session.session_id().to_string(),
-                turn_id: None,
+                turn_id,
                 reason: Some(format!("trigger:{trigger:?}:{subagent_type}")),
             })
             .await
@@ -766,34 +1040,21 @@ fn record_subagent_trace(
 }
 
 fn build_companion_dispatch_prompt(
-    hook_session: &agentdash_executor::HookSessionRuntime,
-    resolution: &agentdash_executor::HookResolution,
+    plan: &CompanionDispatchPlan,
     user_prompt: &str,
 ) -> String {
-    let snapshot = hook_session.snapshot();
     let mut sections = vec!["[Companion Dispatch Context]".to_string()];
 
-    if !snapshot.owners.is_empty() {
-        sections.push(format!(
-            "## 当前归属\n{}",
-            snapshot
-                .owners
-                .iter()
-                .map(|owner| format!(
-                    "- {}: {}",
-                    owner.owner_type,
-                    owner.label.as_deref().unwrap_or(owner.owner_id.as_str())
-                ))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
+    sections.push(format!(
+        "## Dispatch Metadata\n- dispatch_id: {}\n- companion_label: {}\n- slice_mode: {:?}\n- adoption_mode: {:?}",
+        plan.dispatch_id, plan.companion_label, plan.slice.mode, plan.adoption_mode
+    ));
 
-    if !resolution.context_fragments.is_empty() {
+    if !plan.slice.fragments.is_empty() {
         sections.push(format!(
             "## 继承上下文\n{}",
-            resolution
-                .context_fragments
+            plan.slice
+                .fragments
                 .iter()
                 .map(|fragment| format!("### {}\n{}", fragment.label, fragment.content.trim()))
                 .collect::<Vec<_>>()
@@ -801,10 +1062,10 @@ fn build_companion_dispatch_prompt(
         ));
     }
 
-    if !resolution.constraints.is_empty() {
+    if !plan.slice.constraints.is_empty() {
         sections.push(format!(
             "## 继承约束\n{}",
-            resolution
+            plan.slice
                 .constraints
                 .iter()
                 .map(|constraint| format!("- {}", constraint.description))
@@ -813,11 +1074,205 @@ fn build_companion_dispatch_prompt(
         ));
     }
 
+    if plan.slice.omitted_fragment_count > 0 || plan.slice.omitted_constraint_count > 0 {
+        sections.push(format!(
+            "## 切片说明\n- omitted_fragments: {}\n- omitted_constraints: {}",
+            plan.slice.omitted_fragment_count, plan.slice.omitted_constraint_count
+        ));
+    }
+
     sections.push(format!(
         "## 派发任务\n{}",
         user_prompt.trim()
     ));
+    sections.push(
+        "## 回流要求\n- 完成后请调用 `companion_complete`。\n- 必填 summary。\n- 如有关键发现请写入 findings。\n- 如需要主 session 后续行动请写入 follow_ups。".to_string(),
+    );
     sections.join("\n\n")
+}
+
+fn build_companion_dispatch_plan(
+    hook_session: &agentdash_executor::HookSessionRuntime,
+    resolution: &agentdash_executor::HookResolution,
+    parent_session_id: &str,
+    parent_turn_id: &str,
+    companion_label: &str,
+    slice_mode: CompanionSliceMode,
+    adoption_mode: CompanionAdoptionMode,
+    max_fragments: Option<usize>,
+    max_constraints: Option<usize>,
+) -> CompanionDispatchPlan {
+    let dispatch_id = format!("dispatch-{}", uuid::Uuid::new_v4().simple());
+    let slice = build_companion_dispatch_slice(
+        &hook_session.snapshot(),
+        resolution,
+        slice_mode,
+        max_fragments.unwrap_or(3),
+        max_constraints.unwrap_or(4),
+    );
+    CompanionDispatchPlan {
+        dispatch_id,
+        companion_label: companion_label.to_string(),
+        parent_session_id: parent_session_id.to_string(),
+        parent_turn_id: parent_turn_id.to_string(),
+        adoption_mode,
+        slice,
+    }
+}
+
+fn build_companion_dispatch_slice(
+    snapshot: &agentdash_executor::SessionHookSnapshot,
+    resolution: &agentdash_executor::HookResolution,
+    mode: CompanionSliceMode,
+    max_fragments: usize,
+    max_constraints: usize,
+) -> CompanionDispatchSlice {
+    let all_fragments = match mode {
+        CompanionSliceMode::Full => resolution.context_fragments.clone(),
+        CompanionSliceMode::WorkflowOnly => resolution
+            .context_fragments
+            .iter()
+            .filter(|fragment| {
+                fragment.slot == "workflow"
+                    || fragment.label.contains("workflow")
+                    || fragment
+                        .source_refs
+                        .iter()
+                        .any(|source| source.layer == agentdash_executor::HookSourceLayer::Workflow)
+            })
+            .cloned()
+            .collect(),
+        CompanionSliceMode::ConstraintsOnly => Vec::new(),
+        CompanionSliceMode::Compact => {
+            let mut compact = Vec::new();
+            if let Some(owner_summary) = build_companion_owner_summary(snapshot) {
+                compact.push(agentdash_executor::HookContextFragment {
+                    slot: "companion".to_string(),
+                    label: "owner_summary".to_string(),
+                    content: owner_summary,
+                    source_summary: vec!["session:owner_summary".to_string()],
+                    source_refs: Vec::new(),
+                });
+            }
+            compact.extend(
+                resolution
+                    .context_fragments
+                    .iter()
+                    .filter(|fragment| fragment.slot == "workflow" || fragment.label.contains("workflow"))
+                    .take(1)
+                    .cloned(),
+            );
+            compact.extend(
+                resolution
+                    .context_fragments
+                    .iter()
+                    .filter(|fragment| fragment.slot == "instruction_append")
+                    .take(1)
+                    .cloned(),
+            );
+            compact
+        }
+    };
+
+    let all_constraints = match mode {
+        CompanionSliceMode::ConstraintsOnly | CompanionSliceMode::Full | CompanionSliceMode::Compact => {
+            resolution.constraints.clone()
+        }
+        CompanionSliceMode::WorkflowOnly => resolution
+            .constraints
+            .iter()
+            .filter(|constraint| {
+                constraint
+                    .source_refs
+                    .iter()
+                    .any(|source| source.layer == agentdash_executor::HookSourceLayer::Workflow)
+            })
+            .cloned()
+            .collect()
+    };
+
+    let fragments = all_fragments
+        .iter()
+        .take(max_fragments.max(1))
+        .cloned()
+        .collect::<Vec<_>>();
+    let constraints = all_constraints
+        .iter()
+        .take(max_constraints.max(1))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    CompanionDispatchSlice {
+        mode,
+        inherited_fragment_labels: fragments.iter().map(|fragment| fragment.label.clone()).collect(),
+        inherited_constraint_keys: constraints.iter().map(|constraint| constraint.key.clone()).collect(),
+        omitted_fragment_count: all_fragments.len().saturating_sub(fragments.len()),
+        omitted_constraint_count: all_constraints.len().saturating_sub(constraints.len()),
+        fragments,
+        constraints,
+    }
+}
+
+fn build_companion_owner_summary(
+    snapshot: &agentdash_executor::SessionHookSnapshot,
+) -> Option<String> {
+    if snapshot.owners.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## 当前归属\n{}",
+        snapshot
+            .owners
+            .iter()
+            .map(|owner| format!(
+                "- {}: {}",
+                owner.owner_type,
+                owner.label.as_deref().unwrap_or(owner.owner_id.as_str())
+            ))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ))
+}
+
+fn build_companion_event_notification(
+    session_id: &str,
+    turn_id: &str,
+    event_type: &str,
+    message: String,
+    data: serde_json::Value,
+) -> SessionNotification {
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = Some(turn_id.to_string());
+
+    let mut event = AgentDashEventV1::new(event_type);
+    event.severity = Some("info".to_string());
+    event.message = Some(message);
+    event.data = Some(data);
+
+    let source = AgentDashSourceV1::new("agentdash-companion", "runtime_tool");
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source))
+        .trace(Some(trace))
+        .event(Some(event));
+
+    SessionNotification::new(
+        SessionId::new(session_id.to_string()),
+        SessionUpdate::SessionInfoUpdate(
+            SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
+        ),
+    )
+}
+
+fn normalize_companion_result_status(status: Option<&str>) -> Result<&str, AgentToolError> {
+    match status.unwrap_or("completed").trim() {
+        "" => Ok("completed"),
+        "completed" => Ok("completed"),
+        "blocked" => Ok("blocked"),
+        "needs_follow_up" => Ok("needs_follow_up"),
+        other => Err(AgentToolError::InvalidArguments(format!(
+            "status 仅支持 completed / blocked / needs_follow_up，收到 `{other}`"
+        ))),
+    }
 }
 
 fn companion_owner_candidates(
@@ -1656,5 +2111,112 @@ mod tests {
         assert_eq!(candidates[0].0, SessionOwnerType::Task);
         assert_eq!(candidates[1].0, SessionOwnerType::Story);
         assert_eq!(candidates[1].1, story_id);
+    }
+
+    #[test]
+    fn compact_companion_slice_keeps_owner_summary_and_limits_payload() {
+        let snapshot = agentdash_executor::SessionHookSnapshot {
+            session_id: "sess-parent".to_string(),
+            owners: vec![agentdash_executor::HookOwnerSummary {
+                owner_type: "task".to_string(),
+                owner_id: Uuid::new_v4().to_string(),
+                label: Some("Task A".to_string()),
+                project_id: None,
+                story_id: None,
+                task_id: None,
+            }],
+            ..agentdash_executor::SessionHookSnapshot::default()
+        };
+        let resolution = agentdash_executor::HookResolution {
+            context_fragments: vec![
+                agentdash_executor::HookContextFragment {
+                    slot: "workflow".to_string(),
+                    label: "active_workflow_phase".to_string(),
+                    content: "phase info".to_string(),
+                    source_summary: vec![],
+                    source_refs: vec![],
+                },
+                agentdash_executor::HookContextFragment {
+                    slot: "instruction_append".to_string(),
+                    label: "workflow_phase_constraints".to_string(),
+                    content: "follow rules".to_string(),
+                    source_summary: vec![],
+                    source_refs: vec![],
+                },
+                agentdash_executor::HookContextFragment {
+                    slot: "workflow".to_string(),
+                    label: "overflow".to_string(),
+                    content: "should be omitted".to_string(),
+                    source_summary: vec![],
+                    source_refs: vec![],
+                },
+            ],
+            constraints: vec![
+                agentdash_executor::HookConstraint {
+                    key: "constraint:1".to_string(),
+                    description: "first".to_string(),
+                    source_summary: vec![],
+                    source_refs: vec![],
+                },
+                agentdash_executor::HookConstraint {
+                    key: "constraint:2".to_string(),
+                    description: "second".to_string(),
+                    source_summary: vec![],
+                    source_refs: vec![],
+                },
+            ],
+            ..agentdash_executor::HookResolution::default()
+        };
+
+        let slice = build_companion_dispatch_slice(
+            &snapshot,
+            &resolution,
+            CompanionSliceMode::Compact,
+            2,
+            1,
+        );
+
+        assert_eq!(slice.fragments.len(), 2);
+        assert_eq!(slice.constraints.len(), 1);
+        assert_eq!(slice.omitted_fragment_count, 1);
+        assert_eq!(slice.omitted_constraint_count, 1);
+        assert_eq!(slice.inherited_fragment_labels[0], "owner_summary");
+    }
+
+    #[test]
+    fn companion_dispatch_prompt_includes_return_instruction() {
+        let plan = CompanionDispatchPlan {
+            dispatch_id: "dispatch-1".to_string(),
+            companion_label: "companion".to_string(),
+            parent_session_id: "sess-parent".to_string(),
+            parent_turn_id: "turn-parent-1".to_string(),
+            adoption_mode: CompanionAdoptionMode::BlockingReview,
+            slice: CompanionDispatchSlice {
+                mode: CompanionSliceMode::Compact,
+                fragments: vec![agentdash_executor::HookContextFragment {
+                    slot: "workflow".to_string(),
+                    label: "active_workflow_phase".to_string(),
+                    content: "phase info".to_string(),
+                    source_summary: vec![],
+                    source_refs: vec![],
+                }],
+                constraints: vec![agentdash_executor::HookConstraint {
+                    key: "constraint:1".to_string(),
+                    description: "first".to_string(),
+                    source_summary: vec![],
+                    source_refs: vec![],
+                }],
+                inherited_fragment_labels: vec!["active_workflow_phase".to_string()],
+                inherited_constraint_keys: vec!["constraint:1".to_string()],
+                omitted_fragment_count: 0,
+                omitted_constraint_count: 0,
+            },
+        };
+
+        let prompt = build_companion_dispatch_prompt(&plan, "请帮我 review 当前实现");
+
+        assert!(prompt.contains("companion_complete"));
+        assert!(prompt.contains("dispatch_id: dispatch-1"));
+        assert!(prompt.contains("请帮我 review 当前实现"));
     }
 }

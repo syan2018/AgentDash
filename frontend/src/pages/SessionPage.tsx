@@ -738,6 +738,7 @@ function HookTraceEntryCard({ entry }: { entry: HookTraceEntry }) {
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
         {entry.tool_name && <span>tool: {entry.tool_name}</span>}
         {entry.tool_call_id && <span>call: {entry.tool_call_id}</span>}
+        {entry.subagent_type && <span>subagent: {entry.subagent_type}</span>}
         {entry.refresh_snapshot && <span>已刷新 snapshot</span>}
       </div>
       {entry.completion && completionStatus && (

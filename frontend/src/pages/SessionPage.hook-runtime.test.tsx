@@ -119,6 +119,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
       revision: 7,
       trigger: "before_stop",
       decision: "continue",
+      subagent_type: "companion",
       matched_rule_keys: ["workflow_completion:checklist_pending:stop_gate"],
       refresh_snapshot: false,
       diagnostics: [
@@ -170,6 +171,7 @@ describe("SessionPage hook runtime cards", () => {
     expect(diagnosticsHtml).toContain("当前 workflow phase 尚未满足 checklist completion 条件");
     expect(diagnosticsHtml).toContain("Workflow / Trellis Dev Workflow / Check");
     expect(traceHtml).toContain("workflow_completion:checklist_pending:stop_gate");
+    expect(traceHtml).toContain("subagent: companion");
     expect(traceHtml).toContain("completion: checklist_passed");
     expect(traceHtml).toContain("Task 还没有进入 awaiting_verification/completed。");
   });

@@ -785,7 +785,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         .await?;
                 }
             }
-            HookTrigger::BeforeSubagentDispatch | HookTrigger::AfterSubagentDispatch => {
+            HookTrigger::BeforeSubagentDispatch
+            | HookTrigger::AfterSubagentDispatch
+            | HookTrigger::SubagentResult => {
                 apply_hook_rules(
                     HookEvaluationContext {
                         snapshot: &snapshot,
@@ -1138,6 +1140,12 @@ fn normalized_hook_rules() -> &'static [NormalizedHookRule] {
             matches: rule_matches_subagent_dispatch_result,
             apply: rule_apply_subagent_dispatch_result,
         },
+        NormalizedHookRule {
+            key: "subagent_result:return_channel_recorded",
+            trigger: HookTrigger::SubagentResult,
+            matches: rule_matches_subagent_result,
+            apply: rule_apply_subagent_result,
+        },
     ]
 }
 
@@ -1445,9 +1453,45 @@ fn rule_apply_subagent_dispatch_result(
     });
 }
 
+fn rule_matches_subagent_result(ctx: &HookEvaluationContext<'_>) -> bool {
+    ctx.query
+        .payload
+        .as_ref()
+        .and_then(|value| value.get("summary"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|summary| !summary.trim().is_empty())
+}
+
+fn rule_apply_subagent_result(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+    let subagent_type = ctx.query.subagent_type.as_deref().unwrap_or("companion");
+    let summary = extract_payload_str(ctx.query.payload.as_ref(), "summary").unwrap_or("无摘要");
+    let status = extract_payload_str(ctx.query.payload.as_ref(), "status").unwrap_or("completed");
+    let companion_session_id =
+        extract_payload_str(ctx.query.payload.as_ref(), "companion_session_id").unwrap_or("-");
+    let adoption_mode =
+        extract_payload_str(ctx.query.payload.as_ref(), "adoption_mode").unwrap_or("suggestion");
+    let dispatch_id = extract_payload_str(ctx.query.payload.as_ref(), "dispatch_id").unwrap_or("-");
+
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "subagent_result_recorded".to_string(),
+        summary: format!("已收到 `{subagent_type}` 的回流结果：{summary}"),
+        detail: Some(format!(
+            "status={status}, adoption_mode={adoption_mode}, companion_session_id={companion_session_id}, dispatch_id={dispatch_id}"
+        )),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
+    });
+}
+
 fn extract_tool_arg<'a>(payload: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {
     payload
         .and_then(|value| value.get("args"))
+        .and_then(|value| value.get(key))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn extract_payload_str<'a>(payload: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {
+    payload
         .and_then(|value| value.get(key))
         .and_then(serde_json::Value::as_str)
 }
@@ -1933,6 +1977,49 @@ mod tests {
             resolution
                 .matched_rule_keys
                 .contains(&"subagent_dispatch:inherit_runtime_context".to_string())
+        );
+    }
+
+    #[test]
+    fn subagent_result_records_structured_return_channel_diagnostic() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::SubagentResult,
+            turn_id: Some("turn-parent-1".to_string()),
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: Some("companion".to_string()),
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "dispatch_id": "dispatch-1",
+                "companion_session_id": "sess-companion-1",
+                "adoption_mode": "blocking_review",
+                "status": "completed",
+                "summary": "子 agent 已完成 review，并附带后续建议"
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"subagent_result:return_channel_recorded".to_string())
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "subagent_result_recorded"
+                    && entry.summary.contains("子 agent 已完成 review"))
         );
     }
 }

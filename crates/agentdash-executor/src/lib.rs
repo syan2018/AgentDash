@@ -19,5 +19,7 @@ pub use hooks::{
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
     SharedHookSessionRuntime,
 };
-pub use hub::{ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta};
+pub use hub::{
+    CompanionSessionContext, ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta,
+};
 pub use runtime_delegate::HookRuntimeDelegate;

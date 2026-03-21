@@ -240,6 +240,21 @@ fn parse_turn_terminal_event(meta: Option<&Meta>) -> Option<(String, bool, Optio
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CompanionSessionContext {
+    pub dispatch_id: String,
+    pub parent_session_id: String,
+    pub parent_turn_id: String,
+    pub companion_label: String,
+    pub slice_mode: String,
+    pub adoption_mode: String,
+    #[serde(default)]
+    pub inherited_fragment_labels: Vec<String>,
+    #[serde(default)]
+    pub inherited_constraint_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
     pub id: String,
     pub title: String,
@@ -249,6 +264,8 @@ pub struct SessionMeta {
     pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub companion_context: Option<CompanionSessionContext>,
 }
 
 #[derive(Clone)]
@@ -322,6 +339,7 @@ impl ExecutorHub {
             updated_at: now,
             executor_config: None,
             executor_session_id: None,
+            companion_context: None,
         };
         self.store.write_meta(&meta).await?;
         Ok(meta)
@@ -333,6 +351,23 @@ impl ExecutorHub {
 
     pub async fn get_session_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
         self.store.read_meta(session_id).await
+    }
+
+    pub async fn update_session_meta<F>(
+        &self,
+        session_id: &str,
+        updater: F,
+    ) -> std::io::Result<Option<SessionMeta>>
+    where
+        F: FnOnce(&mut SessionMeta),
+    {
+        let Some(mut meta) = self.store.read_meta(session_id).await? else {
+            return Ok(None);
+        };
+        updater(&mut meta);
+        meta.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.write_meta(&meta).await?;
+        Ok(Some(meta))
     }
 
     pub async fn inspect_session_execution_state(
@@ -532,6 +567,7 @@ impl ExecutorHub {
                 updated_at: now,
                 executor_config: None,
                 executor_session_id: None,
+                companion_context: None,
             },
         };
         session_meta.updated_at = now;

@@ -44,6 +44,9 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   user_feedback: "用户反馈",
   user_answered_questions: "用户回答",
   permission_denied: "权限拒绝",
+  companion_dispatch_registered: "Companion 已派发",
+  companion_result_available: "Companion 结果可用",
+  companion_result_returned: "Companion 已回传",
 };
 
 const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
@@ -55,6 +58,9 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   user_feedback: "已收到用户反馈",
   user_answered_questions: "已收到用户回答",
   permission_denied: "操作被权限策略拒绝",
+  companion_dispatch_registered: "已注册 companion 派发上下文",
+  companion_result_available: "Companion 已回传结构化结果",
+  companion_result_returned: "当前 companion 结果已回传到主 session",
 };
 
 export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {

@@ -209,16 +209,39 @@ pub struct HookSessionRuntimeSnapshot {
 当前项目的第一版 companion/subagent 生命周期，采用“runtime tool + hook trigger”方式落地：
 
 - runtime tool：`companion_dispatch`
+- result tool：`companion_complete`
 - dispatch 前：工具执行层显式调用 `BeforeSubagentDispatch`
 - dispatch 后：工具执行层显式调用 `AfterSubagentDispatch`
+- result 回流：工具执行层显式调用 `SubagentResult`
 - dispatch 目标：当前 owner 关联的 `label=companion` session；若不存在且允许自动创建，则由执行层创建并绑定
 
-第一版继承规则：
+当前 companion 机制的正式契约：
 
-- 子 agent 默认继承当前 snapshot 的 `context_fragments`
-- 子 agent 默认继承当前 snapshot 的 `constraints`
-- 继承结果必须由 `BeforeSubagentDispatch` 返回，而不是在工具内部硬编码固定 prompt
-- 当前 session 若已是目标 companion session，不允许递归向自身再次派发
+- `companion_dispatch` 必须支持：
+  - `slice_mode`: `compact | full | workflow_only | constraints_only`
+  - `adoption_mode`: `suggestion | follow_up_required | blocking_review`
+  - `max_fragments` / `max_constraints`：限制切片体积
+- 子 agent 继承的 `context_fragments` / `constraints` 必须由 `BeforeSubagentDispatch` resolution 生成，再由执行层按 `slice_mode` 过滤；不能在工具内部重新发明一套硬编码 workflow prompt。
+- `compact` 模式允许执行层补一个 `owner_summary` 片段作为上下文前言，但仍然属于 dispatch slice，而不是 workflow 专用逻辑。
+- `workflow_only` 只能保留带 `workflow` 来源的 fragments / constraints。
+- `constraints_only` 不继承普通 context fragment，只继承约束集合。
+- dispatch 执行前，执行层必须把 `dispatch_id / parent_session_id / parent_turn_id / slice_mode / adoption_mode / inherited_*` 写入目标 companion session 的 `SessionMeta.companion_context`。
+- 当前 session 若已是目标 companion session，不允许递归向自身再次派发。
+
+当前 return channel 契约：
+
+- companion 在完成子任务后，必须显式调用 `companion_complete` 回传结构化结果。
+- `companion_complete` 结果至少包含：
+  - `summary`
+  - `status`: `completed | blocked | needs_follow_up`
+  - `findings`
+  - `follow_ups`
+  - `artifact_refs`
+- 执行层必须通过 `SessionMeta.companion_context` 找到父 session / 父 turn，并同时产出两条通道：
+  - session stream event：给前端与会话历史展示
+  - hook runtime trace / diagnostics：给主 session 的 runtime surface 消费
+- 父 session 若存在 hook runtime，执行层必须同步触发一次 `HookTrigger::SubagentResult`，并把 `dispatch_id / adoption_mode / summary / status / companion_session_id` 等结构化字段写入 payload。
+- `adoption_mode` 当前阶段只是“回流语义标注”，尚未自动驱动 approve/resume；后续 Ask/Approval/Resume 任务会在此基础上把采纳链路补成正式控制流。
 
 ### 4. Validation & Error Matrix
 
@@ -232,6 +255,9 @@ pub struct HookSessionRuntimeSnapshot {
 | `BeforeStop` 命中 `session_ended` | 允许自然结束 | 仅 diagnostics，不阻止退出 |
 | `BeforeStop` 命中 `checklist_passed` 且 task 未达成 | 注入 stop gate，继续 loop | 返回 steering/constraints |
 | `BeforeStop` 命中 `checklist_passed` 且 task 已 `awaiting_verification/completed` | 允许结束 | diagnostics 标记 satisfied |
+| `companion_dispatch` 命中 `BeforeSubagentDispatch` deny | 同步拒绝派发 | `AgentToolError::ExecutionFailed` |
+| `companion_complete` 在非 companion session 调用 | 同步拒绝回流 | `当前 session 不是通过 companion_dispatch 建立的上下文` |
+| `companion_complete` 回流到仍持有 hook runtime 的父 session | 同步触发 `SubagentResult` | trace + diagnostics 同步可见 |
 
 ### 5. Good / Base / Bad Cases
 
@@ -269,6 +295,8 @@ frontend 展示实际生效的 policies/diagnostics/source registry
   - checklist phase 未满足时 `before_stop` 注入 gate
   - checklist phase 满足时 `before_stop` 允许结束
   - `BeforeSubagentDispatch` 会继承 runtime context / constraints
+  - `companion_dispatch` 会按 slice mode 过滤 fragments / constraints，并生成 return-channel 指令
+  - `SubagentResult` 会记录结构化 return-channel diagnostic
   - snapshot 会合并 `global_builtin + workflow` 来源，并暴露去重后的 `sources`
   - workflow 产出的 `policy / constraint / diagnostic` 必须带 `source_refs`
 - `cargo check`：

@@ -328,6 +328,7 @@ pub enum HookTrigger {
     SessionTerminal,
     BeforeSubagentDispatch,
     AfterSubagentDispatch,
+    SubagentResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

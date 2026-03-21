@@ -600,22 +600,41 @@ export interface HookOwnerSummary {
   task_id?: string | null;
 }
 
+export type HookSourceLayer =
+  | "global_builtin"
+  | "workflow"
+  | "project"
+  | "story"
+  | "task"
+  | "session";
+
+export interface HookSourceRef {
+  layer: HookSourceLayer;
+  key: string;
+  label: string;
+  priority: number;
+}
+
 export interface HookContextFragment {
   slot: string;
   label: string;
   content: string;
   source_summary: string[];
+  source_refs: HookSourceRef[];
 }
 
 export interface HookConstraint {
   key: string;
   description: string;
   source_summary: string[];
+  source_refs: HookSourceRef[];
 }
 
 export interface HookPolicy {
   key: string;
   description: string;
+  source_summary: string[];
+  source_refs: HookSourceRef[];
   payload?: Record<string, unknown> | null;
 }
 
@@ -624,6 +643,7 @@ export interface HookDiagnosticEntry {
   summary: string;
   detail?: string | null;
   source_summary: string[];
+  source_refs: HookSourceRef[];
 }
 
 export interface HookCompletionStatus {
@@ -668,6 +688,7 @@ export interface HookRuntimeMetadata {
 export interface SessionHookSnapshot {
   session_id: string;
   owners: HookOwnerSummary[];
+  sources: HookSourceRef[];
   tags: string[];
   context_fragments: HookContextFragment[];
   constraints: HookConstraint[];

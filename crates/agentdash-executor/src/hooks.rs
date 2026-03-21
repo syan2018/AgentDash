@@ -22,6 +22,27 @@ pub struct HookOwnerSummary {
     pub task_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookSourceLayer {
+    #[default]
+    GlobalBuiltin,
+    Workflow,
+    Project,
+    Story,
+    Task,
+    Session,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookSourceRef {
+    pub layer: HookSourceLayer,
+    pub key: String,
+    pub label: String,
+    pub priority: i32,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookContextFragment {
@@ -30,6 +51,8 @@ pub struct HookContextFragment {
     pub content: String,
     #[serde(default)]
     pub source_summary: Vec<String>,
+    #[serde(default)]
+    pub source_refs: Vec<HookSourceRef>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +62,8 @@ pub struct HookConstraint {
     pub description: String,
     #[serde(default)]
     pub source_summary: Vec<String>,
+    #[serde(default)]
+    pub source_refs: Vec<HookSourceRef>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -46,6 +71,10 @@ pub struct HookConstraint {
 pub struct HookPolicy {
     pub key: String,
     pub description: String,
+    #[serde(default)]
+    pub source_summary: Vec<String>,
+    #[serde(default)]
+    pub source_refs: Vec<HookSourceRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
 }
@@ -59,6 +88,8 @@ pub struct HookDiagnosticEntry {
     pub detail: Option<String>,
     #[serde(default)]
     pub source_summary: Vec<String>,
+    #[serde(default)]
+    pub source_refs: Vec<HookSourceRef>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -67,6 +98,8 @@ pub struct SessionHookSnapshot {
     pub session_id: String,
     #[serde(default)]
     pub owners: Vec<HookOwnerSummary>,
+    #[serde(default)]
+    pub sources: Vec<HookSourceRef>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -79,6 +112,23 @@ pub struct SessionHookSnapshot {
     pub diagnostics: Vec<HookDiagnosticEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookContributionSet {
+    #[serde(default)]
+    pub sources: Vec<HookSourceRef>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub context_fragments: Vec<HookContextFragment>,
+    #[serde(default)]
+    pub constraints: Vec<HookConstraint>,
+    #[serde(default)]
+    pub policies: Vec<HookPolicy>,
+    #[serde(default)]
+    pub diagnostics: Vec<HookDiagnosticEntry>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

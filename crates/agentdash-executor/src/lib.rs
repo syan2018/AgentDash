@@ -12,11 +12,12 @@ pub use connector::{
     ExecutionStream, ExecutorInfo, PromptPayload, RuntimeToolProvider,
 };
 pub use hooks::{
-    ExecutionHookProvider, HookConstraint, HookContextFragment, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookOwnerSummary, HookPolicy, HookResolution, HookSessionRuntime,
-    HookSessionRuntimeSnapshot, HookTraceEntry, HookTrigger, HookCompletionStatus,
-    NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    ExecutionHookProvider, HookCompletionStatus, HookConstraint, HookContextFragment,
+    HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary,
+    HookPolicy, HookResolution, HookSessionRuntime, HookSessionRuntimeSnapshot, HookSourceLayer,
+    HookSourceRef, HookTraceEntry, HookTrigger, NoopExecutionHookProvider,
+    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    SharedHookSessionRuntime,
 };
 pub use hub::{ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta};
 pub use runtime_delegate::HookRuntimeDelegate;

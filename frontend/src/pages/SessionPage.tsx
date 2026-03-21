@@ -10,6 +10,8 @@ import type {
   AgentBinding,
   ContextContainerDefinition,
   ExecutionAddressSpace,
+  HookDiagnosticEntry,
+  HookSourceRef,
   HookTraceEntry,
   HookSessionRuntimeInfo,
   MountDerivationPolicy,
@@ -487,6 +489,9 @@ export function HookRuntimeSurfaceCard({
           owners: {snapshot.owners.length}
         </span>
         <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          sources: {snapshot.sources.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
           policies: {snapshot.policies.length}
         </span>
         <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
@@ -515,6 +520,16 @@ export function HookRuntimeSurfaceCard({
         </div>
       )}
       {activeWorkflow && <HookRuntimeWorkflowMetaCard metadata={activeWorkflow} />}
+      {snapshot.sources.length > 0 && (
+        <div className="mt-3 rounded-[10px] border border-border bg-background/70 px-3 py-2">
+          <p className="text-xs font-medium text-foreground">Hook 来源注册表</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {snapshot.sources.map((source) => (
+              <HookSourceBadge key={`${source.layer}:${source.key}`} source={source} />
+            ))}
+          </div>
+        </div>
+      )}
       {snapshot.policies.length > 0 && (
         <div className="mt-3 space-y-2">
           {snapshot.policies.map((policy) => (
@@ -528,14 +543,26 @@ export function HookRuntimeSurfaceCard({
                 </span>
                 <span className="text-xs text-foreground/85">{policy.description}</span>
               </div>
+              <HookSourceBadgeList
+                className="mt-2"
+                sourceRefs={policy.source_refs}
+                sourceSummary={policy.source_summary}
+              />
             </div>
           ))}
         </div>
       )}
       {snapshot.constraints.length > 0 && (
-        <div className="mt-3 space-y-1 text-xs leading-5 text-foreground/85">
+        <div className="mt-3 space-y-2">
           {snapshot.constraints.map((constraint) => (
-            <p key={constraint.key}>- {constraint.description}</p>
+            <div key={constraint.key} className="rounded-[10px] border border-border bg-background/70 px-3 py-2">
+              <p className="text-xs leading-5 text-foreground/85">- {constraint.description}</p>
+              <HookSourceBadgeList
+                className="mt-2"
+                sourceRefs={constraint.source_refs}
+                sourceSummary={constraint.source_summary}
+              />
+            </div>
           ))}
         </div>
       )}
@@ -579,6 +606,47 @@ function HookRuntimeWorkflowMetaCard({
   );
 }
 
+function HookSourceBadge({ source }: { source: HookSourceRef }) {
+  return (
+    <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] text-muted-foreground">
+      {source.layer} · {source.label}
+    </span>
+  );
+}
+
+function HookSourceSummaryBadge({ summary }: { summary: string }) {
+  return (
+    <span className="rounded-full border border-dashed border-border bg-background px-2 py-1 text-[10px] text-muted-foreground">
+      {summary}
+    </span>
+  );
+}
+
+function HookSourceBadgeList({
+  sourceRefs,
+  sourceSummary,
+  className = "",
+}: {
+  sourceRefs: HookSourceRef[];
+  sourceSummary: string[];
+  className?: string;
+}) {
+  if (sourceRefs.length === 0 && sourceSummary.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={`${className} flex flex-wrap gap-1.5`}>
+      {sourceRefs.map((source) => (
+        <HookSourceBadge key={`${source.layer}:${source.key}`} source={source} />
+      ))}
+      {sourceRefs.length === 0 && sourceSummary.map((summary) => (
+        <HookSourceSummaryBadge key={summary} summary={summary} />
+      ))}
+    </div>
+  );
+}
+
 export function HookRuntimeDiagnosticsCard({
   hookRuntime,
 }: {
@@ -602,6 +670,7 @@ export function HookRuntimeDiagnosticsCard({
               {entry.detail && (
                 <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{entry.detail}</p>
               )}
+              <HookDiagnosticSourceMeta entry={entry} className="mt-2" />
             </div>
           ))}
         </div>
@@ -694,13 +763,32 @@ function HookTraceEntryCard({ entry }: { entry: HookTraceEntry }) {
       {entry.diagnostics.length > 0 && (
         <div className="mt-2 space-y-1">
           {entry.diagnostics.map((diagnostic, index) => (
-            <p key={`${diagnostic.code}-${index}`} className="text-[11px] leading-5 text-muted-foreground">
-              {diagnostic.code}: {diagnostic.summary}
-            </p>
+            <div key={`${diagnostic.code}-${index}`} className="rounded-[8px] border border-border/70 bg-background/60 px-2 py-1.5">
+              <p className="text-[11px] leading-5 text-muted-foreground">
+                {diagnostic.code}: {diagnostic.summary}
+              </p>
+              <HookDiagnosticSourceMeta entry={diagnostic} className="mt-1" />
+            </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function HookDiagnosticSourceMeta({
+  entry,
+  className = "",
+}: {
+  entry: HookDiagnosticEntry;
+  className?: string;
+}) {
+  return (
+    <HookSourceBadgeList
+      className={className}
+      sourceRefs={entry.source_refs}
+      sourceSummary={entry.source_summary}
+    />
   );
 }
 

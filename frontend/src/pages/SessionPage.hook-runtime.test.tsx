@@ -13,6 +13,20 @@ const hookRuntime: HookSessionRuntimeInfo = {
   revision: 7,
   snapshot: {
     session_id: "sess-hook-test",
+    sources: [
+      {
+        layer: "global_builtin",
+        key: "runtime_trace_observability",
+        label: "Global Builtin / Runtime Trace",
+        priority: 100,
+      },
+      {
+        layer: "workflow",
+        key: "trellis_dev_task:check",
+        label: "Workflow / Trellis Dev Workflow / Check",
+        priority: 300,
+      },
+    ],
     owners: [
       {
         owner_type: "task",
@@ -27,6 +41,14 @@ const hookRuntime: HookSessionRuntimeInfo = {
         label: "active_workflow_phase",
         content: "当前在 Check phase",
         source_summary: ["workflow:trellis_dev_task"],
+        source_refs: [
+          {
+            layer: "workflow",
+            key: "trellis_dev_task:check",
+            label: "Workflow / Trellis Dev Workflow / Check",
+            priority: 300,
+          },
+        ],
       },
     ],
     constraints: [
@@ -34,12 +56,29 @@ const hookRuntime: HookSessionRuntimeInfo = {
         key: "before_stop:checklist_pending",
         description: "先给出验证结论，再结束 session。",
         source_summary: ["workflow_phase:check"],
+        source_refs: [
+          {
+            layer: "workflow",
+            key: "trellis_dev_task:check",
+            label: "Workflow / Trellis Dev Workflow / Check",
+            priority: 300,
+          },
+        ],
       },
     ],
     policies: [
       {
         key: "workflow:*:*:task_status_gate",
         description: "Check phase 需要先更新 Task 状态。",
+        source_summary: ["workflow:trellis_dev_task", "workflow:trellis_dev_task:check"],
+        source_refs: [
+          {
+            layer: "workflow",
+            key: "trellis_dev_task:check",
+            label: "Workflow / Trellis Dev Workflow / Check",
+            priority: 300,
+          },
+        ],
       },
     ],
     diagnostics: [],
@@ -63,6 +102,14 @@ const hookRuntime: HookSessionRuntimeInfo = {
       summary: "当前 workflow phase 尚未满足 checklist completion 条件。",
       detail: "current_task_status=running",
       source_summary: ["workflow_phase:check"],
+      source_refs: [
+        {
+          layer: "workflow",
+          key: "trellis_dev_task:check",
+          label: "Workflow / Trellis Dev Workflow / Check",
+          priority: 300,
+        },
+      ],
     },
   ],
   trace: [
@@ -80,6 +127,14 @@ const hookRuntime: HookSessionRuntimeInfo = {
           summary: "Hook 阻止当前 session 结束，要求先补齐验证。",
           detail: null,
           source_summary: ["workflow_phase:check"],
+          source_refs: [
+            {
+              layer: "workflow",
+              key: "trellis_dev_task:check",
+              label: "Workflow / Trellis Dev Workflow / Check",
+              priority: 300,
+            },
+          ],
         },
       ],
       completion: {
@@ -97,9 +152,11 @@ describe("SessionPage hook runtime cards", () => {
     const html = renderToStaticMarkup(<HookRuntimeSurfaceCard hookRuntime={hookRuntime} />);
 
     expect(html).toContain("运行中 Hook Runtime");
+    expect(html).toContain("sources: 2");
     expect(html).toContain("policies: 1");
     expect(html).toContain("workflow:*:*:task_status_gate");
     expect(html).toContain("Trellis Dev Workflow / Task / Check");
+    expect(html).toContain("Workflow / Trellis Dev Workflow / Check");
     expect(html).toContain("checklist_passed");
   });
 
@@ -111,6 +168,7 @@ describe("SessionPage hook runtime cards", () => {
 
     expect(diagnosticsHtml).toContain("before_stop_checklist_pending");
     expect(diagnosticsHtml).toContain("当前 workflow phase 尚未满足 checklist completion 条件");
+    expect(diagnosticsHtml).toContain("Workflow / Trellis Dev Workflow / Check");
     expect(traceHtml).toContain("workflow_completion:checklist_pending:stop_gate");
     expect(traceHtml).toContain("completion: checklist_passed");
     expect(traceHtml).toContain("Task 还没有进入 awaiting_verification/completed。");

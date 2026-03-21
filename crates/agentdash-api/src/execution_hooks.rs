@@ -18,9 +18,9 @@ use agentdash_domain::workflow::{
 };
 use agentdash_executor::{
     ExecutionHookProvider, HookCompletionStatus, HookConstraint, HookContextFragment,
-    HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary, HookPolicy,
-    HookResolution, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery,
+    HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary,
+    HookPolicy, HookResolution, HookSourceLayer, HookSourceRef, HookTrigger,
+    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -57,6 +57,8 @@ impl AppExecutionHookProvider {
         &self,
         binding: &SessionBinding,
     ) -> Result<ResolvedOwnerSummary, HookError> {
+        let binding_source_refs = vec![session_binding_source_ref(binding)];
+        let binding_source_summary = source_summary_from_refs(&binding_source_refs);
         let mut summary = HookOwnerSummary {
             owner_type: binding.owner_type.to_string(),
             owner_id: binding.owner_id.to_string(),
@@ -72,7 +74,8 @@ impl AppExecutionHookProvider {
                 binding.owner_type, binding.owner_id, binding.label
             ),
             detail: None,
-            source_summary: vec![format!("session_binding:{}", binding.id)],
+            source_summary: binding_source_summary.clone(),
+            source_refs: binding_source_refs.clone(),
         }];
 
         match binding.owner_type {
@@ -90,7 +93,8 @@ impl AppExecutionHookProvider {
                         code: "session_binding_owner_missing".to_string(),
                         summary: "会话绑定引用的 Project 已不存在".to_string(),
                         detail: Some(binding.owner_id.to_string()),
-                        source_summary: vec![format!("session_binding:{}", binding.id)],
+                        source_summary: binding_source_summary.clone(),
+                        source_refs: binding_source_refs.clone(),
                     });
                 }
             }
@@ -109,7 +113,8 @@ impl AppExecutionHookProvider {
                         code: "session_binding_owner_missing".to_string(),
                         summary: "会话绑定引用的 Story 已不存在".to_string(),
                         detail: Some(binding.owner_id.to_string()),
-                        source_summary: vec![format!("session_binding:{}", binding.id)],
+                        source_summary: binding_source_summary.clone(),
+                        source_refs: binding_source_refs.clone(),
                     });
                 }
             }
@@ -136,7 +141,8 @@ impl AppExecutionHookProvider {
                             code: "task_story_missing".to_string(),
                             summary: "Task 对应的 Story 已不存在，无法补全 project_id".to_string(),
                             detail: Some(task.story_id.to_string()),
-                            source_summary: vec![format!("task:{}", task.id)],
+                            source_summary: source_summary_from_refs(&[task_source_ref(task.id)]),
+                            source_refs: vec![task_source_ref(task.id)],
                         });
                     }
                 } else {
@@ -144,7 +150,8 @@ impl AppExecutionHookProvider {
                         code: "session_binding_owner_missing".to_string(),
                         summary: "会话绑定引用的 Task 已不存在".to_string(),
                         detail: Some(binding.owner_id.to_string()),
-                        source_summary: vec![format!("session_binding:{}", binding.id)],
+                        source_summary: binding_source_summary,
+                        source_refs: binding_source_refs,
                     });
                 }
             }
@@ -228,6 +235,7 @@ impl AppExecutionHookProvider {
         resolution: &mut HookResolution,
     ) -> Result<(), HookError> {
         let source_summary = active_workflow_source_summary(snapshot);
+        let source_refs = active_workflow_source_refs(snapshot);
         resolution
             .diagnostics
             .extend(decision.evidence.iter().map(|evidence| HookDiagnosticEntry {
@@ -235,6 +243,7 @@ impl AppExecutionHookProvider {
                 summary: evidence.summary.clone(),
                 detail: evidence.detail.clone(),
                 source_summary: source_summary.clone(),
+                source_refs: source_refs.clone(),
             }));
 
         let Some(locator) = active_workflow_locator(snapshot) else {
@@ -280,6 +289,7 @@ impl AppExecutionHookProvider {
                 summary: "Hook 发现 workflow run 已不存在，无法写回 completion".to_string(),
                 detail: Some(locator.run_id.to_string()),
                 source_summary,
+                source_refs,
             });
             return Ok(());
         };
@@ -328,7 +338,8 @@ impl AppExecutionHookProvider {
                         locator.run_id, locator.phase_key
                     ),
                     detail: None,
-                    source_summary,
+                    source_summary: source_summary.clone(),
+                    source_refs: source_refs.clone(),
                 });
             }
             Err(error) => {
@@ -343,6 +354,7 @@ impl AppExecutionHookProvider {
                     summary: "Hook Runtime 尝试推进 workflow phase 失败".to_string(),
                     detail: Some(error.to_string()),
                     source_summary,
+                    source_refs,
                 });
             }
         }
@@ -354,6 +366,139 @@ impl AppExecutionHookProvider {
 struct ActiveWorkflowLocator {
     run_id: Uuid,
     phase_key: String,
+}
+
+fn global_builtin_sources() -> Vec<HookSourceRef> {
+    vec![
+        HookSourceRef {
+            layer: HookSourceLayer::GlobalBuiltin,
+            key: "runtime_trace_observability".to_string(),
+            label: "Global Builtin / Runtime Trace".to_string(),
+            priority: 100,
+        },
+        HookSourceRef {
+            layer: HookSourceLayer::GlobalBuiltin,
+            key: "workspace_path_safety".to_string(),
+            label: "Global Builtin / Workspace Path Safety".to_string(),
+            priority: 100,
+        },
+    ]
+}
+
+fn session_source_ref(session_id: &str) -> HookSourceRef {
+    HookSourceRef {
+        layer: HookSourceLayer::Session,
+        key: session_id.to_string(),
+        label: format!("Session / {session_id}"),
+        priority: 500,
+    }
+}
+
+fn session_binding_source_ref(binding: &SessionBinding) -> HookSourceRef {
+    HookSourceRef {
+        layer: HookSourceLayer::Session,
+        key: format!("binding:{}", binding.id),
+        label: format!("Session Binding / {}", binding.label),
+        priority: 500,
+    }
+}
+
+fn task_source_ref(task_id: Uuid) -> HookSourceRef {
+    HookSourceRef {
+        layer: HookSourceLayer::Task,
+        key: task_id.to_string(),
+        label: format!("Task / {task_id}"),
+        priority: 400,
+    }
+}
+
+fn workflow_source_refs(workflow: &ResolvedWorkflowPhase) -> Vec<HookSourceRef> {
+    vec![HookSourceRef {
+        layer: HookSourceLayer::Workflow,
+        key: format!("{}:{}", workflow.definition.key, workflow.phase.key),
+        label: format!(
+            "Workflow / {} / {}",
+            workflow.definition.name, workflow.phase.title
+        ),
+        priority: 300,
+    }]
+}
+
+fn source_layer_tag(layer: HookSourceLayer) -> &'static str {
+    match layer {
+        HookSourceLayer::GlobalBuiltin => "global_builtin",
+        HookSourceLayer::Workflow => "workflow",
+        HookSourceLayer::Project => "project",
+        HookSourceLayer::Story => "story",
+        HookSourceLayer::Task => "task",
+        HookSourceLayer::Session => "session",
+    }
+}
+
+fn source_summary_from_refs(source_refs: &[HookSourceRef]) -> Vec<String> {
+    source_refs
+        .iter()
+        .map(|source| format!("{}:{}", source_layer_tag(source.layer), source.key))
+        .collect()
+}
+
+fn merge_hook_contribution(snapshot: &mut SessionHookSnapshot, contribution: HookContributionSet) {
+    snapshot.sources.extend(contribution.sources);
+    snapshot.tags.extend(contribution.tags);
+    snapshot
+        .context_fragments
+        .extend(contribution.context_fragments);
+    snapshot.constraints.extend(contribution.constraints);
+    snapshot.policies.extend(contribution.policies);
+    snapshot.diagnostics.extend(contribution.diagnostics);
+    snapshot.sources = dedupe_source_refs(snapshot.sources.clone());
+}
+
+fn dedupe_source_refs(sources: Vec<HookSourceRef>) -> Vec<HookSourceRef> {
+    let mut seen = BTreeSet::new();
+    sources
+        .into_iter()
+        .filter(|source| {
+            seen.insert((
+                source_layer_tag(source.layer).to_string(),
+                source.key.clone(),
+            ))
+        })
+        .collect()
+}
+
+fn global_builtin_hook_contribution() -> HookContributionSet {
+    let source_refs = global_builtin_sources();
+    let source_summary = source_summary_from_refs(&source_refs);
+    HookContributionSet {
+        sources: source_refs.clone(),
+        tags: vec![
+            "hook_source:global_builtin".to_string(),
+            "hook_builtin:runtime_trace".to_string(),
+            "hook_builtin:workspace_path_safety".to_string(),
+        ],
+        policies: vec![
+            HookPolicy {
+                key: "global_builtin:runtime_trace_observable".to_string(),
+                description:
+                    "当前 session 的 hook 决策会被记录进 runtime trace / diagnostics 调试面。"
+                        .to_string(),
+                source_summary: source_summary.clone(),
+                source_refs: source_refs.clone(),
+                payload: None,
+            },
+            HookPolicy {
+                key: "global_builtin:workspace_path_safety".to_string(),
+                description:
+                    "shell_exec 在命中工作区内绝对 cwd 时，可由全局 builtin hook 自动 rewrite 为相对路径。"
+                        .to_string(),
+                source_summary,
+                source_refs,
+                payload: None,
+            },
+        ],
+        ..HookContributionSet::default()
+    }
 }
 
 #[async_trait]
@@ -371,6 +516,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         let mut snapshot = SessionHookSnapshot {
             session_id: query.session_id.clone(),
             owners: Vec::new(),
+            sources: Vec::new(),
             tags: query.tags,
             context_fragments: Vec::new(),
             constraints: Vec::new(),
@@ -384,13 +530,16 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 "workspace_root": query.workspace_root,
             })),
         };
+        merge_hook_contribution(&mut snapshot, global_builtin_hook_contribution());
 
         if bindings.is_empty() {
+            let source_refs = vec![session_source_ref(&snapshot.session_id)];
             snapshot.diagnostics.push(HookDiagnosticEntry {
                 code: "session_binding_missing".to_string(),
                 summary: "当前 session 没有关联的业务 owner，Hook snapshot 为空基线".to_string(),
                 detail: None,
-                source_summary: vec![format!("session:{}", snapshot.session_id)],
+                source_summary: source_summary_from_refs(&source_refs),
+                source_refs,
             });
         }
 
@@ -431,22 +580,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
 
             if let Some(workflow) = self.resolve_active_workflow(&owner).await? {
-                let source_summary = vec![
-                    format!("workflow:{}", workflow.definition.key),
-                    format!("workflow_phase:{}", workflow.phase.key),
-                    format!("workflow_run:{}", workflow.run.id),
-                ];
-
-                snapshot
-                    .tags
-                    .push(format!("workflow:{}", workflow.definition.key));
-                snapshot
-                    .tags
-                    .push(format!("workflow_phase:{}", workflow.phase.key));
-                snapshot.tags.push(format!(
-                    "workflow_status:{}",
-                    workflow_run_status_tag(workflow.run.status)
-                ));
+                let source_refs = workflow_source_refs(&workflow);
+                let mut source_summary = source_summary_from_refs(&source_refs);
+                source_summary.push(format!("workflow_run:{}", workflow.run.id));
 
                 snapshot.diagnostics.push(HookDiagnosticEntry {
                     code: "workflow_phase_resolved".to_string(),
@@ -461,6 +597,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         workflow_run_status_tag(workflow.run.status)
                     )),
                     source_summary: source_summary.clone(),
+                    source_refs: source_refs.clone(),
                 });
 
                 if let Some(metadata) = snapshot
@@ -484,37 +621,58 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     );
                 }
 
-                snapshot.context_fragments.push(HookContextFragment {
-                    slot: "workflow".to_string(),
-                    label: "active_workflow_phase".to_string(),
-                    content: build_phase_summary_markdown(&workflow),
-                    source_summary: source_summary.clone(),
-                });
-
-                if !workflow.phase.agent_instructions.is_empty() {
-                    snapshot.context_fragments.push(HookContextFragment {
-                        slot: "instruction_append".to_string(),
-                        label: "workflow_phase_constraints".to_string(),
-                        content: build_phase_instruction_markdown(&workflow),
-                        source_summary: source_summary.clone(),
-                    });
-                }
-
-                snapshot.constraints.extend(
-                    workflow.phase.agent_instructions.iter().enumerate().map(
-                        |(index, instruction)| HookConstraint {
-                            key: format!(
-                                "workflow:{}:{}:instruction:{}",
-                                workflow.definition.key,
-                                workflow.phase.key,
-                                index + 1
+                merge_hook_contribution(
+                    &mut snapshot,
+                    HookContributionSet {
+                        sources: source_refs.clone(),
+                        tags: vec![
+                            format!("workflow:{}", workflow.definition.key),
+                            format!("workflow_phase:{}", workflow.phase.key),
+                            format!(
+                                "workflow_status:{}",
+                                workflow_run_status_tag(workflow.run.status)
                             ),
-                            description: instruction.clone(),
-                            source_summary: source_summary.clone(),
+                        ],
+                        context_fragments: {
+                            let mut fragments = vec![HookContextFragment {
+                                slot: "workflow".to_string(),
+                                label: "active_workflow_phase".to_string(),
+                                content: build_phase_summary_markdown(&workflow),
+                                source_summary: source_summary.clone(),
+                                source_refs: source_refs.clone(),
+                            }];
+                            if !workflow.phase.agent_instructions.is_empty() {
+                                fragments.push(HookContextFragment {
+                                    slot: "instruction_append".to_string(),
+                                    label: "workflow_phase_constraints".to_string(),
+                                    content: build_phase_instruction_markdown(&workflow),
+                                    source_summary: source_summary.clone(),
+                                    source_refs: source_refs.clone(),
+                                });
+                            }
+                            fragments
                         },
-                    ),
+                        constraints: workflow
+                            .phase
+                            .agent_instructions
+                            .iter()
+                            .enumerate()
+                            .map(|(index, instruction)| HookConstraint {
+                                key: format!(
+                                    "workflow:{}:{}:instruction:{}",
+                                    workflow.definition.key,
+                                    workflow.phase.key,
+                                    index + 1
+                                ),
+                                description: instruction.clone(),
+                                source_summary: source_summary.clone(),
+                                source_refs: source_refs.clone(),
+                            })
+                            .collect(),
+                        policies: build_workflow_policies(&workflow, &source_summary, &source_refs),
+                        diagnostics: Vec::new(),
+                    },
                 );
-                snapshot.policies.extend(build_workflow_policies(&workflow));
             }
 
             snapshot.owners.push(owner);
@@ -755,6 +913,15 @@ fn active_workflow_source_summary(snapshot: &SessionHookSnapshot) -> Vec<String>
     summary
 }
 
+fn active_workflow_source_refs(snapshot: &SessionHookSnapshot) -> Vec<HookSourceRef> {
+    snapshot
+        .sources
+        .iter()
+        .filter(|source| source.layer == HookSourceLayer::Workflow)
+        .cloned()
+        .collect()
+}
+
 fn active_workflow_locator(snapshot: &SessionHookSnapshot) -> Option<ActiveWorkflowLocator> {
     let run_id = snapshot
         .metadata
@@ -791,7 +958,11 @@ fn parse_session_terminal_state(
     }
 }
 
-fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> {
+fn build_workflow_policies(
+    workflow: &ResolvedWorkflowPhase,
+    source_summary: &[String],
+    source_refs: &[HookSourceRef],
+) -> Vec<HookPolicy> {
     let mut policies = vec![HookPolicy {
         key: format!(
             "workflow:{}:{}:completion_mode",
@@ -801,6 +972,8 @@ fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> 
             "当前 phase 使用 `{}` 作为完成语义。",
             completion_mode_tag(workflow.phase.completion_mode)
         ),
+        source_summary: source_summary.to_vec(),
+        source_refs: source_refs.to_vec(),
         payload: Some(serde_json::json!({
             "workflow_key": workflow.definition.key,
             "phase_key": workflow.phase.key,
@@ -820,6 +993,8 @@ fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> 
             description:
                 "Implement phase 期间不应直接把 Task 标记为 completed，应先进入 awaiting_verification。"
                     .to_string(),
+            source_summary: source_summary.to_vec(),
+            source_refs: source_refs.to_vec(),
             payload: Some(serde_json::json!({
                 "tool": "update_task_status",
                 "deny_statuses": ["completed"],
@@ -834,6 +1009,8 @@ fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> 
             description:
                 "Implement phase 不应提前产出 session_summary / archive_suggestion 类记录产物。"
                     .to_string(),
+            source_summary: source_summary.to_vec(),
+            source_refs: source_refs.to_vec(),
             payload: Some(serde_json::json!({
                 "tool": "report_artifact",
                 "deny_artifact_types": ["session_summary", "archive_suggestion"],
@@ -852,6 +1029,8 @@ fn build_workflow_policies(workflow: &ResolvedWorkflowPhase) -> Vec<HookPolicy> 
             description:
                 "Checklist phase 结束前，Task 状态至少应进入 awaiting_verification 或 completed。"
                     .to_string(),
+            source_summary: source_summary.to_vec(),
+            source_refs: source_refs.to_vec(),
             payload: Some(serde_json::json!({
                 "accepted_task_statuses": ["awaiting_verification", "completed"],
                 "tool": "update_task_status",
@@ -1003,6 +1182,7 @@ fn rule_apply_shell_exec_absolute_cwd_rewrite(
             "tool:shell_exec".to_string(),
             "hook_rewrite:absolute_cwd".to_string(),
         ],
+        source_refs: global_builtin_sources(),
     });
 }
 
@@ -1019,6 +1199,7 @@ fn rule_apply_implement_completed_status_block(
         summary: "Hook 阻止了 Implement phase 期间直接 completed 的状态更新".to_string(),
         detail: Some("expected_status=awaiting_verification".to_string()),
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1045,6 +1226,7 @@ fn rule_apply_checklist_status_signal(
         summary: format!("捕获到 checklist completion 信号：Task 即将更新为 `{next_status}`"),
         detail: None,
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1073,6 +1255,7 @@ fn rule_apply_implement_record_artifact_block(
         summary: "Hook 阻止了 Implement phase 的提前归档型产物上报".to_string(),
         detail: None,
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1092,6 +1275,7 @@ fn rule_apply_after_tool_refresh(ctx: &HookEvaluationContext<'_>, resolution: &m
         summary: format!("工具 `{tool_name}` 可能改变 workflow/hook 观察面，已请求刷新 snapshot"),
         detail: None,
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1109,6 +1293,7 @@ fn rule_apply_check_phase_after_turn_summary(
             "Check phase 的阶段性输出应明确写出发现的问题、已修复项、剩余风险与未覆盖验证。"
                 .to_string(),
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1116,12 +1301,16 @@ fn rule_matches_session_ended_notice(ctx: &HookEvaluationContext<'_>) -> bool {
     workflow_completion_mode(ctx.snapshot) == Some("session_ended")
 }
 
-fn rule_apply_session_ended_notice(_ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+fn rule_apply_session_ended_notice(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_stop_session_ended".to_string(),
         summary: "当前 workflow phase 允许在 session 结束时自然完成".to_string(),
         detail: None,
         source_summary: vec!["workflow_completion_mode:session_ended".to_string()],
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
     resolution.completion.get_or_insert(HookCompletionStatus {
         mode: "session_ended".to_string(),
@@ -1154,6 +1343,7 @@ fn rule_apply_checklist_pending_gate(
         ]
         .join("\n"),
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
     resolution.constraints.push(HookConstraint {
         key: "before_stop:checklist_pending".to_string(),
@@ -1161,6 +1351,7 @@ fn rule_apply_checklist_pending_gate(
             "当前 phase 还未满足 checklist_passed 条件；请先给出验证/风险结论并更新 Task 状态，再结束 session。"
                 .to_string(),
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_stop_checklist_pending".to_string(),
@@ -1168,6 +1359,7 @@ fn rule_apply_checklist_pending_gate(
             .to_string(),
         detail: active_task_status(ctx.snapshot).map(|status| format!("current_task_status={status}")),
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1182,6 +1374,7 @@ fn rule_apply_manual_notice(ctx: &HookEvaluationContext<'_>, resolution: &mut Ho
             .to_string(),
         detail: None,
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
     resolution.completion.get_or_insert(HookCompletionStatus {
         mode: "manual".to_string(),
@@ -1210,6 +1403,7 @@ fn rule_apply_subagent_dispatch(ctx: &HookEvaluationContext<'_>, resolution: &mu
         detail: workflow_phase_key(ctx.snapshot)
             .map(|phase_key| format!("phase={phase_key}")),
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1247,6 +1441,7 @@ fn rule_apply_subagent_dispatch_result(
             turn_id.unwrap_or("-")
         )),
         source_summary: active_workflow_source_summary(ctx.snapshot),
+        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -1382,8 +1577,15 @@ mod tests {
         completion_mode: &str,
         task_status: Option<&str>,
     ) -> SessionHookSnapshot {
+        let workflow_source = HookSourceRef {
+            layer: HookSourceLayer::Workflow,
+            key: format!("trellis_dev_task:{phase_key}"),
+            label: format!("Workflow / Trellis Dev Workflow / {phase_key}"),
+            priority: 300,
+        };
         let mut snapshot = SessionHookSnapshot {
             session_id: "sess-test".to_string(),
+            sources: vec![workflow_source],
             metadata: Some(serde_json::json!({
                 "workspace_root": "F:/Projects/AgentDash",
                 "active_workflow": {
@@ -1664,6 +1866,12 @@ mod tests {
     fn before_subagent_dispatch_inherits_runtime_context_and_constraints() {
         let snapshot = SessionHookSnapshot {
             session_id: "sess-test".to_string(),
+            sources: vec![HookSourceRef {
+                layer: HookSourceLayer::Workflow,
+                key: "trellis_dev_task:check".to_string(),
+                label: "Workflow / Trellis Dev Workflow / Check".to_string(),
+                priority: 300,
+            }],
             owners: vec![HookOwnerSummary {
                 owner_type: "story".to_string(),
                 owner_id: Uuid::new_v4().to_string(),
@@ -1677,11 +1885,23 @@ mod tests {
                 label: "active_workflow_phase".to_string(),
                 content: "phase info".to_string(),
                 source_summary: vec!["workflow:trellis_dev_task".to_string()],
+                source_refs: vec![HookSourceRef {
+                    layer: HookSourceLayer::Workflow,
+                    key: "trellis_dev_task:check".to_string(),
+                    label: "Workflow / Trellis Dev Workflow / Check".to_string(),
+                    priority: 300,
+                }],
             }],
             constraints: vec![HookConstraint {
                 key: "workflow:check".to_string(),
                 description: "先验证再结束".to_string(),
                 source_summary: vec!["workflow_phase:check".to_string()],
+                source_refs: vec![HookSourceRef {
+                    layer: HookSourceLayer::Workflow,
+                    key: "trellis_dev_task:check".to_string(),
+                    label: "Workflow / Trellis Dev Workflow / Check".to_string(),
+                    priority: 300,
+                }],
             }],
             ..SessionHookSnapshot::default()
         };

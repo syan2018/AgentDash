@@ -122,12 +122,29 @@ pub struct HookSessionRuntimeSnapshot {
 
 - `session_id`
 - `owners`
+- `sources`
 - `tags`
 - `context_fragments`
 - `constraints`
 - `policies`
 - `diagnostics`
 - `metadata`
+
+当前 `sources` / `source_summary` / `source_refs` 已约定：
+
+- `sources` 是 session 当前真实生效的来源注册表，不是静态 workflow 模板说明
+- `HookContextFragment` / `HookConstraint` / `HookPolicy` / `HookDiagnosticEntry` 都必须携带：
+  - `source_summary: Vec<String>`
+  - `source_refs: Vec<HookSourceRef>`
+- `HookSourceRef.layer` 当前支持：
+  - `global_builtin`
+  - `workflow`
+  - `project`
+  - `story`
+  - `task`
+  - `session`
+- `source_summary` 必须使用稳定 tag，不能依赖 Rust `Debug` 输出等偶然字符串
+- `source_refs` 为空只允许出现在暂时无法给出结构化来源、只能保留 summary 的退化场景
 
 当前 `metadata` 已约定包含：
 
@@ -163,7 +180,9 @@ pub struct HookSessionRuntimeSnapshot {
 - `agent_instructions` 生成 `constraints`
 - `completion_mode` 生成 completion policy
 - phase/tool/status gate 生成 `policies`
-- policy 的来源必须可通过 `source_summary` / `metadata` 解释
+- provider 必须先把不同来源解释成 `HookContributionSet`，再 merge 进 session snapshot
+- policy / constraint / diagnostic 的来源必须可通过 `source_summary` / `source_refs` / `metadata` 解释
+- global builtin hook 也是正式来源层的一部分，不能绕过来源注册表直接塞进 rule engine
 
 当前已落地的 policy 示例：
 
@@ -179,10 +198,11 @@ pub struct HookSessionRuntimeSnapshot {
 
 必须区分：
 
-- `snapshot.tags` / `snapshot.metadata`：当前 runtime 基线
+- `snapshot.sources` / `snapshot.tags` / `snapshot.metadata`：当前 runtime 基线与来源注册表
 - `snapshot.policies` / `snapshot.constraints`：当前会话真实规则面
 - `diagnostics`：session runtime 命中记录
 - `trace`：per-trigger 的运行态轨迹，必须能看到 trigger / decision / matched_rule_keys / refresh / completion
+- 若某条 policy / diagnostic / constraint 来自 workflow 或 global builtin，前端应能直接看到来源标签，而不是只剩自然语言描述
 
 #### 3.6 Companion / Subagent Dispatch 契约
 
@@ -218,10 +238,11 @@ pub struct HookSessionRuntimeSnapshot {
 #### Good
 
 ```text
-workflow phase -> provider 生成 policies/constraints
+workflow/global builtin -> provider 生成 contribution
+provider merge sources/policies/constraints 形成 snapshot
 executor runtime 缓存 snapshot
 runtime delegate 在 before_tool/before_stop 同步消费 resolution
-frontend 展示实际生效的 policies/diagnostics
+frontend 展示实际生效的 policies/diagnostics/source registry
 ```
 
 #### Base
@@ -248,6 +269,8 @@ frontend 展示实际生效的 policies/diagnostics
   - checklist phase 未满足时 `before_stop` 注入 gate
   - checklist phase 满足时 `before_stop` 允许结束
   - `BeforeSubagentDispatch` 会继承 runtime context / constraints
+  - snapshot 会合并 `global_builtin + workflow` 来源，并暴露去重后的 `sources`
+  - workflow 产出的 `policy / constraint / diagnostic` 必须带 `source_refs`
 - `cargo check`：
   - `agentdash-agent`
   - `agentdash-executor`
@@ -265,7 +288,8 @@ frontend 展示实际生效的 policies/diagnostics
 
 ```text
 workflow runtime 直接长成“工具前后如何决策”的一大坨 if/else 中心；
-agent_loop 再直接去问 workflow 当前 phase 和 task 状态。
+agent_loop 再直接去问 workflow 当前 phase 和 task 状态；
+前端只能看到 workflow phase 文本，却看不到规则真正来自哪一层。
 ```
 
 问题：
@@ -277,11 +301,11 @@ agent_loop 再直接去问 workflow 当前 phase 和 task 状态。
 #### Correct
 
 ```text
-workflow / task / story / project
+global builtin / workflow / task / story / project / session
         ↓
-ExecutionHookProvider
+ExecutionHookProvider（解析 contribution source）
         ↓
-SessionHookSnapshot + HookResolution
+HookContributionSet merge -> SessionHookSnapshot + HookResolution
         ↓
 HookSessionRuntime
         ↓
@@ -295,6 +319,7 @@ agent_loop 的同步控制边界 / companion dispatch 执行层
 - 编排/注入可插拔
 - 执行层不侵入业务
 - runtime 决策能及时生效
+- 来源可观测、可追踪、可前端解释
 
 ---
 

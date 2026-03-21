@@ -227,3 +227,80 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Workflow runtime 注入落地与 hook 任务拆分
+
+**Date**: 2026-03-21
+**Task**: Workflow runtime 注入落地与 hook 任务拆分
+
+### Summary
+
+完成 workflow runtime 第一阶段落地，打通 phase 约束真实注入，并拆出后续 Pi Agent 动态 hook 上下文任务。
+
+### Main Changes
+
+﻿## Goal
+
+完成 Workflow 从 Trellis 特化实现向平台化数据驱动框架的当前阶段收口，并把后续真正的 hook runtime 工作拆成独立任务继续推进。
+
+## Summary
+
+本次会话完成了 Workflow Runtime 第一阶段落地：内置 workflow 已收敛为仓库内 JSON builtin templates，运行时会基于 active workflow run 的当前 phase 自动解析并注入 `agent_instructions` 与 `context_bindings`，不再只是前端展示层模板。
+
+同时，这轮把 Project / Story / Task 三条会话链路都接入了 workflow runtime 注入，让 active phase 的约束真实进入 Agent 上下文；前端也拆掉了只认 Trellis task workflow 的残余耦合，开始按通用 role / definition / phase 结构渲染。
+
+针对用户提出的更关键目标，也已经补充了后续独立任务 `03-21-pi-agent-dynamic-hook-context`，明确后面要继续实现的不是再堆 phase 面板，而是接近真实 Trellis / Claude Code 风格的 SessionStart / Tool / Subagent 动态 hook runtime。
+
+## Main Changes
+
+| Area | Description |
+|------|-------------|
+| Workflow Runtime | 新增 `crates/agentdash-api/src/workflow_runtime.rs`，按 `workflow run -> current phase` 解析运行时注入内容 |
+| Session Injection | Task execution、Story owner session、Project owner session 全部接入 workflow runtime 注入 |
+| Builtin Templates | 将内置 workflow 改为 `crates/agentdash-application/src/workflow/builtins/*.json` 数据文件加载 |
+| Domain Model | `WorkflowPhaseDefinition` 新增 `agent_instructions`，binding/completion 语义进一步结构化 |
+| Completion Semantics | `session_ended` completion mode 开始根据 executor session 状态自动完成 phase |
+| Frontend Decoupling | Workflow 面板和 SessionPage 去除只认 Trellis task workflow 的硬编码，展示真实 phase 注入信息 |
+| Trellis Tasks | 新增 `03-21-workflow-data-driven-refactor` 与 `03-21-pi-agent-dynamic-hook-context` 两个任务文档，并归档前者 |
+
+## Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c8e262` | feat(workflow): 打通运行时注入并补齐 hook 规划 |
+
+## Testing
+
+- [OK] `cargo check -p agentdash-api`
+- [OK] `cargo test workflow --workspace`
+- [OK] `npm --prefix frontend run build`
+- [OK] `cargo fmt --all`
+
+## Status
+
+[OK] **Completed**
+
+## Next Steps
+
+- 继续推进 `03-21-pi-agent-dynamic-hook-context`
+- 先补 SessionStart 风格 hook runtime，再扩展到 tool / subagent / companion 动态上下文注入
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c8e262` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

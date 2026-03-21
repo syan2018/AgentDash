@@ -3,36 +3,19 @@
   "name": "companion-subagent-hook-lifecycle",
   "title": "Pi Agent companion/subagent hook 生命周期",
   "description": "为 Pi Agent 建立 companion/subagent dispatch 的正式 hook 生命周期、上下文切片与继承策略，作为下一阶段动态 hook 机制的第一优先级任务。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "backend",
   "scope": "architecture",
   "priority": "P1",
   "creator": "codex",
   "assignee": "codex",
   "createdAt": "2026-03-21",
-  "completedAt": null,
-  "branch": null,
+  "completedAt": "2026-03-21",
+  "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
-  "next_action": [
-    {
-      "phase": 1,
-      "action": "implement"
-    },
-    {
-      "phase": 2,
-      "action": "check"
-    },
-    {
-      "phase": 3,
-      "action": "finish"
-    },
-    {
-      "phase": 4,
-      "action": "create-pr"
-    }
-  ],
+  "current_phase": 4,
+  "next_action": [],
   "commit": null,
   "pr_url": null,
   "subtasks": [],
@@ -44,5 +27,5 @@
     "crates/agentdash-executor/src/runtime_delegate.rs",
     "crates/agentdash-executor/src/hooks.rs"
   ],
-  "notes": "这是下一阶段第一优先级执行 task。目标不是先做 UI，而是先把 companion/subagent dispatch 的平台级生命周期、上下文切片与 policy 继承模型收口。"
+  "notes": "已完成第一版 companion/subagent hook 生命周期：新增 `companion_dispatch` runtime tool，执行层会在派发前后触发 `BeforeSubagentDispatch/AfterSubagentDispatch`，默认继承 runtime context/constraints，并把 dispatch 结果写入 hook trace。"
 }

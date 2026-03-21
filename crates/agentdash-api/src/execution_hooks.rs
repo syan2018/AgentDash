@@ -626,13 +626,13 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 }
             }
             HookTrigger::BeforeSubagentDispatch | HookTrigger::AfterSubagentDispatch => {
-                resolution.diagnostics.push(HookDiagnosticEntry {
-                    code: "subagent_hook_not_implemented".to_string(),
-                    summary: "当前 session 已预留 subagent hook trigger，但尚未接入正式 dispatch runtime"
-                        .to_string(),
-                    detail: query.subagent_type.clone(),
-                    source_summary: active_workflow_source_summary(&snapshot),
-                });
+                apply_hook_rules(
+                    HookEvaluationContext {
+                        snapshot: &snapshot,
+                        query: &query,
+                    },
+                    &mut resolution,
+                );
             }
         }
 
@@ -931,6 +931,18 @@ fn normalized_hook_rules() -> &'static [NormalizedHookRule] {
             matches: rule_matches_manual_notice,
             apply: rule_apply_manual_notice,
         },
+        NormalizedHookRule {
+            key: "subagent_dispatch:inherit_runtime_context",
+            trigger: HookTrigger::BeforeSubagentDispatch,
+            matches: rule_matches_subagent_dispatch,
+            apply: rule_apply_subagent_dispatch,
+        },
+        NormalizedHookRule {
+            key: "subagent_dispatch:record_dispatch_result",
+            trigger: HookTrigger::AfterSubagentDispatch,
+            matches: rule_matches_subagent_dispatch_result,
+            apply: rule_apply_subagent_dispatch_result,
+        },
     ]
 }
 
@@ -1125,6 +1137,65 @@ fn rule_apply_manual_notice(ctx: &HookEvaluationContext<'_>, resolution: &mut Ho
         satisfied: false,
         advanced: false,
         reason: "manual phase 需要显式推进".to_string(),
+    });
+}
+
+fn rule_matches_subagent_dispatch(ctx: &HookEvaluationContext<'_>) -> bool {
+    ctx.query
+        .subagent_type
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn rule_apply_subagent_dispatch(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+    let subagent_type = ctx.query.subagent_type.as_deref().unwrap_or("companion");
+    resolution.context_fragments.extend(ctx.snapshot.context_fragments.clone());
+    resolution.constraints.extend(ctx.snapshot.constraints.clone());
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_subagent_dispatch_prepared".to_string(),
+        summary: format!(
+            "已为 `{subagent_type}` 准备 companion/subagent dispatch 上下文与约束继承"
+        ),
+        detail: workflow_phase_key(ctx.snapshot)
+            .map(|phase_key| format!("phase={phase_key}")),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
+    });
+}
+
+fn rule_matches_subagent_dispatch_result(ctx: &HookEvaluationContext<'_>) -> bool {
+    ctx.query
+        .subagent_type
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn rule_apply_subagent_dispatch_result(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
+    let subagent_type = ctx.query.subagent_type.as_deref().unwrap_or("companion");
+    let companion_session_id = ctx
+        .query
+        .payload
+        .as_ref()
+        .and_then(|value| value.get("companion_session_id"))
+        .and_then(serde_json::Value::as_str);
+    let turn_id = ctx
+        .query
+        .payload
+        .as_ref()
+        .and_then(|value| value.get("turn_id"))
+        .and_then(serde_json::Value::as_str);
+
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "after_subagent_dispatch_recorded".to_string(),
+        summary: format!("已记录 `{subagent_type}` 的 subagent dispatch 结果"),
+        detail: Some(format!(
+            "companion_session_id={}, turn_id={}",
+            companion_session_id.unwrap_or("-"),
+            turn_id.unwrap_or("-")
+        )),
+        source_summary: active_workflow_source_summary(ctx.snapshot),
     });
 }
 
@@ -1327,6 +1398,62 @@ mod tests {
         assert_eq!(
             decision.summary.as_deref(),
             Some("Task 状态已进入 `awaiting_verification`，满足 checklist_passed completion")
+        );
+    }
+
+    #[test]
+    fn before_subagent_dispatch_inherits_runtime_context_and_constraints() {
+        let snapshot = SessionHookSnapshot {
+            session_id: "sess-test".to_string(),
+            owners: vec![HookOwnerSummary {
+                owner_type: "story".to_string(),
+                owner_id: Uuid::new_v4().to_string(),
+                label: Some("Story A".to_string()),
+                project_id: None,
+                story_id: None,
+                task_id: None,
+            }],
+            context_fragments: vec![HookContextFragment {
+                slot: "workflow".to_string(),
+                label: "active_workflow_phase".to_string(),
+                content: "phase info".to_string(),
+                source_summary: vec!["workflow:trellis_dev_task".to_string()],
+            }],
+            constraints: vec![HookConstraint {
+                key: "workflow:check".to_string(),
+                description: "先验证再结束".to_string(),
+                source_summary: vec!["workflow_phase:check".to_string()],
+            }],
+            ..SessionHookSnapshot::default()
+        };
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeSubagentDispatch,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: Some("companion".to_string()),
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "prompt": "请帮我 review"
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert_eq!(resolution.context_fragments.len(), 1);
+        assert_eq!(resolution.constraints.len(), 1);
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"subagent_dispatch:inherit_runtime_context".to_string())
         );
     }
 }

@@ -153,6 +153,9 @@ pub struct HookSessionRuntimeSnapshot {
 | `AfterTool` | 可以附加 diagnostics，并决定是否 `refresh_snapshot` |
 | `AfterTurn` | 可以追加 steering / constraints / follow-up |
 | `BeforeStop` | 必须在 loop 退出前同步返回 stop gate 决策 |
+| `BeforeSubagentDispatch` | 必须在 companion/subagent 真正启动前同步决定是否允许派发，并返回子 agent 应继承的 context/constraints |
+| `AfterSubagentDispatch` | 必须记录派发结果、目标 session/turn，并写入 trace/diagnostics |
+| `SessionTerminal` | 当 executor 观察到 session 进入终态时，必须让 hook runtime 有机会同步产出 completion judgment 并推进 workflow |
 
 #### 3.4 Workflow -> Hook Policy 契约
 
@@ -178,6 +181,23 @@ pub struct HookSessionRuntimeSnapshot {
 - `snapshot.tags` / `snapshot.metadata`：当前 runtime 基线
 - `snapshot.policies` / `snapshot.constraints`：当前会话真实规则面
 - `diagnostics`：session runtime 命中记录
+- `trace`：per-trigger 的运行态轨迹，必须能看到 trigger / decision / matched_rule_keys / refresh / completion
+
+#### 3.6 Companion / Subagent Dispatch 契约
+
+当前项目的第一版 companion/subagent 生命周期，采用“runtime tool + hook trigger”方式落地：
+
+- runtime tool：`companion_dispatch`
+- dispatch 前：工具执行层显式调用 `BeforeSubagentDispatch`
+- dispatch 后：工具执行层显式调用 `AfterSubagentDispatch`
+- dispatch 目标：当前 owner 关联的 `label=companion` session；若不存在且允许自动创建，则由执行层创建并绑定
+
+第一版继承规则：
+
+- 子 agent 默认继承当前 snapshot 的 `context_fragments`
+- 子 agent 默认继承当前 snapshot 的 `constraints`
+- 继承结果必须由 `BeforeSubagentDispatch` 返回，而不是在工具内部硬编码固定 prompt
+- 当前 session 若已是目标 companion session，不允许递归向自身再次派发
 
 ### 4. Validation & Error Matrix
 
@@ -224,6 +244,7 @@ frontend 展示实际生效的 policies/diagnostics
   - implement phase 阻止直接 `completed`
   - checklist phase 未满足时 `before_stop` 注入 gate
   - checklist phase 满足时 `before_stop` 允许结束
+  - `BeforeSubagentDispatch` 会继承 runtime context / constraints
 - `cargo check`：
   - `agentdash-agent`
   - `agentdash-executor`
@@ -261,9 +282,9 @@ SessionHookSnapshot + HookResolution
         ↓
 HookSessionRuntime
         ↓
-AgentRuntimeDelegate
+AgentRuntimeDelegate / Runtime Tool
         ↓
-agent_loop 的同步控制边界
+agent_loop 的同步控制边界 / companion dispatch 执行层
 ```
 
 这样才能同时满足：

@@ -1147,6 +1147,26 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     return () => { cancelled = true; };
   }, [currentSessionId]);
 
+  useEffect(() => {
+    if (!currentSessionId) return undefined;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const runtime = await fetchSessionHookRuntime(currentSessionId);
+          if (!cancelled) setLoadedHookRuntime(runtime);
+        } catch {
+          if (!cancelled) setLoadedHookRuntime(null);
+        }
+      })();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [currentSessionId]);
+
   const sessionBindings = currentSessionId ? loadedSessionBindings : EMPTY_SESSION_BINDINGS;
 
   const sessionOwnerBinding = useMemo(() => {

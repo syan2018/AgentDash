@@ -5,7 +5,9 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
-use crate::address_space_access::{RelayAddressSpaceService, RelayRuntimeToolProvider};
+use crate::address_space_access::{
+    RelayAddressSpaceService, RelayRuntimeToolProvider, SharedExecutorHubHandle,
+};
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use crate::execution_hooks::AppExecutionHookProvider;
 use crate::relay::registry::BackendRegistry;
@@ -147,6 +149,7 @@ impl AppState {
         let backend_registry = BackendRegistry::new();
         let address_space_service =
             Arc::new(RelayAddressSpaceService::new(backend_registry.clone()));
+        let executor_hub_handle = SharedExecutorHubHandle::default();
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
 
@@ -154,6 +157,8 @@ impl AppState {
             &workspace_root,
             settings_repo.as_ref(),
             address_space_service.clone(),
+            session_binding_repo.clone(),
+            executor_hub_handle.clone(),
         )
         .await
         {
@@ -171,6 +176,7 @@ impl AppState {
         ));
         let executor_hub =
             ExecutorHub::new_with_hooks(workspace_root, connector.clone(), Some(hook_provider));
+        executor_hub_handle.set(executor_hub.clone()).await;
         let restart_tracker = RestartTracker::default();
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
@@ -240,6 +246,8 @@ async fn build_pi_agent_connector(
     workspace_root: &std::path::Path,
     settings: &dyn SettingsRepository,
     address_space_service: Arc<RelayAddressSpaceService>,
+    session_binding_repo: Arc<dyn SessionBindingRepository>,
+    executor_hub_handle: SharedExecutorHubHandle,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     use agentdash_agent::{LlmBridge, RigBridge};
     use rig::client::CompletionClient as _;
@@ -286,6 +294,8 @@ async fn build_pi_agent_connector(
         );
         connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
             address_space_service,
+            session_binding_repo,
+            executor_hub_handle,
         )));
         tracing::info!("PiAgentConnector 已初始化（Anthropic）");
         return Some(connector);
@@ -321,6 +331,8 @@ async fn build_pi_agent_connector(
     );
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         address_space_service,
+        session_binding_repo,
+        executor_hub_handle,
     )));
     tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");
     Some(connector)

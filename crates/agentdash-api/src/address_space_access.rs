@@ -7,9 +7,11 @@ use agentdash_agent::tools::schema_value;
 use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
 };
+use agentdash_domain::session_binding::{SessionBinding, SessionBindingRepository, SessionOwnerType};
 use agentdash_executor::{
-    ConnectorError, ExecutionAddressSpace, ExecutionContext, ExecutionMountCapability,
-    RuntimeToolProvider,
+    AgentDashExecutorConfig, ConnectorError, ExecutionAddressSpace, ExecutionContext,
+    ExecutionMountCapability, ExecutorHub, HookEvaluationQuery, HookTraceEntry, HookTrigger,
+    PromptSessionRequest, RuntimeToolProvider, SessionHookRefreshQuery,
 };
 use agentdash_relay::{
     RelayMessage, ToolFileListPayload, ToolFileReadPayload, ToolFileWritePayload,
@@ -18,7 +20,9 @@ use agentdash_relay::{
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 pub use agentdash_application::address_space::*;
 
@@ -352,11 +356,37 @@ impl RelayAddressSpaceService {
 #[derive(Clone)]
 pub struct RelayRuntimeToolProvider {
     service: Arc<RelayAddressSpaceService>,
+    session_binding_repo: Arc<dyn SessionBindingRepository>,
+    executor_hub_handle: SharedExecutorHubHandle,
 }
 
 impl RelayRuntimeToolProvider {
-    pub fn new(service: Arc<RelayAddressSpaceService>) -> Self {
-        Self { service }
+    pub fn new(
+        service: Arc<RelayAddressSpaceService>,
+        session_binding_repo: Arc<dyn SessionBindingRepository>,
+        executor_hub_handle: SharedExecutorHubHandle,
+    ) -> Self {
+        Self {
+            service,
+            session_binding_repo,
+            executor_hub_handle,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct SharedExecutorHubHandle {
+    inner: Arc<RwLock<Option<ExecutorHub>>>,
+}
+
+impl SharedExecutorHubHandle {
+    pub async fn set(&self, hub: ExecutorHub) {
+        let mut guard = self.inner.write().await;
+        *guard = Some(hub);
+    }
+
+    pub async fn get(&self) -> Option<ExecutorHub> {
+        self.inner.read().await.clone()
     }
 }
 
@@ -386,6 +416,11 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 address_space.clone(),
             )) as DynAgentTool,
             Arc::new(ShellExecTool::new(self.service.clone(), address_space)) as DynAgentTool,
+            Arc::new(CompanionDispatchTool::new(
+                self.session_binding_repo.clone(),
+                self.executor_hub_handle.clone(),
+                context,
+            )) as DynAgentTool,
         ])
     }
 }
@@ -399,6 +434,428 @@ fn ok_text(text: String) -> AgentToolResult {
 }
 
 // ─── Tool Implementations ───────────────────────────────────
+
+#[derive(Clone)]
+struct CompanionDispatchTool {
+    session_binding_repo: Arc<dyn SessionBindingRepository>,
+    executor_hub_handle: SharedExecutorHubHandle,
+    current_session_id: Option<String>,
+    current_executor_config: AgentDashExecutorConfig,
+    workspace_root: std::path::PathBuf,
+    working_dir: String,
+    address_space: Option<ExecutionAddressSpace>,
+    mcp_servers: Vec<agent_client_protocol::McpServer>,
+    hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
+}
+
+impl CompanionDispatchTool {
+    fn new(
+        session_binding_repo: Arc<dyn SessionBindingRepository>,
+        executor_hub_handle: SharedExecutorHubHandle,
+        context: &ExecutionContext,
+    ) -> Self {
+        Self {
+            session_binding_repo,
+            executor_hub_handle,
+            current_session_id: context
+                .hook_session
+                .as_ref()
+                .map(|session| session.session_id().to_string()),
+            current_executor_config: context.executor_config.clone(),
+            workspace_root: context.workspace_root.clone(),
+            working_dir: relative_working_dir(context),
+            address_space: context.address_space.clone(),
+            mcp_servers: context.mcp_servers.clone(),
+            hook_session: context.hook_session.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CompanionDispatchParams {
+    pub prompt: String,
+    pub companion_label: Option<String>,
+    pub title: Option<String>,
+    pub auto_create: Option<bool>,
+    pub wait_for_completion: Option<bool>,
+}
+
+#[async_trait]
+impl AgentTool for CompanionDispatchTool {
+    fn name(&self) -> &str {
+        "companion_dispatch"
+    }
+
+    fn description(&self) -> &str {
+        "把一个子任务派发到当前 owner 关联的 companion/subagent session，并返回派发结果"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<CompanionDispatchParams>()
+    }
+
+    async fn execute(
+        &self,
+        _: &str,
+        args: serde_json::Value,
+        _: CancellationToken,
+        _: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        let mut params: CompanionDispatchParams = serde_json::from_value(args)
+            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+        if params.prompt.trim().is_empty() {
+            return Err(AgentToolError::InvalidArguments(
+                "prompt 不能为空".to_string(),
+            ));
+        }
+        if params.wait_for_completion.unwrap_or(false) {
+            return Err(AgentToolError::InvalidArguments(
+                "当前 companion_dispatch 仅支持异步派发，不支持 wait_for_completion=true"
+                    .to_string(),
+            ));
+        }
+
+        let current_session_id =
+            self.current_session_id
+                .clone()
+                .ok_or_else(|| AgentToolError::ExecutionFailed(
+                    "当前 session 没有可识别的 hook runtime，无法执行 companion dispatch"
+                        .to_string(),
+                ))?;
+        let hook_session = self.hook_session.as_ref().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前缺少 hook runtime，无法生成 companion dispatch 上下文".to_string(),
+            )
+        })?;
+        let companion_label = params
+            .companion_label
+            .clone()
+            .unwrap_or_else(|| "companion".to_string());
+
+        let before_resolution = evaluate_subagent_hook(
+            hook_session.as_ref(),
+            HookTrigger::BeforeSubagentDispatch,
+            &companion_label,
+            Some(serde_json::json!({
+                "prompt": params.prompt,
+                "companion_label": companion_label,
+                "auto_create": params.auto_create.unwrap_or(true),
+            })),
+        )
+        .await
+        .map_err(AgentToolError::ExecutionFailed)?;
+
+        if let Some(reason) = before_resolution.block_reason.clone() {
+            record_subagent_trace(
+                hook_session.as_ref(),
+                HookTrigger::BeforeSubagentDispatch,
+                "deny",
+                &companion_label,
+                &before_resolution,
+            );
+            return Err(AgentToolError::ExecutionFailed(reason));
+        }
+        record_subagent_trace(
+            hook_session.as_ref(),
+            HookTrigger::BeforeSubagentDispatch,
+            "allow",
+            &companion_label,
+            &before_resolution,
+        );
+
+        let target_binding = self
+            .resolve_or_create_companion_binding(
+                hook_session.as_ref(),
+                &companion_label,
+                params.auto_create.unwrap_or(true),
+                params.title.take(),
+            )
+            .await?;
+        if target_binding.session_id == current_session_id {
+            return Err(AgentToolError::ExecutionFailed(
+                "当前会话已经是目标 companion session，暂不允许向自身再次派发 companion"
+                    .to_string(),
+            ));
+        }
+
+        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
+            AgentToolError::ExecutionFailed("ExecutorHub 尚未完成初始化，无法执行 companion dispatch".to_string())
+        })?;
+
+        let final_prompt = build_companion_dispatch_prompt(
+            hook_session.as_ref(),
+            &before_resolution,
+            &params.prompt,
+        );
+        let turn_id = executor_hub
+            .start_prompt_with_follow_up(
+                &target_binding.session_id,
+                None,
+                PromptSessionRequest {
+                    prompt: Some(final_prompt),
+                    prompt_blocks: None,
+                    working_dir: Some(self.working_dir.clone()),
+                    env: std::collections::HashMap::new(),
+                    executor_config: Some(self.current_executor_config.clone()),
+                    mcp_servers: self.mcp_servers.clone(),
+                    workspace_root: Some(self.workspace_root.clone()),
+                    address_space: self.address_space.clone(),
+                },
+            )
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+        let after_resolution = evaluate_subagent_hook(
+            hook_session.as_ref(),
+            HookTrigger::AfterSubagentDispatch,
+            &companion_label,
+            Some(serde_json::json!({
+                "companion_session_id": target_binding.session_id,
+                "turn_id": turn_id,
+            })),
+        )
+        .await
+        .map_err(AgentToolError::ExecutionFailed)?;
+        record_subagent_trace(
+            hook_session.as_ref(),
+            HookTrigger::AfterSubagentDispatch,
+            "dispatched",
+            &companion_label,
+            &after_resolution,
+        );
+
+        Ok(AgentToolResult {
+            content: vec![ContentPart::text(format!(
+                "已派发到 companion session。\n- label: {}\n- session_id: {}\n- turn_id: {}\n- 当前为异步执行，可在对应会话中继续观察结果。",
+                companion_label, target_binding.session_id, turn_id
+            ))],
+            is_error: false,
+            details: Some(serde_json::json!({
+                "companion_label": companion_label,
+                "companion_session_id": target_binding.session_id,
+                "turn_id": turn_id,
+                "matched_rule_keys": after_resolution.matched_rule_keys,
+            })),
+        })
+    }
+}
+
+impl CompanionDispatchTool {
+    async fn resolve_or_create_companion_binding(
+        &self,
+        hook_session: &agentdash_executor::HookSessionRuntime,
+        label: &str,
+        auto_create: bool,
+        title: Option<String>,
+    ) -> Result<SessionBinding, AgentToolError> {
+        let snapshot = hook_session.snapshot();
+        let candidates = companion_owner_candidates(&snapshot)?;
+        for (owner_type, owner_id, _) in &candidates {
+            if let Some(binding) = self
+                .session_binding_repo
+                .find_by_owner_and_label(*owner_type, *owner_id, label)
+                .await
+                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+            {
+                return Ok(binding);
+            }
+        }
+
+        if !auto_create {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "当前 owner 还没有 label=`{label}` 的 companion session，且 auto_create=false"
+            )));
+        }
+
+        let (owner_type, owner_id, owner_title) = candidates
+            .first()
+            .cloned()
+            .ok_or_else(|| AgentToolError::ExecutionFailed("当前 session 没有关联 owner，无法创建 companion session".to_string()))?;
+        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
+            AgentToolError::ExecutionFailed("ExecutorHub 尚未完成初始化，无法创建 companion session".to_string())
+        })?;
+        let meta = executor_hub
+            .create_session(
+                title
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| owner_title.as_deref().unwrap_or("Companion Session")),
+            )
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        let binding = SessionBinding::new(meta.id, owner_type, owner_id, label.to_string());
+        self.session_binding_repo
+            .create(&binding)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        Ok(binding)
+    }
+}
+
+fn relative_working_dir(context: &ExecutionContext) -> String {
+    context
+        .working_directory
+        .strip_prefix(&context.workspace_root)
+        .ok()
+        .map(|relative| {
+            if relative.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                relative.to_string_lossy().replace('\\', "/")
+            }
+        })
+        .unwrap_or_else(|| ".".to_string())
+}
+
+async fn evaluate_subagent_hook(
+    hook_session: &agentdash_executor::HookSessionRuntime,
+    trigger: HookTrigger,
+    subagent_type: &str,
+    payload: Option<serde_json::Value>,
+) -> Result<agentdash_executor::HookResolution, String> {
+    let resolution = hook_session
+        .evaluate(HookEvaluationQuery {
+            session_id: hook_session.session_id().to_string(),
+            trigger: trigger.clone(),
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: Some(subagent_type.to_string()),
+            snapshot: Some(hook_session.snapshot()),
+            payload,
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+
+    if resolution.refresh_snapshot {
+        hook_session
+            .refresh(SessionHookRefreshQuery {
+                session_id: hook_session.session_id().to_string(),
+                turn_id: None,
+                reason: Some(format!("trigger:{trigger:?}:{subagent_type}")),
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(resolution)
+}
+
+fn record_subagent_trace(
+    hook_session: &agentdash_executor::HookSessionRuntime,
+    trigger: HookTrigger,
+    decision: &str,
+    subagent_type: &str,
+    resolution: &agentdash_executor::HookResolution,
+) {
+    hook_session.append_trace(HookTraceEntry {
+        sequence: hook_session.next_trace_sequence(),
+        timestamp_ms: chrono::Utc::now().timestamp_millis(),
+        revision: hook_session.revision(),
+        trigger,
+        decision: decision.to_string(),
+        tool_name: None,
+        tool_call_id: None,
+        subagent_type: Some(subagent_type.to_string()),
+        matched_rule_keys: resolution.matched_rule_keys.clone(),
+        refresh_snapshot: resolution.refresh_snapshot,
+        block_reason: resolution.block_reason.clone(),
+        completion: resolution.completion.clone(),
+        diagnostics: resolution.diagnostics.clone(),
+    });
+}
+
+fn build_companion_dispatch_prompt(
+    hook_session: &agentdash_executor::HookSessionRuntime,
+    resolution: &agentdash_executor::HookResolution,
+    user_prompt: &str,
+) -> String {
+    let snapshot = hook_session.snapshot();
+    let mut sections = vec!["[Companion Dispatch Context]".to_string()];
+
+    if !snapshot.owners.is_empty() {
+        sections.push(format!(
+            "## 当前归属\n{}",
+            snapshot
+                .owners
+                .iter()
+                .map(|owner| format!(
+                    "- {}: {}",
+                    owner.owner_type,
+                    owner.label.as_deref().unwrap_or(owner.owner_id.as_str())
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    if !resolution.context_fragments.is_empty() {
+        sections.push(format!(
+            "## 继承上下文\n{}",
+            resolution
+                .context_fragments
+                .iter()
+                .map(|fragment| format!("### {}\n{}", fragment.label, fragment.content.trim()))
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        ));
+    }
+
+    if !resolution.constraints.is_empty() {
+        sections.push(format!(
+            "## 继承约束\n{}",
+            resolution
+                .constraints
+                .iter()
+                .map(|constraint| format!("- {}", constraint.description))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    sections.push(format!(
+        "## 派发任务\n{}",
+        user_prompt.trim()
+    ));
+    sections.join("\n\n")
+}
+
+fn companion_owner_candidates(
+    snapshot: &agentdash_executor::SessionHookSnapshot,
+) -> Result<Vec<(SessionOwnerType, Uuid, Option<String>)>, AgentToolError> {
+    let mut owners = Vec::new();
+    for owner in &snapshot.owners {
+        if let Some(candidate) = parse_owner_candidate(owner.owner_type.as_str(), &owner.owner_id, owner.label.clone())? {
+            owners.push(candidate);
+        }
+        if owner.owner_type == "task" {
+            if let Some(story_id) = owner.story_id.as_deref() {
+                if let Some(candidate) = parse_owner_candidate("story", story_id, owner.label.clone())? {
+                    owners.push(candidate);
+                }
+            }
+        }
+    }
+    owners.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);
+    Ok(owners)
+}
+
+fn parse_owner_candidate(
+    owner_type: &str,
+    owner_id: &str,
+    label: Option<String>,
+) -> Result<Option<(SessionOwnerType, Uuid, Option<String>)>, AgentToolError> {
+    let owner_type = match owner_type {
+        "project" => SessionOwnerType::Project,
+        "story" => SessionOwnerType::Story,
+        "task" => SessionOwnerType::Task,
+        _ => return Ok(None),
+    };
+    let owner_id = Uuid::parse_str(owner_id).map_err(|error| {
+        AgentToolError::ExecutionFailed(format!("owner_id 不是有效 UUID: {error}"))
+    })?;
+    Ok(Some((owner_type, owner_id, label)))
+}
 
 #[derive(Clone)]
 struct MountsListTool {
@@ -1175,5 +1632,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn companion_owner_candidates_fallback_from_task_to_story() {
+        let story_id = Uuid::new_v4();
+        let snapshot = agentdash_executor::SessionHookSnapshot {
+            session_id: "sess-test".to_string(),
+            owners: vec![agentdash_executor::HookOwnerSummary {
+                owner_type: "task".to_string(),
+                owner_id: Uuid::new_v4().to_string(),
+                label: Some("Task A".to_string()),
+                project_id: None,
+                story_id: Some(story_id.to_string()),
+                task_id: None,
+            }],
+            ..agentdash_executor::SessionHookSnapshot::default()
+        };
+
+        let candidates = companion_owner_candidates(&snapshot).expect("candidates");
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].0, SessionOwnerType::Task);
+        assert_eq!(candidates[1].0, SessionOwnerType::Story);
+        assert_eq!(candidates[1].1, story_id);
     }
 }

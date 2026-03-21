@@ -486,6 +486,9 @@ function HookRuntimeSurfaceCard({
           owners: {snapshot.owners.length}
         </span>
         <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          policies: {snapshot.policies.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
           constraints: {snapshot.constraints.length}
         </span>
         <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
@@ -508,6 +511,23 @@ function HookRuntimeSurfaceCard({
         </div>
       )}
       {activeWorkflow && <HookRuntimeWorkflowMetaCard metadata={activeWorkflow} />}
+      {snapshot.policies.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {snapshot.policies.map((policy) => (
+            <div
+              key={policy.key}
+              className="rounded-[10px] border border-border bg-background/70 px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+                  {policy.key}
+                </span>
+                <span className="text-xs text-foreground/85">{policy.description}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {snapshot.constraints.length > 0 && (
         <div className="mt-3 space-y-1 text-xs leading-5 text-foreground/85">
           {snapshot.constraints.map((constraint) => (

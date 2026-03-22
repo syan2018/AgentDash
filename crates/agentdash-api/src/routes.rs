@@ -139,10 +139,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_workflow_runs_by_target),
         )
         .route(
-            "/workflow-runs/{id}/reconcile",
-            post(workflows::reconcile_workflow_run),
-        )
-        .route(
             "/workflow-runs/{id}/phases/{phase_key}/activate",
             post(workflows::activate_workflow_phase),
         )

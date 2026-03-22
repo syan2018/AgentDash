@@ -19,9 +19,10 @@ pub use hooks::{
     ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,
     HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
     HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookPolicy, HookResolution, HookSessionRuntime, HookSessionRuntimeSnapshot, HookSourceLayer,
-    HookSourceRef, HookTraceEntry, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    HookPhaseAdvanceRequest, HookPolicy, HookResolution, HookSessionRuntime,
+    HookSessionRuntimeSnapshot, HookSourceLayer, HookSourceRef, HookTraceEntry, HookTrigger,
+    NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 pub use hub::{
     CompanionSessionContext, ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta,

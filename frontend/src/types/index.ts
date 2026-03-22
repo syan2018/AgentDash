@@ -159,30 +159,10 @@ export interface WorkflowResolvedBindingSnapshot {
   summary: string;
 }
 
-export interface WorkflowRuntimePhaseSnapshot {
-  key: string;
-  title: string;
-  description: string;
-  requires_session: boolean;
-  completion_mode: WorkflowPhaseCompletionMode;
-  agent_instructions: string[];
-  bindings: WorkflowResolvedBindingSnapshot[];
-}
-
-export interface WorkflowRuntimeSnapshot {
-  run_id: string;
-  workflow_id: string;
-  workflow_key: string;
-  workflow_name: string;
-  run_status: WorkflowRunStatus;
-  current_phase: WorkflowRuntimePhaseSnapshot;
-}
-
 export interface SessionContextSnapshot {
   project_defaults: SessionProjectDefaults;
   story_overrides: SessionStoryOverrides;
   effective: SessionEffectiveContext;
-  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface TaskSessionContextSnapshot {
@@ -190,12 +170,10 @@ export interface TaskSessionContextSnapshot {
   project_defaults: SessionProjectDefaults;
   story_overrides: SessionStoryOverrides;
   effective: SessionEffectiveContext;
-  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface StorySessionContextSnapshot extends SessionContextSnapshot {
   executor: TaskSessionExecutorSummary;
-  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface StorySessionInfo {
@@ -214,7 +192,6 @@ export interface ProjectSessionContextSnapshot {
   project_defaults: SessionProjectDefaults;
   effective: SessionEffectiveContext;
   shared_context_mounts: ProjectAgentMount[];
-  workflow_runtime?: WorkflowRuntimeSnapshot | null;
 }
 
 export interface ProjectSessionInfo {

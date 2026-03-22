@@ -39,7 +39,6 @@ use crate::{
         TaskExecutionPhase, build_declared_source_warning_fragment, build_task_agent_context,
         resolve_workspace_declared_sources,
     },
-    workflow_runtime::{WorkflowRuntimeContext, resolve_workflow_runtime_injection},
 };
 
 pub struct AppStateTaskExecutionGateway {
@@ -151,26 +150,6 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         let use_cloud_native_agent = resolved_config
             .as_ref()
             .is_some_and(|config| config.is_native_agent());
-
-        if !use_cloud_native_agent {
-            if let Some(workflow_runtime) = resolve_workflow_runtime_injection(
-                &self.state,
-                WorkflowRuntimeContext {
-                    target_kind: agentdash_domain::workflow::WorkflowTargetKind::Task,
-                    target_id: task.id,
-                    project: &project,
-                    story: Some(&story),
-                    task: Some(task),
-                    workspace: workspace.as_ref(),
-                },
-            )
-            .await
-            {
-                extra_contributors.push(Box::new(StaticFragmentsContributor::new(
-                    workflow_runtime.context_fragments,
-                )));
-            }
-        }
 
         let address_space = if use_cloud_native_agent {
             let agent_type = resolved_config

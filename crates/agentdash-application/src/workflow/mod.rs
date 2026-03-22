@@ -1,3 +1,4 @@
+pub mod binding;
 mod catalog;
 mod completion;
 mod definition;

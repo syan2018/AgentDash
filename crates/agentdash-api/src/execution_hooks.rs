@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use agentdash_application::workflow::{
     CompleteWorkflowPhaseCommand, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
-    WorkflowRunService, WorkflowSessionTerminalState, build_phase_completion_artifact_drafts,
-    completion_mode_tag, evaluate_phase_completion, select_active_run,
+    WorkflowRecordArtifactDraft, WorkflowRunService, WorkflowSessionTerminalState,
+    build_phase_completion_artifact_drafts, completion_mode_tag, evaluate_phase_completion,
+    select_active_run,
 };
+use agentdash_application::workflow::binding::{self, BindingResolutionContext};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
@@ -13,14 +15,17 @@ use agentdash_domain::session_binding::{
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::{TaskRepository, TaskStatus};
 use agentdash_domain::workflow::{
-    WorkflowDefinition, WorkflowDefinitionRepository, WorkflowPhaseDefinition, WorkflowRun,
-    WorkflowRunRepository, WorkflowRunStatus, WorkflowTargetKind,
+    WorkflowDefinition, WorkflowDefinitionRepository, WorkflowPhaseDefinition,
+    WorkflowRecordArtifactType, WorkflowRun, WorkflowRunRepository, WorkflowRunStatus,
+    WorkflowTargetKind,
 };
+use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::{
     ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,
     HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
-    HookOwnerSummary, HookPolicy, HookResolution, HookSourceLayer, HookSourceRef, HookTrigger,
-    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    HookOwnerSummary, HookPhaseAdvanceRequest, HookPolicy, HookResolution, HookSourceLayer,
+    HookSourceRef, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -29,6 +34,7 @@ pub struct AppExecutionHookProvider {
     project_repo: Arc<dyn ProjectRepository>,
     story_repo: Arc<dyn StoryRepository>,
     task_repo: Arc<dyn TaskRepository>,
+    workspace_repo: Arc<dyn WorkspaceRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     workflow_run_repo: Arc<dyn WorkflowRunRepository>,
@@ -39,6 +45,7 @@ impl AppExecutionHookProvider {
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
         task_repo: Arc<dyn TaskRepository>,
+        workspace_repo: Arc<dyn WorkspaceRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         workflow_run_repo: Arc<dyn WorkflowRunRepository>,
@@ -47,6 +54,7 @@ impl AppExecutionHookProvider {
             project_repo,
             story_repo,
             task_repo,
+            workspace_repo,
             session_binding_repo,
             workflow_definition_repo,
             workflow_run_repo,
@@ -228,6 +236,91 @@ impl AppExecutionHookProvider {
         }))
     }
 
+    /// Resolve binding context_fragments for the active workflow phase.
+    /// Returns `HookContextFragment`s for each resolved binding.
+    async fn resolve_workflow_bindings(
+        &self,
+        owner: &HookOwnerSummary,
+        workflow: &ResolvedWorkflowPhase,
+        source_summary: &[String],
+        source_refs: &[HookSourceRef],
+    ) -> Result<Vec<HookContextFragment>, HookError> {
+        let _owner_id = Uuid::parse_str(owner.owner_id.as_str())
+            .map_err(|e| HookError::Runtime(format!("owner_id parse: {e}")))?;
+
+        let project = if let Some(pid) = owner.project_id.as_deref() {
+            let pid = Uuid::parse_str(pid)
+                .map_err(|e| HookError::Runtime(format!("project_id parse: {e}")))?;
+            self.project_repo.get_by_id(pid).await.map_err(map_hook_error)?
+        } else {
+            None
+        };
+        let Some(project) = project else {
+            return Ok(Vec::new());
+        };
+
+        let story = if let Some(sid) = owner.story_id.as_deref() {
+            let sid = Uuid::parse_str(sid)
+                .map_err(|e| HookError::Runtime(format!("story_id parse: {e}")))?;
+            self.story_repo.get_by_id(sid).await.map_err(map_hook_error)?
+        } else {
+            None
+        };
+
+        let task = if let Some(tid) = owner.task_id.as_deref() {
+            let tid = Uuid::parse_str(tid)
+                .map_err(|e| HookError::Runtime(format!("task_id parse: {e}")))?;
+            self.task_repo.get_by_id(tid).await.map_err(map_hook_error)?
+        } else {
+            None
+        };
+
+        let workspace = if let Some(ws_id) = task.as_ref().and_then(|t| t.workspace_id) {
+            self.workspace_repo.get_by_id(ws_id).await.map_err(map_hook_error)?
+        } else {
+            let target_kind = match owner.owner_type.as_str() {
+                "project" => Some(WorkflowTargetKind::Project),
+                "story" => Some(WorkflowTargetKind::Story),
+                _ => None,
+            };
+            // For project/story-level owners without task, we don't have workspace_id
+            let _ = target_kind;
+            None
+        };
+
+        let binding_ctx = BindingResolutionContext {
+            target_kind: match owner.owner_type.as_str() {
+                "project" => WorkflowTargetKind::Project,
+                "story" => WorkflowTargetKind::Story,
+                _ => WorkflowTargetKind::Task,
+            },
+            project: &project,
+            story: story.as_ref(),
+            task: task.as_ref(),
+            workspace: workspace.as_ref(),
+        };
+
+        let resolved: Vec<_> = workflow
+            .phase
+            .context_bindings
+            .iter()
+            .map(|b| binding::resolve_binding(b, &binding_ctx))
+            .collect();
+
+        let mut fragments = Vec::new();
+        if let Some(bindings_md) = binding::build_bindings_markdown(&resolved) {
+            fragments.push(HookContextFragment {
+                slot: "workflow".to_string(),
+                label: "workflow_phase_bindings".to_string(),
+                content: bindings_md,
+                source_summary: source_summary.to_vec(),
+                source_refs: source_refs.to_vec(),
+            });
+        }
+
+        Ok(fragments)
+    }
+
     async fn apply_completion_decision(
         &self,
         snapshot: &SessionHookSnapshot,
@@ -312,58 +405,41 @@ impl AppExecutionHookProvider {
             return Ok(());
         }
 
-        let completion_summary = decision.summary.clone();
         let record_artifacts = build_completion_record_artifacts_from_snapshot(snapshot, &decision);
-        let service = WorkflowRunService::new(
-            self.workflow_definition_repo.as_ref(),
-            self.workflow_run_repo.as_ref(),
-        );
-        match service
-            .complete_phase(CompleteWorkflowPhaseCommand {
-                run_id: locator.run_id,
-                phase_key: locator.phase_key.clone(),
-                summary: completion_summary.clone(),
-                record_artifacts,
-            })
-            .await
-        {
-            Ok(_) => {
-                resolution.refresh_snapshot = true;
-                resolution.completion = Some(HookCompletionStatus {
-                    mode: decision.completion_mode,
-                    satisfied: true,
-                    advanced: true,
-                    reason: completion_summary.unwrap_or_else(|| {
-                        "Hook Runtime 已把当前 phase 推进到下一阶段".to_string()
-                    }),
-                });
-                resolution.diagnostics.push(HookDiagnosticEntry {
-                    code: "workflow_phase_advanced_by_hook".to_string(),
-                    summary: format!(
-                        "Hook Runtime 已推进 workflow run {} 的 phase `{}`",
-                        locator.run_id, locator.phase_key
-                    ),
-                    detail: None,
-                    source_summary: source_summary.clone(),
-                    source_refs: source_refs.clone(),
-                });
-            }
-            Err(error) => {
-                resolution.completion = Some(HookCompletionStatus {
-                    mode: decision.completion_mode,
-                    satisfied: true,
-                    advanced: false,
-                    reason: format!("completion 条件满足，但推进 phase 失败：{error}"),
-                });
-                resolution.diagnostics.push(HookDiagnosticEntry {
-                    code: "workflow_phase_advance_failed".to_string(),
-                    summary: "Hook Runtime 尝试推进 workflow phase 失败".to_string(),
-                    detail: Some(error.to_string()),
-                    source_summary,
-                    source_refs,
-                });
-            }
-        }
+        let completion_summary = decision.summary.clone();
+
+        resolution.completion = Some(HookCompletionStatus {
+            mode: decision.completion_mode.clone(),
+            satisfied: true,
+            advanced: false,
+            reason: completion_summary
+                .clone()
+                .unwrap_or_else(|| "completion 条件满足，等待 post-evaluate 推进".to_string()),
+        });
+        resolution.pending_advance = Some(HookPhaseAdvanceRequest {
+            run_id: locator.run_id.to_string(),
+            phase_key: locator.phase_key.clone(),
+            completion_mode: decision.completion_mode,
+            summary: completion_summary,
+            record_artifacts: record_artifacts
+                .into_iter()
+                .map(|a| serde_json::json!({
+                    "title": a.title,
+                    "artifact_type": a.artifact_type,
+                    "content": a.content,
+                }))
+                .collect(),
+        });
+        resolution.diagnostics.push(HookDiagnosticEntry {
+            code: "workflow_phase_advance_requested".to_string(),
+            summary: format!(
+                "Hook 产出 phase 推进信号：run={}, phase=`{}`",
+                locator.run_id, locator.phase_key
+            ),
+            detail: None,
+            source_summary,
+            source_refs,
+        });
 
         Ok(())
     }
@@ -688,6 +764,17 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                                     source_refs: source_refs.clone(),
                                 });
                             }
+                            if let Ok(binding_frags) = self
+                                .resolve_workflow_bindings(
+                                    &owner,
+                                    &workflow,
+                                    &source_summary,
+                                    &source_refs,
+                                )
+                                .await
+                            {
+                                fragments.extend(binding_frags);
+                            }
                             fragments
                         },
                         constraints: workflow
@@ -842,6 +929,47 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         }
 
         Ok(resolution)
+    }
+
+    async fn advance_workflow_phase(
+        &self,
+        request: HookPhaseAdvanceRequest,
+    ) -> Result<(), HookError> {
+        let run_id = Uuid::parse_str(&request.run_id)
+            .map_err(|e| HookError::Runtime(format!("advance: invalid run_id: {e}")))?;
+
+        let record_artifacts: Vec<WorkflowRecordArtifactDraft> = request
+            .record_artifacts
+            .into_iter()
+            .filter_map(|value| {
+                let title = value.get("title")?.as_str()?.to_string();
+                let content = value.get("content")?.as_str()?.to_string();
+                let artifact_type_str = value.get("artifact_type")?.as_str()?;
+                let artifact_type: WorkflowRecordArtifactType =
+                    serde_json::from_value(serde_json::json!(artifact_type_str)).ok()?;
+                Some(WorkflowRecordArtifactDraft {
+                    artifact_type,
+                    title,
+                    content,
+                })
+            })
+            .collect();
+
+        let service = WorkflowRunService::new(
+            self.workflow_definition_repo.as_ref(),
+            self.workflow_run_repo.as_ref(),
+        );
+        service
+            .complete_phase(CompleteWorkflowPhaseCommand {
+                run_id,
+                phase_key: request.phase_key,
+                summary: request.summary,
+                record_artifacts,
+            })
+            .await
+            .map_err(|e| HookError::Runtime(format!("advance_workflow_phase: {e}")))?;
+
+        Ok(())
     }
 }
 

@@ -344,7 +344,33 @@ impl HookSessionRuntime {
     }
 
     pub async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
-        let resolution = self.provider.evaluate_hook(query).await?;
+        let mut resolution = self.provider.evaluate_hook(query).await?;
+
+        if let Some(advance_request) = resolution.pending_advance.take() {
+            match self.provider.advance_workflow_phase(advance_request).await {
+                Ok(()) => {
+                    resolution.refresh_snapshot = true;
+                    if let Some(completion) = resolution.completion.as_mut() {
+                        completion.advanced = true;
+                    }
+                }
+                Err(error) => {
+                    resolution.diagnostics.push(HookDiagnosticEntry {
+                        code: "workflow_phase_advance_failed".to_string(),
+                        summary: "post-evaluate phase advancement failed".to_string(),
+                        detail: Some(error.to_string()),
+                        source_summary: Vec::new(),
+                        source_refs: Vec::new(),
+                    });
+                    if let Some(completion) = resolution.completion.as_mut() {
+                        completion.advanced = false;
+                        completion.reason =
+                            format!("completion satisfied, but advance failed: {error}");
+                    }
+                }
+            }
+        }
+
         self.append_diagnostics(resolution.diagnostics.clone());
         Ok(resolution)
     }
@@ -587,6 +613,11 @@ pub struct HookResolution {
     pub approval_request: Option<HookApprovalRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
+    /// Phase advancement signal. When set, `HookSessionRuntime::evaluate`
+    /// delegates to `provider.advance_workflow_phase()` in a post-evaluate
+    /// step and updates `completion.advanced` accordingly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_advance: Option<HookPhaseAdvanceRequest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -604,6 +635,20 @@ pub struct HookCompletionStatus {
     pub satisfied: bool,
     pub advanced: bool,
     pub reason: String,
+}
+
+/// Request payload for the post-evaluate phase advancement bridge.
+/// Produced by `evaluate_hook` when completion conditions are met, consumed by
+/// `HookSessionRuntime::evaluate` which delegates to
+/// `ExecutionHookProvider::advance_workflow_phase`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookPhaseAdvanceRequest {
+    pub run_id: String,
+    pub phase_key: String,
+    pub completion_mode: String,
+    pub summary: Option<String>,
+    pub record_artifacts: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -651,6 +696,16 @@ pub trait ExecutionHookProvider: Send + Sync {
     ) -> Result<SessionHookSnapshot, HookError>;
 
     async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
+
+    /// Execute the actual phase advancement. Called by `HookSessionRuntime`
+    /// post-evaluate when the resolution carries a `pending_advance` signal.
+    async fn advance_workflow_phase(
+        &self,
+        request: HookPhaseAdvanceRequest,
+    ) -> Result<(), HookError> {
+        let _ = request;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]

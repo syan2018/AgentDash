@@ -19,9 +19,6 @@ use crate::{
     },
     rpc::ApiError,
     session_plan::{summarize_runtime_policy, summarize_tool_visibility},
-    workflow_runtime::{
-        WorkflowRuntimeContext, WorkflowRuntimeSnapshot, resolve_workflow_runtime_injection,
-    },
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_mcp::injection::McpInjectionConfig;
@@ -34,8 +31,6 @@ pub struct ProjectSessionContextSnapshot {
     pub project_defaults: SessionProjectDefaults,
     pub effective: SessionEffectiveContext,
     pub shared_context_mounts: Vec<ProjectAgentMountResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workflow_runtime: Option<WorkflowRuntimeSnapshot>,
 }
 
 #[derive(Debug, Serialize)]
@@ -170,19 +165,6 @@ async fn build_project_session_context_response(
         &mcp_servers,
         &tool_visibility.tool_names,
     );
-    let workflow_runtime = resolve_workflow_runtime_injection(
-        state,
-        WorkflowRuntimeContext {
-            target_kind: agentdash_domain::workflow::WorkflowTargetKind::Project,
-            target_id: project.id,
-            project,
-            story: None,
-            task: None,
-            workspace: workspace.as_ref(),
-        },
-    )
-    .await
-    .map(|item| item.snapshot);
     let executor_source = if session_meta.executor_config.is_some() {
         "session.meta.executor_config".to_string()
     } else {
@@ -217,7 +199,6 @@ async fn build_project_session_context_response(
             shared_context_mounts: resolved_config
                 .map(|config| build_project_agent_visible_mounts(project, config))
                 .unwrap_or_default(),
-            workflow_runtime,
         }),
     })
 }

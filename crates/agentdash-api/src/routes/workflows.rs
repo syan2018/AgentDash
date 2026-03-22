@@ -10,16 +10,13 @@ use uuid::Uuid;
 use agentdash_application::workflow::{
     ActivateWorkflowPhaseCommand, AppendWorkflowPhaseArtifactsCommand, AssignWorkflowCommand,
     CompleteWorkflowPhaseCommand, StartWorkflowRunCommand, WorkflowCatalogService,
-    WorkflowCompletionSignalSet, WorkflowRecordArtifactDraft, WorkflowRunService,
-    WorkflowSessionTerminalState, build_builtin_workflow_definition,
-    build_phase_completion_artifact_drafts, evaluate_phase_completion,
+    WorkflowRecordArtifactDraft, WorkflowRunService, build_builtin_workflow_definition,
     list_builtin_workflow_templates,
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{
     WorkflowAgentRole, WorkflowRecordArtifactType, WorkflowRun, WorkflowTargetKind,
 };
-use agentdash_executor::SessionExecutionState;
 
 use crate::app_state::AppState;
 use crate::dto::{
@@ -225,19 +222,6 @@ pub async fn list_workflow_runs_by_target(
     ))
 }
 
-/// Explicit reconcile endpoint: checks whether a session_ended phase should be
-/// advanced based on the current session execution state, and completes it if so.
-/// This is a POST because it may mutate the workflow run.
-pub async fn reconcile_workflow_run(
-    State(state): State<Arc<AppState>>,
-    Path(run_id): Path<String>,
-) -> Result<Json<WorkflowRunResponse>, ApiError> {
-    let run_id = parse_uuid(&run_id, "run_id")?;
-    let run = load_workflow_run(&state, run_id).await?;
-    let run = reconcile_workflow_run_runtime(&state, run).await?;
-    Ok(Json(WorkflowRunResponse::from(run)))
-}
-
 pub async fn activate_workflow_phase(
     State(state): State<Arc<AppState>>,
     Path((run_id, phase_key)): Path<(String, String)>,
@@ -430,113 +414,6 @@ fn target_owner_type(target_kind: WorkflowTargetKind) -> SessionOwnerType {
         WorkflowTargetKind::Story => SessionOwnerType::Story,
         WorkflowTargetKind::Task => SessionOwnerType::Task,
     }
-}
-
-async fn reconcile_workflow_run_runtime(
-    state: &Arc<AppState>,
-    run: WorkflowRun,
-) -> Result<WorkflowRun, ApiError> {
-    let Some(current_phase_key) = run.current_phase_key.clone() else {
-        return Ok(run);
-    };
-    let definition = state
-        .repos
-        .workflow_definition_repo
-        .get_by_id(run.workflow_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("workflow_definition {} 不存在", run.workflow_id))
-        })?;
-    let Some(phase_definition) = definition
-        .phases
-        .iter()
-        .find(|item| item.key == current_phase_key)
-    else {
-        return Ok(run);
-    };
-
-    if phase_definition.completion_mode
-        != agentdash_domain::workflow::WorkflowPhaseCompletionMode::SessionEnded
-    {
-        return Ok(run);
-    }
-
-    let Some(phase_state) = run
-        .phase_states
-        .iter()
-        .find(|item| item.phase_key == current_phase_key)
-    else {
-        return Ok(run);
-    };
-    if phase_state.status != agentdash_domain::workflow::WorkflowPhaseExecutionStatus::Running {
-        return Ok(run);
-    }
-
-    let Some(binding_id) = phase_state.session_binding_id else {
-        return Ok(run);
-    };
-    let binding = state
-        .repos
-        .session_binding_repo
-        .list_by_owner(target_owner_type(run.target_kind), run.target_id)
-        .await?
-        .into_iter()
-        .find(|item| item.id == binding_id);
-    let Some(binding) = binding else {
-        return Ok(run);
-    };
-
-    let execution_state = state
-        .services
-        .executor_hub
-        .inspect_session_execution_state(&binding.session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-
-    let summary = match execution_state {
-        SessionExecutionState::Completed { .. } => WorkflowCompletionSignalSet {
-            session_terminal_state: Some(WorkflowSessionTerminalState::Completed),
-            session_terminal_message: None,
-            ..WorkflowCompletionSignalSet::default()
-        },
-        SessionExecutionState::Failed { message, .. } => WorkflowCompletionSignalSet {
-            session_terminal_state: Some(WorkflowSessionTerminalState::Failed),
-            session_terminal_message: message,
-            ..WorkflowCompletionSignalSet::default()
-        },
-        SessionExecutionState::Interrupted { .. } => WorkflowCompletionSignalSet {
-            session_terminal_state: Some(WorkflowSessionTerminalState::Interrupted),
-            session_terminal_message: Some(format!("关联 session `{}` 已终止", binding.session_id)),
-            ..WorkflowCompletionSignalSet::default()
-        },
-        SessionExecutionState::Idle | SessionExecutionState::Running { .. } => {
-            WorkflowCompletionSignalSet::default()
-        }
-    };
-    let decision = evaluate_phase_completion(phase_definition.completion_mode, &summary);
-
-    if !decision.should_complete_phase {
-        return Ok(run);
-    }
-
-    let service = WorkflowRunService::new(
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.workflow_run_repo.as_ref(),
-    );
-    let run = service
-        .complete_phase(CompleteWorkflowPhaseCommand {
-            run_id: run.id,
-            phase_key: current_phase_key,
-            summary: decision.summary.clone(),
-            record_artifacts: build_phase_completion_artifact_drafts(
-                &phase_definition.key,
-                phase_definition.default_artifact_type,
-                phase_definition.default_artifact_title.as_deref(),
-                &decision,
-            ),
-        })
-        .await?;
-    Ok(run)
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {

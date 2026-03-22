@@ -1,45 +1,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
-use agentdash_application::workflow::select_active_run;
 use agentdash_domain::workflow::{
-    WorkflowContextBinding, WorkflowContextBindingKind, WorkflowPhaseCompletionMode,
-    WorkflowRunStatus, WorkflowTargetKind,
+    WorkflowContextBinding, WorkflowContextBindingKind, WorkflowTargetKind,
 };
 use agentdash_domain::workspace::Workspace;
-use agentdash_injection::{ContextFragment, MergeStrategy};
 use serde::Serialize;
-use uuid::Uuid;
-
-use crate::app_state::AppState;
 
 const MAX_WORKFLOW_DOCUMENT_CHARS: usize = 6_000;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct WorkflowRuntimeSnapshot {
-    pub run_id: Uuid,
-    pub workflow_id: Uuid,
-    pub workflow_key: String,
-    pub workflow_name: String,
-    pub run_status: WorkflowRunStatus,
-    pub current_phase: WorkflowRuntimePhaseSnapshot,
-}
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
-pub struct WorkflowRuntimePhaseSnapshot {
-    pub key: String,
-    pub title: String,
-    pub description: String,
-    pub requires_session: bool,
-    pub completion_mode: WorkflowPhaseCompletionMode,
-    pub agent_instructions: Vec<String>,
-    pub bindings: Vec<WorkflowResolvedBindingSnapshot>,
-}
-
+/// Snapshot of a single resolved binding, serialisable and safe to expose to
+/// the frontend.
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkflowResolvedBindingSnapshot {
     pub kind: WorkflowContextBindingKind,
@@ -51,117 +29,32 @@ pub struct WorkflowResolvedBindingSnapshot {
     pub summary: String,
 }
 
+/// Internal resolution result carrying both the snapshot and optional rendered
+/// markdown content for injection into agent context.
 #[derive(Debug, Clone)]
-pub struct WorkflowRuntimeInjection {
-    pub snapshot: WorkflowRuntimeSnapshot,
-    pub context_fragments: Vec<ContextFragment>,
-    pub source_summary: Vec<String>,
+pub struct ResolvedWorkflowBinding {
+    pub snapshot: WorkflowResolvedBindingSnapshot,
+    pub content_markdown: Option<String>,
 }
 
-pub struct WorkflowRuntimeContext<'a> {
+/// Input context required by binding resolution.  The fields mirror the
+/// entities available at the session bootstrap / hook snapshot building call
+/// sites.
+pub struct BindingResolutionContext<'a> {
     pub target_kind: WorkflowTargetKind,
-    pub target_id: Uuid,
     pub project: &'a Project,
     pub story: Option<&'a Story>,
     pub task: Option<&'a Task>,
     pub workspace: Option<&'a Workspace>,
 }
 
-pub async fn resolve_workflow_runtime_injection(
-    state: &Arc<AppState>,
-    context: WorkflowRuntimeContext<'_>,
-) -> Option<WorkflowRuntimeInjection> {
-    let run = load_active_run(state, context.target_kind, context.target_id)
-        .await
-        .ok()??;
-    let definition = state
-        .repos
-        .workflow_definition_repo
-        .get_by_id(run.workflow_id)
-        .await
-        .ok()??;
-    if !definition.enabled {
-        return None;
-    }
-    let current_phase_key = run.current_phase_key.as_deref()?;
-    let phase = definition
-        .phases
-        .iter()
-        .find(|item| item.key == current_phase_key)?
-        .clone();
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
 
-    let binding_resolutions = phase
-        .context_bindings
-        .iter()
-        .map(|binding| resolve_binding(binding, &context))
-        .collect::<Vec<_>>();
-    let snapshot = WorkflowRuntimeSnapshot {
-        run_id: run.id,
-        workflow_id: definition.id,
-        workflow_key: definition.key.clone(),
-        workflow_name: definition.name.clone(),
-        run_status: run.status,
-        current_phase: WorkflowRuntimePhaseSnapshot {
-            key: phase.key.clone(),
-            title: phase.title.clone(),
-            description: phase.description.clone(),
-            requires_session: phase.requires_session,
-            completion_mode: phase.completion_mode,
-            agent_instructions: phase.agent_instructions.clone(),
-            bindings: binding_resolutions
-                .iter()
-                .map(|item| item.snapshot.clone())
-                .collect(),
-        },
-    };
-    let context_markdown = build_workflow_runtime_markdown(&snapshot, &binding_resolutions);
-    let mut context_fragments = vec![ContextFragment {
-        slot: "workflow",
-        label: "active_workflow_phase",
-        order: 47,
-        strategy: MergeStrategy::Append,
-        content: context_markdown,
-    }];
-
-    if !phase.agent_instructions.is_empty() {
-        context_fragments.push(ContextFragment {
-            slot: "instruction_append",
-            label: "workflow_phase_constraints",
-            order: 95,
-            strategy: MergeStrategy::Append,
-            content: build_workflow_instruction_markdown(&snapshot.current_phase),
-        });
-    }
-
-    Some(WorkflowRuntimeInjection {
-        source_summary: build_source_summary(&snapshot),
-        snapshot,
-        context_fragments,
-    })
-}
-
-async fn load_active_run(
-    state: &Arc<AppState>,
-    target_kind: WorkflowTargetKind,
-    target_id: Uuid,
-) -> Result<Option<agentdash_domain::workflow::WorkflowRun>, agentdash_domain::DomainError> {
-    let runs = state
-        .repos
-        .workflow_run_repo
-        .list_by_target(target_kind, target_id)
-        .await?;
-    Ok(select_active_run(runs))
-}
-
-#[derive(Debug, Clone)]
-struct ResolvedWorkflowBinding {
-    snapshot: WorkflowResolvedBindingSnapshot,
-    content_markdown: Option<String>,
-}
-
-fn resolve_binding(
+pub fn resolve_binding(
     binding: &WorkflowContextBinding,
-    context: &WorkflowRuntimeContext<'_>,
+    context: &BindingResolutionContext<'_>,
 ) -> ResolvedWorkflowBinding {
     match binding.kind {
         WorkflowContextBindingKind::DocumentPath => {
@@ -175,6 +68,40 @@ fn resolve_binding(
         WorkflowContextBindingKind::ActionRef => resolve_action_binding(binding),
     }
 }
+
+/// Build a rendered markdown section for an already-resolved list of bindings.
+pub fn build_bindings_markdown(resolved: &[ResolvedWorkflowBinding]) -> Option<String> {
+    if resolved.is_empty() {
+        return None;
+    }
+    let body = resolved
+        .iter()
+        .map(|b| {
+            let header = format!(
+                "- {} [{}] {}",
+                binding_display_title_from_snapshot(&b.snapshot),
+                if b.snapshot.resolved {
+                    "resolved"
+                } else if b.snapshot.required {
+                    "missing-required"
+                } else {
+                    "missing-optional"
+                },
+                b.snapshot.summary
+            );
+            match b.content_markdown.as_deref() {
+                Some(content) => format!("{header}\n\n{content}"),
+                None => header,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some(format!("## Phase Bindings\n{body}"))
+}
+
+// ---------------------------------------------------------------------------
+// Individual resolvers
+// ---------------------------------------------------------------------------
 
 fn resolve_document_binding(
     binding: &WorkflowContextBinding,
@@ -213,7 +140,7 @@ fn resolve_document_binding(
 
 fn resolve_runtime_binding(
     binding: &WorkflowContextBinding,
-    context: &WorkflowRuntimeContext<'_>,
+    context: &BindingResolutionContext<'_>,
 ) -> ResolvedWorkflowBinding {
     let content = match binding.locator.trim() {
         "project_session_context" => Some(render_project_runtime_context(context.project)),
@@ -247,7 +174,7 @@ fn resolve_runtime_binding(
 
 fn resolve_checklist_binding(
     binding: &WorkflowContextBinding,
-    context: &WorkflowRuntimeContext<'_>,
+    context: &BindingResolutionContext<'_>,
 ) -> ResolvedWorkflowBinding {
     let items = match binding.locator.trim() {
         "project_review_checklist" => vec![
@@ -360,6 +287,10 @@ fn resolve_action_binding(binding: &WorkflowContextBinding) -> ResolvedWorkflowB
     }
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 fn unresolved_binding(binding: &WorkflowContextBinding, summary: &str) -> ResolvedWorkflowBinding {
     let title = binding_display_title(binding);
     ResolvedWorkflowBinding {
@@ -445,96 +376,7 @@ fn checklist_fallback(target_kind: WorkflowTargetKind) -> Vec<&'static str> {
     }
 }
 
-fn build_workflow_runtime_markdown(
-    snapshot: &WorkflowRuntimeSnapshot,
-    resolved_bindings: &[ResolvedWorkflowBinding],
-) -> String {
-    let phase = &snapshot.current_phase;
-    let mut sections = vec![format!(
-        "## Active Workflow Phase\n- workflow: {} (`{}`)\n- run_status: `{:?}`\n- phase: {} (`{}`)\n- completion_mode: `{}`\n- requires_session: {}\n\n### Phase Goal\n{}",
-        snapshot.workflow_name,
-        snapshot.workflow_key,
-        snapshot.run_status,
-        phase.title,
-        phase.key,
-        phase_completion_mode_label(phase.completion_mode),
-        yes_no(phase.requires_session),
-        phase.description
-    )];
-
-    if !phase.agent_instructions.is_empty() {
-        sections.push(format!(
-            "### Auto-Injected Constraints\n{}",
-            phase
-                .agent_instructions
-                .iter()
-                .map(|item| format!("- {item}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-
-    if !resolved_bindings.is_empty() {
-        sections.push(format!(
-            "## Phase Bindings\n{}",
-            resolved_bindings
-                .iter()
-                .map(|binding| {
-                    let header = format!(
-                        "- {} [{}] {}",
-                        binding_display_title_from_snapshot(&binding.snapshot),
-                        if binding.snapshot.resolved {
-                            "resolved"
-                        } else if binding.snapshot.required {
-                            "missing-required"
-                        } else {
-                            "missing-optional"
-                        },
-                        binding.snapshot.summary
-                    );
-                    match binding.content_markdown.as_deref() {
-                        Some(content) => format!("{header}\n\n{content}"),
-                        None => header,
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        ));
-    }
-
-    sections.join("\n\n")
-}
-
-fn build_workflow_instruction_markdown(phase: &WorkflowRuntimePhaseSnapshot) -> String {
-    format!(
-        "## Workflow Constraints\n- 当前 workflow phase: {} (`{}`)\n{}",
-        phase.title,
-        phase.key,
-        phase
-            .agent_instructions
-            .iter()
-            .map(|item| format!("- {item}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    )
-}
-
-fn build_source_summary(snapshot: &WorkflowRuntimeSnapshot) -> Vec<String> {
-    let mut sources = vec![format!(
-        "workflow:{}:{}",
-        snapshot.workflow_key, snapshot.current_phase.key
-    )];
-    for binding in &snapshot.current_phase.bindings {
-        sources.push(format!(
-            "workflow_binding:{}:{}",
-            snapshot.current_phase.key,
-            binding.title.as_deref().unwrap_or(binding.locator.as_str())
-        ));
-    }
-    sources
-}
-
-fn binding_display_title(binding: &WorkflowContextBinding) -> &str {
+pub fn binding_display_title(binding: &WorkflowContextBinding) -> &str {
     binding
         .title
         .as_deref()
@@ -543,7 +385,7 @@ fn binding_display_title(binding: &WorkflowContextBinding) -> &str {
         .unwrap_or(binding.locator.as_str())
 }
 
-fn binding_display_title_from_snapshot(binding: &WorkflowResolvedBindingSnapshot) -> &str {
+pub fn binding_display_title_from_snapshot(binding: &WorkflowResolvedBindingSnapshot) -> &str {
     binding
         .title
         .as_deref()
@@ -591,12 +433,4 @@ fn clean_text(input: Option<&str>) -> Option<&str> {
 
 fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
-}
-
-fn phase_completion_mode_label(mode: WorkflowPhaseCompletionMode) -> &'static str {
-    match mode {
-        WorkflowPhaseCompletionMode::Manual => "manual",
-        WorkflowPhaseCompletionMode::SessionEnded => "session_ended",
-        WorkflowPhaseCompletionMode::ChecklistPassed => "checklist_passed",
-    }
 }

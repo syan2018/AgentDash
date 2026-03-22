@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { useAcpSession } from "../model";
 import { AcpSessionEntry } from "./AcpSessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
@@ -30,6 +31,10 @@ import {
   type RichInputRef,
 } from "../../file-reference";
 import { batchReadWorkspaceFiles, type FileEntry } from "../../../services/workspaceFiles";
+import {
+  fetchSessionExecutionState,
+} from "../../../services/session";
+import type { SessionExecutionState } from "../../../types";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -161,6 +166,9 @@ export interface SessionChatViewProps {
   /** Agent turn 结束时回调（turn_completed / turn_failed） */
   onTurnEnd?: () => void;
 
+  /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
+  onSystemEvent?: (eventType: string, update: SessionUpdate) => void;
+
   // ─── 执行器 ──────────────────────────────────────────
 
   /** 执行器提示（如 task 的 agent_type），自动映射为执行器选择 */
@@ -218,6 +226,7 @@ export function SessionChatView({
   onSessionIdChange,
   onMessageSent,
   onTurnEnd,
+  onSystemEvent,
   executorHint,
   showExecutorSelector = true,
   customSend,
@@ -235,6 +244,8 @@ export function SessionChatView({
   const [inputValue, setInputValue] = useState("");
   const [optimisticRunning, setOptimisticRunning] = useState(false);
   const [stableActionRunning, setStableActionRunning] = useState(false);
+  const [executionState, setExecutionState] = useState<SessionExecutionState | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedHintRef = useRef<string | null>(null);
@@ -263,7 +274,24 @@ export function SessionChatView({
   // sessionId 变更时重置内部状态
   useEffect(() => {
     setSendError(null);
+    setExecutionState(null);
+    setIsCancelling(false);
   }, [sessionId]);
+
+  const refreshExecutionState = useCallback(async () => {
+    if (!sessionId) {
+      setExecutionState(null);
+      return null;
+    }
+    const next = await fetchSessionExecutionState(sessionId);
+    setExecutionState(next);
+    return next;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    void refreshExecutionState().catch(() => {});
+  }, [sessionId, refreshExecutionState]);
 
   // ─── 执行器配置 ──────────────────────────────────────
 
@@ -314,19 +342,17 @@ export function SessionChatView({
     tokenUsage,
   } = useAcpSession({ sessionId: streamSessionId, enabled: hasSession });
 
+  useEffect(() => {
+    if (!hasSession || executionState?.status !== "running") return;
+    const timer = window.setInterval(() => {
+      void refreshExecutionState().catch(() => {});
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [executionState?.status, hasSession, refreshExecutionState]);
+
   // ─── Action running 检测 ──────────────────────────────
 
-  const streamRunning = useMemo(() => {
-    if (!hasSession || rawEntries.length === 0) return false;
-    for (let i = rawEntries.length - 1; i >= 0; i -= 1) {
-      const entry = rawEntries[i];
-      if (!entry || entry.update.sessionUpdate !== "session_info_update") continue;
-      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
-      if (eventType === "turn_started") return true;
-      if (eventType === "turn_completed" || eventType === "turn_failed") return false;
-    }
-    return false;
-  }, [hasSession, rawEntries]);
+  const streamRunning = executionState?.status === "running";
 
   const targetActionRunning = hasSession && (streamRunning || optimisticRunning);
 
@@ -368,6 +394,12 @@ export function SessionChatView({
 
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
+  const onSystemEventRef = useRef(onSystemEvent);
+  const lastSystemEventEntryIdRef = useRef<string | null>(null);
+  useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
+  useEffect(() => {
+    lastSystemEventEntryIdRef.current = null;
+  }, [sessionId]);
 
   useEffect(() => {
     if (!hasSession || rawEntries.length === 0) return;
@@ -375,13 +407,47 @@ export function SessionChatView({
       const entry = rawEntries[i];
       if (!entry || entry.update.sessionUpdate !== "session_info_update") continue;
       const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
-      if (eventType === "turn_started") { setOptimisticRunning(false); return; }
-      if (eventType === "turn_completed" || eventType === "turn_failed") {
+      if (eventType === "turn_started") {
+        setOptimisticRunning(false);
+        void refreshExecutionState().catch(() => {});
+        return;
+      }
+      if (eventType === "turn_completed" || eventType === "turn_failed" || eventType === "turn_interrupted") {
         optimisticRunningUntilRef.current = 0;
         setOptimisticRunning(false);
+        void refreshExecutionState().catch(() => {});
         onTurnEndRef.current?.();
         return;
       }
+    }
+  }, [hasSession, rawEntries, refreshExecutionState]);
+
+  useEffect(() => {
+    if (!hasSession || rawEntries.length === 0) return;
+
+    const newSystemEvents: Array<{ id: string; eventType: string; update: SessionUpdate }> = [];
+    for (let i = rawEntries.length - 1; i >= 0; i -= 1) {
+      const entry = rawEntries[i];
+      if (!entry) continue;
+      if (entry.id === lastSystemEventEntryIdRef.current) {
+        break;
+      }
+      if (entry.update.sessionUpdate !== "session_info_update") {
+        continue;
+      }
+      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
+      if (!eventType) continue;
+      newSystemEvents.push({
+        id: entry.id,
+        eventType,
+        update: entry.update,
+      });
+    }
+
+    lastSystemEventEntryIdRef.current = rawEntries[rawEntries.length - 1]?.id ?? null;
+    if (newSystemEvents.length === 0) return;
+    for (const item of newSystemEvents.reverse()) {
+      onSystemEventRef.current?.(item.eventType, item.update);
     }
   }, [hasSession, rawEntries]);
 
@@ -443,6 +509,7 @@ export function SessionChatView({
 
       execConfig.recordUsage();
       clearInput();
+      void refreshExecutionState().catch(() => {});
       onMessageSent?.();
     } catch (e) {
       optimisticRunningUntilRef.current = 0;
@@ -453,11 +520,30 @@ export function SessionChatView({
     }
   }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput]);
 
-  const handleCancel = sendCancel;
+  const handleCancel = useCallback(async () => {
+    if (!hasSession || !sessionId || isCancelling) return;
+    setSendError(null);
+    setIsCancelling(true);
+    try {
+      await sendCancel();
+      const next = await refreshExecutionState();
+      if (next?.status === "interrupted" || next?.status === "idle") {
+        optimisticRunningUntilRef.current = 0;
+        setOptimisticRunning(false);
+      }
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "取消失败，请重试。");
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [hasSession, isCancelling, refreshExecutionState, sendCancel, sessionId]);
 
-  const handlePrimaryAction = useCallback(() => {
-    if (hasSession && isActionRunning) { handleCancel(); return; }
-    void handleSend();
+  const handlePrimaryAction = useCallback(async () => {
+    if (hasSession && isActionRunning) {
+      await handleCancel();
+      return;
+    }
+    await handleSend();
   }, [handleCancel, handleSend, hasSession, isActionRunning]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
@@ -515,7 +601,7 @@ export function SessionChatView({
           {isActionRunning && (
             <span className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
-              接收中
+              {isConnected ? "接收中" : "执行中"}
             </span>
           )}
           <ContextUsageRing usage={tokenUsage} />
@@ -669,18 +755,19 @@ export function SessionChatView({
                   type="button"
                   disabled={
                     isSending ||
+                    isCancelling ||
                     (hasSession && isActionRunning
-                      ? !isConnected
+                      ? false
                       : customSend ? false : !inputValue.trim())
                   }
-                  onClick={handlePrimaryAction}
+                  onClick={() => { void handlePrimaryAction(); }}
                   className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
                     hasSession && isActionRunning
                       ? "border-border bg-background text-foreground hover:bg-secondary"
                       : "border-primary bg-primary text-primary-foreground hover:opacity-95"
                   }`}
                 >
-                  {isSending ? "…" : hasSession && isActionRunning ? "取消" : idleSendLabel}
+                  {isSending ? "…" : isCancelling ? "取消中…" : hasSession && isActionRunning ? "取消" : idleSendLabel}
                 </button>
               </div>
             </div>

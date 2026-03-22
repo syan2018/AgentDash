@@ -24,6 +24,7 @@ pub enum SessionExecutionState {
     },
     Interrupted {
         turn_id: Option<String>,
+        message: Option<String>,
     },
 }
 
@@ -98,13 +99,16 @@ fn plan_for_running_task(
                 context,
             })
         }
-        SessionExecutionState::Interrupted { turn_id } => {
+        SessionExecutionState::Interrupted { turn_id, message } => {
             let mut context = json!({
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
                 "execution_mode": task.execution_mode,
             });
+            if let Some(msg) = &message {
+                context["message"] = json!(msg);
+            }
 
             if task.execution_mode == TaskExecutionMode::AutoRetry {
                 if let Some(tracker) = restart_tracker {
@@ -207,7 +211,10 @@ pub async fn reconcile_running_tasks_on_boot(
                 }
 
                 let execution_state = match task.session_id.as_deref() {
-                    None => SessionExecutionState::Interrupted { turn_id: None },
+                    None => SessionExecutionState::Interrupted {
+                        turn_id: None,
+                        message: None,
+                    },
                     Some(session_id) => session_state_reader
                         .inspect_session_execution_state(session_id)
                         .await

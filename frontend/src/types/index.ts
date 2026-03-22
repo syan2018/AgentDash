@@ -671,6 +671,33 @@ export interface HookTraceEntry {
   diagnostics: HookDiagnosticEntry[];
 }
 
+export interface HookPendingAction {
+  id: string;
+  created_at_ms: number;
+  title: string;
+  summary: string;
+  action_type: string;
+  turn_id?: string | null;
+  source_trigger: string;
+  status: "pending" | "injected" | "resolved" | "dismissed";
+  last_injected_at_ms?: number | null;
+  resolved_at_ms?: number | null;
+  resolution_kind?: "adopted" | "rejected" | "completed" | "superseded" | "user_dismissed" | null;
+  resolution_note?: string | null;
+  resolution_turn_id?: string | null;
+  context_fragments: HookContextFragment[];
+  constraints: HookConstraint[];
+}
+
+export type SessionExecutionStatus = "idle" | "running" | "completed" | "failed" | "interrupted";
+
+export interface SessionExecutionState {
+  session_id: string;
+  status: SessionExecutionStatus;
+  turn_id?: string | null;
+  message?: string | null;
+}
+
 export interface ActiveWorkflowHookMetadata {
   workflow_id: string;
   workflow_key: string;
@@ -705,6 +732,7 @@ export interface HookSessionRuntimeInfo {
   snapshot: SessionHookSnapshot;
   diagnostics: HookDiagnosticEntry[];
   trace: HookTraceEntry[];
+  pending_actions: HookPendingAction[];
 }
 
 export interface ProjectSessionAgentContext {

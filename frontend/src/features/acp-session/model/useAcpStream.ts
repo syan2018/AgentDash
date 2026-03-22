@@ -18,7 +18,7 @@ import type {
   SessionNotification,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
-import { buildApiPath } from "../../../api/origin";
+import { cancelSession } from "../../../services/session";
 import type { AcpDisplayEntry, TokenUsageInfo } from "./types";
 import type { PromptSessionRequest } from "../../../services/executor";
 import { createAcpStreamTransport, type AcpStreamTransport } from "./streamTransport";
@@ -47,7 +47,7 @@ export interface UseAcpStreamResult {
   tokenUsage: TokenUsageInfo | null;
   reconnect: () => void;
   close: () => void;
-  sendCancel: () => void;
+  sendCancel: () => Promise<void>;
 }
 
 const FLUSH_INTERVAL_MS = 50;
@@ -364,15 +364,15 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
 
   enqueueNotificationRef.current = enqueueNotification;
 
-  const sendCancel = useCallback(() => {
-    void fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/cancel`), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    }).catch((e) => {
+  const sendCancel = useCallback(async () => {
+    try {
+      await cancelSession(sessionId);
+    } catch (e) {
       const err = e instanceof Error ? e : new Error("取消执行失败");
       setError(err);
       callbackRefs.current.onError?.(err);
-    });
+      throw err;
+    }
   }, [sessionId]);
 
   useEffect(() => {

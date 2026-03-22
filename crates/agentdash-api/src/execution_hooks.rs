@@ -18,9 +18,8 @@ use agentdash_domain::workflow::{
 };
 use agentdash_executor::{
     ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,
-    HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookOwnerSummary, HookPolicy, HookResolution, HookSourceLayer,
-    HookSourceRef, HookTrigger,
+    HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
+    HookOwnerSummary, HookPolicy, HookResolution, HookSourceLayer, HookSourceRef, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
 };
 use async_trait::async_trait;
@@ -239,13 +238,18 @@ impl AppExecutionHookProvider {
         let source_refs = active_workflow_source_refs(snapshot);
         resolution
             .diagnostics
-            .extend(decision.evidence.iter().map(|evidence| HookDiagnosticEntry {
-                code: evidence.code.clone(),
-                summary: evidence.summary.clone(),
-                detail: evidence.detail.clone(),
-                source_summary: source_summary.clone(),
-                source_refs: source_refs.clone(),
-            }));
+            .extend(
+                decision
+                    .evidence
+                    .iter()
+                    .map(|evidence| HookDiagnosticEntry {
+                        code: evidence.code.clone(),
+                        summary: evidence.summary.clone(),
+                        detail: evidence.detail.clone(),
+                        source_summary: source_summary.clone(),
+                        source_refs: source_refs.clone(),
+                    }),
+            );
 
         let Some(locator) = active_workflow_locator(snapshot) else {
             resolution.completion = Some(HookCompletionStatus {
@@ -735,10 +739,13 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
     }
 
     async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
-        let snapshot = query.snapshot.clone().unwrap_or_else(|| SessionHookSnapshot {
-            session_id: query.session_id.clone(),
-            ..SessionHookSnapshot::default()
-        });
+        let snapshot = query
+            .snapshot
+            .clone()
+            .unwrap_or_else(|| SessionHookSnapshot {
+                session_id: query.session_id.clone(),
+                ..SessionHookSnapshot::default()
+            });
         let mut resolution = HookResolution {
             policies: snapshot.policies.clone(),
             diagnostics: snapshot
@@ -1024,7 +1031,9 @@ fn active_workflow_locator(snapshot: &SessionHookSnapshot) -> Option<ActiveWorkf
     Some(ActiveWorkflowLocator { run_id, phase_key })
 }
 
-fn parse_completion_mode_tag(mode: &str) -> agentdash_domain::workflow::WorkflowPhaseCompletionMode {
+fn parse_completion_mode_tag(
+    mode: &str,
+) -> agentdash_domain::workflow::WorkflowPhaseCompletionMode {
     match mode {
         "session_ended" => agentdash_domain::workflow::WorkflowPhaseCompletionMode::SessionEnded,
         "checklist_passed" => {
@@ -1215,6 +1224,12 @@ fn normalized_hook_rules() -> &'static [NormalizedHookRule] {
             apply: rule_apply_checklist_pending_gate,
         },
         NormalizedHookRule {
+            key: "task_runtime:running_status:stop_gate",
+            trigger: HookTrigger::BeforeStop,
+            matches: rule_matches_task_running_stop_gate,
+            apply: rule_apply_task_running_stop_gate,
+        },
+        NormalizedHookRule {
             key: "workflow_completion:manual:notice",
             trigger: HookTrigger::BeforeStop,
             matches: rule_matches_manual_notice,
@@ -1275,8 +1290,7 @@ fn rule_apply_shell_exec_absolute_cwd_rewrite(
     resolution.rewritten_tool_input = Some(rewritten_args);
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_tool_shell_exec_cwd_rewritten".to_string(),
-        summary: "Hook 已把 shell_exec 的绝对 cwd 改写为相对 workspace root 的路径"
-            .to_string(),
+        summary: "Hook 已把 shell_exec 的绝对 cwd 改写为相对 workspace root 的路径".to_string(),
         detail: Some(format!("rewritten_cwd={rewritten_cwd}")),
         source_summary: vec![
             "tool:shell_exec".to_string(),
@@ -1374,9 +1388,7 @@ fn rule_apply_supervised_tool_approval(
 ) {
     let tool_name = ctx.query.tool_name.as_deref().unwrap_or("unknown_tool");
     resolution.approval_request = Some(HookApprovalRequest {
-        reason: format!(
-            "当前会话使用 SUPERVISED 权限策略，执行 `{tool_name}` 前需要用户审批。"
-        ),
+        reason: format!("当前会话使用 SUPERVISED 权限策略，执行 `{tool_name}` 前需要用户审批。"),
         details: Some(serde_json::json!({
             "policy": "supervised_tool_approval",
             "permission_policy": session_permission_policy(ctx.snapshot).unwrap_or("SUPERVISED"),
@@ -1400,8 +1412,7 @@ fn rule_matches_after_tool_refresh(ctx: &HookEvaluationContext<'_>) -> bool {
         return false;
     };
     !tool_call_failed(ctx.query.payload.as_ref())
-        && (is_update_task_status_tool(tool_name)
-            || is_report_workflow_artifact_tool(tool_name))
+        && (is_update_task_status_tool(tool_name) || is_report_workflow_artifact_tool(tool_name))
 }
 
 fn rule_apply_after_tool_refresh(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
@@ -1487,6 +1498,46 @@ fn rule_apply_checklist_pending_gate(
     });
 }
 
+fn rule_matches_task_running_stop_gate(ctx: &HookEvaluationContext<'_>) -> bool {
+    active_task_status(ctx.snapshot) == Some("running")
+        && workflow_completion_mode(ctx.snapshot) != Some("checklist_passed")
+}
+
+fn rule_apply_task_running_stop_gate(
+    _ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
+    resolution.context_fragments.push(HookContextFragment {
+        slot: "workflow".to_string(),
+        label: "before_stop_task_status_gate".to_string(),
+        content: [
+            "## Task Stop Gate",
+            "- 当前 session 关联的 Task 仍处于 `running`。",
+            "- 自然结束前，必须显式把 Task 迁移到新的终态或交接态。",
+            "- 正常完成实现/检查时，优先更新为 `awaiting_verification`。",
+            "- 如果执行失败，请显式更新为 `failed` 并说明原因。",
+        ]
+        .join("\n"),
+        source_summary: vec!["task_status:running".to_string()],
+        source_refs: Vec::new(),
+    });
+    resolution.constraints.push(HookConstraint {
+        key: "before_stop:task_status_running".to_string(),
+        description:
+            "当前 Task 仍为 running；请先显式更新 Task 状态（通常为 awaiting_verification / completed / failed），再结束 session。"
+                .to_string(),
+        source_summary: vec!["task_status:running".to_string()],
+        source_refs: Vec::new(),
+    });
+    resolution.diagnostics.push(HookDiagnosticEntry {
+        code: "before_stop_task_status_running".to_string(),
+        summary: "Task 仍处于 running，Hook 阻止当前 session 自然结束".to_string(),
+        detail: Some("expected_status=awaiting_verification|completed|failed".to_string()),
+        source_summary: vec!["task_status:running".to_string()],
+        source_refs: Vec::new(),
+    });
+}
+
 fn rule_matches_manual_notice(ctx: &HookEvaluationContext<'_>) -> bool {
     workflow_completion_mode(ctx.snapshot) == Some("manual")
 }
@@ -1517,15 +1568,18 @@ fn rule_matches_subagent_dispatch(ctx: &HookEvaluationContext<'_>) -> bool {
 
 fn rule_apply_subagent_dispatch(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
     let subagent_type = ctx.query.subagent_type.as_deref().unwrap_or("companion");
-    resolution.context_fragments.extend(ctx.snapshot.context_fragments.clone());
-    resolution.constraints.extend(ctx.snapshot.constraints.clone());
+    resolution
+        .context_fragments
+        .extend(ctx.snapshot.context_fragments.clone());
+    resolution
+        .constraints
+        .extend(ctx.snapshot.constraints.clone());
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_subagent_dispatch_prepared".to_string(),
         summary: format!(
             "已为 `{subagent_type}` 准备 companion/subagent dispatch 上下文与约束继承"
         ),
-        detail: workflow_phase_key(ctx.snapshot)
-            .map(|phase_key| format!("phase={phase_key}")),
+        detail: workflow_phase_key(ctx.snapshot).map(|phase_key| format!("phase={phase_key}")),
         source_summary: active_workflow_source_summary(ctx.snapshot),
         source_refs: active_workflow_source_refs(ctx.snapshot),
     });
@@ -1587,6 +1641,9 @@ fn rule_apply_subagent_result(ctx: &HookEvaluationContext<'_>, resolution: &mut 
     let adoption_mode =
         extract_payload_str(ctx.query.payload.as_ref(), "adoption_mode").unwrap_or("suggestion");
     let dispatch_id = extract_payload_str(ctx.query.payload.as_ref(), "dispatch_id").unwrap_or("-");
+    let findings = extract_payload_string_list(ctx.query.payload.as_ref(), "findings");
+    let follow_ups = extract_payload_string_list(ctx.query.payload.as_ref(), "follow_ups");
+    let artifact_refs = extract_payload_string_list(ctx.query.payload.as_ref(), "artifact_refs");
 
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "subagent_result_recorded".to_string(),
@@ -1597,6 +1654,73 @@ fn rule_apply_subagent_result(ctx: &HookEvaluationContext<'_>, resolution: &mut 
         source_summary: active_workflow_source_summary(ctx.snapshot),
         source_refs: active_workflow_source_refs(ctx.snapshot),
     });
+
+    match adoption_mode {
+        "follow_up_required" | "blocking_review" => {
+            let is_blocking = adoption_mode == "blocking_review";
+            resolution.context_fragments.push(HookContextFragment {
+                slot: "workflow".to_string(),
+                label: if is_blocking {
+                    "subagent_blocking_review".to_string()
+                } else {
+                    "subagent_follow_up_required".to_string()
+                },
+                content: build_subagent_result_context(
+                    subagent_type,
+                    summary,
+                    status,
+                    dispatch_id,
+                    companion_session_id,
+                    &findings,
+                    &follow_ups,
+                    &artifact_refs,
+                    is_blocking,
+                ),
+                source_summary: active_workflow_source_summary(ctx.snapshot),
+                source_refs: active_workflow_source_refs(ctx.snapshot),
+            });
+            resolution.constraints.push(HookConstraint {
+                key: if is_blocking {
+                    "subagent_result:blocking_review".to_string()
+                } else {
+                    "subagent_result:follow_up_required".to_string()
+                },
+                description: if is_blocking {
+                    format!(
+                        "当前 `{subagent_type}` 回流被标记为 blocking_review；主 session 必须先明确采纳/拒绝/拆解该结果，再继续其它推进或自然结束。"
+                    )
+                } else {
+                    format!(
+                        "当前 `{subagent_type}` 回流要求 follow-up；主 session 需要先吸收结果并落实下一步动作，再继续推进。"
+                    )
+                },
+                source_summary: active_workflow_source_summary(ctx.snapshot),
+                source_refs: active_workflow_source_refs(ctx.snapshot),
+            });
+            resolution.diagnostics.push(HookDiagnosticEntry {
+                code: if is_blocking {
+                    "subagent_result_blocking_review_enqueued".to_string()
+                } else {
+                    "subagent_result_follow_up_enqueued".to_string()
+                },
+                summary: if is_blocking {
+                    "已把 companion 回流升级为阻塞式 review 待办，要求主 session 优先处理"
+                        .to_string()
+                } else {
+                    "已把 companion 回流升级为 follow-up 待办，要求主 session 继续处理".to_string()
+                },
+                detail: Some(format!(
+                    "findings={}, follow_ups={}, artifact_refs={}",
+                    findings.len(),
+                    follow_ups.len(),
+                    artifact_refs.len()
+                )),
+                source_summary: active_workflow_source_summary(ctx.snapshot),
+                source_refs: active_workflow_source_refs(ctx.snapshot),
+            });
+        }
+        _ => {}
+    }
 }
 
 fn extract_tool_arg<'a>(payload: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {
@@ -1612,6 +1736,63 @@ fn extract_payload_str<'a>(payload: Option<&'a serde_json::Value>, key: &str) ->
         .and_then(serde_json::Value::as_str)
 }
 
+fn extract_payload_string_list(payload: Option<&serde_json::Value>, key: &str) -> Vec<String> {
+    payload
+        .and_then(|value| value.get(key))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn build_subagent_result_context(
+    subagent_type: &str,
+    summary: &str,
+    status: &str,
+    dispatch_id: &str,
+    companion_session_id: &str,
+    findings: &[String],
+    follow_ups: &[String],
+    artifact_refs: &[String],
+    is_blocking: bool,
+) -> String {
+    let mut sections = vec![if is_blocking {
+        "## Companion Blocking Review".to_string()
+    } else {
+        "## Companion Follow-up".to_string()
+    }];
+    sections.push(format!("- 类型: {subagent_type}"));
+    sections.push(format!("- status: {status}"));
+    sections.push(format!("- dispatch_id: {dispatch_id}"));
+    sections.push(format!("- companion_session_id: {companion_session_id}"));
+    sections.push(format!("- 摘要: {summary}"));
+
+    if !findings.is_empty() {
+        sections.push("\n### 关键发现".to_string());
+        sections.extend(findings.iter().map(|item| format!("- {item}")));
+    }
+    if !follow_ups.is_empty() {
+        sections.push("\n### 建议后续动作".to_string());
+        sections.extend(follow_ups.iter().map(|item| format!("- {item}")));
+    }
+    if !artifact_refs.is_empty() {
+        sections.push("\n### 相关产物".to_string());
+        sections.extend(artifact_refs.iter().map(|item| format!("- {item}")));
+    }
+
+    sections.push(if is_blocking {
+        "\n请先明确这份 companion 结果如何被主 session 采纳、拒绝或拆解，不要直接忽略后继续结束本轮。"
+            .to_string()
+    } else {
+        "\n请把这份 companion 结果吸收进主 session 的下一步行动中，再继续推进。".to_string()
+    });
+    sections.join("\n")
+}
+
 fn shell_exec_rewritten_args(
     snapshot: &SessionHookSnapshot,
     payload: Option<&serde_json::Value>,
@@ -1624,10 +1805,8 @@ fn shell_exec_rewritten_args(
 
     let rewritten_cwd = absolutize_cwd_to_workspace_relative(workspace_root, cwd)?;
     let mut args = payload?.get("args")?.clone();
-    args.as_object_mut()?.insert(
-        "cwd".to_string(),
-        serde_json::Value::String(rewritten_cwd),
-    );
+    args.as_object_mut()?
+        .insert("cwd".to_string(), serde_json::Value::String(rewritten_cwd));
     Some(args)
 }
 
@@ -1678,9 +1857,7 @@ fn workflow_record_artifact_type_tag(
     artifact_type: agentdash_domain::workflow::WorkflowRecordArtifactType,
 ) -> &'static str {
     match artifact_type {
-        agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary => {
-            "session_summary"
-        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary => "session_summary",
         agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate => "journal_update",
         agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion => {
             "archive_suggestion"
@@ -1702,13 +1879,13 @@ fn parse_workflow_record_artifact_type_tag(
         "journal_update" => {
             Some(agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate)
         }
-        "archive_suggestion" => Some(
-            agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion,
-        ),
+        "archive_suggestion" => {
+            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion)
+        }
         "phase_note" => Some(agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote),
-        "checklist_evidence" => Some(
-            agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence,
-        ),
+        "checklist_evidence" => {
+            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence)
+        }
         _ => None,
     }
 }
@@ -1808,8 +1985,8 @@ mod tests {
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
     };
     use agentdash_executor::{
-        ExecutionHookProvider, HookError, HookSessionRuntime, HookSessionRuntimeSnapshot,
-        HookRuntimeDelegate, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery,
+        ExecutionHookProvider, HookError, HookRuntimeDelegate, HookSessionRuntime,
+        HookSessionRuntimeSnapshot, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery,
     };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
@@ -2121,7 +2298,60 @@ mod tests {
         assert!(decision.should_complete_phase);
         assert_eq!(
             decision.summary.as_deref(),
-            Some("Task 状态已进入 `completed`，且存在 checklist evidence，满足 checklist_passed completion")
+            Some(
+                "Task 状态已进入 `completed`，且存在 checklist evidence，满足 checklist_passed completion"
+            )
+        );
+    }
+
+    #[test]
+    fn before_stop_blocks_when_task_still_running_without_active_workflow() {
+        let snapshot = SessionHookSnapshot {
+            session_id: "sess-task-running".to_string(),
+            metadata: Some(serde_json::json!({
+                "active_task": {
+                    "task_id": "task-1",
+                    "status": "running",
+                }
+            })),
+            ..SessionHookSnapshot::default()
+        };
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeStop,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: None,
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"task_runtime:running_status:stop_gate".to_string())
+        );
+        assert!(
+            resolution
+                .constraints
+                .iter()
+                .any(|constraint| constraint.key == "before_stop:task_status_running")
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "before_stop_task_status_running")
         );
     }
 
@@ -2150,7 +2380,10 @@ mod tests {
             &self,
             query: HookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
-            let snapshot = query.snapshot.clone().unwrap_or_else(|| self.snapshot.clone());
+            let snapshot = query
+                .snapshot
+                .clone()
+                .unwrap_or_else(|| self.snapshot.clone());
             let mut resolution = HookResolution::default();
             apply_hook_rules(
                 HookEvaluationContext {
@@ -2343,7 +2576,8 @@ mod tests {
 
     #[test]
     fn subagent_result_records_structured_return_channel_diagnostic() {
-        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let snapshot =
+            snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -2381,6 +2615,24 @@ mod tests {
                 .iter()
                 .any(|entry| entry.code == "subagent_result_recorded"
                     && entry.summary.contains("子 agent 已完成 review"))
+        );
+        assert_eq!(resolution.context_fragments.len(), 1);
+        assert_eq!(resolution.constraints.len(), 1);
+        assert!(
+            resolution.context_fragments[0]
+                .label
+                .contains("subagent_blocking_review")
+        );
+        assert!(
+            resolution.constraints[0]
+                .key
+                .contains("subagent_result:blocking_review")
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "subagent_result_blocking_review_enqueued")
         );
     }
 }

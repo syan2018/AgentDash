@@ -170,19 +170,15 @@ fn build_turn_terminal_notification(
     session_id: &str,
     source: &AgentDashSourceV1,
     turn_id: &str,
-    success: bool,
+    terminal_kind: TurnTerminalKind,
     message: Option<String>,
 ) -> SessionNotification {
     build_turn_lifecycle_notification(
         session_id,
         source,
         turn_id,
-        if success {
-            "turn_completed"
-        } else {
-            "turn_failed"
-        },
-        if success { "info" } else { "error" },
+        terminal_kind.event_type(),
+        terminal_kind.severity(),
         message,
     )
 }
@@ -226,16 +222,29 @@ fn parse_turn_id(meta: Option<&Meta>) -> Option<String> {
         .filter(|turn_id| !turn_id.is_empty())
 }
 
-fn parse_turn_terminal_event(meta: Option<&Meta>) -> Option<(String, bool, Option<String>)> {
+fn parse_turn_terminal_event(
+    meta: Option<&Meta>,
+) -> Option<(String, TurnTerminalKind, Option<String>)> {
     let parsed = parse_agentdash_meta(meta?)?;
     let trace = parsed.trace?;
     let turn_id = trace.turn_id?;
     let event = parsed.event?;
 
     match event.r#type.as_str() {
-        "turn_completed" => Some((turn_id, true, event.message)),
-        "turn_failed" => Some((turn_id, false, event.message)),
+        "turn_completed" => Some((turn_id, TurnTerminalKind::Completed, event.message)),
+        "turn_failed" => Some((turn_id, TurnTerminalKind::Failed, event.message)),
+        "turn_interrupted" => Some((turn_id, TurnTerminalKind::Interrupted, event.message)),
         _ => None,
+    }
+}
+
+fn build_session_runtime(tx: broadcast::Sender<SessionNotification>) -> SessionRuntime {
+    SessionRuntime {
+        tx,
+        running: false,
+        current_turn_id: None,
+        cancel_requested: false,
+        hook_session: None,
     }
 }
 
@@ -281,6 +290,8 @@ pub struct ExecutorHub {
 struct SessionRuntime {
     tx: broadcast::Sender<SessionNotification>,
     running: bool,
+    current_turn_id: Option<String>,
+    cancel_requested: bool,
     hook_session: Option<SharedHookSessionRuntime>,
 }
 
@@ -299,7 +310,41 @@ pub enum SessionExecutionState {
     },
     Interrupted {
         turn_id: Option<String>,
+        message: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnTerminalKind {
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+impl TurnTerminalKind {
+    fn event_type(self) -> &'static str {
+        match self {
+            Self::Completed => "turn_completed",
+            Self::Failed => "turn_failed",
+            Self::Interrupted => "turn_interrupted",
+        }
+    }
+
+    fn severity(self) -> &'static str {
+        match self {
+            Self::Completed => "info",
+            Self::Failed => "error",
+            Self::Interrupted => "warning",
+        }
+    }
+
+    fn state_tag(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
+        }
+    }
 }
 
 impl ExecutorHub {
@@ -375,15 +420,18 @@ impl ExecutorHub {
         &self,
         session_id: &str,
     ) -> std::io::Result<SessionExecutionState> {
-        let running = {
+        let (running, live_turn_id) = {
             let sessions = self.sessions.lock().await;
-            sessions.get(session_id).map(|runtime| runtime.running)
+            sessions
+                .get(session_id)
+                .map(|runtime| (runtime.running, runtime.current_turn_id.clone()))
         }
-        .unwrap_or(false);
+        .unwrap_or((false, None));
 
         let history = self.store.read_all(session_id).await?;
         let mut latest_turn_id: Option<String> = None;
-        let mut terminal_by_turn: HashMap<String, (bool, Option<String>)> = HashMap::new();
+        let mut terminal_by_turn: HashMap<String, (TurnTerminalKind, Option<String>)> =
+            HashMap::new();
 
         for notification in history {
             match &notification.update {
@@ -405,19 +453,30 @@ impl ExecutorHub {
 
         if running {
             return Ok(SessionExecutionState::Running {
-                turn_id: latest_turn_id,
+                turn_id: live_turn_id.or(latest_turn_id),
             });
         }
 
         if let Some(turn_id) = latest_turn_id {
-            if let Some((success, message)) = terminal_by_turn.remove(&turn_id) {
-                if success {
-                    return Ok(SessionExecutionState::Completed { turn_id });
+            if let Some((terminal_kind, message)) = terminal_by_turn.remove(&turn_id) {
+                match terminal_kind {
+                    TurnTerminalKind::Completed => {
+                        return Ok(SessionExecutionState::Completed { turn_id });
+                    }
+                    TurnTerminalKind::Failed => {
+                        return Ok(SessionExecutionState::Failed { turn_id, message });
+                    }
+                    TurnTerminalKind::Interrupted => {
+                        return Ok(SessionExecutionState::Interrupted {
+                            turn_id: Some(turn_id),
+                            message,
+                        });
+                    }
                 }
-                return Ok(SessionExecutionState::Failed { turn_id, message });
             }
             return Ok(SessionExecutionState::Interrupted {
                 turn_id: Some(turn_id),
+                message: None,
             });
         }
 
@@ -439,11 +498,7 @@ impl ExecutorHub {
         let mut sessions = self.sessions.lock().await;
         let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
             let (tx, _rx) = broadcast::channel(1024);
-            SessionRuntime {
-                tx,
-                running: false,
-                hook_session: None,
-            }
+            build_session_runtime(tx)
         });
         runtime.tx.subscribe()
     }
@@ -456,6 +511,63 @@ impl ExecutorHub {
         sessions
             .get(session_id)
             .and_then(|runtime| runtime.hook_session.clone())
+    }
+
+    pub async fn ensure_hook_session_runtime(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+        {
+            let sessions = self.sessions.lock().await;
+            if let Some(runtime) = sessions
+                .get(session_id)
+                .and_then(|runtime| runtime.hook_session.clone())
+            {
+                return Ok(Some(runtime));
+            }
+        }
+
+        if self.store.read_meta(session_id).await?.is_none() {
+            return Ok(None);
+        }
+
+        let Some(provider) = self.hook_provider.as_ref() else {
+            return Ok(None);
+        };
+
+        let snapshot = provider
+            .load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.map(ToString::to_string),
+                connector_id: None,
+                executor: None,
+                permission_policy: None,
+                working_directory: None,
+                workspace_root: None,
+                owners: Vec::new(),
+                tags: Vec::new(),
+            })
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!("重建会话 Hook snapshot 失败: {error}"))
+            })?;
+
+        let rebuilt_runtime = Arc::new(HookSessionRuntime::new(
+            session_id.to_string(),
+            provider.clone(),
+            snapshot,
+        ));
+
+        let mut sessions = self.sessions.lock().await;
+        let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+            let (tx, _rx) = broadcast::channel(1024);
+            build_session_runtime(tx)
+        });
+        if runtime.hook_session.is_none() {
+            runtime.hook_session = Some(rebuilt_runtime.clone());
+        }
+        Ok(runtime.hook_session.clone())
     }
 
     /// 多轮对话：同一 session 允许多次调用，但同一时间只允许一次活跃执行。
@@ -479,16 +591,13 @@ impl ExecutorHub {
         let resolved_payload = req
             .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
+        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
 
         let tx = {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = broadcast::channel(1024);
-                SessionRuntime {
-                    tx,
-                    running: false,
-                    hook_session: None,
-                }
+                build_session_runtime(tx)
             });
             if runtime.running {
                 return Err(ConnectorError::Runtime(
@@ -496,12 +605,10 @@ impl ExecutorHub {
                 ));
             }
             runtime.running = true;
+            runtime.current_turn_id = Some(turn_id.clone());
+            runtime.cancel_requested = false;
             runtime.tx.clone()
         };
-
-        let executor_config = req
-            .executor_config
-            .unwrap_or_else(crate::connector::AgentDashExecutorConfig::default);
 
         let workspace_root = req
             .workspace_root
@@ -509,8 +616,31 @@ impl ExecutorHub {
             .unwrap_or_else(|| self.workspace_root.clone());
         let working_directory = resolve_working_dir(&workspace_root, req.working_dir.as_deref());
 
-        // 该 turn_id 必须在“用户消息注入”和“连接器流”之间保持一致，便于前端归并。
-        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
+        let title_hint = resolved_payload
+            .text_prompt
+            .chars()
+            .take(30)
+            .collect::<String>();
+        let store = self.store.clone();
+        let sid = session_id.to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut session_meta = match store.read_meta(&sid).await {
+            Ok(Some(meta)) => meta,
+            Ok(None) | Err(_) => SessionMeta {
+                id: sid.clone(),
+                title: title_hint.clone(),
+                created_at: now,
+                updated_at: now,
+                executor_config: None,
+                executor_session_id: None,
+                companion_context: None,
+            },
+        };
+        let executor_config = req
+            .executor_config
+            .clone()
+            .or_else(|| session_meta.executor_config.clone())
+            .unwrap_or_else(crate::connector::AgentDashExecutorConfig::default);
 
         let hook_session = match self
             .load_session_hook_runtime(
@@ -528,6 +658,8 @@ impl ExecutorHub {
                 let mut sessions = self.sessions.lock().await;
                 if let Some(runtime) = sessions.get_mut(session_id) {
                     runtime.running = false;
+                    runtime.current_turn_id = None;
+                    runtime.cancel_requested = false;
                     runtime.hook_session = None;
                 }
                 return Err(error);
@@ -552,26 +684,6 @@ impl ExecutorHub {
             hook_session: hook_session.clone(),
         };
 
-        let title_hint = resolved_payload
-            .text_prompt
-            .chars()
-            .take(30)
-            .collect::<String>();
-        let store = self.store.clone();
-        let sid = session_id.to_string();
-        let now = chrono::Utc::now().timestamp_millis();
-        let mut session_meta = match store.read_meta(&sid).await {
-            Ok(Some(meta)) => meta,
-            Ok(None) | Err(_) => SessionMeta {
-                id: sid.clone(),
-                title: title_hint.clone(),
-                created_at: now,
-                updated_at: now,
-                executor_config: None,
-                executor_session_id: None,
-                companion_context: None,
-            },
-        };
         session_meta.updated_at = now;
         session_meta.executor_config = Some(context.executor_config.clone());
         if session_meta.title.trim().is_empty() {
@@ -637,8 +749,19 @@ impl ExecutorHub {
                 let mut sessions = self.sessions.lock().await;
                 if let Some(runtime) = sessions.get_mut(session_id) {
                     runtime.running = false;
+                    runtime.current_turn_id = None;
+                    runtime.cancel_requested = false;
                     runtime.hook_session = None;
                 }
+                let failed = build_turn_terminal_notification(
+                    &sid,
+                    &source,
+                    &turn_id,
+                    TurnTerminalKind::Failed,
+                    Some(error.to_string()),
+                );
+                let _ = store.append(&sid, &failed).await;
+                let _ = tx.send(failed);
                 return Err(error);
             }
         };
@@ -650,7 +773,7 @@ impl ExecutorHub {
         tokio::spawn(async move {
             let mut terminal_notification: Option<SessionNotification> = None;
             let mut last_executor_session_id: Option<String> = None;
-            let mut terminal_success = true;
+            let mut terminal_kind = TurnTerminalKind::Completed;
             let mut terminal_message: Option<String> = None;
             while let Some(next) = stream.next().await {
                 match next {
@@ -682,13 +805,29 @@ impl ExecutorHub {
                     }
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
-                        terminal_success = false;
-                        terminal_message = Some(e.to_string());
+                        let (cancel_requested, live_turn_matches) = {
+                            let guard = sessions.lock().await;
+                            match guard.get(&session_id) {
+                                Some(runtime) => (
+                                    runtime.cancel_requested,
+                                    runtime.current_turn_id.as_deref()
+                                        == Some(turn_id_for_spawn.as_str()),
+                                ),
+                                None => (false, false),
+                            }
+                        };
+                        if cancel_requested && live_turn_matches {
+                            terminal_kind = TurnTerminalKind::Interrupted;
+                            terminal_message = Some("执行已取消".to_string());
+                        } else {
+                            terminal_kind = TurnTerminalKind::Failed;
+                            terminal_message = Some(e.to_string());
+                        }
                         terminal_notification = Some(build_turn_terminal_notification(
                             &session_id,
                             &source,
                             &turn_id_for_spawn,
-                            false,
+                            terminal_kind,
                             terminal_message.clone(),
                         ));
                         break;
@@ -697,11 +836,27 @@ impl ExecutorHub {
             }
 
             if terminal_notification.is_none() {
+                let (cancel_requested, live_turn_matches) = {
+                    let guard = sessions.lock().await;
+                    match guard.get(&session_id) {
+                        Some(runtime) => (
+                            runtime.cancel_requested,
+                            runtime.current_turn_id.as_deref() == Some(turn_id_for_spawn.as_str()),
+                        ),
+                        None => (false, false),
+                    }
+                };
+                if cancel_requested && live_turn_matches {
+                    terminal_kind = TurnTerminalKind::Interrupted;
+                    if terminal_message.is_none() {
+                        terminal_message = Some("执行已取消".to_string());
+                    }
+                }
                 terminal_notification = Some(build_turn_terminal_notification(
                     &session_id,
                     &source,
                     &turn_id_for_spawn,
-                    true,
+                    terminal_kind,
                     terminal_message.clone(),
                 ));
             }
@@ -722,7 +877,7 @@ impl ExecutorHub {
                         subagent_type: None,
                         snapshot: Some(hook_session.snapshot()),
                         payload: Some(serde_json::json!({
-                            "terminal_state": if terminal_success { "completed" } else { "failed" },
+                            "terminal_state": terminal_kind.state_tag(),
                             "message": terminal_message,
                         })),
                     })
@@ -786,6 +941,8 @@ impl ExecutorHub {
             let mut guard = sessions.lock().await;
             if let Some(runtime) = guard.get_mut(&session_id) {
                 runtime.running = false;
+                runtime.current_turn_id = None;
+                runtime.cancel_requested = false;
             }
         });
 
@@ -818,11 +975,7 @@ impl ExecutorHub {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = broadcast::channel(1024);
-                SessionRuntime {
-                    tx,
-                    running: false,
-                    hook_session: None,
-                }
+                build_session_runtime(tx)
             });
             runtime.tx.clone()
         };
@@ -832,7 +985,74 @@ impl ExecutorHub {
     }
 
     pub async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-        self.connector.cancel(session_id).await
+        let (running, current_turn_id, tx) = {
+            let mut sessions = self.sessions.lock().await;
+            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+                let (tx, _rx) = broadcast::channel(1024);
+                build_session_runtime(tx)
+            });
+            if runtime.running {
+                runtime.cancel_requested = true;
+            }
+            (
+                runtime.running,
+                runtime.current_turn_id.clone(),
+                runtime.tx.clone(),
+            )
+        };
+
+        if running {
+            self.connector.cancel(session_id).await?;
+            return Ok(());
+        }
+
+        let history = self
+            .store
+            .read_all(session_id)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+        let mut latest_turn_id = current_turn_id;
+        let mut terminal_by_turn: HashMap<String, (TurnTerminalKind, Option<String>)> =
+            HashMap::new();
+        for notification in history {
+            match &notification.update {
+                SessionUpdate::UserMessageChunk(chunk) => {
+                    if let Some(turn_id) = parse_turn_id(chunk.meta.as_ref()) {
+                        latest_turn_id = Some(turn_id);
+                    }
+                }
+                SessionUpdate::SessionInfoUpdate(info) => {
+                    if let Some((turn_id, terminal_kind, message)) =
+                        parse_turn_terminal_event(info.meta.as_ref())
+                    {
+                        terminal_by_turn.insert(turn_id, (terminal_kind, message));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let Some(turn_id) = latest_turn_id else {
+            return Ok(());
+        };
+        if terminal_by_turn.contains_key(&turn_id) {
+            return Ok(());
+        }
+
+        let source = AgentDashSourceV1::new(self.connector.connector_id(), "local_executor");
+        let interrupted = build_turn_terminal_notification(
+            session_id,
+            &source,
+            &turn_id,
+            TurnTerminalKind::Interrupted,
+            Some("检测到未收尾的旧执行，已手动标记为 interrupted".to_string()),
+        );
+        self.store
+            .append(session_id, &interrupted)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+        let _ = tx.send(interrupted);
+        Ok(())
     }
 
     pub async fn approve_tool_call(
@@ -840,7 +1060,9 @@ impl ExecutorHub {
         session_id: &str,
         tool_call_id: &str,
     ) -> Result<(), ConnectorError> {
-        self.connector.approve_tool_call(session_id, tool_call_id).await
+        self.connector
+            .approve_tool_call(session_id, tool_call_id)
+            .await
     }
 
     pub async fn reject_tool_call(
@@ -1015,7 +1237,8 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use tokio::sync::Mutex as TokioMutex;
+    use tokio::sync::{Mutex as TokioMutex, mpsc};
+    use tokio_stream::wrappers::ReceiverStream;
 
     #[test]
     fn resolve_prompt_payload_from_text_prompt() {
@@ -1228,5 +1451,357 @@ mod tests {
         let context = contexts.last().expect("context should be recorded");
         assert_eq!(context.workspace_root, workspace.path().to_path_buf());
         assert_eq!(context.working_directory, workspace.path().join("src"));
+    }
+
+    #[tokio::test]
+    async fn start_prompt_reuses_existing_session_executor_config() {
+        #[derive(Default)]
+        struct RecordingConnector {
+            contexts: Arc<TokioMutex<Vec<ExecutionContext>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentConnector for RecordingConnector {
+            fn connector_id(&self) -> &'static str {
+                "recording"
+            }
+
+            fn connector_type(&self) -> crate::connector::ConnectorType {
+                crate::connector::ConnectorType::LocalExecutor
+            }
+
+            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
+                crate::connector::ConnectorCapabilities::default()
+            }
+
+            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+                vec![crate::connector::ExecutorInfo {
+                    id: "PI_AGENT".to_string(),
+                    name: "PI Agent".to_string(),
+                    variants: Vec::new(),
+                    available: true,
+                }]
+            }
+
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                context: ExecutionContext,
+            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+                self.contexts.lock().await.push(context);
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+        }
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let connector = Arc::new(RecordingConnector::default());
+        let hub = ExecutorHub::new(base.path().to_path_buf(), connector.clone());
+
+        let session = hub
+            .create_session("reuse existing executor")
+            .await
+            .expect("create session");
+
+        hub.update_session_meta(&session.id, |meta| {
+            meta.executor_config = Some(crate::connector::AgentDashExecutorConfig::new("PI_AGENT"));
+        })
+        .await
+        .expect("update meta should succeed");
+
+        hub.start_prompt(
+            &session.id,
+            PromptSessionRequest {
+                prompt: Some("hello".to_string()),
+                prompt_blocks: None,
+                working_dir: None,
+                env: HashMap::new(),
+                executor_config: None,
+                mcp_servers: vec![],
+                workspace_root: None,
+                address_space: None,
+            },
+        )
+        .await
+        .expect("prompt should start");
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let contexts = connector.contexts.lock().await;
+        let context = contexts.last().expect("context should be recorded");
+        assert_eq!(context.executor_config.executor, "PI_AGENT");
+    }
+
+    #[tokio::test]
+    async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
+        struct FailingConnector;
+
+        #[async_trait::async_trait]
+        impl AgentConnector for FailingConnector {
+            fn connector_id(&self) -> &'static str {
+                "failing"
+            }
+
+            fn connector_type(&self) -> crate::connector::ConnectorType {
+                crate::connector::ConnectorType::LocalExecutor
+            }
+
+            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
+                crate::connector::ConnectorCapabilities::default()
+            }
+
+            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+                Vec::new()
+            }
+
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                _context: ExecutionContext,
+            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+                Err(ConnectorError::Runtime(
+                    "connector setup failed".to_string(),
+                ))
+            }
+
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+        }
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = ExecutorHub::new(base.path().to_path_buf(), Arc::new(FailingConnector));
+
+        let error = hub
+            .start_prompt(
+                "sess-failing",
+                PromptSessionRequest {
+                    prompt: Some("hello".to_string()),
+                    prompt_blocks: None,
+                    working_dir: None,
+                    env: HashMap::new(),
+                    executor_config: None,
+                    mcp_servers: vec![],
+                    workspace_root: None,
+                    address_space: None,
+                },
+            )
+            .await
+            .expect_err("prompt should fail");
+        assert!(error.to_string().contains("connector setup failed"));
+
+        let history = hub
+            .store
+            .read_all("sess-failing")
+            .await
+            .expect("history should load");
+        let terminal = history
+            .iter()
+            .filter_map(|notification| match &notification.update {
+                SessionUpdate::SessionInfoUpdate(info) => {
+                    parse_turn_terminal_event(info.meta.as_ref())
+                }
+                _ => None,
+            })
+            .last()
+            .expect("terminal event should exist");
+        assert_eq!(terminal.1, TurnTerminalKind::Failed);
+        assert_eq!(
+            terminal.2.as_deref(),
+            Some("执行器运行错误: connector setup failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_marks_running_turn_interrupted() {
+        #[derive(Default)]
+        struct CancelAwareConnector {
+            streams: Arc<
+                TokioMutex<
+                    HashMap<String, mpsc::Sender<Result<SessionNotification, ConnectorError>>>,
+                >,
+            >,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentConnector for CancelAwareConnector {
+            fn connector_id(&self) -> &'static str {
+                "cancel-aware"
+            }
+
+            fn connector_type(&self) -> crate::connector::ConnectorType {
+                crate::connector::ConnectorType::LocalExecutor
+            }
+
+            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
+                crate::connector::ConnectorCapabilities::default()
+            }
+
+            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+                Vec::new()
+            }
+
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn prompt(
+                &self,
+                session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                _context: ExecutionContext,
+            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+                let (tx, rx) = mpsc::channel(4);
+                self.streams.lock().await.insert(session_id.to_string(), tx);
+                Ok(Box::pin(ReceiverStream::new(rx)))
+            }
+
+            async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
+                self.streams.lock().await.remove(session_id);
+                Ok(())
+            }
+
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+        }
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let connector = Arc::new(CancelAwareConnector::default());
+        let hub = ExecutorHub::new(base.path().to_path_buf(), connector);
+
+        let turn_id = hub
+            .start_prompt(
+                "sess-cancel",
+                PromptSessionRequest {
+                    prompt: Some("hello".to_string()),
+                    prompt_blocks: None,
+                    working_dir: None,
+                    env: HashMap::new(),
+                    executor_config: None,
+                    mcp_servers: vec![],
+                    workspace_root: None,
+                    address_space: None,
+                },
+            )
+            .await
+            .expect("prompt should start");
+
+        hub.cancel("sess-cancel")
+            .await
+            .expect("cancel should succeed");
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+        let state = hub
+            .inspect_session_execution_state("sess-cancel")
+            .await
+            .expect("state should load");
+        assert_eq!(
+            state,
+            SessionExecutionState::Interrupted {
+                turn_id: Some(turn_id.clone()),
+                message: Some("执行已取消".to_string()),
+            }
+        );
+
+        let history = hub
+            .store
+            .read_all("sess-cancel")
+            .await
+            .expect("history should load");
+        let terminal = history
+            .iter()
+            .filter_map(|notification| match &notification.update {
+                SessionUpdate::SessionInfoUpdate(info) => {
+                    parse_turn_terminal_event(info.meta.as_ref())
+                }
+                _ => None,
+            })
+            .last()
+            .expect("terminal event should exist");
+        assert_eq!(terminal.0, turn_id);
+        assert_eq!(terminal.1, TurnTerminalKind::Interrupted);
+        assert_eq!(terminal.2.as_deref(), Some("执行已取消"));
     }
 }

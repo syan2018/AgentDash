@@ -25,7 +25,9 @@ use agentdash_application::story::context_builder::{
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
-use agentdash_executor::{HookSessionRuntimeSnapshot, PromptSessionRequest, SessionMeta};
+use agentdash_executor::{
+    HookSessionRuntimeSnapshot, PromptSessionRequest, SessionExecutionState, SessionMeta,
+};
 use agentdash_mcp::injection::McpInjectionConfig;
 use serde::Serialize;
 
@@ -142,8 +144,9 @@ pub async fn get_session_hook_runtime(
     let runtime = state
         .services
         .executor_hub
-        .get_hook_session_runtime(&session_id)
+        .ensure_hook_session_runtime(&session_id, None)
         .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
         .ok_or_else(|| {
             ApiError::NotFound(format!(
                 "session {} 当前没有可用的 hook runtime",
@@ -151,6 +154,71 @@ pub async fn get_session_hook_runtime(
             ))
         })?;
     Ok(Json(runtime.runtime_snapshot()))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionExecutionStateResponse {
+    pub session_id: String,
+    pub status: String,
+    pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+pub async fn get_session_state(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionExecutionStateResponse>, ApiError> {
+    state
+        .services
+        .executor_hub
+        .get_session_meta(&session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
+
+    let execution_state = state
+        .services
+        .executor_hub
+        .inspect_session_execution_state(&session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let response = match execution_state {
+        SessionExecutionState::Idle => SessionExecutionStateResponse {
+            session_id,
+            status: "idle".to_string(),
+            turn_id: None,
+            message: None,
+        },
+        SessionExecutionState::Running { turn_id } => SessionExecutionStateResponse {
+            session_id,
+            status: "running".to_string(),
+            turn_id,
+            message: None,
+        },
+        SessionExecutionState::Completed { turn_id } => SessionExecutionStateResponse {
+            session_id,
+            status: "completed".to_string(),
+            turn_id: Some(turn_id),
+            message: None,
+        },
+        SessionExecutionState::Failed { turn_id, message } => SessionExecutionStateResponse {
+            session_id,
+            status: "failed".to_string(),
+            turn_id: Some(turn_id),
+            message,
+        },
+        SessionExecutionState::Interrupted { turn_id, message } => SessionExecutionStateResponse {
+            session_id,
+            status: "interrupted".to_string(),
+            turn_id,
+            message,
+        },
+    };
+
+    Ok(Json(response))
 }
 
 #[derive(Debug, Serialize)]
@@ -623,9 +691,34 @@ pub async fn cancel_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    Ok(Json(
-        serde_json::json!({ "cancelled": true, "sessionId": session_id }),
-    ))
+    let execution_state = state
+        .services
+        .executor_hub
+        .inspect_session_execution_state(&session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let state_payload = match execution_state {
+        SessionExecutionState::Idle => serde_json::json!({ "status": "idle" }),
+        SessionExecutionState::Running { turn_id } => {
+            serde_json::json!({ "status": "running", "turn_id": turn_id })
+        }
+        SessionExecutionState::Completed { turn_id } => {
+            serde_json::json!({ "status": "completed", "turn_id": turn_id })
+        }
+        SessionExecutionState::Failed { turn_id, message } => {
+            serde_json::json!({ "status": "failed", "turn_id": turn_id, "message": message })
+        }
+        SessionExecutionState::Interrupted { turn_id, message } => {
+            serde_json::json!({ "status": "interrupted", "turn_id": turn_id, "message": message })
+        }
+    };
+
+    Ok(Json(serde_json::json!({
+        "cancelled": true,
+        "sessionId": session_id,
+        "state": state_payload,
+    })))
 }
 
 #[derive(Debug, Deserialize)]

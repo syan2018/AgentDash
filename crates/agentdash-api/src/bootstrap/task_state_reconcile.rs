@@ -39,8 +39,8 @@ impl SessionExecutionStateReader for HubSessionStateReader<'_> {
             agentdash_executor::SessionExecutionState::Failed { turn_id, message } => {
                 SessionExecutionState::Failed { turn_id, message }
             }
-            agentdash_executor::SessionExecutionState::Interrupted { turn_id } => {
-                SessionExecutionState::Interrupted { turn_id }
+            agentdash_executor::SessionExecutionState::Interrupted { turn_id, message } => {
+                SessionExecutionState::Interrupted { turn_id, message }
             }
         })
     }

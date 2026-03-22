@@ -59,13 +59,18 @@ const DEFAULT_STYLE = SEVERITY_STYLES.info!;
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   executor_session_bound: "会话已绑定",
+  turn_started: "执行开始",
   turn_completed: "执行完成",
+  turn_interrupted: "执行已中断",
   turn_failed: "执行失败",
   system_message: "系统消息",
   error: "错误",
   user_feedback: "用户反馈",
   user_answered_questions: "用户回答",
   permission_denied: "权限拒绝",
+  approval_requested: "等待审批",
+  approval_resolved: "审批结果",
+  hook_action_resolved: "Hook 事项已结案",
   companion_dispatch_registered: "Companion 已派发",
   companion_result_available: "Companion 结果可用",
   companion_result_returned: "Companion 已回传",
@@ -76,12 +81,16 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   executor_session_bound: "已绑定到底层执行会话",
   turn_started: "本轮执行已开始",
   turn_completed: "本轮执行已完成",
+  turn_interrupted: "本轮执行已中断",
   turn_failed: "本轮执行失败",
   system_message: "系统消息",
   error: "执行出现错误",
   user_feedback: "已收到用户反馈",
   user_answered_questions: "已收到用户回答",
   permission_denied: "操作被权限策略拒绝",
+  approval_requested: "当前工具调用正在等待审批",
+  approval_resolved: "当前工具调用审批已完成",
+  hook_action_resolved: "Hook Runtime 中的一项干预已被显式结案",
   companion_dispatch_registered: "已注册 companion 派发上下文",
   companion_result_available: "Companion 已回传结构化结果",
   companion_result_returned: "当前 companion 结果已回传到主 session",
@@ -108,7 +117,7 @@ export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
 
   const displayMessage = message || fallbackMessage || EVENT_TYPE_DEFAULT_MESSAGES[eventType] || "系统事件";
   const metadataChips = buildMetadataChips(eventType, hookData, meta?.trace?.turnId ?? null);
-  const detailLines = buildDetailLines(eventType, hookData);
+  const detailLines = buildDetailLines(eventType, event?.data, hookData);
   const extraData = eventType === "hook_event" ? null : formatExtraData(event?.data);
 
   return (
@@ -219,8 +228,15 @@ function buildMetadataChips(
   return chips;
 }
 
-function buildDetailLines(eventType: string, hookData: HookEventData | null): string[] {
-  if (eventType !== "hook_event" || !hookData) {
+function buildDetailLines(
+  eventType: string,
+  eventData: unknown,
+  hookData: HookEventData | null,
+): string[] {
+  if (eventType !== "hook_event") {
+    return buildGenericDetailLines(eventType, eventData);
+  }
+  if (!hookData) {
     return [];
   }
 
@@ -254,6 +270,63 @@ function buildDetailLines(eventType: string, hookData: HookEventData | null): st
         `诊断${code ? ` ${code}` : ""}：${summary}${detail ? `；${detail}` : ""}`,
       );
     }
+  }
+
+  return lines;
+}
+
+function buildGenericDetailLines(eventType: string, value: unknown): string[] {
+  if (!isRecord(value)) return [];
+  const lines: string[] = [];
+
+  if (eventType === "approval_requested" || eventType === "approval_resolved") {
+    const toolName = typeof value.tool_name === "string" ? value.tool_name : null;
+    const toolCallId = typeof value.tool_call_id === "string" ? value.tool_call_id : null;
+    const reason = typeof value.reason === "string" ? value.reason : null;
+    const approved = typeof value.approved === "boolean" ? value.approved : null;
+    if (toolName) lines.push(`工具：${toolName}`);
+    if (toolCallId) lines.push(`tool_call_id：${toolCallId}`);
+    if (approved != null) lines.push(`审批结果：${approved ? "已批准" : "已拒绝"}`);
+    if (reason) lines.push(`原因：${reason}`);
+    return lines;
+  }
+
+  if (eventType === "hook_action_resolved") {
+    const actionId = typeof value.action_id === "string" ? value.action_id : null;
+    const actionType = typeof value.action_type === "string" ? value.action_type : null;
+    const status = typeof value.status === "string" ? value.status : null;
+    const resolutionKind = typeof value.resolution_kind === "string" ? value.resolution_kind : null;
+    const resolutionNote = typeof value.resolution_note === "string" ? value.resolution_note : null;
+    const resolutionTurnId = typeof value.resolution_turn_id === "string" ? value.resolution_turn_id : null;
+    const summary = typeof value.summary === "string" ? value.summary : null;
+    if (actionId) lines.push(`action_id：${actionId}`);
+    if (actionType) lines.push(`action_type：${actionType}`);
+    if (status) lines.push(`status：${status}`);
+    if (resolutionKind) lines.push(`resolution_kind：${resolutionKind}`);
+    if (resolutionTurnId) lines.push(`resolution_turn_id：${resolutionTurnId}`);
+    if (summary) lines.push(`摘要：${summary}`);
+    if (resolutionNote) lines.push(`说明：${resolutionNote}`);
+    return lines;
+  }
+
+  if (eventType === "companion_dispatch_registered"
+    || eventType === "companion_result_available"
+    || eventType === "companion_result_returned") {
+    const label = typeof value.companion_label === "string" ? value.companion_label : null;
+    const sessionId = typeof value.companion_session_id === "string" ? value.companion_session_id : null;
+    const dispatchId = typeof value.dispatch_id === "string" ? value.dispatch_id : null;
+    const adoptionMode = typeof value.adoption_mode === "string" ? value.adoption_mode : null;
+    const sliceMode = typeof value.slice_mode === "string" ? value.slice_mode : null;
+    const status = typeof value.status === "string" ? value.status : null;
+    const summary = typeof value.summary === "string" ? value.summary : null;
+    if (label) lines.push(`companion：${label}`);
+    if (dispatchId) lines.push(`dispatch_id：${dispatchId}`);
+    if (sessionId) lines.push(`companion_session_id：${sessionId}`);
+    if (sliceMode) lines.push(`slice_mode：${sliceMode}`);
+    if (adoptionMode) lines.push(`adoption_mode：${adoptionMode}`);
+    if (status) lines.push(`status：${status}`);
+    if (summary) lines.push(`摘要：${summary}`);
+    return lines;
   }
 
   return lines;

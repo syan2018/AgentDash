@@ -34,7 +34,7 @@ export interface UseAcpSessionResult {
   error: Error | null;
   reconnect: () => void;
   close: () => void;
-  sendCancel: () => void;
+  sendCancel: () => Promise<void>;
   /** ID of the entry currently being streamed (last agent_message_chunk while receiving data), or null */
   streamingEntryId: string | null;
   /** 最新的 token 用量（累计） */

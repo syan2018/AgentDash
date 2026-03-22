@@ -179,6 +179,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/sessions/{id}/hook-runtime",
             get(acp_sessions::get_session_hook_runtime),
         )
+        .route("/sessions/{id}/state", get(acp_sessions::get_session_state))
         .route(
             "/sessions/{id}/bindings",
             get(acp_sessions::get_session_bindings),

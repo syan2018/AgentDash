@@ -123,10 +123,20 @@ impl AgentConnector for CompositeConnector {
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
+        let mut any_success = false;
+        let mut last_error: Option<ConnectorError> = None;
         for c in &self.connectors {
-            let _ = c.cancel(session_id).await;
+            match c.cancel(session_id).await {
+                Ok(()) => any_success = true,
+                Err(error) => last_error = Some(error),
+            }
         }
-        Ok(())
+        if any_success {
+            return Ok(());
+        }
+        Err(last_error.unwrap_or_else(|| {
+            ConnectorError::Runtime(format!("当前没有可取消 session `{session_id}` 的连接器"))
+        }))
     }
 
     async fn approve_tool_call(

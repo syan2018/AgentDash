@@ -1,5 +1,10 @@
 import { buildApiPath } from "../api/origin";
-import type { HookSessionRuntimeInfo, SessionBindingOwner } from "../types";
+import type {
+  HookSessionRuntimeInfo,
+  SessionBindingOwner,
+  SessionExecutionState,
+  SessionExecutionStatus,
+} from "../types";
 
 function mapSessionBindingOwner(raw: Record<string, unknown>): SessionBindingOwner {
   return {
@@ -86,4 +91,41 @@ export async function fetchSessionHookRuntime(id: string): Promise<HookSessionRu
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`获取 Hook Runtime 失败: HTTP ${res.status}`);
   return res.json();
+}
+
+function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatus {
+  switch (value) {
+    case "idle":
+    case "running":
+    case "completed":
+    case "failed":
+    case "interrupted":
+      return value;
+    default:
+      return "idle";
+  }
+}
+
+function mapSessionExecutionState(raw: Record<string, unknown>): SessionExecutionState {
+  return {
+    session_id: String(raw.session_id ?? ""),
+    status: normalizeSessionExecutionStatus(raw.status),
+    turn_id: raw.turn_id != null ? String(raw.turn_id) : null,
+    message: raw.message != null ? String(raw.message) : null,
+  };
+}
+
+export async function fetchSessionExecutionState(id: string): Promise<SessionExecutionState> {
+  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/state`));
+  if (!res.ok) throw new Error(`获取会话运行状态失败: HTTP ${res.status}`);
+  const raw = await res.json() as Record<string, unknown>;
+  return mapSessionExecutionState(raw);
+}
+
+export async function cancelSession(id: string): Promise<void> {
+  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/cancel`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`取消会话失败: HTTP ${res.status}`);
 }

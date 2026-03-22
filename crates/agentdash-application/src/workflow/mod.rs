@@ -19,5 +19,5 @@ pub use error::WorkflowApplicationError;
 pub use run::{
     ActivateWorkflowPhaseCommand, AppendWorkflowPhaseArtifactsCommand,
     CompleteWorkflowPhaseCommand, StartWorkflowRunCommand, WorkflowRecordArtifactDraft,
-    WorkflowRunService, build_phase_completion_artifact_drafts,
+    WorkflowRunService, build_phase_completion_artifact_drafts, select_active_run,
 };

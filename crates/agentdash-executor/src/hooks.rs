@@ -114,6 +114,42 @@ pub struct SessionHookSnapshot {
     pub metadata: Option<serde_json::Value>,
 }
 
+const SESSION_LEVEL_METADATA_KEYS: &[&str] = &[
+    "permission_policy",
+    "working_directory",
+    "workspace_root",
+    "connector_id",
+    "executor",
+];
+
+/// Merge back session-level constant metadata from the previous snapshot into a
+/// freshly-loaded snapshot. These fields are set once at session start and must
+/// survive snapshot refreshes triggered by runtime hooks.
+fn preserve_session_level_metadata(
+    snapshot: &mut SessionHookSnapshot,
+    previous_metadata: Option<&serde_json::Value>,
+) {
+    let Some(previous) = previous_metadata.and_then(serde_json::Value::as_object) else {
+        return;
+    };
+    let target = snapshot
+        .metadata
+        .get_or_insert_with(|| serde_json::json!({}));
+    let Some(target) = target.as_object_mut() else {
+        return;
+    };
+    for &key in SESSION_LEVEL_METADATA_KEYS {
+        if target
+            .get(key)
+            .map_or(true, serde_json::Value::is_null)
+        {
+            if let Some(value) = previous.get(key).filter(|v| !v.is_null()) {
+                target.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookContributionSet {
@@ -300,7 +336,9 @@ impl HookSessionRuntime {
         &self,
         query: SessionHookRefreshQuery,
     ) -> Result<SessionHookSnapshot, HookError> {
-        let snapshot = self.provider.refresh_session_snapshot(query).await?;
+        let previous_metadata = self.snapshot().metadata.clone();
+        let mut snapshot = self.provider.refresh_session_snapshot(query).await?;
+        preserve_session_level_metadata(&mut snapshot, previous_metadata.as_ref());
         self.replace_snapshot(snapshot.clone());
         Ok(snapshot)
     }
@@ -645,5 +683,103 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
         _query: HookEvaluationQuery,
     ) -> Result<HookResolution, HookError> {
         Ok(HookResolution::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn preserve_session_level_metadata_merges_missing_keys() {
+        let mut snapshot = SessionHookSnapshot {
+            session_id: "s1".into(),
+            metadata: Some(serde_json::json!({
+                "turn_id": "turn-2",
+                "active_task": { "status": "running" },
+            })),
+            ..Default::default()
+        };
+        let previous = serde_json::json!({
+            "turn_id": "turn-1",
+            "permission_policy": "SUPERVISED",
+            "workspace_root": "F:/Projects/AgentDash",
+            "working_directory": ".",
+            "connector_id": "pi_agent",
+            "executor": "local",
+        });
+
+        preserve_session_level_metadata(&mut snapshot, Some(&previous));
+
+        let meta = snapshot.metadata.as_ref().unwrap();
+        assert_eq!(meta["permission_policy"], "SUPERVISED");
+        assert_eq!(meta["workspace_root"], "F:/Projects/AgentDash");
+        assert_eq!(meta["working_directory"], ".");
+        assert_eq!(meta["connector_id"], "pi_agent");
+        assert_eq!(meta["executor"], "local");
+        // turn_id should NOT be overwritten (not a session-level constant)
+        assert_eq!(meta["turn_id"], "turn-2");
+        // dynamic metadata should be kept
+        assert!(meta["active_task"].is_object());
+    }
+
+    #[test]
+    fn preserve_session_level_metadata_does_not_overwrite_existing() {
+        let mut snapshot = SessionHookSnapshot {
+            session_id: "s1".into(),
+            metadata: Some(serde_json::json!({
+                "permission_policy": "AUTONOMOUS",
+                "workspace_root": "/new/root",
+            })),
+            ..Default::default()
+        };
+        let previous = serde_json::json!({
+            "permission_policy": "SUPERVISED",
+            "workspace_root": "F:/Old/Root",
+        });
+
+        preserve_session_level_metadata(&mut snapshot, Some(&previous));
+
+        let meta = snapshot.metadata.as_ref().unwrap();
+        assert_eq!(meta["permission_policy"], "AUTONOMOUS");
+        assert_eq!(meta["workspace_root"], "/new/root");
+    }
+
+    #[tokio::test]
+    async fn refresh_preserves_session_level_metadata() {
+        let initial_snapshot = SessionHookSnapshot {
+            session_id: "sess-1".into(),
+            metadata: Some(serde_json::json!({
+                "permission_policy": "SUPERVISED",
+                "workspace_root": "F:/Projects/AgentDash",
+                "working_directory": ".",
+                "connector_id": "pi_agent",
+                "executor": "local",
+            })),
+            ..Default::default()
+        };
+        let provider = Arc::new(NoopExecutionHookProvider);
+        let runtime = HookSessionRuntime::new(
+            "sess-1".into(),
+            provider,
+            initial_snapshot,
+        );
+
+        let refreshed = runtime
+            .refresh(SessionHookRefreshQuery {
+                session_id: "sess-1".into(),
+                turn_id: Some("turn-2".into()),
+                reason: Some("test".into()),
+            })
+            .await
+            .expect("refresh should succeed");
+
+        let meta = refreshed.metadata.unwrap();
+        assert_eq!(meta["permission_policy"], "SUPERVISED");
+        assert_eq!(meta["workspace_root"], "F:/Projects/AgentDash");
+        assert_eq!(meta["working_directory"], ".");
+        assert_eq!(meta["connector_id"], "pi_agent");
+        assert_eq!(meta["executor"], "local");
     }
 }

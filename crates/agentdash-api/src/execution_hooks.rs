@@ -4,7 +4,7 @@ use std::sync::Arc;
 use agentdash_application::workflow::{
     CompleteWorkflowPhaseCommand, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
     WorkflowRunService, WorkflowSessionTerminalState, build_phase_completion_artifact_drafts,
-    completion_mode_tag, evaluate_phase_completion,
+    completion_mode_tag, evaluate_phase_completion, select_active_run,
 };
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::{
@@ -855,32 +855,6 @@ struct ResolvedWorkflowPhase {
     run: WorkflowRun,
     definition: WorkflowDefinition,
     phase: WorkflowPhaseDefinition,
-}
-
-fn select_active_run(runs: Vec<WorkflowRun>) -> Option<WorkflowRun> {
-    runs.into_iter()
-        .filter(|run| {
-            run.current_phase_key.is_some()
-                && matches!(
-                    run.status,
-                    WorkflowRunStatus::Ready
-                        | WorkflowRunStatus::Running
-                        | WorkflowRunStatus::Blocked
-                )
-        })
-        .max_by_key(|run| (workflow_run_priority(run.status), run.updated_at))
-}
-
-fn workflow_run_priority(status: WorkflowRunStatus) -> i32 {
-    match status {
-        WorkflowRunStatus::Running => 3,
-        WorkflowRunStatus::Ready => 2,
-        WorkflowRunStatus::Blocked => 1,
-        WorkflowRunStatus::Draft
-        | WorkflowRunStatus::Completed
-        | WorkflowRunStatus::Failed
-        | WorkflowRunStatus::Cancelled => 0,
-    }
 }
 
 fn workflow_run_status_tag(status: WorkflowRunStatus) -> &'static str {

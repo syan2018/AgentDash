@@ -5,8 +5,9 @@ use std::sync::Arc;
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
+use agentdash_application::workflow::select_active_run;
 use agentdash_domain::workflow::{
-    WorkflowContextBinding, WorkflowContextBindingKind, WorkflowPhaseCompletionMode, WorkflowRun,
+    WorkflowContextBinding, WorkflowContextBindingKind, WorkflowPhaseCompletionMode,
     WorkflowRunStatus, WorkflowTargetKind,
 };
 use agentdash_domain::workspace::Workspace;
@@ -143,37 +144,13 @@ async fn load_active_run(
     state: &Arc<AppState>,
     target_kind: WorkflowTargetKind,
     target_id: Uuid,
-) -> Result<Option<WorkflowRun>, agentdash_domain::DomainError> {
+) -> Result<Option<agentdash_domain::workflow::WorkflowRun>, agentdash_domain::DomainError> {
     let runs = state
         .repos
         .workflow_run_repo
         .list_by_target(target_kind, target_id)
         .await?;
-
-    Ok(runs
-        .into_iter()
-        .filter(|run| {
-            run.current_phase_key.is_some()
-                && matches!(
-                    run.status,
-                    WorkflowRunStatus::Ready
-                        | WorkflowRunStatus::Running
-                        | WorkflowRunStatus::Blocked
-                )
-        })
-        .max_by_key(|run| (workflow_run_priority(run.status), run.updated_at)))
-}
-
-fn workflow_run_priority(status: WorkflowRunStatus) -> i32 {
-    match status {
-        WorkflowRunStatus::Running => 3,
-        WorkflowRunStatus::Ready => 2,
-        WorkflowRunStatus::Blocked => 1,
-        WorkflowRunStatus::Draft
-        | WorkflowRunStatus::Completed
-        | WorkflowRunStatus::Failed
-        | WorkflowRunStatus::Cancelled => 0,
-    }
+    Ok(select_active_run(runs))
 }
 
 #[derive(Debug, Clone)]

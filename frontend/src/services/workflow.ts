@@ -337,3 +337,11 @@ export async function completeWorkflowPhase(input: {
   );
   return mapWorkflowRun(raw);
 }
+
+export async function reconcileWorkflowRun(runId: string): Promise<WorkflowRun> {
+  const raw = await api.post<Record<string, unknown>>(
+    `/workflow-runs/${runId}/reconcile`,
+    {},
+  );
+  return mapWorkflowRun(raw);
+}

@@ -202,7 +202,6 @@ pub async fn get_workflow_run(
         .get_by_id(run_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("workflow_run {run_id} 不存在")))?;
-    let run = reconcile_workflow_run_runtime(&state, run).await?;
 
     Ok(Json(WorkflowRunResponse::from(run)))
 }
@@ -218,17 +217,25 @@ pub async fn list_workflow_runs_by_target(
         .workflow_run_repo
         .list_by_target(target_kind, target_id)
         .await?;
-    let mut resolved_runs = Vec::with_capacity(runs.len());
-    for run in runs {
-        resolved_runs.push(reconcile_workflow_run_runtime(&state, run).await?);
-    }
 
     Ok(Json(
-        resolved_runs
-            .into_iter()
+        runs.into_iter()
             .map(WorkflowRunResponse::from)
             .collect(),
     ))
+}
+
+/// Explicit reconcile endpoint: checks whether a session_ended phase should be
+/// advanced based on the current session execution state, and completes it if so.
+/// This is a POST because it may mutate the workflow run.
+pub async fn reconcile_workflow_run(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<String>,
+) -> Result<Json<WorkflowRunResponse>, ApiError> {
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    let run = load_workflow_run(&state, run_id).await?;
+    let run = reconcile_workflow_run_runtime(&state, run).await?;
+    Ok(Json(WorkflowRunResponse::from(run)))
 }
 
 pub async fn activate_workflow_phase(

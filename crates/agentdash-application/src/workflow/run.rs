@@ -105,6 +105,35 @@ pub fn build_phase_completion_artifact_drafts(
     }]
 }
 
+/// Pick the single most relevant active run from a list (highest priority
+/// status, most recently updated). Shared by hook snapshot loading and
+/// workflow runtime context injection.
+pub fn select_active_run(runs: Vec<WorkflowRun>) -> Option<WorkflowRun> {
+    runs.into_iter()
+        .filter(|run| {
+            run.current_phase_key.is_some()
+                && matches!(
+                    run.status,
+                    WorkflowRunStatus::Ready
+                        | WorkflowRunStatus::Running
+                        | WorkflowRunStatus::Blocked
+                )
+        })
+        .max_by_key(|run| (active_run_status_priority(run.status), run.updated_at))
+}
+
+fn active_run_status_priority(status: WorkflowRunStatus) -> i32 {
+    match status {
+        WorkflowRunStatus::Running => 3,
+        WorkflowRunStatus::Ready => 2,
+        WorkflowRunStatus::Blocked => 1,
+        WorkflowRunStatus::Draft
+        | WorkflowRunStatus::Completed
+        | WorkflowRunStatus::Failed
+        | WorkflowRunStatus::Cancelled => 0,
+    }
+}
+
 pub struct WorkflowRunService<'a, D: ?Sized, R: ?Sized> {
     definition_repo: &'a D,
     run_repo: &'a R,
@@ -146,18 +175,18 @@ where
             .run_repo
             .list_by_target(cmd.target_kind, cmd.target_id)
             .await?;
-        if existing_runs.iter().any(|run| {
-            run.workflow_id == definition.id
-                && matches!(
-                    run.status,
-                    WorkflowRunStatus::Ready
-                        | WorkflowRunStatus::Running
-                        | WorkflowRunStatus::Blocked
-                )
-        }) {
+        let conflicting_run = existing_runs.iter().find(|run| {
+            matches!(
+                run.status,
+                WorkflowRunStatus::Ready
+                    | WorkflowRunStatus::Running
+                    | WorkflowRunStatus::Blocked
+            )
+        });
+        if let Some(conflicting) = conflicting_run {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "目标对象 {} 已存在进行中的 workflow run",
-                cmd.target_id
+                "目标对象 {} 已存在进行中的 workflow run（workflow_id={}）",
+                cmd.target_id, conflicting.workflow_id
             )));
         }
 
@@ -646,5 +675,47 @@ mod tests {
         assert_eq!(run.current_phase_key.as_deref(), Some("check"));
         assert_eq!(run.record_artifacts.len(), 1);
         assert_eq!(run.record_artifacts[0].title, "实现说明");
+    }
+
+    #[tokio::test]
+    async fn start_run_rejects_different_workflow_on_same_target_with_active_run() {
+        let store = MemoryWorkflowRunStore::default();
+        let definition_a =
+            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition a");
+        WorkflowDefinitionRepository::create(&store, &definition_a)
+            .await
+            .expect("store definition a");
+
+        let mut definition_b = definition_a.clone();
+        definition_b.id = Uuid::new_v4();
+        definition_b.key = "alternate_task_workflow".to_string();
+        definition_b.name = "Alternate Task Workflow".to_string();
+        WorkflowDefinitionRepository::create(&store, &definition_b)
+            .await
+            .expect("store definition b");
+
+        let service = WorkflowRunService::new(&store, &store);
+        let target_id = Uuid::new_v4();
+        service
+            .start_run(StartWorkflowRunCommand {
+                workflow_id: Some(definition_a.id),
+                workflow_key: None,
+                target_kind: WorkflowTargetKind::Task,
+                target_id,
+            })
+            .await
+            .expect("first run with definition_a");
+
+        let error = service
+            .start_run(StartWorkflowRunCommand {
+                workflow_id: Some(definition_b.id),
+                workflow_key: None,
+                target_kind: WorkflowTargetKind::Task,
+                target_id,
+            })
+            .await
+            .expect_err("should reject second workflow on same target");
+
+        assert!(error.to_string().contains("进行中的 workflow run"));
     }
 }

@@ -27,7 +27,7 @@
     "check": "cargo check",
     "clean": "cargo clean && rimraf frontend/dist",
     "kill-ports": "node scripts/kill-ports.js",
-    "kill:frontend": "node scripts/kill-ports.js 5173 5174 5175",
+    "kill:frontend": "node scripts/kill-ports.js 5380 5381 5382",
     "kill:backend": "node scripts/kill-ports.js 3001"
   },
   "devDependencies": {

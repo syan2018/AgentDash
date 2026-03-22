@@ -5,13 +5,13 @@
  *
  * 用法:
  *   node kill-ports.js [port1] [port2] ...
- *   不传参数时默认清理: 3001, 5173, 5174, 5175
+ *   不传参数时默认清理: 3001, 5380, 5381, 5382
  */
 
 import { execSync } from 'child_process';
 import { platform } from 'os';
 
-const DEFAULT_PORTS = [3001, 5173, 5174, 5175];
+const DEFAULT_PORTS = [3001, 5380, 5381, 5382];
 const parsedPorts = process.argv.slice(2).map(Number).filter(Boolean);
 const ports = parsedPorts.length > 0 ? parsedPorts : DEFAULT_PORTS;
 

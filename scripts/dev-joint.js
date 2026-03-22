@@ -104,7 +104,7 @@ async function main() {
   }
 
   if (!config.skipFrontend) {
-    console.log('[4/4] 启动前端 (:5173)...');
+    console.log('[4/4] 启动前端 (:5380)...');
     startFrontendProcess();
   } else {
     console.log('[4/4] 跳过前端（--skip-frontend）');
@@ -115,7 +115,7 @@ async function main() {
   console.log('  ║       所有服务已就绪                 ║');
   console.log('  ╚══════════════════════════════════════╝');
   console.log(`  API:      http://localhost:${config.serverPort}`);
-  console.log('  Frontend: http://localhost:5173');
+  console.log('  Frontend: http://localhost:5380');
   console.log(`  WS:       ws://localhost:${config.serverPort}/ws/backend`);
   console.log('');
   console.log('  按 Ctrl+C 停止全部服务');
@@ -254,7 +254,7 @@ async function runStep0KillPorts() {
     ports.push(config.serverPort);
   }
   if (!config.skipFrontend) {
-    ports.push(5173, 5174, 5175);
+    ports.push(5380, 5381, 5382);
   }
 
   if (ports.length === 0) {

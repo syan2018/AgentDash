@@ -32,7 +32,7 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: 5173,
+    port: 5380,
     proxy: {
       // SSE 是长连接；避免 dev 代理因超时/断流导致 ECONNRESET 噪音或中断
       '/api/events/stream': {

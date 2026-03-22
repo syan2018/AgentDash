@@ -1,0 +1,53 @@
+{
+  "id": "03-22-complete-hook-runtime-closure",
+  "name": "03-22-complete-hook-runtime-closure",
+  "title": "完整补齐 Hook 机制闭环与 Companion Adoption 控制流",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 2,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/tasks/03-22-03-22-complete-hook-runtime-closure/prd.md",
+    ".trellis/spec/backend/execution-hook-runtime.md",
+    "crates/agentdash-executor/src/hub.rs",
+    "crates/agentdash-executor/src/hooks.rs",
+    "crates/agentdash-executor/src/runtime_delegate.rs",
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-api/src/execution_hooks.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "frontend/src/features/acp-session/ui/SessionChatView.tsx",
+    "frontend/src/features/acp-session/ui/AcpSystemEventCard.tsx",
+    "frontend/src/pages/SessionPage.tsx"
+  ],
+  "notes": "2026-03-22 创建，用于追踪 03-22 hook 任务后续真正未闭环的部分。已完成 parent runtime 重建回流、companion capability slice、approval 主事件流补齐、Hook Runtime 事件驱动刷新与前端待处理干预可视化。本轮继续补齐 pending action 生命周期：状态化记录、resolve_hook_action 显式结案、blocking_review 持续 stop gate、hook_action_resolved 主事件流。"
+}

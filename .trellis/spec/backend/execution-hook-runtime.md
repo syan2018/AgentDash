@@ -95,6 +95,8 @@ pub struct HookSessionRuntimeSnapshot {
     pub revision: u64,
     pub snapshot: SessionHookSnapshot,
     pub diagnostics: Vec<HookDiagnosticEntry>,
+    pub trace: Vec<HookTraceEntry>,
+    pub pending_actions: Vec<HookPendingAction>,
 }
 ```
 
@@ -208,6 +210,7 @@ pub struct HookSessionRuntimeSnapshot {
 - `snapshot.policies` / `snapshot.constraints`：当前会话真实规则面
 - `diagnostics`：session runtime 命中记录
 - `trace`：per-trigger 的运行态轨迹，必须能看到 trigger / decision / matched_rule_keys / refresh / completion
+- `pending_actions`：已进入执行层、等待主 session 下一次 loop 消费的 companion/hook 干预队列
 - 若某条 policy / diagnostic / constraint 来自 workflow 或 global builtin，前端应能直接看到来源标签，而不是只剩自然语言描述
 
 #### 3.5.0 Hook Event Stream 契约
@@ -302,7 +305,53 @@ pub struct HookSessionRuntimeSnapshot {
   - session stream event：给前端与会话历史展示
   - hook runtime trace / diagnostics：给主 session 的 runtime surface 消费
 - 父 session 若存在 hook runtime，执行层必须同步触发一次 `HookTrigger::SubagentResult`，并把 `dispatch_id / adoption_mode / summary / status / companion_session_id` 等结构化字段写入 payload。
-- `adoption_mode` 当前阶段只是“回流语义标注”，尚未自动驱动 approve/resume；后续 Ask/Approval/Resume 任务会在此基础上把采纳链路补成正式控制流。
+- `adoption_mode` 不允许只停留在 diagnostics：
+  - `suggestion`：允许只记录 trace / diagnostics
+  - `follow_up_required`：必须进入 `HookSessionRuntime.pending_actions`，并在外循环边界转成 follow-up 注入
+  - `blocking_review`：必须进入 `HookSessionRuntime.pending_actions`，并在外循环边界转成 steering / continue 信号
+- 这类 pending action 由 runtime 持有和消费，不能反向侵入 `agent_loop` 业务逻辑；`agent_loop` 只在既有 delegate 边界接收结果。
+
+#### 3.6.1 Pending Action / Adoption Control 契约
+
+- `HookPendingAction` 是执行层正式 surface，不是前端私有状态：
+  - `id`
+  - `created_at_ms`
+  - `title`
+  - `summary`
+  - `action_type`
+  - `turn_id`
+  - `source_trigger`
+  - `status`：`pending | injected | resolved | dismissed`
+  - `last_injected_at_ms`
+  - `resolved_at_ms`
+  - `resolution_kind`：`adopted | rejected | completed | superseded | user_dismissed`
+  - `resolution_note`
+  - `resolution_turn_id`
+  - `context_fragments`
+  - `constraints`
+- Companion 回流若生成 `context_fragments / constraints`，执行层必须把它们排入 `pending_actions`，并递增 runtime `revision`
+- runtime delegate 在以下边界把 `pending` action 标记为 `injected` 并注入 loop：
+  - `AfterTurn`
+  - `BeforeStop`
+  - `TransformContext`（用于 parent session 已停住、下次用户重新进入时）
+- `injected` action 不能因“已经注入过一次”就直接消失；它必须继续保留在 runtime surface，直到被显式结案。
+- 主 session 处理完 hook 回流后，必须通过 runtime tool `resolve_hook_action` 显式写回结案结果，而不是依赖隐式 drain。
+- `blocking_review` 在未结案前必须持续阻止 `BeforeStop` 自然结束；`follow_up_required` 至少要保持可观测、可结案。
+- 结案后，执行层必须保留对应 action 记录，并把状态切到 `resolved / dismissed`，供前端与调试面回看。
+
+#### 3.6.2 Frontend Refresh 契约
+
+- 会话页的 Hook Runtime 面板不应长期依赖固定轮询
+- 主路径应为：
+  - `hook_event`
+  - `hook_action_resolved`
+  - `companion_dispatch_registered`
+  - `companion_result_available`
+  - `companion_result_returned`
+  - `turn_completed / turn_failed`
+  这些主事件流信号触发 runtime 刷新
+- 首次进入页面或 session 切换时允许主动拉一次 `/api/sessions/{id}/hook-runtime`
+- 定时轮询只可作为临时 debug 手段，不能作为正式产品语义
 
 ### 4. Validation & Error Matrix
 
@@ -317,11 +366,13 @@ pub struct HookSessionRuntimeSnapshot {
 | `BeforeStop` 命中 `session_ended` | 允许自然结束 | 仅 diagnostics，不阻止退出 |
 | `BeforeStop` 命中 `checklist_passed` 且 task 未达成 | 注入 stop gate，继续 loop | 返回 steering/constraints |
 | `BeforeStop` 命中 `checklist_passed` 且 task 已 `awaiting_verification/completed` | 允许结束 | diagnostics 标记 satisfied |
+| `BeforeStop` 存在未结案 `blocking_review` action | 持续阻止自然结束 | `StopDecision::Continue` + runtime pending action stop gate |
 | 用户批准 pending tool call | 原 tool call 继续执行 | `tool_call_update(status=in_progress)` |
 | 用户拒绝 pending tool call | 原 tool call 不执行，但 loop 继续推进 | `tool_result.details.approval_state=rejected` |
 | `companion_dispatch` 命中 `BeforeSubagentDispatch` deny | 同步拒绝派发 | `AgentToolError::ExecutionFailed` |
 | `companion_complete` 在非 companion session 调用 | 同步拒绝回流 | `当前 session 不是通过 companion_dispatch 建立的上下文` |
 | `companion_complete` 回流到仍持有 hook runtime 的父 session | 同步触发 `SubagentResult` | trace + diagnostics 同步可见 |
+| 主 session 调用 `resolve_hook_action` | 显式结案当前 hook action | runtime snapshot 保留记录，主事件流收到 `hook_action_resolved` |
 
 ### 5. Good / Base / Bad Cases
 

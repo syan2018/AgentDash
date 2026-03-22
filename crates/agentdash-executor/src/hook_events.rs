@@ -51,14 +51,17 @@ pub fn build_hook_trace_notification(
     Some(SessionNotification::new(
         SessionId::new(session_id.to_string()),
         SessionUpdate::SessionInfoUpdate(
-            SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
+            SessionInfoUpdate::new()
+                .meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
         ),
     ))
 }
 
 fn should_emit_hook_trace_event(entry: &HookTraceEntry) -> bool {
-    !matches!(entry.decision.as_str(), "noop" | "allow" | "effects_applied")
-        || !entry.matched_rule_keys.is_empty()
+    !matches!(
+        entry.decision.as_str(),
+        "noop" | "allow" | "effects_applied"
+    ) || !entry.matched_rule_keys.is_empty()
         || !entry.diagnostics.is_empty()
         || entry.completion.is_some()
         || entry.block_reason.is_some()

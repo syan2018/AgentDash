@@ -17,7 +17,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_acp_meta::{
-    AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
 
 use agentdash_agent::{
@@ -356,14 +356,9 @@ impl AgentConnector for PiAgentConnector {
         } else {
             (None, None)
         };
-        agent.set_runtime_delegate(
-            context
-                .hook_session
-                .clone()
-                .map(|hook_session| {
-                    HookRuntimeDelegate::new_with_trace_events(hook_session, hook_trace_tx)
-                }),
-        );
+        agent.set_runtime_delegate(context.hook_session.clone().map(|hook_session| {
+            HookRuntimeDelegate::new_with_trace_events(hook_session, hook_trace_tx)
+        }));
 
         let (event_rx, join_handle) = agent
             .prompt(AgentMessage::user(&prompt_text))
@@ -570,6 +565,39 @@ fn make_meta(
     merge_agentdash_meta(None, &agentdash).expect("agentdash meta 不应为空")
 }
 
+fn make_event_notification(
+    session_id: &SessionId,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+    entry_index: u32,
+    event_type: &str,
+    severity: &str,
+    message: String,
+    data: serde_json::Value,
+) -> SessionNotification {
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = Some(turn_id.to_string());
+    trace.entry_index = Some(entry_index);
+
+    let mut event = AgentDashEventV1::new(event_type);
+    event.severity = Some(severity.to_string());
+    event.message = Some(message);
+    event.data = Some(data);
+
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source.clone()))
+        .trace(Some(trace))
+        .event(Some(event));
+
+    SessionNotification::new(
+        session_id.clone(),
+        SessionUpdate::SessionInfoUpdate(
+            agent_client_protocol::SessionInfoUpdate::new()
+                .meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
+        ),
+    )
+}
+
 fn convert_event_to_notifications(
     event: &AgentEvent,
     session_id: &SessionId,
@@ -705,6 +733,8 @@ fn convert_event_to_notifications(
 
         AgentEvent::ToolExecutionPendingApproval {
             tool_call_id,
+            tool_name,
+            args,
             reason,
             details,
             ..
@@ -724,14 +754,31 @@ fn convert_event_to_notifications(
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
             update.meta = Some(meta);
 
-            vec![SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::ToolCallUpdate(update),
-            )]
+            vec![
+                SessionNotification::new(session_id.clone(), SessionUpdate::ToolCallUpdate(update)),
+                make_event_notification(
+                    session_id,
+                    source,
+                    turn_id,
+                    *entry_index,
+                    "approval_requested",
+                    "warning",
+                    format!("工具 `{tool_name}` 正等待审批"),
+                    serde_json::json!({
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "reason": reason,
+                        "args": args,
+                        "details": details,
+                    }),
+                ),
+            ]
         }
 
         AgentEvent::ToolExecutionApprovalResolved {
             tool_call_id,
+            tool_name,
+            args,
             approved,
             reason,
             ..
@@ -761,10 +808,29 @@ fn convert_event_to_notifications(
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
             update.meta = Some(meta);
 
-            vec![SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::ToolCallUpdate(update),
-            )]
+            vec![
+                SessionNotification::new(session_id.clone(), SessionUpdate::ToolCallUpdate(update)),
+                make_event_notification(
+                    session_id,
+                    source,
+                    turn_id,
+                    *entry_index,
+                    "approval_resolved",
+                    if *approved { "info" } else { "warning" },
+                    if *approved {
+                        format!("工具 `{tool_name}` 已获批准并继续执行")
+                    } else {
+                        format!("工具 `{tool_name}` 已被拒绝执行")
+                    },
+                    serde_json::json!({
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "approved": approved,
+                        "reason": reason,
+                        "args": args,
+                    }),
+                ),
+            ]
         }
 
         AgentEvent::ToolExecutionEnd {
@@ -959,7 +1025,7 @@ mod tests {
             &mut entry_index,
         );
 
-        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications.len(), 2);
         match &notifications[0].update {
             SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
@@ -971,6 +1037,22 @@ mod tests {
                         .and_then(|value| value.get("approval_state"))
                         .and_then(serde_json::Value::as_str),
                     Some("pending")
+                );
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+
+        match &notifications[1].update {
+            SessionUpdate::SessionInfoUpdate(info) => {
+                let value = serde_json::to_value(info).expect("serialize session info");
+                assert_eq!(
+                    value
+                        .get("_meta")
+                        .and_then(|item| item.get("agentdash"))
+                        .and_then(|item| item.get("event"))
+                        .and_then(|item| item.get("type"))
+                        .and_then(serde_json::Value::as_str),
+                    Some("approval_requested")
                 );
             }
             other => panic!("unexpected session update: {other:?}"),

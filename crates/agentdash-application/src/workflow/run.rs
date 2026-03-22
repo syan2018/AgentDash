@@ -6,8 +6,8 @@ use agentdash_domain::workflow::{
     WorkflowRunStatus, WorkflowTargetKind,
 };
 
-use super::error::WorkflowApplicationError;
 use super::completion::WorkflowCompletionDecision;
+use super::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
 pub struct StartWorkflowRunCommand {
@@ -66,7 +66,12 @@ pub fn build_phase_completion_artifact_drafts(
     let artifact_type = default_artifact_type.unwrap_or(WorkflowRecordArtifactType::PhaseNote);
 
     let mut sections = Vec::new();
-    if let Some(summary) = decision.summary.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(summary) = decision
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         sections.push(format!("## 阶段总结\n{summary}"));
     }
     if !decision.evidence.is_empty() {

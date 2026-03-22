@@ -141,6 +141,70 @@ pub struct HookSessionRuntimeSnapshot {
     pub diagnostics: Vec<HookDiagnosticEntry>,
     #[serde(default)]
     pub trace: Vec<HookTraceEntry>,
+    #[serde(default)]
+    pub pending_actions: Vec<HookPendingAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookPendingAction {
+    pub id: String,
+    pub created_at_ms: i64,
+    pub title: String,
+    pub summary: String,
+    pub action_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    pub source_trigger: HookTrigger,
+    #[serde(default)]
+    pub status: HookPendingActionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_injected_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution_kind: Option<HookPendingActionResolutionKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution_turn_id: Option<String>,
+    #[serde(default)]
+    pub context_fragments: Vec<HookContextFragment>,
+    #[serde(default)]
+    pub constraints: Vec<HookConstraint>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookPendingActionStatus {
+    #[default]
+    Pending,
+    Injected,
+    Resolved,
+    Dismissed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookPendingActionResolutionKind {
+    Adopted,
+    Rejected,
+    Completed,
+    Superseded,
+    UserDismissed,
+}
+
+impl HookPendingAction {
+    pub fn is_unresolved(&self) -> bool {
+        matches!(
+            self.status,
+            HookPendingActionStatus::Pending | HookPendingActionStatus::Injected
+        )
+    }
+
+    pub fn is_blocking(&self) -> bool {
+        self.action_type == "blocking_review"
+    }
 }
 
 pub struct HookSessionRuntime {
@@ -149,6 +213,7 @@ pub struct HookSessionRuntime {
     snapshot: RwLock<SessionHookSnapshot>,
     diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
     trace: RwLock<Vec<HookTraceEntry>>,
+    pending_actions: RwLock<Vec<HookPendingAction>>,
     revision: AtomicU64,
     trace_sequence: AtomicU64,
 }
@@ -178,6 +243,7 @@ impl HookSessionRuntime {
             snapshot: RwLock::new(snapshot),
             diagnostics: RwLock::new(diagnostics),
             trace: RwLock::new(Vec::new()),
+            pending_actions: RwLock::new(Vec::new()),
             revision: AtomicU64::new(1),
             trace_sequence: AtomicU64::new(0),
         }
@@ -212,6 +278,13 @@ impl HookSessionRuntime {
             .clone()
     }
 
+    pub fn pending_actions(&self) -> Vec<HookPendingAction> {
+        self.pending_actions
+            .read()
+            .expect("hook pending actions read lock poisoned")
+            .clone()
+    }
+
     pub fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot {
         HookSessionRuntimeSnapshot {
             session_id: self.session_id.clone(),
@@ -219,6 +292,7 @@ impl HookSessionRuntime {
             snapshot: self.snapshot(),
             diagnostics: self.diagnostics(),
             trace: self.trace(),
+            pending_actions: self.pending_actions(),
         }
     }
 
@@ -281,6 +355,106 @@ impl HookSessionRuntime {
 
     pub fn next_trace_sequence(&self) -> u64 {
         self.trace_sequence.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn enqueue_pending_action(&self, action: HookPendingAction) {
+        let mut guard = self
+            .pending_actions
+            .write()
+            .expect("hook pending actions write lock poisoned");
+        if guard.iter().any(|existing| existing.id == action.id) {
+            return;
+        }
+        guard.push(HookPendingAction {
+            status: HookPendingActionStatus::Pending,
+            last_injected_at_ms: None,
+            resolved_at_ms: None,
+            resolution_kind: None,
+            resolution_note: None,
+            resolution_turn_id: None,
+            ..action
+        });
+        if guard.len() > 64 {
+            let drain_count = guard.len() - 64;
+            guard.drain(0..drain_count);
+        }
+        self.revision.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn collect_pending_actions_for_injection(&self) -> Vec<HookPendingAction> {
+        let mut guard = self
+            .pending_actions
+            .write()
+            .expect("hook pending actions write lock poisoned");
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut injected = Vec::new();
+        for action in guard.iter_mut() {
+            if action.status != HookPendingActionStatus::Pending {
+                continue;
+            }
+            action.status = HookPendingActionStatus::Injected;
+            action.last_injected_at_ms = Some(now);
+            injected.push(action.clone());
+        }
+        if !injected.is_empty() {
+            self.revision.fetch_add(1, Ordering::SeqCst);
+        }
+        injected
+    }
+
+    pub fn unresolved_pending_actions(&self) -> Vec<HookPendingAction> {
+        self.pending_actions
+            .read()
+            .expect("hook pending actions read lock poisoned")
+            .iter()
+            .filter(|action| action.is_unresolved())
+            .cloned()
+            .collect()
+    }
+
+    pub fn unresolved_blocking_actions(&self) -> Vec<HookPendingAction> {
+        self.pending_actions
+            .read()
+            .expect("hook pending actions read lock poisoned")
+            .iter()
+            .filter(|action| action.is_unresolved() && action.is_blocking())
+            .cloned()
+            .collect()
+    }
+
+    pub fn resolve_pending_action(
+        &self,
+        action_id: &str,
+        resolution_kind: HookPendingActionResolutionKind,
+        note: Option<String>,
+        turn_id: Option<String>,
+    ) -> Option<HookPendingAction> {
+        let mut guard = self
+            .pending_actions
+            .write()
+            .expect("hook pending actions write lock poisoned");
+        let action = guard.iter_mut().find(|action| action.id == action_id)?;
+        if !action.is_unresolved() {
+            return Some(action.clone());
+        }
+
+        action.status = match resolution_kind {
+            HookPendingActionResolutionKind::UserDismissed => HookPendingActionStatus::Dismissed,
+            HookPendingActionResolutionKind::Adopted
+            | HookPendingActionResolutionKind::Rejected
+            | HookPendingActionResolutionKind::Completed
+            | HookPendingActionResolutionKind::Superseded => HookPendingActionStatus::Resolved,
+        };
+        action.resolved_at_ms = Some(chrono::Utc::now().timestamp_millis());
+        action.resolution_kind = Some(resolution_kind);
+        action.resolution_note = note
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        action.resolution_turn_id = turn_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self.revision.fetch_add(1, Ordering::SeqCst);
+        Some(action.clone())
     }
 }
 

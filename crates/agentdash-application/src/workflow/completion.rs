@@ -186,24 +186,20 @@ pub fn session_terminal_state_tag(state: WorkflowSessionTerminalState) -> &'stat
     }
 }
 
-fn session_terminal_summary(
-    state: WorkflowSessionTerminalState,
-    message: Option<&str>,
-) -> String {
-    match (state, message.map(str::trim).filter(|value| !value.is_empty())) {
+fn session_terminal_summary(state: WorkflowSessionTerminalState, message: Option<&str>) -> String {
+    match (
+        state,
+        message.map(str::trim).filter(|value| !value.is_empty()),
+    ) {
         (WorkflowSessionTerminalState::Completed, _) => "关联 session 已自然结束".to_string(),
         (WorkflowSessionTerminalState::Failed, Some(message)) => {
             format!("关联 session 以失败终态结束：{message}")
         }
-        (WorkflowSessionTerminalState::Failed, None) => {
-            "关联 session 以失败终态结束".to_string()
-        }
+        (WorkflowSessionTerminalState::Failed, None) => "关联 session 以失败终态结束".to_string(),
         (WorkflowSessionTerminalState::Interrupted, Some(message)) => {
             format!("关联 session 已中断：{message}")
         }
-        (WorkflowSessionTerminalState::Interrupted, None) => {
-            "关联 session 已中断".to_string()
-        }
+        (WorkflowSessionTerminalState::Interrupted, None) => "关联 session 已中断".to_string(),
     }
 }
 
@@ -245,10 +241,12 @@ mod tests {
                 "当前 phase 尚未满足 checklist_passed completion；请先产出包含检查结论的 phase note / checklist evidence，再结束 session"
             )
         );
-        assert!(decision
-            .evidence
-            .iter()
-            .any(|entry| entry.code == "checklist_evidence_missing"));
+        assert!(
+            decision
+                .evidence
+                .iter()
+                .any(|entry| entry.code == "checklist_evidence_missing")
+        );
     }
 
     #[test]

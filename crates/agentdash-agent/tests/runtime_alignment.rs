@@ -10,8 +10,7 @@ use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
     AgentToolError, AgentToolResult, AssistantStreamEvent, BridgeError, BridgeRequest,
     BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopReason, ToolApprovalOutcome,
-    ToolCallInfo,
-    agent_loop::AgentEventSink,
+    ToolCallInfo, agent_loop::AgentEventSink,
 };
 use async_trait::async_trait;
 use futures::Stream;

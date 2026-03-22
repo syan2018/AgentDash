@@ -15,8 +15,8 @@ use tokio::sync::{Mutex, Notify, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::{
-    self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, AwaitToolApprovalFn,
-    BeforeToolCallFn, ConvertToLlmFn, TransformContextFn,
+    self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, AwaitToolApprovalFn, BeforeToolCallFn,
+    ConvertToLlmFn, TransformContextFn,
 };
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
@@ -277,9 +277,7 @@ impl Agent {
             .responder
             .send(ToolApprovalOutcome::Approved)
             .map_err(|_| {
-                AgentError::InvalidState(format!(
-                    "tool_call `{tool_call_id}` 的审批请求已经失效"
-                ))
+                AgentError::InvalidState(format!("tool_call `{tool_call_id}` 的审批请求已经失效"))
             })
     }
 
@@ -297,9 +295,7 @@ impl Agent {
             .responder
             .send(ToolApprovalOutcome::Rejected { reason })
             .map_err(|_| {
-                AgentError::InvalidState(format!(
-                    "tool_call `{tool_call_id}` 的审批请求已经失效"
-                ))
+                AgentError::InvalidState(format!("tool_call `{tool_call_id}` 的审批请求已经失效"))
             })
     }
 
@@ -576,32 +572,34 @@ impl Agent {
 fn build_tool_approval_waiter(
     pending_approvals: Arc<Mutex<std::collections::HashMap<String, PendingApprovalEntry>>>,
 ) -> AwaitToolApprovalFn {
-    Arc::new(move |request: ToolApprovalRequest, cancel: CancellationToken| {
-        let pending_approvals = pending_approvals.clone();
-        Box::pin(async move {
-            let tool_call_id = request.tool_call.id.clone();
-            let (tx, rx) = oneshot::channel();
-            pending_approvals.lock().await.insert(
-                tool_call_id.clone(),
-                PendingApprovalEntry {
-                    responder: tx,
-                    request,
-                },
-            );
+    Arc::new(
+        move |request: ToolApprovalRequest, cancel: CancellationToken| {
+            let pending_approvals = pending_approvals.clone();
+            Box::pin(async move {
+                let tool_call_id = request.tool_call.id.clone();
+                let (tx, rx) = oneshot::channel();
+                pending_approvals.lock().await.insert(
+                    tool_call_id.clone(),
+                    PendingApprovalEntry {
+                        responder: tx,
+                        request,
+                    },
+                );
 
-            let outcome = tokio::select! {
-                _ = cancel.cancelled() => ToolApprovalOutcome::Rejected {
-                    reason: Some("执行已取消，审批等待结束".to_string()),
-                },
-                resolved = rx => resolved.unwrap_or(ToolApprovalOutcome::Rejected {
-                    reason: Some("审批请求已失效".to_string()),
-                }),
-            };
+                let outcome = tokio::select! {
+                    _ = cancel.cancelled() => ToolApprovalOutcome::Rejected {
+                        reason: Some("执行已取消，审批等待结束".to_string()),
+                    },
+                    resolved = rx => resolved.unwrap_or(ToolApprovalOutcome::Rejected {
+                        reason: Some("审批请求已失效".to_string()),
+                    }),
+                };
 
-            pending_approvals.lock().await.remove(&tool_call_id);
-            outcome
-        })
-    })
+                pending_approvals.lock().await.remove(&tool_call_id);
+                outcome
+            })
+        },
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default)]

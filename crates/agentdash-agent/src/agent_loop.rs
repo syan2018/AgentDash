@@ -28,9 +28,8 @@ use crate::types::{
     AfterToolCallContext, AfterToolCallInput, AfterToolCallResult, AfterTurnInput, AgentContext,
     AgentError, AgentEvent, AgentMessage, AgentToolResult, AssistantStreamEvent, BeforeStopInput,
     BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, ContentPart,
-    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolApprovalOutcome,
-    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback,
-    TransformContextInput,
+    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
+    ToolCallDecision, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
 };
 
 const DEFAULT_MAX_TURNS: usize = 25;
@@ -1098,13 +1097,8 @@ async fn execute_tool_calls_sequential(
                         )
                         .await;
                         results.push(
-                            emit_tool_call_outcome(
-                                tc,
-                                &finalized.result,
-                                finalized.is_error,
-                                emit,
-                            )
-                            .await,
+                            emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, emit)
+                                .await,
                         );
                     }
                     ApprovalResolution::Rejected { result } => {
@@ -1634,9 +1628,7 @@ fn error_tool_result(message: impl Into<String>) -> AgentToolResult {
 
 enum ApprovalResolution {
     Approved,
-    Rejected {
-        result: AgentToolResult,
-    },
+    Rejected { result: AgentToolResult },
 }
 
 async fn await_tool_approval(

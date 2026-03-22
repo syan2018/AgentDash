@@ -5,7 +5,8 @@
  */
 
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { extractAgentDashMetaFromUpdate } from "../model/agentdashMeta";
+import { extractAgentDashMetaFromUpdate, isRecord } from "../model/agentdashMeta";
+import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 
 export interface AcpTaskEventCardProps {
   update: SessionUpdate;
@@ -18,16 +19,6 @@ const TASK_EVENT_LABELS: Record<string, string> = {
   task_start_failed: "任务启动失败",
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isTaskEventUpdate(update: SessionUpdate): boolean {
-  if (update.sessionUpdate !== "session_info_update") return false;
-  const eventType = extractAgentDashMetaFromUpdate(update)?.event?.type;
-  return typeof eventType === "string" && eventType.startsWith("task_");
-}
-
 export function AcpTaskEventCard({ update }: AcpTaskEventCardProps) {
   if (!isTaskEventUpdate(update)) return null;
 
@@ -39,7 +30,6 @@ export function AcpTaskEventCard({ update }: AcpTaskEventCardProps) {
 
   const fromStatus = typeof data?.from === "string" ? data.from : null;
   const toStatus = typeof data?.to === "string" ? data.to : null;
-  const taskId = typeof data?.task_id === "string" ? data.task_id : null;
 
   const isFailure = eventType === "task_start_failed" || eventType === "task_cancel_requested";
   const borderColor = isFailure ? "border-destructive/30" : "border-success/30";
@@ -59,11 +49,9 @@ export function AcpTaskEventCard({ update }: AcpTaskEventCardProps) {
         )}
       </div>
       <p className="mt-1.5 text-xs text-foreground/80">{message}</p>
-      {(fromStatus || taskId) && (
-        <p className="mt-1.5 text-[10px] text-muted-foreground font-mono">
-          {taskId ? `task=${taskId}` : ""}
-          {taskId && fromStatus ? " · " : ""}
-          {fromStatus && toStatus ? `${fromStatus} → ${toStatus}` : ""}
+      {fromStatus && toStatus && (
+        <p className="mt-1.5 text-[10px] text-muted-foreground">
+          {fromStatus} → {toStatus}
         </p>
       )}
     </div>

@@ -145,7 +145,7 @@ export function TaskDrawer({
       <DetailPanel
         open={Boolean(task)}
         title={task.title}
-        subtitle={`ID: ${task.id}`}
+        subtitle={task.id.slice(0, 8)}
         onClose={onClose}
         widthClassName="max-w-[78rem]"
         overlayClassName="z-30"
@@ -275,7 +275,7 @@ export function TaskDrawer({
 
             <DetailSection
               title="Workflow 执行"
-              description="把 Task Session 正式挂到结构化 workflow run，并在当前抽屉里推进阶段。"
+              description="按工作流步骤推进任务执行。"
             >
               <TaskWorkflowPanel task={task} projectId={projectId} />
             </DetailSection>

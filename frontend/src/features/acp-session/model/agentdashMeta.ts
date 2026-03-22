@@ -3,7 +3,7 @@ import type { AgentDashMetaV1 } from '../../../generated/agentdash-acp-meta';
 
 const EXPECTED_VERSION = 1;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 

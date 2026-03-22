@@ -3,58 +3,21 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   WorkflowAgentRole,
   WorkflowAssignment,
-  WorkflowContextBinding,
   WorkflowDefinition,
-  WorkflowPhaseCompletionMode,
   WorkflowPhaseDefinition,
-  WorkflowTargetKind,
   WorkflowTemplate,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
+import {
+  BINDING_KIND_LABEL,
+  COMPLETION_MODE_LABEL,
+  DEFAULT_ROLE_BY_TARGET,
+  ROLE_LABEL,
+  ROLE_ORDER,
+  TARGET_KIND_LABEL,
+} from "./shared-labels";
 
 const EMPTY_ASSIGNMENTS: WorkflowAssignment[] = [];
-
-const TARGET_KIND_LABEL: Record<WorkflowTargetKind, string> = {
-  project: "Project",
-  story: "Story",
-  task: "Task",
-};
-
-const ROLE_LABEL: Record<WorkflowAgentRole, string> = {
-  project_context_maintainer: "Project 上下文维护",
-  story_lifecycle_companion: "Story 生命周期协作",
-  task_execution_worker: "Task 执行",
-  review_agent: "Review",
-  record_agent: "Record",
-};
-
-const ROLE_ORDER: WorkflowAgentRole[] = [
-  "project_context_maintainer",
-  "story_lifecycle_companion",
-  "task_execution_worker",
-  "review_agent",
-  "record_agent",
-];
-
-const DEFAULT_ROLE_BY_TARGET: Record<WorkflowTargetKind, WorkflowAgentRole> = {
-  project: "project_context_maintainer",
-  story: "story_lifecycle_companion",
-  task: "task_execution_worker",
-};
-
-const COMPLETION_MODE_LABEL: Record<WorkflowPhaseCompletionMode, string> = {
-  manual: "手动完成",
-  session_ended: "会话结束后完成",
-  checklist_passed: "检查通过后完成",
-};
-
-const BINDING_KIND_LABEL: Record<WorkflowContextBinding["kind"], string> = {
-  document_path: "文档",
-  runtime_context: "运行时上下文",
-  checklist: "检查清单",
-  journal_target: "记录目标",
-  action_ref: "动作引用",
-};
 
 function findDefinitionByTemplate(
   definitions: WorkflowDefinition[],
@@ -72,6 +35,8 @@ function resolveDefinitionRole(
 }
 
 function PhaseSummary({ phase }: { phase: WorkflowPhaseDefinition }) {
+  const [showInstructions, setShowInstructions] = useState(false);
+
   return (
     <div className="rounded-[10px] border border-border bg-background px-3 py-2 text-[11px]">
       <div className="flex flex-wrap items-center gap-2">
@@ -80,13 +45,6 @@ function PhaseSummary({ phase }: { phase: WorkflowPhaseDefinition }) {
           {COMPLETION_MODE_LABEL[phase.completion_mode]}
         </span>
       </div>
-      {phase.agent_instructions.length > 0 && (
-        <div className="mt-2 space-y-1 text-[10px] leading-5 text-foreground/75">
-          {phase.agent_instructions.map((instruction, index) => (
-            <p key={`${phase.key}-instruction-${index}`}>- {instruction}</p>
-          ))}
-        </div>
-      )}
       {phase.context_bindings.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {phase.context_bindings.map((binding, index) => (
@@ -98,6 +56,24 @@ function PhaseSummary({ phase }: { phase: WorkflowPhaseDefinition }) {
               {BINDING_KIND_LABEL[binding.kind]}: {binding.title?.trim() || binding.locator}
             </span>
           ))}
+        </div>
+      )}
+      {phase.agent_instructions.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setShowInstructions((v) => !v)}
+            className="text-[10px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+          >
+            {showInstructions ? "▲ 收起 Agent 约束" : `▶ ${phase.agent_instructions.length} 条 Agent 约束`}
+          </button>
+          {showInstructions && (
+            <div className="mt-1 space-y-1 text-[10px] leading-5 text-foreground/60">
+              {phase.agent_instructions.map((instruction, index) => (
+                <p key={`${phase.key}-instruction-${index}`}>- {instruction}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -324,7 +300,7 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
           <div>
             <p className="text-sm font-medium text-foreground">Workflow 模板与定义</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              builtin workflow 只是全局数据模板；注册后成为 definition，再按不同 Agent role 绑定到当前 Project。
+              管理项目可用的工作流，按角色分配默认流程。
             </p>
           </div>
         </div>
@@ -358,7 +334,7 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
         <div>
           <p className="text-sm font-medium text-foreground">可注册的内置模板</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            template 只描述 phase、binding 与自动注入约束；真正生效的是注册后的 workflow definition。
+            从内置模板注册为可使用的工作流。
           </p>
         </div>
         <div className="grid gap-3">
@@ -390,7 +366,7 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
         <div>
           <p className="text-sm font-medium text-foreground">已注册的 Workflow Definition</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            每个 role 可以选择自己的默认流程，不再只局限于 Task 执行流程。
+            为每个角色选择默认使用的工作流。
           </p>
         </div>
 

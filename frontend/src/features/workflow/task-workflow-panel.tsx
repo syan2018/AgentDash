@@ -4,9 +4,7 @@ import type {
   SessionBindingOwner,
   Task,
   WorkflowAssignment,
-  WorkflowContextBinding,
   WorkflowDefinition,
-  WorkflowPhaseCompletionMode,
   WorkflowPhaseDefinition,
   WorkflowPhaseState,
   WorkflowRecordArtifactType,
@@ -14,23 +12,15 @@ import type {
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { fetchSessionBindings } from "../../services/session";
+import {
+  BINDING_KIND_LABEL,
+  COMPLETION_MODE_LABEL,
+  PHASE_STATUS_LABEL,
+  RUN_STATUS_LABEL,
+} from "./shared-labels";
 
 const EMPTY_ASSIGNMENTS: WorkflowAssignment[] = [];
 const EMPTY_RUNS: WorkflowRun[] = [];
-
-const COMPLETION_MODE_LABEL: Record<WorkflowPhaseCompletionMode, string> = {
-  manual: "手动完成",
-  session_ended: "会话结束后完成",
-  checklist_passed: "检查通过后完成",
-};
-
-const BINDING_KIND_LABEL: Record<WorkflowContextBinding["kind"], string> = {
-  document_path: "文档",
-  runtime_context: "运行时上下文",
-  checklist: "检查清单",
-  journal_target: "记录目标",
-  action_ref: "动作引用",
-};
 
 function findDefinition(definitions: WorkflowDefinition[], workflowId: string): WorkflowDefinition | null {
   return definitions.find((item) => item.id === workflowId) ?? null;
@@ -84,6 +74,36 @@ function selectPreferredRun(runs: WorkflowRun[]): WorkflowRun | null {
     ?? runs.find((run) => run.status === "ready")
     ?? runs[0]
     ?? null
+  );
+}
+
+function AgentInstructionsCollapsible({
+  phaseKey,
+  instructions,
+}: {
+  phaseKey: string;
+  instructions: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+      >
+        {open ? "▲ 收起 Agent 约束" : `▶ ${instructions.length} 条 Agent 约束`}
+      </button>
+      {open && (
+        <div className="mt-1.5 rounded-[10px] border border-border bg-secondary/20 p-3">
+          <div className="space-y-1 text-xs leading-5 text-foreground/60">
+            {instructions.map((instruction, index) => (
+              <p key={`${phaseKey}-instruction-${index}`}>- {instruction}</p>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -242,7 +262,7 @@ export function TaskWorkflowPanel({
           <div>
             <p className="text-sm font-medium text-foreground">Workflow Run</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              这里把 Task 执行会话正式挂到 workflow phase 上，并让阶段约束真正进入 Agent prompt。
+              按步骤推进任务执行流程，追踪各阶段进展。
             </p>
           </div>
           <button
@@ -301,7 +321,7 @@ export function TaskWorkflowPanel({
                 {activeDefinition?.name ?? activeRun.workflow_id}
               </span>
               <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
-                {activeRun.status}
+                {RUN_STATUS_LABEL[activeRun.status] ?? activeRun.status}
               </span>
               {activeRun.current_phase_key && (
                 <span className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700">
@@ -331,7 +351,7 @@ export function TaskWorkflowPanel({
                       </span>
                     )}
                     <span className={`rounded-full border px-2 py-0.5 text-[11px] ${phaseBadgeClass(phase.status)}`}>
-                      {phase.status}
+                      {PHASE_STATUS_LABEL[phase.status] ?? phase.status}
                     </span>
                   </div>
                 </div>
@@ -364,14 +384,10 @@ export function TaskWorkflowPanel({
                 </div>
               )}
               {currentPhaseDefinition?.agent_instructions.length ? (
-                <div className="mt-3 rounded-[10px] border border-border bg-secondary/20 p-3">
-                  <p className="text-xs font-medium text-muted-foreground">自动注入给 Agent 的阶段约束</p>
-                  <div className="mt-2 space-y-1 text-xs leading-5 text-foreground/80">
-                    {currentPhaseDefinition.agent_instructions.map((instruction, index) => (
-                      <p key={`${currentPhaseDefinition.key}-instruction-${index}`}>- {instruction}</p>
-                    ))}
-                  </div>
-                </div>
+                <AgentInstructionsCollapsible
+                  phaseKey={currentPhaseDefinition.key}
+                  instructions={currentPhaseDefinition.agent_instructions}
+                />
               ) : null}
               {currentPhaseDefinition?.requires_session && !task.session_id && (
                 <p className="mt-2 text-xs text-amber-700">

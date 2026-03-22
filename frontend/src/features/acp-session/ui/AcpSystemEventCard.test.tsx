@@ -6,7 +6,7 @@ import { AcpSystemEventCard } from "./AcpSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./AcpSystemEventGuard";
 
 describe("AcpSystemEventCard", () => {
-  it("让 hook_event 进入可见事件流并展示关键摘要", () => {
+  it("让 hook_event 进入可见事件流并展示用户级摘要", () => {
     const update = {
       sessionUpdate: "session_info_update",
       _meta: {
@@ -46,12 +46,15 @@ describe("AcpSystemEventCard", () => {
     expect(isRenderableSystemEventUpdate(update)).toBe(true);
 
     const html = renderToStaticMarkup(<AcpSystemEventCard update={update} />);
-    expect(html).toContain("Hook 事件");
-    expect(html).toContain("trigger: before_stop");
-    expect(html).toContain("decision: continue");
-    expect(html).toContain("completion: checklist_passed");
-    expect(html).toContain("命中规则：workflow_completion:checklist_pending:stop_gate");
-    expect(html).toContain("诊断 before_stop_checklist_pending：需要继续执行");
+    // 用户级信息：类型标签、消息、完成判定
+    expect(html).toContain("流程事件");
+    expect(html).toContain("Hook 阻止了当前结束并要求继续执行");
+    expect(html).toContain("完成判定：未满足");
+    // 调试详情默认折叠——不在初始渲染中
+    expect(html).not.toContain("trigger: before_stop");
+    expect(html).not.toContain("decision: continue");
+    // 有"调试详情"入口
+    expect(html).toContain("调试详情");
   });
 
   it("显示 turn_started 这类 info lifecycle 事件", () => {
@@ -75,7 +78,9 @@ describe("AcpSystemEventCard", () => {
 
     const html = renderToStaticMarkup(<AcpSystemEventCard update={update} />);
     expect(html).toContain("开始执行");
-    expect(html).toContain("turn: turn-2");
+    expect(html).toContain("执行开始");
+    // turnId 只在调试折叠中，初始渲染中为截断版
+    expect(html).toContain("调试详情");
   });
 
   it("显示 turn_interrupted 并保留中断原因", () => {
@@ -100,10 +105,9 @@ describe("AcpSystemEventCard", () => {
     const html = renderToStaticMarkup(<AcpSystemEventCard update={update} />);
     expect(html).toContain("执行已中断");
     expect(html).toContain("执行已取消");
-    expect(html).toContain("turn: turn-3");
   });
 
-  it("展示 companion 回流事件中的 adoption 细节", () => {
+  it("展示 companion 回流事件中的用户级摘要", () => {
     const update = {
       sessionUpdate: "session_info_update",
       _meta: {
@@ -129,10 +133,13 @@ describe("AcpSystemEventCard", () => {
     } as unknown as SessionUpdate;
 
     const html = renderToStaticMarkup(<AcpSystemEventCard update={update} />);
-    expect(html).toContain("Companion 结果可用");
-    expect(html).toContain("adoption_mode：blocking_review");
-    expect(html).toContain("slice_mode：compact");
+    expect(html).toContain("协作结果可用");
+    // 用户级信息：companion 名称、状态、摘要
+    expect(html).toContain("协作 Agent：reviewer");
     expect(html).toContain("摘要：请先处理 review 结论");
+    // 内部字段不在用户级详情中
+    expect(html).not.toContain("adoption_mode");
+    expect(html).not.toContain("slice_mode");
   });
 
   it("展示 hook action 显式结案事件", () => {
@@ -163,9 +170,11 @@ describe("AcpSystemEventCard", () => {
     expect(isRenderableSystemEventUpdate(update)).toBe(true);
 
     const html = renderToStaticMarkup(<AcpSystemEventCard update={update} />);
-    expect(html).toContain("Hook 事项已结案");
-    expect(html).toContain("action_id：blocking_review:dispatch-1:turn-1");
-    expect(html).toContain("resolution_kind：adopted");
+    expect(html).toContain("事项已结案");
+    // 用户级：摘要和说明
     expect(html).toContain("说明：主 session 已确认采纳 review 结论");
+    // 内部字段不在用户级详情中
+    expect(html).not.toContain("action_id");
+    expect(html).not.toContain("resolution_kind");
   });
 });

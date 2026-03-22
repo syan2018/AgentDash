@@ -5,8 +5,9 @@
  * _meta.agentdash.event 携带事件元数据（type, severity, message, data）。
  */
 
+import { useState } from "react";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { extractAgentDashMetaFromUpdate } from "../model/agentdashMeta";
+import { extractAgentDashMetaFromUpdate, isRecord } from "../model/agentdashMeta";
 
 export interface AcpSystemEventCardProps {
   update: SessionUpdate;
@@ -70,15 +71,15 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   permission_denied: "权限拒绝",
   approval_requested: "等待审批",
   approval_resolved: "审批结果",
-  hook_action_resolved: "Hook 事项已结案",
-  companion_dispatch_registered: "Companion 已派发",
-  companion_result_available: "Companion 结果可用",
-  companion_result_returned: "Companion 已回传",
-  hook_event: "Hook 事件",
+  hook_action_resolved: "事项已结案",
+  companion_dispatch_registered: "协作 Agent 已派发",
+  companion_result_available: "协作结果可用",
+  companion_result_returned: "协作结果已回传",
+  hook_event: "流程事件",
 };
 
 const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
-  executor_session_bound: "已绑定到底层执行会话",
+  executor_session_bound: "已绑定到执行会话",
   turn_started: "本轮执行已开始",
   turn_completed: "本轮执行已完成",
   turn_interrupted: "本轮执行已中断",
@@ -90,14 +91,16 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   permission_denied: "操作被权限策略拒绝",
   approval_requested: "当前工具调用正在等待审批",
   approval_resolved: "当前工具调用审批已完成",
-  hook_action_resolved: "Hook Runtime 中的一项干预已被显式结案",
-  companion_dispatch_registered: "已注册 companion 派发上下文",
-  companion_result_available: "Companion 已回传结构化结果",
-  companion_result_returned: "当前 companion 结果已回传到主 session",
-  hook_event: "Hook Runtime 已产生新的流程事件",
+  hook_action_resolved: "一项流程干预已被结案",
+  companion_dispatch_registered: "已注册协作 Agent 派发",
+  companion_result_available: "协作 Agent 已回传结果",
+  companion_result_returned: "协作结果已回传到当前会话",
+  hook_event: "流程产生新事件",
 };
 
 export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
+  const [showDebug, setShowDebug] = useState(false);
+
   if (update.sessionUpdate !== "session_info_update") return null;
 
   const meta = extractAgentDashMetaFromUpdate(update);
@@ -116,9 +119,12 @@ export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
   const fallbackMessage = typeof sessionInfo?.message === "string" ? sessionInfo.message : undefined;
 
   const displayMessage = message || fallbackMessage || EVENT_TYPE_DEFAULT_MESSAGES[eventType] || "系统事件";
-  const metadataChips = buildMetadataChips(eventType, hookData, meta?.trace?.turnId ?? null);
-  const detailLines = buildDetailLines(eventType, event?.data, hookData);
+  const userDetailLines = buildUserDetailLines(eventType, event?.data, hookData);
+
+  const debugChips = buildDebugChips(eventType, hookData, meta?.trace?.turnId ?? null);
+  const debugLines = buildDebugLines(hookData);
   const extraData = eventType === "hook_event" ? null : formatExtraData(event?.data);
+  const hasDebugContent = debugChips.length > 0 || debugLines.length > 0 || Boolean(extraData);
 
   return (
     <div className={`rounded-[12px] border ${style.border} bg-background px-4 py-3`}>
@@ -128,33 +134,15 @@ export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
             <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${style.badge}`}>
               {typeLabel}
             </span>
-            {event?.code && (
-              <span className="rounded-full border border-border bg-secondary/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
-                {event.code}
-              </span>
-            )}
           </div>
           <p className="mt-2 text-sm leading-6 text-foreground/90">{displayMessage}</p>
         </div>
         <span className={`shrink-0 text-[11px] font-medium ${style.tone}`}>{severityLabel}</span>
       </div>
 
-      {metadataChips.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {metadataChips.map((chip) => (
-            <span
-              key={chip}
-              className="rounded-full border border-border bg-secondary/35 px-2 py-1 text-[10px] text-muted-foreground"
-            >
-              {chip}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {detailLines.length > 0 && (
+      {userDetailLines.length > 0 && (
         <div className="mt-3 space-y-2 rounded-[10px] border border-border/70 bg-secondary/20 px-3 py-2.5">
-          {detailLines.map((line) => (
+          {userDetailLines.map((line) => (
             <p key={line} className="text-xs leading-5 text-muted-foreground">
               {line}
             </p>
@@ -162,10 +150,46 @@ export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
         </div>
       )}
 
-      {extraData && (
-        <pre className="mt-3 overflow-auto rounded-[10px] border border-border/70 bg-secondary/20 p-3 text-xs text-muted-foreground">
-          {extraData}
-        </pre>
+      {hasDebugContent && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setShowDebug((v) => !v)}
+            className="text-[10px] text-muted-foreground/40 transition-colors hover:text-muted-foreground"
+          >
+            {showDebug ? "▲ 收起详情" : "▶ 调试详情"}
+          </button>
+          {showDebug && (
+            <div className="mt-1.5 space-y-2">
+              {debugChips.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {debugChips.map((chip) => (
+                    <span
+                      key={chip}
+                      className="rounded-full border border-border bg-secondary/35 px-2 py-1 text-[10px] text-muted-foreground"
+                    >
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {debugLines.length > 0 && (
+                <div className="space-y-1 rounded-[10px] border border-border/70 bg-secondary/20 px-3 py-2.5">
+                  {debugLines.map((line) => (
+                    <p key={line} className="text-xs leading-5 text-muted-foreground">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {extraData && (
+                <pre className="overflow-auto rounded-[10px] border border-border/70 bg-secondary/20 p-3 text-xs text-muted-foreground">
+                  {extraData}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -182,128 +206,47 @@ function resolveSeverityLabel(severity: string): string {
   }
 }
 
-function buildMetadataChips(
-  eventType: string,
-  hookData: HookEventData | null,
-  turnId: string | null,
-): string[] {
-  const chips: string[] = [];
-  if (turnId) {
-    chips.push(`turn: ${turnId}`);
-  }
-  if (eventType !== "hook_event" || !hookData) {
-    return chips;
-  }
-
-  if (hookData.trigger) {
-    chips.push(`trigger: ${hookData.trigger}`);
-  }
-  if (hookData.decision) {
-    chips.push(`decision: ${hookData.decision}`);
-  }
-  if (hookData.completion?.mode) {
-    chips.push(`completion: ${hookData.completion.mode}`);
-  }
-  if (typeof hookData.revision === "number") {
-    chips.push(`revision: ${hookData.revision}`);
-  }
-  if (typeof hookData.sequence === "number") {
-    chips.push(`trace: #${hookData.sequence}`);
-  }
-  if (hookData.tool_name) {
-    chips.push(`tool: ${hookData.tool_name}`);
-  }
-  if (hookData.subagent_type) {
-    chips.push(`subagent: ${hookData.subagent_type}`);
-  }
-  if (hookData.refresh_snapshot) {
-    chips.push("已请求刷新快照");
-  }
-  if (hookData.matched_rule_keys?.length) {
-    chips.push(`rules: ${hookData.matched_rule_keys.length}`);
-  }
-  if (hookData.diagnostic_codes?.length) {
-    chips.push(`diagnostics: ${hookData.diagnostic_codes.length}`);
-  }
-  return chips;
-}
-
-function buildDetailLines(
+/** 用户级详情行——只显示对用户有意义的信息 */
+function buildUserDetailLines(
   eventType: string,
   eventData: unknown,
   hookData: HookEventData | null,
 ): string[] {
-  if (eventType !== "hook_event") {
-    return buildGenericDetailLines(eventType, eventData);
-  }
-  if (!hookData) {
-    return [];
-  }
-
-  const lines: string[] = [];
-  if (hookData.block_reason) {
-    lines.push(`阻塞原因：${hookData.block_reason}`);
-  }
-
-  if (hookData.completion) {
-    const status = hookData.completion.satisfied ? "已满足" : "未满足";
-    const advanced = hookData.completion.advanced ? "，并已推进后续阶段" : "";
-    const reason = hookData.completion.reason ? `：${hookData.completion.reason}` : "";
-    lines.push(`完成判定：${status}${advanced}${reason}`);
-  }
-
-  if (hookData.matched_rule_keys?.length) {
-    lines.push(`命中规则：${hookData.matched_rule_keys.join("，")}`);
-  }
-
-  if (hookData.tool_call_id) {
-    lines.push(`tool_call_id：${hookData.tool_call_id}`);
-  }
-
-  if (hookData.diagnostics?.length) {
-    for (const diagnostic of hookData.diagnostics) {
-      const summary = typeof diagnostic?.summary === "string" ? diagnostic.summary : null;
-      if (!summary) continue;
-      const code = typeof diagnostic?.code === "string" ? diagnostic.code : null;
-      const detail = typeof diagnostic?.detail === "string" ? diagnostic.detail : null;
-      lines.push(
-        `诊断${code ? ` ${code}` : ""}：${summary}${detail ? `；${detail}` : ""}`,
-      );
+  if (eventType === "hook_event" && hookData) {
+    const lines: string[] = [];
+    if (hookData.block_reason) {
+      lines.push(`阻塞原因：${hookData.block_reason}`);
     }
+    if (hookData.completion) {
+      const status = hookData.completion.satisfied ? "已满足" : "未满足";
+      const advanced = hookData.completion.advanced ? "，已推进后续阶段" : "";
+      const reason = hookData.completion.reason ? `：${hookData.completion.reason}` : "";
+      lines.push(`完成判定：${status}${advanced}${reason}`);
+    }
+    return lines;
   }
 
-  return lines;
+  return buildGenericDetailLines(eventType, eventData);
 }
 
+/** 面向用户的通用事件详情 */
 function buildGenericDetailLines(eventType: string, value: unknown): string[] {
   if (!isRecord(value)) return [];
   const lines: string[] = [];
 
   if (eventType === "approval_requested" || eventType === "approval_resolved") {
     const toolName = typeof value.tool_name === "string" ? value.tool_name : null;
-    const toolCallId = typeof value.tool_call_id === "string" ? value.tool_call_id : null;
     const reason = typeof value.reason === "string" ? value.reason : null;
     const approved = typeof value.approved === "boolean" ? value.approved : null;
     if (toolName) lines.push(`工具：${toolName}`);
-    if (toolCallId) lines.push(`tool_call_id：${toolCallId}`);
     if (approved != null) lines.push(`审批结果：${approved ? "已批准" : "已拒绝"}`);
     if (reason) lines.push(`原因：${reason}`);
     return lines;
   }
 
   if (eventType === "hook_action_resolved") {
-    const actionId = typeof value.action_id === "string" ? value.action_id : null;
-    const actionType = typeof value.action_type === "string" ? value.action_type : null;
-    const status = typeof value.status === "string" ? value.status : null;
-    const resolutionKind = typeof value.resolution_kind === "string" ? value.resolution_kind : null;
-    const resolutionNote = typeof value.resolution_note === "string" ? value.resolution_note : null;
-    const resolutionTurnId = typeof value.resolution_turn_id === "string" ? value.resolution_turn_id : null;
     const summary = typeof value.summary === "string" ? value.summary : null;
-    if (actionId) lines.push(`action_id：${actionId}`);
-    if (actionType) lines.push(`action_type：${actionType}`);
-    if (status) lines.push(`status：${status}`);
-    if (resolutionKind) lines.push(`resolution_kind：${resolutionKind}`);
-    if (resolutionTurnId) lines.push(`resolution_turn_id：${resolutionTurnId}`);
+    const resolutionNote = typeof value.resolution_note === "string" ? value.resolution_note : null;
     if (summary) lines.push(`摘要：${summary}`);
     if (resolutionNote) lines.push(`说明：${resolutionNote}`);
     return lines;
@@ -313,22 +256,60 @@ function buildGenericDetailLines(eventType: string, value: unknown): string[] {
     || eventType === "companion_result_available"
     || eventType === "companion_result_returned") {
     const label = typeof value.companion_label === "string" ? value.companion_label : null;
-    const sessionId = typeof value.companion_session_id === "string" ? value.companion_session_id : null;
-    const dispatchId = typeof value.dispatch_id === "string" ? value.dispatch_id : null;
-    const adoptionMode = typeof value.adoption_mode === "string" ? value.adoption_mode : null;
-    const sliceMode = typeof value.slice_mode === "string" ? value.slice_mode : null;
-    const status = typeof value.status === "string" ? value.status : null;
     const summary = typeof value.summary === "string" ? value.summary : null;
-    if (label) lines.push(`companion：${label}`);
-    if (dispatchId) lines.push(`dispatch_id：${dispatchId}`);
-    if (sessionId) lines.push(`companion_session_id：${sessionId}`);
-    if (sliceMode) lines.push(`slice_mode：${sliceMode}`);
-    if (adoptionMode) lines.push(`adoption_mode：${adoptionMode}`);
-    if (status) lines.push(`status：${status}`);
+    const status = typeof value.status === "string" ? value.status : null;
+    if (label) lines.push(`协作 Agent：${label}`);
+    if (status) lines.push(`状态：${status}`);
     if (summary) lines.push(`摘要：${summary}`);
     return lines;
   }
 
+  return lines;
+}
+
+/** 调试级 chips——折叠后才可见 */
+function buildDebugChips(
+  eventType: string,
+  hookData: HookEventData | null,
+  turnId: string | null,
+): string[] {
+  const chips: string[] = [];
+  if (turnId) chips.push(`turn: ${turnId.slice(0, 8)}`);
+  if (eventType !== "hook_event" || !hookData) return chips;
+
+  if (hookData.trigger) chips.push(`trigger: ${hookData.trigger}`);
+  if (hookData.decision) chips.push(`decision: ${hookData.decision}`);
+  if (hookData.completion?.mode) chips.push(`completion: ${hookData.completion.mode}`);
+  if (typeof hookData.revision === "number") chips.push(`rev: ${hookData.revision}`);
+  if (typeof hookData.sequence === "number") chips.push(`seq: #${hookData.sequence}`);
+  if (hookData.tool_name) chips.push(`tool: ${hookData.tool_name}`);
+  if (hookData.subagent_type) chips.push(`subagent: ${hookData.subagent_type}`);
+  if (hookData.refresh_snapshot) chips.push("snapshot refreshed");
+  if (hookData.matched_rule_keys?.length) chips.push(`rules: ${hookData.matched_rule_keys.length}`);
+  if (hookData.diagnostic_codes?.length) chips.push(`diag: ${hookData.diagnostic_codes.length}`);
+  return chips;
+}
+
+/** 调试级详情行——折叠后才可见 */
+function buildDebugLines(hookData: HookEventData | null): string[] {
+  if (!hookData) return [];
+  const lines: string[] = [];
+
+  if (hookData.matched_rule_keys?.length) {
+    lines.push(`命中规则：${hookData.matched_rule_keys.join("，")}`);
+  }
+  if (hookData.tool_call_id) {
+    lines.push(`tool_call_id：${hookData.tool_call_id}`);
+  }
+  if (hookData.diagnostics?.length) {
+    for (const diagnostic of hookData.diagnostics) {
+      const summary = typeof diagnostic?.summary === "string" ? diagnostic.summary : null;
+      if (!summary) continue;
+      const code = typeof diagnostic?.code === "string" ? diagnostic.code : null;
+      const detail = typeof diagnostic?.detail === "string" ? diagnostic.detail : null;
+      lines.push(`诊断${code ? ` ${code}` : ""}：${summary}${detail ? `；${detail}` : ""}`);
+    }
+  }
   return lines;
 }
 
@@ -344,10 +325,6 @@ function formatExtraData(value: unknown): string | null {
   } catch {
     return null;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export default AcpSystemEventCard;

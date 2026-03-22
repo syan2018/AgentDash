@@ -218,8 +218,8 @@ export function AcpToolCallCard({
             </div>
           )}
 
-          <p className="text-xs text-muted-foreground/40 font-mono">
-            {toolCallId}
+          <p className="text-xs text-muted-foreground/25 font-mono select-none">
+            {toolCallId.slice(0, 8)}
           </p>
         </div>
       )}

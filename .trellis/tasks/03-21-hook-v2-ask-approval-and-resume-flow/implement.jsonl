@@ -1,2 +1,0 @@
-{"file": "crates/agentdash-agent/src/types.rs", "reason": "Ask 决策模型"}
-{"file": "crates/agentdash-executor/src/runtime_delegate.rs", "reason": "loop 边界同步控制"}

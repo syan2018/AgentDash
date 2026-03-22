@@ -1,2 +1,0 @@
-{"file": "crates/agentdash-api/src/address_space_access.rs", "reason": "当前 companion_dispatch 实现"}
-{"file": "crates/agentdash-api/src/execution_hooks.rs", "reason": "dispatch 前后 hook 决策"}

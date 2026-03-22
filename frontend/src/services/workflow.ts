@@ -93,6 +93,7 @@ function normalizeWorkflowRecordArtifactType(value: string): WorkflowRecordArtif
     case "journal_update":
     case "archive_suggestion":
     case "phase_note":
+    case "checklist_evidence":
       return value;
     default:
       return "phase_note";
@@ -159,6 +160,7 @@ function mapWorkflowPhaseState(raw: Record<string, unknown>): WorkflowPhaseState
 function mapWorkflowRecordArtifact(raw: Record<string, unknown>): WorkflowRecordArtifact {
   return {
     id: String(raw.id ?? ""),
+    phase_key: String(raw.phase_key ?? ""),
     artifact_type: normalizeWorkflowRecordArtifactType(String(raw.artifact_type ?? "phase_note")),
     title: String(raw.title ?? ""),
     content: String(raw.content ?? ""),

@@ -80,8 +80,8 @@
       ],
       "requires_session": true,
       "completion_mode": "checklist_passed",
-      "default_artifact_type": "phase_note",
-      "default_artifact_title": "阶段记录"
+      "default_artifact_type": "checklist_evidence",
+      "default_artifact_title": "检查证据"
     },
     {
       "key": "record",

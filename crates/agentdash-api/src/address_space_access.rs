@@ -12,10 +12,15 @@ use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionBindingRepository, SessionOwnerType};
+use agentdash_domain::workflow::{WorkflowDefinitionRepository, WorkflowRunRepository};
 use agentdash_executor::{
     AgentDashExecutorConfig, CompanionSessionContext, ConnectorError, ExecutionAddressSpace,
     ExecutionContext, ExecutionMountCapability, ExecutorHub, HookEvaluationQuery, HookTraceEntry,
     HookTrigger, PromptSessionRequest, RuntimeToolProvider, SessionHookRefreshQuery,
+    build_hook_trace_notification,
+};
+use agentdash_application::workflow::{
+    AppendWorkflowPhaseArtifactsCommand, WorkflowRecordArtifactDraft, WorkflowRunService,
 };
 use agentdash_relay::{
     RelayMessage, ToolFileListPayload, ToolFileReadPayload, ToolFileWritePayload,
@@ -361,6 +366,8 @@ impl RelayAddressSpaceService {
 pub struct RelayRuntimeToolProvider {
     service: Arc<RelayAddressSpaceService>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
+    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    workflow_run_repo: Arc<dyn WorkflowRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
 }
 
@@ -368,11 +375,15 @@ impl RelayRuntimeToolProvider {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
+        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+        workflow_run_repo: Arc<dyn WorkflowRunRepository>,
         executor_hub_handle: SharedExecutorHubHandle,
     ) -> Self {
         Self {
             service,
             session_binding_repo,
+            workflow_definition_repo,
+            workflow_run_repo,
             executor_hub_handle,
         }
     }
@@ -420,6 +431,11 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 address_space.clone(),
             )) as DynAgentTool,
             Arc::new(ShellExecTool::new(self.service.clone(), address_space)) as DynAgentTool,
+            Arc::new(WorkflowArtifactReportTool::new(
+                self.workflow_definition_repo.clone(),
+                self.workflow_run_repo.clone(),
+                context,
+            )) as DynAgentTool,
             Arc::new(CompanionDispatchTool::new(
                 self.session_binding_repo.clone(),
                 self.executor_hub_handle.clone(),
@@ -444,6 +460,27 @@ fn ok_text(text: String) -> AgentToolResult {
 // ─── Tool Implementations ───────────────────────────────────
 
 #[derive(Clone)]
+struct WorkflowArtifactReportTool {
+    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+    current_session_id: Option<String>,
+    current_turn_id: String,
+    hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct WorkflowArtifactReportParams {
+    pub content: String,
+    pub artifact_type: Option<String>,
+    pub title: Option<String>,
+}
+
+struct ActiveWorkflowLocator {
+    run_id: Uuid,
+    phase_key: String,
+}
+
+#[derive(Clone)]
 struct CompanionDispatchTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
@@ -455,6 +492,25 @@ struct CompanionDispatchTool {
     address_space: Option<ExecutionAddressSpace>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
     hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
+}
+
+impl WorkflowArtifactReportTool {
+    fn new(
+        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+        workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+        context: &ExecutionContext,
+    ) -> Self {
+        Self {
+            workflow_definition_repo,
+            workflow_run_repo,
+            current_session_id: context
+                .hook_session
+                .as_ref()
+                .map(|session| session.session_id().to_string()),
+            current_turn_id: context.turn_id.clone(),
+            hook_session: context.hook_session.clone(),
+        }
+    }
 }
 
 impl CompanionDispatchTool {
@@ -569,6 +625,100 @@ impl CompanionCompleteTool {
 }
 
 #[async_trait]
+impl AgentTool for WorkflowArtifactReportTool {
+    fn name(&self) -> &str {
+        "report_workflow_artifact"
+    }
+
+    fn description(&self) -> &str {
+        "向当前 active workflow phase 追加结构化记录产物。支持 `phase_note` / `checklist_evidence` / `session_summary` / `journal_update` / `archive_suggestion`；当 phase 使用 checklist_passed 时，优先写入 `checklist_evidence`。"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<WorkflowArtifactReportParams>()
+    }
+
+    async fn execute(
+        &self,
+        _: &str,
+        args: serde_json::Value,
+        _: CancellationToken,
+        _: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        let params: WorkflowArtifactReportParams = serde_json::from_value(args)
+            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+        let content = params.content.trim();
+        if content.is_empty() {
+            return Err(AgentToolError::InvalidArguments(
+                "content 不能为空".to_string(),
+            ));
+        }
+
+        let hook_session = self.hook_session.as_ref().ok_or_else(|| {
+            AgentToolError::ExecutionFailed("当前 session 没有 hook runtime，无法写入 workflow 记录产物".to_string())
+        })?;
+        let locator = active_workflow_locator_from_snapshot(&hook_session.snapshot()).ok_or_else(|| {
+            AgentToolError::ExecutionFailed("当前 session 没有关联 active workflow，无法写入 workflow 记录产物".to_string())
+        })?;
+
+        let artifact_type = normalize_workflow_record_artifact_type(params.artifact_type.as_deref())?;
+        let title = params
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| active_workflow_default_artifact_title_from_snapshot(&hook_session.snapshot()))
+            .unwrap_or_else(|| format!("{} 阶段记录", locator.phase_key));
+
+        let service = WorkflowRunService::new(
+            self.workflow_definition_repo.as_ref(),
+            self.workflow_run_repo.as_ref(),
+        );
+        let run = service
+            .append_phase_artifacts(AppendWorkflowPhaseArtifactsCommand {
+                run_id: locator.run_id,
+                phase_key: locator.phase_key.clone(),
+                artifacts: vec![WorkflowRecordArtifactDraft {
+                    artifact_type,
+                    title: title.clone(),
+                    content: content.to_string(),
+                }],
+            })
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+        hook_session
+            .refresh(SessionHookRefreshQuery {
+                session_id: hook_session.session_id().to_string(),
+                turn_id: Some(self.current_turn_id.clone()),
+                reason: Some("tool:report_workflow_artifact".to_string()),
+            })
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+        Ok(AgentToolResult {
+            content: vec![ContentPart::text(format!(
+                "已写入 workflow 记录产物。\n- run_id: {}\n- phase_key: {}\n- artifact_type: {}\n- title: {}",
+                run.id,
+                locator.phase_key,
+                workflow_record_artifact_type_key(artifact_type),
+                title
+            ))],
+            is_error: false,
+            details: Some(serde_json::json!({
+                "session_id": self.current_session_id.clone(),
+                "turn_id": self.current_turn_id.clone(),
+                "run_id": run.id,
+                "phase_key": locator.phase_key,
+                "artifact_type": workflow_record_artifact_type_key(artifact_type),
+                "title": title,
+            })),
+        })
+    }
+}
+
+#[async_trait]
 impl AgentTool for CompanionDispatchTool {
     fn name(&self) -> &str {
         "companion_dispatch"
@@ -638,14 +788,21 @@ impl AgentTool for CompanionDispatchTool {
         .await
         .map_err(AgentToolError::ExecutionFailed)?;
 
+        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
+            AgentToolError::ExecutionFailed("ExecutorHub 尚未完成初始化，无法执行 companion dispatch".to_string())
+        })?;
+
         if let Some(reason) = before_resolution.block_reason.clone() {
             record_subagent_trace(
                 hook_session.as_ref(),
+                Some(&executor_hub),
+                Some(self.current_turn_id.as_str()),
                 HookTrigger::BeforeSubagentDispatch,
                 "deny",
                 &companion_label,
                 &before_resolution,
-            );
+            )
+            .await;
             return Err(AgentToolError::ExecutionFailed(reason));
         }
 
@@ -662,11 +819,14 @@ impl AgentTool for CompanionDispatchTool {
         );
         record_subagent_trace(
             hook_session.as_ref(),
+            Some(&executor_hub),
+            Some(self.current_turn_id.as_str()),
             HookTrigger::BeforeSubagentDispatch,
             "allow",
             &companion_label,
             &before_resolution,
-        );
+        )
+        .await;
 
         let target_binding = self
             .resolve_or_create_companion_binding(
@@ -682,10 +842,6 @@ impl AgentTool for CompanionDispatchTool {
                     .to_string(),
             ));
         }
-
-        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
-            AgentToolError::ExecutionFailed("ExecutorHub 尚未完成初始化，无法执行 companion dispatch".to_string())
-        })?;
 
         let companion_context = CompanionSessionContext {
             dispatch_id: dispatch_plan.dispatch_id.clone(),
@@ -762,11 +918,14 @@ impl AgentTool for CompanionDispatchTool {
         .map_err(AgentToolError::ExecutionFailed)?;
         record_subagent_trace(
             hook_session.as_ref(),
+            Some(&executor_hub),
+            Some(self.current_turn_id.as_str()),
             HookTrigger::AfterSubagentDispatch,
             "dispatched",
             &companion_label,
             &after_resolution,
-        );
+        )
+        .await;
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
@@ -921,11 +1080,14 @@ impl AgentTool for CompanionCompleteTool {
             .map_err(AgentToolError::ExecutionFailed)?;
             record_subagent_trace(
                 parent_hook_session.as_ref(),
+                Some(&executor_hub),
+                Some(companion_context.parent_turn_id.as_str()),
                 HookTrigger::SubagentResult,
                 "result_returned",
                 &companion_context.companion_label,
                 &resolution,
-            );
+            )
+            .await;
         }
 
         let parent_notification = build_companion_event_notification(
@@ -1015,14 +1177,16 @@ async fn evaluate_subagent_hook(
     Ok(resolution)
 }
 
-fn record_subagent_trace(
+async fn record_subagent_trace(
     hook_session: &agentdash_executor::HookSessionRuntime,
+    executor_hub: Option<&ExecutorHub>,
+    turn_id: Option<&str>,
     trigger: HookTrigger,
     decision: &str,
     subagent_type: &str,
     resolution: &agentdash_executor::HookResolution,
 ) {
-    hook_session.append_trace(HookTraceEntry {
+    let trace = HookTraceEntry {
         sequence: hook_session.next_trace_sequence(),
         timestamp_ms: chrono::Utc::now().timestamp_millis(),
         revision: hook_session.revision(),
@@ -1036,7 +1200,97 @@ fn record_subagent_trace(
         block_reason: resolution.block_reason.clone(),
         completion: resolution.completion.clone(),
         diagnostics: resolution.diagnostics.clone(),
-    });
+    };
+    hook_session.append_trace(trace.clone());
+
+    if let (Some(executor_hub), Some(turn_id)) = (executor_hub, turn_id) {
+        if let Some(notification) = build_hook_trace_notification(
+            hook_session.session_id(),
+            Some(turn_id),
+            hook_trace_source(),
+            &trace,
+        ) {
+            let _ = executor_hub
+                .inject_notification(hook_session.session_id(), notification)
+                .await;
+        }
+    }
+}
+
+fn hook_trace_source() -> AgentDashSourceV1 {
+    let mut source = AgentDashSourceV1::new("pi-agent", "runtime_tool");
+    source.executor_id = Some("PI_AGENT".to_string());
+    source
+}
+
+fn active_workflow_locator_from_snapshot(
+    snapshot: &agentdash_executor::SessionHookSnapshot,
+) -> Option<ActiveWorkflowLocator> {
+    let active_workflow = snapshot.metadata.as_ref()?.get("active_workflow")?;
+    let run_id = active_workflow
+        .get("run_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())?;
+    let phase_key = active_workflow
+        .get("phase_key")
+        .and_then(serde_json::Value::as_str)?
+        .to_string();
+    Some(ActiveWorkflowLocator { run_id, phase_key })
+}
+
+fn active_workflow_default_artifact_title_from_snapshot(
+    snapshot: &agentdash_executor::SessionHookSnapshot,
+) -> Option<String> {
+    snapshot
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("active_workflow"))
+        .and_then(|value| value.get("default_artifact_title"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn normalize_workflow_record_artifact_type(
+    value: Option<&str>,
+) -> Result<agentdash_domain::workflow::WorkflowRecordArtifactType, AgentToolError> {
+    match value.unwrap_or("phase_note").trim() {
+        "" | "phase_note" => Ok(agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote),
+        "checklist_evidence" => Ok(
+            agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence,
+        ),
+        "session_summary" => {
+            Ok(agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary)
+        }
+        "journal_update" => {
+            Ok(agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate)
+        }
+        "archive_suggestion" => Ok(
+            agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion,
+        ),
+        other => Err(AgentToolError::InvalidArguments(format!(
+            "artifact_type 不支持 `{other}`"
+        ))),
+    }
+}
+
+fn workflow_record_artifact_type_key(
+    artifact_type: agentdash_domain::workflow::WorkflowRecordArtifactType,
+) -> &'static str {
+    match artifact_type {
+        agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary => {
+            "session_summary"
+        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate => "journal_update",
+        agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion => {
+            "archive_suggestion"
+        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote => "phase_note",
+        agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence => {
+            "checklist_evidence"
+        }
+    }
 }
 
 fn build_companion_dispatch_prompt(

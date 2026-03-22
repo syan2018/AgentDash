@@ -424,6 +424,174 @@ agent_loop 的同步控制边界 / companion dispatch 执行层
 
 ---
 
+## Scenario: Checklist Evidence Artifact Contract
+
+### 1. Scope / Trigger
+
+- Trigger: workflow phase 使用 `checklist_passed` completion
+- Trigger: Pi Agent / runtime tool 需要向当前 active workflow phase 写入结构化 evidence
+- Trigger: 前端 / API / hook runtime 需要统一识别 `checklist_evidence`
+
+### 2. Signatures
+
+#### Domain Enum
+
+```rust
+pub enum WorkflowRecordArtifactType {
+    SessionSummary,
+    JournalUpdate,
+    ArchiveSuggestion,
+    PhaseNote,
+    ChecklistEvidence,
+}
+```
+
+#### Runtime Tool
+
+```rust
+report_workflow_artifact({
+  content: string,
+  artifact_type?: "phase_note" | "checklist_evidence" | "session_summary" | "journal_update" | "archive_suggestion",
+  title?: string,
+})
+```
+
+#### Workflow Phase Definition
+
+```json
+{
+  "completion_mode": "checklist_passed",
+  "default_artifact_type": "checklist_evidence",
+  "default_artifact_title": "检查证据"
+}
+```
+
+#### Snapshot Metadata
+
+`active_workflow` 当前至少必须暴露：
+
+- `default_artifact_type`
+- `default_artifact_title`
+- `checklist_evidence_artifact_type`
+- `checklist_evidence_present`
+- `checklist_evidence_count`
+- `checklist_evidence_artifact_ids`
+- `checklist_evidence_titles`
+
+### 3. Contracts
+
+#### 3.1 Evidence 判据必须跟随 Phase 配置
+
+- `checklist_passed` 的正式 evidence 判据，不再硬编码为“某段 assistant 文本长得像检查结论”
+- provider 必须读取当前 active phase 的 `default_artifact_type`
+- hook runtime 必须以“当前 phase 下、artifact_type 等于该配置值、且内容非空”的 record artifacts 作为 checklist evidence
+- 若 phase 未声明 `default_artifact_type`，才允许回退到 `phase_note`
+
+#### 3.2 Builtin Workflow 仍然只是声明层
+
+- Trellis builtin workflow 只能通过 JSON phase 配置声明：
+  - `completion_mode`
+  - `default_artifact_type`
+  - `default_artifact_title`
+- 禁止在 hook rule / route / tool 层写死：
+  - `check phase -> phase_note`
+  - `check phase -> 检查证据`
+  - `phase_key == check` 就代表某种特殊 artifact 语义
+
+#### 3.3 Tool 写入契约
+
+- `report_workflow_artifact` 只能向当前 active workflow phase 追加记录产物
+- 当调用方未显式传 `title` 时，应优先使用 snapshot 中的 `default_artifact_title`
+- 当调用方显式传入不支持的 `artifact_type` 时，必须同步报错，不允许静默降级
+- tool 写入成功后，必须主动 refresh hook runtime snapshot，保证 `before_stop` 能在同一轮外循环中看到最新 evidence
+
+#### 3.4 Completion 产物契约
+
+- hook runtime 在 `checklist_passed` 满足并自动完成 phase 时，生成的 completion artifact 也必须沿用当前 phase 的 `default_artifact_type`
+- 不能再把自动 completion artifact 固定写成 `phase_note`
+
+### 4. Validation & Error Matrix
+
+| 场景 | 预期行为 | 错误/结果 |
+|---|---|---|
+| 当前 session 没有 hook runtime | 拒绝写入 | `当前 session 没有 hook runtime，无法写入 workflow 记录产物` |
+| 当前 session 没有关联 active workflow | 拒绝写入 | `当前 session 没有关联 active workflow，无法写入 workflow 记录产物` |
+| `content` 为空 | 拒绝写入 | `content 不能为空` |
+| `artifact_type=checklist_evidence` | 正常写入 | run.record_artifacts 新增 `checklist_evidence` |
+| `artifact_type` 未知 | 拒绝写入 | `artifact_type 不支持` |
+| `checklist_passed` phase 未声明 `default_artifact_type` | 允许回退 | evidence 类型按 `phase_note` 处理 |
+| `checklist_passed` phase 声明 `default_artifact_type=checklist_evidence` | 不得降级 | before_stop 只认 `checklist_evidence` |
+
+### 5. Good / Base / Bad Cases
+
+#### Good
+
+```text
+builtin workflow JSON 声明 check phase 使用 checklist_evidence
+    ↓
+report_workflow_artifact 写入 checklist_evidence
+    ↓
+hook snapshot 刷新并记录 checklist_evidence_present=true
+    ↓
+before_stop 依据 task_status + checklist_evidence 允许 stop
+```
+
+#### Base
+
+```text
+phase 未声明 default_artifact_type
+→ 仍然允许沿用 phase_note 作为默认记录类型
+```
+
+#### Bad
+
+```text
+只要 phase_key == "check" 就把 artifact 当成 checklist evidence
+根据 last_assistant_text 猜“像不像检查结论”
+前端显示 checklist_evidence，但后端 stop gate 实际只认 phase_note
+```
+
+### 6. Tests Required
+
+- `execution_hooks`：
+  - `checklist_passed` 未见 evidence 时，`before_stop` 必须继续
+  - phase 默认 artifact type 为 `checklist_evidence` 时，`before_stop` 必须认 `checklist_evidence`
+  - 自动 phase completion 生成的 artifact type 必须跟随 phase 配置
+- `address_space_access` / runtime tool：
+  - `report_workflow_artifact` 支持 `checklist_evidence`
+  - 非法 `artifact_type` 返回明确错误
+  - 写入成功后 snapshot 已刷新
+- API / DTO：
+  - `/api/workflow-runs/{id}`
+  - `/api/workflow-runs/targets/{kind}/{id}`
+  - 返回的 `record_artifacts[].artifact_type` 必须保留 `checklist_evidence`
+- 联调：
+  - 真实 session 至少一轮验证 `continue -> stop -> phase advance -> record`
+  - 真实 workflow run 至少包含一条 `artifact_type=checklist_evidence`
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+checklist_passed 本质上仍靠 assistant 自然语言启发式判定；
+builtin workflow 只是名字上配置了 phase，真正 evidence 逻辑写死在 hook if/else 里。
+```
+
+#### Correct
+
+```text
+workflow phase 配置声明 evidence 类型
+    ↓
+runtime tool / auto completion 都按该类型写入 artifact
+    ↓
+hook runtime 从当前 phase 配置反推 evidence 判据
+    ↓
+before_stop / phase advance / frontend 展示使用同一事实来源
+```
+
+---
+
 ## Design Decision
 
 ### 决策：Hook 信息获取在 loop 外，Hook 控制决策在 loop 边界同步发生

@@ -8,10 +8,12 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::workflow::{
-    ActivateWorkflowPhaseCommand, AssignWorkflowCommand, CompleteWorkflowPhaseCommand,
-    StartWorkflowRunCommand, WorkflowCatalogService, WorkflowCompletionSignalSet,
-    WorkflowRecordArtifactDraft, WorkflowRunService, WorkflowSessionTerminalState,
-    build_builtin_workflow_definition, evaluate_phase_completion, list_builtin_workflow_templates,
+    ActivateWorkflowPhaseCommand, AppendWorkflowPhaseArtifactsCommand, AssignWorkflowCommand,
+    CompleteWorkflowPhaseCommand, StartWorkflowRunCommand, WorkflowCatalogService,
+    WorkflowCompletionSignalSet, WorkflowRecordArtifactDraft, WorkflowRunService,
+    WorkflowSessionTerminalState, build_builtin_workflow_definition,
+    build_phase_completion_artifact_drafts, evaluate_phase_completion,
+    list_builtin_workflow_templates,
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{
@@ -56,6 +58,11 @@ pub struct ActivateWorkflowPhaseRequest {
 #[derive(Debug, Deserialize, Default)]
 pub struct CompleteWorkflowPhaseRequest {
     pub summary: Option<String>,
+    pub record_artifacts: Option<Vec<WorkflowRecordArtifactDraftRequest>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AppendWorkflowPhaseArtifactsRequest {
     pub record_artifacts: Option<Vec<WorkflowRecordArtifactDraftRequest>>,
 }
 
@@ -291,6 +298,49 @@ pub async fn complete_workflow_phase(
     Ok(Json(WorkflowRunResponse::from(run)))
 }
 
+pub async fn append_workflow_phase_artifacts(
+    State(state): State<Arc<AppState>>,
+    Path((run_id, phase_key)): Path<(String, String)>,
+    Json(req): Json<AppendWorkflowPhaseArtifactsRequest>,
+) -> Result<Json<WorkflowRunResponse>, ApiError> {
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    let existing_run = load_workflow_run(&state, run_id).await?;
+    if let Some(phase_state) = existing_run
+        .phase_states
+        .iter()
+        .find(|item| item.phase_key == phase_key)
+    {
+        if let Some(binding_id) = phase_state.session_binding_id {
+            ensure_session_binding_matches_run(&state, binding_id, &existing_run).await?;
+        }
+    }
+    let artifacts = req
+        .record_artifacts
+        .unwrap_or_default()
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<_>>();
+    if artifacts.is_empty() {
+        return Err(ApiError::BadRequest(
+            "record_artifacts 不能为空".to_string(),
+        ));
+    }
+
+    let service = WorkflowRunService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.workflow_run_repo.as_ref(),
+    );
+    let run = service
+        .append_phase_artifacts(AppendWorkflowPhaseArtifactsCommand {
+            run_id,
+            phase_key,
+            artifacts,
+        })
+        .await?;
+
+    Ok(Json(WorkflowRunResponse::from(run)))
+}
+
 async fn ensure_project_exists(state: &Arc<AppState>, project_id: Uuid) -> Result<(), ApiError> {
     let exists = state
         .repos
@@ -470,8 +520,13 @@ async fn reconcile_workflow_run_runtime(
         .complete_phase(CompleteWorkflowPhaseCommand {
             run_id: run.id,
             phase_key: current_phase_key,
-            summary: decision.summary,
-            record_artifacts: vec![],
+            summary: decision.summary.clone(),
+            record_artifacts: build_phase_completion_artifact_drafts(
+                &phase_definition.key,
+                phase_definition.default_artifact_type,
+                phase_definition.default_artifact_title.as_deref(),
+                &decision,
+            ),
         })
         .await?;
     Ok(run)

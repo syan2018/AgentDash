@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use agentdash_application::workflow::{
     CompleteWorkflowPhaseCommand, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
-    WorkflowRunService, WorkflowSessionTerminalState, completion_mode_tag,
-    evaluate_phase_completion,
+    WorkflowRunService, WorkflowSessionTerminalState, build_phase_completion_artifact_drafts,
+    completion_mode_tag, evaluate_phase_completion,
 };
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::{
@@ -309,6 +309,7 @@ impl AppExecutionHookProvider {
         }
 
         let completion_summary = decision.summary.clone();
+        let record_artifacts = build_completion_record_artifacts_from_snapshot(snapshot, &decision);
         let service = WorkflowRunService::new(
             self.workflow_definition_repo.as_ref(),
             self.workflow_run_repo.as_ref(),
@@ -318,7 +319,7 @@ impl AppExecutionHookProvider {
                 run_id: locator.run_id,
                 phase_key: locator.phase_key.clone(),
                 summary: completion_summary.clone(),
-                record_artifacts: vec![],
+                record_artifacts,
             })
             .await
         {
@@ -367,6 +368,13 @@ impl AppExecutionHookProvider {
 struct ActiveWorkflowLocator {
     run_id: Uuid,
     phase_key: String,
+}
+
+struct ActiveWorkflowChecklistEvidenceSummary {
+    artifact_type: agentdash_domain::workflow::WorkflowRecordArtifactType,
+    count: usize,
+    artifact_ids: Vec<Uuid>,
+    titles: Vec<String>,
 }
 
 fn global_builtin_sources() -> Vec<HookSourceRef> {
@@ -598,6 +606,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 let source_refs = workflow_source_refs(&workflow);
                 let mut source_summary = source_summary_from_refs(&source_refs);
                 source_summary.push(format!("workflow_run:{}", workflow.run.id));
+                let checklist_evidence = active_workflow_checklist_evidence_summary(&workflow);
 
                 snapshot.diagnostics.push(HookDiagnosticEntry {
                     code: "workflow_phase_resolved".to_string(),
@@ -632,6 +641,16 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             "phase_title": workflow.phase.title,
                             "completion_mode": completion_mode_tag(workflow.phase.completion_mode),
                             "requires_session": workflow.phase.requires_session,
+                            "default_artifact_type": workflow
+                                .phase
+                                .default_artifact_type
+                                .map(workflow_record_artifact_type_tag),
+                            "default_artifact_title": workflow.phase.default_artifact_title.clone(),
+                            "checklist_evidence_artifact_type": workflow_record_artifact_type_tag(checklist_evidence.artifact_type),
+                            "checklist_evidence_present": checklist_evidence.count > 0,
+                            "checklist_evidence_count": checklist_evidence.count,
+                            "checklist_evidence_artifact_ids": checklist_evidence.artifact_ids,
+                            "checklist_evidence_titles": checklist_evidence.titles,
                         }),
                     );
                 }
@@ -763,10 +782,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         parse_completion_mode_tag(completion_mode),
                         &WorkflowCompletionSignalSet {
                             task_status: active_task_status(&snapshot).map(ToString::to_string),
-                            checklist_evidence_present: checklist_evidence_present(
-                                &snapshot,
-                                query.payload.as_ref(),
-                            ),
+                            checklist_evidence_present: checklist_evidence_present(&snapshot),
                             ..WorkflowCompletionSignalSet::default()
                         },
                     );
@@ -902,6 +918,28 @@ fn active_workflow_checklist_evidence(snapshot: &SessionHookSnapshot) -> bool {
         .unwrap_or(false)
 }
 
+fn active_workflow_default_artifact_type(
+    snapshot: &SessionHookSnapshot,
+) -> Option<agentdash_domain::workflow::WorkflowRecordArtifactType> {
+    parse_workflow_record_artifact_type_tag(
+        snapshot
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("active_workflow"))
+            .and_then(|value| value.get("default_artifact_type"))
+            .and_then(serde_json::Value::as_str)?,
+    )
+}
+
+fn active_workflow_default_artifact_title(snapshot: &SessionHookSnapshot) -> Option<&str> {
+    snapshot
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("active_workflow"))
+        .and_then(|value| value.get("default_artifact_title"))
+        .and_then(serde_json::Value::as_str)
+}
+
 fn session_permission_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
     snapshot
         .metadata
@@ -996,37 +1034,8 @@ fn parse_completion_mode_tag(mode: &str) -> agentdash_domain::workflow::Workflow
     }
 }
 
-fn checklist_evidence_present(
-    snapshot: &SessionHookSnapshot,
-    payload: Option<&serde_json::Value>,
-) -> bool {
+fn checklist_evidence_present(snapshot: &SessionHookSnapshot) -> bool {
     active_workflow_checklist_evidence(snapshot)
-        || payload
-            .and_then(|value| value.get("last_assistant_text"))
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(assistant_text_looks_like_checklist_evidence)
-}
-
-fn assistant_text_looks_like_checklist_evidence(text: &str) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    let char_len = trimmed.chars().count();
-    let sentence_markers = trimmed
-        .chars()
-        .filter(|ch| matches!(ch, '。' | '！' | '？' | ';' | '；' | '.'))
-        .count();
-    let has_structured_markers = trimmed.contains('\n')
-        || trimmed.contains("- ")
-        || trimmed.contains("* ")
-        || trimmed.contains("1. ")
-        || trimmed.contains("2. ")
-        || trimmed.contains("3. ")
-        || trimmed.contains("•");
-
-    (has_structured_markers && char_len >= 40) || (sentence_markers >= 2 && char_len >= 60)
 }
 
 fn parse_session_terminal_state(
@@ -1097,7 +1106,7 @@ fn build_workflow_policies(
             source_summary: source_summary.to_vec(),
             source_refs: source_refs.to_vec(),
             payload: Some(serde_json::json!({
-                "tool": "report_artifact",
+                "tool": "report_workflow_artifact",
                 "deny_artifact_types": ["session_summary", "archive_suggestion"],
             })),
         });
@@ -1325,7 +1334,7 @@ fn rule_matches_implement_record_artifact_block(ctx: &HookEvaluationContext<'_>)
     let Some(tool_name) = ctx.query.tool_name.as_deref() else {
         return false;
     };
-    is_report_artifact_tool(tool_name)
+    is_report_workflow_artifact_tool(tool_name)
         && workflow_phase_key(ctx.snapshot) == Some("implement")
         && matches!(
             extract_tool_arg(ctx.query.payload.as_ref(), "artifact_type"),
@@ -1391,7 +1400,8 @@ fn rule_matches_after_tool_refresh(ctx: &HookEvaluationContext<'_>) -> bool {
         return false;
     };
     !tool_call_failed(ctx.query.payload.as_ref())
-        && (is_update_task_status_tool(tool_name) || is_report_artifact_tool(tool_name))
+        && (is_update_task_status_tool(tool_name)
+            || is_report_workflow_artifact_tool(tool_name))
 }
 
 fn rule_apply_after_tool_refresh(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
@@ -1434,7 +1444,7 @@ fn rule_matches_checklist_pending_gate(ctx: &HookEvaluationContext<'_>) -> bool 
         && (!matches!(
             active_task_status(ctx.snapshot),
             Some("awaiting_verification" | "completed")
-        ) || !checklist_evidence_present(ctx.snapshot, ctx.query.payload.as_ref()))
+        ) || !checklist_evidence_present(ctx.snapshot))
 }
 
 fn rule_apply_checklist_pending_gate(
@@ -1470,7 +1480,7 @@ fn rule_apply_checklist_pending_gate(
         detail: Some(format!(
             "current_task_status={}, checklist_evidence_present={}",
             active_task_status(ctx.snapshot).unwrap_or("unknown"),
-            checklist_evidence_present(ctx.snapshot, ctx.query.payload.as_ref())
+            checklist_evidence_present(ctx.snapshot)
         )),
         source_summary: active_workflow_source_summary(ctx.snapshot),
         source_refs: active_workflow_source_refs(ctx.snapshot),
@@ -1660,8 +1670,90 @@ fn is_update_task_status_tool(tool_name: &str) -> bool {
     tool_name.ends_with("update_task_status")
 }
 
-fn is_report_artifact_tool(tool_name: &str) -> bool {
-    tool_name.ends_with("report_artifact")
+fn is_report_workflow_artifact_tool(tool_name: &str) -> bool {
+    tool_name.ends_with("report_workflow_artifact")
+}
+
+fn workflow_record_artifact_type_tag(
+    artifact_type: agentdash_domain::workflow::WorkflowRecordArtifactType,
+) -> &'static str {
+    match artifact_type {
+        agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary => {
+            "session_summary"
+        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate => "journal_update",
+        agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion => {
+            "archive_suggestion"
+        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote => "phase_note",
+        agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence => {
+            "checklist_evidence"
+        }
+    }
+}
+
+fn parse_workflow_record_artifact_type_tag(
+    value: &str,
+) -> Option<agentdash_domain::workflow::WorkflowRecordArtifactType> {
+    match value {
+        "session_summary" => {
+            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary)
+        }
+        "journal_update" => {
+            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate)
+        }
+        "archive_suggestion" => Some(
+            agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion,
+        ),
+        "phase_note" => Some(agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote),
+        "checklist_evidence" => Some(
+            agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence,
+        ),
+        _ => None,
+    }
+}
+
+fn active_workflow_checklist_evidence_summary(
+    workflow: &ResolvedWorkflowPhase,
+) -> ActiveWorkflowChecklistEvidenceSummary {
+    let artifact_type = workflow
+        .phase
+        .default_artifact_type
+        .unwrap_or(agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote);
+    let matching = workflow
+        .run
+        .record_artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.phase_key == workflow.phase.key
+                && artifact.artifact_type == artifact_type
+                && !artifact.content.trim().is_empty()
+        })
+        .collect::<Vec<_>>();
+
+    ActiveWorkflowChecklistEvidenceSummary {
+        artifact_type,
+        count: matching.len(),
+        artifact_ids: matching.iter().map(|artifact| artifact.id).collect(),
+        titles: matching
+            .iter()
+            .map(|artifact| artifact.title.trim())
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+    }
+}
+
+fn build_completion_record_artifacts_from_snapshot(
+    snapshot: &SessionHookSnapshot,
+    decision: &WorkflowCompletionDecision,
+) -> Vec<agentdash_application::workflow::WorkflowRecordArtifactDraft> {
+    build_phase_completion_artifact_drafts(
+        workflow_phase_key(snapshot).unwrap_or("workflow_phase"),
+        active_workflow_default_artifact_type(snapshot),
+        active_workflow_default_artifact_title(snapshot),
+        decision,
+    )
 }
 
 fn build_phase_summary_markdown(workflow: &ResolvedWorkflowPhase) -> String {
@@ -1727,6 +1819,15 @@ mod tests {
         completion_mode: &str,
         task_status: Option<&str>,
     ) -> SessionHookSnapshot {
+        snapshot_with_workflow_and_evidence(phase_key, completion_mode, task_status, false)
+    }
+
+    fn snapshot_with_workflow_and_evidence(
+        phase_key: &str,
+        completion_mode: &str,
+        task_status: Option<&str>,
+        checklist_evidence_present: bool,
+    ) -> SessionHookSnapshot {
         let workflow_source = HookSourceRef {
             layer: HookSourceLayer::Workflow,
             key: format!("trellis_dev_task:{phase_key}"),
@@ -1742,6 +1843,7 @@ mod tests {
                     "workflow_key": "trellis_dev_task",
                     "phase_key": phase_key,
                     "completion_mode": completion_mode,
+                    "checklist_evidence_present": checklist_evidence_present,
                 }
             })),
             ..SessionHookSnapshot::default()
@@ -1916,9 +2018,7 @@ mod tests {
             tool_call_id: None,
             subagent_type: None,
             snapshot: None,
-            payload: Some(serde_json::json!({
-                "last_assistant_text": "准备结束。"
-            })),
+            payload: None,
         };
 
         apply_hook_rules(
@@ -1940,8 +2040,12 @@ mod tests {
 
     #[test]
     fn before_stop_allows_ready_task_with_checklist_evidence() {
-        let snapshot =
-            snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let snapshot = snapshot_with_workflow_and_evidence(
+            "check",
+            "checklist_passed",
+            Some("awaiting_verification"),
+            true,
+        );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -1951,9 +2055,7 @@ mod tests {
             tool_call_id: None,
             subagent_type: None,
             snapshot: None,
-            payload: Some(serde_json::json!({
-                "last_assistant_text": "检查结果如下：\n- 已确认当前实现覆盖了任务目标。\n- 已完成验证，并记录了剩余风险与未覆盖项。\n- 当前 Task 已可进入 awaiting_verification。"
-            })),
+            payload: None,
         };
 
         apply_hook_rules(

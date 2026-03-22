@@ -431,6 +431,9 @@ export function TaskWorkflowPanel({
                     className="rounded-[10px] border border-border bg-secondary/15 px-3 py-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
+                        {artifact.phase_key || "unknown_phase"}
+                      </span>
                       <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
                         {artifact.artifact_type}
                       </span>

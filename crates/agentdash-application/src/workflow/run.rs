@@ -7,6 +7,7 @@ use agentdash_domain::workflow::{
 };
 
 use super::error::WorkflowApplicationError;
+use super::completion::WorkflowCompletionDecision;
 
 #[derive(Debug, Clone)]
 pub struct StartWorkflowRunCommand {
@@ -32,6 +33,13 @@ pub struct CompleteWorkflowPhaseCommand {
 }
 
 #[derive(Debug, Clone)]
+pub struct AppendWorkflowPhaseArtifactsCommand {
+    pub run_id: Uuid,
+    pub phase_key: String,
+    pub artifacts: Vec<WorkflowRecordArtifactDraft>,
+}
+
+#[derive(Debug, Clone)]
 pub struct WorkflowRecordArtifactDraft {
     pub artifact_type: WorkflowRecordArtifactType,
     pub title: String,
@@ -39,9 +47,57 @@ pub struct WorkflowRecordArtifactDraft {
 }
 
 impl WorkflowRecordArtifactDraft {
-    fn into_artifact(self) -> WorkflowRecordArtifact {
-        WorkflowRecordArtifact::new(self.artifact_type, self.title, self.content)
+    fn into_artifact(self, phase_key: &str) -> WorkflowRecordArtifact {
+        WorkflowRecordArtifact::new(phase_key, self.artifact_type, self.title, self.content)
     }
+}
+
+pub fn build_phase_completion_artifact_drafts(
+    phase_key: &str,
+    default_artifact_type: Option<WorkflowRecordArtifactType>,
+    default_artifact_title: Option<&str>,
+    decision: &WorkflowCompletionDecision,
+) -> Vec<WorkflowRecordArtifactDraft> {
+    let title = default_artifact_title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{phase_key} 阶段记录"));
+    let artifact_type = default_artifact_type.unwrap_or(WorkflowRecordArtifactType::PhaseNote);
+
+    let mut sections = Vec::new();
+    if let Some(summary) = decision.summary.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        sections.push(format!("## 阶段总结\n{summary}"));
+    }
+    if !decision.evidence.is_empty() {
+        sections.push(format!(
+            "## 完成证据\n{}",
+            decision
+                .evidence
+                .iter()
+                .map(|entry| {
+                    let detail = entry
+                        .detail
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(|detail| format!(" ({detail})"))
+                        .unwrap_or_default();
+                    format!("- {}: {}{}", entry.code, entry.summary, detail)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if sections.is_empty() {
+        return Vec::new();
+    }
+
+    vec![WorkflowRecordArtifactDraft {
+        artifact_type,
+        title,
+        content: sections.join("\n\n"),
+    }]
 }
 
 pub struct WorkflowRunService<'a, D: ?Sized, R: ?Sized> {
@@ -173,7 +229,51 @@ where
         run.complete_phase(&cmd.phase_key, cmd.summary)
             .map_err(WorkflowApplicationError::Conflict)?;
         for artifact in cmd.record_artifacts {
-            run.append_record_artifact(artifact.into_artifact());
+            run.append_record_artifact(artifact.into_artifact(&cmd.phase_key));
+        }
+
+        self.run_repo.update(&run).await?;
+        Ok(run)
+    }
+
+    pub async fn append_phase_artifacts(
+        &self,
+        cmd: AppendWorkflowPhaseArtifactsCommand,
+    ) -> Result<WorkflowRun, WorkflowApplicationError> {
+        let mut run = self.load_run(cmd.run_id).await?;
+        let definition = self.load_definition(run.workflow_id).await?;
+        let _phase_definition = find_phase_definition(&definition, &cmd.phase_key)?;
+        let phase_state = run
+            .phase_states
+            .iter()
+            .find(|phase| phase.phase_key == cmd.phase_key)
+            .cloned()
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "workflow run phase 不存在: {}",
+                    cmd.phase_key
+                ))
+            })?;
+
+        if run.current_phase_key.as_deref() != Some(cmd.phase_key.as_str()) {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "当前活跃 phase 不是 `{}`，不能向其追加记录产物",
+                cmd.phase_key
+            )));
+        }
+        if !matches!(
+            phase_state.status,
+            agentdash_domain::workflow::WorkflowPhaseExecutionStatus::Ready
+                | agentdash_domain::workflow::WorkflowPhaseExecutionStatus::Running
+        ) {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "phase `{}` 当前状态为 {:?}，不能追加记录产物",
+                cmd.phase_key, phase_state.status
+            )));
+        }
+
+        for artifact in cmd.artifacts {
+            run.append_record_artifact(artifact.into_artifact(&cmd.phase_key));
         }
 
         self.run_repo.update(&run).await?;

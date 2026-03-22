@@ -270,7 +270,8 @@ export type WorkflowRecordArtifactType =
   | "session_summary"
   | "journal_update"
   | "archive_suggestion"
-  | "phase_note";
+  | "phase_note"
+  | "checklist_evidence";
 
 export interface WorkflowContextBinding {
   kind: WorkflowContextBindingKind;
@@ -344,6 +345,7 @@ export interface WorkflowPhaseState {
 
 export interface WorkflowRecordArtifact {
   id: string;
+  phase_key: string;
   artifact_type: WorkflowRecordArtifactType;
   title: string;
   content: string;

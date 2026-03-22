@@ -300,6 +300,76 @@ if (isTerminalToolCallStatus(incomingStatus)) {
 
 ---
 
+## Scenario: Workflow Artifact Type Mapping
+
+### 1. Scope / Trigger
+
+- Trigger: 前端展示 workflow run 的 `record_artifacts`
+- Trigger: 后端新增 `WorkflowRecordArtifactType`
+- Trigger: 使用 `vite preview` / MCP 做真实联调
+
+### 2. Contracts
+
+- `frontend/src/types/index.ts` 中的 `WorkflowRecordArtifactType` 必须与后端 DTO 同步扩展
+- `frontend/src/services/workflow.ts` 的 normalize / map 层必须无损保留新 artifact type
+- Workflow 面板中的 type chip 必须直接显示 API 返回值，不允许在组件层二次硬编码“check phase -> phase_note”
+- `record_artifacts[].phase_key` 与 `record_artifacts[].artifact_type` 都属于正式展示字段，不能在 mapper 中丢失
+
+### 3. Validation & Error Matrix
+
+| 场景 | 预期行为 | 风险 |
+|---|---|---|
+| 后端返回 `artifact_type=checklist_evidence` | UI type chip 显示 `checklist_evidence` | 正常 |
+| type union / normalize 未同步 | UI 会被静默降级成 `phase_note` | 严重误导联调判断 |
+| `vite preview` 仍在服务旧 dist | 即使源码已修复，UI 仍可能显示旧值 | 必须重建再验 |
+
+### 4. Wrong vs Correct
+
+#### Wrong
+
+```ts
+function normalizeWorkflowRecordArtifactType(value: string): WorkflowRecordArtifactType {
+  switch (value) {
+    case "phase_note":
+      return value;
+    default:
+      return "phase_note";
+  }
+}
+```
+
+结果：
+
+- 后端明明已经返回 `checklist_evidence`
+- 但前端在 mapper 边界静默降级，导致 Workflow 面板显示错误
+
+#### Correct
+
+```ts
+function normalizeWorkflowRecordArtifactType(value: string): WorkflowRecordArtifactType {
+  switch (value) {
+    case "session_summary":
+    case "journal_update":
+    case "archive_suggestion":
+    case "phase_note":
+    case "checklist_evidence":
+      return value;
+    default:
+      return "phase_note";
+  }
+}
+```
+
+### 5. 联调 Gotcha
+
+> **Warning**: 使用 `vite preview` 做 MCP 联调时，前端展示取决于 `frontend/dist` 当前构建产物，而不是工作区源码本身。
+>
+> 如果刚修改了 `services/workflow.ts` / `types/index.ts` / 相关页面组件，却没有重新执行 `pnpm --dir frontend build`，preview 仍可能继续服务旧 bundle，表现为“浏览器 fetch 是新值，但 UI 还是旧值”。
+>
+> 当前项目已真实踩到过一次：后端与浏览器直接 fetch 都返回 `checklist_evidence`，但旧 dist 中的 normalize 仍只认 `phase_note`，最终 Workflow 面板错误显示 `phase_note`。遇到这种现象，应先重建 dist，再继续判断是否真有前端逻辑 bug。
+
+---
+
 ## 参考实现
 
 - `features/acp-session/model/useAcpStream.ts` - ACP 流管理 + 事件归并 reducer

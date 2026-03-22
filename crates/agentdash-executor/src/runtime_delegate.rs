@@ -327,17 +327,6 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 None,
                 Some(serde_json::json!({
                     "message_count": input.context.messages.len(),
-                    "last_assistant_text": input
-                        .context
-                        .messages
-                        .iter()
-                        .rev()
-                        .find_map(|message| match message {
-                            agentdash_agent::AgentMessage::Assistant { .. } => {
-                                message.first_text().map(ToString::to_string)
-                            }
-                            _ => None,
-                        }),
                 })),
             )
             .await?;

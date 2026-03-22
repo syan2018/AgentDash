@@ -132,11 +132,14 @@ pub enum WorkflowRecordArtifactType {
     JournalUpdate,
     ArchiveSuggestion,
     PhaseNote,
+    ChecklistEvidence,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowRecordArtifact {
     pub id: Uuid,
+    #[serde(default)]
+    pub phase_key: String,
     pub artifact_type: WorkflowRecordArtifactType,
     pub title: String,
     pub content: String,
@@ -145,12 +148,14 @@ pub struct WorkflowRecordArtifact {
 
 impl WorkflowRecordArtifact {
     pub fn new(
+        phase_key: impl Into<String>,
         artifact_type: WorkflowRecordArtifactType,
         title: impl Into<String>,
         content: impl Into<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
+            phase_key: phase_key.into(),
             artifact_type,
             title: title.into(),
             content: content.into(),

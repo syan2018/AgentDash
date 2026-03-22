@@ -158,6 +158,8 @@ impl AppState {
             settings_repo.as_ref(),
             address_space_service.clone(),
             session_binding_repo.clone(),
+            workflow_repo.clone(),
+            workflow_repo.clone(),
             executor_hub_handle.clone(),
         )
         .await
@@ -247,6 +249,8 @@ async fn build_pi_agent_connector(
     settings: &dyn SettingsRepository,
     address_space_service: Arc<RelayAddressSpaceService>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
+    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    workflow_run_repo: Arc<dyn WorkflowRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     use agentdash_agent::{LlmBridge, RigBridge};
@@ -295,6 +299,8 @@ async fn build_pi_agent_connector(
         connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
             address_space_service,
             session_binding_repo,
+            workflow_definition_repo,
+            workflow_run_repo,
             executor_hub_handle,
         )));
         tracing::info!("PiAgentConnector 已初始化（Anthropic）");
@@ -332,6 +338,8 @@ async fn build_pi_agent_connector(
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         address_space_service,
         session_binding_repo,
+        workflow_definition_repo,
+        workflow_run_repo,
         executor_hub_handle,
     )));
     tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");

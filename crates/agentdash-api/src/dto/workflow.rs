@@ -99,6 +99,7 @@ pub struct WorkflowPhaseStateResponse {
 #[derive(Debug, Serialize)]
 pub struct WorkflowRecordArtifactResponse {
     pub id: Uuid,
+    pub phase_key: String,
     pub artifact_type: WorkflowRecordArtifactType,
     pub title: String,
     pub content: String,
@@ -215,6 +216,7 @@ impl From<WorkflowRecordArtifact> for WorkflowRecordArtifactResponse {
     fn from(value: WorkflowRecordArtifact) -> Self {
         Self {
             id: value.id,
+            phase_key: value.phase_key,
             artifact_type: value.artifact_type,
             title: value.title,
             content: value.content,

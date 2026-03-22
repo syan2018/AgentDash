@@ -11,9 +11,9 @@
 - 通过真实联调验证 continue -> stop -> phase advance -> record 的完整流程。
 
 ## Acceptance Criteria
-- [ ] 结构化 evidence 写入与读取链路正式打通，不再依赖纯文本启发式作为主判据。
+- [x] 结构化 evidence 写入与读取链路正式打通，不再依赖纯文本启发式作为主判据。
 - [x] hook runtime API、trace、diagnostics 与前端 UI 展示保持一致。
-- [ ] 至少一条真实 session 验证完整经过 continue -> stop -> phase advance -> record。
+- [x] 至少一条真实 session 验证完整经过 continue -> stop -> phase advance -> record。
 - [ ] companion / subagent / approval / dynamic context 的关键状态都可在统一观测面中追踪。
 - [x] 相关前后端测试补齐并通过。
 
@@ -25,3 +25,15 @@
   - `hook_event` 已通过 `session_info_update` 正式进入 ACP 会话事件流。
   - 前端会话流已显示 `hook_event / turn_started / turn_completed / executor_session_bound`。
   - 已在真实 session `sess-1774148877320-151e00e5` 上验证 `user_prompt_submit / before_stop / session_terminal` 三类 hook_event 会落入 session jsonl，并在页面主事件流中可见。
+  - `WorkflowRecordArtifactType` 已正式扩展 `checklist_evidence`，`report_workflow_artifact` tool 与 workflow run API 均已贯通该类型。
+  - `checklist_passed` completion 现在以当前 phase 的 `default_artifact_type` 为正式 evidence 判据；Trellis builtin task/story/project workflow 的 `check` phase 已改为数据驱动声明 `default_artifact_type=checklist_evidence`、`default_artifact_title=检查证据`。
+  - 已在真实 task `f753b253-1f2e-49e0-b877-0cc49be2b3b0` / run `25c70efc-80dc-4da3-b069-d8dc6cbb2c0e` 上验证：
+    - `report_workflow_artifact` 实际写入 `artifact_type=checklist_evidence`
+    - `before_stop` 先 `continue`，满足条件后再 `stop`
+    - hook 自动推进 `check -> record`
+    - 前端主事件流可见 `hook:before_tool:allow / hook:after_tool:refresh_requested / hook:before_stop:continue / hook:before_stop:stop / workflow_phase_advanced_by_hook`
+  - 已通过 MCP + preview 复验 Workflow 面板中的结构化记录产物 type chip 正确显示 `checklist_evidence`。
+
+## Current Remaining Scope
+- companion / subagent / approval / dynamic context 仍需继续扩成统一观测面与控制流闭环。
+- record phase 目前已经能进入并展示，但后续还需要继续推进更完整的 record / archive / adoption 链路。

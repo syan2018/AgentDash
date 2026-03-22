@@ -146,6 +146,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/workflow-runs/{id}/phases/{phase_key}/complete",
             post(workflows::complete_workflow_phase),
         )
+        .route(
+            "/workflow-runs/{id}/phases/{phase_key}/artifacts",
+            post(workflows::append_workflow_phase_artifacts),
+        )
         // Backend
         .route(
             "/backends",

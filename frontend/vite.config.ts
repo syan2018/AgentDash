@@ -31,11 +31,12 @@ export default defineConfig({
     },
   },
   server: {
+    host: '127.0.0.1',
     port: 5173,
     proxy: {
       // SSE 是长连接；避免 dev 代理因超时/断流导致 ECONNRESET 噪音或中断
       '/api/events/stream': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         ws: false,
         timeout: 0,
@@ -65,7 +66,7 @@ export default defineConfig({
         },
       },
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         // NDJSON/SSE 是普通 HTTP 长连接，不需要 WebSocket 代理；ws 由上面的精确规则单独处理
         ws: false,

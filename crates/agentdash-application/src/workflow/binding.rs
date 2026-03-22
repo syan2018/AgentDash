@@ -402,9 +402,6 @@ fn candidate_roots(workspace: Option<&Workspace>) -> Vec<PathBuf> {
             roots.push(PathBuf::from(trimmed));
         }
     }
-    if let Ok(current_dir) = std::env::current_dir() {
-        roots.push(current_dir);
-    }
     roots
 }
 

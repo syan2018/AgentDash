@@ -12,6 +12,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_application::bootstrap_plan::{
+    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
+    derive_session_context_snapshot,
+};
+use agentdash_application::session_context::{
+    SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
+};
+
 use crate::{
     app_state::AppState,
     bootstrap::task_execution_gateway::{
@@ -19,10 +27,6 @@ use crate::{
         resolve_task_agent_config,
     },
     rpc::ApiError,
-    session_context::{
-        self, ExecutorSummaryInput, SessionContextInput, SessionContextSnapshot,
-        SessionOwnerVariant, extract_story_overrides, normalize_optional_string,
-    },
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -168,7 +172,12 @@ async fn build_task_session_context_response(
 ) -> Option<BuiltTaskSessionContextResponse> {
     let task = state.repos.task_repo.get_by_id(task_id).await.ok()??;
     let story = state.repos.story_repo.get_by_id(task.story_id).await.ok()??;
-    let project = state.repos.project_repo.get_by_id(story.project_id).await.ok()??;
+    let project = state
+        .repos
+        .project_repo
+        .get_by_id(story.project_id)
+        .await
+        .ok()??;
     let workspace = if let Some(ws_id) = task.workspace_id {
         state.repos.workspace_repo.get_by_id(ws_id).await.ok()?
     } else {
@@ -183,37 +192,53 @@ async fn build_task_session_context_response(
     let effective_agent_type = resolved_config.as_ref().map(|c| c.executor.as_str());
     let use_address_space = resolved_config.as_ref().is_some_and(|c| c.is_native_agent());
     let address_space = if use_address_space {
-        state.services.address_space_service
+        state
+            .services
+            .address_space_service
             .build_task_address_space(&project, &story, workspace.as_ref(), effective_agent_type)
             .ok()
     } else {
         None
     };
-    let mcp_servers = state.config.mcp_base_url.as_ref()
+    let mcp_servers = state
+        .config
+        .mcp_base_url
+        .as_ref()
         .map(|base_url| {
-            vec![McpInjectionConfig::for_task(base_url.clone(), story.project_id, task.story_id, task.id).to_acp_mcp_server()]
+            vec![
+                McpInjectionConfig::for_task(
+                    base_url.clone(),
+                    story.project_id,
+                    task.story_id,
+                    task.id,
+                )
+                .to_acp_mcp_server(),
+            ]
         })
         .unwrap_or_default();
 
-    let snapshot = session_context::build_session_context(SessionContextInput {
-        project: &project,
-        story: Some(&story),
-        workspace_attached: workspace.is_some(),
-        resolved_config: resolved_config.as_ref(),
-        address_space: address_space.as_ref(),
-        mcp_servers: &mcp_servers,
-        executor_summary: ExecutorSummaryInput {
-            preset_name,
-            source: executor_source,
-            resolution_error,
-        },
-        owner_variant: SessionOwnerVariant::Task {
-            story_overrides: extract_story_overrides(&story),
-        },
+    let story_overrides = extract_story_overrides(&story);
+
+    let plan = build_bootstrap_plan(BootstrapPlanInput {
+        project,
+        story: Some(story),
+        workspace,
+        resolved_config,
+        address_space,
+        mcp_servers,
+        working_dir: None,
+        workspace_root: None,
+        executor_preset_name: preset_name,
+        executor_source,
+        executor_resolution_error: resolution_error,
+        owner_variant: BootstrapOwnerVariant::Task { story_overrides },
+        workflow: None,
     });
 
+    let snapshot = derive_session_context_snapshot(&plan);
+
     Some(BuiltTaskSessionContextResponse {
-        address_space,
+        address_space: plan.address_space,
         context_snapshot: Some(snapshot),
     })
 }

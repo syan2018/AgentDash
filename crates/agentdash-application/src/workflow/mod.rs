@@ -1,8 +1,10 @@
+mod assignment_resolution;
 pub mod binding;
 mod catalog;
 mod completion;
 mod definition;
 mod error;
+pub mod projection;
 mod run;
 
 pub use catalog::{AssignWorkflowCommand, WorkflowCatalogService};
@@ -17,6 +19,13 @@ pub use definition::{
     get_builtin_workflow_template, list_builtin_workflow_templates,
 };
 pub use error::WorkflowApplicationError;
+pub use projection::{
+    ActiveWorkflowProjection, WorkflowProjectionSnapshot, WorkflowTargetSummary,
+    resolve_active_workflow_projection,
+};
+pub use assignment_resolution::{
+    ResolveAssignmentInput, ResolvedAssignment, resolve_assignment_and_ensure_run,
+};
 pub use run::{
     ActivateWorkflowPhaseCommand, AppendWorkflowPhaseArtifactsCommand,
     CompleteWorkflowPhaseCommand, StartWorkflowRunCommand, WorkflowRecordArtifactDraft,

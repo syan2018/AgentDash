@@ -7,16 +7,18 @@ use axum::{
 use serde::Serialize;
 use uuid::Uuid;
 
+use agentdash_application::bootstrap_plan::{
+    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
+    derive_session_context_snapshot,
+};
+use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
+
 use crate::{
     app_state::AppState,
     routes::project_agents::{
         build_project_agent_visible_mounts, resolve_project_agent_bridge, resolve_project_workspace,
     },
     rpc::ApiError,
-    session_context::{
-        self, ExecutorSummaryInput, SessionContextInput, SessionContextSnapshot,
-        SessionOwnerVariant, SharedContextMount,
-    },
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_mcp::injection::McpInjectionConfig;
@@ -108,23 +110,44 @@ async fn build_project_session_context_response(
         .strip_prefix("project_agent:")
         .unwrap_or_default();
     let project_agent = resolve_project_agent_bridge(project, agent_key)?;
-    let workspace = resolve_project_workspace(state, project).await.ok().flatten();
-    let session_meta = state.services.executor_hub.get_session_meta(session_id).await.ok()??;
+    let workspace = resolve_project_workspace(state, project)
+        .await
+        .ok()
+        .flatten();
+    let session_meta = state
+        .services
+        .executor_hub
+        .get_session_meta(session_id)
+        .await
+        .ok()??;
 
     let resolved_config = session_meta
         .executor_config
-        .as_ref()
-        .or(Some(&project_agent.executor_config));
-    let use_address_space = resolved_config.is_some_and(|c| c.is_native_agent());
+        .clone()
+        .or_else(|| Some(project_agent.executor_config.clone()));
+    let use_address_space = resolved_config.as_ref().is_some_and(|c| c.is_native_agent());
     let address_space = if use_address_space {
-        state.services.address_space_service
-            .build_project_address_space(project, workspace.as_ref(), resolved_config.map(|c| c.executor.as_str()))
+        state
+            .services
+            .address_space_service
+            .build_project_address_space(
+                project,
+                workspace.as_ref(),
+                resolved_config.as_ref().map(|c| c.executor.as_str()),
+            )
             .ok()
     } else {
         None
     };
-    let mcp_servers = state.config.mcp_base_url.as_ref()
-        .map(|base_url| vec![McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server()])
+    let mcp_servers = state
+        .config
+        .mcp_base_url
+        .as_ref()
+        .map(|base_url| {
+            vec![
+                McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server(),
+            ]
+        })
         .unwrap_or_default();
 
     let executor_source = if session_meta.executor_config.is_some() {
@@ -134,6 +157,7 @@ async fn build_project_session_context_response(
     };
 
     let shared_mounts: Vec<SharedContextMount> = resolved_config
+        .as_ref()
         .map(|config| {
             build_project_agent_visible_mounts(project, config)
                 .into_iter()
@@ -147,27 +171,30 @@ async fn build_project_session_context_response(
         })
         .unwrap_or_default();
 
-    let snapshot = session_context::build_session_context(SessionContextInput {
-        project,
+    let plan = build_bootstrap_plan(BootstrapPlanInput {
+        project: project.clone(),
         story: None,
-        workspace_attached: workspace.is_some(),
+        workspace,
         resolved_config,
-        address_space: address_space.as_ref(),
-        mcp_servers: &mcp_servers,
-        executor_summary: ExecutorSummaryInput {
-            preset_name: project_agent.preset_name,
-            source: executor_source,
-            resolution_error: None,
-        },
-        owner_variant: SessionOwnerVariant::Project {
+        address_space,
+        mcp_servers,
+        working_dir: None,
+        workspace_root: None,
+        executor_preset_name: project_agent.preset_name,
+        executor_source,
+        executor_resolution_error: None,
+        owner_variant: BootstrapOwnerVariant::Project {
             agent_key: project_agent.key,
             agent_display_name: project_agent.display_name,
             shared_context_mounts: shared_mounts,
         },
+        workflow: None,
     });
 
+    let snapshot = derive_session_context_snapshot(&plan);
+
     Some(BuiltProjectSessionContextResponse {
-        address_space,
+        address_space: plan.address_space,
         context_snapshot: Some(snapshot),
     })
 }

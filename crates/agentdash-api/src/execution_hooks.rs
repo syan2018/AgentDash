@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agentdash_application::workflow::{
-    CompleteWorkflowPhaseCommand, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
-    WorkflowRecordArtifactDraft, WorkflowRunService, WorkflowSessionTerminalState,
-    build_phase_completion_artifact_drafts, completion_mode_tag, evaluate_phase_completion,
-    select_active_run,
+    ActiveWorkflowProjection, CompleteWorkflowPhaseCommand, WorkflowCompletionDecision,
+    WorkflowCompletionSignalSet, WorkflowRecordArtifactDraft, WorkflowRunService,
+    WorkflowSessionTerminalState, build_phase_completion_artifact_drafts, completion_mode_tag,
+    evaluate_phase_completion, resolve_active_workflow_projection,
 };
 use agentdash_application::workflow::binding::{self, BindingResolutionContext};
 use agentdash_domain::project::ProjectRepository;
@@ -15,9 +15,8 @@ use agentdash_domain::session_binding::{
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::{TaskRepository, TaskStatus};
 use agentdash_domain::workflow::{
-    WorkflowDefinition, WorkflowDefinitionRepository, WorkflowPhaseDefinition,
-    WorkflowRecordArtifactType, WorkflowRun, WorkflowRunRepository, WorkflowRunStatus,
-    WorkflowTargetKind,
+    WorkflowDefinitionRepository, WorkflowRecordArtifactType, WorkflowRunRepository,
+    WorkflowRunStatus, WorkflowTargetKind,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::{
@@ -183,7 +182,7 @@ impl AppExecutionHookProvider {
     async fn resolve_active_workflow(
         &self,
         owner: &HookOwnerSummary,
-    ) -> Result<Option<ResolvedWorkflowPhase>, HookError> {
+    ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
         let owner_id = Uuid::parse_str(owner.owner_id.as_str())
             .map_err(|error| HookError::Runtime(format!("owner_id 不是有效 UUID: {error}")))?;
         let target_kind = match owner.owner_type.as_str() {
@@ -197,43 +196,16 @@ impl AppExecutionHookProvider {
             }
         };
 
-        let runs = self
-            .workflow_run_repo
-            .list_by_target(target_kind, owner_id)
-            .await
-            .map_err(map_hook_error)?;
-
-        let Some(run) = select_active_run(runs) else {
-            return Ok(None);
-        };
-        let Some(current_phase_key) = run.current_phase_key.as_deref() else {
-            return Ok(None);
-        };
-
-        let definition = self
-            .workflow_definition_repo
-            .get_by_id(run.workflow_id)
-            .await
-            .map_err(map_hook_error)?
-            .filter(|definition| definition.enabled);
-        let Some(definition) = definition else {
-            return Ok(None);
-        };
-
-        let Some(phase) = definition
-            .phases
-            .iter()
-            .find(|phase| phase.key == current_phase_key)
-            .cloned()
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(ResolvedWorkflowPhase {
-            run,
-            definition,
-            phase,
-        }))
+        resolve_active_workflow_projection(
+            target_kind,
+            owner_id,
+            owner.label.clone(),
+            self.workflow_definition_repo.as_ref(),
+            self.workflow_run_repo.as_ref(),
+            None,
+        )
+        .await
+        .map_err(|e| HookError::Runtime(e))
     }
 
     /// Resolve binding context_fragments for the active workflow phase.
@@ -241,7 +213,7 @@ impl AppExecutionHookProvider {
     async fn resolve_workflow_bindings(
         &self,
         owner: &HookOwnerSummary,
-        workflow: &ResolvedWorkflowPhase,
+        workflow: &ActiveWorkflowProjection,
         source_summary: &[String],
         source_refs: &[HookSourceRef],
     ) -> Result<Vec<HookContextFragment>, HookError> {
@@ -501,7 +473,7 @@ fn task_source_ref(task_id: Uuid) -> HookSourceRef {
     }
 }
 
-fn workflow_source_refs(workflow: &ResolvedWorkflowPhase) -> Vec<HookSourceRef> {
+fn workflow_source_refs(workflow: &ActiveWorkflowProjection) -> Vec<HookSourceRef> {
     vec![HookSourceRef {
         layer: HookSourceLayer::Workflow,
         key: format!("{}:{}", workflow.definition.key, workflow.phase.key),
@@ -965,6 +937,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 phase_key: request.phase_key,
                 summary: request.summary,
                 record_artifacts,
+                completed_by: Some(
+                    agentdash_domain::workflow::WorkflowProgressionSource::HookRuntime,
+                ),
             })
             .await
             .map_err(|e| HookError::Runtime(format!("advance_workflow_phase: {e}")))?;
@@ -977,12 +952,6 @@ struct ResolvedOwnerSummary {
     summary: HookOwnerSummary,
     diagnostics: Vec<HookDiagnosticEntry>,
     task_status: Option<String>,
-}
-
-struct ResolvedWorkflowPhase {
-    run: WorkflowRun,
-    definition: WorkflowDefinition,
-    phase: WorkflowPhaseDefinition,
 }
 
 fn workflow_run_status_tag(status: WorkflowRunStatus) -> &'static str {
@@ -1164,7 +1133,7 @@ fn parse_session_terminal_state(
 }
 
 fn build_workflow_policies(
-    workflow: &ResolvedWorkflowPhase,
+    workflow: &ActiveWorkflowProjection,
     source_summary: &[String],
     source_refs: &[HookSourceRef],
 ) -> Vec<HookPolicy> {
@@ -1993,7 +1962,7 @@ fn parse_workflow_record_artifact_type_tag(
 }
 
 fn active_workflow_checklist_evidence_summary(
-    workflow: &ResolvedWorkflowPhase,
+    workflow: &ActiveWorkflowProjection,
 ) -> ActiveWorkflowChecklistEvidenceSummary {
     let artifact_type = workflow
         .phase
@@ -2035,7 +2004,7 @@ fn build_completion_record_artifacts_from_snapshot(
     )
 }
 
-fn build_phase_summary_markdown(workflow: &ResolvedWorkflowPhase) -> String {
+fn build_phase_summary_markdown(workflow: &ActiveWorkflowProjection) -> String {
     format!(
         "## Active Workflow Phase\n- workflow: {} (`{}`)\n- phase: {} (`{}`)\n- status: `{}`\n- requires_session: {}\n\n{}",
         workflow.definition.name,
@@ -2052,7 +2021,7 @@ fn build_phase_summary_markdown(workflow: &ResolvedWorkflowPhase) -> String {
     )
 }
 
-fn build_phase_instruction_markdown(workflow: &ResolvedWorkflowPhase) -> String {
+fn build_phase_instruction_markdown(workflow: &ActiveWorkflowProjection) -> String {
     format!(
         "## Workflow Constraints\n- 当前 workflow phase: {} (`{}`)\n{}",
         workflow.phase.title,

@@ -1,4 +1,5 @@
 pub mod address_space;
+pub mod bootstrap_plan;
 pub mod context;
 pub mod project;
 pub mod session_context;

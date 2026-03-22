@@ -1,15 +1,10 @@
-use agent_client_protocol::McpServer;
 use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
-use agentdash_domain::project::Project;
 use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
-use agentdash_executor::{AgentDashExecutorConfig, ExecutionAddressSpace};
+use agentdash_executor::AgentDashExecutorConfig;
 use serde::Serialize;
 
-use crate::session_plan::{
-    SessionRuntimePolicySummary, SessionToolVisibilitySummary, resolve_effective_session_composition,
-    summarize_runtime_policy, summarize_tool_visibility,
-};
+use crate::session_plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
 
 // ─── Unified DTO ─────────────────────────────────────
 
@@ -85,100 +80,6 @@ pub struct SharedContextMount {
     pub mount_id: String,
     pub display_name: String,
     pub writable: bool,
-}
-
-// ─── Builder input ───────────────────────────────────
-
-/// 构建 `SessionContextSnapshot` 所需的全部输入。
-pub struct SessionContextInput<'a> {
-    pub project: &'a Project,
-    pub story: Option<&'a Story>,
-    pub workspace_attached: bool,
-    pub resolved_config: Option<&'a AgentDashExecutorConfig>,
-    pub address_space: Option<&'a ExecutionAddressSpace>,
-    pub mcp_servers: &'a [McpServer],
-    pub executor_summary: ExecutorSummaryInput,
-    pub owner_variant: SessionOwnerVariant,
-}
-
-pub struct ExecutorSummaryInput {
-    pub preset_name: Option<String>,
-    pub source: String,
-    pub resolution_error: Option<String>,
-}
-
-pub enum SessionOwnerVariant {
-    Task {
-        story_overrides: SessionStoryOverrides,
-    },
-    Story {
-        story_overrides: SessionStoryOverrides,
-    },
-    Project {
-        agent_key: String,
-        agent_display_name: String,
-        shared_context_mounts: Vec<SharedContextMount>,
-    },
-}
-
-// ─── Builder ─────────────────────────────────────────
-
-pub fn build_session_context(input: SessionContextInput<'_>) -> SessionContextSnapshot {
-    let effective_mount_policy = input
-        .story
-        .and_then(|s| s.context.mount_policy_override.clone())
-        .unwrap_or_else(|| input.project.config.mount_policy.clone());
-
-    let effective_session_composition =
-        resolve_effective_session_composition(input.project, input.story);
-
-    let tool_visibility = summarize_tool_visibility(input.address_space, input.mcp_servers);
-    let runtime_policy = summarize_runtime_policy(
-        input.workspace_attached,
-        input.address_space,
-        input.mcp_servers,
-        &tool_visibility.tool_names,
-    );
-
-    SessionContextSnapshot {
-        executor: build_session_executor_summary(
-            input.resolved_config,
-            input.executor_summary.preset_name,
-            input.executor_summary.source,
-            input.executor_summary.resolution_error,
-        ),
-        project_defaults: SessionProjectDefaults {
-            default_agent_type: normalize_optional_string(
-                input.project.config.default_agent_type.clone(),
-            ),
-            context_containers: input.project.config.context_containers.clone(),
-            mount_policy: input.project.config.mount_policy.clone(),
-            session_composition: input.project.config.session_composition.clone(),
-        },
-        effective: SessionEffectiveContext {
-            mount_policy: effective_mount_policy,
-            session_composition: effective_session_composition,
-            tool_visibility,
-            runtime_policy,
-        },
-        owner_context: match input.owner_variant {
-            SessionOwnerVariant::Task { story_overrides } => {
-                SessionOwnerContext::Task { story_overrides }
-            }
-            SessionOwnerVariant::Story { story_overrides } => {
-                SessionOwnerContext::Story { story_overrides }
-            }
-            SessionOwnerVariant::Project {
-                agent_key,
-                agent_display_name,
-                shared_context_mounts,
-            } => SessionOwnerContext::Project {
-                agent_key,
-                agent_display_name,
-                shared_context_mounts,
-            },
-        },
-    }
 }
 
 // ─── Shared utility functions ────────────────────────

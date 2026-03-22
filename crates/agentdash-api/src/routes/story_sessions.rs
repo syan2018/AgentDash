@@ -7,14 +7,18 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_application::bootstrap_plan::{
+    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
+    derive_session_context_snapshot,
+};
+use agentdash_application::session_context::{
+    SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
+};
+
 use crate::{
     app_state::AppState,
     routes::project_agents::resolve_project_workspace,
     rpc::ApiError,
-    session_context::{
-        self, ExecutorSummaryInput, SessionContextInput, SessionContextSnapshot,
-        SessionOwnerVariant, extract_story_overrides, normalize_optional_string,
-    },
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
@@ -303,27 +307,54 @@ async fn build_story_session_context_response(
     story: &agentdash_domain::story::Story,
     session_id: &str,
 ) -> Option<BuiltStorySessionContextResponse> {
-    let project = state.repos.project_repo.get_by_id(story.project_id).await.ok()??;
-    let workspace = resolve_project_workspace(state, &project).await.ok().flatten();
-    let session_meta = state.services.executor_hub.get_session_meta(session_id).await.ok()??;
+    let project = state
+        .repos
+        .project_repo
+        .get_by_id(story.project_id)
+        .await
+        .ok()??;
+    let workspace = resolve_project_workspace(state, &project)
+        .await
+        .ok()
+        .flatten();
+    let session_meta = state
+        .services
+        .executor_hub
+        .get_session_meta(session_id)
+        .await
+        .ok()??;
 
-    let resolved_config = session_meta.executor_config.as_ref();
+    let resolved_config = session_meta.executor_config.clone();
     let default_agent_type = normalize_optional_string(project.config.default_agent_type.clone());
     let effective_agent_type = resolved_config
+        .as_ref()
         .and_then(|c| normalize_optional_string(Some(c.executor.clone())))
         .or(default_agent_type.clone());
-    let use_address_space = resolved_config.is_some_and(|c| c.is_native_agent())
+    let use_address_space = resolved_config.as_ref().is_some_and(|c| c.is_native_agent())
         || (resolved_config.is_none() && default_agent_type.is_some());
     let address_space = if use_address_space {
-        state.services.address_space_service
-            .build_story_address_space(&project, story, workspace.as_ref(), effective_agent_type.as_deref())
+        state
+            .services
+            .address_space_service
+            .build_story_address_space(
+                &project,
+                story,
+                workspace.as_ref(),
+                effective_agent_type.as_deref(),
+            )
             .ok()
     } else {
         None
     };
-    let mcp_servers = state.config.mcp_base_url.as_ref()
+    let mcp_servers = state
+        .config
+        .mcp_base_url
+        .as_ref()
         .map(|base_url| {
-            vec![McpInjectionConfig::for_story(base_url.clone(), story.project_id, story.id).to_acp_mcp_server()]
+            vec![
+                McpInjectionConfig::for_story(base_url.clone(), story.project_id, story.id)
+                    .to_acp_mcp_server(),
+            ]
         })
         .unwrap_or_default();
 
@@ -335,25 +366,28 @@ async fn build_story_session_context_response(
         "unresolved"
     };
 
-    let snapshot = session_context::build_session_context(SessionContextInput {
-        project: &project,
-        story: Some(story),
-        workspace_attached: workspace.is_some(),
+    let story_overrides = extract_story_overrides(story);
+
+    let plan = build_bootstrap_plan(BootstrapPlanInput {
+        project,
+        story: Some(story.clone()),
+        workspace,
         resolved_config,
-        address_space: address_space.as_ref(),
-        mcp_servers: &mcp_servers,
-        executor_summary: ExecutorSummaryInput {
-            preset_name: None,
-            source: executor_source.to_string(),
-            resolution_error: None,
-        },
-        owner_variant: SessionOwnerVariant::Story {
-            story_overrides: extract_story_overrides(story),
-        },
+        address_space,
+        mcp_servers,
+        working_dir: None,
+        workspace_root: None,
+        executor_preset_name: None,
+        executor_source: executor_source.to_string(),
+        executor_resolution_error: None,
+        owner_variant: BootstrapOwnerVariant::Story { story_overrides },
+        workflow: None,
     });
 
+    let snapshot = derive_session_context_snapshot(&plan);
+
     Some(BuiltStorySessionContextResponse {
-        address_space,
+        address_space: plan.address_space,
         context_snapshot: Some(snapshot),
     })
 }

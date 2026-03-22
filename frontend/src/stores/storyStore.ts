@@ -12,7 +12,7 @@ import type {
   MountDerivationPolicy,
   SessionComposition,
   StorySessionInfo,
-  TaskSessionContextSnapshot,
+  SessionContextSnapshot,
 } from '../types';
 import { api } from '../api/client';
 
@@ -32,7 +32,7 @@ export interface TaskSessionInfo {
   session_title: string | null;
   last_activity: number | null;
   address_space: ExecutionAddressSpace | null;
-  context_snapshot: TaskSessionContextSnapshot | null;
+  context_snapshot: SessionContextSnapshot | null;
 }
 
 export interface CreateStorySessionInput {
@@ -643,7 +643,7 @@ export const useStoryStore = create<StoryState>((set) => ({
         session_title: raw.session_title ? String(raw.session_title) : null,
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
         address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
-        context_snapshot: (raw.context_snapshot as TaskSessionContextSnapshot) ?? null,
+        context_snapshot: (raw.context_snapshot as SessionContextSnapshot) ?? null,
       };
     } catch (e) {
       set({ error: (e as Error).message });

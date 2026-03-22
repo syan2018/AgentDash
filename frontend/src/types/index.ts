@@ -159,21 +159,16 @@ export interface WorkflowResolvedBindingSnapshot {
   summary: string;
 }
 
+export type SessionOwnerContext =
+  | { owner_level: "task"; story_overrides: SessionStoryOverrides }
+  | { owner_level: "story"; story_overrides: SessionStoryOverrides }
+  | { owner_level: "project"; agent_key: string; agent_display_name: string; shared_context_mounts: ProjectAgentMount[] };
+
 export interface SessionContextSnapshot {
-  project_defaults: SessionProjectDefaults;
-  story_overrides: SessionStoryOverrides;
-  effective: SessionEffectiveContext;
-}
-
-export interface TaskSessionContextSnapshot {
   executor: TaskSessionExecutorSummary;
   project_defaults: SessionProjectDefaults;
-  story_overrides: SessionStoryOverrides;
   effective: SessionEffectiveContext;
-}
-
-export interface StorySessionContextSnapshot extends SessionContextSnapshot {
-  executor: TaskSessionExecutorSummary;
+  owner_context: SessionOwnerContext;
 }
 
 export interface StorySessionInfo {
@@ -182,16 +177,7 @@ export interface StorySessionInfo {
   session_title: string | null;
   last_activity: number | null;
   address_space: ExecutionAddressSpace | null;
-  context_snapshot: StorySessionContextSnapshot | null;
-}
-
-export interface ProjectSessionContextSnapshot {
-  agent_key: string;
-  agent_display_name: string;
-  executor: TaskSessionExecutorSummary;
-  project_defaults: SessionProjectDefaults;
-  effective: SessionEffectiveContext;
-  shared_context_mounts: ProjectAgentMount[];
+  context_snapshot: SessionContextSnapshot | null;
 }
 
 export interface ProjectSessionInfo {
@@ -200,7 +186,7 @@ export interface ProjectSessionInfo {
   session_title: string | null;
   last_activity: number | null;
   address_space: ExecutionAddressSpace | null;
-  context_snapshot: ProjectSessionContextSnapshot | null;
+  context_snapshot: SessionContextSnapshot | null;
 }
 
 // ─── Workflow ─────────────────────────────────────────

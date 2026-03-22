@@ -20,7 +20,7 @@ use axum::{
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{app_state::AppState, rpc::ApiError};
+use crate::{app_state::AppState, rpc::ApiError, session_context::normalize_optional_string};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectAgentBridge {
@@ -457,13 +457,3 @@ fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
         .map_err(|_| ApiError::BadRequest(format!("无效的 project_id: {project_id}")))
 }
 
-pub(crate) fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|item| {
-        let trimmed = item.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}

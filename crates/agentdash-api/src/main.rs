@@ -12,6 +12,7 @@ mod execution_hooks;
 mod relay;
 mod routes;
 mod rpc;
+mod session_context;
 mod session_plan;
 mod stream;
 mod task_agent_context;

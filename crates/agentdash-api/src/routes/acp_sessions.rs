@@ -31,6 +31,7 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use serde::Serialize;
 
 use super::project_agents::{resolve_project_agent_bridge, resolve_project_workspace};
+use crate::session_context::apply_workspace_defaults;
 use crate::task_agent_context::resolve_workspace_declared_sources;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
@@ -497,13 +498,7 @@ async fn build_story_owner_prompt_request(
     req.prompt = None;
     req.prompt_blocks = Some(prompt_blocks);
 
-    if req.working_dir.is_none() && workspace.is_some() {
-        req.working_dir = Some(".".to_string());
-    }
-    if req.workspace_root.is_none() {
-        req.workspace_root =
-            workspace.map(|item| std::path::PathBuf::from(item.container_ref.clone()));
-    }
+    apply_workspace_defaults(&mut req.working_dir, &mut req.workspace_root, workspace);
     if req.address_space.is_none() {
         req.address_space = address_space;
     }
@@ -574,14 +569,7 @@ async fn build_project_owner_prompt_request(
     req.prompt = None;
     req.prompt_blocks = Some(prompt_blocks);
 
-    if req.working_dir.is_none() && workspace.is_some() {
-        req.working_dir = Some(".".to_string());
-    }
-    if req.workspace_root.is_none() {
-        req.workspace_root = workspace
-            .as_ref()
-            .map(|item| std::path::PathBuf::from(item.container_ref.clone()));
-    }
+    apply_workspace_defaults(&mut req.working_dir, &mut req.workspace_root, workspace.as_ref());
     if req.address_space.is_none() {
         req.address_space = address_space;
     }

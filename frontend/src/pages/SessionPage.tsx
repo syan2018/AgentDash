@@ -16,7 +16,6 @@ import type {
   HookSessionRuntimeInfo,
   MountDerivationPolicy,
   ProjectSessionAgentContext,
-  ProjectSessionInfo,
   SessionContextSnapshot,
   SessionBindingOwner,
   SessionNavigationState,
@@ -114,7 +113,11 @@ function resolveEffectiveStoryContextFolders(
   story: Story,
   contextSnapshot?: SessionContextSnapshot | null,
 ): ContextFolderItem[] {
-  if (!contextSnapshot) {
+  const storyOverrides = contextSnapshot?.owner_context.owner_level === "task" || contextSnapshot?.owner_context.owner_level === "story"
+    ? contextSnapshot.owner_context.story_overrides
+    : null;
+
+  if (!contextSnapshot || !storyOverrides) {
     return story.context.context_containers.map((container) => ({
       id: container.id,
       title: container.display_name || container.mount_id || container.id,
@@ -123,11 +126,11 @@ function resolveEffectiveStoryContextFolders(
     }));
   }
 
-  const disabled = new Set(contextSnapshot.story_overrides.disabled_container_ids);
+  const disabled = new Set(storyOverrides.disabled_container_ids);
   const effective = [...contextSnapshot.project_defaults.context_containers]
     .filter((container) => !disabled.has(container.id));
 
-  for (const container of contextSnapshot.story_overrides.context_containers) {
+  for (const container of storyOverrides.context_containers) {
     const filtered = effective.filter((item) => item.id !== container.id && item.mount_id !== container.mount_id);
     filtered.push(container);
     effective.splice(0, effective.length, ...filtered);
@@ -142,9 +145,11 @@ function resolveEffectiveStoryContextFolders(
 }
 
 function resolveProjectContextFolders(
-  projectSessionInfo?: ProjectSessionInfo | null,
+  contextSnapshot?: SessionContextSnapshot | null,
 ): ContextFolderItem[] {
-  const mounts = projectSessionInfo?.context_snapshot?.shared_context_mounts ?? [];
+  const mounts = contextSnapshot?.owner_context.owner_level === "project"
+    ? contextSnapshot.owner_context.shared_context_mounts
+    : [];
   return mounts.map((mount) => ({
     id: mount.container_id || mount.mount_id,
     title: mount.display_name || mount.mount_id || mount.container_id,
@@ -966,24 +971,25 @@ function StorySessionContextPanel({
 
 function ProjectSessionContextPanel({
   projectName,
-  projectSessionInfo,
+  contextSnapshot,
   addressSpace,
   hookRuntime,
   isOpen,
   onToggle,
 }: {
   projectName: string;
-  projectSessionInfo: ProjectSessionInfo;
+  contextSnapshot: SessionContextSnapshot;
   addressSpace?: ExecutionAddressSpace | null;
   hookRuntime?: HookSessionRuntimeInfo | null;
   isOpen: boolean;
   onToggle: () => void;
 }) {
-  const snapshot = projectSessionInfo.context_snapshot;
-  const folders = resolveProjectContextFolders(projectSessionInfo);
-  const composition = snapshot?.effective.session_composition ?? null;
+  const snapshot = contextSnapshot;
+  const projectOwner = snapshot.owner_context.owner_level === "project" ? snapshot.owner_context : null;
+  const folders = resolveProjectContextFolders(contextSnapshot);
+  const composition = snapshot.effective.session_composition ?? null;
   const badges = [
-    snapshot?.agent_display_name ? `Agent · ${snapshot.agent_display_name}` : "",
+    projectOwner?.agent_display_name ? `Agent · ${projectOwner.agent_display_name}` : "",
     `${folders.length} 个共享目录`,
     composition?.persona_label ? `Persona · ${composition.persona_label}` : "",
   ].filter((item): item is string => Boolean(item));
@@ -998,8 +1004,8 @@ function ProjectSessionContextPanel({
     >
       <div className="grid gap-3 lg:grid-cols-3">
         <AgentSummarySurfaceCard
-          label={snapshot?.agent_display_name || "Project Agent"}
-          executor={snapshot?.executor}
+          label={projectOwner?.agent_display_name || "Project Agent"}
+          executor={snapshot.executor}
           helperText="Project Session 绑定的是一个明确的协作 Agent，后续 Story 会话可以低存在感地继承它的默认做法。"
         />
         <SharedFoldersSurfaceCard
@@ -1212,8 +1218,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     task_agent_binding: AgentBinding | null;
     address_space: ExecutionAddressSpace | null;
     context_snapshot: SessionContextSnapshot | null;
-    project_session_info: ProjectSessionInfo | null;
-    task_executor_summary: TaskSessionExecutorSummary | null;
   } | null>(null);
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
@@ -1352,8 +1356,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           task_agent_binding: taskSession?.agent_binding ?? null,
           address_space: taskSession?.address_space ?? null,
           context_snapshot: taskSession?.context_snapshot ?? null,
-          project_session_info: null,
-          task_executor_summary: taskSession?.context_snapshot?.executor ?? null,
         });
       })();
       return () => { cancelled = true; };
@@ -1377,8 +1379,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           task_agent_binding: null,
           address_space: storySession?.address_space ?? null,
           context_snapshot: storySession?.context_snapshot ?? null,
-          project_session_info: null,
-          task_executor_summary: storySession?.context_snapshot?.executor ?? null,
         });
       })();
       return () => { cancelled = true; };
@@ -1398,9 +1398,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           source_key: `project:${projectId}:${bindingId}`,
           task_agent_binding: null,
           address_space: info?.address_space ?? null,
-          context_snapshot: null,
-          project_session_info: info,
-          task_executor_summary: info?.context_snapshot?.executor ?? null,
+          context_snapshot: info?.context_snapshot ?? null,
         });
       })();
       return () => { cancelled = true; };
@@ -1417,8 +1415,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     ?? null;
   const sessionAddressSpace = activeSessionContext?.address_space ?? null;
   const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
-  const projectSessionInfo = activeSessionContext?.project_session_info ?? null;
-  const taskExecutorSummary = activeSessionContext?.task_executor_summary ?? null;
+  const taskExecutorSummary = sessionContextSnapshot?.executor ?? null;
 
   // 按需加载关联 Story 的上下文信息
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
@@ -1474,7 +1471,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const executorHint = taskAgentBinding?.agent_type
     ?? projectAgentContext?.executor_hint
-    ?? projectSessionInfo?.context_snapshot?.executor.executor
     ?? taskExecutorSummary?.executor
     ?? null;
 
@@ -1554,9 +1550,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       <span>
         已绑定：{sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id}
       </span>
-      {sessionOwnerBinding.owner_type === "project" && projectSessionInfo?.context_snapshot?.agent_display_name && (
+      {sessionOwnerBinding.owner_type === "project" && sessionContextSnapshot?.owner_context.owner_level === "project" && sessionContextSnapshot.owner_context.agent_display_name && (
         <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-foreground/80">
-          Agent · {projectSessionInfo.context_snapshot.agent_display_name}
+          Agent · {sessionContextSnapshot.owner_context.agent_display_name}
         </span>
       )}
       {(sessionOwnerBinding.project_id || sessionOwnerBinding.story_id) && (
@@ -1610,10 +1606,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         </div>
       </header>
 
-      {projectSessionInfo?.context_snapshot && (
+      {sessionContextSnapshot?.owner_context.owner_level === "project" && (
         <ProjectSessionContextPanel
           projectName={ownerProjectName}
-          projectSessionInfo={projectSessionInfo}
+          contextSnapshot={sessionContextSnapshot}
           addressSpace={sessionAddressSpace}
           hookRuntime={activeHookRuntime}
           isOpen={isContextPanelOpen}
@@ -1621,7 +1617,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         />
       )}
 
-      {!projectSessionInfo?.context_snapshot && ownerStory && (
+      {sessionContextSnapshot?.owner_context.owner_level !== "project" && ownerStory && (
         hasStoryContextInfo(ownerStory)
         || sessionContextSnapshot != null
         || (sessionAddressSpace && sessionAddressSpace.mounts.length > 0)

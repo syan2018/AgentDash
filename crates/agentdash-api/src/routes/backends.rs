@@ -11,6 +11,7 @@ use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use crate::app_state::AppState;
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
+use crate::session_context::normalize_optional_string;
 
 #[derive(Deserialize)]
 pub struct CreateBackendRequest {
@@ -134,13 +135,6 @@ pub async fn add_backend(
     };
     state.repos.backend_repo.add_backend(&config).await?;
     Ok(Json(config))
-}
-
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|item| {
-        let trimmed = item.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
 }
 
 async fn resolve_backend_auth_token(

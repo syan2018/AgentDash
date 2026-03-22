@@ -10,25 +10,14 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     routes::project_agents::resolve_project_workspace,
-    routes::task_execution::{
-        SessionEffectiveContext, SessionProjectDefaults, SessionStoryOverrides,
-        TaskSessionExecutorSummary, build_session_executor_summary, normalize_optional_string,
-    },
     rpc::ApiError,
-    session_plan::{
-        resolve_effective_session_composition, summarize_runtime_policy, summarize_tool_visibility,
+    session_context::{
+        self, ExecutorSummaryInput, SessionContextInput, SessionContextSnapshot,
+        SessionOwnerVariant, extract_story_overrides, normalize_optional_string,
     },
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
-
-#[derive(Debug, Serialize)]
-pub struct StorySessionContextSnapshot {
-    pub executor: TaskSessionExecutorSummary,
-    pub project_defaults: SessionProjectDefaults,
-    pub story_overrides: SessionStoryOverrides,
-    pub effective: SessionEffectiveContext,
-}
 
 #[derive(Debug, Serialize)]
 pub struct StorySessionDetailResponse {
@@ -40,13 +29,13 @@ pub struct StorySessionDetailResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_space: Option<agentdash_executor::ExecutionAddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_snapshot: Option<StorySessionContextSnapshot>,
+    pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
 #[derive(Debug)]
 struct BuiltStorySessionContextResponse {
     address_space: Option<agentdash_executor::ExecutionAddressSpace>,
-    context_snapshot: Option<StorySessionContextSnapshot>,
+    context_snapshot: Option<SessionContextSnapshot>,
 }
 
 /// 返回给前端的 Session 绑定信息（含 Session 元数据）
@@ -314,101 +303,57 @@ async fn build_story_session_context_response(
     story: &agentdash_domain::story::Story,
     session_id: &str,
 ) -> Option<BuiltStorySessionContextResponse> {
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(story.project_id)
-        .await
-        .ok()??;
-    let workspace = resolve_project_workspace(state, &project)
-        .await
-        .ok()
-        .flatten();
-    let session_meta = state
-        .services
-        .executor_hub
-        .get_session_meta(session_id)
-        .await
-        .ok()??;
-    let default_agent_type = normalize_optional_string(project.config.default_agent_type.clone());
+    let project = state.repos.project_repo.get_by_id(story.project_id).await.ok()??;
+    let workspace = resolve_project_workspace(state, &project).await.ok().flatten();
+    let session_meta = state.services.executor_hub.get_session_meta(session_id).await.ok()??;
+
     let resolved_config = session_meta.executor_config.as_ref();
+    let default_agent_type = normalize_optional_string(project.config.default_agent_type.clone());
     let effective_agent_type = resolved_config
-        .and_then(|config| normalize_optional_string(Some(config.executor.clone())))
+        .and_then(|c| normalize_optional_string(Some(c.executor.clone())))
         .or(default_agent_type.clone());
-    let use_address_space = resolved_config.is_some_and(|config| config.is_native_agent())
+    let use_address_space = resolved_config.is_some_and(|c| c.is_native_agent())
         || (resolved_config.is_none() && default_agent_type.is_some());
     let address_space = if use_address_space {
-        state
-            .services
-            .address_space_service
-            .build_story_address_space(
-                &project,
-                story,
-                workspace.as_ref(),
-                effective_agent_type.as_deref(),
-            )
+        state.services.address_space_service
+            .build_story_address_space(&project, story, workspace.as_ref(), effective_agent_type.as_deref())
             .ok()
     } else {
         None
     };
-    let effective_mount_policy = story
-        .context
-        .mount_policy_override
-        .clone()
-        .unwrap_or_else(|| project.config.mount_policy.clone());
-    let effective_session_composition =
-        resolve_effective_session_composition(&project, Some(story));
-    let mcp_servers = state
-        .config
-        .mcp_base_url
-        .as_ref()
+    let mcp_servers = state.config.mcp_base_url.as_ref()
         .map(|base_url| {
-            vec![
-                McpInjectionConfig::for_story(base_url.clone(), story.project_id, story.id)
-                    .to_acp_mcp_server(),
-            ]
+            vec![McpInjectionConfig::for_story(base_url.clone(), story.project_id, story.id).to_acp_mcp_server()]
         })
         .unwrap_or_default();
-    let tool_visibility = summarize_tool_visibility(address_space.as_ref(), &mcp_servers);
-    let runtime_policy = summarize_runtime_policy(
-        workspace.is_some(),
-        address_space.as_ref(),
-        &mcp_servers,
-        &tool_visibility.tool_names,
-    );
+
+    let executor_source = if session_meta.executor_config.is_some() {
+        "session.meta.executor_config"
+    } else if effective_agent_type.is_some() {
+        "project.config.default_agent_type"
+    } else {
+        "unresolved"
+    };
+
+    let snapshot = session_context::build_session_context(SessionContextInput {
+        project: &project,
+        story: Some(story),
+        workspace_attached: workspace.is_some(),
+        resolved_config,
+        address_space: address_space.as_ref(),
+        mcp_servers: &mcp_servers,
+        executor_summary: ExecutorSummaryInput {
+            preset_name: None,
+            source: executor_source.to_string(),
+            resolution_error: None,
+        },
+        owner_variant: SessionOwnerVariant::Story {
+            story_overrides: extract_story_overrides(story),
+        },
+    });
+
     Some(BuiltStorySessionContextResponse {
         address_space,
-        context_snapshot: Some(StorySessionContextSnapshot {
-            executor: build_session_executor_summary(
-                resolved_config,
-                None,
-                if session_meta.executor_config.is_some() {
-                    "session.meta.executor_config"
-                } else if effective_agent_type.is_some() {
-                    "project.config.default_agent_type"
-                } else {
-                    "unresolved"
-                },
-                None,
-            ),
-            project_defaults: SessionProjectDefaults {
-                default_agent_type,
-                context_containers: project.config.context_containers.clone(),
-                mount_policy: project.config.mount_policy.clone(),
-                session_composition: project.config.session_composition.clone(),
-            },
-            story_overrides: SessionStoryOverrides {
-                context_containers: story.context.context_containers.clone(),
-                disabled_container_ids: story.context.disabled_container_ids.clone(),
-                mount_policy_override: story.context.mount_policy_override.clone(),
-                session_composition_override: story.context.session_composition_override.clone(),
-            },
-            effective: SessionEffectiveContext {
-                mount_policy: effective_mount_policy,
-                session_composition: effective_session_composition,
-                tool_visibility,
-                runtime_policy,
-            },
-        }),
+        context_snapshot: Some(snapshot),
     })
 }

@@ -4,6 +4,7 @@ import type {
   MountDerivationPolicy,
   OpenProjectAgentSessionResult,
   ProjectSessionInfo,
+  SessionContextSnapshot,
   ProjectAgentSummary,
   Project,
   ProjectConfig,
@@ -101,28 +102,8 @@ function mapOpenProjectAgentSessionResult(raw: Record<string, unknown>): OpenPro
 }
 
 function mapProjectSessionInfo(raw: Record<string, unknown>, fallbackBindingId: string): ProjectSessionInfo {
-  const rawSnapshot = raw.context_snapshot && typeof raw.context_snapshot === 'object'
-    ? raw.context_snapshot as Record<string, unknown>
-    : null;
-  const rawSharedMountsSource = rawSnapshot?.shared_context_mounts;
-  const rawSharedMounts = Array.isArray(rawSharedMountsSource)
-    ? rawSharedMountsSource as Record<string, unknown>[]
-    : [];
-  const contextSnapshot = rawSnapshot
-    ? {
-        agent_key: String(rawSnapshot.agent_key ?? ''),
-        agent_display_name: String(rawSnapshot.agent_display_name ?? ''),
-        executor: (rawSnapshot.executor as NonNullable<ProjectSessionInfo['context_snapshot']>['executor']) ?? { source: 'unresolved' },
-        project_defaults: rawSnapshot.project_defaults as NonNullable<ProjectSessionInfo['context_snapshot']>['project_defaults'],
-        effective: rawSnapshot.effective as NonNullable<ProjectSessionInfo['context_snapshot']>['effective'],
-        workflow_runtime: (rawSnapshot.workflow_runtime as NonNullable<ProjectSessionInfo['context_snapshot']>['workflow_runtime']) ?? null,
-        shared_context_mounts: rawSharedMounts.map((mount) => ({
-          container_id: String(mount.container_id ?? ''),
-          mount_id: String(mount.mount_id ?? ''),
-          display_name: String(mount.display_name ?? mount.mount_id ?? ''),
-          writable: Boolean(mount.writable),
-        })),
-      }
+  const contextSnapshot = raw.context_snapshot && typeof raw.context_snapshot === 'object'
+    ? (raw.context_snapshot as SessionContextSnapshot)
     : null;
 
   return {

@@ -19,6 +19,7 @@ use agentdash_domain::workflow::{
 };
 
 use crate::app_state::AppState;
+use crate::session_context::normalize_string;
 use crate::dto::{
     WorkflowAssignmentResponse, WorkflowDefinitionResponse, WorkflowRunResponse,
     WorkflowTemplateResponse,
@@ -179,7 +180,7 @@ pub async fn start_workflow_run(
     let run = service
         .start_run(StartWorkflowRunCommand {
             workflow_id: parse_optional_uuid(req.workflow_id.as_deref(), "workflow_id")?,
-            workflow_key: req.workflow_key.and_then(normalize_optional_string),
+            workflow_key: req.workflow_key.and_then(normalize_string),
             target_kind: req.target_kind,
             target_id,
         })
@@ -276,7 +277,7 @@ pub async fn complete_workflow_phase(
         .complete_phase(CompleteWorkflowPhaseCommand {
             run_id,
             phase_key,
-            summary: req.summary.and_then(normalize_optional_string),
+            summary: req.summary.and_then(normalize_string),
             record_artifacts: req
                 .record_artifacts
                 .unwrap_or_default()
@@ -432,15 +433,6 @@ fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, A
     match raw.and_then(normalize_optional_str_ref) {
         Some(value) => parse_uuid(value, field).map(Some),
         None => Ok(None),
-    }
-}
-
-fn normalize_optional_string(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
     }
 }
 

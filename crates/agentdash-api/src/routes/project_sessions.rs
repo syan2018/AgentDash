@@ -10,28 +10,16 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     routes::project_agents::{
-        ProjectAgentMountResponse, build_project_agent_visible_mounts, normalize_optional_string,
-        resolve_project_agent_bridge, resolve_project_workspace,
-    },
-    routes::task_execution::{
-        SessionEffectiveContext, SessionProjectDefaults, TaskSessionExecutorSummary,
-        build_session_executor_summary,
+        build_project_agent_visible_mounts, resolve_project_agent_bridge, resolve_project_workspace,
     },
     rpc::ApiError,
-    session_plan::{summarize_runtime_policy, summarize_tool_visibility},
+    session_context::{
+        self, ExecutorSummaryInput, SessionContextInput, SessionContextSnapshot,
+        SessionOwnerVariant, SharedContextMount,
+    },
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_mcp::injection::McpInjectionConfig;
-
-#[derive(Debug, Serialize)]
-pub struct ProjectSessionContextSnapshot {
-    pub agent_key: String,
-    pub agent_display_name: String,
-    pub executor: TaskSessionExecutorSummary,
-    pub project_defaults: SessionProjectDefaults,
-    pub effective: SessionEffectiveContext,
-    pub shared_context_mounts: Vec<ProjectAgentMountResponse>,
-}
 
 #[derive(Debug, Serialize)]
 pub struct ProjectSessionDetailResponse {
@@ -43,13 +31,13 @@ pub struct ProjectSessionDetailResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_space: Option<agentdash_executor::ExecutionAddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_snapshot: Option<ProjectSessionContextSnapshot>,
+    pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
 #[derive(Debug)]
 struct BuiltProjectSessionContextResponse {
     address_space: Option<agentdash_executor::ExecutionAddressSpace>,
-    context_snapshot: Option<ProjectSessionContextSnapshot>,
+    context_snapshot: Option<SessionContextSnapshot>,
 }
 
 pub async fn get_project_session(
@@ -120,85 +108,66 @@ async fn build_project_session_context_response(
         .strip_prefix("project_agent:")
         .unwrap_or_default();
     let project_agent = resolve_project_agent_bridge(project, agent_key)?;
-    let workspace = resolve_project_workspace(state, project)
-        .await
-        .ok()
-        .flatten();
-    let session_meta = state
-        .services
-        .executor_hub
-        .get_session_meta(session_id)
-        .await
-        .ok()??;
+    let workspace = resolve_project_workspace(state, project).await.ok().flatten();
+    let session_meta = state.services.executor_hub.get_session_meta(session_id).await.ok()??;
+
     let resolved_config = session_meta
         .executor_config
         .as_ref()
         .or(Some(&project_agent.executor_config));
-    let effective_agent_type =
-        resolved_config.and_then(|config| normalize_optional_string(Some(config.executor.clone())));
-    let use_address_space = resolved_config.is_some_and(|config| config.is_native_agent());
+    let use_address_space = resolved_config.is_some_and(|c| c.is_native_agent());
     let address_space = if use_address_space {
-        state
-            .services
-            .address_space_service
-            .build_project_address_space(
-                project,
-                workspace.as_ref(),
-                effective_agent_type.as_deref(),
-            )
+        state.services.address_space_service
+            .build_project_address_space(project, workspace.as_ref(), resolved_config.map(|c| c.executor.as_str()))
             .ok()
     } else {
         None
     };
-    let mcp_servers = state
-        .config
-        .mcp_base_url
-        .as_ref()
-        .map(|base_url| {
-            vec![McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server()]
-        })
+    let mcp_servers = state.config.mcp_base_url.as_ref()
+        .map(|base_url| vec![McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server()])
         .unwrap_or_default();
-    let tool_visibility = summarize_tool_visibility(address_space.as_ref(), &mcp_servers);
-    let runtime_policy = summarize_runtime_policy(
-        workspace.is_some(),
-        address_space.as_ref(),
-        &mcp_servers,
-        &tool_visibility.tool_names,
-    );
+
     let executor_source = if session_meta.executor_config.is_some() {
         "session.meta.executor_config".to_string()
     } else {
         project_agent.source.clone()
     };
 
-    Some(BuiltProjectSessionContextResponse {
-        address_space,
-        context_snapshot: Some(ProjectSessionContextSnapshot {
+    let shared_mounts: Vec<SharedContextMount> = resolved_config
+        .map(|config| {
+            build_project_agent_visible_mounts(project, config)
+                .into_iter()
+                .map(|m| SharedContextMount {
+                    container_id: m.container_id,
+                    mount_id: m.mount_id,
+                    display_name: m.display_name,
+                    writable: m.writable,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let snapshot = session_context::build_session_context(SessionContextInput {
+        project,
+        story: None,
+        workspace_attached: workspace.is_some(),
+        resolved_config,
+        address_space: address_space.as_ref(),
+        mcp_servers: &mcp_servers,
+        executor_summary: ExecutorSummaryInput {
+            preset_name: project_agent.preset_name,
+            source: executor_source,
+            resolution_error: None,
+        },
+        owner_variant: SessionOwnerVariant::Project {
             agent_key: project_agent.key,
             agent_display_name: project_agent.display_name,
-            executor: build_session_executor_summary(
-                resolved_config,
-                project_agent.preset_name,
-                executor_source,
-                None,
-            ),
-            project_defaults: SessionProjectDefaults {
-                default_agent_type: normalize_optional_string(
-                    project.config.default_agent_type.clone(),
-                ),
-                context_containers: project.config.context_containers.clone(),
-                mount_policy: project.config.mount_policy.clone(),
-                session_composition: project.config.session_composition.clone(),
-            },
-            effective: SessionEffectiveContext {
-                mount_policy: project.config.mount_policy.clone(),
-                session_composition: project.config.session_composition.clone(),
-                tool_visibility,
-                runtime_policy,
-            },
-            shared_context_mounts: resolved_config
-                .map(|config| build_project_agent_visible_mounts(project, config))
-                .unwrap_or_default(),
-        }),
+            shared_context_mounts: shared_mounts,
+        },
+    });
+
+    Some(BuiltProjectSessionContextResponse {
+        address_space,
+        context_snapshot: Some(snapshot),
     })
 }

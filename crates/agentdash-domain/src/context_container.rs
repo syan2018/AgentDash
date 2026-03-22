@@ -3,18 +3,13 @@ use std::collections::BTreeSet;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::common::MountCapability;
+
+/// 向后兼容别名
+pub type ContextContainerCapability = MountCapability;
+
 fn bool_true() -> bool {
     true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextContainerCapability {
-    Read,
-    Write,
-    List,
-    Search,
-    Exec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

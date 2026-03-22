@@ -81,164 +81,6 @@ impl SqliteTaskRepository {
         Ok(())
     }
 
-    pub async fn create_task_with_story_update(&self, task: &Task) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        let mut story = self.load_story_snapshot(&mut tx, task.story_id).await?;
-        let now = chrono::Utc::now().to_rfc3339();
-
-        sqlx::query(
-            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(task.id.to_string())
-        .bind(task.story_id.to_string())
-        .bind(task.workspace_id.map(|id| id.to_string()))
-        .bind(&task.title)
-        .bind(&task.description)
-        .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
-        .bind(task.session_id.as_deref())
-        .bind(task.executor_session_id.as_deref())
-        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
-        .bind(serde_json::to_string(&task.agent_binding)?)
-        .bind(serde_json::to_string(&task.artifacts)?)
-        .bind(task.created_at.to_rfc3339())
-        .bind(task.updated_at.to_rfc3339())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        let result = sqlx::query(
-            "UPDATE stories SET task_count = task_count + 1, updated_at = ? WHERE id = ?",
-        )
-        .bind(&now)
-        .bind(task.story_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        if result.rows_affected() == 0 {
-            return Err(DomainError::NotFound {
-                entity: "story",
-                id: task.story_id.to_string(),
-            });
-        }
-
-        story.task_count += 1;
-        story.updated_at = now;
-
-        self.insert_state_change(
-            &mut tx,
-            task.id,
-            ChangeKind::TaskCreated,
-            build_task_created_payload(task),
-            &story.backend_id,
-        )
-        .await?;
-        self.insert_state_change(
-            &mut tx,
-            task.story_id,
-            ChangeKind::StoryUpdated,
-            story.to_payload("task_created_by_user"),
-            &story.backend_id,
-        )
-        .await?;
-
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        Ok(())
-    }
-
-    pub async fn delete_task_with_story_update(
-        &self,
-        task_id: uuid::Uuid,
-    ) -> Result<Task, DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        let row = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
-             FROM tasks WHERE id = ?",
-        )
-        .bind(task_id.to_string())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
-        .ok_or_else(|| DomainError::NotFound {
-            entity: "task",
-            id: task_id.to_string(),
-        })?;
-        let task: Task = row.try_into()?;
-
-        let mut story = self.load_story_snapshot(&mut tx, task.story_id).await?;
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let deleted = sqlx::query("DELETE FROM tasks WHERE id = ?")
-            .bind(task_id.to_string())
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        if deleted.rows_affected() == 0 {
-            return Err(DomainError::NotFound {
-                entity: "task",
-                id: task_id.to_string(),
-            });
-        }
-
-        let result = sqlx::query(
-            "UPDATE stories
-             SET task_count = MAX(task_count - 1, 0), updated_at = ?
-             WHERE id = ?",
-        )
-        .bind(&now)
-        .bind(task.story_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        if result.rows_affected() == 0 {
-            return Err(DomainError::NotFound {
-                entity: "story",
-                id: task.story_id.to_string(),
-            });
-        }
-
-        story.task_count = (story.task_count - 1).max(0);
-        story.updated_at = now;
-
-        self.insert_state_change(
-            &mut tx,
-            task_id,
-            ChangeKind::TaskDeleted,
-            serde_json::json!({
-                "task_id": task_id,
-                "story_id": task.story_id,
-                "reason": "task_deleted_by_user"
-            }),
-            &story.backend_id,
-        )
-        .await?;
-        self.insert_state_change(
-            &mut tx,
-            task.story_id,
-            ChangeKind::StoryUpdated,
-            story.to_payload("task_deleted_by_user"),
-            &story.backend_id,
-        )
-        .await?;
-
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        Ok(task)
-    }
-
     async fn load_story_snapshot(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -413,6 +255,164 @@ impl TaskRepository for SqliteTaskRepository {
             });
         }
         Ok(())
+    }
+
+    async fn create_task_with_story_update(&self, task: &Task) -> Result<(), DomainError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let mut story = self.load_story_snapshot(&mut tx, task.story_id).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(task.id.to_string())
+        .bind(task.story_id.to_string())
+        .bind(task.workspace_id.map(|id| id.to_string()))
+        .bind(&task.title)
+        .bind(&task.description)
+        .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
+        .bind(task.session_id.as_deref())
+        .bind(task.executor_session_id.as_deref())
+        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
+        .bind(serde_json::to_string(&task.agent_binding)?)
+        .bind(serde_json::to_string(&task.artifacts)?)
+        .bind(task.created_at.to_rfc3339())
+        .bind(task.updated_at.to_rfc3339())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let result = sqlx::query(
+            "UPDATE stories SET task_count = task_count + 1, updated_at = ? WHERE id = ?",
+        )
+        .bind(&now)
+        .bind(task.story_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound {
+                entity: "story",
+                id: task.story_id.to_string(),
+            });
+        }
+
+        story.task_count += 1;
+        story.updated_at = now;
+
+        self.insert_state_change(
+            &mut tx,
+            task.id,
+            ChangeKind::TaskCreated,
+            build_task_created_payload(task),
+            &story.backend_id,
+        )
+        .await?;
+        self.insert_state_change(
+            &mut tx,
+            task.story_id,
+            ChangeKind::StoryUpdated,
+            story.to_payload("task_created_by_user"),
+            &story.backend_id,
+        )
+        .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn delete_task_with_story_update(
+        &self,
+        task_id: uuid::Uuid,
+    ) -> Result<Task, DomainError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let row = sqlx::query_as::<_, TaskRow>(
+            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+             FROM tasks WHERE id = ?",
+        )
+        .bind(task_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "task",
+            id: task_id.to_string(),
+        })?;
+        let task: Task = row.try_into()?;
+
+        let mut story = self.load_story_snapshot(&mut tx, task.story_id).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let deleted = sqlx::query("DELETE FROM tasks WHERE id = ?")
+            .bind(task_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        if deleted.rows_affected() == 0 {
+            return Err(DomainError::NotFound {
+                entity: "task",
+                id: task_id.to_string(),
+            });
+        }
+
+        let result = sqlx::query(
+            "UPDATE stories
+             SET task_count = MAX(task_count - 1, 0), updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&now)
+        .bind(task.story_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound {
+                entity: "story",
+                id: task.story_id.to_string(),
+            });
+        }
+
+        story.task_count = (story.task_count - 1).max(0);
+        story.updated_at = now;
+
+        self.insert_state_change(
+            &mut tx,
+            task_id,
+            ChangeKind::TaskDeleted,
+            serde_json::json!({
+                "task_id": task_id,
+                "story_id": task.story_id,
+                "reason": "task_deleted_by_user"
+            }),
+            &story.backend_id,
+        )
+        .await?;
+        self.insert_state_change(
+            &mut tx,
+            task.story_id,
+            ChangeKind::StoryUpdated,
+            story.to_payload("task_deleted_by_user"),
+            &story.backend_id,
+        )
+        .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        Ok(task)
     }
 }
 

@@ -27,8 +27,14 @@ json-patch = "2.0"
 rmcp = { version = "1.1", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
 
-# Pi Agent 框架
-agentdash-agent = { workspace = true }
+# Pi Agent 框架（仅云端编译）
+agentdash-agent = { workspace = true, optional = true }
+rig-core = { workspace = true, optional = true }
+
+[features]
+default = ["pi-agent"]
+pi-agent = ["dep:agentdash-agent", "dep:rig-core"]
 
 [dev-dependencies]
 tempfile = "3.18"
+agentdash-agent = { workspace = true }

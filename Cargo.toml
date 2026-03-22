@@ -54,7 +54,7 @@ agentdash-domain = { path = "crates/agentdash-domain" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-injection = { path = "crates/agentdash-injection" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
-agentdash-executor = { path = "crates/agentdash-executor" }
+agentdash-executor = { path = "crates/agentdash-executor", default-features = false }
 agentdash-acp-meta = { path = "crates/agentdash-acp-meta" }
 agentdash-mcp = { path = "crates/agentdash-mcp" }
 agentdash-agent = { path = "crates/agentdash-agent" }

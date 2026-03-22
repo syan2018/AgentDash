@@ -39,7 +39,6 @@ pub struct RepositorySet {
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
-    pub sqlite_task_repo: Arc<SqliteTaskRepository>,
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
@@ -203,8 +202,7 @@ impl AppState {
                 project_repo,
                 workspace_repo,
                 story_repo,
-                task_repo: task_repo.clone(),
-                sqlite_task_repo: task_repo,
+                task_repo,
                 session_binding_repo,
                 backend_repo,
                 settings_repo,
@@ -230,20 +228,7 @@ impl AppState {
     }
 }
 
-/// 从 Settings 读取单个字符串值，如果 Settings 中没有则返回 None
-async fn read_setting_str(repo: &dyn SettingsRepository, key: &str) -> Option<String> {
-    repo.get(key)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|s| s.value.as_str().map(String::from))
-        .filter(|s| !s.is_empty())
-}
-
-/// 尝试构建 PiAgentConnector。
-///
-/// 配置优先级：Settings DB > 环境变量 > 默认值。
-/// 支持 OpenAI Responses API（默认）和 Chat Completions API。
+/// 尝试构建 PiAgentConnector，委托给 executor 层的 factory 后附加 runtime tool provider。
 async fn build_pi_agent_connector(
     workspace_root: &std::path::Path,
     settings: &dyn SettingsRepository,
@@ -253,88 +238,9 @@ async fn build_pi_agent_connector(
     workflow_run_repo: Arc<dyn WorkflowRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
-    use agentdash_agent::{LlmBridge, RigBridge};
-    use rig::client::CompletionClient as _;
-
-    // 从 Settings 读取 OpenAI 系列配置
-    let api_key = read_setting_str(settings, "llm.openai.api_key")
-        .await
-        .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-    let base_url = read_setting_str(settings, "llm.openai.base_url")
-        .await
-        .or_else(|| std::env::var("OPENAI_BASE_URL").ok());
-    let model_id = read_setting_str(settings, "llm.openai.default_model")
-        .await
-        .unwrap_or_else(|| "gpt-4o".to_string());
-    let wire_api = read_setting_str(settings, "llm.openai.wire_api")
-        .await
-        .unwrap_or_else(|| "responses".to_string());
-
-    // Pi Agent 参数
-    let system_prompt = read_setting_str(settings, "agent.pi.system_prompt")
-        .await
-        .or_else(|| std::env::var("PI_AGENT_SYSTEM_PROMPT").ok())
-        .unwrap_or_else(|| {
-            "你是 AgentDash 内置 AI 助手，一个通用的编程与任务执行 Agent。请用中文回复用户。"
-                .to_string()
-        });
-
-    // --- 尝试 Anthropic（Settings → 环境变量）---
-    let anthropic_key = read_setting_str(settings, "llm.anthropic.api_key")
-        .await
-        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
-
-    if let Some(api_key) = anthropic_key {
-        let client = rig::providers::anthropic::Client::new(&api_key);
-        let anthropic_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET;
-        let model = client.completion_model(anthropic_model);
-        let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
-
-        let mut connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
-            workspace_root.to_path_buf(),
-            bridge,
-            system_prompt,
-            anthropic_model,
-        );
-        connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
-            address_space_service,
-            session_binding_repo,
-            workflow_definition_repo,
-            workflow_run_repo,
-            executor_hub_handle,
-        )));
-        tracing::info!("PiAgentConnector 已初始化（Anthropic）");
-        return Some(connector);
-    }
-
-    // --- 尝试 OpenAI/兼容端点 ---
-    let api_key = api_key?;
-
-    if wire_api != "responses" {
-        tracing::warn!(
-            "Rig 发行版当前统一走 Responses API，忽略 llm.openai.wire_api={} 配置",
-            wire_api
-        );
-    }
-
-    let mut builder = rig::providers::openai::Client::builder(&api_key);
-    if let Some(ref url) = base_url {
-        builder = builder.base_url(url);
-    }
-    let client = builder.build();
-    let model = client.completion_model(&model_id);
-    tracing::info!(
-        "OpenAI Responses Client 已就绪（base_url={}, model={model_id}）",
-        base_url.as_deref().unwrap_or("default")
-    );
-    let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
-
-    let mut connector = agentdash_executor::connectors::pi_agent::PiAgentConnector::new(
-        workspace_root.to_path_buf(),
-        bridge,
-        system_prompt,
-        &model_id,
-    );
+    let mut connector =
+        agentdash_executor::connectors::pi_agent::build_pi_agent_connector(workspace_root, settings)
+            .await?;
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         address_space_service,
         session_binding_repo,
@@ -342,6 +248,5 @@ async fn build_pi_agent_connector(
         workflow_run_repo,
         executor_hub_handle,
     )));
-    tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");
     Some(connector)
 }

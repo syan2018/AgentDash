@@ -9,6 +9,7 @@ use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[cfg(feature = "pi-agent")]
 use agentdash_agent::DynAgentTool;
 
 use crate::hooks::HookSessionRuntime;
@@ -128,15 +129,8 @@ pub struct ExecutionContext {
     pub hook_session: Option<Arc<HookSessionRuntime>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionMountCapability {
-    Read,
-    Write,
-    List,
-    Search,
-    Exec,
-}
+/// 向后兼容别名，规范定义在 `agentdash_domain::common::MountCapability`
+pub type ExecutionMountCapability = agentdash_domain::common::MountCapability;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExecutionMount {
@@ -295,6 +289,7 @@ pub enum ConnectorError {
     Json(#[from] serde_json::Error),
 }
 
+#[cfg(feature = "pi-agent")]
 #[async_trait]
 pub trait RuntimeToolProvider: Send + Sync {
     async fn build_tools(

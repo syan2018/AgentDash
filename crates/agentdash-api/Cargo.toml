@@ -13,7 +13,7 @@ agentdash-domain = { workspace = true }
 agentdash-application = { workspace = true }
 agentdash-injection = { workspace = true }
 agentdash-infrastructure = { workspace = true }
-agentdash-executor = { workspace = true }
+agentdash-executor = { workspace = true, features = ["pi-agent"] }
 agentdash-acp-meta = { workspace = true }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
@@ -38,10 +38,10 @@ walkdir = "2.5"
 executors = { workspace = true }
 schemars = { workspace = true }
 
+# Agent 类型（RuntimeToolProvider 使用 AgentTool trait）
+agentdash-agent = { workspace = true }
+
 # ACP 协议（仅用于路由层的类型引用）
 agent-client-protocol = { workspace = true }
 json-patch = "2.0"
 
-# Agent Runtime（用于初始化 PiAgentConnector）
-agentdash-agent = { workspace = true }
-rig-core = { workspace = true }

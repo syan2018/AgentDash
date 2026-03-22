@@ -409,7 +409,7 @@ pub async fn create_task(
 
     state
         .repos
-        .sqlite_task_repo
+        .task_repo
         .create_task_with_story_update(&task)
         .await?;
 
@@ -528,7 +528,7 @@ pub async fn delete_task(
 
     state
         .repos
-        .sqlite_task_repo
+        .task_repo
         .delete_task_with_story_update(task_id)
         .await?;
 

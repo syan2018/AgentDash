@@ -903,6 +903,103 @@ fn content_part_to_block(part: &ContentPart) -> Option<ContentBlock> {
     }
 }
 
+// ─── Factory ────────────────────────────────────────────────────────
+
+/// 从 `SettingsRepository` 和环境变量构建 `PiAgentConnector`。
+///
+/// 配置优先级：Settings DB > 环境变量 > 默认值。
+/// 支持 Anthropic（优先）和 OpenAI Responses API。
+pub async fn build_pi_agent_connector(
+    workspace_root: &Path,
+    settings: &dyn agentdash_domain::settings::SettingsRepository,
+) -> Option<PiAgentConnector> {
+    use agentdash_agent::{LlmBridge, RigBridge};
+    use rig::client::CompletionClient as _;
+
+    let api_key = read_setting_str(settings, "llm.openai.api_key")
+        .await
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+    let base_url = read_setting_str(settings, "llm.openai.base_url")
+        .await
+        .or_else(|| std::env::var("OPENAI_BASE_URL").ok());
+    let model_id = read_setting_str(settings, "llm.openai.default_model")
+        .await
+        .unwrap_or_else(|| "gpt-4o".to_string());
+    let wire_api = read_setting_str(settings, "llm.openai.wire_api")
+        .await
+        .unwrap_or_else(|| "responses".to_string());
+
+    let system_prompt = read_setting_str(settings, "agent.pi.system_prompt")
+        .await
+        .or_else(|| std::env::var("PI_AGENT_SYSTEM_PROMPT").ok())
+        .unwrap_or_else(|| {
+            "你是 AgentDash 内置 AI 助手，一个通用的编程与任务执行 Agent。请用中文回复用户。"
+                .to_string()
+        });
+
+    // Anthropic（Settings → 环境变量）
+    let anthropic_key = read_setting_str(settings, "llm.anthropic.api_key")
+        .await
+        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+
+    if let Some(api_key) = anthropic_key {
+        let client = rig::providers::anthropic::Client::new(&api_key);
+        let anthropic_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET;
+        let model = client.completion_model(anthropic_model);
+        let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
+        let connector = PiAgentConnector::new(
+            workspace_root.to_path_buf(),
+            bridge,
+            system_prompt,
+            anthropic_model,
+        );
+        tracing::info!("PiAgentConnector 已初始化（Anthropic）");
+        return Some(connector);
+    }
+
+    // OpenAI/兼容端点
+    let api_key = api_key?;
+
+    if wire_api != "responses" {
+        tracing::warn!(
+            "Rig 发行版当前统一走 Responses API，忽略 llm.openai.wire_api={} 配置",
+            wire_api
+        );
+    }
+
+    let mut builder = rig::providers::openai::Client::builder(&api_key);
+    if let Some(ref url) = base_url {
+        builder = builder.base_url(url);
+    }
+    let client = builder.build();
+    let model = client.completion_model(&model_id);
+    tracing::info!(
+        "OpenAI Responses Client 已就绪（base_url={}, model={model_id}）",
+        base_url.as_deref().unwrap_or("default")
+    );
+    let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
+    let connector = PiAgentConnector::new(
+        workspace_root.to_path_buf(),
+        bridge,
+        system_prompt,
+        &model_id,
+    );
+    tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");
+    Some(connector)
+}
+
+async fn read_setting_str(
+    repo: &dyn agentdash_domain::settings::SettingsRepository,
+    key: &str,
+) -> Option<String> {
+    repo.get(key)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.value.as_str().map(String::from))
+        .filter(|s| !s.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

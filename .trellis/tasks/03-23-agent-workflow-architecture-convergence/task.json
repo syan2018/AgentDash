@@ -1,0 +1,78 @@
+{
+  "id": "agent-workflow-architecture-convergence",
+  "name": "agent-workflow-architecture-convergence",
+  "title": "Agent / Workflow 架构收口执行计划",
+  "description": "作为 Agent、Workflow、Session Context、Hook Runtime 的总收口任务，维护从现状治理到最终统一架构的分阶段执行计划。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "architecture",
+  "priority": "P0",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-23",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "phase-1",
+      "title": "统一 workflow runtime projection 与 session bootstrap 抽象",
+      "status": "pending"
+    },
+    {
+      "key": "phase-2",
+      "title": "让 query snapshot 与实际 prompt bootstrap 共用同一条管线",
+      "status": "pending"
+    },
+    {
+      "key": "phase-3",
+      "title": "让 workflow binding 解析严格走 runtime address space / resolver",
+      "status": "pending"
+    },
+    {
+      "key": "phase-4",
+      "title": "把 WorkflowAssignment 接入默认执行主线并保证生命周期幂等",
+      "status": "pending"
+    },
+    {
+      "key": "phase-5",
+      "title": "收口 workflow 写入 authority 与前端投影",
+      "status": "pending"
+    }
+  ],
+  "relatedFiles": [
+    ".trellis/tasks/03-22-agent-workflow-overdesign-review/architecture-review.md",
+    ".trellis/tasks/03-22-session-context-dedup/prd.md",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-api/src/execution_hooks.rs",
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-application/src/session_context.rs",
+    "crates/agentdash-application/src/context/builder.rs",
+    "crates/agentdash-application/src/workflow/run.rs",
+    "crates/agentdash-application/src/workflow/binding.rs"
+  ],
+  "notes": "最终目标不是继续堆抽象，而是把 workflow 生命周期、session bootstrap 和前端可见投影收口到少数 authoritative pipeline 上。"
+}

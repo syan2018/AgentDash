@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/tasks/03-22-agent-workflow-overdesign-review/architecture-review.md", "reason": "当前 Agent / Workflow 架构现状与问题基线"}
+{"file": ".trellis/tasks/03-22-session-context-dedup/prd.md", "reason": "Session Context 收口任务的已完成设计与边界"}
+{"file": "crates/agentdash-application/src/session_context.rs", "reason": "Session context snapshot 统一 DTO 与共享 builder"}
+{"file": "crates/agentdash-api/src/execution_hooks.rs", "reason": "Workflow hook runtime 与 completion authority 主实现"}
+{"file": "crates/agentdash-application/src/workflow/run.rs", "reason": "Workflow run 生命周期与 active run 约束"}
+{"file": "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs", "reason": "Task 执行主链 bootstrap 与 prompt 发起入口"}
+{"file": "crates/agentdash-api/src/routes/acp_sessions.rs", "reason": "Story owner / Project agent session bootstrap 入口"}

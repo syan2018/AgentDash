@@ -297,6 +297,8 @@ export interface WorkflowAssignment {
   updated_at: string;
 }
 
+export type WorkflowProgressionSource = "hook_runtime" | "manual_override";
+
 export interface WorkflowPhaseState {
   phase_key: string;
   status: WorkflowPhaseExecutionStatus;
@@ -304,6 +306,7 @@ export interface WorkflowPhaseState {
   started_at?: string | null;
   completed_at?: string | null;
   summary?: string | null;
+  completed_by?: WorkflowProgressionSource | null;
 }
 
 export interface WorkflowRecordArtifact {
@@ -327,6 +330,30 @@ export interface WorkflowRun {
   created_at: string;
   updated_at: string;
   last_activity_at: string;
+}
+
+export interface WorkflowTargetSummary {
+  target_kind: WorkflowTargetKind;
+  target_id: string;
+  target_label: string;
+}
+
+export interface WorkflowProjectionSnapshot {
+  run_id: string;
+  workflow_id: string;
+  workflow_key: string;
+  workflow_name: string;
+  run_status: string;
+  phase_key: string;
+  phase_title: string;
+  completion_mode: string;
+  requires_session: boolean;
+  default_artifact_type?: string | null;
+  default_artifact_title?: string | null;
+  target: WorkflowTargetSummary;
+  agent_instructions: string[];
+  binding_count: number;
+  resolved_binding_count: number;
 }
 
 // ─── Project ──────────────────────────────────────────

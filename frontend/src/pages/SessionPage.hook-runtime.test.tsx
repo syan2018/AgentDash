@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  HookRuntimePendingActionsCard,
   HookRuntimeDiagnosticsCard,
   HookRuntimeSurfaceCard,
   HookRuntimeTraceCard,
@@ -146,6 +147,57 @@ const hookRuntime: HookSessionRuntimeInfo = {
       },
     },
   ],
+  pending_actions: [
+    {
+      id: "blocking_review:dispatch-1:turn-1",
+      created_at_ms: 1_710_000_100_000,
+      title: "Companion `reviewer` 结果需要阻塞式 review",
+      summary: "status=completed, dispatch_id=dispatch-1, summary=请先处理 review 结论",
+      action_type: "blocking_review",
+      turn_id: "turn-parent-1",
+      source_trigger: "subagent_result",
+      status: "injected",
+      last_injected_at_ms: 1_710_000_120_000,
+      resolved_at_ms: null,
+      resolution_kind: null,
+      resolution_note: null,
+      resolution_turn_id: null,
+      context_fragments: [
+        {
+          slot: "workflow",
+          label: "subagent_blocking_review",
+          content: "请先处理 companion review 结论。",
+          source_summary: ["workflow_phase:check"],
+          source_refs: [],
+        },
+      ],
+      constraints: [
+        {
+          key: "subagent_result:blocking_review",
+          description: "主 session 必须先处理这份 companion review。",
+          source_summary: ["workflow_phase:check"],
+          source_refs: [],
+        },
+      ],
+    },
+    {
+      id: "follow_up_required:dispatch-2:turn-2",
+      created_at_ms: 1_710_000_200_000,
+      title: "Companion `planner` 结果需要主 session 跟进",
+      summary: "status=completed, dispatch_id=dispatch-2, summary=已经吸收 plan",
+      action_type: "follow_up_required",
+      turn_id: "turn-parent-2",
+      source_trigger: "subagent_result",
+      status: "resolved",
+      last_injected_at_ms: 1_710_000_210_000,
+      resolved_at_ms: 1_710_000_260_000,
+      resolution_kind: "adopted",
+      resolution_note: "主 session 已吸收并继续推进",
+      resolution_turn_id: "turn-parent-2",
+      context_fragments: [],
+      constraints: [],
+    },
+  ],
 };
 
 describe("SessionPage hook runtime cards", () => {
@@ -155,6 +207,9 @@ describe("SessionPage hook runtime cards", () => {
     expect(html).toContain("运行中 Hook Runtime");
     expect(html).toContain("sources: 2");
     expect(html).toContain("policies: 1");
+    expect(html).toContain("actions: 2");
+    expect(html).toContain("open: 1");
+    expect(html).toContain("resolved: 1");
     expect(html).toContain("workflow:*:*:task_status_gate");
     expect(html).toContain("Trellis Dev Workflow / Task / Check");
     expect(html).toContain("Workflow / Trellis Dev Workflow / Check");
@@ -174,5 +229,18 @@ describe("SessionPage hook runtime cards", () => {
     expect(traceHtml).toContain("subagent: companion");
     expect(traceHtml).toContain("completion: checklist_passed");
     expect(traceHtml).toContain("Task 还没有进入 awaiting_verification/completed。");
+  });
+
+  it("渲染 pending hook actions", () => {
+    const html = renderToStaticMarkup(<HookRuntimePendingActionsCard hookRuntime={hookRuntime} />);
+
+    expect(html).toContain("干预项状态");
+    expect(html).toContain("blocking_review");
+    expect(html).toContain("injected");
+    expect(html).toContain("Companion `reviewer` 结果需要阻塞式 review");
+    expect(html).toContain("主 session 必须先处理这份 companion review");
+    expect(html).toContain("resolved");
+    expect(html).toContain("resolution: adopted");
+    expect(html).toContain("结案说明：主 session 已吸收并继续推进");
   });
 });

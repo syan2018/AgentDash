@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { SessionChatView, type PromptTemplate } from "../features/acp-session";
 import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/session";
@@ -482,6 +482,12 @@ export function HookRuntimeSurfaceCard({
 }) {
   const { snapshot } = hookRuntime;
   const activeWorkflow = snapshot.metadata?.active_workflow ?? null;
+  const unresolvedActions = hookRuntime.pending_actions.filter(
+    (action) => action.status === "pending" || action.status === "injected",
+  );
+  const resolvedActions = hookRuntime.pending_actions.filter(
+    (action) => action.status === "resolved" || action.status === "dismissed",
+  );
   return (
     <SurfaceCard eyebrow="运行中 Hook Runtime" title={`revision ${hookRuntime.revision}`}>
       <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
@@ -505,6 +511,15 @@ export function HookRuntimeSurfaceCard({
         </span>
         <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
           trace: {hookRuntime.trace.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          actions: {hookRuntime.pending_actions.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          open: {unresolvedActions.length}
+        </span>
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1">
+          resolved: {resolvedActions.length}
         </span>
       </div>
       {snapshot.tags.length > 0 && (
@@ -704,6 +719,81 @@ export function HookRuntimeTraceCard({
   );
 }
 
+export function HookRuntimePendingActionsCard({
+  hookRuntime,
+}: {
+  hookRuntime: HookSessionRuntimeInfo;
+}) {
+  return (
+    <SurfaceCard eyebrow="Hook Actions" title="干预项状态">
+      {hookRuntime.pending_actions.length > 0 ? (
+        <div className="space-y-2">
+          {hookRuntime.pending_actions.map((action) => {
+            const createdAt = Number.isFinite(action.created_at_ms)
+              ? new Date(action.created_at_ms).toLocaleTimeString("zh-CN", {
+                hour12: false,
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })
+              : "-";
+            const resolvedAt = typeof action.resolved_at_ms === "number" && Number.isFinite(action.resolved_at_ms)
+              ? new Date(action.resolved_at_ms).toLocaleTimeString("zh-CN", {
+                hour12: false,
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })
+              : null;
+            return (
+              <div key={action.id} className="rounded-[10px] border border-border bg-background/70 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
+                    {action.action_type}
+                  </span>
+                  <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] text-muted-foreground">
+                    {action.status}
+                  </span>
+                  <span className="text-xs font-medium text-foreground/90">{action.title}</span>
+                  <span className="text-[11px] text-muted-foreground">{createdAt}</span>
+                </div>
+                <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{action.summary}</p>
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                  <span>action: {action.id}</span>
+                  {action.turn_id && <span>turn: {action.turn_id}</span>}
+                  <span>trigger: {action.source_trigger}</span>
+                  <span>fragments: {action.context_fragments.length}</span>
+                  <span>constraints: {action.constraints.length}</span>
+                  {action.last_injected_at_ms != null && <span>last_injected: 已注入</span>}
+                  {action.resolution_kind && <span>resolution: {action.resolution_kind}</span>}
+                  {action.resolution_turn_id && <span>resolution_turn: {action.resolution_turn_id}</span>}
+                  {resolvedAt && <span>resolved_at: {resolvedAt}</span>}
+                </div>
+                {action.resolution_note && (
+                  <p className="mt-2 text-[11px] leading-5 text-foreground/80">
+                    结案说明：{action.resolution_note}
+                  </p>
+                )}
+                {action.constraints.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {action.constraints.map((constraint) => (
+                      <p key={`${action.id}-${constraint.key}`} className="text-[11px] leading-5 text-foreground/80">
+                        - {constraint.description}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">当前还没有记录到 hook 干预项。</p>
+      )}
+    </SurfaceCard>
+  );
+}
+
 function HookTraceEntryCard({ entry }: { entry: HookTraceEntry }) {
   const timestamp = Number.isFinite(entry.timestamp_ms)
     ? new Date(entry.timestamp_ms).toLocaleTimeString("zh-CN", {
@@ -865,6 +955,7 @@ function StorySessionContextPanel({
         <WorkflowRuntimeSurfaceCard workflowRuntime={contextSnapshot.workflow_runtime} />
       )}
       {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
+      {hookRuntime && <HookRuntimePendingActionsCard hookRuntime={hookRuntime} />}
       {hookRuntime && <HookRuntimeTraceCard hookRuntime={hookRuntime} />}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
@@ -986,6 +1077,7 @@ function ProjectSessionContextPanel({
         <WorkflowRuntimeSurfaceCard workflowRuntime={snapshot.workflow_runtime} />
       )}
       {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
+      {hookRuntime && <HookRuntimePendingActionsCard hookRuntime={hookRuntime} />}
       {hookRuntime && <HookRuntimeTraceCard hookRuntime={hookRuntime} />}
 
       <details className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
@@ -1169,6 +1261,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const fetchTaskSession = useStoryStore((state) => state.fetchTaskSession);
   const fetchStorySessionInfo = useStoryStore((state) => state.fetchStorySessionInfo);
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
+  const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
 
   const [loadedSessionBindings, setLoadedSessionBindings] = useState<SessionBindingOwner[]>([]);
   const [loadedHookRuntime, setLoadedHookRuntime] = useState<HookSessionRuntimeInfo | null>(null);
@@ -1197,6 +1290,31 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const routeTaskIdHint = taskContextFromRoute?.task_id ?? taskIdFromQuery;
   const currentSessionId = propSessionId ?? null;
 
+  const refreshHookRuntime = useCallback(async (sessionId: string) => {
+    try {
+      const runtime = await fetchSessionHookRuntime(sessionId);
+      setLoadedHookRuntime(runtime);
+    } catch {
+      setLoadedHookRuntime(null);
+    }
+  }, []);
+
+  const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
+    if (!currentSessionId) return;
+    if (hookRuntimeRefreshTimerRef.current) {
+      window.clearTimeout(hookRuntimeRefreshTimerRef.current);
+      hookRuntimeRefreshTimerRef.current = null;
+    }
+    if (immediate) {
+      void refreshHookRuntime(currentSessionId);
+      return;
+    }
+    hookRuntimeRefreshTimerRef.current = window.setTimeout(() => {
+      hookRuntimeRefreshTimerRef.current = null;
+      void refreshHookRuntime(currentSessionId);
+    }, 180);
+  }, [currentSessionId, refreshHookRuntime]);
+
   // ─── session ID 同步 ──────────────────────────────────
 
   useEffect(() => {
@@ -1220,38 +1338,27 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId]);
 
   useEffect(() => {
-    if (!currentSessionId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const runtime = await fetchSessionHookRuntime(currentSessionId);
-        if (!cancelled) setLoadedHookRuntime(runtime);
-      } catch {
-        if (!cancelled) setLoadedHookRuntime(null);
+    return () => {
+      if (hookRuntimeRefreshTimerRef.current) {
+        window.clearTimeout(hookRuntimeRefreshTimerRef.current);
+        hookRuntimeRefreshTimerRef.current = null;
       }
-    })();
-    return () => { cancelled = true; };
-  }, [currentSessionId]);
+    };
+  }, []);
 
   useEffect(() => {
-    if (!currentSessionId) return undefined;
-    let cancelled = false;
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          const runtime = await fetchSessionHookRuntime(currentSessionId);
-          if (!cancelled) setLoadedHookRuntime(runtime);
-        } catch {
-          if (!cancelled) setLoadedHookRuntime(null);
-        }
-      })();
-    }, 3000);
-
+    if (!currentSessionId) {
+      setLoadedHookRuntime(null);
+      return;
+    }
+    void refreshHookRuntime(currentSessionId);
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      if (hookRuntimeRefreshTimerRef.current) {
+        window.clearTimeout(hookRuntimeRefreshTimerRef.current);
+        hookRuntimeRefreshTimerRef.current = null;
+      }
     };
-  }, [currentSessionId]);
+  }, [currentSessionId, refreshHookRuntime]);
 
   const sessionBindings = currentSessionId ? loadedSessionBindings : EMPTY_SESSION_BINDINGS;
   const activeHookRuntime = loadedHookRuntime?.session_id === currentSessionId
@@ -1442,15 +1549,26 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const handleMessageSent = useCallback(() => {
     void reloadSessions();
     if (!currentSessionId) return;
-    void (async () => {
-      try {
-        const runtime = await fetchSessionHookRuntime(currentSessionId);
-        setLoadedHookRuntime(runtime);
-      } catch {
-        setLoadedHookRuntime(null);
-      }
-    })();
-  }, [currentSessionId, reloadSessions]);
+    scheduleHookRuntimeRefresh("message_sent", true);
+  }, [currentSessionId, reloadSessions, scheduleHookRuntimeRefresh]);
+
+  const handleTurnEnd = useCallback(() => {
+    scheduleHookRuntimeRefresh("turn_end", true);
+  }, [scheduleHookRuntimeRefresh]);
+
+  const handleSystemEvent = useCallback((eventType: string) => {
+    switch (eventType) {
+      case "hook_event":
+      case "hook_action_resolved":
+      case "companion_dispatch_registered":
+      case "companion_result_available":
+      case "companion_result_returned":
+        scheduleHookRuntimeRefresh(eventType);
+        break;
+      default:
+        break;
+    }
+  }, [scheduleHookRuntimeRefresh]);
 
   const handleNewSession = useCallback(() => {
     setActiveSessionId(null);
@@ -1584,6 +1702,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           onCreateSession={handleCreateSession}
           onSessionIdChange={handleSessionIdChange}
           onMessageSent={handleMessageSent}
+          onTurnEnd={handleTurnEnd}
+          onSystemEvent={handleSystemEvent}
           executorHint={executorHint}
           promptTemplates={defaultPromptTemplates}
           inputPrefix={ownerBindingBar}

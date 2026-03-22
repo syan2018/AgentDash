@@ -1,0 +1,41 @@
+{
+  "id": "agent-tooling-redundancy-closure",
+  "name": "agent-tooling-redundancy-closure",
+  "title": "Agent 工具体系冗余收口",
+  "description": "追踪 Agent 可用工具体系中的命名分叉、流程工具暴露过宽、MCP 暴露工具面不透明以及遗留 workspace_files 协议链等冗余问题，并形成统一收口方案。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-23",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": ""
+}

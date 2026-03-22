@@ -284,6 +284,9 @@ pub async fn complete_workflow_phase(
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            completed_by: Some(
+                agentdash_domain::workflow::WorkflowProgressionSource::ManualOverride,
+            ),
         })
         .await?;
 

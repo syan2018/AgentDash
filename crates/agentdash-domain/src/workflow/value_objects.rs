@@ -111,6 +111,16 @@ pub enum WorkflowPhaseExecutionStatus {
     Skipped,
 }
 
+/// Phase 完成/推进的来源标记。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowProgressionSource {
+    /// Hook runtime 自动推进（唯一的自动 authority）。
+    HookRuntime,
+    /// 人工通过 API route 手动 override。
+    ManualOverride,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowPhaseState {
     pub phase_key: String,
@@ -123,6 +133,9 @@ pub struct WorkflowPhaseState {
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// 记录此 phase 由谁推进完成（缺省视为 unknown/legacy）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_by: Option<WorkflowProgressionSource>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     WorkflowDefinition, WorkflowDefinitionRepository, WorkflowPhaseDefinition,
-    WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowRun, WorkflowRunRepository,
-    WorkflowRunStatus, WorkflowTargetKind,
+    WorkflowProgressionSource, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowRun,
+    WorkflowRunRepository, WorkflowRunStatus, WorkflowTargetKind,
 };
 
 use super::completion::WorkflowCompletionDecision;
@@ -30,6 +30,7 @@ pub struct CompleteWorkflowPhaseCommand {
     pub phase_key: String,
     pub summary: Option<String>,
     pub record_artifacts: Vec<WorkflowRecordArtifactDraft>,
+    pub completed_by: Option<WorkflowProgressionSource>,
 }
 
 #[derive(Debug, Clone)]
@@ -260,7 +261,7 @@ where
             )));
         }
 
-        run.complete_phase(&cmd.phase_key, cmd.summary)
+        run.complete_phase(&cmd.phase_key, cmd.summary, cmd.completed_by)
             .map_err(WorkflowApplicationError::Conflict)?;
         for artifact in cmd.record_artifacts {
             run.append_record_artifact(artifact.into_artifact(&cmd.phase_key));
@@ -606,6 +607,7 @@ mod tests {
                 phase_key: "start".to_string(),
                 summary: Some("done".to_string()),
                 record_artifacts: vec![],
+                completed_by: None,
             })
             .await
             .expect("complete start");
@@ -647,6 +649,7 @@ mod tests {
                 phase_key: "start".to_string(),
                 summary: Some("done".to_string()),
                 record_artifacts: vec![],
+                completed_by: None,
             })
             .await
             .expect("complete start");
@@ -668,6 +671,7 @@ mod tests {
                     title: "实现说明".to_string(),
                     content: "已完成 workflow runtime 初版".to_string(),
                 }],
+                completed_by: None,
             })
             .await
             .expect("complete implement");

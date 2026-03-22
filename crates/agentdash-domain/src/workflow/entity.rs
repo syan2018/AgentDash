@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use super::value_objects::{
     WorkflowAgentRole, WorkflowPhaseDefinition, WorkflowPhaseExecutionStatus, WorkflowPhaseState,
-    WorkflowRecordArtifact, WorkflowRecordPolicy, WorkflowRunStatus, WorkflowTargetKind,
-    validate_workflow_definition,
+    WorkflowProgressionSource, WorkflowRecordArtifact, WorkflowRecordPolicy, WorkflowRunStatus,
+    WorkflowTargetKind, validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +119,7 @@ impl WorkflowRun {
                 started_at: None,
                 completed_at: None,
                 summary: None,
+                completed_by: None,
             })
             .collect::<Vec<_>>();
 
@@ -202,6 +203,7 @@ impl WorkflowRun {
         &mut self,
         phase_key: &str,
         summary: Option<String>,
+        completed_by: Option<WorkflowProgressionSource>,
     ) -> Result<(), String> {
         let Some(index) = self
             .phase_states
@@ -236,6 +238,7 @@ impl WorkflowRun {
         self.phase_states[index].status = WorkflowPhaseExecutionStatus::Completed;
         self.phase_states[index].completed_at = Some(now);
         self.phase_states[index].summary = summary;
+        self.phase_states[index].completed_by = completed_by;
 
         let next_index = self
             .phase_states
@@ -319,7 +322,7 @@ mod tests {
             &[phase("start"), phase("implement")],
         );
 
-        run.complete_phase("start", Some("done".to_string()))
+        run.complete_phase("start", Some("done".to_string()), None)
             .expect("complete");
 
         assert_eq!(run.status, WorkflowRunStatus::Ready);
@@ -357,6 +360,7 @@ mod tests {
         run.attach_session_binding("start", binding_id)
             .expect("bind session");
         run.append_record_artifact(WorkflowRecordArtifact::new(
+            "start",
             crate::workflow::WorkflowRecordArtifactType::PhaseNote,
             "note",
             "content",

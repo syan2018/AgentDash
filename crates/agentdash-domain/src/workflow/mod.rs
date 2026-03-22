@@ -9,6 +9,7 @@ pub use repository::{
 pub use value_objects::{
     WorkflowAgentRole, WorkflowContextBinding, WorkflowContextBindingKind,
     WorkflowPhaseCompletionMode, WorkflowPhaseDefinition, WorkflowPhaseExecutionStatus,
-    WorkflowPhaseState, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowRecordPolicy,
-    WorkflowRunStatus, WorkflowTargetKind, validate_workflow_definition,
+    WorkflowPhaseState, WorkflowProgressionSource, WorkflowRecordArtifact,
+    WorkflowRecordArtifactType, WorkflowRecordPolicy, WorkflowRunStatus, WorkflowTargetKind,
+    validate_workflow_definition,
 };

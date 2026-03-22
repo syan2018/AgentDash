@@ -210,6 +210,38 @@ pub struct HookSessionRuntimeSnapshot {
 - `trace`：per-trigger 的运行态轨迹，必须能看到 trigger / decision / matched_rule_keys / refresh / completion
 - 若某条 policy / diagnostic / constraint 来自 workflow 或 global builtin，前端应能直接看到来源标签，而不是只剩自然语言描述
 
+#### 3.5.0 Hook Event Stream 契约
+
+除 `/api/sessions/{id}/hook-runtime` 的静态观察面外，执行层还必须把“有意义的 hook 决策”镜像进主会话事件流：
+
+- 事件载体：`SessionUpdate::SessionInfoUpdate`
+- `_meta.agentdash.event.type`：固定为 `hook_event`
+- `_meta.agentdash.trace.turn_id`：必须回填当前 turn，确保前端能并入同一轮会话流
+- `event.data` 至少应包含：
+  - `trigger`
+  - `decision`
+  - `sequence`
+  - `revision`
+  - `matched_rule_keys`
+  - `refresh_snapshot`
+  - `block_reason`
+  - `completion`
+  - `diagnostic_codes`
+  - `diagnostics`
+
+当前约定：
+
+- `noop / allow / effects_applied` 这类纯噪音 trace 默认不强制发入事件流
+- 但只要该 trace 带有 `matched_rule_keys / diagnostics / completion / block_reason` 中任一信息，就必须发 `hook_event`
+- `SessionTerminal` 产生的 hook trace 也必须发入事件流，不能只保留在 runtime trace 面板
+
+这样前端主事件流才能直接看到：
+
+- `user_prompt_submit` 注入了哪些流程上下文
+- `before_stop` 为何继续 / 阻止结束
+- `session_terminal` 是否推进了 phase、是否只是记录终态
+- hook 判定与普通 `turn_started / turn_completed / tool_call` 事件在时间线上如何交错
+
 #### 3.5.1 Ask / Approval / Resume 契约
 
 当前项目已经把 `Ask` 推进为正式的人机审批链路：
@@ -345,9 +377,11 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 - 前端测试：
   - pending approval 工具卡片会显示审批按钮
   - `approval_state=rejected` 会渲染为“已拒绝”
+  - `hook_event` 会进入主事件流并展示 trigger / decision / completion / diagnostics 摘要
 - 联调：
   - `GET /api/sessions/{id}/hook-runtime` 返回 `policies + metadata + diagnostics`
   - 会话页能看到 `policies: N` 与具体 policy 列表
+  - 真实 session jsonl 能看到 `hook_event`，且页面主事件流能显示 `before_stop / session_terminal` 的 hook 卡片
 
 ### 7. Wrong vs Correct
 

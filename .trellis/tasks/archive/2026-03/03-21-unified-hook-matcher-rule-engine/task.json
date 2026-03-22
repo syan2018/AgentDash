@@ -1,0 +1,30 @@
+{
+  "id": "unified-hook-matcher-rule-engine",
+  "name": "unified-hook-matcher-rule-engine",
+  "title": "统一 Hook matcher 与 rule engine",
+  "description": "把当前 workflow phase 生成的 hook policy 收敛为统一 matcher/rule engine，让 workflow、task、story、global builtin hook 共用同一套执行面。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-03-21",
+  "completedAt": "2026-03-22",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 4,
+  "next_action": [],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/tasks/03-21-pi-agent-dynamic-hook-context/prd.md",
+    "crates/agentdash-api/src/execution_hooks.rs",
+    "crates/agentdash-executor/src/hooks.rs",
+    "crates/agentdash-api/src/workflow_runtime.rs",
+    "crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json"
+  ],
+  "notes": "已把当前 workflow phase gate 收敛为 normalized hook rule 列表 + 统一 apply 路径，matched_rule_keys 会进入 runtime resolution/trace。workflow 继续作为声明来源，不再直接充当 hook 行为 if/else 中心。"
+}

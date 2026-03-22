@@ -228,7 +228,7 @@ export const useStoryStore = create<StoryState>((set) => ({
 | `user_message_chunk` | 同上 | 是 | |
 | `agent_thought_chunk` | 同上 | 是 | |
 | `plan` | 直接添加新条目 | 是 | |
-| `session_info_update` | 直接添加新条目 | **否**（静默） | 数据保留在 entries 中，UI 不绘制 |
+| `session_info_update` | 直接添加新条目 | **默认否**（选择性可见） | `task_*`、关键 lifecycle、`hook_event`、关键 companion/system 事件由 UI guard 决定是否绘制 |
 | `usage_update` | 直接添加新条目 + 实时更新 `tokenUsage` state | **否**（header 圆环） | 用量通过 header 小圆环展示 |
 | 其他 | 直接添加新条目 | 否 | |
 
@@ -266,6 +266,37 @@ if (isTerminalToolCallStatus(incomingStatus)) {
   nextPendingApproval = false;
 }
 ```
+
+### SessionInfoUpdate 可见性契约
+
+`session_info_update` 不是“一律静默”。
+
+当前前端约定：
+
+- 任务语义事件：交给 `AcpTaskEventGuard`
+- 系统 / companion / hook 事件：交给 `AcpSystemEventGuard`
+- 其余未命中的 `session_info_update`：保留在 entries 中，但不渲染
+
+当前必须可见的系统事件至少包括：
+
+- `executor_session_bound`
+- `turn_started`
+- `turn_completed`
+- `turn_failed`
+- `hook_event`
+- `companion_dispatch_registered`
+- `companion_result_available`
+- `companion_result_returned`
+
+其中 `hook_event` 卡片必须能直接给出：
+
+- `trigger`
+- `decision`
+- `completion`
+- `matched_rule_keys`
+- `diagnostics`
+
+不能要求用户再去展开 hook runtime 面板才能理解为什么当前会话继续、停止或推进 phase。
 
 ---
 

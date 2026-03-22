@@ -6,6 +6,7 @@ use agentdash_agent::{
     TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::hooks::{
@@ -15,11 +16,22 @@ use crate::hooks::{
 
 pub struct HookRuntimeDelegate {
     hook_session: SharedHookSessionRuntime,
+    trace_event_tx: Option<UnboundedSender<HookTraceEntry>>,
 }
 
 impl HookRuntimeDelegate {
     pub fn new(hook_session: SharedHookSessionRuntime) -> Arc<dyn AgentRuntimeDelegate> {
-        Arc::new(Self { hook_session })
+        Self::new_with_trace_events(hook_session, None)
+    }
+
+    pub fn new_with_trace_events(
+        hook_session: SharedHookSessionRuntime,
+        trace_event_tx: Option<UnboundedSender<HookTraceEntry>>,
+    ) -> Arc<dyn AgentRuntimeDelegate> {
+        Arc::new(Self {
+            hook_session,
+            trace_event_tx,
+        })
     }
 
     async fn evaluate(
@@ -73,7 +85,7 @@ impl HookRuntimeDelegate {
         subagent_type: Option<String>,
         evaluated: &EvaluatedResolution,
     ) {
-        self.hook_session.append_trace(HookTraceEntry {
+        let trace = HookTraceEntry {
             sequence: self.hook_session.next_trace_sequence(),
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
             revision: evaluated.runtime.revision,
@@ -87,7 +99,11 @@ impl HookRuntimeDelegate {
             block_reason: evaluated.resolution.block_reason.clone(),
             completion: evaluated.resolution.completion.clone(),
             diagnostics: evaluated.resolution.diagnostics.clone(),
-        });
+        };
+        self.hook_session.append_trace(trace.clone());
+        if let Some(sender) = &self.trace_event_tx {
+            let _ = sender.send(trace);
+        }
     }
 }
 

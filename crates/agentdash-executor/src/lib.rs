@@ -3,6 +3,7 @@ pub mod connector;
 pub mod connectors;
 pub mod hooks;
 pub mod hub;
+mod hook_events;
 mod runtime_delegate;
 
 #[allow(unused_imports)]
@@ -20,6 +21,7 @@ pub use hooks::{
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
     SharedHookSessionRuntime,
 };
+pub use hook_events::build_hook_trace_notification;
 pub use hub::{
     CompanionSessionContext, ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta,
 };

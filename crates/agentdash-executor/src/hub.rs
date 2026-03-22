@@ -21,6 +21,7 @@ use agent_client_protocol::McpServer;
 
 use crate::connector::ExecutionAddressSpace;
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
+use crate::hook_events::build_hook_trace_notification;
 use crate::hooks::{
     ExecutionHookProvider, HookSessionRuntime, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
@@ -737,7 +738,7 @@ impl ExecutorHub {
                                 })
                                 .await;
                         }
-                        hook_session.append_trace(HookTraceEntry {
+                        let trace = HookTraceEntry {
                             sequence: hook_session.next_trace_sequence(),
                             timestamp_ms: chrono::Utc::now().timestamp_millis(),
                             revision: hook_session.revision(),
@@ -759,7 +760,17 @@ impl ExecutorHub {
                             block_reason: resolution.block_reason,
                             completion: resolution.completion,
                             diagnostics: resolution.diagnostics,
-                        });
+                        };
+                        hook_session.append_trace(trace.clone());
+                        if let Some(notification) = build_hook_trace_notification(
+                            &session_id,
+                            Some(&turn_id_for_spawn),
+                            source.clone(),
+                            &trace,
+                        ) {
+                            let _ = store.append(&session_id, &notification).await;
+                            let _ = tx.send(notification);
+                        }
                     }
                     Err(error) => {
                         tracing::warn!(

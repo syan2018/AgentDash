@@ -1,0 +1,2 @@
+{"file": "crates/agentdash-api/src/execution_hooks.rs", "reason": "hook 决策与 trace"}
+{"file": "crates/agentdash-executor/src/hub.rs", "reason": "session 终态与 runtime 生命周期"}

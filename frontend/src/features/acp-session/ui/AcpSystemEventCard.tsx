@@ -12,24 +12,46 @@ export interface AcpSystemEventCardProps {
   update: SessionUpdate;
 }
 
-const SEVERITY_STYLES: Record<string, { border: string; bg: string; text: string; icon: string }> = {
+interface HookEventData {
+  trigger?: string;
+  decision?: string;
+  sequence?: number;
+  revision?: number;
+  tool_name?: string | null;
+  tool_call_id?: string | null;
+  subagent_type?: string | null;
+  matched_rule_keys?: string[];
+  refresh_snapshot?: boolean;
+  block_reason?: string | null;
+  completion?: {
+    mode?: string;
+    satisfied?: boolean;
+    advanced?: boolean;
+    reason?: string;
+  } | null;
+  diagnostic_codes?: string[];
+  diagnostics?: Array<{
+    code?: string;
+    summary?: string;
+    detail?: string | null;
+  }>;
+}
+
+const SEVERITY_STYLES: Record<string, { border: string; tone: string; badge: string }> = {
   error: {
-    border: "border-destructive/40",
-    bg: "bg-destructive/5",
-    text: "text-destructive",
-    icon: "⚠",
+    border: "border-destructive/35",
+    tone: "text-destructive",
+    badge: "border-destructive/25 bg-destructive/10 text-destructive",
   },
   warning: {
-    border: "border-warning/40",
-    bg: "bg-warning/5",
-    text: "text-warning",
-    icon: "⚡",
+    border: "border-warning/35",
+    tone: "text-warning",
+    badge: "border-warning/25 bg-warning/10 text-warning",
   },
   info: {
-    border: "border-primary/30",
-    bg: "bg-primary/5",
-    text: "text-primary",
-    icon: "ℹ",
+    border: "border-border",
+    tone: "text-muted-foreground",
+    badge: "border-border bg-secondary/50 text-muted-foreground",
   },
 };
 
@@ -47,10 +69,12 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_dispatch_registered: "Companion 已派发",
   companion_result_available: "Companion 结果可用",
   companion_result_returned: "Companion 已回传",
+  hook_event: "Hook 事件",
 };
 
 const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   executor_session_bound: "已绑定到底层执行会话",
+  turn_started: "本轮执行已开始",
   turn_completed: "本轮执行已完成",
   turn_failed: "本轮执行失败",
   system_message: "系统消息",
@@ -61,6 +85,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_dispatch_registered: "已注册 companion 派发上下文",
   companion_result_available: "Companion 已回传结构化结果",
   companion_result_returned: "当前 companion 结果已回传到主 session",
+  hook_event: "Hook Runtime 已产生新的流程事件",
 };
 
 export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
@@ -73,28 +98,183 @@ export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
   const style = SEVERITY_STYLES[severity] ?? DEFAULT_STYLE;
   const eventType = event?.type ?? "system";
   const typeLabel = EVENT_TYPE_LABELS[eventType] ?? eventType;
+  const severityLabel = resolveSeverityLabel(severity);
   const message = event?.message ?? (update as Record<string, unknown>).message as string | undefined;
+  const hookData = eventType === "hook_event" ? extractHookEventData(event?.data) : null;
 
   const u = update as Record<string, unknown>;
   const sessionInfo = u.sessionInfo as Record<string, unknown> | undefined;
   const fallbackMessage = typeof sessionInfo?.message === "string" ? sessionInfo.message : undefined;
 
   const displayMessage = message || fallbackMessage || EVENT_TYPE_DEFAULT_MESSAGES[eventType] || "系统事件";
+  const metadataChips = buildMetadataChips(eventType, hookData, meta?.trace?.turnId ?? null);
+  const detailLines = buildDetailLines(eventType, hookData);
+  const extraData = eventType === "hook_event" ? null : formatExtraData(event?.data);
 
   return (
-    <div className={`rounded-md border ${style.border} ${style.bg} px-3 py-2`}>
-      <div className="flex items-center gap-2">
-        <span className="text-sm">{style.icon}</span>
-        <span className={`text-xs font-medium ${style.text}`}>{typeLabel}</span>
-        <span className="flex-1 text-sm text-foreground/80">{displayMessage}</span>
+    <div className={`rounded-[12px] border ${style.border} bg-background px-4 py-3`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${style.badge}`}>
+              {typeLabel}
+            </span>
+            {event?.code && (
+              <span className="rounded-full border border-border bg-secondary/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                {event.code}
+              </span>
+            )}
+          </div>
+          <p className="mt-2 text-sm leading-6 text-foreground/90">{displayMessage}</p>
+        </div>
+        <span className={`shrink-0 text-[11px] font-medium ${style.tone}`}>{severityLabel}</span>
       </div>
-      {event?.data != null && (
-        <pre className="mt-1.5 overflow-auto rounded bg-muted/30 p-2 text-xs text-muted-foreground">
-          {typeof event.data === "string" ? event.data : JSON.stringify(event.data, null, 2)}
+
+      {metadataChips.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {metadataChips.map((chip) => (
+            <span
+              key={chip}
+              className="rounded-full border border-border bg-secondary/35 px-2 py-1 text-[10px] text-muted-foreground"
+            >
+              {chip}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {detailLines.length > 0 && (
+        <div className="mt-3 space-y-2 rounded-[10px] border border-border/70 bg-secondary/20 px-3 py-2.5">
+          {detailLines.map((line) => (
+            <p key={line} className="text-xs leading-5 text-muted-foreground">
+              {line}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {extraData && (
+        <pre className="mt-3 overflow-auto rounded-[10px] border border-border/70 bg-secondary/20 p-3 text-xs text-muted-foreground">
+          {extraData}
         </pre>
       )}
     </div>
   );
+}
+
+function resolveSeverityLabel(severity: string): string {
+  switch (severity) {
+    case "error":
+      return "错误";
+    case "warning":
+      return "注意";
+    default:
+      return "信息";
+  }
+}
+
+function buildMetadataChips(
+  eventType: string,
+  hookData: HookEventData | null,
+  turnId: string | null,
+): string[] {
+  const chips: string[] = [];
+  if (turnId) {
+    chips.push(`turn: ${turnId}`);
+  }
+  if (eventType !== "hook_event" || !hookData) {
+    return chips;
+  }
+
+  if (hookData.trigger) {
+    chips.push(`trigger: ${hookData.trigger}`);
+  }
+  if (hookData.decision) {
+    chips.push(`decision: ${hookData.decision}`);
+  }
+  if (hookData.completion?.mode) {
+    chips.push(`completion: ${hookData.completion.mode}`);
+  }
+  if (typeof hookData.revision === "number") {
+    chips.push(`revision: ${hookData.revision}`);
+  }
+  if (typeof hookData.sequence === "number") {
+    chips.push(`trace: #${hookData.sequence}`);
+  }
+  if (hookData.tool_name) {
+    chips.push(`tool: ${hookData.tool_name}`);
+  }
+  if (hookData.subagent_type) {
+    chips.push(`subagent: ${hookData.subagent_type}`);
+  }
+  if (hookData.refresh_snapshot) {
+    chips.push("已请求刷新快照");
+  }
+  if (hookData.matched_rule_keys?.length) {
+    chips.push(`rules: ${hookData.matched_rule_keys.length}`);
+  }
+  if (hookData.diagnostic_codes?.length) {
+    chips.push(`diagnostics: ${hookData.diagnostic_codes.length}`);
+  }
+  return chips;
+}
+
+function buildDetailLines(eventType: string, hookData: HookEventData | null): string[] {
+  if (eventType !== "hook_event" || !hookData) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  if (hookData.block_reason) {
+    lines.push(`阻塞原因：${hookData.block_reason}`);
+  }
+
+  if (hookData.completion) {
+    const status = hookData.completion.satisfied ? "已满足" : "未满足";
+    const advanced = hookData.completion.advanced ? "，并已推进后续阶段" : "";
+    const reason = hookData.completion.reason ? `：${hookData.completion.reason}` : "";
+    lines.push(`完成判定：${status}${advanced}${reason}`);
+  }
+
+  if (hookData.matched_rule_keys?.length) {
+    lines.push(`命中规则：${hookData.matched_rule_keys.join("，")}`);
+  }
+
+  if (hookData.tool_call_id) {
+    lines.push(`tool_call_id：${hookData.tool_call_id}`);
+  }
+
+  if (hookData.diagnostics?.length) {
+    for (const diagnostic of hookData.diagnostics) {
+      const summary = typeof diagnostic?.summary === "string" ? diagnostic.summary : null;
+      if (!summary) continue;
+      const code = typeof diagnostic?.code === "string" ? diagnostic.code : null;
+      const detail = typeof diagnostic?.detail === "string" ? diagnostic.detail : null;
+      lines.push(
+        `诊断${code ? ` ${code}` : ""}：${summary}${detail ? `；${detail}` : ""}`,
+      );
+    }
+  }
+
+  return lines;
+}
+
+function extractHookEventData(value: unknown): HookEventData | null {
+  return isRecord(value) ? value as HookEventData : null;
+}
+
+function formatExtraData(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export default AcpSystemEventCard;

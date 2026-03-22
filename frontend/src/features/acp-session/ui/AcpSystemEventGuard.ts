@@ -2,6 +2,10 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { extractAgentDashMetaFromUpdate } from "../model/agentdashMeta";
 
 const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
+  "executor_session_bound",
+  "turn_started",
+  "turn_completed",
+  "hook_event",
   "system_message",
   "error",
   "permission_denied",

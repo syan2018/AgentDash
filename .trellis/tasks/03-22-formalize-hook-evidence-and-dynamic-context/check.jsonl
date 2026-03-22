@@ -1,0 +1,8 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "ACP 事件流与 hook 消费约束"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端状态与展示约束"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层链路梳理"}
+{"file": ".trellis/spec/backend/execution-hook-runtime.md", "reason": "Hook Runtime 跨层契约"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "前端组件与设计语言约束"}

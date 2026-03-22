@@ -1,0 +1,1 @@
+{"file": "crates/agentdash-executor/src/hub.rs", "reason": "session 生命周期与 prompt follow-up"}

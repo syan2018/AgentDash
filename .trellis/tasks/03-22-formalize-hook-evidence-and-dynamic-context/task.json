@@ -1,0 +1,49 @@
+{
+  "id": "formalize-hook-evidence-and-dynamic-context",
+  "name": "formalize-hook-evidence-and-dynamic-context",
+  "title": "正式升级 Hook 结构化 Evidence 与动态上下文机制",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 1,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    ".trellis/spec/backend/execution-hook-runtime.md",
+    "crates/agentdash-executor/src/hook_events.rs",
+    "crates/agentdash-executor/src/runtime_delegate.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent.rs",
+    "crates/agentdash-executor/src/hub.rs",
+    "frontend/src/features/acp-session/ui/AcpSystemEventGuard.ts",
+    "frontend/src/features/acp-session/ui/AcpSystemEventCard.tsx"
+  ],
+  "notes": "当前阶段已完成 hook_event 进 ACP 会话事件流，以及前端主事件流可视化收口。2026-03-22 已在真实 session sess-1774148877320-151e00e5 上验证 user_prompt_submit / before_stop / session_terminal hook_event 会落入 session jsonl，并能在会话页主流中看到。下一阶段继续补结构化 evidence 主判据、companion/subagent/approval 的统一事件面与最终完整联调闭环。"
+}

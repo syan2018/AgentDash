@@ -1,0 +1,2 @@
+{"file": "frontend/src/pages/SessionPage.tsx", "reason": "前端 Hook Runtime 观测面"}
+{"file": "crates/agentdash-api/src/address_space_access.rs", "reason": "companion dispatch 实际入口"}

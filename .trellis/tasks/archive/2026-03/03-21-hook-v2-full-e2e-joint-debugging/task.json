@@ -1,0 +1,43 @@
+{
+  "id": "hook-v2-full-e2e-joint-debugging",
+  "name": "hook-v2-full-e2e-joint-debugging",
+  "title": "Hook v2 最终全链路联调",
+  "description": "作为 Hook v2 计划的最终里程碑，要求真实打通主 session、hook 控制、companion 行为、结果回流与前端 trace/debug surface。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "verification",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-03-21",
+  "completedAt": "2026-03-22",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 1,
+  "next_action": [
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "frontend/src/pages/SessionPage.tsx",
+    "crates/agentdash-api/src/execution_hooks.rs",
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-executor/src/hub.rs",
+    ".trellis/tasks/03-21-complete-hook-runtime-v2-program/task.json"
+  ],
+  "notes": "已完成真实联调：在本地前后端环境中通过前端会话页验证了 SUPERVISED 审批卡片展示、批准后恢复执行、拒绝后回流拒绝结果与 Agent 后续回复；同时清理了会话流中老模式遗留的聚合/资源卡片样式，作为最终联调关闭依据。"
+}

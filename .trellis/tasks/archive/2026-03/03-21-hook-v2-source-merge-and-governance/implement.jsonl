@@ -1,0 +1,2 @@
+{"file": "crates/agentdash-api/src/execution_hooks.rs", "reason": "当前规则收口位置"}
+{"file": "crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json", "reason": "workflow 声明层示例"}

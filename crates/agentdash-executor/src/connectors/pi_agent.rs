@@ -31,6 +31,7 @@ use crate::connector::{
     RuntimeToolProvider,
 };
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
+use crate::hook_events::build_hook_trace_notification;
 use crate::runtime_delegate::HookRuntimeDelegate;
 
 pub struct PiAgentConnector {
@@ -349,7 +350,20 @@ impl AgentConnector for PiAgentConnector {
             .collect::<Vec<_>>();
         agent.set_tools(runtime_tools);
         agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
-        agent.set_runtime_delegate(context.hook_session.clone().map(HookRuntimeDelegate::new));
+        let (hook_trace_tx, hook_trace_rx) = if context.hook_session.is_some() {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+        agent.set_runtime_delegate(
+            context
+                .hook_session
+                .clone()
+                .map(|hook_session| {
+                    HookRuntimeDelegate::new_with_trace_events(hook_session, hook_trace_tx)
+                }),
+        );
 
         let (event_rx, join_handle) = agent
             .prompt(AgentMessage::user(&prompt_text))
@@ -372,8 +386,51 @@ impl AgentConnector for PiAgentConnector {
         tokio::spawn(async move {
             let mut entry_index: u32 = 0;
             let mut event_rx = event_rx;
+            let mut hook_trace_rx = hook_trace_rx;
 
-            while let Some(event) = event_rx.next().await {
+            loop {
+                if let Some(receiver) = hook_trace_rx.as_mut() {
+                    tokio::select! {
+                        maybe_trace = receiver.recv() => {
+                            if let Some(entry) = maybe_trace {
+                                if let Some(notification) = build_hook_trace_notification(
+                                    acp_session_id.0.as_ref(),
+                                    Some(&turn_id),
+                                    source.clone(),
+                                    &entry,
+                                ) {
+                                    if tx.send(Ok(notification)).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        maybe_event = event_rx.next() => {
+                            let Some(event) = maybe_event else {
+                                break;
+                            };
+                            let notifications = convert_event_to_notifications(
+                                &event,
+                                &acp_session_id,
+                                &source,
+                                &turn_id,
+                                &mut entry_index,
+                            );
+
+                            for n in notifications {
+                                if tx.send(Ok(n)).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                let Some(event) = event_rx.next().await else {
+                    break;
+                };
+
                 let notifications = convert_event_to_notifications(
                     &event,
                     &acp_session_id,
@@ -402,6 +459,15 @@ impl AgentConnector for PiAgentConnector {
                     let _ = tx.send(Err(error)).await;
                 }
             }
+
+            emit_pending_hook_trace_notifications(
+                &mut hook_trace_rx,
+                &tx,
+                &acp_session_id,
+                &source,
+                &turn_id,
+            )
+            .await;
         });
 
         Ok(Box::pin(ReceiverStream::new(rx)))
@@ -443,6 +509,31 @@ impl AgentConnector for PiAgentConnector {
             .reject_tool_call(tool_call_id, reason)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))
+    }
+}
+
+async fn emit_pending_hook_trace_notifications(
+    hook_trace_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<crate::HookTraceEntry>>,
+    tx: &tokio::sync::mpsc::Sender<Result<SessionNotification, ConnectorError>>,
+    session_id: &SessionId,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+) {
+    let Some(receiver) = hook_trace_rx.as_mut() else {
+        return;
+    };
+
+    while let Ok(entry) = receiver.try_recv() {
+        if let Some(notification) = build_hook_trace_notification(
+            session_id.0.as_ref(),
+            Some(turn_id),
+            source.clone(),
+            &entry,
+        ) {
+            if tx.send(Ok(notification)).await.is_err() {
+                return;
+            }
+        }
     }
 }
 

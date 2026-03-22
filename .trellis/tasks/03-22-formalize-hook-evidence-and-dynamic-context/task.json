@@ -3,18 +3,18 @@
   "name": "formalize-hook-evidence-and-dynamic-context",
   "title": "正式升级 Hook 结构化 Evidence 与动态上下文机制",
   "description": "",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-03-22",
-  "completedAt": null,
+  "completedAt": "2026-03-22",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 1,
+  "current_phase": 0,
   "next_action": [
     {
       "phase": 1,
@@ -45,5 +45,5 @@
     "frontend/src/features/acp-session/ui/AcpSystemEventGuard.ts",
     "frontend/src/features/acp-session/ui/AcpSystemEventCard.tsx"
   ],
-  "notes": "当前阶段已完成 hook_event 进 ACP 会话事件流，以及前端主事件流可视化收口。2026-03-22 已在真实 session sess-1774148877320-151e00e5 上验证 user_prompt_submit / before_stop / session_terminal hook_event 会落入 session jsonl，并能在会话页主流中看到。下一阶段继续补结构化 evidence 主判据、companion/subagent/approval 的统一事件面与最终完整联调闭环。"
+  "notes": "2026-03-22 已正式完成并验收：hook_event 已进入 ACP 主事件流；checklist_evidence 已成为正式 workflow artifact；真实 session 已验证 continue -> stop -> phase advance -> record；approval、companion/subagent、dynamic context 均已具备统一观测面。后续 record/archive/adoption 自动化与更完整 hook 机制另立后续任务推进。"
 }

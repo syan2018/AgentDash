@@ -218,8 +218,9 @@ python3 ./.trellis/scripts/task.py create "<title>" --slug <task-name>
 
 4. Commit code
    --> git add <files>
-   --> git commit -m "type(scope): description"
+   --> git commit -m "type(scope): 中文动作结果"
        Format: feat/fix/docs/refactor/test/chore
+       See: .trellis/spec/communication.md
 
 5. Record session (one command)
    --> python3 ./.trellis/scripts/add_session.py --title "Title" --commit "hash"
@@ -379,11 +380,19 @@ python3 ./.trellis/scripts/task.py list-archive    # List archived tasks
 ### Commit Convention
 
 ```bash
-git commit -m "type(scope): description"
+git commit -m "type(scope): 中文动作结果"
 ```
 
-**Type**: feat, fix, docs, refactor, test, chore
-**Scope**: Module name (e.g., auth, api, ui)
+**Type**: `feat`、`fix`、`docs`、`refactor`、`test`、`chore`
+**Scope**: 领域/模块名，例如 `hook`、`workflow`、`frontend`、`executor`
+**Description**: 必须使用中文，直接描述“本次提交完成了什么”
+
+示例：
+
+```bash
+git commit -m "feat(hook): 打通 ask 审批与恢复执行链路"
+git commit -m "docs(spec): 明确中文 conventional commit 提交规范"
+```
 
 ### Common Commands
 

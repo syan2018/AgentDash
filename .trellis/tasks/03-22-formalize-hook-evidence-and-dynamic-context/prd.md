@@ -14,7 +14,7 @@
 - [x] 结构化 evidence 写入与读取链路正式打通，不再依赖纯文本启发式作为主判据。
 - [x] hook runtime API、trace、diagnostics 与前端 UI 展示保持一致。
 - [x] 至少一条真实 session 验证完整经过 continue -> stop -> phase advance -> record。
-- [ ] companion / subagent / approval / dynamic context 的关键状态都可在统一观测面中追踪。
+- [x] companion / subagent / approval / dynamic context 的关键状态都可在统一观测面中追踪。
 - [x] 相关前后端测试补齐并通过。
 
 ## Technical Notes
@@ -33,7 +33,24 @@
     - hook 自动推进 `check -> record`
     - 前端主事件流可见 `hook:before_tool:allow / hook:after_tool:refresh_requested / hook:before_stop:continue / hook:before_stop:stop / workflow_phase_advanced_by_hook`
   - 已通过 MCP + preview 复验 Workflow 面板中的结构化记录产物 type chip 正确显示 `checklist_evidence`。
+  - approval 链路已在正式会话流中收口：
+    - `ToolExecutionPendingApproval / ToolExecutionApprovalResolved` 已由 Pi Agent connector 映射为工具卡片状态
+    - 前端工具卡片支持直接批准 / 拒绝，并对 `approval_state=rejected` 显示“已拒绝执行”
+  - companion / subagent 链路已纳入统一观测面：
+    - `companion_dispatch_registered / companion_result_available / companion_result_returned` 已进入主事件流
+    - 前端系统事件卡片可直接展示 companion 生命周期节点
+  - dynamic context / hook runtime 观测面已在会话页统一展示：
+    - Hook Runtime 面板可见 `sources / policies / constraints / fragments / diagnostics / trace`
+    - 主事件流可见 `hook_event`，因此运行态决策与静态 runtime snapshot 已形成闭环
 
-## Current Remaining Scope
-- companion / subagent / approval / dynamic context 仍需继续扩成统一观测面与控制流闭环。
-- record phase 目前已经能进入并展示，但后续还需要继续推进更完整的 record / archive / adoption 链路。
+## Final Validation Summary
+- 2026-03-22 已重新核对当前实现与前端观测面：
+  - approval：工具卡片可见 pending approval、approve / reject 操作与 rejected 终态
+  - companion / subagent：主事件流可见注册、结果可用、结果回传三类系统事件
+  - dynamic context：Hook Runtime 面板持续展示当前 session 生效的动态注入来源、约束与诊断
+  - hook trace：主事件流与 Hook Runtime trace 面板能互相对照 trigger / decision / completion / diagnostics
+- 当前任务定义内的目标已全部满足，后续若继续推进 record/archive/adoption 自动化、companion 结果采纳控制流等能力，应另立后续任务追踪，不再阻塞本任务结案。
+
+## Follow-up Scope
+- 继续推进 record / archive / adoption 自动化闭环。
+- 在后续任务中补强 companion 结果采纳、hook 化 follow-up 与更细粒度的 workflow 约束编排。

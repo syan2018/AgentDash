@@ -168,7 +168,7 @@ pub struct HookSessionRuntimeSnapshot {
 | `SessionStart` / `UserPromptSubmit` | 返回当前应注入的 `context_fragments + constraints + policies` |
 | `BeforeTool` | 可以 `Allow / Deny / Ask / Rewrite`，其中 `Ask` 必须在当前 tool call 边界同步挂起等待审批，不得退化成“先报错，下一轮再猜” |
 | `AfterTool` | 可以附加 diagnostics，并决定是否 `refresh_snapshot` |
-| `AfterTurn` | 可以追加 steering / constraints / follow-up |
+| `AfterTurn` | 可以追加针对“本轮结果”的 steering / follow-up，但不能重复注入 phase 基线约束，避免 loop 因永续 steering 而无法抵达 `BeforeStop` |
 | `BeforeStop` | 必须在 loop 退出前同步返回 stop gate 决策 |
 | `BeforeSubagentDispatch` | 必须在 companion/subagent 真正启动前同步决定是否允许派发，并返回子 agent 应继承的 context/constraints |
 | `AfterSubagentDispatch` | 必须记录派发结果、目标 session/turn，并写入 trace/diagnostics |
@@ -191,6 +191,12 @@ pub struct HookSessionRuntimeSnapshot {
 - `workflow:*:*:task_status_gate`
 - `workflow:*:*:record_gate`
 - `workflow:*:*:checklist_gate`
+
+其中 `checklist_gate` 的当前语义已经明确为：
+
+- `Task.status in {awaiting_verification, completed}` 只是必要条件，不是充分条件
+- `BeforeStop` 还必须结合当前回合是否已经形成 checklist evidence（例如带检查结论/风险说明的阶段性总结）同步判定是否允许自然结束
+- 因此 check phase 不能只靠“更新了状态”就放行，也不能把 evidence 约束做成每轮永续 `after_turn` steering
 
 #### 3.5 Frontend 契约
 

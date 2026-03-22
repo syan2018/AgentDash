@@ -9,7 +9,8 @@
  * - plan → AcpPlanCard
  * - session_info_update
  *   - task_* 事件 → AcpTaskEventCard（Task 专属）
- *   - 其他事件保持静默
+ *   - 关键 system / hook / companion 事件 → AcpSystemEventCard
+ *   - 其他噪音事件保持静默
  * - usage_update / available_commands_update / current_mode_update / config_option_update → 静默
  *
  * 说明：
@@ -33,6 +34,8 @@ import { AcpTaskContextCard } from "./AcpTaskContextCard";
 import { isAgentDashTaskContextBlock } from "./AcpTaskContextGuard";
 import { AcpTaskEventCard } from "./AcpTaskEventCard";
 import { isTaskEventUpdate } from "./AcpTaskEventGuard";
+import { AcpSystemEventCard } from "./AcpSystemEventCard";
+import { isRenderableSystemEventUpdate } from "./AcpSystemEventGuard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
@@ -128,6 +131,9 @@ function SingleEntry({
     case "session_info_update":
       if (isTaskEventUpdate(update)) {
         return <AcpTaskEventCard update={update} />;
+      }
+      if (isRenderableSystemEventUpdate(update)) {
+        return <AcpSystemEventCard update={update} />;
       }
       return null;
 

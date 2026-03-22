@@ -763,6 +763,10 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         parse_completion_mode_tag(completion_mode),
                         &WorkflowCompletionSignalSet {
                             task_status: active_task_status(&snapshot).map(ToString::to_string),
+                            checklist_evidence_present: checklist_evidence_present(
+                                &snapshot,
+                                query.payload.as_ref(),
+                            ),
                             ..WorkflowCompletionSignalSet::default()
                         },
                     );
@@ -888,6 +892,16 @@ fn workflow_completion_mode(snapshot: &SessionHookSnapshot) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
 }
 
+fn active_workflow_checklist_evidence(snapshot: &SessionHookSnapshot) -> bool {
+    snapshot
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("active_workflow"))
+        .and_then(|value| value.get("checklist_evidence_present"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn session_permission_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
     snapshot
         .metadata
@@ -980,6 +994,39 @@ fn parse_completion_mode_tag(mode: &str) -> agentdash_domain::workflow::Workflow
         }
         _ => agentdash_domain::workflow::WorkflowPhaseCompletionMode::Manual,
     }
+}
+
+fn checklist_evidence_present(
+    snapshot: &SessionHookSnapshot,
+    payload: Option<&serde_json::Value>,
+) -> bool {
+    active_workflow_checklist_evidence(snapshot)
+        || payload
+            .and_then(|value| value.get("last_assistant_text"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(assistant_text_looks_like_checklist_evidence)
+}
+
+fn assistant_text_looks_like_checklist_evidence(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let char_len = trimmed.chars().count();
+    let sentence_markers = trimmed
+        .chars()
+        .filter(|ch| matches!(ch, '。' | '！' | '？' | ';' | '；' | '.'))
+        .count();
+    let has_structured_markers = trimmed.contains('\n')
+        || trimmed.contains("- ")
+        || trimmed.contains("* ")
+        || trimmed.contains("1. ")
+        || trimmed.contains("2. ")
+        || trimmed.contains("3. ")
+        || trimmed.contains("•");
+
+    (has_structured_markers && char_len >= 40) || (sentence_markers >= 2 && char_len >= 60)
 }
 
 fn parse_session_terminal_state(
@@ -1145,12 +1192,6 @@ fn normalized_hook_rules() -> &'static [NormalizedHookRule] {
             trigger: HookTrigger::AfterTool,
             matches: rule_matches_after_tool_refresh,
             apply: rule_apply_after_tool_refresh,
-        },
-        NormalizedHookRule {
-            key: "workflow_phase:check:after_turn_summary_constraint",
-            trigger: HookTrigger::AfterTurn,
-            matches: rule_matches_check_phase_after_turn_summary,
-            apply: rule_apply_check_phase_after_turn_summary,
         },
         NormalizedHookRule {
             key: "workflow_completion:session_ended:notice",
@@ -1365,24 +1406,6 @@ fn rule_apply_after_tool_refresh(ctx: &HookEvaluationContext<'_>, resolution: &m
     });
 }
 
-fn rule_matches_check_phase_after_turn_summary(ctx: &HookEvaluationContext<'_>) -> bool {
-    workflow_phase_key(ctx.snapshot) == Some("check")
-}
-
-fn rule_apply_check_phase_after_turn_summary(
-    ctx: &HookEvaluationContext<'_>,
-    resolution: &mut HookResolution,
-) {
-    resolution.constraints.push(HookConstraint {
-        key: "after_turn:check_phase_summary".to_string(),
-        description:
-            "Check phase 的阶段性输出应明确写出发现的问题、已修复项、剩余风险与未覆盖验证。"
-                .to_string(),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
-    });
-}
-
 fn rule_matches_session_ended_notice(ctx: &HookEvaluationContext<'_>) -> bool {
     workflow_completion_mode(ctx.snapshot) == Some("session_ended")
 }
@@ -1408,10 +1431,10 @@ fn rule_apply_session_ended_notice(
 
 fn rule_matches_checklist_pending_gate(ctx: &HookEvaluationContext<'_>) -> bool {
     workflow_completion_mode(ctx.snapshot) == Some("checklist_passed")
-        && !matches!(
+        && (!matches!(
             active_task_status(ctx.snapshot),
             Some("awaiting_verification" | "completed")
-        )
+        ) || !checklist_evidence_present(ctx.snapshot, ctx.query.payload.as_ref()))
 }
 
 fn rule_apply_checklist_pending_gate(
@@ -1424,7 +1447,8 @@ fn rule_apply_checklist_pending_gate(
         content: [
             "## Session Stop Gate",
             "- 当前 workflow phase 使用 `checklist_passed` 完成语义。",
-            "- 结束前请先补齐验证结论、剩余风险，并把 Task 状态至少更新为 `awaiting_verification`。",
+            "- 结束前请先补齐验证结论、剩余风险，形成可识别的 checklist evidence。",
+            "- 同时把 Task 状态至少更新为 `awaiting_verification`。",
             "- 如果还存在未验证项，不要直接结束本轮 session。",
         ]
         .join("\n"),
@@ -1434,7 +1458,7 @@ fn rule_apply_checklist_pending_gate(
     resolution.constraints.push(HookConstraint {
         key: "before_stop:checklist_pending".to_string(),
         description:
-            "当前 phase 还未满足 checklist_passed 条件；请先给出验证/风险结论并更新 Task 状态，再结束 session。"
+            "当前 phase 还未满足 checklist_passed 条件；请先给出验证/风险结论形成 checklist evidence，并更新 Task 状态，再结束 session。"
                 .to_string(),
         source_summary: active_workflow_source_summary(ctx.snapshot),
         source_refs: active_workflow_source_refs(ctx.snapshot),
@@ -1443,7 +1467,11 @@ fn rule_apply_checklist_pending_gate(
         code: "before_stop_checklist_pending".to_string(),
         summary: "当前 workflow phase 尚未满足 checklist completion 条件，Hook 要求继续 loop"
             .to_string(),
-        detail: active_task_status(ctx.snapshot).map(|status| format!("current_task_status={status}")),
+        detail: Some(format!(
+            "current_task_status={}, checklist_evidence_present={}",
+            active_task_status(ctx.snapshot).unwrap_or("unknown"),
+            checklist_evidence_present(ctx.snapshot, ctx.query.payload.as_ref())
+        )),
         source_summary: active_workflow_source_summary(ctx.snapshot),
         source_refs: active_workflow_source_refs(ctx.snapshot),
     });
@@ -1876,13 +1904,113 @@ mod tests {
     }
 
     #[test]
-    fn before_stop_allows_checklist_completion_when_task_ready() {
+    fn before_stop_requires_checklist_evidence_even_when_task_ready() {
         let snapshot =
             snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeStop,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "last_assistant_text": "准备结束。"
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(!resolution.context_fragments.is_empty());
+        assert!(!resolution.constraints.is_empty());
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"workflow_completion:checklist_pending:stop_gate".to_string())
+        );
+    }
+
+    #[test]
+    fn before_stop_allows_ready_task_with_checklist_evidence() {
+        let snapshot =
+            snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeStop,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "last_assistant_text": "检查结果如下：\n- 已确认当前实现覆盖了任务目标。\n- 已完成验证，并记录了剩余风险与未覆盖项。\n- 当前 Task 已可进入 awaiting_verification。"
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(resolution.context_fragments.is_empty());
+        assert!(resolution.constraints.is_empty());
+        assert!(resolution.matched_rule_keys.is_empty());
+    }
+
+    #[test]
+    fn after_turn_does_not_inject_perpetual_check_phase_steering() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("running"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::AfterTurn,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "assistant_message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "检查完成，准备结束。" }]
+                },
+                "tool_results": []
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(resolution.context_fragments.is_empty());
+        assert!(resolution.constraints.is_empty());
+        assert!(resolution.matched_rule_keys.is_empty());
+    }
+
+    #[test]
+    fn before_stop_allows_checklist_completion_when_task_ready() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("completed"));
         let decision = evaluate_phase_completion(
             parse_completion_mode_tag("checklist_passed"),
             &WorkflowCompletionSignalSet {
                 task_status: active_task_status(&snapshot).map(ToString::to_string),
+                checklist_evidence_present: true,
                 ..WorkflowCompletionSignalSet::default()
             },
         );
@@ -1891,7 +2019,7 @@ mod tests {
         assert!(decision.should_complete_phase);
         assert_eq!(
             decision.summary.as_deref(),
-            Some("Task 状态已进入 `awaiting_verification`，满足 checklist_passed completion")
+            Some("Task 状态已进入 `completed`，且存在 checklist evidence，满足 checklist_passed completion")
         );
     }
 

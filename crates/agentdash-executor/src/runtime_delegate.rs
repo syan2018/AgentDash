@@ -311,6 +311,17 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 None,
                 Some(serde_json::json!({
                     "message_count": input.context.messages.len(),
+                    "last_assistant_text": input
+                        .context
+                        .messages
+                        .iter()
+                        .rev()
+                        .find_map(|message| match message {
+                            agentdash_agent::AgentMessage::Assistant { .. } => {
+                                message.first_text().map(ToString::to_string)
+                            }
+                            _ => None,
+                        }),
                 })),
             )
             .await?;
@@ -321,8 +332,13 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             &evaluated.resolution.constraints,
             &evaluated.runtime,
         );
+        let completion_satisfied = evaluated
+            .resolution
+            .completion
+            .as_ref()
+            .is_some_and(|completion| completion.satisfied);
 
-        if steering.is_empty() {
+        if steering.is_empty() && completion_satisfied {
             self.record_trace(
                 HookTrigger::BeforeStop,
                 "stop",
@@ -345,7 +361,11 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         Ok(StopDecision::Continue {
             steering,
             follow_up: Vec::new(),
-            reason: Some("hook runtime 注入了额外约束，继续 loop".to_string()),
+            reason: Some(if completion_satisfied {
+                "hook runtime 尚有额外约束待处理，继续 loop".to_string()
+            } else {
+                "hook runtime 尚未满足 stop gate，继续 loop".to_string()
+            }),
         })
     }
 }
@@ -372,30 +392,31 @@ fn build_hook_injection_message(
 
 fn build_hook_steering_messages(
     snapshot: &crate::hooks::SessionHookSnapshot,
-    context_fragments: &[HookContextFragment],
+    fragments: &[HookContextFragment],
     constraints: &[HookConstraint],
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Vec<AgentMessage> {
-    build_hook_markdown(snapshot, context_fragments, constraints, runtime)
-        .map(AgentMessage::user)
-        .into_iter()
-        .collect()
+    build_hook_markdown(snapshot, fragments, constraints, runtime)
+        .map(|content| vec![AgentMessage::user(content)])
+        .unwrap_or_default()
 }
 
 fn build_hook_markdown(
     snapshot: &crate::hooks::SessionHookSnapshot,
-    context_fragments: &[HookContextFragment],
+    fragments: &[HookContextFragment],
     constraints: &[HookConstraint],
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<String> {
-    if context_fragments.is_empty() && constraints.is_empty() {
+    if fragments.is_empty() && constraints.is_empty() {
         return None;
     }
 
-    let mut sections = vec![format!(
+    let mut sections = Vec::new();
+
+    sections.push(format!(
         "[系统动态 Hook 上下文]\n当前 session_id={}，revision={}",
         snapshot.session_id, runtime.revision
-    )];
+    ));
 
     if !snapshot.owners.is_empty() {
         sections.push(format!(
@@ -403,27 +424,26 @@ fn build_hook_markdown(
             snapshot
                 .owners
                 .iter()
-                .map(|owner| {
-                    format!(
-                        "- {}: {}",
-                        owner.owner_type,
-                        owner.label.as_deref().unwrap_or(owner.owner_id.as_str())
-                    )
-                })
+                .map(|owner| format!("- {}: {} {}", owner.owner_type, owner.label.as_deref().unwrap_or("??"), owner.owner_id))
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
     }
 
-    if !context_fragments.is_empty() {
-        sections.push(format!(
-            "## 动态注入上下文\n{}",
-            context_fragments
-                .iter()
-                .map(|fragment| { format!("### {}\n{}", fragment.label, fragment.content.trim()) })
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        ));
+    let mut fragment_lines = Vec::new();
+    if !fragments.is_empty() {
+        fragment_lines.push("## 动态注入上下文".to_string());
+        for fragment in fragments {
+            fragment_lines.push(format!("### {}", fragment.label));
+            fragment_lines.push(fragment.content.clone());
+            fragment_lines.push(String::new());
+        }
+    }
+    if !fragment_lines.is_empty() {
+        while fragment_lines.last().is_some_and(|line| line.is_empty()) {
+            fragment_lines.pop();
+        }
+        sections.push(fragment_lines.join("\n"));
     }
 
     if !constraints.is_empty() {
@@ -437,8 +457,8 @@ fn build_hook_markdown(
         ));
     }
 
-    sections
-        .push("以上内容由 Hook Runtime 自动注入，不代表用户新增需求，但必须优先遵守。".to_string());
+    sections.push("以上内容由 Hook Runtime 自动注入，不代表用户新增需求，但必须优先遵守。".to_string());
+
     Some(sections.join("\n\n"))
 }
 

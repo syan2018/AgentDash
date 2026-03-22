@@ -3,14 +3,14 @@
   "name": "complete-hook-runtime-v2-program",
   "title": "Pi Agent 完整 Hook Runtime v2 计划总任务",
   "description": "推进 Hook v2 的完整能力：来源合并、动态上下文、companion 切片与回流、Ask/Approval，以及最终联调闭环。该任务只能在最终联调完成后才允许关闭。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": "fullstack",
   "scope": "architecture",
   "priority": "P1",
   "creator": "codex",
   "assignee": "codex",
   "createdAt": "2026-03-21",
-  "completedAt": null,
+  "completedAt": "2026-03-22",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -39,5 +39,5 @@
     ".trellis/tasks/03-21-hook-v2-full-e2e-joint-debugging/task.json",
     ".trellis/spec/backend/execution-hook-runtime.md"
   ],
-  "notes": "目前已完成来源合并治理、companion 上下文切片与结果回流、Ask/Approval/Resume 主链。总任务仍保持 in_progress，直到最终联调 task 验证主 session、hook 控制、companion 回流与前端审批交互全部真实跑通。"
+  "notes": "已完成来源合并治理、companion 上下文切片与结果回流、Ask/Approval/Resume 主链，并在最终联调中真实打通前端审批交互、批准/拒绝回流与会话展示收口，因此总任务正式关闭。"
 }

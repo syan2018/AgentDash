@@ -145,70 +145,39 @@ function SingleEntry({
 function AggregatedToolGroupEntry({ group }: { group: AggregatedEntryGroup }) {
   const [expanded, setExpanded] = useState(false);
   const { aggregationType, entries } = group;
-
-  const getIcon = () => {
-    switch (aggregationType) {
-      case "file_read":
-      case "command_run_read":
-        return "📄";
-      case "search":
-      case "command_run_search":
-        return "🔍";
-      case "web_fetch":
-      case "command_run_fetch":
-        return "🌐";
-      case "command_run_edit":
-        return "✏️";
-      default:
-        return "🔧";
-    }
-  };
-
-  const getLabel = () => {
-    switch (aggregationType) {
-      case "file_read":
-        return "读取文件";
-      case "search":
-        return "搜索";
-      case "web_fetch":
-        return "获取网页";
-      case "command_run_read":
-        return "读取命令";
-      case "command_run_search":
-        return "搜索命令";
-      case "command_run_edit":
-        return "编辑命令";
-      case "command_run_fetch":
-        return "获取命令";
-      default:
-        return "工具调用";
-    }
-  };
+  const badge = getAggregationBadgeConfig(aggregationType);
 
   return (
     <div className="rounded-[12px] border border-border bg-background overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary/35"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
       >
-        <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          {getIcon()}
+        <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          {badge.token}
         </span>
-        <span>{getLabel()}</span>
-        <span className="ml-auto text-xs tabular-nums">{entries.length} 个</span>
-        <span className="text-xs text-muted-foreground/50">{expanded ? "▲" : "▼"}</span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-foreground">{badge.label}</p>
+          <p className="text-xs text-muted-foreground">
+            {entries.length} 次同类工具操作已聚合
+          </p>
+        </div>
+        <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
       </button>
       {expanded && (
-        <div className="border-t border-border px-3 py-2 space-y-1.5">
+        <div className="space-y-1.5 border-t border-border px-3 py-2.5">
           {entries.map((entry) => (
-            <div key={entry.id} className="text-xs text-muted-foreground">
-              {entry.update.sessionUpdate === "tool_call" && (
-                <span>{entry.update.title}</span>
-              )}
-              {entry.update.sessionUpdate === "tool_call_update" && (
-                <span>{entry.update.title ?? "更新"}</span>
-              )}
+            <div
+              key={entry.id}
+              className="rounded-[10px] border border-border/70 bg-secondary/25 px-3 py-2"
+            >
+              <p className="truncate text-sm text-foreground/90">
+                {resolveAggregatedToolTitle(entry)}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {entry.update.sessionUpdate === "tool_call_update" ? "工具更新" : "工具调用"}
+              </p>
             </div>
           ))}
         </div>
@@ -231,23 +200,26 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
     .join("");
 
   return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
+    <div className="overflow-hidden rounded-[12px] border border-dashed border-border bg-secondary/45">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary/35"
+        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary/60"
       >
-        <span className="flex items-center gap-2.5">
-          <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            TH
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-background px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            THINK
           </span>
-          <span className="text-xs">思考过程 ({entries.length} 条)</span>
-        </span>
-        <span className="text-xs text-muted-foreground/50">{expanded ? "▲" : "▼"}</span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">思考摘录</p>
+            <p className="text-xs text-muted-foreground">{entries.length} 条思考已折叠聚合</p>
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
       </button>
       {expanded && (
-        <div className="border-t border-border px-3 py-2.5">
-          <pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground/80 leading-relaxed">
+        <div className="border-t border-border/80 px-3 py-2.5">
+          <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-muted-foreground/85">
             {combinedContent}
           </pre>
         </div>
@@ -277,7 +249,7 @@ function AggregatedDiffGroupEntry({
           {entries.length} 次编辑
         </span>
       </div>
-      <div className="px-3 py-2 space-y-1.5">
+      <div className="space-y-1.5 px-3 py-2.5">
         {entries.map((entry) => (
           <AcpToolCallCard
             key={entry.id}
@@ -290,6 +262,42 @@ function AggregatedDiffGroupEntry({
       </div>
     </div>
   );
+}
+
+function getAggregationBadgeConfig(aggregationType: AggregatedEntryGroup["aggregationType"]): {
+  token: string;
+  label: string;
+} {
+  switch (aggregationType) {
+    case "file_read":
+      return { token: "READ", label: "读取文件" };
+    case "search":
+      return { token: "FIND", label: "搜索文件" };
+    case "web_fetch":
+      return { token: "FETCH", label: "获取网页" };
+    case "command_run_read":
+      return { token: "READ", label: "读取命令结果" };
+    case "command_run_search":
+      return { token: "FIND", label: "搜索命令结果" };
+    case "command_run_edit":
+      return { token: "EDIT", label: "命令写入" };
+    case "command_run_fetch":
+      return { token: "FETCH", label: "命令获取" };
+    case "file_edit":
+      return { token: "EDIT", label: "文件编辑" };
+    default:
+      return { token: "TOOL", label: "工具调用" };
+  }
+}
+
+function resolveAggregatedToolTitle(entry: AggregatedEntryGroup["entries"][number]): string {
+  if (entry.update.sessionUpdate === "tool_call") {
+    return entry.update.title;
+  }
+  if (entry.update.sessionUpdate === "tool_call_update") {
+    return entry.update.title ?? "工具更新";
+  }
+  return "工具更新";
 }
 
 export default AcpSessionEntry;

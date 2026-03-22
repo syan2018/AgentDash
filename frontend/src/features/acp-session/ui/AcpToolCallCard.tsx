@@ -148,15 +148,15 @@ export function AcpToolCallCard({
         <div className="space-y-3 border-t border-border px-3 py-3">
           {isPendingApproval && (
             <div className="flex items-center gap-2 rounded-[10px] border border-warning/20 bg-warning/10 p-2.5 text-sm text-warning">
-              <span className="inline-flex rounded-[6px] border border-warning/30 bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]">WAIT</span>
+              <span className="inline-flex rounded-[6px] border border-warning/30 bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em]">审批</span>
               <span>等待用户审批</span>
             </div>
           )}
 
           {(displayStatus === "canceled" || displayStatus === "rejected") && (
             <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/70 p-2.5 text-sm text-muted-foreground">
-              <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]">
-                {displayStatus === "canceled" ? "STOP" : "NO"}
+              <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em]">
+                {displayStatus === "canceled" ? "取消" : "拒绝"}
               </span>
               <span>{displayStatus === "canceled" ? "已取消执行" : "已拒绝执行"}</span>
             </div>
@@ -298,7 +298,7 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
     return (
       <div className="rounded-[10px] border border-border bg-secondary/70 p-2.5">
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]">TERM</span>
+          <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em]">终端</span>
           终端: {content.terminalId}
         </p>
       </div>

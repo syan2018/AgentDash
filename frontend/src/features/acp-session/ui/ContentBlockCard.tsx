@@ -1,8 +1,7 @@
 /**
  * ContentBlock 卡片组件
  *
- * 优雅地展示 resource/resource_link 类型的 ContentBlock。
- * 包含文件类型图标、文件名、路径和预览信息。
+ * 用统一的会话卡片视觉展示 resource/resource_link 类型的内容块。
  */
 
 import { memo } from "react";
@@ -13,35 +12,29 @@ export interface ContentBlockCardProps {
   variant?: "compact" | "default";
 }
 
-/**
- * 根据 mimeType 获取对应的图标
- */
-function getMimeTypeIcon(mimeType?: string): string {
-  if (!mimeType) return "📄";
+function getMimeTypeBadge(mimeType?: string): string {
+  if (!mimeType) return "FILE";
 
-  if (mimeType.startsWith("image/")) return "🖼️";
-  if (mimeType.startsWith("audio/")) return "🔊";
-  if (mimeType.startsWith("video/")) return "🎬";
+  if (mimeType.startsWith("image/")) return "IMAGE";
+  if (mimeType.startsWith("audio/")) return "AUDIO";
+  if (mimeType.startsWith("video/")) return "VIDEO";
   if (mimeType.startsWith("text/")) {
-    if (mimeType.includes("markdown")) return "📝";
-    if (mimeType.includes("html")) return "🌐";
-    if (mimeType.includes("css")) return "🎨";
-    if (mimeType.includes("javascript") || mimeType.includes("typescript")) return "📜";
-    return "📄";
+    if (mimeType.includes("markdown")) return "MD";
+    if (mimeType.includes("html")) return "HTML";
+    if (mimeType.includes("css")) return "STYLE";
+    if (mimeType.includes("javascript") || mimeType.includes("typescript")) return "CODE";
+    return "TEXT";
   }
-  if (mimeType.includes("json")) return "📋";
-  if (mimeType.includes("pdf")) return "📕";
-  if (mimeType.includes("zip") || mimeType.includes("compressed")) return "📦";
-  if (mimeType.includes("sql")) return "🗄️";
-  if (mimeType.includes("xml")) return "📰";
+  if (mimeType.includes("json")) return "JSON";
+  if (mimeType.includes("pdf")) return "PDF";
+  if (mimeType.includes("zip") || mimeType.includes("compressed")) return "ARCHIVE";
+  if (mimeType.includes("sql")) return "SQL";
+  if (mimeType.includes("xml")) return "XML";
 
-  return "📄";
+  return "FILE";
 }
 
-/**
- * 根据文件扩展名获取图标（作为 mimeType 的备用）
- */
-function getFileIconFromName(name: string): string {
+function getFileBadgeFromName(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase();
 
   switch (ext) {
@@ -49,48 +42,41 @@ function getFileIconFromName(name: string): string {
     case "tsx":
     case "js":
     case "jsx":
-      return "📜";
+    case "rs":
+    case "py":
+    case "go":
+    case "java":
+      return "CODE";
     case "json":
     case "jsonc":
-      return "📋";
+      return "JSON";
     case "md":
     case "mdx":
-      return "📝";
+      return "MD";
     case "css":
     case "scss":
     case "less":
-      return "🎨";
+      return "STYLE";
     case "html":
     case "htm":
-      return "🌐";
+      return "HTML";
     case "yml":
     case "yaml":
     case "toml":
-      return "⚙️";
-    case "rs":
-      return "🦀";
-    case "py":
-      return "🐍";
-    case "go":
-      return "🐹";
-    case "java":
-      return "☕";
+      return "CFG";
     case "sql":
-      return "🗄️";
+      return "SQL";
     case "sh":
     case "bash":
     case "zsh":
-      return "🐚";
+      return "SHELL";
     case "dockerfile":
-      return "🐳";
+      return "DOCKER";
     default:
-      return "📄";
+      return "FILE";
   }
 }
 
-/**
- * 格式化文件大小
- */
 function formatFileSize(bytes?: number | null): string {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -98,42 +84,12 @@ function formatFileSize(bytes?: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/**
- * 从 URI 中提取文件名
- */
 function getFileNameFromUri(uri: string): string {
   const normalized = uri.replace(/\\/g, "/");
   const parts = normalized.split("/");
   return parts[parts.length - 1] || uri;
 }
 
-/**
- * 获取文件名的颜色类（基于扩展名）
- */
-function getFileNameColorClass(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase();
-
-  const colorMap: Record<string, string> = {
-    ts: "text-blue-600 dark:text-blue-400",
-    tsx: "text-blue-600 dark:text-blue-400",
-    js: "text-yellow-600 dark:text-yellow-400",
-    jsx: "text-yellow-600 dark:text-yellow-400",
-    json: "text-gray-600 dark:text-gray-400",
-    md: "text-purple-600 dark:text-purple-400",
-    css: "text-pink-600 dark:text-pink-400",
-    scss: "text-pink-600 dark:text-pink-400",
-    html: "text-orange-600 dark:text-orange-400",
-    rs: "text-orange-700 dark:text-orange-500",
-    py: "text-green-600 dark:text-green-400",
-    go: "text-cyan-600 dark:text-cyan-400",
-  };
-
-  return colorMap[ext || ""] || "text-foreground";
-}
-
-/**
- * 提取路径（不含文件名）
- */
 function getDirectoryPath(uri: string, fileName: string): string {
   const normalized = uri.replace(/\\/g, "/");
   if (normalized.endsWith(fileName)) {
@@ -143,13 +99,48 @@ function getDirectoryPath(uri: string, fileName: string): string {
   return uri.replace(/^file:\/\//, "");
 }
 
+function ResourceHeader({
+  badge,
+  title,
+  meta,
+  path,
+}: {
+  badge: string;
+  title: string;
+  meta?: string | null;
+  path?: string | null;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="inline-flex min-w-12 shrink-0 items-center justify-center rounded-[8px] border border-border bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {badge}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">{title}</span>
+          {meta && (
+            <span className="shrink-0 rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {meta}
+            </span>
+          )}
+        </div>
+        {path && (
+          <span className="mt-1 block truncate font-mono text-[10px] text-muted-foreground/70">
+            {path}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export const ContentBlockCard = memo(function ContentBlockCard({
   block,
   variant = "default",
 }: ContentBlockCardProps) {
   if (block.type === "text") {
     return (
-      <div className="rounded-lg border border-border/60 bg-card px-4 py-3 shadow-sm">
+      <div className="rounded-[12px] border border-border bg-background px-4 py-3">
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
           {block.text}
         </p>
@@ -159,44 +150,22 @@ export const ContentBlockCard = memo(function ContentBlockCard({
 
   if (block.type === "resource_link") {
     const fileName = block.name || getFileNameFromUri(block.uri);
-    const icon = getFileIconFromName(fileName);
+    const badge = getFileBadgeFromName(fileName);
     const dirPath = getDirectoryPath(block.uri, fileName);
     const sizeText = formatFileSize(block.size);
 
     return (
-      <div className="group relative flex items-center gap-3 rounded-lg border border-border/60 bg-card p-3 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:bg-accent/30">
-        {/* 图标容器 */}
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-xl shadow-inner">
-          {icon}
+      <div className="rounded-[12px] border border-border bg-background px-3 py-3 transition-colors hover:bg-secondary/20">
+        <ResourceHeader badge={badge} title={fileName} path={dirPath} />
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span>资源链接</span>
+          {sizeText && (
+            <>
+              <span>·</span>
+              <span className="tabular-nums">{sizeText}</span>
+            </>
+          )}
         </div>
-
-        {/* 内容 */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`truncate text-sm font-medium ${getFileNameColorClass(fileName)}`}>
-              {fileName}
-            </span>
-            {sizeText && (
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {sizeText}
-              </span>
-            )}
-          </div>
-          <div className="mt-0.5 flex items-center gap-1.5">
-            <span className="text-[10px] text-muted-foreground/70">📎 资源链接</span>
-            {dirPath && (
-              <>
-                <span className="text-muted-foreground/40">·</span>
-                <span className="truncate text-[10px] text-muted-foreground/60 font-mono">
-                  {dirPath}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* 悬停装饰 */}
-        <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-primary/0 transition-all group-hover:ring-primary/10" />
       </div>
     );
   }
@@ -204,100 +173,46 @@ export const ContentBlockCard = memo(function ContentBlockCard({
   if (block.type === "resource") {
     const resource = block.resource;
     const fileName = getFileNameFromUri(resource.uri);
-    const icon = resource.mimeType
-      ? getMimeTypeIcon(resource.mimeType)
-      : getFileIconFromName(fileName);
+    const badge = resource.mimeType
+      ? getMimeTypeBadge(resource.mimeType)
+      : getFileBadgeFromName(fileName);
     const dirPath = getDirectoryPath(resource.uri, fileName);
-
-    // 判断是否有文本内容
     const hasTextContent = "text" in resource && resource.text != null;
-    const textLength = hasTextContent ? resource.text!.length : 0;
+    const resourceText = hasTextContent ? resource.text : null;
+    const textLength = resourceText?.length ?? 0;
+    const mimeLabel = resource.mimeType?.split("/").pop() ?? null;
 
     if (variant === "compact" || !hasTextContent) {
       return (
-        <div className="group relative flex items-center gap-3 rounded-lg border border-border/60 bg-card p-3 shadow-sm transition-all hover:border-primary/30 hover:shadow-md hover:bg-accent/30">
-          {/* 图标容器 */}
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-secondary to-secondary/70 text-xl shadow-inner">
-            {icon}
+        <div className="rounded-[12px] border border-border bg-background px-3 py-3 transition-colors hover:bg-secondary/20">
+          <ResourceHeader badge={badge} title={fileName} meta={mimeLabel} path={dirPath} />
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span>已引用{textLength > 0 ? ` · ${textLength.toLocaleString()} 字符` : ""}</span>
           </div>
-
-          {/* 内容 */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className={`truncate text-sm font-medium ${getFileNameColorClass(fileName)}`}>
-                {fileName}
-              </span>
-              {resource.mimeType && (
-                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  {resource.mimeType.split("/").pop()}
-                </span>
-              )}
-            </div>
-            <div className="mt-0.5 flex items-center gap-1.5">
-              <span className="text-[10px] text-muted-foreground/70">
-                📄 已引用 {textLength > 0 && `(${textLength.toLocaleString()} 字符)`}
-              </span>
-              {dirPath && (
-                <>
-                  <span className="text-muted-foreground/40">·</span>
-                  <span className="truncate text-[10px] text-muted-foreground/60 font-mono">
-                    {dirPath}
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* 悬停装饰 */}
-          <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-primary/0 transition-all group-hover:ring-primary/10" />
         </div>
       );
     }
 
-    // 完整版本：带内容预览
     return (
-      <div className="group overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm transition-all hover:border-primary/30 hover:shadow-md">
-        {/* 头部 */}
-        <div className="flex items-center gap-3 border-b border-border/40 bg-gradient-to-r from-secondary/50 to-transparent p-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-secondary to-secondary/70 text-xl shadow-inner">
-            {icon}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className={`truncate text-sm font-medium ${getFileNameColorClass(fileName)}`}>
-                {fileName}
-              </span>
-              {resource.mimeType && (
-                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  {resource.mimeType.split("/").pop()}
-                </span>
-              )}
-            </div>
-            {dirPath && (
-              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground/60 font-mono">
-                {dirPath}
-              </span>
-            )}
-          </div>
+      <div className="overflow-hidden rounded-[12px] border border-border bg-background">
+        <div className="border-b border-border px-3 py-3">
+          <ResourceHeader badge={badge} title={fileName} meta={mimeLabel} path={dirPath} />
         </div>
 
-        {/* 内容预览 */}
         {hasTextContent && (
           <div className="relative">
-            <pre className="max-h-32 overflow-auto bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-              <code>{resource.text}</code>
+            <pre className="max-h-32 overflow-auto bg-secondary/20 p-3 text-xs leading-relaxed text-foreground/85">
+              <code>{resourceText}</code>
             </pre>
-            {/* 渐变遮罩（当内容溢出时） */}
-            <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-card to-transparent" />
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-background to-transparent" />
           </div>
         )}
 
-        {/* 底部信息 */}
-        <div className="flex items-center justify-between border-t border-border/40 bg-secondary/20 px-3 py-1.5">
+        <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2">
           <span className="text-[10px] text-muted-foreground">
             已引用 · {textLength.toLocaleString()} 字符
           </span>
-          <span className="text-[10px] text-muted-foreground/60 font-mono truncate max-w-[200px]">
+          <span className="max-w-[240px] truncate font-mono text-[10px] text-muted-foreground/70">
             {resource.uri}
           </span>
         </div>
@@ -307,9 +222,11 @@ export const ContentBlockCard = memo(function ContentBlockCard({
 
   if (block.type === "image") {
     return (
-      <div className="group overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm transition-all hover:border-primary/30 hover:shadow-md">
-        <div className="flex items-center gap-2 border-b border-border/40 bg-secondary/30 px-3 py-2">
-          <span className="text-lg">🖼️</span>
+      <div className="overflow-hidden rounded-[12px] border border-border bg-background">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+          <span className="inline-flex min-w-12 items-center justify-center rounded-[8px] border border-border bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            IMAGE
+          </span>
           <span className="text-xs text-muted-foreground">
             图片 {block.mimeType && `(${block.mimeType})`}
           </span>
@@ -318,7 +235,7 @@ export const ContentBlockCard = memo(function ContentBlockCard({
           <img
             src={`data:${block.mimeType};base64,${block.data}`}
             alt="嵌入图片"
-            className="max-h-48 max-w-full rounded-md object-contain"
+            className="max-h-48 max-w-full rounded-[10px] border border-border object-contain"
           />
         </div>
       </div>

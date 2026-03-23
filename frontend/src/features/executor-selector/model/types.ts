@@ -55,17 +55,16 @@ export interface ModelProvider {
   name: string;
 }
 
-export interface ReasoningOption {
-  id: string;
-  label: string;
-  is_default: boolean;
-}
-
 export interface ModelInfo {
   id: string;
   name: string;
   provider_id?: string | null;
-  reasoning_options: ReasoningOption[];
+  /** 是否支持 extended thinking */
+  reasoning: boolean;
+  /** 上下文窗口大小（tokens） */
+  context_window: number;
+  /** 最大输出 tokens */
+  max_tokens: number;
 }
 
 export interface AgentInfo {
@@ -107,12 +106,13 @@ export interface UseExecutorDiscoveredOptionsResult {
   reconnect: () => void;
 }
 
-/** 用户选择的执行器配置（用于持久化） */
+/** 用户选择的执行器配置（用于持久化到 localStorage，使用 camelCase） */
 export interface PersistedExecutorConfig {
   executor: string;
   variant?: string;
   modelId?: string;
-  reasoningId?: string;
+  /** 推理级别，替代旧的 reasoningId 字段（v2 格式） */
+  thinkingLevel?: string;
   permissionPolicy?: string;
 }
 
@@ -128,13 +128,14 @@ export interface UseExecutorConfigResult {
   executor: string;
   variant: string;
   modelId: string;
-  reasoningId: string;
+  /** 推理级别，替代旧的 reasoningId 字段 */
+  thinkingLevel: string;
   permissionPolicy: string;
   recentEntries: RecentExecutorEntry[];
   setExecutor: (executor: string) => void;
   setVariant: (variant: string) => void;
   setModelId: (modelId: string) => void;
-  setReasoningId: (reasoningId: string) => void;
+  setThinkingLevel: (thinkingLevel: string) => void;
   setPermissionPolicy: (policy: string) => void;
   recordUsage: () => void;
   reset: () => void;

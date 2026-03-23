@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol::{McpServer, McpServerHttp};
+use agent_client_protocol::{HttpHeader, McpServer, McpServerHttp, McpServerSse};
 use agentdash_application::{
     address_space::{
         SessionMountTarget, container_visible_for_target, effective_context_containers,
@@ -31,8 +31,10 @@ pub(crate) struct ProjectAgentBridge {
     pub executor_config: AgentDashExecutorConfig,
     pub preset_name: Option<String>,
     pub source: String,
+    /// Http/SSE MCP servers parsed from preset config — injected into ExecutionContext for cloud agents
     pub preset_mcp_servers: Vec<McpServer>,
-    pub subagent_keys: Vec<String>,
+    /// Stdio MCP server JSON decls — forwarded as-is in relay CommandPromptPayload
+    pub preset_stdio_mcp_decls: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,7 +51,7 @@ pub struct ProjectAgentExecutorResponse {
     pub variant: Option<String>,
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
-    pub reasoning_id: Option<String>,
+    pub thinking_level: Option<agentdash_executor::ThinkingLevel>,
     pub permission_policy: Option<String>,
 }
 
@@ -109,7 +111,7 @@ mod tests {
                 variant: None,
                 model_id: Some("gpt-5.4".to_string()),
                 agent_id: None,
-                reasoning_id: None,
+                thinking_level: None,
                 permission_policy: Some("AUTO".to_string()),
             },
             preset_name: None,
@@ -294,7 +296,7 @@ pub(crate) fn resolve_project_agent_bridge(
             preset_name: None,
             source: "project.config.default_agent_type".to_string(),
             preset_mcp_servers: vec![],
-            subagent_keys: vec![],
+            preset_stdio_mcp_decls: vec![],
         });
     }
 
@@ -369,7 +371,7 @@ fn build_project_agent_summary(
             variant: agent.executor_config.variant.clone(),
             model_id: agent.executor_config.model_id.clone(),
             agent_id: agent.executor_config.agent_id.clone(),
-            reasoning_id: agent.executor_config.reasoning_id.clone(),
+            thinking_level: agent.executor_config.thinking_level,
             permission_policy: agent.executor_config.permission_policy.clone(),
         },
         preset_name: agent.preset_name.clone(),
@@ -524,35 +526,7 @@ fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
             )
         });
 
-    let preset_mcp_servers = preset
-        .config
-        .get("mcp_servers")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|entry| {
-                    let name = entry.get("name")?.as_str()?.trim().to_string();
-                    let url = entry.get("url")?.as_str()?.trim().to_string();
-                    if name.is_empty() || url.is_empty() {
-                        return None;
-                    }
-                    Some(McpServer::Http(McpServerHttp::new(name, url)))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    let subagent_keys = preset
-        .config
-        .get("subagent_keys")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let (preset_mcp_servers, preset_stdio_mcp_decls) = parse_preset_mcp_servers(&preset.config);
 
     ProjectAgentBridge {
         key: format!("preset:{}", preset.name),
@@ -562,8 +536,138 @@ fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
         preset_name: Some(preset.name.clone()),
         source: format!("project.config.agent_presets[{}]", preset.name),
         preset_mcp_servers,
-        subagent_keys,
+        preset_stdio_mcp_decls,
     }
+}
+
+/// Parse `mcp_servers` from an AgentPreset config JSON value.
+///
+/// Returns (http_sse_servers, stdio_json_decls).
+/// - Http/SSE → constructed as `McpServer::Http` / `McpServer::Sse`
+/// - Stdio → kept as raw JSON (forwarded to relay as-is; cannot execute on cloud)
+///
+/// JSON format:
+///   Http:  { "type": "http",  "name": "...", "url": "...", "headers": [...] }
+///   SSE:   { "type": "sse",   "name": "...", "url": "...", "headers": [...] }
+///   Stdio: { "type": "stdio", "name": "...", "command": "...", "args": [...], "env": [...] }
+///   Backward compat: missing `type` → has `url` = Http, has `command` = Stdio
+fn parse_preset_mcp_servers(
+    config: &serde_json::Value,
+) -> (Vec<McpServer>, Vec<serde_json::Value>) {
+    let raw_list = match config
+        .get("mcp_servers")
+        .and_then(|v| v.as_array())
+    {
+        Some(list) => list,
+        None => return (vec![], vec![]),
+    };
+
+    let mut mcp_servers = Vec::new();
+    let mut stdio_decls = Vec::new();
+
+    for entry in raw_list {
+        let obj = match entry.as_object() {
+            Some(o) => o,
+            None => continue,
+        };
+
+        let name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Determine transport type
+        let transport = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let has_url = obj.contains_key("url");
+        let has_command = obj.contains_key("command");
+
+        let effective_type = if transport == "http" {
+            "http"
+        } else if transport == "sse" {
+            "sse"
+        } else if transport == "stdio" {
+            "stdio"
+        } else if has_url {
+            // Backward compat: no type, has url → Http
+            "http"
+        } else if has_command {
+            // Backward compat: no type, has command → Stdio
+            "stdio"
+        } else {
+            tracing::warn!(name = %name, "MCP server entry 缺少 type/url/command，跳过");
+            continue;
+        };
+
+        match effective_type {
+            "http" | "sse" => {
+                let url = match obj.get("url").and_then(|v| v.as_str()) {
+                    Some(u) => u.to_string(),
+                    None => {
+                        tracing::warn!(name = %name, "MCP Http/SSE server 缺少 url，跳过");
+                        continue;
+                    }
+                };
+                let headers: Vec<HttpHeader> = obj
+                    .get("headers")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let ho = h.as_object()?;
+                                let hname = ho.get("name")?.as_str()?.to_string();
+                                let hvalue = ho.get("value")?.as_str()?.to_string();
+                                Some(HttpHeader::new(hname, hvalue))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if effective_type == "http" {
+                    mcp_servers.push(McpServer::Http(
+                        McpServerHttp::new(name, url).headers(headers),
+                    ));
+                } else {
+                    mcp_servers.push(McpServer::Sse(
+                        McpServerSse::new(name, url).headers(headers),
+                    ));
+                }
+            }
+            "stdio" => {
+                // Stdio servers are forwarded as raw JSON to relay for local execution
+                // Build a normalized JSON representation
+                let command = obj
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if command.is_empty() {
+                    tracing::warn!(name = %name, "MCP Stdio server 缺少 command，跳过");
+                    continue;
+                }
+                let args: Vec<serde_json::Value> = obj
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let env: Vec<serde_json::Value> = obj
+                    .get("env")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                stdio_decls.push(serde_json::json!({
+                    "type": "stdio",
+                    "name": name,
+                    "command": command,
+                    "args": args,
+                    "env": env,
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    (mcp_servers, stdio_decls)
 }
 
 async fn load_project(state: &Arc<AppState>, project_id: Uuid) -> Result<Project, ApiError> {
@@ -580,4 +684,3 @@ fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(project_id)
         .map_err(|_| ApiError::BadRequest(format!("无效的 project_id: {project_id}")))
 }
-

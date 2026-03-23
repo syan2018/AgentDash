@@ -96,8 +96,6 @@ pub type AgentEventSink =
 
 /// Agent Loop 配置 — 对齐 Pi `AgentLoopConfig`
 pub struct AgentLoopConfig {
-    pub temperature: Option<f64>,
-    pub max_tokens: Option<u64>,
     pub max_turns: usize,
 
     /// 消息格式转换：AgentMessage[] → LLM Message[]
@@ -136,8 +134,6 @@ pub struct AgentLoopConfig {
 impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
-            temperature: None,
-            max_tokens: Some(8192),
             max_turns: DEFAULT_MAX_TURNS,
             convert_to_llm: None,
             transform_context: None,
@@ -544,8 +540,6 @@ async fn stream_assistant_response(
         system_prompt: Some(context.system_prompt.clone()),
         messages: context.messages.clone(),
         tools: tool_definitions.to_vec(),
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
         llm_messages: Some(llm_messages),
     };
 

@@ -21,11 +21,10 @@ interface ProjectState {
   error: string | null;
 
   fetchProjects: () => Promise<void>;
-  createProject: (name: string, description: string, backendId: string, config?: Partial<ProjectConfig>) => Promise<Project | null>;
+  createProject: (name: string, description: string, config?: Partial<ProjectConfig>) => Promise<Project | null>;
   updateProject: (id: string, payload: {
     name?: string;
     description?: string;
-    backend_id?: string;
     config?: ProjectConfig;
     context_containers?: ContextContainerDefinition[];
     mount_policy?: MountDerivationPolicy;
@@ -62,7 +61,9 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
       variant: rawExecutor.variant != null ? String(rawExecutor.variant) : null,
       model_id: rawExecutor.model_id != null ? String(rawExecutor.model_id) : null,
       agent_id: rawExecutor.agent_id != null ? String(rawExecutor.agent_id) : null,
-      reasoning_id: rawExecutor.reasoning_id != null ? String(rawExecutor.reasoning_id) : null,
+      thinking_level: (rawExecutor.thinking_level != null
+        ? String(rawExecutor.thinking_level)
+        : null) as import('../types').ThinkingLevel | null,
       permission_policy: rawExecutor.permission_policy != null ? String(rawExecutor.permission_policy) : null,
     },
     preset_name: raw.preset_name != null
@@ -139,12 +140,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  createProject: async (name, description, backendId, config) => {
+  createProject: async (name, description, config) => {
     try {
       const project = await api.post<Project>('/projects', {
         name,
         description,
-        backend_id: backendId,
         config: config ?? {
           agent_presets: [],
           context_containers: [],

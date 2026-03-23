@@ -320,10 +320,11 @@ export function SessionChatView({
       executor: trimmed,
       variant: execConfig.variant.trim() || undefined,
       model_id: execConfig.modelId.trim() || undefined,
-      reasoning_id: execConfig.reasoningId.trim() || undefined,
+      // 将 camelCase 的 thinkingLevel 转为 snake_case 发给后端
+      thinking_level: (execConfig.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
       permission_policy: (execConfig.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     };
-  }, [execConfig.executor, execConfig.variant, execConfig.modelId, execConfig.reasoningId, execConfig.permissionPolicy]);
+  }, [execConfig.executor, execConfig.variant, execConfig.modelId, execConfig.thinkingLevel, execConfig.permissionPolicy]);
 
   // ─── ACP 会话流 ──────────────────────────────────────
 
@@ -697,12 +698,12 @@ export function SessionChatView({
               executor={execConfig.executor}
               variant={execConfig.variant}
               modelId={execConfig.modelId}
-              reasoningId={execConfig.reasoningId}
+              thinkingLevel={execConfig.thinkingLevel}
               permissionPolicy={execConfig.permissionPolicy}
               onExecutorChange={execConfig.setExecutor}
               onVariantChange={execConfig.setVariant}
               onModelIdChange={execConfig.setModelId}
-              onReasoningIdChange={execConfig.setReasoningId}
+              onThinkingLevelChange={execConfig.setThinkingLevel}
               onPermissionPolicyChange={execConfig.setPermissionPolicy}
               onReset={execConfig.reset}
               onRefetch={discovery.refetch}

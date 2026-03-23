@@ -2,7 +2,7 @@ use agentdash_domain::{
     project::{AgentPreset, Project},
     task::Task,
 };
-use agentdash_executor::AgentDashExecutorConfig;
+use agentdash_executor::{AgentDashExecutorConfig, ThinkingLevel};
 
 use super::execution::TaskExecutionError;
 
@@ -61,8 +61,11 @@ pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<AgentDashExec
         if let Some(v) = obj.get("agent_id").and_then(|v| v.as_str()) {
             config.agent_id = normalize_option_string(Some(v.to_string()));
         }
-        if let Some(v) = obj.get("reasoning_id").and_then(|v| v.as_str()) {
-            config.reasoning_id = normalize_option_string(Some(v.to_string()));
+        if let Some(v) = obj.get("thinking_level").and_then(|v| v.as_str()) {
+            // Parse thinking_level from JSON string using serde
+            if let Ok(level) = serde_json::from_value::<ThinkingLevel>(serde_json::Value::String(v.to_string())) {
+                config.thinking_level = Some(level);
+            }
         }
         if let Some(v) = obj.get("permission_policy").and_then(|v| v.as_str()) {
             config.permission_policy = normalize_option_string(Some(v.to_string()));

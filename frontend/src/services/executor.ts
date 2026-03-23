@@ -1,5 +1,6 @@
 import { buildApiPath } from "../api/origin";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
+import type { ThinkingLevel } from "../types";
 
 export type ExecutorProfile = string;
 
@@ -8,10 +9,11 @@ export type PermissionPolicy = "AUTO" | "SUPERVISED" | "PLAN";
 export interface ExecutorConfig {
   executor: ExecutorProfile;
   variant?: string;
-  // 对齐 vibe-kanban / executors::profile::ExecutorConfig（Rust 侧使用 snake_case 字段）
+  // 对齐后端 ExecutorConfig（Rust 侧使用 snake_case 字段）
   model_id?: string;
   agent_id?: string;
-  reasoning_id?: string;
+  /** 推理级别，替代旧的 reasoning_id 字段 */
+  thinking_level?: ThinkingLevel;
   permission_policy?: PermissionPolicy;
 }
 

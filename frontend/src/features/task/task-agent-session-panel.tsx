@@ -162,7 +162,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
           executor: execConfig.executor,
           ...(execConfig.variant && { variant: execConfig.variant }),
           ...(execConfig.model_id && { model_id: execConfig.model_id }),
-          ...(execConfig.reasoning_id && { reasoning_id: execConfig.reasoning_id }),
+          ...(execConfig.thinking_level && { thinking_level: execConfig.thinking_level }),
           ...(execConfig.permission_policy && { permission_policy: execConfig.permission_policy }),
         };
       }

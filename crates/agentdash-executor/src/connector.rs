@@ -14,6 +14,52 @@ use agentdash_agent::DynAgentTool;
 
 use crate::hooks::HookSessionRuntime;
 
+// ─── ThinkingLevel（本地定义，避免 feature gate 依赖 agentdash-agent）──────
+
+/// 思考/推理级别 — 与 `agentdash_agent::ThinkingLevel` 保持一致。
+///
+/// 在 connector 层独立定义以避免 `pi-agent` feature gate 传播到所有消费者。
+/// 当 `pi-agent` 特性启用时，通过 `From` 实现与 `agentdash_agent::ThinkingLevel` 互转。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingLevel {
+    #[default]
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+}
+
+#[cfg(feature = "pi-agent")]
+impl From<ThinkingLevel> for agentdash_agent::ThinkingLevel {
+    fn from(level: ThinkingLevel) -> Self {
+        match level {
+            ThinkingLevel::Off => agentdash_agent::ThinkingLevel::Off,
+            ThinkingLevel::Minimal => agentdash_agent::ThinkingLevel::Minimal,
+            ThinkingLevel::Low => agentdash_agent::ThinkingLevel::Low,
+            ThinkingLevel::Medium => agentdash_agent::ThinkingLevel::Medium,
+            ThinkingLevel::High => agentdash_agent::ThinkingLevel::High,
+            ThinkingLevel::Xhigh => agentdash_agent::ThinkingLevel::Xhigh,
+        }
+    }
+}
+
+#[cfg(feature = "pi-agent")]
+impl From<agentdash_agent::ThinkingLevel> for ThinkingLevel {
+    fn from(level: agentdash_agent::ThinkingLevel) -> Self {
+        match level {
+            agentdash_agent::ThinkingLevel::Off => ThinkingLevel::Off,
+            agentdash_agent::ThinkingLevel::Minimal => ThinkingLevel::Minimal,
+            agentdash_agent::ThinkingLevel::Low => ThinkingLevel::Low,
+            agentdash_agent::ThinkingLevel::Medium => ThinkingLevel::Medium,
+            agentdash_agent::ThinkingLevel::High => ThinkingLevel::High,
+            agentdash_agent::ThinkingLevel::Xhigh => ThinkingLevel::Xhigh,
+        }
+    }
+}
+
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,7 +104,7 @@ pub struct AgentDashExecutorConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_id: Option<String>,
+    pub thinking_level: Option<ThinkingLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_policy: Option<String>,
 }
@@ -70,7 +116,7 @@ impl AgentDashExecutorConfig {
             variant: None,
             model_id: None,
             agent_id: None,
-            reasoning_id: None,
+            thinking_level: None,
             permission_policy: None,
         }
     }
@@ -92,7 +138,14 @@ impl AgentDashExecutorConfig {
             variant: self.variant.clone(),
             model_id: self.model_id.clone(),
             agent_id: self.agent_id.clone(),
-            reasoning_id: self.reasoning_id.clone(),
+            reasoning_id: self.thinking_level.map(|level| match level {
+                ThinkingLevel::Off => "off",
+                ThinkingLevel::Minimal => "minimal",
+                ThinkingLevel::Low => "low",
+                ThinkingLevel::Medium => "medium",
+                ThinkingLevel::High => "high",
+                ThinkingLevel::Xhigh => "xhigh",
+            }.to_string()),
             permission_policy,
         })
     }

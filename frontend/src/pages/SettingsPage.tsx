@@ -73,7 +73,94 @@ function Field({
 // Section components
 // ---------------------------------------------------------------------------
 
-function LlmSection({
+// ---------------------------------------------------------------------------
+// LLM Providers 配置
+// ---------------------------------------------------------------------------
+
+interface LlmProviderDef {
+  id: string;
+  name: string;
+  description: string;
+  apiKeySettingKey?: string;
+  baseUrlSettingKey?: string;
+  defaultModelSettingKey?: string;
+  wireApiSettingKey?: string;
+  supportsBaseUrl: boolean;
+  /** 无需 API Key（如本地 Ollama） */
+  noApiKey?: boolean;
+  apiKeyPlaceholder?: string;
+  baseUrlPlaceholder?: string;
+}
+
+const LLM_PROVIDERS: LlmProviderDef[] = [
+  {
+    id: "anthropic",
+    name: "Anthropic Claude",
+    description: "Claude Opus、Sonnet 等模型",
+    apiKeySettingKey: "llm.anthropic.api_key",
+    supportsBaseUrl: false,
+    apiKeyPlaceholder: "sk-ant-...",
+  },
+  {
+    id: "gemini",
+    name: "Google Gemini",
+    description: "Gemini 2.5 Pro、Flash 等模型",
+    apiKeySettingKey: "llm.gemini.api_key",
+    supportsBaseUrl: false,
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    description: "DeepSeek Chat、DeepSeek Reasoner (R1)",
+    apiKeySettingKey: "llm.deepseek.api_key",
+    supportsBaseUrl: false,
+    apiKeyPlaceholder: "sk-...",
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    description: "GPT-4o、o3 等模型，支持兼容端点",
+    apiKeySettingKey: "llm.openai.api_key",
+    baseUrlSettingKey: "llm.openai.base_url",
+    defaultModelSettingKey: "llm.openai.default_model",
+    wireApiSettingKey: "llm.openai.wire_api",
+    supportsBaseUrl: true,
+    apiKeyPlaceholder: "sk-...",
+    baseUrlPlaceholder: "https://api.openai.com/v1",
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    description: "Llama、QwQ 等模型（高速推理）",
+    apiKeySettingKey: "llm.groq.api_key",
+    supportsBaseUrl: false,
+    apiKeyPlaceholder: "gsk_...",
+  },
+  {
+    id: "xai",
+    name: "xAI (Grok)",
+    description: "Grok 3、Grok 3 Mini 等模型",
+    apiKeySettingKey: "llm.xai.api_key",
+    supportsBaseUrl: false,
+    apiKeyPlaceholder: "xai-...",
+  },
+  {
+    id: "ollama",
+    name: "Ollama（本地）",
+    description: "本地部署的开源模型，无需 API Key",
+    baseUrlSettingKey: "llm.ollama.base_url",
+    supportsBaseUrl: true,
+    noApiKey: true,
+    baseUrlPlaceholder: "http://localhost:11434",
+  },
+];
+
+/** 判断 setting value 是否已配置（非空） */
+function isConfigured(val: string): boolean {
+  return val.length > 0;
+}
+
+function LlmProvidersSection({
   settings,
   saving,
   onSave,
@@ -82,30 +169,104 @@ function LlmSection({
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
-  const seed = {
-    apiKey: readVal(settings, "llm.openai.api_key"),
-    baseUrl: readVal(settings, "llm.openai.base_url", "https://api.openai.com/v1"),
-    model: readVal(settings, "llm.openai.default_model", "gpt-4o"),
-    wireApi: (() => {
-      const wire = readVal(settings, "llm.openai.wire_api", "responses");
-      return wire === "completions" || wire === "responses" ? wire : "responses";
-    })() as "responses" | "completions",
-  };
-
   return (
-    <LlmSectionForm
-      key={JSON.stringify(seed)}
-      initialApiKey={seed.apiKey}
-      initialBaseUrl={seed.baseUrl}
-      initialModel={seed.model}
-      initialWireApi={seed.wireApi}
-      saving={saving}
-      onSave={onSave}
-    />
+    <SectionCard title="LLM Providers">
+      <p className="text-xs text-muted-foreground -mt-2 mb-1">
+        配置各 LLM 服务商的 API 密钥和端点，按需开启
+      </p>
+      <div className="space-y-2">
+        {LLM_PROVIDERS.map((provider) => (
+          <LlmProviderRow
+            key={provider.id}
+            provider={provider}
+            settings={settings}
+            saving={saving}
+            onSave={onSave}
+          />
+        ))}
+      </div>
+    </SectionCard>
   );
 }
 
-function LlmSectionForm({
+function LlmProviderRow({
+  provider,
+  settings,
+  saving,
+  onSave,
+}: {
+  provider: LlmProviderDef;
+  settings: { key: string; value: unknown; masked: boolean }[];
+  saving: boolean;
+  onSave: (updates: SettingUpdate[]) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  // 读取当前已保存的值
+  const savedApiKey = provider.apiKeySettingKey ? readVal(settings, provider.apiKeySettingKey) : "";
+  const savedBaseUrl = provider.baseUrlSettingKey ? readVal(settings, provider.baseUrlSettingKey) : "";
+  const savedModel = provider.defaultModelSettingKey ? readVal(settings, provider.defaultModelSettingKey) : "";
+  const savedWireApi = provider.wireApiSettingKey ? readVal(settings, provider.wireApiSettingKey, "responses") : "";
+
+  // 对于有 API Key 的 provider，以 API Key 存在为判断依据；对于 noApiKey 的 provider，以 baseUrl 为判断依据
+  const configured = provider.noApiKey
+    ? isConfigured(savedBaseUrl)
+    : isConfigured(savedApiKey);
+
+  return (
+    <div className="rounded-[10px] border border-border bg-background/80">
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        onClick={() => setExpanded((p) => !p)}
+      >
+        {/* 配置状态指示 */}
+        <span
+          className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${configured ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-foreground">{provider.name}</p>
+          <p className="text-xs text-muted-foreground">{provider.description}</p>
+        </div>
+        {configured && (
+          <span className="rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-400">
+            已配置
+          </span>
+        )}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <LlmProviderForm
+          key={`${provider.id}-${savedApiKey}-${savedBaseUrl}`}
+          provider={provider}
+          initialApiKey={savedApiKey}
+          initialBaseUrl={savedBaseUrl}
+          initialModel={savedModel}
+          initialWireApi={savedWireApi}
+          saving={saving}
+          onSave={onSave}
+        />
+      )}
+    </div>
+  );
+}
+
+function LlmProviderForm({
+  provider,
   initialApiKey,
   initialBaseUrl,
   initialModel,
@@ -113,10 +274,11 @@ function LlmSectionForm({
   saving,
   onSave,
 }: {
+  provider: LlmProviderDef;
   initialApiKey: string;
   initialBaseUrl: string;
   initialModel: string;
-  initialWireApi: "responses" | "completions";
+  initialWireApi: string;
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
@@ -124,80 +286,107 @@ function LlmSectionForm({
   const [apiKeyTouched, setApiKeyTouched] = useState(false);
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [model, setModel] = useState(initialModel);
-  const [wireApi, setWireApi] = useState<"responses" | "completions">(initialWireApi);
+  const [wireApi, setWireApi] = useState(initialWireApi || "responses");
 
   const handleSave = () => {
-    const updates: SettingUpdate[] = [
-      { key: "llm.openai.base_url", value: baseUrl },
-      { key: "llm.openai.default_model", value: model },
-      { key: "llm.openai.wire_api", value: wireApi },
-    ];
-    // 仅在用户实际编辑过 api_key 时才提交
-    if (apiKeyTouched) {
-      updates.push({ key: "llm.openai.api_key", value: apiKey });
+    const updates: SettingUpdate[] = [];
+
+    // API Key（仅当用户编辑过才提交，避免覆盖掩码值）
+    if (!provider.noApiKey && provider.apiKeySettingKey && apiKeyTouched) {
+      updates.push({ key: provider.apiKeySettingKey, value: apiKey });
     }
-    onSave(updates);
-    setApiKeyTouched(false);
+
+    // Base URL
+    if (provider.supportsBaseUrl && provider.baseUrlSettingKey) {
+      updates.push({ key: provider.baseUrlSettingKey, value: baseUrl });
+    }
+
+    // 默认模型（仅 OpenAI 类 provider 有此选项）
+    if (provider.defaultModelSettingKey) {
+      updates.push({ key: provider.defaultModelSettingKey, value: model });
+    }
+
+    // Wire API（仅 OpenAI 有此选项）
+    if (provider.wireApiSettingKey) {
+      updates.push({ key: provider.wireApiSettingKey, value: wireApi });
+    }
+
+    if (updates.length > 0) {
+      onSave(updates);
+      setApiKeyTouched(false);
+    }
   };
 
   return (
-    <SectionCard title="LLM 服务">
-      <Field label="API Key" desc="OpenAI 兼容接口的密钥">
-        <input
-          type="password"
-          className={inputCls}
-          value={apiKey}
-          placeholder="sk-..."
-          onChange={(e) => {
-            setApiKey(e.target.value);
-            setApiKeyTouched(true);
-          }}
-        />
-      </Field>
+    <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+      {/* API Key 输入（非 noApiKey provider） */}
+      {!provider.noApiKey && (
+        <Field label="API Key" desc="服务密钥，保存后以掩码形式显示">
+          <input
+            type="password"
+            className={inputCls}
+            value={apiKey}
+            placeholder={provider.apiKeyPlaceholder ?? "输入 API Key"}
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              setApiKeyTouched(true);
+            }}
+          />
+        </Field>
+      )}
 
-      <Field label="Base URL" desc="API 端点地址">
-        <input
-          type="text"
-          className={inputCls}
-          value={baseUrl}
-          placeholder="https://api.openai.com/v1"
-          onChange={(e) => setBaseUrl(e.target.value)}
-        />
-      </Field>
+      {/* Base URL 输入（supportsBaseUrl provider） */}
+      {provider.supportsBaseUrl && (
+        <Field label="Base URL" desc="API 端点地址">
+          <input
+            type="text"
+            className={inputCls}
+            value={baseUrl}
+            placeholder={provider.baseUrlPlaceholder ?? "https://..."}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+        </Field>
+      )}
 
-      <Field label="默认模型">
-        <input
-          type="text"
-          className={inputCls}
-          value={model}
-          placeholder="gpt-4o"
-          onChange={(e) => setModel(e.target.value)}
-        />
-      </Field>
+      {/* 默认模型（仅有 defaultModelSettingKey 的 provider） */}
+      {provider.defaultModelSettingKey && (
+        <Field label="默认模型">
+          <input
+            type="text"
+            className={inputCls}
+            value={model}
+            placeholder="例如 gpt-4o"
+            onChange={(e) => setModel(e.target.value)}
+          />
+        </Field>
+      )}
 
-      <Field label="Wire API" desc="请求协议，responses 为新版 Responses API">
-        <div className="flex gap-4">
-          {(["responses", "completions"] as const).map((opt) => (
-            <label key={opt} className="flex items-center gap-1.5 text-sm text-foreground">
-              <input
-                type="radio"
-                name="wire_api"
-                checked={wireApi === opt}
-                onChange={() => setWireApi(opt)}
-                className="accent-primary"
-              />
-              {opt}
-            </label>
-          ))}
-        </div>
-      </Field>
+      {/* Wire API（仅 OpenAI） */}
+      {provider.wireApiSettingKey && (
+        <Field label="Wire API" desc="请求协议，responses 为新版 Responses API">
+          <div className="flex gap-4">
+            {(["responses", "completions"] as const).map((opt) => (
+              <label key={opt} className="flex items-center gap-1.5 text-sm text-foreground">
+                <input
+                  type="radio"
+                  name={`wire_api_${provider.id}`}
+                  checked={wireApi === opt}
+                  onChange={() => setWireApi(opt)}
+                  className="accent-primary"
+                />
+                {opt}
+              </label>
+            ))}
+          </div>
+        </Field>
+      )}
 
       <div className="flex justify-end pt-1">
         <button type="button" disabled={saving} className={btnPrimaryCls} onClick={handleSave}>
           {saving ? "保存中…" : "保存"}
         </button>
       </div>
-    </SectionCard>
+    </div>
   );
 }
 
@@ -212,16 +401,12 @@ function AgentSection({
 }) {
   const seed = {
     systemPrompt: readVal(settings, "agent.pi.system_prompt"),
-    temperature: readVal(settings, "agent.pi.temperature", "0.7"),
-    maxTurns: readVal(settings, "agent.pi.max_turns", "25"),
   };
 
   return (
     <AgentSectionForm
       key={JSON.stringify(seed)}
       initialSystemPrompt={seed.systemPrompt}
-      initialTemperature={seed.temperature}
-      initialMaxTurns={seed.maxTurns}
       saving={saving}
       onSave={onSave}
     />
@@ -230,26 +415,18 @@ function AgentSection({
 
 function AgentSectionForm({
   initialSystemPrompt,
-  initialTemperature,
-  initialMaxTurns,
   saving,
   onSave,
 }: {
   initialSystemPrompt: string;
-  initialTemperature: string;
-  initialMaxTurns: string;
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
   const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
-  const [temperature, setTemperature] = useState(initialTemperature);
-  const [maxTurns, setMaxTurns] = useState(initialMaxTurns);
 
   const handleSave = () => {
     onSave([
       { key: "agent.pi.system_prompt", value: systemPrompt },
-      { key: "agent.pi.temperature", value: Number(temperature) },
-      { key: "agent.pi.max_turns", value: Number(maxTurns) },
     ]);
   };
 
@@ -263,30 +440,6 @@ function AgentSectionForm({
           rows={4}
         />
       </Field>
-
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="Temperature" desc="生成随机性 (0–1)">
-          <input
-            type="number"
-            className={inputCls}
-            value={temperature}
-            min={0}
-            max={1}
-            step={0.1}
-            onChange={(e) => setTemperature(e.target.value)}
-          />
-        </Field>
-
-        <Field label="Max Turns" desc="单次会话最大轮数">
-          <input
-            type="number"
-            className={inputCls}
-            value={maxTurns}
-            min={1}
-            onChange={(e) => setMaxTurns(e.target.value)}
-          />
-        </Field>
-      </div>
 
       <div className="flex justify-end pt-1">
         <button type="button" disabled={saving} className={btnPrimaryCls} onClick={handleSave}>
@@ -533,7 +686,7 @@ export function SettingsPage() {
         )}
 
         <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
-        <LlmSection settings={settings} saving={saving} onSave={handleSave} />
+        <LlmProvidersSection settings={settings} saving={saving} onSave={handleSave} />
         <AgentSection settings={settings} saving={saving} onSave={handleSave} />
         <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />
       </div>

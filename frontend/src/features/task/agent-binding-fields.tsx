@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
-import type { AgentBinding, ProjectConfig } from "../../types";
+import type { AgentBinding, ProjectConfig, ThinkingLevel } from "../../types";
+import { THINKING_LEVEL_OPTIONS } from "../../types";
 import { useExecutorDiscovery } from "../executor-selector";
 
 export interface AgentBindingFieldsProps {
@@ -149,6 +150,26 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
           placeholder="可补充执行前置约束、上下文说明"
           className="agentdash-form-textarea"
         />
+      </div>
+
+      <div>
+        <label className="agentdash-form-label">推理级别</label>
+        <select
+          value={value.thinking_level ?? ""}
+          onChange={(event) =>
+            updateBinding({
+              thinking_level: (event.target.value as ThinkingLevel) || undefined,
+            })
+          }
+          className="agentdash-form-select"
+        >
+          <option value="">默认（不指定）</option>
+          {THINKING_LEVEL_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {error && (

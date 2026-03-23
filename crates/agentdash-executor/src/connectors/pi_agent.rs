@@ -34,10 +34,153 @@ use crate::connectors::pi_agent_mcp::discover_mcp_tools;
 use crate::hook_events::build_hook_trace_notification;
 use crate::runtime_delegate::HookRuntimeDelegate;
 
+// ─── 静态模型元数据表 ───────────────────────────────────────────
+
+/// 已知模型的静态元数据
+struct KnownModelMeta {
+    id: &'static str,
+    name: &'static str,
+    reasoning: bool,
+    context_window: u64,
+    max_tokens: u64,
+}
+
+const ANTHROPIC_MODELS: &[KnownModelMeta] = &[
+    KnownModelMeta {
+        id: "claude-opus-4-6",
+        name: "Claude Opus 4.6",
+        reasoning: true,
+        context_window: 200_000,
+        max_tokens: 32_000,
+    },
+    KnownModelMeta {
+        id: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        reasoning: true,
+        context_window: 200_000,
+        max_tokens: 16_000,
+    },
+    KnownModelMeta {
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        reasoning: false,
+        context_window: 200_000,
+        max_tokens: 8_192,
+    },
+];
+
+const GEMINI_MODELS: &[KnownModelMeta] = &[
+    KnownModelMeta {
+        id: "gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        reasoning: true,
+        context_window: 1_048_576,
+        max_tokens: 65_536,
+    },
+    KnownModelMeta {
+        id: "gemini-2.5-flash",
+        name: "Gemini 2.5 Flash",
+        reasoning: true,
+        context_window: 1_048_576,
+        max_tokens: 65_536,
+    },
+];
+
+const DEEPSEEK_MODELS: &[KnownModelMeta] = &[
+    KnownModelMeta {
+        id: "deepseek-chat",
+        name: "DeepSeek Chat",
+        reasoning: false,
+        context_window: 64_000,
+        max_tokens: 8_192,
+    },
+    KnownModelMeta {
+        id: "deepseek-reasoner",
+        name: "DeepSeek Reasoner (R1)",
+        reasoning: true,
+        context_window: 64_000,
+        max_tokens: 8_192,
+    },
+];
+
+const GROQ_MODELS: &[KnownModelMeta] = &[
+    KnownModelMeta {
+        id: "llama-3.3-70b-versatile",
+        name: "Llama 3.3 70B",
+        reasoning: false,
+        context_window: 128_000,
+        max_tokens: 32_768,
+    },
+    KnownModelMeta {
+        id: "qwen-qwq-32b",
+        name: "QwQ 32B",
+        reasoning: true,
+        context_window: 128_000,
+        max_tokens: 16_384,
+    },
+];
+
+const XAI_MODELS: &[KnownModelMeta] = &[
+    KnownModelMeta {
+        id: "grok-3",
+        name: "Grok 3",
+        reasoning: false,
+        context_window: 131_072,
+        max_tokens: 16_384,
+    },
+    KnownModelMeta {
+        id: "grok-3-mini",
+        name: "Grok 3 Mini",
+        reasoning: true,
+        context_window: 131_072,
+        max_tokens: 16_384,
+    },
+];
+
+const OPENAI_MODELS: &[KnownModelMeta] = &[
+    KnownModelMeta {
+        id: "gpt-4o",
+        name: "GPT-4o",
+        reasoning: false,
+        context_window: 128_000,
+        max_tokens: 16_384,
+    },
+    KnownModelMeta {
+        id: "o3",
+        name: "o3",
+        reasoning: true,
+        context_window: 200_000,
+        max_tokens: 100_000,
+    },
+    KnownModelMeta {
+        id: "o4-mini",
+        name: "o4-mini",
+        reasoning: true,
+        context_window: 200_000,
+        max_tokens: 100_000,
+    },
+];
+
+// ─── Provider 条目 ───────────────────────────────────────────────
+
+/// 已配置的 LLM Provider 条目
+/// bridge_factory：按 model_id 创建对应的 LlmBridge
+struct ProviderEntry {
+    provider_id: &'static str,
+    provider_name: &'static str,
+    models: &'static [KnownModelMeta],
+    bridge_factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>,
+}
+
+// ─── PiAgentConnector ───────────────────────────────────────────
+
 pub struct PiAgentConnector {
     #[allow(dead_code)]
     workspace_root: PathBuf,
+    /// 默认 bridge（向后兼容，无 provider 注册或 model_id 未匹配时使用）
     bridge: Arc<dyn LlmBridge>,
+    /// 已注册的 provider 列表（按注册顺序，首个命中的 provider 优先）
+    providers: Vec<ProviderEntry>,
     tools: Vec<DynAgentTool>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     system_prompt: String,
@@ -55,6 +198,7 @@ impl PiAgentConnector {
         Self {
             workspace_root,
             bridge,
+            providers: Vec::new(),
             tools: Vec::new(),
             runtime_tool_provider: None,
             system_prompt: system_prompt.into(),
@@ -71,15 +215,45 @@ impl PiAgentConnector {
         self.runtime_tool_provider = Some(provider);
     }
 
-    fn create_agent(&self) -> Agent {
+    /// 注册一个 LLM provider（含模型列表和 bridge 工厂）
+    fn add_provider(
+        &mut self,
+        provider_id: &'static str,
+        provider_name: &'static str,
+        models: &'static [KnownModelMeta],
+        bridge_factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>,
+    ) {
+        self.providers.push(ProviderEntry {
+            provider_id,
+            provider_name,
+            models,
+            bridge_factory,
+        });
+    }
+
+    fn create_agent_with_bridge(&self, bridge: Arc<dyn LlmBridge>) -> Agent {
         let config = AgentConfig {
             system_prompt: self.system_prompt.clone(),
-            max_tokens: Some(8192),
             ..AgentConfig::default()
         };
-        let mut agent = Agent::new(self.bridge.clone(), config);
+        let mut agent = Agent::new(bridge, config);
         agent.set_tools(self.tools.clone());
         agent
+    }
+
+    #[allow(dead_code)]
+    fn create_agent(&self) -> Agent {
+        self.create_agent_with_bridge(self.bridge.clone())
+    }
+
+    /// 根据 model_id 在已注册 provider 中查找合适的 bridge
+    fn find_bridge_for_model(&self, model_id: &str) -> Option<Arc<dyn LlmBridge>> {
+        for provider in &self.providers {
+            if provider.models.iter().any(|m| m.id == model_id) {
+                return Some((provider.bridge_factory)(model_id));
+            }
+        }
+        None
     }
 
     fn build_runtime_system_prompt(
@@ -276,7 +450,7 @@ impl AgentConnector for PiAgentConnector {
             supports_cancel: true,
             supports_discovery: true,
             supports_variants: false,
-            supports_model_override: false,
+            supports_model_override: true,
             supports_permission_policy: false,
         }
     }
@@ -296,12 +470,49 @@ impl AgentConnector for PiAgentConnector {
         _variant: Option<&str>,
         _working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
-        let model_id = self.model_id.clone();
+        let mut all_providers: Vec<serde_json::Value> = vec![];
+        let mut all_models: Vec<serde_json::Value> = vec![];
+
+        for provider in &self.providers {
+            all_providers.push(serde_json::json!({
+                "id": provider.provider_id,
+                "name": provider.provider_name,
+            }));
+            for model in provider.models {
+                all_models.push(serde_json::json!({
+                    "id": model.id,
+                    "name": model.name,
+                    "provider_id": provider.provider_id,
+                    "reasoning": model.reasoning,
+                    "context_window": model.context_window,
+                    "max_tokens": model.max_tokens,
+                }));
+            }
+        }
+
+        // 若没有注册任何 provider，退化为单模型显示（向后兼容）
+        if all_providers.is_empty() {
+            let model_id = self.model_id.clone();
+            all_providers.push(serde_json::json!({
+                "id": "default",
+                "name": "Default",
+            }));
+            all_models.push(serde_json::json!({
+                "id": model_id,
+                "name": model_id,
+                "provider_id": "default",
+                "reasoning": false,
+                "context_window": 128_000u64,
+                "max_tokens": 16_384u64,
+            }));
+        }
+
+        let default_model = self.model_id.clone();
 
         let patch: json_patch::Patch = serde_json::from_value(serde_json::json!([
-            { "op": "replace", "path": "/options/model_selector/providers", "value": [{ "id": "openai", "name": "OpenAI Compatible" }] },
-            { "op": "replace", "path": "/options/model_selector/models", "value": [{ "id": model_id, "name": model_id, "provider_id": "openai", "reasoning_options": [] }] },
-            { "op": "replace", "path": "/options/model_selector/default_model", "value": model_id },
+            { "op": "replace", "path": "/options/model_selector/providers", "value": all_providers },
+            { "op": "replace", "path": "/options/model_selector/models", "value": all_models },
+            { "op": "replace", "path": "/options/model_selector/default_model", "value": default_model },
             { "op": "replace", "path": "/options/loading_models", "value": false },
             { "op": "replace", "path": "/options/loading_agents", "value": false },
             { "op": "replace", "path": "/options/loading_slash_commands", "value": false }
@@ -327,7 +538,17 @@ impl AgentConnector for PiAgentConnector {
             let mut agents = self.agents.lock().await;
             agents
                 .remove(session_id)
-                .unwrap_or_else(|| self.create_agent())
+                .unwrap_or_else(|| {
+                    // 根据 executor_config.model_id 选择 bridge
+                    let bridge = context
+                        .executor_config
+                        .model_id
+                        .as_deref()
+                        .filter(|m| *m != self.model_id.as_str())
+                        .and_then(|m| self.find_bridge_for_model(m))
+                        .unwrap_or_else(|| self.bridge.clone());
+                    self.create_agent_with_bridge(bridge)
+                })
         };
 
         let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
@@ -360,6 +581,11 @@ impl AgentConnector for PiAgentConnector {
         agent.set_runtime_delegate(context.hook_session.clone().map(|hook_session| {
             HookRuntimeDelegate::new_with_trace_events(hook_session, hook_trace_tx)
         }));
+
+        // 注入 thinking_level（若 executor_config 有指定）
+        if let Some(thinking_level) = context.executor_config.thinking_level {
+            agent.set_thinking_level(thinking_level.into());
+        }
 
         let (event_rx, join_handle) = agent
             .prompt(AgentMessage::user(&prompt_text))
@@ -909,26 +1135,14 @@ fn content_part_to_block(part: &ContentPart) -> Option<ContentBlock> {
 /// 从 `SettingsRepository` 和环境变量构建 `PiAgentConnector`。
 ///
 /// 配置优先级：Settings DB > 环境变量 > 默认值。
-/// 支持 Anthropic（优先）和 OpenAI Responses API。
+/// 支持多 provider：Anthropic、Gemini、DeepSeek、Groq、xAI、OpenAI/兼容端点。
+/// 按注册顺序，首个完成注册的 provider 的首个模型作为默认 bridge。
 pub async fn build_pi_agent_connector(
     workspace_root: &Path,
     settings: &dyn agentdash_domain::settings::SettingsRepository,
 ) -> Option<PiAgentConnector> {
     use agentdash_agent::{LlmBridge, RigBridge};
     use rig::client::CompletionClient as _;
-
-    let api_key = read_setting_str(settings, "llm.openai.api_key")
-        .await
-        .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-    let base_url = read_setting_str(settings, "llm.openai.base_url")
-        .await
-        .or_else(|| std::env::var("OPENAI_BASE_URL").ok());
-    let model_id = read_setting_str(settings, "llm.openai.default_model")
-        .await
-        .unwrap_or_else(|| "gpt-4o".to_string());
-    let wire_api = read_setting_str(settings, "llm.openai.wire_api")
-        .await
-        .unwrap_or_else(|| "responses".to_string());
 
     let system_prompt = read_setting_str(settings, "agent.pi.system_prompt")
         .await
@@ -938,54 +1152,209 @@ pub async fn build_pi_agent_connector(
                 .to_string()
         });
 
-    // Anthropic（Settings → 环境变量）
+    // 收集已配置的 provider，按注册顺序排列
+    // 每条 entry：(provider_id, provider_name, models, bridge_factory, default_model_id, default_bridge)
+    #[allow(clippy::type_complexity)]
+    let mut providers: Vec<(
+        &'static str,
+        &'static str,
+        &'static [KnownModelMeta],
+        Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>,
+        String,           // default model_id for this provider
+        Arc<dyn LlmBridge>, // bridge for the default model
+    )> = Vec::new();
+
+    // ── Anthropic ──────────────────────────────────────────────────
     let anthropic_key = read_setting_str(settings, "llm.anthropic.api_key")
         .await
         .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+    if let Some(key) = anthropic_key {
+        let client = rig::providers::anthropic::Client::new(&key);
+        let default_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET;
+        let default_bridge: Arc<dyn LlmBridge> =
+            Arc::new(RigBridge::new(client.completion_model(default_model)));
+        let factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync> =
+            Arc::new(move |model_id: &str| {
+                Arc::new(RigBridge::new(client.completion_model(model_id)))
+                    as Arc<dyn LlmBridge>
+            });
+        providers.push((
+            "anthropic",
+            "Anthropic Claude",
+            ANTHROPIC_MODELS,
+            factory,
+            default_model.to_string(),
+            default_bridge,
+        ));
+        tracing::info!("PiAgentConnector: Anthropic provider 已注册");
+    }
 
-    if let Some(api_key) = anthropic_key {
-        let client = rig::providers::anthropic::Client::new(&api_key);
-        let anthropic_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET;
-        let model = client.completion_model(anthropic_model);
-        let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
-        let connector = PiAgentConnector::new(
-            workspace_root.to_path_buf(),
-            bridge,
-            system_prompt,
-            anthropic_model,
+    // ── Gemini ─────────────────────────────────────────────────────
+    let gemini_key = read_setting_str(settings, "llm.gemini.api_key")
+        .await
+        .or_else(|| std::env::var("GEMINI_API_KEY").ok());
+    if let Some(key) = gemini_key {
+        let client = rig::providers::gemini::Client::new(&key);
+        let default_model = "gemini-2.5-flash";
+        let default_bridge: Arc<dyn LlmBridge> =
+            Arc::new(RigBridge::new(client.completion_model(default_model)));
+        let factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync> =
+            Arc::new(move |model_id: &str| {
+                Arc::new(RigBridge::new(client.completion_model(model_id)))
+                    as Arc<dyn LlmBridge>
+            });
+        providers.push((
+            "gemini",
+            "Google Gemini",
+            GEMINI_MODELS,
+            factory,
+            default_model.to_string(),
+            default_bridge,
+        ));
+        tracing::info!("PiAgentConnector: Gemini provider 已注册");
+    }
+
+    // ── DeepSeek ───────────────────────────────────────────────────
+    let deepseek_key = read_setting_str(settings, "llm.deepseek.api_key")
+        .await
+        .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok());
+    if let Some(key) = deepseek_key {
+        let client = rig::providers::deepseek::Client::new(&key);
+        let default_model = "deepseek-chat";
+        let default_bridge: Arc<dyn LlmBridge> =
+            Arc::new(RigBridge::new(client.completion_model(default_model)));
+        let factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync> =
+            Arc::new(move |model_id: &str| {
+                Arc::new(RigBridge::new(client.completion_model(model_id)))
+                    as Arc<dyn LlmBridge>
+            });
+        providers.push((
+            "deepseek",
+            "DeepSeek",
+            DEEPSEEK_MODELS,
+            factory,
+            default_model.to_string(),
+            default_bridge,
+        ));
+        tracing::info!("PiAgentConnector: DeepSeek provider 已注册");
+    }
+
+    // ── Groq ───────────────────────────────────────────────────────
+    let groq_key = read_setting_str(settings, "llm.groq.api_key")
+        .await
+        .or_else(|| std::env::var("GROQ_API_KEY").ok());
+    if let Some(key) = groq_key {
+        let client = rig::providers::groq::Client::new(&key);
+        let default_model = "llama-3.3-70b-versatile";
+        let default_bridge: Arc<dyn LlmBridge> =
+            Arc::new(RigBridge::new(client.completion_model(default_model)));
+        let factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync> =
+            Arc::new(move |model_id: &str| {
+                Arc::new(RigBridge::new(client.completion_model(model_id)))
+                    as Arc<dyn LlmBridge>
+            });
+        providers.push((
+            "groq",
+            "Groq",
+            GROQ_MODELS,
+            factory,
+            default_model.to_string(),
+            default_bridge,
+        ));
+        tracing::info!("PiAgentConnector: Groq provider 已注册");
+    }
+
+    // ── xAI (Grok) ─────────────────────────────────────────────────
+    let xai_key = read_setting_str(settings, "llm.xai.api_key")
+        .await
+        .or_else(|| std::env::var("XAI_API_KEY").ok());
+    if let Some(key) = xai_key {
+        let client = rig::providers::xai::Client::new(&key);
+        let default_model = "grok-3";
+        let default_bridge: Arc<dyn LlmBridge> =
+            Arc::new(RigBridge::new(client.completion_model(default_model)));
+        let factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync> =
+            Arc::new(move |model_id: &str| {
+                Arc::new(RigBridge::new(client.completion_model(model_id)))
+                    as Arc<dyn LlmBridge>
+            });
+        providers.push((
+            "xai",
+            "xAI (Grok)",
+            XAI_MODELS,
+            factory,
+            default_model.to_string(),
+            default_bridge,
+        ));
+        tracing::info!("PiAgentConnector: xAI provider 已注册");
+    }
+
+    // ── OpenAI / 兼容端点 ──────────────────────────────────────────
+    let openai_key = read_setting_str(settings, "llm.openai.api_key")
+        .await
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+    if let Some(key) = openai_key {
+        let base_url = read_setting_str(settings, "llm.openai.base_url")
+            .await
+            .or_else(|| std::env::var("OPENAI_BASE_URL").ok());
+        let configured_model = read_setting_str(settings, "llm.openai.default_model")
+            .await
+            .unwrap_or_else(|| "gpt-4o".to_string());
+
+        let mut builder = rig::providers::openai::Client::builder(&key);
+        if let Some(ref url) = base_url {
+            builder = builder.base_url(url);
+        }
+        let client = builder.build();
+        let default_model_id = configured_model.clone();
+        let default_bridge: Arc<dyn LlmBridge> =
+            Arc::new(RigBridge::new(client.completion_model(&default_model_id)));
+        let factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync> =
+            Arc::new(move |model_id: &str| {
+                Arc::new(RigBridge::new(client.completion_model(model_id)))
+                    as Arc<dyn LlmBridge>
+            });
+        tracing::info!(
+            "PiAgentConnector: OpenAI provider 已注册（base_url={}, default_model={configured_model}）",
+            base_url.as_deref().unwrap_or("default")
         );
-        tracing::info!("PiAgentConnector 已初始化（Anthropic）");
-        return Some(connector);
+        providers.push((
+            "openai",
+            "OpenAI",
+            OPENAI_MODELS,
+            factory,
+            default_model_id,
+            default_bridge,
+        ));
     }
 
-    // OpenAI/兼容端点
-    let api_key = api_key?;
-
-    if wire_api != "responses" {
-        tracing::warn!(
-            "Rig 发行版当前统一走 Responses API，忽略 llm.openai.wire_api={} 配置",
-            wire_api
-        );
+    // ── 组装 connector ─────────────────────────────────────────────
+    if providers.is_empty() {
+        tracing::warn!("PiAgentConnector: 未检测到任何 LLM provider 配置，Pi Agent 不可用");
+        return None;
     }
 
-    let mut builder = rig::providers::openai::Client::builder(&api_key);
-    if let Some(ref url) = base_url {
-        builder = builder.base_url(url);
-    }
-    let client = builder.build();
-    let model = client.completion_model(&model_id);
-    tracing::info!(
-        "OpenAI Responses Client 已就绪（base_url={}, model={model_id}）",
-        base_url.as_deref().unwrap_or("default")
-    );
-    let bridge: Arc<dyn LlmBridge> = Arc::new(RigBridge::new(model));
-    let connector = PiAgentConnector::new(
+    // 取首个 provider 的默认模型和 bridge 作为全局默认，同时保留所有 provider 完整注册
+    let global_default_model = providers[0].4.clone();
+    let global_default_bridge = providers[0].5.clone();
+
+    let mut connector = PiAgentConnector::new(
         workspace_root.to_path_buf(),
-        bridge,
+        global_default_bridge,
         system_prompt,
-        &model_id,
+        global_default_model.clone(),
     );
-    tracing::info!("PiAgentConnector 已初始化（OpenAI 兼容）");
+
+    // 注册所有 provider（含第一个 provider）
+    for (pid, pname, models, factory, _, _) in providers {
+        connector.add_provider(pid, pname, models, factory);
+    }
+
+    tracing::info!(
+        "PiAgentConnector 已初始化（默认模型：{}，provider 数量：{}）",
+        global_default_model,
+        connector.providers.len()
+    );
     Some(connector)
 }
 

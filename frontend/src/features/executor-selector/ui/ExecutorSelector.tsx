@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ExecutorDiscoveredOptions, ExecutorInfo, ModelInfo } from "../model/types";
+import { THINKING_LEVEL_OPTIONS } from "../../../types";
 
 export interface ExecutorSelectorProps {
   executors: ExecutorInfo[];
@@ -14,13 +15,15 @@ export interface ExecutorSelectorProps {
   executor: string;
   variant: string;
   modelId: string;
-  reasoningId: string;
+  /** 推理级别，替代旧的 reasoningId */
+  thinkingLevel: string;
   permissionPolicy: string;
 
   onExecutorChange: (executor: string) => void;
   onVariantChange: (variant: string) => void;
   onModelIdChange: (modelId: string) => void;
-  onReasoningIdChange: (reasoningId: string) => void;
+  /** 推理级别变更回调，替代旧的 onReasoningIdChange */
+  onThinkingLevelChange: (thinkingLevel: string) => void;
   onPermissionPolicyChange: (policy: string) => void;
   onReset: () => void;
   onRefetch: () => void;
@@ -72,12 +75,12 @@ export function ExecutorSelector({
   executor,
   variant,
   modelId,
-  reasoningId,
+  thinkingLevel,
   permissionPolicy,
   onExecutorChange,
   onVariantChange,
   onModelIdChange,
-  onReasoningIdChange,
+  onThinkingLevelChange,
   onPermissionPolicyChange,
   onReset,
   onRefetch,
@@ -157,7 +160,8 @@ export function ExecutorSelector({
     return (modelSelector?.models ?? []).find((m) => m.id === id) ?? null;
   }, [modelSelector, modelId]);
 
-  const reasoningOptions = selectedModel?.reasoning_options ?? [];
+  // 仅当选中模型支持 reasoning 时显示推理级别选择器；未选模型时默认显示
+  const showThinkingSelector = !selectedModel || selectedModel.reasoning === true;
 
   return (
     <div className="space-y-3 rounded-[14px] border border-border bg-secondary/45 p-3.5">
@@ -276,7 +280,7 @@ export function ExecutorSelector({
             available={currentExecutorInfo?.available}
           />
           {modelId && <ConfigTag label={`model: ${modelId}`} />}
-          {reasoningId && <ConfigTag label={`mode: ${reasoningId}`} />}
+          {thinkingLevel && <ConfigTag label={`thinking: ${thinkingLevel}`} />}
           {permissionPolicy && (
             <ConfigTag label={`policy: ${permissionPolicy}`} />
           )}
@@ -287,28 +291,27 @@ export function ExecutorSelector({
       {showAdvanced && (
         <div className="rounded-[12px] border border-border bg-background/70 p-3">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {/* Mode / Reasoning */}
-            <div>
-              <span className={FIELD_LABEL_CLASS}>模式</span>
-              <div className="relative">
-                <select
-                  value={reasoningId}
-                  onChange={(e) => onReasoningIdChange(e.target.value)}
-                  disabled={(reasoningOptions?.length ?? 0) === 0}
-                  className={SELECT_CLASS}
-                >
-                  <option value="">
-                    {(reasoningOptions?.length ?? 0) === 0 ? "当前模型不支持模式选择" : "默认"}
-                  </option>
-                  {reasoningOptions.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}{o.is_default ? " (默认)" : ""}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            {/* 推理级别选择（固定枚举，不依赖 discovered-options） */}
+            {showThinkingSelector && (
+              <div>
+                <span className={FIELD_LABEL_CLASS}>推理级别</span>
+                <div className="relative">
+                  <select
+                    value={thinkingLevel}
+                    onChange={(e) => onThinkingLevelChange(e.target.value)}
+                    className={SELECT_CLASS}
+                  >
+                    <option value="">不设置</option>
+                    {THINKING_LEVEL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               <span className={FIELD_LABEL_CLASS}>权限策略</span>

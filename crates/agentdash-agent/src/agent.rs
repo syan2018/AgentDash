@@ -42,8 +42,6 @@ pub enum QueueMode {
 /// Agent 配置 — 对齐 Pi `AgentOptions`
 pub struct AgentConfig {
     pub system_prompt: String,
-    pub temperature: Option<f64>,
-    pub max_tokens: Option<u64>,
     pub max_turns: usize,
 
     /// 思考/推理级别 — 对齐 Pi `AgentState.thinkingLevel`
@@ -78,8 +76,6 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             system_prompt: String::new(),
-            temperature: None,
-            max_tokens: Some(8192),
             max_turns: 25,
             thinking_level: ThinkingLevel::default(),
             convert_to_llm: None,
@@ -472,8 +468,6 @@ impl Agent {
         };
 
         let config = AgentLoopConfig {
-            temperature: self.config.temperature,
-            max_tokens: self.config.max_tokens,
             max_turns: self.config.max_turns,
             convert_to_llm: self.config.convert_to_llm.clone(),
             transform_context: self.config.transform_context.clone(),

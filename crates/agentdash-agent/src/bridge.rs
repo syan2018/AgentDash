@@ -52,8 +52,6 @@ pub struct BridgeRequest {
     pub system_prompt: Option<String>,
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<rig::completion::ToolDefinition>,
-    pub temperature: Option<f64>,
-    pub max_tokens: Option<u64>,
     /// 预转换好的 LLM 消息（由 AgentLoop 的 convert_to_llm 管线生成）。
     /// 若为 Some，Bridge 应优先使用此字段而非自行转换 `messages`。
     pub llm_messages: Option<Vec<rig::completion::Message>>,
@@ -152,8 +150,8 @@ fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, Bridg
         chat_history,
         documents: vec![],
         tools: request.tools.clone(),
-        temperature: request.temperature,
-        max_tokens: request.max_tokens,
+        temperature: None,
+        max_tokens: None,
         tool_choice: None,
         additional_params: None,
     })
@@ -271,8 +269,6 @@ mod tests {
             system_prompt: Some("你是一个助手".into()),
             messages: vec![AgentMessage::user("你好")],
             tools: vec![],
-            temperature: Some(0.7),
-            max_tokens: Some(4096),
             llm_messages: None,
         };
         assert!(req.system_prompt.is_some());

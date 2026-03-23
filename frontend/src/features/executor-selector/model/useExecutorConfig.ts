@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
 import type { PersistedExecutorConfig, RecentExecutorEntry, UseExecutorConfigResult } from "./types";
 
-const STORAGE_KEY = "agentdash:executor-config";
+// v2 格式 key：包含 thinkingLevel 字段（旧 v1 key 包含 reasoningId，自动丢弃不迁移）
+const STORAGE_KEY = "agentdash:executor-config-v2";
 const RECENT_KEY = "agentdash:recent-executors";
 const MAX_RECENT = 8;
 
@@ -9,7 +10,10 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as PersistedExecutorConfig;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // 检测是否为 v1 格式（含 reasoningId 字段），若是则丢弃返回 null
+    if ("reasoningId" in parsed) return null;
+    return parsed as PersistedExecutorConfig;
   } catch {
     return null;
   }
@@ -51,8 +55,9 @@ function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
 }
 
 /**
- * 管理执行器选择配置，并自动持久化到 localStorage。
+ * 管理执行器选择配置，并自动持久化到 localStorage（v2 格式）。
  *
+ * v2 格式变更：reasoning_id 字段替换为 thinkingLevel（ThinkingLevel 枚举）。
  * 组件挂载时自动恢复上次保存的配置（通过 useState 初始化器）。
  * 切换 executor 时自动清除 variant / modelId。
  * 支持最近使用记录追踪（LRU，最多 MAX_RECENT 条）。
@@ -61,7 +66,7 @@ export function useExecutorConfig(): UseExecutorConfigResult {
   const [executor, setExecutorRaw] = useState(() => loadOrDefault("executor"));
   const [variant, setVariantRaw] = useState(() => loadOrDefault("variant"));
   const [modelId, setModelIdRaw] = useState(() => loadOrDefault("modelId"));
-  const [reasoningId, setReasoningIdRaw] = useState(() => loadOrDefault("reasoningId"));
+  const [thinkingLevel, setThinkingLevelRaw] = useState(() => loadOrDefault("thinkingLevel"));
   const [permissionPolicy, setPolicyRaw] = useState(() => loadOrDefault("permissionPolicy"));
   const [recentEntries, setRecentEntries] = useState<RecentExecutorEntry[]>(() => loadRecentEntries());
 
@@ -71,12 +76,12 @@ export function useExecutorConfig(): UseExecutorConfigResult {
         executor: patch.executor ?? executor,
         variant: patch.variant ?? variant,
         modelId: patch.modelId ?? modelId,
-        reasoningId: patch.reasoningId ?? reasoningId,
+        thinkingLevel: patch.thinkingLevel ?? thinkingLevel,
         permissionPolicy: patch.permissionPolicy ?? permissionPolicy,
       };
       persistConfig(next);
     },
-    [executor, variant, modelId, reasoningId, permissionPolicy],
+    [executor, variant, modelId, thinkingLevel, permissionPolicy],
   );
 
   const setExecutor = useCallback(
@@ -84,9 +89,9 @@ export function useExecutorConfig(): UseExecutorConfigResult {
       setExecutorRaw(v);
       setVariantRaw("");
       setModelIdRaw("");
-      setReasoningIdRaw("");
+      setThinkingLevelRaw("");
       setPolicyRaw("");
-      save({ executor: v, variant: "", modelId: "", reasoningId: "", permissionPolicy: "" });
+      save({ executor: v, variant: "", modelId: "", thinkingLevel: "", permissionPolicy: "" });
     },
     [save],
   );
@@ -102,17 +107,17 @@ export function useExecutorConfig(): UseExecutorConfigResult {
   const setModelId = useCallback(
     (v: string) => {
       setModelIdRaw(v);
-      // 变更模型时，默认清空 reasoning（由 UI 根据模型可选项重置）
-      setReasoningIdRaw("");
+      // 变更模型时，默认清空推理级别（由 UI 根据模型可选项重置）
+      setThinkingLevelRaw("");
       save({ modelId: v });
     },
     [save],
   );
 
-  const setReasoningId = useCallback(
+  const setThinkingLevel = useCallback(
     (v: string) => {
-      setReasoningIdRaw(v);
-      save({ reasoningId: v });
+      setThinkingLevelRaw(v);
+      save({ thinkingLevel: v });
     },
     [save],
   );
@@ -139,7 +144,7 @@ export function useExecutorConfig(): UseExecutorConfigResult {
     setExecutorRaw("");
     setVariantRaw("");
     setModelIdRaw("");
-    setReasoningIdRaw("");
+    setThinkingLevelRaw("");
     setPolicyRaw("");
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -152,13 +157,13 @@ export function useExecutorConfig(): UseExecutorConfigResult {
     executor,
     variant,
     modelId,
-    reasoningId,
+    thinkingLevel,
     permissionPolicy,
     recentEntries,
     setExecutor,
     setVariant,
     setModelId,
-    setReasoningId,
+    setThinkingLevel,
     setPermissionPolicy,
     recordUsage,
     reset,

@@ -119,6 +119,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Repository Pattern](./repository-pattern.md) | Repository trait 定义、依赖注入、测试 | ✅ 已创建 |
 | [ACP Meta Warp](./acp-meta-warp.md) | ACP `_meta.agentdash` 跨层契约（可扩展消息语义层） | ✅ 已更新 |
 | [Address Space Access](./address-space-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
+| [LLM Model Config](./llm-model-config.md) | ThinkingLevel 枚举、ModelInfo 元数据、Provider Registry 架构跨层契约 | ✅ 已创建 |
 | [Execution Hook Runtime](./execution-hook-runtime.md) | Hook Runtime / Workflow Policy / Session Surface 跨层契约 | ✅ 已创建 |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |

@@ -121,7 +121,8 @@ export interface TaskSessionExecutorSummary {
   variant?: string | null;
   model_id?: string | null;
   agent_id?: string | null;
-  reasoning_id?: string | null;
+  /** 推理级别（替代旧的 reasoning_id） */
+  thinking_level?: ThinkingLevel | null;
   permission_policy?: string | null;
   preset_name?: string | null;
   source: string;
@@ -358,6 +359,21 @@ export interface WorkflowProjectionSnapshot {
 
 // ─── Project ──────────────────────────────────────────
 
+export interface McpHttpHeader {
+  name: string;
+  value: string;
+}
+
+export interface McpEnvVar {
+  name: string;
+  value: string;
+}
+
+export type McpServerDecl =
+  | { type: 'http'; name: string; url: string; headers?: McpHttpHeader[] }
+  | { type: 'sse'; name: string; url: string; headers?: McpHttpHeader[] }
+  | { type: 'stdio'; name: string; command: string; args?: string[]; env?: McpEnvVar[] }
+
 export interface AgentPreset {
   name: string;
   agent_type: string;
@@ -377,7 +393,6 @@ export interface Project {
   id: string;
   name: string;
   description: string;
-  backend_id: string;
   config: ProjectConfig;
   created_at: string;
   updated_at: string;
@@ -390,7 +405,7 @@ export interface ProjectAgentExecutor {
   variant?: string | null;
   model_id?: string | null;
   agent_id?: string | null;
-  reasoning_id?: string | null;
+  thinking_level?: ThinkingLevel | null;
   permission_policy?: string | null;
 }
 
@@ -495,7 +510,7 @@ export interface StoryContext {
 export interface Story {
   id: string;
   project_id: string;
-  backend_id: string;
+  default_workspace_id?: string | null;
   title: string;
   description?: string;
   status: StoryStatus;

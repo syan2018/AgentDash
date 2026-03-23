@@ -1,7 +1,7 @@
 use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
 use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
-use agentdash_executor::AgentDashExecutorConfig;
+use agentdash_executor::{AgentDashExecutorConfig, ThinkingLevel};
 use serde::Serialize;
 
 use crate::session_plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
@@ -41,7 +41,7 @@ pub struct SessionExecutorSummary {
     pub variant: Option<String>,
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
-    pub reasoning_id: Option<String>,
+    pub thinking_level: Option<ThinkingLevel>,
     pub permission_policy: Option<String>,
     pub preset_name: Option<String>,
     pub source: String,
@@ -95,7 +95,7 @@ pub fn build_session_executor_summary(
         variant: resolved_config.and_then(|c| c.variant.clone()),
         model_id: resolved_config.and_then(|c| c.model_id.clone()),
         agent_id: resolved_config.and_then(|c| c.agent_id.clone()),
-        reasoning_id: resolved_config.and_then(|c| c.reasoning_id.clone()),
+        thinking_level: resolved_config.and_then(|c| c.thinking_level),
         permission_policy: resolved_config.and_then(|c| c.permission_policy.clone()),
         preset_name,
         source: source.into(),

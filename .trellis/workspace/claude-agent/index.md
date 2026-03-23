@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-03-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~816 | Active |
+| `journal-1.md` | ~848 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 18 | 2026-03-23 | 模型参数清理 + ThinkingLevel 统一 + LLM Provider 扩展 | `5fedfb0` |
 | 17 | 2026-03-23 | Hook 系统前端重构 + Session Context 迁移 + 执行层 Bug 修复 | `81c701f`, `c383f9c`, `408bd95`, `13be286` |
 | 16 | 2026-03-23 | Project/Backend 解耦架构分析 + MCP 连接配置任务规划 | none |
 | 15 | 2026-03-10 | Relay P1-P3: executor aggregation, workspace_files relay, backend management UI | `ee29fb8`, `612750f`, `a327fbc`, `f0201fe` |

@@ -813,3 +813,35 @@ Error
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 模型参数清理 + ThinkingLevel 统一 + LLM Provider 扩展
+
+**Date**: 2026-03-23
+**Task**: 模型参数清理 + ThinkingLevel 统一 + LLM Provider 扩展
+
+### Summary
+
+完成两个任务：(1) 清理 temperature/max_tokens 等 LLM 底层参数，reasoning_id 改为类型化 ThinkingLevel 枚举，打通 PiAgent 注入链路；(2) PiAgentConnector 扩展为多 provider registry（Anthropic/Gemini/DeepSeek/Groq/xAI/OpenAI），discover_options 动态化，前端 Settings 重构为统一 Provider 管理区，ModelInfo 增加 reasoning 元数据驱动 ThinkingLevel 选择器显示逻辑。新增 spec/backend/llm-model-config.md 记录跨层契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5fedfb0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

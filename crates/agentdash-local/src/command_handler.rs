@@ -1,6 +1,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use agent_client_protocol::{
+    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
+};
 use agentdash_relay::*;
 use tokio::sync::mpsc;
 
@@ -161,7 +164,7 @@ impl CommandHandler {
             working_dir: payload.working_dir.clone(),
             env: payload.env,
             executor_config,
-            mcp_servers: vec![],
+            mcp_servers: parse_relay_mcp_servers(&payload.mcp_servers),
             workspace_root: Some(workspace_root),
             address_space: None,
             flow_capabilities: None,
@@ -669,4 +672,122 @@ fn walk_dir_recursive(
             });
         }
     }
+}
+
+// ─── MCP Server 解析 ─────────────────────────────────────
+
+/// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 ACP `McpServer` 列表。
+///
+/// 支持三种传输类型:
+/// - `"type": "http"` → `McpServer::Http`
+/// - `"type": "sse"`  → `McpServer::Sse`
+/// - `"type": "stdio"` (或无 `type` 字段且有 `command` 字段) → `McpServer::Stdio`
+pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
+    let mut servers = Vec::new();
+
+    for entry in raw {
+        let obj = match entry.as_object() {
+            Some(o) => o,
+            None => continue,
+        };
+
+        let name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let transport = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let has_url = obj.contains_key("url");
+        let has_command = obj.contains_key("command");
+
+        let effective_type = if transport == "http" {
+            "http"
+        } else if transport == "sse" {
+            "sse"
+        } else if transport == "stdio" {
+            "stdio"
+        } else if has_url {
+            "http"
+        } else if has_command {
+            "stdio"
+        } else {
+            tracing::debug!(name = %name, "relay MCP server 缺少 type/url/command，跳过");
+            continue;
+        };
+
+        match effective_type {
+            "http" | "sse" => {
+                let url = match obj.get("url").and_then(|v| v.as_str()) {
+                    Some(u) => u.to_string(),
+                    None => {
+                        tracing::warn!(name = %name, "relay MCP Http/SSE server 缺少 url，跳过");
+                        continue;
+                    }
+                };
+                let headers: Vec<HttpHeader> = obj
+                    .get("headers")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let ho = h.as_object()?;
+                                let hname = ho.get("name")?.as_str()?.to_string();
+                                let hvalue = ho.get("value")?.as_str()?.to_string();
+                                Some(HttpHeader::new(hname, hvalue))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if effective_type == "http" {
+                    servers.push(McpServer::Http(
+                        McpServerHttp::new(name, url).headers(headers),
+                    ));
+                } else {
+                    servers.push(McpServer::Sse(
+                        McpServerSse::new(name, url).headers(headers),
+                    ));
+                }
+            }
+            "stdio" => {
+                let command = match obj.get("command").and_then(|v| v.as_str()) {
+                    Some(c) => c.to_string(),
+                    None => {
+                        tracing::warn!(name = %name, "relay MCP Stdio server 缺少 command，跳过");
+                        continue;
+                    }
+                };
+                let args: Vec<String> = obj
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|a| a.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let env: Vec<EnvVariable> = obj
+                    .get("env")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| {
+                                let eo = e.as_object()?;
+                                let ename = eo.get("name")?.as_str()?.to_string();
+                                let evalue = eo.get("value")?.as_str()?.to_string();
+                                Some(EnvVariable::new(ename, evalue))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let server = McpServerStdio::new(name, command).args(args).env(env);
+                servers.push(McpServer::Stdio(server));
+            }
+            _ => {}
+        }
+    }
+
+    servers
 }

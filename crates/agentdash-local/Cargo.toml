@@ -14,6 +14,7 @@ agentdash-relay.workspace = true
 agentdash-executor = { workspace = true }
 agentdash-domain.workspace = true
 agentdash-acp-meta.workspace = true
+agent-client-protocol = { workspace = true }
 
 tokio.workspace = true
 tokio-tungstenite = { version = "0.26" }

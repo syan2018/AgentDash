@@ -1156,7 +1156,7 @@ function ExecutorSummaryCard({ executor }: { executor: TaskSessionExecutorSummar
           {executor.variant && <span>variant: <span className="font-mono text-foreground/80">{executor.variant}</span></span>}
           {executor.model_id && <span>model: <span className="font-mono text-foreground/80">{executor.model_id}</span></span>}
           {executor.agent_id && <span>agent_id: <span className="font-mono text-foreground/80">{executor.agent_id}</span></span>}
-          {executor.reasoning_id && <span>reasoning: <span className="font-mono text-foreground/80">{executor.reasoning_id}</span></span>}
+          {executor.thinking_level && <span>thinking: <span className="font-mono text-foreground/80">{executor.thinking_level}</span></span>}
           {executor.permission_policy && <span>permission: <span className="font-mono text-foreground/80">{executor.permission_policy}</span></span>}
         </div>
         {executor.resolution_error && (

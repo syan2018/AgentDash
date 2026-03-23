@@ -8,7 +8,7 @@ edition.workspace = true
 agentdash-domain = { workspace = true }
 
 # MCP 协议（官方 Rust SDK）
-rmcp = { version = "1.1", features = [
+rmcp = { version = "1.2", features = [
     "server",
     "macros",
     "schemars",

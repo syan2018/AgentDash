@@ -65,7 +65,7 @@ agentdash-local = { path = "crates/agentdash-local" }
 rig-core = "0.24"
 
 # ACP 协议 (官方 SDK)
-agent-client-protocol = { version = "0.9.4", features = ["unstable"] }
+agent-client-protocol = { version = "0.10.2", features = ["unstable"] }
 
 # vibe-kanban executors
 executors = { path = "third_party/vibe-kanban/crates/executors" }

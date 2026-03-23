@@ -15,5 +15,4 @@ path = "src/generate_ts.rs"
 serde = { workspace = true }
 serde_json = { workspace = true }
 agent-client-protocol = { workspace = true }
-ts-rs = { version = "10.1", features = ["serde-json-impl", "no-serde-warnings"] }
-
+ts-rs = { version = "11.1", features = ["serde-json-impl", "no-serde-warnings"] }

@@ -12,6 +12,7 @@ import type {
   ContextContainerDefinition,
   ExecutionAddressSpace,
   HookDiagnosticEntry,
+  HookContextFragment,
   HookSourceRef,
   HookTraceEntry,
   HookSessionRuntimeInfo,
@@ -559,6 +560,16 @@ export function HookRuntimeSurfaceCard({
           ))}
         </div>
       )}
+      {snapshot.context_fragments.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+            上下文注入片段（{snapshot.context_fragments.length} 条）
+          </p>
+          {snapshot.context_fragments.map((fragment) => (
+            <HookContextFragmentRow key={fragment.slot} fragment={fragment} />
+          ))}
+        </div>
+      )}
       <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
         这里显示的是执行层真实加载并参与 loop 的 session 级 hook snapshot，而不是 owner 级静态上下文推导。
       </p>
@@ -595,6 +606,39 @@ function HookRuntimeWorkflowMetaCard({
           run_id: {metadata.run_id}
         </span>
       </div>
+    </div>
+  );
+}
+
+function HookContextFragmentRow({ fragment }: { fragment: HookContextFragment }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-[10px] border border-border bg-background/70 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => fragment.content && setOpen((v) => !v)}
+        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ${fragment.content ? "hover:bg-secondary/35 cursor-pointer" : "cursor-default"}`}
+      >
+        <span className="inline-flex rounded-[4px] border border-border bg-secondary/60 px-1.5 py-0 text-[9px] font-mono text-muted-foreground/70 shrink-0">
+          {fragment.slot}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/85">{fragment.label}</span>
+        {fragment.content && (
+          <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        )}
+      </button>
+      {open && fragment.content && (
+        <div className="border-t border-border/50 px-3 py-2.5">
+          <pre className="max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-foreground/75">
+            {fragment.content}
+          </pre>
+          <HookSourceBadgeList
+            className="mt-2"
+            sourceRefs={fragment.source_refs}
+            sourceSummary={fragment.source_summary}
+          />
+        </div>
+      )}
     </div>
   );
 }

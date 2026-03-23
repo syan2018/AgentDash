@@ -32,6 +32,7 @@ import { AcpPlanCard } from "./AcpPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
 import { AcpTaskContextCard } from "./AcpTaskContextCard";
 import { isAgentDashTaskContextBlock } from "./AcpTaskContextGuard";
+import { AcpOwnerContextCard } from "./AcpOwnerContextCard";
 import { AcpTaskEventCard } from "./AcpTaskEventCard";
 import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 import { AcpSystemEventCard } from "./AcpSystemEventCard";
@@ -79,10 +80,17 @@ function SingleEntry({
 
       // 对于 resource/resource_link 类型，使用优雅的卡片展示
       if (content?.type === "resource" || content?.type === "resource_link") {
-        const contextCard = isAgentDashTaskContextBlock(content)
-          ? <AcpTaskContextCard block={content} />
-          : <ContentBlockCard block={content} variant="compact" />;
-        return contextCard;
+        if (isAgentDashTaskContextBlock(content)) {
+          return <AcpTaskContextCard block={content} />;
+        }
+        const uri = content.type === "resource" ? content.resource?.uri : content.resource?.uri;
+        if (typeof uri === "string" && (
+          uri.startsWith("agentdash://project-context/") ||
+          uri.startsWith("agentdash://story-context/")
+        )) {
+          return <AcpOwnerContextCard block={content} />;
+        }
+        return <ContentBlockCard block={content} variant="compact" />;
       }
 
       const text = extractTextFromContentBlock(content);

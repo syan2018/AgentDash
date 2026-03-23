@@ -58,13 +58,19 @@ pub fn build_hook_trace_notification(
 }
 
 fn should_emit_hook_trace_event(entry: &HookTraceEntry) -> bool {
-    !matches!(
+    // 纯静默决策：无任何实际效果时不产生事件流条目
+    // "规则命中了但什么都没做" 依然是无意义事件，不依赖 matched_rule_keys 判断
+    let is_silent_decision = matches!(
         entry.decision.as_str(),
-        "noop" | "allow" | "effects_applied"
-    ) || !entry.matched_rule_keys.is_empty()
-        || !entry.diagnostics.is_empty()
-        || entry.completion.is_some()
-        || entry.block_reason.is_some()
+        "noop" | "allow" | "effects_applied" | "stop" | "terminal_observed" | "refresh_requested"
+    );
+
+    if is_silent_decision {
+        // 即使是静默决策，有阻塞原因或完成判定时仍需发射（对用户有意义）
+        return entry.block_reason.is_some() || entry.completion.is_some();
+    }
+
+    true
 }
 
 fn hook_event_severity(entry: &HookTraceEntry) -> &'static str {
@@ -73,9 +79,12 @@ fn hook_event_severity(entry: &HookTraceEntry) -> &'static str {
     }
     if matches!(
         entry.decision.as_str(),
-        "ask" | "rewrite" | "refresh_requested" | "steering_injected" | "continue"
+        "ask" | "rewrite" | "steering_injected" | "continue"
     ) {
         return "warning";
+    }
+    if matches!(entry.decision.as_str(), "phase_advanced") {
+        return "success";
     }
     "info"
 }
@@ -168,14 +177,13 @@ mod tests {
         source
     }
 
-    #[test]
-    fn skip_pure_allow_trace() {
-        let entry = HookTraceEntry {
+    fn silent_entry(decision: &str) -> HookTraceEntry {
+        HookTraceEntry {
             sequence: 1,
             timestamp_ms: 1,
             revision: 1,
             trigger: HookTrigger::BeforeTool,
-            decision: "allow".to_string(),
+            decision: decision.to_string(),
             tool_name: None,
             tool_call_id: None,
             subagent_type: None,
@@ -184,11 +192,65 @@ mod tests {
             block_reason: None,
             completion: None,
             diagnostics: Vec::new(),
-        };
+        }
+    }
 
+    #[test]
+    fn skip_pure_allow_trace() {
+        let notification =
+            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("allow"));
+        assert!(notification.is_none());
+    }
+
+    #[test]
+    fn skip_stop_trace() {
+        let notification =
+            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("stop"));
+        assert!(notification.is_none());
+    }
+
+    #[test]
+    fn skip_terminal_observed_trace() {
+        let notification =
+            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("terminal_observed"));
+        assert!(notification.is_none());
+    }
+
+    #[test]
+    fn skip_refresh_requested_trace() {
+        let notification =
+            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("refresh_requested"));
+        assert!(notification.is_none());
+    }
+
+    #[test]
+    fn skip_noop_even_with_matched_rule_keys() {
+        // "规则命中了但什么都没做" 依然是无意义事件
+        let entry = HookTraceEntry {
+            matched_rule_keys: vec!["some_rule".to_string()],
+            ..silent_entry("noop")
+        };
         let notification =
             build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &entry);
         assert!(notification.is_none());
+    }
+
+    #[test]
+    fn emit_stop_with_completion() {
+        // stop + completion 有判定信息时仍需发射
+        let entry = HookTraceEntry {
+            trigger: HookTrigger::BeforeStop,
+            completion: Some(HookCompletionStatus {
+                mode: "checklist_passed".to_string(),
+                satisfied: true,
+                advanced: true,
+                reason: "已完成".to_string(),
+            }),
+            ..silent_entry("stop")
+        };
+        let notification =
+            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &entry);
+        assert!(notification.is_some());
     }
 
     #[test]

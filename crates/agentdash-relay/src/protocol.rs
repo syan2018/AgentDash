@@ -385,7 +385,13 @@ pub struct ExecutorConfigRelay {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_policy: Option<String>,
 }

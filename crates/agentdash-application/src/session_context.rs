@@ -39,6 +39,7 @@ pub enum SessionOwnerContext {
 pub struct SessionExecutorSummary {
     pub executor: Option<String>,
     pub variant: Option<String>,
+    pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
     pub thinking_level: Option<ThinkingLevel>,
@@ -93,6 +94,7 @@ pub fn build_session_executor_summary(
     SessionExecutorSummary {
         executor: resolved_config.map(|c| c.executor.clone()),
         variant: resolved_config.and_then(|c| c.variant.clone()),
+        provider_id: resolved_config.and_then(|c| c.provider_id.clone()),
         model_id: resolved_config.and_then(|c| c.model_id.clone()),
         agent_id: resolved_config.and_then(|c| c.agent_id.clone()),
         thinking_level: resolved_config.and_then(|c| c.thinking_level),

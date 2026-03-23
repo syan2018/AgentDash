@@ -49,6 +49,7 @@ pub enum ProjectAgentWritebackMode {
 pub struct ProjectAgentExecutorResponse {
     pub executor: String,
     pub variant: Option<String>,
+    pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
     pub thinking_level: Option<agentdash_executor::ThinkingLevel>,
@@ -109,6 +110,7 @@ mod tests {
             executor: ProjectAgentExecutorResponse {
                 executor: "PI_AGENT".to_string(),
                 variant: None,
+                provider_id: Some("openai".to_string()),
                 model_id: Some("gpt-5.4".to_string()),
                 agent_id: None,
                 thinking_level: None,
@@ -369,6 +371,7 @@ fn build_project_agent_summary(
         executor: ProjectAgentExecutorResponse {
             executor: agent.executor_config.executor.clone(),
             variant: agent.executor_config.variant.clone(),
+            provider_id: agent.executor_config.provider_id.clone(),
             model_id: agent.executor_config.model_id.clone(),
             agent_id: agent.executor_config.agent_id.clone(),
             thinking_level: agent.executor_config.thinking_level,

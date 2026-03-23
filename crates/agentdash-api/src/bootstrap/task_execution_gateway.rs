@@ -1393,7 +1393,17 @@ async fn relay_start_prompt(
     let relay_config = executor_config.map(|c| ExecutorConfigRelay {
         executor: c.executor,
         variant: c.variant,
+        provider_id: c.provider_id,
         model_id: c.model_id,
+        agent_id: c.agent_id,
+        thinking_level: c.thinking_level.map(|level| match level {
+            agentdash_executor::ThinkingLevel::Off => "off",
+            agentdash_executor::ThinkingLevel::Minimal => "minimal",
+            agentdash_executor::ThinkingLevel::Low => "low",
+            agentdash_executor::ThinkingLevel::Medium => "medium",
+            agentdash_executor::ThinkingLevel::High => "high",
+            agentdash_executor::ThinkingLevel::Xhigh => "xhigh",
+        }.to_string()),
         permission_policy: c.permission_policy,
     });
 

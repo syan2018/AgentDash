@@ -100,6 +100,8 @@ pub struct AgentDashExecutorConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
@@ -114,6 +116,7 @@ impl AgentDashExecutorConfig {
         Self {
             executor: executor.into(),
             variant: None,
+            provider_id: None,
             model_id: None,
             agent_id: None,
             thinking_level: None,

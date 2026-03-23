@@ -55,6 +55,9 @@ pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<AgentDashExec
         if let Some(v) = obj.get("variant").and_then(|v| v.as_str()) {
             config.variant = normalize_option_string(Some(v.to_string()));
         }
+        if let Some(v) = obj.get("provider_id").and_then(|v| v.as_str()) {
+            config.provider_id = normalize_option_string(Some(v.to_string()));
+        }
         if let Some(v) = obj.get("model_id").and_then(|v| v.as_str()) {
             config.model_id = normalize_option_string(Some(v.to_string()));
         }

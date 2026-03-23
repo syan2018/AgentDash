@@ -202,3 +202,28 @@ const displayName = String(raw.display_name ?? "");
 - [ ] 共享状态使用 `Arc`
 - [ ] 业务 HTTP DTO 输出为 `snake_case`
 - [ ] 外部协议桥接对象是否已明确标注例外边界
+
+---
+
+## Session Context 注入架构规范
+
+### system_context vs prompt_blocks
+
+Project / Story 伴随会话的 owner 级上下文（身份声明 + context markdown）必须通过 `system_context` 字段注入，不得出现在 `prompt_blocks` 的用户消息侧。
+
+| 字段 | 用途 | 展示 |
+|------|------|------|
+| `PromptSessionRequest.system_context` | owner 级上下文，每轮随 system prompt 注入 Agent | 不出现在用户消息流 |
+| `prompt_blocks` 中的 resource block | `agentdash://project-context/` 或 `agentdash://story-context/` URI，仅作前端展示锚点 | 渲染为 AcpOwnerContextCard |
+
+**禁止行为**：
+
+- 禁止在 `prompt_blocks` 中放 instruction text block（`## Instruction 你是...`），这属于 system 层信息
+- 禁止在用户消息文本中暴露 `当前来源摘要：project_core(project), ...` 等技术 slot 标识
+
+### PromptSessionRequest 新增字段时的规范
+
+`PromptSessionRequest` 是跨多个 crate 的核心结构，新增字段后必须：
+1. 在 `connector.rs::ExecutionContext` 同步添加对应字段
+2. 在 `hub.rs::start_prompt_with_follow_up` 的 `ExecutionContext` 构造处填充
+3. 在所有 `PromptSessionRequest { ... }` 字面量构造处补充新字段（当前分布在 `agentdash-api`、`agentdash-executor` 测试、`agentdash-local` 共三处）

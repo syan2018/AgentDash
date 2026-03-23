@@ -280,15 +280,37 @@ if (isTerminalToolCallStatus(incomingStatus)) {
 当前必须可见的系统事件至少包括：
 
 - `executor_session_bound`
-- `turn_started`
-- `turn_completed`
+- `turn_interrupted`（注意：`turn_started` / `turn_completed` **已静默**——会话运行状态由发送按钮表达）
 - `turn_failed`
-- `hook_event`
+- `hook_event`（见下方 decision 级过滤规则）
 - `companion_dispatch_registered`
 - `companion_result_available`
 - `companion_result_returned`
 
-其中 `hook_event` 卡片必须能直接给出：
+### hook_event 可见性规则（decision 级过滤）
+
+`hook_event` 不是无条件显示。`AcpSystemEventGuard` 对其做 decision 级二次过滤：
+
+**静默决策**（不在会话流中渲染卡片）：
+- `stop` — 自然结束放行，turn 结束已由消息列表末尾表达
+- `terminal_observed` — 纯技术终态记录，无用户感知价值
+- `refresh_requested` — 内部快照刷新机制，用户无需感知
+
+**例外**：即使是静默决策，若携带 `block_reason` 或 `completion` 则仍显示。
+
+decision 通过解析 `event.code`（格式 `hook:{trigger}:{decision}`）获取。
+
+### hook_event 渲染分级
+
+后端 `should_emit_hook_trace_event` 是第一道过滤，前端 Guard 是第二道。
+通过 Guard 的 hook_event 再按 decision 分两路渲染（见 `AcpSystemEventCard.tsx`）：
+
+| 类型 | decision | 渲染方式 |
+|------|----------|----------|
+| 高优先级干预 | `deny/ask/rewrite/continue` 或有 `block_reason` | 完整大卡片（warning/error 色调） |
+| 信息型 | `context_injected/steering_injected/phase_advanced` 等 | 可展开细条（默认折叠） |
+
+`hook_event` 卡片（高优先级路径）必须能直接给出：
 
 - `trigger`
 - `decision`
@@ -297,6 +319,11 @@ if (isTerminalToolCallStatus(incomingStatus)) {
 - `diagnostics`
 
 不能要求用户再去展开 hook runtime 面板才能理解为什么当前会话继续、停止或推进 phase。
+
+### context_fragments 展示规则
+
+`HookRuntimeSurfaceCard` 中，`context_fragments` 不能仅显示计数 badge。
+每个 fragment 必须有可展开的 `HookContextFragmentRow`：slot badge + label + 展开 content。
 
 ---
 

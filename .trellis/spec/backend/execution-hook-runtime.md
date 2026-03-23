@@ -171,7 +171,7 @@ pub struct HookSessionRuntimeSnapshot {
 | `BeforeTool` | 可以 `Allow / Deny / Ask / Rewrite`，其中 `Ask` 必须在当前 tool call 边界同步挂起等待审批，不得退化成“先报错，下一轮再猜” |
 | `AfterTool` | 可以附加 diagnostics，并决定是否 `refresh_snapshot` |
 | `AfterTurn` | 可以追加针对“本轮结果”的 steering / follow-up，但不能重复注入 phase 基线约束，避免 loop 因永续 steering 而无法抵达 `BeforeStop` |
-| `BeforeStop` | 必须在 loop 退出前同步返回 stop gate 决策 |
+| `BeforeStop` | 必须在 loop 退出前同步返回 stop gate 决策。**关键约束：无 workflow 绑定时 `completion = None`，此时必须允许自然结束（视为无 gate），不得因 `completion_satisfied = false` 而错误阻止退出。** |
 | `BeforeSubagentDispatch` | 必须在 companion/subagent 真正启动前同步决定是否允许派发，并返回子 agent 应继承的 context/constraints |
 | `AfterSubagentDispatch` | 必须记录派发结果、目标 session/turn，并写入 trace/diagnostics |
 | `SessionTerminal` | 当 executor 观察到 session 进入终态时，必须让 hook runtime 有机会同步产出 completion judgment 并推进 workflow |
@@ -663,3 +663,45 @@ before_stop / phase advance / frontend 展示使用同一事实来源
 - 对齐项目早期的可插拔策略哲学
 - 保持执行层与编排/注入层边界清晰
 - 让 workflow 继续作为声明信息源，而不是执行引擎
+
+---
+
+## Scenario: agent_message_chunk 合并协议（Pi Agent 流模式）
+
+### 背景
+
+Pi Agent 在 streaming 模式下同时产生两类 `agent_message_chunk`：
+
+1. **TextDelta 增量 chunk** — `AgentEvent::MessageUpdate::TextDelta` 触发，每次只含新增文字片段
+2. **MessageEnd 全量 chunk** — `AgentEvent::MessageEnd` 触发，含完整的消息文本快照
+
+两类 chunk 共享相同的 `_meta.agentdash.trace.entryIndex`（`entry_index` 在 `MessageEnd` 之后才递增），因此 `(turnId, entryIndex, sessionUpdate)` 三元组可以唯一标识"同一条消息"。
+
+### 前端合并契约
+
+前端 `useAcpStream.applyNotification` 在处理 chunk 时必须按以下顺序：
+
+**Step 1：entryIndex upsert（优先）**
+
+若 incoming chunk 携带 `turnId` + `entryIndex`，先向后遍历 entries 查找同 `(turnId, entryIndex, sessionUpdate)` 的已有 entry：
+- **找到** → 用 incoming 文本**直接覆盖**（全量快照覆盖增量累积版本），不拼接，不新建
+- **找不到** → 进入 Step 2
+
+**Step 2：相邻合并（次选，正常 delta 场景）**
+
+`(turnId, sessionUpdate)` 相同且相邻的 chunk → `mergeStreamChunk` 累积拼接。
+
+**禁止行为**：不得在 entryIndex upsert 命中时走 `${previous}${incoming}` 拼接，这会导致重复渲染。
+
+### MessageEnd 行为说明
+
+`pi_agent.rs::convert_event_to_notifications` 对 `AgentEvent::MessageEnd` 的处理：
+- 正常路径：发出包含完整文本的 `AgentMessageChunk` + 递增 `entry_index`
+- 错误路径（`error_message` 非空且无实际 TextDelta content）：同上，发出错误文本 chunk
+
+**MessageEnd 发全量快照是正确且必要的行为**，不应修改。前端负责通过 entryIndex 识别并正确覆盖。
+
+### 关键文件
+
+- `crates/agentdash-executor/src/connectors/pi_agent.rs` — `convert_event_to_notifications`
+- `frontend/src/features/acp-session/model/useAcpStream.ts` — `applyNotification` chunk 合并

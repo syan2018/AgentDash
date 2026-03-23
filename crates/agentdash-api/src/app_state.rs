@@ -150,6 +150,12 @@ impl AppState {
             Arc::new(RelayAddressSpaceService::new(backend_registry.clone()));
         let executor_hub_handle = SharedExecutorHubHandle::default();
 
+        let inline_persister: Arc<dyn crate::address_space_access::InlineContentPersister> =
+            Arc::new(crate::address_space_access::DbInlineContentPersister::new(
+                project_repo.clone(),
+                story_repo.clone(),
+            ));
+
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
 
         if let Some(pi_connector) = build_pi_agent_connector(
@@ -160,6 +166,7 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
             executor_hub_handle.clone(),
+            Some(inline_persister),
         )
         .await
         {
@@ -238,6 +245,7 @@ async fn build_pi_agent_connector(
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     workflow_run_repo: Arc<dyn WorkflowRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
+    inline_persister: Option<Arc<dyn crate::address_space_access::InlineContentPersister>>,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     let mut connector =
         agentdash_executor::connectors::pi_agent::build_pi_agent_connector(workspace_root, settings)
@@ -248,6 +256,7 @@ async fn build_pi_agent_connector(
         workflow_definition_repo,
         workflow_run_repo,
         executor_hub_handle,
+        inline_persister,
     )));
     Some(connector)
 }

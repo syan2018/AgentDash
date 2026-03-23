@@ -10,7 +10,7 @@ mod runtime_delegate;
 pub use connector::{
     AgentConnector, AgentDashExecutorConfig, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
-    ExecutionStream, ExecutorInfo, PromptPayload,
+    ExecutionStream, ExecutorInfo, FlowCapabilities, PromptPayload,
 };
 #[cfg(feature = "pi-agent")]
 pub use connector::RuntimeToolProvider;

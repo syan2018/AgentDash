@@ -127,6 +127,24 @@ pub struct ExecutionContext {
     /// 会话级 Hook Runtime 快照。
     /// 当前阶段仅作为执行层承载位，后续由 ExecutorHub / Hook provider 正式填充。
     pub hook_session: Option<Arc<HookSessionRuntime>>,
+    /// Session 级别声明的流程工具能力集。
+    /// 工具构建时按此裁剪：仅注入声明可用的流程工具。
+    #[allow(clippy::type_complexity)]
+    pub flow_capabilities: FlowCapabilities,
+}
+
+/// 流程工具能力声明。
+/// 按 session 类型在 session plan 阶段填充，runtime tool provider 据此裁剪注入。
+#[derive(Debug, Clone, Default)]
+pub struct FlowCapabilities {
+    /// 是否允许汇报 workflow artifact
+    pub workflow_artifact: bool,
+    /// 是否允许发起 companion dispatch（仅 Story session）
+    pub companion_dispatch: bool,
+    /// 是否允许完成 companion session
+    pub companion_complete: bool,
+    /// 是否允许解析 hook pending action
+    pub resolve_hook_action: bool,
 }
 
 /// 向后兼容别名，规范定义在 `agentdash_domain::common::MountCapability`
@@ -157,6 +175,12 @@ pub struct ExecutionAddressSpace {
     pub mounts: Vec<ExecutionMount>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_mount_id: Option<String>,
+    /// 来源 Project ID（用于 inline_fs 写入持久化追溯）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_project_id: Option<String>,
+    /// 来源 Story ID（用于 inline_fs 写入持久化追溯）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_story_id: Option<String>,
 }
 
 impl ExecutionAddressSpace {

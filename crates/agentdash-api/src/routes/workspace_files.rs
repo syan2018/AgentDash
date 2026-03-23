@@ -552,6 +552,7 @@ async fn relay_list_files(
                 },
                 recursive: true,
             },
+            None,
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -592,6 +593,7 @@ async fn relay_read_file(
                 mount_id: "main".to_string(),
                 path: rel_path.to_string(),
             },
+            None,
         )
         .await
         .map_err(ApiError::Internal)?;

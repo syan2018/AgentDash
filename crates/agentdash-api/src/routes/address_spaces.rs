@@ -10,7 +10,7 @@ use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
 use crate::address_space_access::{
     ListOptions, ReadResult, ResourceRef, SessionMountTarget, inline_files_from_mount,
-    PROVIDER_INLINE_FS,
+    normalize_mount_relative_path, PROVIDER_INLINE_FS,
 };
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
@@ -120,6 +120,7 @@ pub async fn list_address_entries(
                         pattern: query.query.clone(),
                         recursive,
                     },
+                    None,
                 )
                 .await
                 .map_err(ApiError::Internal)?;
@@ -210,6 +211,7 @@ pub async fn list_mount_entries(
                 pattern: query.pattern.clone(),
                 recursive,
             },
+            None,
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -280,6 +282,7 @@ pub async fn read_mount_file(
                 mount_id: req.mount_id.clone(),
                 path: req.path.clone(),
             },
+            None,
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -290,6 +293,102 @@ pub async fn read_mount_file(
         path: result.path,
         content: result.content,
         size,
+    }))
+}
+
+// ─── Mount 级文件写入 ──────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct WriteMountFileRequest {
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub story_id: Option<String>,
+    pub mount_id: String,
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WriteMountFileResponse {
+    pub mount_id: String,
+    pub path: String,
+    pub size: u64,
+    pub persisted: bool,
+}
+
+/// `POST /api/address-spaces/write-file`
+///
+/// 写入文件到指定 mount。relay_fs 走远端 relay；inline_fs 持久化到 project/story 的容器配置。
+pub async fn write_mount_file(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<WriteMountFileRequest>,
+) -> Result<Json<WriteMountFileResponse>, ApiError> {
+    let address_space = resolve_address_space(
+        &state,
+        &req.project_id,
+        &req.story_id,
+    )
+    .await?;
+
+    let mount = address_space
+        .mounts
+        .iter()
+        .find(|m| m.id == req.mount_id)
+        .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
+
+    if !mount.supports(agentdash_executor::ExecutionMountCapability::Write) {
+        return Err(ApiError::BadRequest(format!(
+            "挂载点 \"{}\" 没有 write 能力",
+            mount.display_name,
+        )));
+    }
+
+    let normalized_path = normalize_mount_relative_path(&req.path, false)
+        .map_err(ApiError::BadRequest)?;
+
+    if mount.provider == PROVIDER_INLINE_FS {
+        let persister = crate::address_space_access::DbInlineContentPersister::new(
+            state.repos.project_repo.clone(),
+            state.repos.story_repo.clone(),
+        );
+        let overlay = crate::address_space_access::InlineContentOverlay::new(std::sync::Arc::new(persister));
+        overlay
+            .write(&address_space, mount, &normalized_path, &req.content)
+            .await
+            .map_err(ApiError::Internal)?;
+
+        let size = req.content.len() as u64;
+        return Ok(Json(WriteMountFileResponse {
+            mount_id: req.mount_id,
+            path: normalized_path,
+            size,
+            persisted: true,
+        }));
+    }
+
+    check_mount_backend_online(&state, &address_space, &req.mount_id).await?;
+
+    state
+        .services
+        .address_space_service
+        .write_text(
+            &address_space,
+            &ResourceRef {
+                mount_id: req.mount_id.clone(),
+                path: req.path.clone(),
+            },
+            &req.content,
+            None,
+        )
+        .await
+        .map_err(ApiError::Internal)?;
+
+    let size = req.content.len() as u64;
+    Ok(Json(WriteMountFileResponse {
+        mount_id: req.mount_id,
+        path: normalized_path,
+        size,
+        persisted: false,
     }))
 }
 

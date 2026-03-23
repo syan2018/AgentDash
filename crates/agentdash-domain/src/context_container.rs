@@ -137,21 +137,9 @@ pub fn validate_context_container(container: &ContextContainerDefinition) -> Res
             if container
                 .capabilities
                 .iter()
-                .any(|item| matches!(item, ContextContainerCapability::Write))
-            {
-                return Err(
-                    "inline_files 当前仅支持只读访问，不允许声明 write capability".to_string(),
-                );
-            }
-            if container
-                .capabilities
-                .iter()
                 .any(|item| matches!(item, ContextContainerCapability::Exec))
             {
                 return Err("inline_files 不支持 exec capability".to_string());
-            }
-            if container.default_write {
-                return Err("inline_files 不支持 default_write=true".to_string());
             }
 
             let mut seen_paths = BTreeSet::new();

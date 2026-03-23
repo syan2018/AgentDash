@@ -44,6 +44,241 @@ use crate::relay::registry::BackendRegistry;
 
 const MAX_SEARCH_FILE_BYTES: u64 = 256 * 1024;
 
+// ─── Inline Content Persistence ─────────────────────────────
+
+/// 内联文件写入持久化接口。
+/// 实现方负责将 inline_fs mount 的文件修改写回到对应的
+/// Project/Story container 配置中。
+#[async_trait]
+pub trait InlineContentPersister: Send + Sync {
+    /// 将文件内容持久化到归属的 container 定义。
+    /// `source_project_id` / `source_story_id` 标识来源 owner，
+    /// `container_id` 从 mount.root_ref 中解析（`context://inline/{id}`），
+    /// `path` 为归一化后的文件路径。
+    async fn persist_write(
+        &self,
+        source_project_id: &str,
+        source_story_id: Option<&str>,
+        container_id: &str,
+        path: &str,
+        content: &str,
+    ) -> Result<(), String>;
+}
+
+/// Per-session 的内联文件写入覆盖层。
+///
+/// 设计目标：
+/// - 同一 session 内 write 后立即可 read（write-through cache）
+/// - 写入同时通过 `InlineContentPersister` 持久化到 DB
+/// - 多个 Agent 工具共享同一个 overlay（`Arc<InlineContentOverlay>`）
+pub struct InlineContentOverlay {
+    overrides: tokio::sync::RwLock<std::collections::HashMap<(String, String), String>>,
+    persister: Arc<dyn InlineContentPersister>,
+}
+
+impl InlineContentOverlay {
+    pub fn new(persister: Arc<dyn InlineContentPersister>) -> Self {
+        Self {
+            overrides: Default::default(),
+            persister,
+        }
+    }
+
+    pub async fn read(&self, mount_id: &str, path: &str) -> Option<String> {
+        self.overrides
+            .read()
+            .await
+            .get(&(mount_id.to_string(), path.to_string()))
+            .cloned()
+    }
+
+    pub async fn has_override(&self, mount_id: &str, path: &str) -> bool {
+        self.overrides
+            .read()
+            .await
+            .contains_key(&(mount_id.to_string(), path.to_string()))
+    }
+
+    /// 返回指定 mount 下所有被覆盖的文件（用于 list 时合并新增文件）
+    pub async fn overridden_files(&self, mount_id: &str) -> std::collections::HashMap<String, String> {
+        self.overrides
+            .read()
+            .await
+            .iter()
+            .filter(|((mid, _), _)| mid == mount_id)
+            .map(|((_, path), content)| (path.clone(), content.clone()))
+            .collect()
+    }
+
+    pub async fn write(
+        &self,
+        address_space: &ExecutionAddressSpace,
+        mount: &agentdash_executor::ExecutionMount,
+        path: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let container_id = mount
+            .root_ref
+            .strip_prefix("context://inline/")
+            .ok_or_else(|| {
+                format!(
+                    "无法从 root_ref 解析 container_id: {}",
+                    mount.root_ref
+                )
+            })?;
+
+        let project_id = address_space
+            .source_project_id
+            .as_deref()
+            .ok_or("address space 缺少 source_project_id，无法持久化 inline 写入")?;
+
+        // 1. 写入本地覆盖缓存（立即可读）
+        self.overrides
+            .write()
+            .await
+            .insert((mount.id.clone(), path.to_string()), content.to_string());
+
+        // 2. 持久化到 DB
+        self.persister
+            .persist_write(
+                project_id,
+                address_space.source_story_id.as_deref(),
+                container_id,
+                path,
+                content,
+            )
+            .await
+    }
+}
+
+// ─── DB Inline Content Persister ────────────────────────────
+
+/// 基于 Project / Story Repository 的 InlineContentPersister 实现。
+///
+/// 将 inline_fs 的文件写入持久化到对应的 ContextContainerDefinition
+/// (project.config.context_containers 或 story.context.context_containers)。
+pub struct DbInlineContentPersister {
+    project_repo: Arc<dyn agentdash_domain::project::ProjectRepository>,
+    story_repo: Arc<dyn agentdash_domain::story::StoryRepository>,
+}
+
+impl DbInlineContentPersister {
+    pub fn new(
+        project_repo: Arc<dyn agentdash_domain::project::ProjectRepository>,
+        story_repo: Arc<dyn agentdash_domain::story::StoryRepository>,
+    ) -> Self {
+        Self {
+            project_repo,
+            story_repo,
+        }
+    }
+
+    fn upsert_inline_file(
+        containers: &mut Vec<agentdash_domain::context_container::ContextContainerDefinition>,
+        container_id: &str,
+        path: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let container = containers
+            .iter_mut()
+            .find(|c| c.id.trim() == container_id)
+            .ok_or_else(|| format!("容器 {} 不存在", container_id))?;
+
+        match &mut container.provider {
+            agentdash_domain::context_container::ContextContainerProvider::InlineFiles {
+                files,
+            } => {
+                if let Some(file) = files.iter_mut().find(|f| {
+                    normalize_mount_relative_path(&f.path, false)
+                        .unwrap_or_default()
+                        == path
+                }) {
+                    file.content = content.to_string();
+                } else {
+                    files.push(agentdash_domain::context_container::ContextContainerFile {
+                        path: path.to_string(),
+                        content: content.to_string(),
+                    });
+                }
+                Ok(())
+            }
+            _ => Err(format!(
+                "容器 {} 不是 inline_files 类型",
+                container_id
+            )),
+        }
+    }
+}
+
+#[async_trait]
+impl InlineContentPersister for DbInlineContentPersister {
+    async fn persist_write(
+        &self,
+        source_project_id: &str,
+        source_story_id: Option<&str>,
+        container_id: &str,
+        path: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let project_uuid = uuid::Uuid::parse_str(source_project_id)
+            .map_err(|e| format!("无效的 project_id: {e}"))?;
+
+        // 优先尝试在 story 中查找（story 级 container 覆盖 project 级）
+        if let Some(story_id_str) = source_story_id {
+            let story_uuid = uuid::Uuid::parse_str(story_id_str)
+                .map_err(|e| format!("无效的 story_id: {e}"))?;
+            if let Some(mut story) = self
+                .story_repo
+                .get_by_id(story_uuid)
+                .await
+                .map_err(|e| format!("加载 story 失败: {e}"))?
+            {
+                if story
+                    .context
+                    .context_containers
+                    .iter()
+                    .any(|c| c.id.trim() == container_id)
+                {
+                    Self::upsert_inline_file(
+                        &mut story.context.context_containers,
+                        container_id,
+                        path,
+                        content,
+                    )?;
+                    self.story_repo
+                        .update(&story)
+                        .await
+                        .map_err(|e| format!("保存 story 失败: {e}"))?;
+                    return Ok(());
+                }
+            }
+        }
+
+        // 回退到 project
+        let mut project = self
+            .project_repo
+            .get_by_id(project_uuid)
+            .await
+            .map_err(|e| format!("加载 project 失败: {e}"))?
+            .ok_or_else(|| format!("project {} 不存在", source_project_id))?;
+
+        Self::upsert_inline_file(
+            &mut project.config.context_containers,
+            container_id,
+            path,
+            content,
+        )?;
+        self.project_repo
+            .update(&project)
+            .await
+            .map_err(|e| format!("保存 project 失败: {e}"))?;
+
+        Ok(())
+    }
+}
+
+// ─── Service ────────────────────────────────────────────────
+
 #[derive(Clone)]
 pub struct RelayAddressSpaceService {
     backend_registry: Arc<BackendRegistry>,
@@ -130,6 +365,7 @@ impl RelayAddressSpaceService {
         &self,
         address_space: &ExecutionAddressSpace,
         target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
     ) -> Result<ReadResult, String> {
         let mount = resolve_mount(
             address_space,
@@ -138,6 +374,12 @@ impl RelayAddressSpaceService {
         )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
         if mount.provider == PROVIDER_INLINE_FS {
+            // overlay 优先（session 内写入立即可读）
+            if let Some(ov) = overlay {
+                if let Some(content) = ov.read(&mount.id, &path).await {
+                    return Ok(ReadResult { path, content });
+                }
+            }
             let files = inline_files_from_mount(mount)?;
             let content = files
                 .get(&path)
@@ -182,6 +424,7 @@ impl RelayAddressSpaceService {
         address_space: &ExecutionAddressSpace,
         target: &ResourceRef,
         content: &str,
+        overlay: Option<&InlineContentOverlay>,
     ) -> Result<(), String> {
         let mount = resolve_mount(
             address_space,
@@ -190,10 +433,13 @@ impl RelayAddressSpaceService {
         )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
         if mount.provider == PROVIDER_INLINE_FS {
-            return Err(format!(
-                "mount `{}` 是只读内联容器，当前不支持写入",
-                mount.id
-            ));
+            let ov = overlay.ok_or_else(|| {
+                format!(
+                    "mount `{}` 是内联容器，需要 InlineContentOverlay 才能写入",
+                    mount.id
+                )
+            })?;
+            return ov.write(address_space, mount, &path, content).await;
         }
         let response = self
             .backend_registry
@@ -226,13 +472,21 @@ impl RelayAddressSpaceService {
         address_space: &ExecutionAddressSpace,
         mount_id: &str,
         options: ListOptions,
+        overlay: Option<&InlineContentOverlay>,
     ) -> Result<ListResult, String> {
         let mount = resolve_mount(address_space, mount_id, ExecutionMountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
         if mount.provider == PROVIDER_INLINE_FS {
+            let mut files = inline_files_from_mount(mount)?;
+            // 合并 overlay 中的新增/修改文件
+            if let Some(ov) = overlay {
+                for (p, c) in ov.overridden_files(&mount.id).await {
+                    files.insert(p, c);
+                }
+            }
             return Ok(ListResult {
                 entries: list_inline_entries(
-                    &inline_files_from_mount(mount)?,
+                    &files,
                     &path,
                     options.pattern.as_deref(),
                     options.recursive,
@@ -327,6 +581,7 @@ impl RelayAddressSpaceService {
         path: &str,
         query: &str,
         max_results: usize,
+        overlay: Option<&InlineContentOverlay>,
     ) -> Result<Vec<String>, String> {
         let mount = resolve_mount(address_space, mount_id, ExecutionMountCapability::Search)?;
         let base_path = normalize_mount_relative_path(path, true)?;
@@ -339,6 +594,7 @@ impl RelayAddressSpaceService {
                     pattern: None,
                     recursive: true,
                 },
+                overlay,
             )
             .await?;
 
@@ -355,6 +611,7 @@ impl RelayAddressSpaceService {
                         mount_id: mount.id.clone(),
                         path: entry.path.clone(),
                     },
+                    overlay,
                 )
                 .await
             {
@@ -385,6 +642,7 @@ pub struct RelayRuntimeToolProvider {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     workflow_run_repo: Arc<dyn WorkflowRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
+    inline_persister: Option<Arc<dyn InlineContentPersister>>,
 }
 
 impl RelayRuntimeToolProvider {
@@ -394,6 +652,7 @@ impl RelayRuntimeToolProvider {
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         workflow_run_repo: Arc<dyn WorkflowRunRepository>,
         executor_hub_handle: SharedExecutorHubHandle,
+        inline_persister: Option<Arc<dyn InlineContentPersister>>,
     ) -> Self {
         Self {
             service,
@@ -401,6 +660,7 @@ impl RelayRuntimeToolProvider {
             workflow_definition_repo,
             workflow_run_repo,
             executor_hub_handle,
+            inline_persister,
         }
     }
 }
@@ -431,41 +691,68 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             ConnectorError::InvalidConfig("缺少 address_space，无法构建统一访问工具".to_string())
         })?;
 
-        Ok(vec![
+        let overlay: Option<Arc<InlineContentOverlay>> = self
+            .inline_persister
+            .as_ref()
+            .map(|p| Arc::new(InlineContentOverlay::new(p.clone())));
+
+        let mut tools: Vec<DynAgentTool> = vec![
             Arc::new(MountsListTool::new(
                 self.service.clone(),
                 address_space.clone(),
-            )) as DynAgentTool,
-            Arc::new(FsReadTool::new(self.service.clone(), address_space.clone())) as DynAgentTool,
+            )),
+            Arc::new(FsReadTool::new(
+                self.service.clone(),
+                address_space.clone(),
+                overlay.clone(),
+            )),
             Arc::new(FsWriteTool::new(
                 self.service.clone(),
                 address_space.clone(),
-            )) as DynAgentTool,
-            Arc::new(FsListTool::new(self.service.clone(), address_space.clone())) as DynAgentTool,
+                overlay.clone(),
+            )),
+            Arc::new(FsListTool::new(
+                self.service.clone(),
+                address_space.clone(),
+                overlay.clone(),
+            )),
             Arc::new(FsSearchTool::new(
                 self.service.clone(),
                 address_space.clone(),
-            )) as DynAgentTool,
-            Arc::new(ShellExecTool::new(self.service.clone(), address_space)) as DynAgentTool,
-            Arc::new(WorkflowArtifactReportTool::new(
+                overlay.clone(),
+            )),
+            Arc::new(ShellExecTool::new(self.service.clone(), address_space)),
+        ];
+
+        let caps = &context.flow_capabilities;
+        if caps.workflow_artifact {
+            tools.push(Arc::new(WorkflowArtifactReportTool::new(
                 self.workflow_definition_repo.clone(),
                 self.workflow_run_repo.clone(),
                 context,
-            )) as DynAgentTool,
-            Arc::new(CompanionDispatchTool::new(
+            )));
+        }
+        if caps.companion_dispatch {
+            tools.push(Arc::new(CompanionDispatchTool::new(
                 self.session_binding_repo.clone(),
                 self.executor_hub_handle.clone(),
                 context,
-            )) as DynAgentTool,
-            Arc::new(CompanionCompleteTool::new(
+            )));
+        }
+        if caps.companion_complete {
+            tools.push(Arc::new(CompanionCompleteTool::new(
                 self.executor_hub_handle.clone(),
                 context,
-            )) as DynAgentTool,
-            Arc::new(ResolveHookActionTool::new(
+            )));
+        }
+        if caps.resolve_hook_action {
+            tools.push(Arc::new(ResolveHookActionTool::new(
                 self.executor_hub_handle.clone(),
                 context,
-            )) as DynAgentTool,
-        ])
+            )));
+        }
+
+        Ok(tools)
     }
 }
 
@@ -952,6 +1239,7 @@ impl AgentTool for CompanionDispatchTool {
                     mcp_servers: execution_slice.mcp_servers.clone(),
                     workspace_root: Some(self.workspace_root.clone()),
                     address_space: execution_slice.address_space.clone(),
+                    flow_capabilities: None,
                 },
             )
             .await
@@ -1801,6 +2089,8 @@ fn filter_address_space_capabilities(
     ExecutionAddressSpace {
         mounts,
         default_mount_id,
+        source_project_id: address_space.source_project_id.clone(),
+        source_story_id: address_space.source_story_id.clone(),
     }
 }
 
@@ -2058,12 +2348,18 @@ impl AgentTool for MountsListTool {
 struct FsReadTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: ExecutionAddressSpace,
+    overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsReadTool {
-    fn new(service: Arc<RelayAddressSpaceService>, address_space: ExecutionAddressSpace) -> Self {
+    fn new(
+        service: Arc<RelayAddressSpaceService>,
+        address_space: ExecutionAddressSpace,
+        overlay: Option<Arc<InlineContentOverlay>>,
+    ) -> Self {
         Self {
             service,
             address_space,
+            overlay,
         }
     }
 }
@@ -2106,6 +2402,7 @@ impl AgentTool for FsReadTool {
                     mount_id,
                     path: params.path,
                 },
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -2137,12 +2434,18 @@ impl AgentTool for FsReadTool {
 struct FsWriteTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: ExecutionAddressSpace,
+    overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsWriteTool {
-    fn new(service: Arc<RelayAddressSpaceService>, address_space: ExecutionAddressSpace) -> Self {
+    fn new(
+        service: Arc<RelayAddressSpaceService>,
+        address_space: ExecutionAddressSpace,
+        overlay: Option<Arc<InlineContentOverlay>>,
+    ) -> Self {
         Self {
             service,
             address_space,
+            overlay,
         }
     }
 }
@@ -2181,8 +2484,13 @@ impl AgentTool for FsWriteTool {
             mount_id,
             path: params.path,
         };
+        let overlay_ref = self.overlay.as_ref().map(|arc| arc.as_ref());
         let final_content = if params.append.unwrap_or(false) {
-            match self.service.read_text(&self.address_space, &target).await {
+            match self
+                .service
+                .read_text(&self.address_space, &target, overlay_ref)
+                .await
+            {
                 Ok(existing) => format!("{}{}", existing.content, params.content),
                 Err(_) => params.content,
             }
@@ -2190,7 +2498,7 @@ impl AgentTool for FsWriteTool {
             params.content
         };
         self.service
-            .write_text(&self.address_space, &target, &final_content)
+            .write_text(&self.address_space, &target, &final_content, overlay_ref)
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
         Ok(ok_text(format!("已写入文件: {}", target.path)))
@@ -2201,12 +2509,18 @@ impl AgentTool for FsWriteTool {
 struct FsListTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: ExecutionAddressSpace,
+    overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsListTool {
-    fn new(service: Arc<RelayAddressSpaceService>, address_space: ExecutionAddressSpace) -> Self {
+    fn new(
+        service: Arc<RelayAddressSpaceService>,
+        address_space: ExecutionAddressSpace,
+        overlay: Option<Arc<InlineContentOverlay>>,
+    ) -> Self {
         Self {
             service,
             address_space,
+            overlay,
         }
     }
 }
@@ -2251,6 +2565,7 @@ impl AgentTool for FsListTool {
                     pattern: params.pattern,
                     recursive: params.recursive.unwrap_or(false),
                 },
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -2275,12 +2590,18 @@ impl AgentTool for FsListTool {
 struct FsSearchTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: ExecutionAddressSpace,
+    overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsSearchTool {
-    fn new(service: Arc<RelayAddressSpaceService>, address_space: ExecutionAddressSpace) -> Self {
+    fn new(
+        service: Arc<RelayAddressSpaceService>,
+        address_space: ExecutionAddressSpace,
+        overlay: Option<Arc<InlineContentOverlay>>,
+    ) -> Self {
         Self {
             service,
             address_space,
+            overlay,
         }
     }
 }
@@ -2323,6 +2644,7 @@ impl AgentTool for FsSearchTool {
                 params.path.as_deref().unwrap_or("."),
                 &params.query,
                 params.max_results.unwrap_or(50).max(1),
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -2616,6 +2938,7 @@ mod tests {
                 .expect("mount should build"),
             ],
             default_mount_id: Some("brief".to_string()),
+            ..Default::default()
         };
 
         let read = service
@@ -2625,6 +2948,7 @@ mod tests {
                     mount_id: "brief".to_string(),
                     path: "brief.md".to_string(),
                 },
+                None,
             )
             .await
             .expect("inline read");
@@ -2639,6 +2963,7 @@ mod tests {
                     pattern: None,
                     recursive: true,
                 },
+                None,
             )
             .await
             .expect("inline list");
@@ -2646,7 +2971,7 @@ mod tests {
         assert!(listed.entries.iter().any(|e| e.path == "notes/todo.md"));
 
         let hits = service
-            .search_text(&address_space, "brief", ".", "verify", 10)
+            .search_text(&address_space, "brief", ".", "verify", 10, None)
             .await
             .expect("inline search");
         assert_eq!(hits.len(), 1);
@@ -2691,6 +3016,7 @@ mod tests {
                             mount_id: "main".to_string(),
                             path: "src/main.rs".to_string(),
                         },
+                        None,
                     )
                     .await
             }
@@ -2743,14 +3069,15 @@ mod tests {
                 metadata: serde_json::json!({ "files": { "brief.md": "hello" } }),
             }],
             default_mount_id: Some("brief".to_string()),
+            ..Default::default()
         };
 
         let schemas = vec![
             MountsListTool::new(service.clone(), address_space.clone()).parameters_schema(),
-            FsReadTool::new(service.clone(), address_space.clone()).parameters_schema(),
-            FsWriteTool::new(service.clone(), address_space.clone()).parameters_schema(),
-            FsListTool::new(service.clone(), address_space.clone()).parameters_schema(),
-            FsSearchTool::new(service.clone(), address_space.clone()).parameters_schema(),
+            FsReadTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
+            FsWriteTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
+            FsListTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
+            FsSearchTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
             ShellExecTool::new(service, address_space).parameters_schema(),
         ];
 
@@ -2887,6 +3214,7 @@ mod tests {
                 metadata: serde_json::Value::Null,
             }],
             default_mount_id: Some("main".to_string()),
+            ..Default::default()
         };
 
         let slice = build_companion_execution_slice(
@@ -2932,6 +3260,7 @@ mod tests {
                 metadata: serde_json::Value::Null,
             }],
             default_mount_id: Some("main".to_string()),
+            ..Default::default()
         };
 
         let slice = build_companion_execution_slice(

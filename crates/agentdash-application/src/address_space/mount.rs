@@ -55,6 +55,8 @@ pub fn build_derived_address_space(
     Ok(ExecutionAddressSpace {
         mounts,
         default_mount_id,
+        source_project_id: Some(project.id.to_string()),
+        source_story_id: story.map(|s| s.id.to_string()),
     })
 }
 
@@ -68,6 +70,8 @@ pub fn build_workspace_address_space(
             &MountDerivationPolicy::default(),
         )?],
         default_mount_id: Some("main".to_string()),
+        source_project_id: None,
+        source_story_id: None,
     })
 }
 

@@ -226,6 +226,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(address_spaces::read_mount_file),
         )
         .route(
+            "/address-spaces/write-file",
+            post(address_spaces::write_mount_file),
+        )
+        .route(
             "/address-spaces/preview",
             post(address_spaces::preview_address_space),
         )

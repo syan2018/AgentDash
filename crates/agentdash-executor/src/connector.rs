@@ -131,6 +131,9 @@ pub struct ExecutionContext {
     /// 工具构建时按此裁剪：仅注入声明可用的流程工具。
     #[allow(clippy::type_complexity)]
     pub flow_capabilities: FlowCapabilities,
+    /// 会话级 owner 上下文 markdown（project/story 摘要）。
+    /// 由 session plan 层填充，注入到 system prompt 头部，不写入用户消息流。
+    pub system_context: Option<String>,
 }
 
 /// 流程工具能力声明。

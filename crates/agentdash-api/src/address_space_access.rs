@@ -1240,6 +1240,7 @@ impl AgentTool for CompanionDispatchTool {
                     workspace_root: Some(self.workspace_root.clone()),
                     address_space: execution_slice.address_space.clone(),
                     flow_capabilities: None,
+                    system_context: None,
                 },
             )
             .await

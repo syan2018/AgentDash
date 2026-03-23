@@ -207,6 +207,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                     companion_complete: true,
                     resolve_hook_action: true,
                 }),
+                system_context: None,
             };
 
             let turn_id = self

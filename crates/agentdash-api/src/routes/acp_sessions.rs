@@ -17,9 +17,11 @@ use tokio::time::MissedTickBehavior;
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
+    build_project_system_context,
 };
 use agentdash_application::story::context_builder::{
     StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
+    build_story_system_context,
 };
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
@@ -475,7 +477,7 @@ async fn build_story_owner_prompt_request(
             .await
             .map_err(ApiError::BadRequest)?;
 
-    let (context_markdown, source_summary) =
+    let (context_markdown, _source_summary) =
         build_story_context_markdown(StoryContextBuildInput {
             story,
             project,
@@ -486,17 +488,21 @@ async fn build_story_owner_prompt_request(
             workspace_source_fragments: resolved_workspace_sources.fragments,
             workspace_source_warnings: resolved_workspace_sources.warnings,
         });
+
+    // system_context：身份声明 + context markdown，注入 system prompt，不写入用户消息流
+    let system_context = build_story_system_context(&context_markdown, None);
+
+    // prompt_blocks：仅含 resource 展示锚点 + 用户原始消息
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
         context_markdown,
-        &source_summary,
-        None,
         req.prompt.take(),
         req.prompt_blocks.take(),
     );
 
     req.prompt = None;
     req.prompt_blocks = Some(prompt_blocks);
+    req.system_context = Some(system_context);
 
     apply_workspace_defaults(&mut req.working_dir, &mut req.workspace_root, workspace);
     if req.address_space.is_none() {
@@ -554,7 +560,7 @@ async fn build_project_owner_prompt_request(
         .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
 
-    let (context_markdown, source_summary) =
+    let (context_markdown, _source_summary) =
         build_project_context_markdown(ProjectContextBuildInput {
             project,
             workspace: workspace.as_ref(),
@@ -564,17 +570,21 @@ async fn build_project_owner_prompt_request(
             preset_name: project_agent.preset_name.as_deref(),
             agent_display_name: project_agent.display_name.as_str(),
         });
+
+    // system_context：身份声明 + context markdown，注入 system prompt，不写入用户消息流
+    let system_context = build_project_system_context(&context_markdown, None);
+
+    // prompt_blocks：仅含 resource 展示锚点 + 用户原始消息
     let prompt_blocks = build_project_owner_prompt_blocks(
         project.id,
         context_markdown,
-        &source_summary,
-        None,
         req.prompt.take(),
         req.prompt_blocks.take(),
     );
 
     req.prompt = None;
     req.prompt_blocks = Some(prompt_blocks);
+    req.system_context = Some(system_context);
 
     apply_workspace_defaults(&mut req.working_dir, &mut req.workspace_root, workspace.as_ref());
     if req.address_space.is_none() {

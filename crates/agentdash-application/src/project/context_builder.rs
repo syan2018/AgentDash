@@ -91,17 +91,48 @@ pub fn build_project_context_markdown(
     composer.compose()
 }
 
+/// 构造注入到 system prompt 的 owner 级上下文字符串。
+///
+/// 包含：Project Agent 身份声明 + context markdown 正文。
+/// 仅通过 `PromptSessionRequest.system_context` 传递，不出现在用户消息流中。
+pub fn build_project_system_context(
+    context_markdown: &str,
+    workflow_instruction: Option<&str>,
+) -> String {
+    let mut sections = vec![
+        "## Instruction\n你是该 Project 下的共享协作 Agent。请围绕项目共享上下文、资料整理、决策沉淀和后续 Story 准备展开工作。\n\n默认应把上下文组织成用户可理解的资料目录，而不是向用户强调底层 provider、mount derivation 或 runtime capability 细节。"
+            .to_string(),
+    ];
+
+    if !context_markdown.trim().is_empty() {
+        sections.push(context_markdown.trim().to_string());
+    }
+
+    if let Some(instruction) = workflow_instruction
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sections.push(instruction.to_string());
+    }
+
+    sections.join("\n\n")
+}
+
+/// 构造用户消息侧的 prompt blocks。
+///
+/// 仅包含：context resource block（供前端展示引用信息）+ 用户原始消息 blocks。
+/// instruction 和来源摘要已移入 system_context，不再出现在用户消息中。
 pub fn build_project_owner_prompt_blocks(
     project_id: uuid::Uuid,
     context_markdown: String,
-    source_summary: &[String],
-    workflow_instruction: Option<String>,
     original_prompt: Option<String>,
     original_prompt_blocks: Option<Vec<serde_json::Value>>,
 ) -> Vec<serde_json::Value> {
-    let mut prefix_blocks = Vec::new();
+    let mut blocks = Vec::new();
+
+    // resource block 仅作为前端展示锚点（显示为可展开的上下文引用卡片）
     if !context_markdown.trim().is_empty() {
-        prefix_blocks.push(json!({
+        blocks.push(json!({
             "type": "resource",
             "resource": {
                 "uri": format!("agentdash://project-context/{}", project_id),
@@ -111,41 +142,19 @@ pub fn build_project_owner_prompt_blocks(
         }));
     }
 
-    let project_instruction = format!(
-        "## Instruction\n你是该 Project 下的共享协作 Agent。请围绕项目共享上下文、资料整理、决策沉淀和后续 Story 准备展开工作。\n\n默认应把上下文组织成用户可理解的资料目录，而不是向用户强调底层 provider、mount derivation 或 runtime capability 细节。\n\n当前来源摘要：{}",
-        if source_summary.is_empty() {
-            "-".to_string()
-        } else {
-            source_summary.join(", ")
-        }
-    );
-    prefix_blocks.push(json!({
-        "type": "text",
-        "text": project_instruction,
-    }));
-    if let Some(workflow_instruction) = workflow_instruction
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        prefix_blocks.push(json!({
-            "type": "text",
-            "text": workflow_instruction,
-        }));
-    }
-
     let user_blocks = match (original_prompt, original_prompt_blocks) {
         (Some(prompt), None) => vec![json!({ "type": "text", "text": prompt })],
         (None, Some(blocks)) => blocks,
-        (Some(prompt), Some(mut blocks)) => {
+        (Some(prompt), Some(mut extra)) => {
             let mut merged = vec![json!({ "type": "text", "text": prompt })];
-            merged.append(&mut blocks);
+            merged.append(&mut extra);
             merged
         }
         (None, None) => Vec::new(),
     };
 
-    prefix_blocks.extend(user_blocks);
-    prefix_blocks
+    blocks.extend(user_blocks);
+    blocks
 }
 
 fn trim_or_dash(text: &str) -> &str {

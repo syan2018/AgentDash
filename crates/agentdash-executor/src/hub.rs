@@ -52,6 +52,11 @@ pub struct PromptSessionRequest {
     /// 流程工具能力裁剪。由 session plan 层根据 owner type 填充。
     #[serde(skip)]
     pub flow_capabilities: Option<crate::connector::FlowCapabilities>,
+    /// 会话级 owner 上下文（project/story 的 markdown 摘要）。
+    /// 由 session binding 层在每次 prompt 前填充，注入到 system prompt 头部。
+    /// 不出现在用户消息流中，对用户透明。
+    #[serde(skip)]
+    pub system_context: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -686,6 +691,7 @@ impl ExecutorHub {
             address_space: req.address_space,
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
+            system_context: req.system_context,
         };
 
         session_meta.updated_at = now;
@@ -1256,6 +1262,7 @@ mod tests {
             workspace_root: None,
             address_space: None,
             flow_capabilities: None,
+            system_context: None,
         };
 
         let payload = req
@@ -1289,6 +1296,7 @@ mod tests {
             workspace_root: None,
             address_space: None,
             flow_capabilities: None,
+            system_context: None,
         };
 
         let payload = req
@@ -1447,12 +1455,11 @@ mod tests {
                 workspace_root: Some(workspace.path().to_path_buf()),
                 address_space: None,
                 flow_capabilities: None,
+                system_context: None,
             },
         )
         .await
         .expect("prompt should start");
-
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
         let contexts = connector.contexts.lock().await;
         let context = contexts.last().expect("context should be recorded");
@@ -1560,6 +1567,7 @@ mod tests {
                 workspace_root: None,
                 address_space: None,
                 flow_capabilities: None,
+                system_context: None,
             },
         )
         .await
@@ -1654,6 +1662,7 @@ mod tests {
                     workspace_root: None,
                     address_space: None,
                     flow_capabilities: None,
+                    system_context: None,
                 },
             )
             .await
@@ -1773,6 +1782,7 @@ mod tests {
                     workspace_root: None,
                     address_space: None,
                     flow_capabilities: None,
+                    system_context: None,
                 },
             )
             .await

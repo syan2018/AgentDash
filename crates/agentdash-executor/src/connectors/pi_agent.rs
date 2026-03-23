@@ -89,6 +89,14 @@ impl PiAgentConnector {
     ) -> String {
         let mut sections = vec![self.system_prompt.clone()];
 
+        // 会话级 owner 上下文（project/story markdown 摘要）注入到 system prompt 头部
+        // 仅在第一个 section 之后立即插入，确保 Agent 能在每轮对话中感知完整上下文
+        if let Some(ref ctx) = context.system_context {
+            if !ctx.trim().is_empty() {
+                sections.push(ctx.clone());
+            }
+        }
+
         if let Some(address_space) = &context.address_space {
             let mount_lines = address_space
                 .mounts
@@ -1200,6 +1208,7 @@ mod tests {
             address_space: None,
             hook_session: None,
             flow_capabilities: Default::default(),
+            system_context: None,
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);

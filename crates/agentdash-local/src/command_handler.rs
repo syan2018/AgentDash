@@ -165,6 +165,7 @@ impl CommandHandler {
             workspace_root: Some(workspace_root),
             address_space: None,
             flow_capabilities: None,
+            system_context: None,
         };
 
         tracing::info!(

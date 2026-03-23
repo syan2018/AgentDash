@@ -388,12 +388,19 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             .completion
             .as_ref()
             .is_some_and(|completion| completion.satisfied);
+        // completion 为 None 表示无 workflow stop gate，视为"无约束，可自然结束"
+        let has_completion_gate = evaluated.resolution.completion.is_some();
         let blocking_review_pending = !unresolved_blocking_actions.is_empty();
 
+        // stop 条件：
+        // 1. 无 steering 消息要注入
+        // 2. 无待处理的 follow_up
+        // 3. 无 blocking_review 未结案
+        // 4. 要么没有 completion gate（无 workflow），要么 completion 已满足
         if steering.is_empty()
             && pending_messages.follow_up.is_empty()
-            && completion_satisfied
             && !blocking_review_pending
+            && (!has_completion_gate || completion_satisfied)
         {
             self.record_trace(
                 HookTrigger::BeforeStop,

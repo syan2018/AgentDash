@@ -92,6 +92,12 @@ function getTurnId(update: SessionUpdate): string | undefined {
   return meta?.trace?.turnId ?? undefined;
 }
 
+function getEntryIndex(update: SessionUpdate): number | undefined {
+  const meta = extractAgentDashMetaFromUpdate(update);
+  const idx = meta?.trace?.entryIndex;
+  return typeof idx === "number" ? idx : undefined;
+}
+
 /**
  * 将 tool_call_update 的字段合并到已有 tool_call entry 中。
  * 仿照 Zed 的 update_fields 策略：只覆盖非空字段，保留已有值。
@@ -281,7 +287,34 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       return [...prev, makeEntry(update)];
     }
 
-    // 合并 chunk：保持时间线顺序，只合并"相邻、同类型、同 turn"的文本 chunk。
+    const incomingTurnId = getTurnId(update);
+    const incomingEntryIndex = getEntryIndex(update);
+    const newUpdateAny = update as unknown as { content?: { type?: string; text?: string } };
+    const incomingText = newUpdateAny.content?.type === "text" ? (newUpdateAny.content.text ?? "") : null;
+
+    // ── entryIndex upsert：按 (turnId, entryIndex, sessionUpdate) 查找同一消息的已有 entry ──
+    // MessageEnd 发出的全量快照和之前所有 TextDelta 共享相同的 entryIndex（entry_index 在
+    // MessageEnd 之后才递增）。找到同一消息 → 用全量文本直接覆盖，不拼接。
+    if (incomingTurnId !== undefined && incomingEntryIndex !== undefined && incomingText !== null) {
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        const candidate = prev[i]!;
+        if (candidate.update.sessionUpdate !== update.sessionUpdate) continue;
+        if (candidate.turnId !== incomingTurnId) continue;
+        const candidateEntryIndex = getEntryIndex(candidate.update);
+        if (candidateEntryIndex !== incomingEntryIndex) continue;
+
+        // 找到同一消息的 entry：覆盖文本（全量快照覆盖增量累积版本）
+        const overwrittenUpdate: SessionUpdate = {
+          ...candidate.update,
+          content: { type: "text" as const, text: incomingText },
+        } as SessionUpdate;
+        const next = [...prev];
+        next[i] = { ...candidate, update: overwrittenUpdate };
+        return next;
+      }
+    }
+
+    // ── 相邻合并：同类型 + 同 turn 的相邻 chunk 累积拼接（正常 delta 场景）──
     if (prev.length === 0) {
       return [makeEntry(update)];
     }
@@ -291,20 +324,17 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       return [...prev, makeEntry(update)];
     }
 
-    const incomingTurnId = getTurnId(update);
     if (incomingTurnId && lastEntry.turnId && lastEntry.turnId !== incomingTurnId) {
       return [...prev, makeEntry(update)];
     }
 
     const targetUpdateAny = lastEntry.update as unknown as { content?: { type?: string; text?: string } };
-    const newUpdateAny = update as unknown as { content?: { type?: string; text?: string } };
     if (targetUpdateAny.content?.type !== "text" || newUpdateAny.content?.type !== "text") {
       return [...prev, makeEntry(update)];
     }
 
     const previousText = targetUpdateAny.content.text ?? "";
-    const incomingText = newUpdateAny.content.text ?? "";
-    const mergedText = mergeStreamChunk(previousText, incomingText);
+    const mergedText = mergeStreamChunk(previousText, incomingText ?? "");
 
     if (mergedText === previousText) {
       return prev;

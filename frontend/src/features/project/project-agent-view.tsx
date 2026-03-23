@@ -442,6 +442,7 @@ export function ProjectAgentView({
         key={isCreateOpen ? "create" : "closed"}
         open={isCreateOpen}
         existingNames={existingPresetNames}
+        availableSubagents={agents}
         onSave={handleCreatePreset}
         onClose={() => setIsCreateOpen(false)}
         isSaving={isSaving}
@@ -453,6 +454,7 @@ export function ProjectAgentView({
           open
           initialPreset={editingPreset}
           existingNames={existingPresetNames}
+          availableSubagents={agents}
           onSave={handleEditPreset}
           onClose={() => setEditingPreset(null)}
           isSaving={isSaving}

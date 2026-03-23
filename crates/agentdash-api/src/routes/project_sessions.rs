@@ -139,7 +139,7 @@ async fn build_project_session_context_response(
     } else {
         None
     };
-    let mcp_servers = state
+    let mut mcp_servers = state
         .config
         .mcp_base_url
         .as_ref()
@@ -149,6 +149,7 @@ async fn build_project_session_context_response(
             ]
         })
         .unwrap_or_default();
+    mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
 
     let executor_source = if session_meta.executor_config.is_some() {
         "session.meta.executor_config".to_string()

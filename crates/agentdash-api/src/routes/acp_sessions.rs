@@ -552,6 +552,7 @@ async fn build_project_owner_prompt_request(
         .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
     effective_mcp_servers
         .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
+    effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
 
     let (context_markdown, source_summary) =
         build_project_context_markdown(ProjectContextBuildInput {

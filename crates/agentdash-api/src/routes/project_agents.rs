@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agent_client_protocol::{McpServer, McpServerHttp};
 use agentdash_application::{
     address_space::{
         SessionMountTarget, container_visible_for_target, effective_context_containers,
@@ -30,6 +31,8 @@ pub(crate) struct ProjectAgentBridge {
     pub executor_config: AgentDashExecutorConfig,
     pub preset_name: Option<String>,
     pub source: String,
+    pub preset_mcp_servers: Vec<McpServer>,
+    pub subagent_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -290,6 +293,8 @@ pub(crate) fn resolve_project_agent_bridge(
             executor_config: AgentDashExecutorConfig::new(agent_type),
             preset_name: None,
             source: "project.config.default_agent_type".to_string(),
+            preset_mcp_servers: vec![],
+            subagent_keys: vec![],
         });
     }
 
@@ -519,6 +524,36 @@ fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
             )
         });
 
+    let preset_mcp_servers = preset
+        .config
+        .get("mcp_servers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let name = entry.get("name")?.as_str()?.trim().to_string();
+                    let url = entry.get("url")?.as_str()?.trim().to_string();
+                    if name.is_empty() || url.is_empty() {
+                        return None;
+                    }
+                    Some(McpServer::Http(McpServerHttp::new(name, url)))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let subagent_keys = preset
+        .config
+        .get("subagent_keys")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
     ProjectAgentBridge {
         key: format!("preset:{}", preset.name),
         display_name,
@@ -526,6 +561,8 @@ fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
         executor_config,
         preset_name: Some(preset.name.clone()),
         source: format!("project.config.agent_presets[{}]", preset.name),
+        preset_mcp_servers,
+        subagent_keys,
     }
 }
 

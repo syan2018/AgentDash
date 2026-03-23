@@ -46,6 +46,7 @@ import {
   createDefaultMountPolicy,
   createDefaultSessionComposition,
 } from "../components/context-config-defaults";
+import { AddressSpaceBrowser } from "../features/address-space";
 
 // Story 优先级选项
 const priorityOptions: { value: StoryPriority; label: string }[] = [
@@ -786,6 +787,21 @@ function ContextPanel({
           isSaving={isSaving}
           onSave={(next) => persistStoryContext({ session_composition_override: next }, "已保存会话编排覆盖")}
           onClear={() => persistStoryContext({ clear_session_composition_override: true }, "已清空会话编排覆盖")}
+        />
+      </div>
+
+      {/* Address Space 预览 */}
+      <div className="space-y-2 rounded-[12px] border border-border bg-secondary/20 p-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            地址空间预览
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            以下是当前 Story 配置下 Agent 将看到的挂载视图。
+          </p>
+        </div>
+        <AddressSpaceBrowser
+          preview={{ projectId: story.project_id, storyId: story.id, target: "story" }}
         />
       </div>
 

@@ -26,6 +26,7 @@ import {
 } from "../../components/context-config-defaults";
 import { ProjectWorkflowPanel } from "../workflow/project-workflow-panel";
 import { AgentPresetEditor } from "./agent-preset-editor";
+import { AddressSpaceBrowser } from "../address-space";
 
 interface ProjectSelectorProps {
   projects: Project[];
@@ -449,6 +450,18 @@ function ProjectDetailDrawer({
           {activeTab === "workspaces" && (
             <DetailSection title="工作空间">
               <WorkspaceList projectId={project.id} workspaces={currentWorkspaces} />
+
+              <div className="mt-4 border-t border-border pt-4">
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">
+                  Address Space 预览
+                </p>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  以下是当前项目配置下 Agent 会话将看到的挂载视图（基于默认工作空间 + 上下文容器）。
+                </p>
+                <AddressSpaceBrowser
+                  preview={{ projectId: project.id, target: "project" }}
+                />
+              </div>
             </DetailSection>
           )}
 

@@ -5,6 +5,7 @@ import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/sessi
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { useStoryStore } from "../stores/storyStore";
+import { AddressSpaceBrowser } from "../features/address-space";
 import type {
   ActiveWorkflowHookMetadata,
   AgentBinding,
@@ -279,11 +280,15 @@ function SharedFoldersSurfaceCard({
   folders,
   emptyText,
   helperText,
+  addressSpace,
 }: {
   folders: ContextFolderItem[];
   emptyText: string;
   helperText: string;
+  addressSpace?: ExecutionAddressSpace | null;
 }) {
+  const [browserOpen, setBrowserOpen] = useState(false);
+
   return (
     <SurfaceCard eyebrow="共享资料" title={folders.length > 0 ? `${folders.length} 个可见目录` : "暂无共享资料"}>
       {folders.length > 0 ? (
@@ -304,6 +309,26 @@ function SharedFoldersSurfaceCard({
       ) : (
         <p className="text-xs text-muted-foreground">{emptyText}</p>
       )}
+
+      {addressSpace && addressSpace.mounts.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setBrowserOpen(!browserOpen)}
+            className="rounded-[6px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            {browserOpen ? "收起地址空间" : `查看地址空间 (${addressSpace.mounts.length} 个挂载点)`}
+          </button>
+          {browserOpen && (
+            <div className="mt-2">
+              <AddressSpaceBrowser
+                addressSpace={addressSpace}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{helperText}</p>
     </SurfaceCard>
   );
@@ -896,6 +921,7 @@ function StorySessionContextPanel({
           folders={folders}
           emptyText="当前 Story 还没有整理出额外共享资料目录。"
           helperText="这些目录才是对用户真正可见的上下文表面，底层 provider / mount 细节默认不直接暴露。"
+          addressSpace={addressSpace}
         />
         <SessionBehaviorSurfaceCard
           composition={effectiveComposition}
@@ -1012,6 +1038,7 @@ function ProjectSessionContextPanel({
           folders={folders}
           emptyText="当前 Project Session 还没有对用户暴露可用共享目录。"
           helperText="共享上下文默认表达成近似文件系统的目录，而不是 provider、mount policy 或权限矩阵。"
+          addressSpace={addressSpace}
         />
         <SessionBehaviorSurfaceCard
           composition={composition}

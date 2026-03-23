@@ -119,12 +119,11 @@ function parseWorkflowSteps(value: string): string[] {
 }
 
 function containerSupportsCapability(
-  _container: ContextContainerDefinition,
+  container: ContextContainerDefinition,
   capability: ContextContainerCapability,
 ): boolean {
-  if (capability === "write" || capability === "exec") {
-    return false;
-  }
+  if (capability === "exec") return false;
+  if (capability === "write" && container.provider.kind === "external_service") return false;
   return true;
 }
 

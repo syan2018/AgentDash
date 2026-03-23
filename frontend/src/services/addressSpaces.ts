@@ -60,6 +60,15 @@ export interface ReadMountFileResponse {
   size: number;
 }
 
+// ─── Mount 文件写入 ─────────────────────────────────────
+
+export interface WriteMountFileResponse {
+  mount_id: string;
+  path: string;
+  size: number;
+  persisted: boolean;
+}
+
 // ─── Address Space 预览 ─────────────────────────────────
 
 export interface MountSummary {
@@ -200,6 +209,27 @@ export async function previewAddressSpace(params: {
       project_id: params.projectId,
       story_id: params.storyId,
       target: params.target ?? "project",
+    }),
+  });
+}
+
+export async function writeMountFile(params: {
+  projectId: string;
+  storyId?: string;
+  mountId: string;
+  path: string;
+  content: string;
+}): Promise<WriteMountFileResponse> {
+  const url = buildApiPath("/address-spaces/write-file");
+  return fetchJson(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      project_id: params.projectId,
+      story_id: params.storyId,
+      mount_id: params.mountId,
+      path: params.path,
+      content: params.content,
     }),
   });
 }

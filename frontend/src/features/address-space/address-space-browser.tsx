@@ -11,6 +11,7 @@ import {
   listMountEntries,
   previewAddressSpace,
   readMountFile,
+  writeMountFile,
   type MountEntry,
   type PreviewAddressSpaceResponse,
 } from "../../services/addressSpaces";
@@ -299,6 +300,12 @@ function MountFileBrowser({
 
   const [previewFile, setPreviewFile] = useState<{ path: string; content: string; size: number } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const canWrite = mount.capabilities.includes("write");
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -385,6 +392,39 @@ function MountFileBrowser({
     },
     [projectId, storyId, mount.id, handleNavigate],
   );
+
+  const handleSave = useCallback(async () => {
+    if (!previewFile) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await writeMountFile({
+        projectId,
+        storyId,
+        mountId: mount.id,
+        path: previewFile.path,
+        content: editContent,
+      });
+      setPreviewFile({ ...previewFile, content: editContent, size: new Blob([editContent]).size });
+      setEditing(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }, [previewFile, editContent, projectId, storyId, mount.id]);
+
+  const handleStartEdit = useCallback(() => {
+    if (!previewFile) return;
+    setEditContent(previewFile.content);
+    setEditing(true);
+    setSaveError(null);
+  }, [previewFile]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditing(false);
+    setSaveError(null);
+  }, []);
 
   const pathSegments = useMemo(() => {
     if (currentPath === ".") return [{ label: mount.display_name, path: "." }];
@@ -499,7 +539,7 @@ function MountFileBrowser({
           ))}
       </div>
 
-      {/* 文件预览 */}
+      {/* 文件预览 / 编辑 */}
       {previewLoading && (
         <div className="border-t border-border px-3 py-3 text-xs text-muted-foreground">
           正在读取文件…
@@ -515,18 +555,63 @@ function MountFileBrowser({
               <span className="text-[10px] text-muted-foreground">
                 {formatFileSize(previewFile.size)}
               </span>
-              <button
-                type="button"
-                onClick={() => setPreviewFile(null)}
-                className="rounded-[4px] border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              >
-                关闭
-              </button>
+              {canWrite && !editing && (
+                <button
+                  type="button"
+                  onClick={handleStartEdit}
+                  className="rounded-[4px] border border-primary/30 bg-primary/8 px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:bg-primary/15"
+                >
+                  编辑
+                </button>
+              )}
+              {editing && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleSave()}
+                    disabled={saving}
+                    className="rounded-[4px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    {saving ? "保存中…" : "保存"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    disabled={saving}
+                    className="rounded-[4px] border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  >
+                    取消
+                  </button>
+                </>
+              )}
+              {!editing && (
+                <button
+                  type="button"
+                  onClick={() => { setPreviewFile(null); setEditing(false); }}
+                  className="rounded-[4px] border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  关闭
+                </button>
+              )}
             </div>
           </div>
-          <pre className="max-h-[300px] overflow-auto bg-secondary/20 px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85">
-            {previewFile.content}
-          </pre>
+          {saveError && (
+            <div className="mx-3 mb-1 rounded-[4px] border border-destructive/20 bg-destructive/5 px-2 py-1 text-[10px] text-destructive">
+              {saveError}
+            </div>
+          )}
+          {editing ? (
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              disabled={saving}
+              className="block max-h-[300px] min-h-[200px] w-full resize-y bg-secondary/20 px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 focus:outline-none disabled:opacity-50"
+            />
+          ) : (
+            <pre className="max-h-[300px] overflow-auto bg-secondary/20 px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85">
+              {previewFile.content}
+            </pre>
+          )}
         </div>
       )}
     </div>

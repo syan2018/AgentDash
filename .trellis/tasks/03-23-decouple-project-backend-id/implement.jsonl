@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "Address Space 规范，Workspace 是 backend 绑定的唯一单元"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量规范，DTO 命名契约"}

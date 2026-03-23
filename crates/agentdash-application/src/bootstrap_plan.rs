@@ -202,7 +202,6 @@ mod tests {
         let project = Project::new(
             "test".to_string(),
             "desc".to_string(),
-            "backend".to_string(),
         );
         let workspace = Workspace::new(
             project.id,
@@ -245,7 +244,6 @@ mod tests {
         let project = Project::new(
             "test".to_string(),
             "desc".to_string(),
-            "backend".to_string(),
         );
 
         let plan = build_bootstrap_plan(BootstrapPlanInput {

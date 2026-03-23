@@ -15,6 +15,7 @@ use crate::rpc::ApiError;
 #[derive(Deserialize)]
 pub struct CreateWorkspaceRequest {
     pub name: String,
+    pub backend_id: String,
     pub container_ref: Option<String>,
     pub workspace_type: Option<WorkspaceType>,
 }
@@ -97,24 +98,21 @@ pub async fn create_workspace(
         return Err(ApiError::BadRequest("工作空间名称不能为空".into()));
     }
 
+    let backend_id = req.backend_id.trim().to_string();
+    if backend_id.is_empty() {
+        return Err(ApiError::BadRequest("创建 Workspace 必须显式指定 backend_id".into()));
+    }
+
     let project_id = Uuid::parse_str(&project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    // 读取 Project，Workspace.backend_id 默认继承 Project.backend_id。
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(project_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))?;
-
     let ws_type = req.workspace_type.unwrap_or(WorkspaceType::GitWorktree);
     let (container_ref, git_config) =
-        resolve_container_and_git(&state, &project.backend_id, req.container_ref, &ws_type).await?;
+        resolve_container_and_git(&state, &backend_id, req.container_ref, &ws_type).await?;
 
     let mut workspace = Workspace::new(
         project_id,
-        project.backend_id,
+        backend_id,
         workspace_name,
         container_ref,
         ws_type,

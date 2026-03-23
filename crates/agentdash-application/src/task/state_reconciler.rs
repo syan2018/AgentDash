@@ -172,7 +172,7 @@ async fn apply_reconcile_update(
                 "to": plan.next_status,
                 "context": plan.context,
             }),
-            &story.backend_id,
+            None,
         )
         .await?;
 

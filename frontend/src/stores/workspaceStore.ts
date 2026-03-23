@@ -3,6 +3,7 @@ import type { Workspace, WorkspaceType, WorkspaceStatus } from '../types';
 import { api } from '../api/client';
 
 export interface CreateWorkspaceOpts {
+  backend_id: string;
   workspace_type?: WorkspaceType;
   container_ref?: string;
 }
@@ -47,6 +48,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       set({ error: null });
       const payload: Record<string, unknown> = {
         name,
+        backend_id: opts?.backend_id ?? '',
         workspace_type: opts?.workspace_type ?? 'static',
       };
       if (containerRef) {

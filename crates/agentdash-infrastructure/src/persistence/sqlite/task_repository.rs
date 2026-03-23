@@ -87,7 +87,7 @@ impl SqliteTaskRepository {
         story_id: uuid::Uuid,
     ) -> Result<StorySnapshotRow, DomainError> {
         let story = sqlx::query_as::<_, StorySnapshotRow>(
-            "SELECT id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
+            "SELECT id, project_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
              FROM stories WHERE id = ?",
         )
         .bind(story_id.to_string())
@@ -108,7 +108,7 @@ impl SqliteTaskRepository {
         entity_id: uuid::Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,
-        backend_id: &str,
+        backend_id: Option<&str>,
     ) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
@@ -311,7 +311,7 @@ impl TaskRepository for SqliteTaskRepository {
             task.id,
             ChangeKind::TaskCreated,
             build_task_created_payload(task),
-            &story.backend_id,
+            None,
         )
         .await?;
         self.insert_state_change(
@@ -319,7 +319,7 @@ impl TaskRepository for SqliteTaskRepository {
             task.story_id,
             ChangeKind::StoryUpdated,
             story.to_payload("task_created_by_user"),
-            &story.backend_id,
+            None,
         )
         .await?;
 
@@ -397,7 +397,7 @@ impl TaskRepository for SqliteTaskRepository {
                 "story_id": task.story_id,
                 "reason": "task_deleted_by_user"
             }),
-            &story.backend_id,
+            None,
         )
         .await?;
         self.insert_state_change(
@@ -405,7 +405,7 @@ impl TaskRepository for SqliteTaskRepository {
             task.story_id,
             ChangeKind::StoryUpdated,
             story.to_payload("task_deleted_by_user"),
-            &story.backend_id,
+            None,
         )
         .await?;
 
@@ -439,7 +439,6 @@ struct TaskRow {
 struct StorySnapshotRow {
     id: String,
     project_id: String,
-    backend_id: String,
     title: String,
     description: String,
     status: String,
@@ -530,7 +529,6 @@ impl StorySnapshotRow {
         serde_json::json!({
             "id": self.id.clone(),
             "project_id": self.project_id.clone(),
-            "backend_id": self.backend_id.clone(),
             "title": self.title.clone(),
             "description": self.description.clone(),
             "status": self.status.clone(),

@@ -11,7 +11,6 @@ interface StoryListViewProps {
   taskCountByStoryId: Record<string, number>;
   onOpenStory: (story: Story) => void;
   projectId: string;
-  backendId: string;
 }
 
 // Story 优先级选项
@@ -35,11 +34,10 @@ const storyTypeOptions: { value: StoryType; label: string; icon: string }[] = [
 interface CreateStoryDrawerProps {
   open: boolean;
   projectId: string;
-  backendId: string;
   onClose: () => void;
 }
 
-function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryDrawerProps) {
+function CreateStoryDrawer({ open, projectId, onClose }: CreateStoryDrawerProps) {
   const { createStory, error } = useStoryStore();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -54,10 +52,6 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
       setFormMessage("Story 标题不能为空");
       return;
     }
-    if (!backendId) {
-      setFormMessage("当前项目缺少 backend_id，无法创建 Story");
-      return;
-    }
 
     const parsedTags = tags
       .split(",")
@@ -66,7 +60,6 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
 
     const created = await createStory(
       projectId,
-      backendId,
       trimmedTitle,
       description.trim() || undefined,
       {
@@ -184,7 +177,7 @@ function CreateStoryDrawer({ open, projectId, backendId, onClose }: CreateStoryD
           <button
             type="button"
             onClick={() => void handleCreate()}
-            disabled={!title.trim() || !backendId}
+            disabled={!title.trim()}
             className="agentdash-button-primary"
           >
             创建 Story
@@ -200,7 +193,6 @@ export function StoryListView({
   taskCountByStoryId,
   onOpenStory,
   projectId,
-  backendId,
 }: StoryListViewProps) {
   const [search, setSearch] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -253,7 +245,6 @@ export function StoryListView({
       <CreateStoryDrawer
         open={isCreateOpen}
         projectId={projectId}
-        backendId={backendId}
         onClose={() => setIsCreateOpen(false)}
       />
     </>

@@ -51,11 +51,9 @@ interface StoryState {
   error: string | null;
 
   fetchStoriesByProject: (projectId: string) => Promise<void>;
-  fetchStoriesByBackend: (backendId: string) => Promise<void>;
   fetchStoryById: (storyId: string) => Promise<Story | null>;
   createStory: (
     projectId: string,
-    backendId: string,
     title: string,
     description?: string,
     options?: {
@@ -69,7 +67,7 @@ interface StoryState {
     payload: {
       title?: string;
       description?: string;
-      backend_id?: string;
+      default_workspace_id?: string | null;
       status?: Story["status"];
       priority?: Story["priority"];
       story_type?: Story["story_type"];
@@ -291,7 +289,7 @@ const mapStory = (raw: Record<string, unknown>): Story => {
   return {
     id: String(raw.id ?? ''),
     project_id: String(raw.project_id ?? ''),
-    backend_id: String(raw.backend_id ?? ''),
+    default_workspace_id: raw.default_workspace_id != null ? String(raw.default_workspace_id) : null,
     title: String(raw.title ?? '未命名 Story'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeStoryStatus(String(raw.status ?? 'draft')),
@@ -426,7 +424,6 @@ const canMapStoryFromPayload = (payload: Record<string, unknown>): boolean => {
     typeof payload.id === 'string' &&
     typeof payload.title === 'string' &&
     typeof payload.project_id === 'string' &&
-    typeof payload.backend_id === 'string' &&
     typeof payload.status === 'string' &&
     payload.task_count !== undefined
   );
@@ -461,17 +458,6 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
-  fetchStoriesByBackend: async (backendId) => {
-    set({ isLoading: true, error: null });
-    try {
-      const response = await api.get<Record<string, unknown>[]>(`/stories?backend_id=${backendId}`);
-      const stories = response.map(mapStory);
-      set({ stories, isLoading: false });
-    } catch (e) {
-      set({ error: (e as Error).message, isLoading: false });
-    }
-  },
-
   fetchStoryById: async (storyId) => {
     try {
       const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}`);
@@ -484,11 +470,10 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
-  createStory: async (projectId, backendId, title, description, options) => {
+  createStory: async (projectId, title, description, options) => {
     try {
       const raw = await api.post<Record<string, unknown>>('/stories', {
         project_id: projectId,
-        backend_id: backendId,
         title,
         description,
         priority: options?.priority,

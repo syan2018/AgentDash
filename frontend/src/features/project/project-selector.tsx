@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type {
-  BackendConfig,
   Project,
   ProjectConfig,
   Workspace,
@@ -36,20 +35,17 @@ interface ProjectSelectorProps {
 
 interface ProjectCreateDrawerProps {
   open: boolean;
-  backends: BackendConfig[];
   onClose: () => void;
 }
 
-function ProjectCreateDrawer({ open, backends, onClose }: ProjectCreateDrawerProps) {
+function ProjectCreateDrawer({ open, onClose }: ProjectCreateDrawerProps) {
   const { createProject, error } = useProjectStore();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [backendId, setBackendId] = useState(backends[0]?.id ?? "");
-  const effectiveBackendId = backendId || backends[0]?.id || "";
 
   const handleCreate = async () => {
-    if (!name.trim() || !effectiveBackendId) return;
-    const created = await createProject(name.trim(), description.trim(), effectiveBackendId);
+    if (!name.trim()) return;
+    const created = await createProject(name.trim(), description.trim());
     if (!created) return;
     onClose();
   };
@@ -58,7 +54,7 @@ function ProjectCreateDrawer({ open, backends, onClose }: ProjectCreateDrawerPro
     <DetailPanel
       open={open}
       title="新建项目"
-      subtitle="创建 Project 并绑定后端"
+      subtitle="创建 Project"
       onClose={onClose}
       widthClassName="max-w-2xl"
     >
@@ -76,18 +72,6 @@ function ProjectCreateDrawer({ open, backends, onClose }: ProjectCreateDrawerPro
             placeholder="描述（可选）"
             className="agentdash-form-input"
           />
-          <select
-            value={effectiveBackendId}
-            onChange={(event) => setBackendId(event.target.value)}
-            className="agentdash-form-select"
-          >
-            <option value="">选择后端</option>
-            {backends.map((backend) => (
-              <option key={backend.id} value={backend.id}>
-                {backend.name}
-              </option>
-            ))}
-          </select>
         </DetailSection>
 
         {error && <p className="text-xs text-destructive">创建失败：{error}</p>}
@@ -96,7 +80,7 @@ function ProjectCreateDrawer({ open, backends, onClose }: ProjectCreateDrawerPro
           <button
             type="button"
             onClick={() => void handleCreate()}
-            disabled={!name.trim() || !effectiveBackendId}
+            disabled={!name.trim()}
             className="agentdash-button-primary"
           >
             创建项目
@@ -182,7 +166,6 @@ type ProjectDetailTab = "base" | "config" | "context" | "workflow" | "workspaces
 interface ProjectDetailDrawerProps {
   open: boolean;
   project: Project | null;
-  backends: BackendConfig[];
   currentWorkspaces: Workspace[];
   onClose: () => void;
 }
@@ -190,7 +173,6 @@ interface ProjectDetailDrawerProps {
 function ProjectDetailDrawer({
   open,
   project,
-  backends,
   currentWorkspaces,
   onClose,
 }: ProjectDetailDrawerProps) {
@@ -198,7 +180,6 @@ function ProjectDetailDrawer({
   const [activeTab, setActiveTab] = useState<ProjectDetailTab>("base");
   const [editName, setEditName] = useState(project?.name ?? "");
   const [editDescription, setEditDescription] = useState(project?.description ?? "");
-  const [editBackendId, setEditBackendId] = useState(project?.backend_id ?? "");
   const [defaultAgentType, setDefaultAgentType] = useState(
     project?.config.default_agent_type ?? "",
   );
@@ -214,16 +195,14 @@ function ProjectDetailDrawer({
 
   const handleSaveBase = async () => {
     const trimmedName = editName.trim();
-    const trimmedBackendId = editBackendId.trim();
-    if (!trimmedName || !trimmedBackendId) {
-      setFormError("项目名称和后端不能为空");
+    if (!trimmedName) {
+      setFormError("项目名称不能为空");
       return;
     }
 
     const saved = await updateProject(project.id, {
       name: trimmedName,
       description: editDescription.trim(),
-      backend_id: trimmedBackendId,
     });
     if (!saved) return;
 
@@ -369,18 +348,6 @@ function ProjectDetailDrawer({
                 placeholder="项目描述"
                 className="agentdash-form-input"
               />
-              <select
-                value={editBackendId}
-                onChange={(event) => setEditBackendId(event.target.value)}
-                className="agentdash-form-select"
-              >
-                <option value="">选择后端</option>
-                {backends.map((backend) => (
-                  <option key={backend.id} value={backend.id}>
-                    {backend.name}
-                  </option>
-                ))}
-              </select>
               <div className="flex justify-end">
                 <button
                   type="button"
@@ -556,7 +523,7 @@ export function ProjectSelector({
               >
                 <p className="truncate font-medium">{project.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {project.description || `后端: ${project.backend_id}`}
+                  {project.description || `ID: ${project.id}`}
                 </p>
               </button>
               {showDetail && (
@@ -582,7 +549,6 @@ export function ProjectSelector({
       <ProjectCreateDrawer
         key={`project-create-${isCreateOpen ? "open" : "closed"}-${backends[0]?.id ?? "none"}`}
         open={isCreateOpen}
-        backends={backends}
         onClose={() => setIsCreateOpen(false)}
       />
 
@@ -590,7 +556,6 @@ export function ProjectSelector({
         key={`project-detail-${isDetailOpen ? "open" : "closed"}-${detailProject?.id ?? "none"}`}
         open={isDetailOpen}
         project={detailProject}
-        backends={backends}
         currentWorkspaces={detailWorkspaces}
         onClose={() => {
           setIsDetailOpen(false);

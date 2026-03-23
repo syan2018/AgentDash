@@ -13,7 +13,6 @@ interface ProjectEntity {
   id: string;
   name: string;
   description: string;
-  backend_id: string;
   config?: {
     default_agent_type?: string | null;
     default_workspace_id?: string | null;
@@ -90,12 +89,11 @@ async function ensureBackend(request: APIRequestContext, suffix: string): Promis
   return backend;
 }
 
-async function createProject(request: APIRequestContext, backendId: string, suffix: string): Promise<ProjectEntity> {
+async function createProject(request: APIRequestContext, suffix: string): Promise<ProjectEntity> {
   const resp = await request.post(`${API_ORIGIN}/projects`, {
     data: {
       name: `E2E Story Context 项目 ${suffix}`,
       description: "用于验证 Story 文件引用与上下文注入",
-      backend_id: backendId,
       config: {
         default_agent_type: "codex",
       },
@@ -108,11 +106,13 @@ async function createProject(request: APIRequestContext, backendId: string, suff
 async function createWorkspace(
   request: APIRequestContext,
   projectId: string,
+  backendId: string,
   suffix: string,
 ): Promise<WorkspaceEntity> {
   const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/workspaces`, {
     data: {
       name: `E2E Workspace ${suffix}`,
+      backend_id: backendId,
       container_ref: REPO_ROOT,
       workspace_type: "static",
     },
@@ -130,7 +130,6 @@ async function updateProjectDefaultWorkspace(
     data: {
       name: project.name,
       description: project.description,
-      backend_id: project.backend_id,
       config: {
         default_agent_type: project.config?.default_agent_type ?? "codex",
         default_workspace_id: workspaceId,
@@ -145,13 +144,11 @@ async function updateProjectDefaultWorkspace(
 async function createStory(
   request: APIRequestContext,
   projectId: string,
-  backendId: string,
   suffix: string,
 ): Promise<StoryEntity> {
   const resp = await request.post(`${API_ORIGIN}/stories`, {
     data: {
       project_id: projectId,
-      backend_id: backendId,
       title: `E2E Story Context ${suffix}`,
       description: "用于验证 Story 文件引用、Task 分配与会话上下文注入",
     },
@@ -281,10 +278,10 @@ async function collectSessionNotifications(sessionId: string, limit = 24): Promi
 test("Story 文件引用可保存到 Story 并分配给 Task Agent", async ({ page, request }) => {
   const suffix = Date.now().toString();
   const backend = await ensureBackend(request, suffix);
-  const project = await createProject(request, backend.id, suffix);
-  const workspace = await createWorkspace(request, project.id, suffix);
+  const project = await createProject(request, suffix);
+  const workspace = await createWorkspace(request, project.id, backend.id, suffix);
   await updateProjectDefaultWorkspace(request, project, workspace.id);
-  const story = await createStory(request, project.id, backend.id, suffix);
+  const story = await createStory(request, project.id, suffix);
   const taskTitle = `E2E Context Task ${suffix}`;
 
   await page.goto(`/`);
@@ -341,10 +338,10 @@ test("Story 文件引用可保存到 Story 并分配给 Task Agent", async ({ pa
 test("Story 伴随会话在 prompt 前会自动注入 Story 上下文资源", async ({ request }) => {
   const suffix = `${Date.now()}-session`;
   const backend = await ensureBackend(request, suffix);
-  const project = await createProject(request, backend.id, suffix);
-  const workspace = await createWorkspace(request, project.id, suffix);
+  const project = await createProject(request, suffix);
+  const workspace = await createWorkspace(request, project.id, backend.id, suffix);
   await updateProjectDefaultWorkspace(request, project, workspace.id);
-  const story = await createStory(request, project.id, backend.id, suffix);
+  const story = await createStory(request, project.id, suffix);
 
   await updateStorySourceRefs(request, story.id, [
     {

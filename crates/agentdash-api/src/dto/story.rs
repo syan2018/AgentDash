@@ -8,7 +8,7 @@ use agentdash_domain::story::{Story, StoryContext, StoryPriority, StoryStatus, S
 pub struct StoryResponse {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub backend_id: String,
+    pub default_workspace_id: Option<Uuid>,
     pub title: String,
     pub description: String,
     pub status: StoryStatus,
@@ -26,7 +26,7 @@ impl From<Story> for StoryResponse {
         Self {
             id: s.id,
             project_id: s.project_id,
-            backend_id: s.backend_id,
+            default_workspace_id: s.default_workspace_id,
             title: s.title,
             description: s.description,
             status: s.status,

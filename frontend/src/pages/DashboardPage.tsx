@@ -139,7 +139,6 @@ export function DashboardPage() {
           taskCountByStoryId={taskCountByStoryId}
           onOpenStory={handleOpenStory}
           projectId={currentProjectId}
-          backendId={currentProject?.backend_id ?? ""}
         />
       ) : currentProject ? (
         <ProjectAgentView

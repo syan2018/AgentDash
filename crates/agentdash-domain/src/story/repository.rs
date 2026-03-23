@@ -11,7 +11,6 @@ use crate::common::error::DomainError;
 pub trait StoryRepository: Send + Sync {
     async fn create(&self, story: &Story) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Story>, DomainError>;
-    async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Story>, DomainError>;
     async fn update(&self, story: &Story) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
@@ -26,6 +25,6 @@ pub trait StoryRepository: Send + Sync {
         entity_id: Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,
-        backend_id: &str,
+        backend_id: Option<&str>,
     ) -> Result<(), DomainError>;
 }

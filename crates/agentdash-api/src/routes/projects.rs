@@ -19,7 +19,6 @@ use crate::rpc::ApiError;
 pub struct CreateProjectRequest {
     pub name: String,
     pub description: Option<String>,
-    pub backend_id: String,
     pub config: Option<ProjectConfig>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub mount_policy: Option<MountDerivationPolicy>,
@@ -30,7 +29,6 @@ pub struct CreateProjectRequest {
 pub struct UpdateProjectRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub backend_id: Option<String>,
     pub config: Option<ProjectConfig>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub mount_policy: Option<MountDerivationPolicy>,
@@ -53,7 +51,6 @@ pub async fn create_project(
     let mut project = Project::new(
         req.name,
         req.description.unwrap_or_default(),
-        req.backend_id,
     );
     if let Some(config) = req.config {
         project.config = config;
@@ -118,9 +115,6 @@ pub async fn update_project(
     }
     if let Some(description) = req.description {
         project.description = description;
-    }
-    if let Some(backend_id) = req.backend_id {
-        project.backend_id = backend_id;
     }
     if let Some(config) = req.config {
         project.config = config;

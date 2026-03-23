@@ -21,7 +21,6 @@ impl SqliteStoryRepository {
             CREATE TABLE IF NOT EXISTS stories (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id),
-                backend_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'created',
@@ -41,7 +40,7 @@ impl SqliteStoryRepository {
                 entity_id TEXT NOT NULL,
                 kind TEXT NOT NULL,
                 payload TEXT NOT NULL DEFAULT '{}',
-                backend_id TEXT NOT NULL,
+                backend_id TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -61,6 +60,13 @@ impl SqliteStoryRepository {
             .await?;
         self.add_story_column_if_missing("task_count INTEGER NOT NULL DEFAULT 0")
             .await?;
+        self.add_story_column_if_missing("default_workspace_id TEXT")
+            .await?;
+
+        // 向后兼容：如果旧 stories 表还有 backend_id 列，忽略错误
+        let _ = sqlx::query("ALTER TABLE stories DROP COLUMN backend_id")
+            .execute(&self.pool)
+            .await;
 
         Ok(())
     }
@@ -102,7 +108,7 @@ impl SqliteStoryRepository {
         entity_id: uuid::Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,
-        backend_id: &str,
+        backend_id: Option<&str>,
     ) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
@@ -131,12 +137,12 @@ impl StoryRepository for SqliteStoryRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         sqlx::query(
-            "INSERT INTO stories (id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at)
+            "INSERT INTO stories (id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(story.id.to_string())
         .bind(story.project_id.to_string())
-        .bind(&story.backend_id)
+        .bind(story.default_workspace_id.map(|id| id.to_string()))
         .bind(&story.title)
         .bind(&story.description)
         .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
@@ -156,7 +162,7 @@ impl StoryRepository for SqliteStoryRepository {
             story.id,
             ChangeKind::StoryCreated,
             serde_json::to_value(story).unwrap_or_default(),
-            &story.backend_id,
+            None,
         )
         .await?;
 
@@ -168,7 +174,7 @@ impl StoryRepository for SqliteStoryRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Story>, DomainError> {
         let row = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
+            "SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
              FROM stories WHERE id = ?",
         )
         .bind(id.to_string())
@@ -179,22 +185,9 @@ impl StoryRepository for SqliteStoryRepository {
         row.map(|r| r.try_into()).transpose()
     }
 
-    async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError> {
-        let rows = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
-             FROM stories WHERE backend_id = ? ORDER BY created_at DESC",
-        )
-        .bind(backend_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        rows.into_iter().map(|r| r.try_into()).collect()
-    }
-
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Story>, DomainError> {
         let rows = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, backend_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
+            "SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
              FROM stories WHERE project_id = ? ORDER BY created_at DESC",
         )
         .bind(project_id.to_string())
@@ -213,11 +206,11 @@ impl StoryRepository for SqliteStoryRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let result = sqlx::query(
-            "UPDATE stories SET project_id = ?, backend_id = ?, title = ?, description = ?, status = ?, priority = ?, story_type = ?, tags = ?, task_count = ?, context = ?, updated_at = ?
+            "UPDATE stories SET project_id = ?, default_workspace_id = ?, title = ?, description = ?, status = ?, priority = ?, story_type = ?, tags = ?, task_count = ?, context = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(story.project_id.to_string())
-        .bind(&story.backend_id)
+        .bind(story.default_workspace_id.map(|id| id.to_string()))
         .bind(&story.title)
         .bind(&story.description)
         .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
@@ -244,7 +237,7 @@ impl StoryRepository for SqliteStoryRepository {
             story.id,
             ChangeKind::StoryUpdated,
             serde_json::to_value(story).unwrap_or_default(),
-            &story.backend_id,
+            None,
         )
         .await?;
 
@@ -301,7 +294,7 @@ impl StoryRepository for SqliteStoryRepository {
         entity_id: uuid::Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,
-        backend_id: &str,
+        backend_id: Option<&str>,
     ) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
@@ -326,7 +319,7 @@ impl StoryRepository for SqliteStoryRepository {
 struct StoryRow {
     id: String,
     project_id: String,
-    backend_id: String,
+    default_workspace_id: Option<String>,
     title: String,
     description: String,
     status: String,
@@ -351,13 +344,18 @@ impl TryFrom<StoryRow> for Story {
         let context: StoryContext = serde_json::from_str(&row.context).unwrap_or_default();
         let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
 
+        let default_workspace_id = row
+            .default_workspace_id
+            .as_deref()
+            .and_then(|s| s.parse().ok());
+
         Ok(Story {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
                 entity: "story",
                 id: row.id.clone(),
             })?,
             project_id,
-            backend_id: row.backend_id,
+            default_workspace_id,
             title: row.title,
             description: row.description,
             status: match row.status.as_str() {
@@ -406,7 +404,7 @@ struct StateChangeRow {
     entity_id: String,
     kind: String,
     payload: String,
-    backend_id: String,
+    backend_id: Option<String>,
     created_at: String,
 }
 
@@ -433,7 +431,7 @@ impl TryFrom<StateChangeRow> for StateChange {
                 _ => ChangeKind::StoryUpdated,
             },
             payload: serde_json::from_str(&row.payload).unwrap_or_default(),
-            backend_id: row.backend_id,
+            backend_id: row.backend_id.unwrap_or_default(),
             created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now()),

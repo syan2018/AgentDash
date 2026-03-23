@@ -7,14 +7,14 @@ use super::value_objects::{StoryContext, StoryPriority, StoryStatus, StoryType};
 /// Story — 用户价值单元
 ///
 /// 从用户角度描述需求的工作单元，维护完整上下文，编排 Task 执行。
-/// 归属于 Project，同时保留 backend_id 作为执行后端标识。
+/// 归属于 Project。backend_id 已移除，通过 default_workspace_id → Workspace.backend_id 获取。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Story {
     pub id: Uuid,
-    /// 所属项目（新增）
+    /// 所属项目
     pub project_id: Uuid,
-    /// 执行后端标识（保留，与 Project.backend_id 可独立设置）
-    pub backend_id: String,
+    /// Story 级默认 Workspace（用于 Task 执行 backend 解析继承链）
+    pub default_workspace_id: Option<Uuid>,
     pub title: String,
     pub description: String,
     pub status: StoryStatus,
@@ -30,12 +30,12 @@ pub struct Story {
 }
 
 impl Story {
-    pub fn new(project_id: Uuid, backend_id: String, title: String, description: String) -> Self {
+    pub fn new(project_id: Uuid, title: String, description: String) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
-            backend_id,
+            default_workspace_id: None,
             title,
             description,
             status: StoryStatus::Created,

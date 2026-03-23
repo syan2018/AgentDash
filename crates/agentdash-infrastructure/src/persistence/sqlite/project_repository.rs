@@ -19,7 +19,6 @@ impl SqliteProjectRepository {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
-                backend_id TEXT NOT NULL,
                 config TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -30,6 +29,11 @@ impl SqliteProjectRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        // 向后兼容：如果旧表还有 backend_id 列，忽略错误（SQLite 不支持 DROP COLUMN IF EXISTS，忽略即可）
+        let _ = sqlx::query("ALTER TABLE projects DROP COLUMN backend_id")
+            .execute(&self.pool)
+            .await;
+
         Ok(())
     }
 }
@@ -38,13 +42,12 @@ impl SqliteProjectRepository {
 impl ProjectRepository for SqliteProjectRepository {
     async fn create(&self, project: &Project) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO projects (id, name, description, backend_id, config, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, description, config, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(project.id.to_string())
         .bind(&project.name)
         .bind(&project.description)
-        .bind(&project.backend_id)
         .bind(serde_json::to_string(&project.config)?)
         .bind(project.created_at.to_rfc3339())
         .bind(project.updated_at.to_rfc3339())
@@ -57,7 +60,7 @@ impl ProjectRepository for SqliteProjectRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Project>, DomainError> {
         let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, name, description, backend_id, config, created_at, updated_at
+            "SELECT id, name, description, config, created_at, updated_at
              FROM projects WHERE id = ?",
         )
         .bind(id.to_string())
@@ -70,7 +73,7 @@ impl ProjectRepository for SqliteProjectRepository {
 
     async fn list_all(&self) -> Result<Vec<Project>, DomainError> {
         let rows = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, name, description, backend_id, config, created_at, updated_at
+            "SELECT id, name, description, config, created_at, updated_at
              FROM projects ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -82,12 +85,11 @@ impl ProjectRepository for SqliteProjectRepository {
 
     async fn update(&self, project: &Project) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "UPDATE projects SET name = ?, description = ?, backend_id = ?, config = ?, updated_at = ?
+            "UPDATE projects SET name = ?, description = ?, config = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&project.name)
         .bind(&project.description)
-        .bind(&project.backend_id)
         .bind(serde_json::to_string(&project.config)?)
         .bind(chrono::Utc::now().to_rfc3339())
         .bind(project.id.to_string())
@@ -128,7 +130,6 @@ struct ProjectRow {
     id: String,
     name: String,
     description: String,
-    backend_id: String,
     config: String,
     created_at: String,
     updated_at: String,
@@ -145,7 +146,6 @@ impl TryFrom<ProjectRow> for Project {
             })?,
             name: row.name,
             description: row.description,
-            backend_id: row.backend_id,
             config: serde_json::from_str::<ProjectConfig>(&row.config).unwrap_or_default(),
             created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))

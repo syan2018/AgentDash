@@ -138,7 +138,6 @@ impl RelayMcpServer {
                     "id": p.id.to_string(),
                     "name": p.name,
                     "description": p.description,
-                    "backend_id": p.backend_id,
                 })
             })
             .collect();
@@ -181,7 +180,6 @@ impl RelayMcpServer {
                 "id": project.id.to_string(),
                 "name": project.name,
                 "description": project.description,
-                "backend_id": project.backend_id,
                 "config": project.config,
                 "created_at": project.created_at.to_rfc3339(),
             },
@@ -209,7 +207,8 @@ impl RelayMcpServer {
 
         let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
 
-        let project = self
+        // Verify the project exists before creating the story
+        let _project = self
             .services
             .project_repo
             .get_by_id(project_id)
@@ -219,7 +218,6 @@ impl RelayMcpServer {
 
         let story = Story::new(
             project_id,
-            project.backend_id.clone(),
             params.title,
             params.description,
         );

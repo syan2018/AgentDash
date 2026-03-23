@@ -10,7 +10,6 @@ interface BackendConfig {
 
 interface ProjectEntity {
   id: string;
-  backend_id: string;
 }
 
 interface StoryEntity {
@@ -45,12 +44,11 @@ async function ensureBackend(request: APIRequestContext, suffix: string): Promis
   return backend;
 }
 
-async function createProject(request: APIRequestContext, backendId: string, suffix: string): Promise<ProjectEntity> {
+async function createProject(request: APIRequestContext, suffix: string): Promise<ProjectEntity> {
   const resp = await request.post(`${API_ORIGIN}/projects`, {
     data: {
       name: `E2E 抽屉返回项目 ${suffix}`,
       description: "用于回归测试 Task 抽屉返回链路",
-      backend_id: backendId,
       config: {
         default_agent_type: "codex",
       },
@@ -63,13 +61,11 @@ async function createProject(request: APIRequestContext, backendId: string, suff
 async function createStory(
   request: APIRequestContext,
   projectId: string,
-  backendId: string,
   suffix: string,
 ): Promise<StoryEntity> {
   const resp = await request.post(`${API_ORIGIN}/stories`, {
     data: {
       project_id: projectId,
-      backend_id: backendId,
       title: `E2E 抽屉返回 Story ${suffix}`,
       description: "用于验证会话返回后抽屉关闭行为",
     },
@@ -120,8 +116,8 @@ async function bindTaskSession(request: APIRequestContext, taskId: string): Prom
 test("Task 抽屉返回链路稳定：关闭不反弹、会话返回后可正常关闭", async ({ page, request }) => {
   const suffix = Date.now().toString();
   const backend = await ensureBackend(request, suffix);
-  const project = await createProject(request, backend.id, suffix);
-  const story = await createStory(request, project.id, backend.id, suffix);
+  const project = await createProject(request, suffix);
+  const story = await createStory(request, project.id, suffix);
   const task = await createTask(request, story.id, suffix);
   const sessionId = await bindTaskSession(request, task.id);
 

@@ -21,19 +21,18 @@ use crate::rpc::ApiError;
 
 #[derive(Deserialize)]
 pub struct ListStoriesQuery {
-    pub backend_id: Option<String>,
     pub project_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct CreateStoryRequest {
     pub project_id: String,
-    pub backend_id: String,
     pub title: String,
     pub description: Option<String>,
     pub priority: Option<StoryPriority>,
     pub story_type: Option<StoryType>,
     pub tags: Option<Vec<String>>,
+    pub default_workspace_id: Option<String>,
     pub context_source_refs: Option<Vec<ContextSourceRef>>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
@@ -45,7 +44,7 @@ pub struct CreateStoryRequest {
 pub struct UpdateStoryRequest {
     pub title: Option<String>,
     pub description: Option<String>,
-    pub backend_id: Option<String>,
+    pub default_workspace_id: Option<String>,
     pub status: Option<StoryStatus>,
     pub priority: Option<StoryPriority>,
     pub story_type: Option<StoryType>,
@@ -94,11 +93,9 @@ pub async fn list_stories(
         let pid = Uuid::parse_str(project_id)
             .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
         state.repos.story_repo.list_by_project(pid).await?
-    } else if let Some(backend_id) = &query.backend_id {
-        state.repos.story_repo.list_by_backend(backend_id).await?
     } else {
         return Err(ApiError::BadRequest(
-            "需要 backend_id 或 project_id 参数".into(),
+            "需要 project_id 参数".into(),
         ));
     };
 
@@ -121,18 +118,19 @@ pub async fn create_story(
     if title.is_empty() {
         return Err(ApiError::BadRequest("Story 标题不能为空".into()));
     }
-    let backend_id = req.backend_id.trim();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest("backend_id 不能为空".into()));
-    }
+
+    let default_workspace_id = req
+        .default_workspace_id
+        .as_deref()
+        .and_then(|s| s.trim().parse::<Uuid>().ok());
 
     let story = Story::new(
         project_id,
-        backend_id.to_string(),
         title.to_string(),
         req.description.unwrap_or_default(),
     );
     let mut next_story = story;
+    next_story.default_workspace_id = default_workspace_id;
     if let Some(priority) = req.priority {
         next_story.priority = priority;
     }
@@ -211,12 +209,17 @@ pub async fn update_story(
     if let Some(description) = req.description {
         story.description = description;
     }
-    if let Some(backend_id) = req.backend_id {
-        let trimmed = backend_id.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::BadRequest("backend_id 不能为空".into()));
-        }
-        story.backend_id = trimmed.to_string();
+    if let Some(default_workspace_id_raw) = req.default_workspace_id {
+        let trimmed = default_workspace_id_raw.trim();
+        story.default_workspace_id = if trimmed.is_empty() {
+            None
+        } else {
+            Some(
+                trimmed
+                    .parse::<Uuid>()
+                    .map_err(|_| ApiError::BadRequest("无效的 default_workspace_id".into()))?,
+            )
+        };
     }
     if let Some(status) = req.status {
         story.status = status;
@@ -286,7 +289,7 @@ pub async fn delete_story(
                     "story_id": story_id,
                     "reason": "cascade_delete_with_story"
                 }),
-                &story.backend_id,
+                None,
             )
             .await
             .ok();
@@ -304,7 +307,7 @@ pub async fn delete_story(
                 "story_id": story_id,
                 "reason": "story_deleted_by_user"
             }),
-            &story.backend_id,
+            None,
         )
         .await
         .ok();
@@ -511,11 +514,12 @@ pub async fn update_task(
             task.id,
             change_kind,
             serde_json::to_value(&task).unwrap_or_default(),
-            &story.backend_id,
+            None,
         )
         .await
         .ok();
 
+    let _ = &story; // story used above for workspace project_id check
     Ok(Json(TaskResponse::from(task)))
 }
 

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Workspace, WorkspaceStatus, WorkspaceType } from "../../types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import {
   DangerConfirmDialog,
   DetailMenu,
@@ -60,6 +61,7 @@ function WorkspaceDetailDrawer({
     deleteWorkspace,
     error,
   } = useWorkspaceStore();
+  const { backends } = useCoordinatorStore();
 
   const [name, setName] = useState(mode === "detail" && workspace ? workspace.name : "");
   const [workspaceType, setWorkspaceType] = useState<WorkspaceType>(
@@ -71,9 +73,14 @@ function WorkspaceDetailDrawer({
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(
     mode === "detail" && workspace ? workspace.status : "pending",
   );
+  const [backendId, setBackendId] = useState(
+    mode === "create" ? (backends[0]?.id ?? "") : (workspace?.backend_id ?? ""),
+  );
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
+
+  const selectedBackend = backends.find((b) => b.id === backendId);
 
   const handleSave = async () => {
     const trimmedName = name.trim();
@@ -81,6 +88,10 @@ function WorkspaceDetailDrawer({
 
     if (!trimmedName) {
       setFormMessage("请填写工作空间名称");
+      return;
+    }
+    if (mode === "create" && !backendId) {
+      setFormMessage("请选择后端");
       return;
     }
     if (!trimmedPath && workspaceType !== "ephemeral") {
@@ -96,6 +107,7 @@ function WorkspaceDetailDrawer({
 
     if (mode === "create") {
       const created = await createWorkspace(projectId, trimmedName, {
+        backend_id: backendId,
         workspace_type: workspaceType,
         container_ref: trimmedPath || undefined,
       });
@@ -169,6 +181,20 @@ function WorkspaceDetailDrawer({
               placeholder="工作空间名称"
               className="agentdash-form-input"
             />
+            {mode === "create" && (
+              <select
+                value={backendId}
+                onChange={(event) => setBackendId(event.target.value)}
+                className="agentdash-form-select"
+              >
+                <option value="">选择后端（必填）</option>
+                {backends.map((backend) => (
+                  <option key={backend.id} value={backend.id}>
+                    {backend.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <select
               value={workspaceType}
               onChange={(event) => setWorkspaceType(event.target.value as WorkspaceType)}
@@ -197,13 +223,18 @@ function WorkspaceDetailDrawer({
               <input
                 value={containerRef}
                 onChange={(event) => setContainerRef(event.target.value)}
-                placeholder="目标 Backend 机器上的目录绝对路径（ephemeral 可留空）"
+                placeholder={
+                  selectedBackend
+                    ? `${selectedBackend.name} 上的目录绝对路径（ephemeral 可留空）`
+                    : "目标 Backend 机器上的目录绝对路径（ephemeral 可留空）"
+                }
                 className="agentdash-form-input flex-1"
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              默认请手动填写目标 Backend 机器上的绝对路径。云端部署下不再提供“浏览目录”能力，
-              以避免误把 cloud 宿主机目录当成工作空间来源。
+              {mode === "create" && selectedBackend
+                ? `将在后端「${selectedBackend.name}」上创建工作空间，请填写该机器上的绝对路径。`
+                : "默认请手动填写目标 Backend 机器上的绝对路径。云端部署下不再提供「浏览目录」能力，以避免误把 cloud 宿主机目录当成工作空间来源。"}
             </p>
           </DetailSection>
 

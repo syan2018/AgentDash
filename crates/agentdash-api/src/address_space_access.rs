@@ -2813,7 +2813,6 @@ mod tests {
         let mut project = agentdash_domain::project::Project::new(
             "proj".into(),
             "desc".into(),
-            "backend-a".into(),
         );
         project.config.context_containers = vec![inline_container(
             "project-spec",
@@ -2831,7 +2830,6 @@ mod tests {
 
         let mut story = agentdash_domain::story::Story::new(
             project.id,
-            "backend-a".into(),
             "story".into(),
             "desc".into(),
         );
@@ -2871,7 +2869,6 @@ mod tests {
         let mut project = agentdash_domain::project::Project::new(
             "proj".into(),
             "desc".into(),
-            "backend-a".into(),
         );
         project.config.context_containers = vec![
             inline_container("project-spec", "shared", "spec.md", "project spec"),
@@ -2880,7 +2877,6 @@ mod tests {
 
         let mut story = agentdash_domain::story::Story::new(
             project.id,
-            "backend-a".into(),
             "story".into(),
             "desc".into(),
         );

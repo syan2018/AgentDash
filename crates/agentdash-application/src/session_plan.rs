@@ -840,7 +840,6 @@ mod tests {
         let mut project = Project::new(
             "demo".to_string(),
             "desc".to_string(),
-            "backend".to_string(),
         );
         project.config.session_composition = SessionComposition {
             persona_label: Some("项目级角色".to_string()),
@@ -854,7 +853,6 @@ mod tests {
 
         let mut story = Story::new(
             project.id,
-            "backend".to_string(),
             "story".to_string(),
             "desc".to_string(),
         );

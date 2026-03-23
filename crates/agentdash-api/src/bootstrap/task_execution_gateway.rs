@@ -909,7 +909,7 @@ async fn clear_task_session_binding(
                     "cleared_session_id": cleared_session_id,
                     "cleared_executor_session_id": cleared_executor_session_id,
                 }),
-                backend_id,
+                Some(backend_id),
             )
             .await?;
 
@@ -1150,10 +1150,15 @@ async fn append_task_change(
     kind: ChangeKind,
     payload: Value,
 ) -> Result<(), agentdash_domain::DomainError> {
+    let backend_id_opt = if backend_id.trim().is_empty() {
+        None
+    } else {
+        Some(backend_id)
+    };
     state
         .repos
         .story_repo
-        .append_change(task_id, kind, payload, backend_id)
+        .append_change(task_id, kind, payload, backend_id_opt)
         .await
 }
 
@@ -1284,7 +1289,12 @@ async fn resolve_task_backend_id(
     state: &Arc<AppState>,
     task: &Task,
 ) -> Result<String, TaskExecutionError> {
-    // 优先级：Workspace.backend_id → Story.backend_id → Project.backend_id
+    // 继承链（从具体到通用）：
+    // 1. Task.workspace_id → Workspace.backend_id
+    // 2. Story.default_workspace_id → Workspace.backend_id
+    // 3. Project.config.default_workspace_id → Workspace.backend_id
+    // 4. Error
+
     if let Some(workspace_id) = task.workspace_id {
         let workspace = state
             .repos
@@ -1308,8 +1318,21 @@ async fn resolve_task_backend_id(
         .map_err(map_domain_error)?
         .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {} 不存在", task.story_id)))?;
 
-    if let Ok(bid) = normalize_backend_id(&story.backend_id) {
-        return Ok(bid.to_string());
+    if let Some(default_ws_id) = story.default_workspace_id {
+        let workspace = state
+            .repos
+            .workspace_repo
+            .get_by_id(default_ws_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "Story 默认 Workspace {default_ws_id} 不存在"
+                ))
+            })?;
+        if let Ok(bid) = normalize_backend_id(&workspace.backend_id) {
+            return Ok(bid.to_string());
+        }
     }
 
     let project = state
@@ -1322,7 +1345,26 @@ async fn resolve_task_backend_id(
             TaskExecutionError::NotFound(format!("Story 所属 Project {} 不存在", story.project_id))
         })?;
 
-    normalize_backend_id(&project.backend_id).map(|value| value.to_string())
+    if let Some(default_ws_id) = project.config.default_workspace_id {
+        let workspace = state
+            .repos
+            .workspace_repo
+            .get_by_id(default_ws_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "Project 默认 Workspace {default_ws_id} 不存在"
+                ))
+            })?;
+        if let Ok(bid) = normalize_backend_id(&workspace.backend_id) {
+            return Ok(bid.to_string());
+        }
+    }
+
+    Err(TaskExecutionError::BadRequest(
+        "Task 执行需要绑定 Workspace：请为 Task、Story 或 Project 配置默认 Workspace".to_string(),
+    ))
 }
 
 fn normalize_backend_id(raw: &str) -> Result<&str, TaskExecutionError> {

@@ -164,6 +164,7 @@ impl CommandHandler {
             mcp_servers: vec![],
             workspace_root: Some(workspace_root),
             address_space: None,
+            flow_capabilities: None,
         };
 
         tracing::info!(

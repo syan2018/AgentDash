@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-03-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~848 | Active |
+| `journal-1.md` | ~908 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 19 | 2026-03-23 | decouple-project-backend-id + workspace-local-mcp-client 实现完成 | `b1db9a9`, `bff647d` |
 | 18 | 2026-03-23 | 模型参数清理 + ThinkingLevel 统一 + LLM Provider 扩展 | `5fedfb0` |
 | 17 | 2026-03-23 | Hook 系统前端重构 + Session Context 迁移 + 执行层 Bug 修复 | `81c701f`, `c383f9c`, `408bd95`, `13be286` |
 | 16 | 2026-03-23 | Project/Backend 解耦架构分析 + MCP 连接配置任务规划 | none |

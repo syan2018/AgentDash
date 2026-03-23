@@ -845,3 +845,63 @@ Error
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: decouple-project-backend-id + workspace-local-mcp-client 实现完成
+
+**Date**: 2026-03-23
+**Task**: decouple-project-backend-id + workspace-local-mcp-client 实现完成
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 完成内容
+
+### 任务一：从 Project/Story 移除 backend_id（`b1db9a9`）
+
+**核心变更：**
+- `Project` 实体彻底移除 `backend_id` 字段，DB 加 backward-compat `DROP COLUMN IF EXISTS` 迁移
+- `Story` 实体移除 `backend_id`，新增 `default_workspace_id: Option<Uuid>`
+- `state_changes.backend_id` 改为 nullable
+- `resolve_task_backend_id` 重写为清晰继承链：
+  `Task.workspace_id → Story.default_workspace_id → Project.config.default_workspace_id → Error`
+- `Workspace` 创建改为显式传入 `backend_id`（不再从 Project 继承）
+- 前端清理：Project 创建/编辑移除 backend 选择器；Workspace 创建表单新增 backend 必选下拉；`coordinatorStore.currentBackendId` / `fetchStoriesByBackend` 死代码删除
+
+**涉及文件：** 33 个文件，536 增 / 305 删
+
+---
+
+### 任务二：AgentPreset MCP 完整 transport 支持（`bff647d`）
+
+**核心变更：**
+- `build_preset_bridge` 重写：完整解析 Http/SSE/Stdio 三种 transport（含 headers/env/args），向后兼容
+- 修复 `task_execution_gateway` relay 路径硬编码 `mcp_servers: vec![]`
+- 修复 `agentdash-local` `command_handler` 硬编码 `mcp_servers: vec![]`
+- 前端 `agent-preset-editor` 新增 `McpServersEditor` 组件，支持三种 transport 结构化配置
+
+**涉及文件：** 9 个文件，447 增 / 18 删
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b1db9a9` | (see git log) |
+| `bff647d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

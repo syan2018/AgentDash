@@ -49,6 +49,9 @@ pub struct PromptSessionRequest {
     /// 可选的会话级 Address Space 视图。
     #[serde(skip)]
     pub address_space: Option<ExecutionAddressSpace>,
+    /// 流程工具能力裁剪。由 session plan 层根据 owner type 填充。
+    #[serde(skip)]
+    pub flow_capabilities: Option<crate::connector::FlowCapabilities>,
 }
 
 #[derive(Debug, Clone)]
@@ -682,6 +685,7 @@ impl ExecutorHub {
             mcp_servers: req.mcp_servers,
             address_space: req.address_space,
             hook_session: hook_session.clone(),
+            flow_capabilities: req.flow_capabilities.unwrap_or_default(),
         };
 
         session_meta.updated_at = now;
@@ -1251,6 +1255,7 @@ mod tests {
             mcp_servers: vec![],
             workspace_root: None,
             address_space: None,
+            flow_capabilities: None,
         };
 
         let payload = req
@@ -1283,6 +1288,7 @@ mod tests {
             mcp_servers: vec![],
             workspace_root: None,
             address_space: None,
+            flow_capabilities: None,
         };
 
         let payload = req
@@ -1440,6 +1446,7 @@ mod tests {
                 mcp_servers: vec![],
                 workspace_root: Some(workspace.path().to_path_buf()),
                 address_space: None,
+                flow_capabilities: None,
             },
         )
         .await
@@ -1552,6 +1559,7 @@ mod tests {
                 mcp_servers: vec![],
                 workspace_root: None,
                 address_space: None,
+                flow_capabilities: None,
             },
         )
         .await
@@ -1645,6 +1653,7 @@ mod tests {
                     mcp_servers: vec![],
                     workspace_root: None,
                     address_space: None,
+                    flow_capabilities: None,
                 },
             )
             .await
@@ -1763,6 +1772,7 @@ mod tests {
                     mcp_servers: vec![],
                     workspace_root: None,
                     address_space: None,
+                    flow_capabilities: None,
                 },
             )
             .await

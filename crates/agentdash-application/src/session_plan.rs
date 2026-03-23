@@ -113,7 +113,11 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         });
     }
 
-    let tool_visibility = summarize_tool_visibility(input.address_space, input.mcp_servers);
+    let tool_visibility = summarize_tool_visibility_with_context(
+        input.address_space,
+        input.mcp_servers,
+        Some(input.owner_kind),
+    );
     let tool_names = tool_visibility.tool_names.clone();
     fragments.push(ContextFragment {
         slot: "tools",
@@ -211,10 +215,24 @@ pub fn summarize_tool_visibility(
     address_space: Option<&ExecutionAddressSpace>,
     mcp_servers: &[McpServer],
 ) -> SessionToolVisibilitySummary {
+    summarize_tool_visibility_with_context(address_space, mcp_servers, None)
+}
+
+pub fn summarize_tool_visibility_with_context(
+    address_space: Option<&ExecutionAddressSpace>,
+    mcp_servers: &[McpServer],
+    owner_kind: Option<SessionPlanOwnerKind>,
+) -> SessionToolVisibilitySummary {
     let resolved = address_space.is_some();
     let mut tool_names = address_space
         .map(runtime_address_space_tools)
         .unwrap_or_default();
+
+    // 流程工具：按 session owner 类型条件注入
+    if resolved {
+        let flow_tools = conditional_flow_tools(owner_kind);
+        tool_names.extend(flow_tools);
+    }
 
     let toolset_label = if resolved {
         "address_space_runtime".to_string()
@@ -249,7 +267,10 @@ pub fn summarize_tool_visibility(
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
-        tool_names.push("mcp_tools".to_string());
+        // 展开 MCP 服务器名，不再使用 "mcp_tools" 占位
+        for server in &mcp_server_summaries {
+            tool_names.push(format!("mcp:{}", server.name));
+        }
     }
 
     SessionToolVisibilitySummary {
@@ -259,6 +280,37 @@ pub fn summarize_tool_visibility(
         tool_names,
         mcp_servers: mcp_server_summaries,
     }
+}
+
+/// 根据 session owner 类型返回应注入的流程工具名。
+/// - `report_workflow_artifact`：所有 task/story session 可用
+/// - `companion_dispatch` / `companion_complete`：仅 story owner session 可用
+/// - `resolve_hook_action`：所有有 hook runtime 的 session 可用（暂所有 resolved session）
+fn conditional_flow_tools(owner_kind: Option<SessionPlanOwnerKind>) -> Vec<String> {
+    let mut tools = Vec::new();
+    match owner_kind {
+        Some(SessionPlanOwnerKind::TaskExecution) => {
+            tools.push("report_workflow_artifact".to_string());
+            tools.push("resolve_hook_action".to_string());
+        }
+        Some(SessionPlanOwnerKind::StoryOwner) => {
+            tools.push("report_workflow_artifact".to_string());
+            tools.push("companion_dispatch".to_string());
+            tools.push("companion_complete".to_string());
+            tools.push("resolve_hook_action".to_string());
+        }
+        Some(SessionPlanOwnerKind::ProjectAgent) => {
+            tools.push("resolve_hook_action".to_string());
+        }
+        None => {
+            // 未知上下文时保守注入所有流程工具
+            tools.push("report_workflow_artifact".to_string());
+            tools.push("companion_dispatch".to_string());
+            tools.push("companion_complete".to_string());
+            tools.push("resolve_hook_action".to_string());
+        }
+    }
+    tools
 }
 
 fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
@@ -616,6 +668,7 @@ mod tests {
                 },
             ],
             default_mount_id: Some("main".to_string()),
+            ..Default::default()
         };
 
         let summary = summarize_address_space(&address_space);
@@ -650,6 +703,7 @@ mod tests {
                 metadata: serde_json::Value::Null,
             }],
             default_mount_id: Some("main".to_string()),
+            ..Default::default()
         };
         let mcp_servers = vec![
             serde_json::from_value::<McpServer>(json!({
@@ -667,7 +721,9 @@ mod tests {
         assert!(summary.tool_names.contains(&"mounts_list".to_string()));
         assert!(summary.tool_names.contains(&"fs_write".to_string()));
         assert!(summary.tool_names.contains(&"shell_exec".to_string()));
-        assert!(summary.tool_names.contains(&"mcp_tools".to_string()));
+        assert!(summary
+            .tool_names
+            .contains(&"mcp:agentdash-story-tools".to_string()));
         assert!(summary.markdown.contains("## Tool Visibility"));
         assert!(summary.markdown.contains("`agentdash-story-tools`"));
     }
@@ -690,6 +746,7 @@ mod tests {
                 metadata: serde_json::Value::Null,
             }],
             default_mount_id: Some("main".to_string()),
+            ..Default::default()
         };
 
         let built = build_session_plan_fragments(SessionPlanInput {
@@ -760,7 +817,10 @@ mod tests {
 
         assert!(!summary.resolved);
         assert_eq!(summary.toolset_label, "runtime_unresolved");
-        assert_eq!(summary.tool_names, vec!["mcp_tools".to_string()]);
+        assert_eq!(
+            summary.tool_names,
+            vec!["mcp:agentdash-project-tools".to_string()]
+        );
         assert!(!summary.tool_names.iter().any(|tool| tool == "read_file"));
         assert!(!summary.tool_names.iter().any(|tool| tool == "write_file"));
         assert!(

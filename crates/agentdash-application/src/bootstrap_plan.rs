@@ -13,7 +13,6 @@ use crate::session_context::{
 };
 use crate::session_plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
-    summarize_tool_visibility,
 };
 use crate::workflow::ActiveWorkflowProjection;
 
@@ -96,8 +95,16 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
             .map(|ws| PathBuf::from(ws.container_ref.clone()));
     }
 
-    let tool_visibility =
-        summarize_tool_visibility(input.address_space.as_ref(), &input.mcp_servers);
+    let owner_kind = match &input.owner_variant {
+        BootstrapOwnerVariant::Task { .. } => crate::session_plan::SessionPlanOwnerKind::TaskExecution,
+        BootstrapOwnerVariant::Story { .. } => crate::session_plan::SessionPlanOwnerKind::StoryOwner,
+        BootstrapOwnerVariant::Project { .. } => crate::session_plan::SessionPlanOwnerKind::ProjectAgent,
+    };
+    let tool_visibility = crate::session_plan::summarize_tool_visibility_with_context(
+        input.address_space.as_ref(),
+        &input.mcp_servers,
+        Some(owner_kind),
+    );
     let runtime_policy = summarize_runtime_policy(
         workspace_attached,
         input.address_space.as_ref(),

@@ -201,6 +201,12 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 mcp_servers: built.mcp_servers,
                 workspace_root,
                 address_space,
+                flow_capabilities: Some(agentdash_executor::FlowCapabilities {
+                    workflow_artifact: true,
+                    companion_dispatch: false,
+                    companion_complete: true,
+                    resolve_hook_action: true,
+                }),
             };
 
             let turn_id = self

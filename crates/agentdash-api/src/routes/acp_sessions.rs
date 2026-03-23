@@ -504,6 +504,12 @@ async fn build_story_owner_prompt_request(
     }
 
     req.mcp_servers = effective_mcp_servers;
+    req.flow_capabilities = Some(agentdash_executor::FlowCapabilities {
+        workflow_artifact: true,
+        companion_dispatch: true,
+        companion_complete: true,
+        resolve_hook_action: true,
+    });
 
     Ok(req)
 }
@@ -578,6 +584,12 @@ async fn build_project_owner_prompt_request(
     }
 
     req.mcp_servers = effective_mcp_servers;
+    req.flow_capabilities = Some(agentdash_executor::FlowCapabilities {
+        workflow_artifact: false,
+        companion_dispatch: false,
+        companion_complete: false,
+        resolve_hook_action: true,
+    });
 
     Ok(req)
 }

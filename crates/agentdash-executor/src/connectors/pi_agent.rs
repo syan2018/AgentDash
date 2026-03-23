@@ -21,8 +21,8 @@ use agentdash_acp_meta::{
 };
 
 use agentdash_agent::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, AgentToolResult, BuiltinToolset, ContentPart,
-    DynAgentTool, LlmBridge,
+    Agent, AgentConfig, AgentEvent, AgentMessage, AgentToolResult, ContentPart, DynAgentTool,
+    LlmBridge,
 };
 
 use crate::connector::{
@@ -330,19 +330,12 @@ impl AgentConnector for PiAgentConnector {
             }
         };
         let mut runtime_tools = self.tools.clone();
-        if context.address_space.is_some() {
-            let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "当前会话提供了 address_space，但 PiAgentConnector 未配置 runtime tool provider"
-                        .to_string(),
-                )
-            })?;
-            runtime_tools.extend(provider.build_tools(&context).await?);
-        } else {
-            let builtin_tools =
-                BuiltinToolset::for_workspace(context.workspace_root.clone()).into_tools();
-            runtime_tools.extend(builtin_tools);
-        }
+        let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "PiAgentConnector 未配置 runtime tool provider".to_string(),
+            )
+        })?;
+        runtime_tools.extend(provider.build_tools(&context).await?);
         runtime_tools.extend(mcp_tools);
         let tool_names = runtime_tools
             .iter()
@@ -1206,6 +1199,7 @@ mod tests {
             mcp_servers: vec![],
             address_space: None,
             hook_session: None,
+            flow_capabilities: Default::default(),
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);

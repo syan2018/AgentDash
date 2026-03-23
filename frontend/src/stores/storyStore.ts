@@ -14,6 +14,7 @@ import type {
   StorySessionInfo,
   SessionContextSnapshot,
 } from '../types';
+import { isThinkingLevel } from '../types';
 import { api } from '../api/client';
 
 export interface CreateTaskInput {
@@ -309,6 +310,7 @@ const defaultBinding: AgentBinding = {
   preset_name: null,
   prompt_template: null,
   initial_context: null,
+  thinking_level: null,
   context_sources: [],
 };
 
@@ -324,6 +326,7 @@ const mapAgentBinding = (raw: unknown): AgentBinding => {
     preset_name: binding.preset_name ? String(binding.preset_name) : null,
     prompt_template: binding.prompt_template ? String(binding.prompt_template) : null,
     initial_context: binding.initial_context ? String(binding.initial_context) : null,
+    thinking_level: isThinkingLevel(binding.thinking_level) ? binding.thinking_level : null,
     context_sources: Array.isArray(binding.context_sources)
       ? binding.context_sources as ContextSourceRef[]
       : [],

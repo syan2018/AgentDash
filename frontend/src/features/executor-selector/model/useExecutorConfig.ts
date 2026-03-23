@@ -6,14 +6,36 @@ const STORAGE_KEY = "agentdash:executor-config-v2";
 const RECENT_KEY = "agentdash:recent-executors";
 const MAX_RECENT = 8;
 
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
 function loadPersistedConfig(): PersistedExecutorConfig | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
     // 检测是否为 v1 格式（含 reasoningId 字段），若是则丢弃返回 null
-    if ("reasoningId" in parsed) return null;
-    return parsed as PersistedExecutorConfig;
+    if ("reasoningId" in record) return null;
+    if (typeof record.executor !== "string") return null;
+    if (
+      !isOptionalString(record.variant)
+      || !isOptionalString(record.modelId)
+      || !isOptionalString(record.thinkingLevel)
+      || !isOptionalString(record.permissionPolicy)
+    ) {
+      return null;
+    }
+
+    return {
+      executor: record.executor,
+      variant: record.variant,
+      modelId: record.modelId,
+      thinkingLevel: record.thinkingLevel,
+      permissionPolicy: record.permissionPolicy,
+    };
   } catch {
     return null;
   }

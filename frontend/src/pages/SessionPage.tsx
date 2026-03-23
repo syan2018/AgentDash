@@ -22,6 +22,7 @@ import type {
   SessionBindingOwner,
   SessionNavigationState,
   SessionComposition,
+  SessionStoryOverrides,
   Story,
   StoryNavigationState,
   TaskSessionExecutorSummary,
@@ -111,13 +112,22 @@ function describeExecutorSource(source: string): string {
   return source;
 }
 
+function getOwnerStoryOverrides(
+  contextSnapshot?: SessionContextSnapshot | null,
+): SessionStoryOverrides | null {
+  if (!contextSnapshot) return null;
+  const ownerContext = contextSnapshot.owner_context;
+  if (ownerContext.owner_level === "task" || ownerContext.owner_level === "story") {
+    return ownerContext.story_overrides;
+  }
+  return null;
+}
+
 function resolveEffectiveStoryContextFolders(
   story: Story,
   contextSnapshot?: SessionContextSnapshot | null,
 ): ContextFolderItem[] {
-  const storyOverrides = contextSnapshot?.owner_context.owner_level === "task" || contextSnapshot?.owner_context.owner_level === "story"
-    ? contextSnapshot.owner_context.story_overrides
-    : null;
+  const storyOverrides = getOwnerStoryOverrides(contextSnapshot);
 
   if (!contextSnapshot || !storyOverrides) {
     return story.context.context_containers.map((container) => ({
@@ -386,9 +396,10 @@ function StorySourceSummaryCard({
   story: Story;
   contextSnapshot?: SessionContextSnapshot | null;
 }) {
+  const storyOverrides = getOwnerStoryOverrides(contextSnapshot);
   const projectCount = contextSnapshot?.project_defaults.context_containers.length ?? 0;
-  const storyCount = contextSnapshot?.story_overrides.context_containers.length ?? story.context.context_containers.length;
-  const disabledCount = contextSnapshot?.story_overrides.disabled_container_ids.length ?? story.context.disabled_container_ids.length;
+  const storyCount = storyOverrides?.context_containers.length ?? story.context.context_containers.length;
+  const disabledCount = storyOverrides?.disabled_container_ids.length ?? story.context.disabled_container_ids.length;
 
   return (
     <SurfaceCard eyebrow="上下文来源" title="Project 默认 + Story 定向整理">
@@ -990,12 +1001,12 @@ function StorySessionContextPanel({
               addressSpace={addressSpace}
               extraBadges={[
                 `${contextSnapshot.project_defaults.context_containers.length} 个 Project 容器`,
-                `${contextSnapshot.story_overrides.context_containers.length} 个 Story 追加容器`,
+                `${getOwnerStoryOverrides(contextSnapshot)?.context_containers.length ?? 0} 个 Story 追加容器`,
               ]}
             />
           )}
           {executorSummary && <ExecutorSummaryCard executor={executorSummary} />}
-          {contextSnapshot ? (
+          {contextSnapshot && getOwnerStoryOverrides(contextSnapshot) ? (
             <RawDiagnosticsSection>
               <ContainerGroup
                 title="Project 默认容器"
@@ -1004,10 +1015,10 @@ function StorySessionContextPanel({
               />
               <ContainerGroup
                 title="Story 追加容器"
-                containers={contextSnapshot.story_overrides.context_containers}
+                containers={getOwnerStoryOverrides(contextSnapshot)?.context_containers ?? []}
                 emptyText="Story 未追加容器"
               />
-              <DisabledContainerCard ids={contextSnapshot.story_overrides.disabled_container_ids} />
+              <DisabledContainerCard ids={getOwnerStoryOverrides(contextSnapshot)?.disabled_container_ids ?? []} />
               <MountPolicyCard title="当前生效挂载策略" policy={contextSnapshot.effective.mount_policy} />
               <SessionCompositionCard title="当前生效会话编排" composition={contextSnapshot.effective.session_composition} />
               <ToolVisibilityCard summary={contextSnapshot.effective.tool_visibility} />
@@ -1364,18 +1375,24 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, []);
 
   useEffect(() => {
-    if (!currentSessionId) {
-      setLoadedHookRuntime(null);
-      return;
-    }
-    void refreshHookRuntime(currentSessionId);
+    if (!currentSessionId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const runtime = await fetchSessionHookRuntime(currentSessionId);
+        if (!cancelled) setLoadedHookRuntime(runtime);
+      } catch {
+        if (!cancelled) setLoadedHookRuntime(null);
+      }
+    })();
     return () => {
+      cancelled = true;
       if (hookRuntimeRefreshTimerRef.current) {
         window.clearTimeout(hookRuntimeRefreshTimerRef.current);
         hookRuntimeRefreshTimerRef.current = null;
       }
     };
-  }, [currentSessionId, refreshHookRuntime]);
+  }, [currentSessionId]);
 
   const sessionBindings = currentSessionId ? loadedSessionBindings : EMPTY_SESSION_BINDINGS;
   const activeHookRuntime = loadedHookRuntime?.session_id === currentSessionId

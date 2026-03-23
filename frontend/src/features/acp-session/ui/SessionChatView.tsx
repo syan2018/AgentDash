@@ -519,7 +519,7 @@ export function SessionChatView({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput]);
+  }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput, refreshExecutionState]);
 
   const handleCancel = useCallback(async () => {
     if (!hasSession || !sessionId || isCancelling) return;

@@ -83,7 +83,7 @@ function SingleEntry({
         if (isAgentDashTaskContextBlock(content)) {
           return <AcpTaskContextCard block={content} />;
         }
-        const uri = content.type === "resource" ? content.resource?.uri : content.resource?.uri;
+        const uri = content.type === "resource" ? content.resource?.uri : content.uri;
         if (typeof uri === "string" && (
           uri.startsWith("agentdash://project-context/") ||
           uri.startsWith("agentdash://story-context/")

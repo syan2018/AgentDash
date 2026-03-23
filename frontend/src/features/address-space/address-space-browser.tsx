@@ -66,6 +66,9 @@ export function AddressSpaceBrowser({
   preview,
   initialMountId,
 }: AddressSpaceBrowserProps) {
+  const previewProjectId = preview?.projectId;
+  const previewStoryId = preview?.storyId;
+  const previewTarget = preview?.target;
   const [mounts, setMounts] = useState<MountInfo[]>([]);
   const [defaultMountId, setDefaultMountId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -90,15 +93,11 @@ export function AddressSpaceBrowser({
         })),
       );
       setDefaultMountId(addressSpace.default_mount_id ?? null);
-      if (!selectedMountId && addressSpace.mounts.length > 0) {
-        setSelectedMountId(
-          addressSpace.default_mount_id ?? addressSpace.mounts[0].id,
-        );
-      }
+      setSelectedMountId((current) => current ?? addressSpace.default_mount_id ?? addressSpace.mounts[0]?.id ?? null);
       return;
     }
 
-    if (!preview) return;
+    if (!previewProjectId) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -106,18 +105,14 @@ export function AddressSpaceBrowser({
     void (async () => {
       try {
         const result: PreviewAddressSpaceResponse = await previewAddressSpace({
-          projectId: preview.projectId,
-          storyId: preview.storyId,
-          target: preview.target,
+          projectId: previewProjectId,
+          storyId: previewStoryId,
+          target: previewTarget,
         });
         if (cancelled) return;
         setMounts(result.mounts);
         setDefaultMountId(result.default_mount_id ?? null);
-        if (!selectedMountId && result.mounts.length > 0) {
-          setSelectedMountId(
-            result.default_mount_id ?? result.mounts[0].id,
-          );
-        }
+        setSelectedMountId((current) => current ?? result.default_mount_id ?? result.mounts[0]?.id ?? null);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "加载 address space 失败");
@@ -127,7 +122,7 @@ export function AddressSpaceBrowser({
     })();
 
     return () => { cancelled = true; };
-  }, [addressSpace, preview?.projectId, preview?.storyId, preview?.target]);
+  }, [addressSpace, previewProjectId, previewStoryId, previewTarget]);
 
   const selectedMount = useMemo(
     () => mounts.find((m) => m.id === selectedMountId) ?? null,

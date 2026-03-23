@@ -11,6 +11,7 @@ import type {
   ProjectConfig,
   SessionComposition,
 } from '../types';
+import { isThinkingLevel } from '../types';
 import { api } from '../api/client';
 
 interface ProjectState {
@@ -51,6 +52,9 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
   const rawMounts = Array.isArray(rawMountsSource)
     ? rawMountsSource as Record<string, unknown>[]
     : [];
+  const thinkingLevel = isThinkingLevel(rawExecutor.thinking_level)
+    ? rawExecutor.thinking_level
+    : null;
 
   return {
     key: String(raw.key ?? ''),
@@ -61,9 +65,7 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
       variant: rawExecutor.variant != null ? String(rawExecutor.variant) : null,
       model_id: rawExecutor.model_id != null ? String(rawExecutor.model_id) : null,
       agent_id: rawExecutor.agent_id != null ? String(rawExecutor.agent_id) : null,
-      thinking_level: (rawExecutor.thinking_level != null
-        ? String(rawExecutor.thinking_level)
-        : null) as import('../types').ThinkingLevel | null,
+      thinking_level: thinkingLevel,
       permission_policy: rawExecutor.permission_policy != null ? String(rawExecutor.permission_policy) : null,
     },
     preset_name: raw.preset_name != null

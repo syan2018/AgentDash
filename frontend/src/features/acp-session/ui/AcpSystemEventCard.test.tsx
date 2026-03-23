@@ -46,8 +46,7 @@ describe("AcpSystemEventCard", () => {
     expect(isRenderableSystemEventUpdate(update)).toBe(true);
 
     const html = renderToStaticMarkup(<AcpSystemEventCard update={update} />);
-    // 用户级信息：类型标签、消息、完成判定
-    expect(html).toContain("流程事件");
+    // 用户级信息：消息、完成判定
     expect(html).toContain("Hook 阻止了当前结束并要求继续执行");
     expect(html).toContain("完成判定：未满足");
     // 调试详情默认折叠——不在初始渲染中
@@ -57,7 +56,7 @@ describe("AcpSystemEventCard", () => {
     expect(html).toContain("调试详情");
   });
 
-  it("显示 turn_started 这类 info lifecycle 事件", () => {
+  it("静默 turn_started 这类 info lifecycle 事件", () => {
     const update = {
       sessionUpdate: "session_info_update",
       _meta: {
@@ -74,13 +73,7 @@ describe("AcpSystemEventCard", () => {
       },
     } as unknown as SessionUpdate;
 
-    expect(isRenderableSystemEventUpdate(update)).toBe(true);
-
-    const html = renderToStaticMarkup(<AcpSystemEventCard update={update} />);
-    expect(html).toContain("开始执行");
-    expect(html).toContain("执行开始");
-    // turnId 只在调试折叠中，初始渲染中为截断版
-    expect(html).toContain("调试详情");
+    expect(isRenderableSystemEventUpdate(update)).toBe(false);
   });
 
   it("显示 turn_interrupted 并保留中断原因", () => {

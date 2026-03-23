@@ -22,6 +22,27 @@ export type TaskExecutionMode = "standard" | "auto_retry" | "one_shot";
 export type BackendType = "local" | "remote";
 export type WorkspaceType = "git_worktree" | "static" | "ephemeral";
 export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "archived" | "error";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export const THINKING_LEVEL_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = [
+  { value: "off", label: "关闭" },
+  { value: "minimal", label: "最少" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+  { value: "xhigh", label: "超高" },
+];
+
+export function isThinkingLevel(value: unknown): value is ThinkingLevel {
+  return (
+    value === "off"
+    || value === "minimal"
+    || value === "low"
+    || value === "medium"
+    || value === "high"
+    || value === "xhigh"
+  );
+}
 
 // ─── 上下文容器 / 挂载策略 / 会话编排 ──────────────────
 
@@ -531,6 +552,7 @@ export interface AgentBinding {
   preset_name?: string | null;
   prompt_template?: string | null;
   initial_context?: string | null;
+  thinking_level?: ThinkingLevel | null;
   context_sources: ContextSourceRef[];
 }
 

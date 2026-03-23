@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl } from "../../types";
+import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, ThinkingLevel } from "../../types";
+import { THINKING_LEVEL_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery } from "../executor-selector";
 
 export interface AgentPresetEditorProps {
@@ -16,7 +17,7 @@ interface PresetFormState {
   variant: string;
   model_id: string;
   agent_id: string;
-  reasoning_id: string;
+  thinking_level: ThinkingLevel | "";
   permission_policy: string;
   mcp_servers: McpServerDecl[];
 }
@@ -32,7 +33,7 @@ function presetToForm(preset?: AgentPreset): PresetFormState {
     variant: String(cfg.variant ?? ""),
     model_id: String(cfg.model_id ?? ""),
     agent_id: String(cfg.agent_id ?? ""),
-    reasoning_id: String(cfg.reasoning_id ?? ""),
+    thinking_level: isThinkingLevel(cfg.thinking_level) ? cfg.thinking_level : "",
     permission_policy: String(cfg.permission_policy ?? ""),
     mcp_servers: rawMcps,
   };
@@ -45,7 +46,7 @@ function formToPreset(form: PresetFormState): AgentPreset {
   if (form.variant.trim()) config.variant = form.variant.trim();
   if (form.model_id.trim()) config.model_id = form.model_id.trim();
   if (form.agent_id.trim()) config.agent_id = form.agent_id.trim();
-  if (form.reasoning_id.trim()) config.reasoning_id = form.reasoning_id.trim();
+  if (form.thinking_level) config.thinking_level = form.thinking_level;
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
   return {
@@ -280,7 +281,6 @@ function McpServersEditor({
         <McpServerEntry
           key={i}
           server={server}
-          index={i}
           onChange={(s) => {
             const next = [...servers];
             next[i] = s;
@@ -388,8 +388,19 @@ function PresetFormFields({
             <input value={form.agent_id} onChange={(e) => patchForm({ agent_id: e.target.value })} placeholder="可选" className="agentdash-form-input" />
           </div>
           <div>
-            <label className="agentdash-form-label">Reasoning ID</label>
-            <input value={form.reasoning_id} onChange={(e) => patchForm({ reasoning_id: e.target.value })} placeholder="可选" className="agentdash-form-input" />
+            <label className="agentdash-form-label">Thinking Level</label>
+            <select
+              value={form.thinking_level}
+              onChange={(e) => patchForm({ thinking_level: (e.target.value as ThinkingLevel) || "" })}
+              className="agentdash-form-select"
+            >
+              <option value="">不设置</option>
+              {THINKING_LEVEL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="sm:col-span-2">
             <label className="agentdash-form-label">Permission Policy</label>

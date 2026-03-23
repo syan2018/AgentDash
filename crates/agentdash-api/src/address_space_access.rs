@@ -108,6 +108,17 @@ impl RelayAddressSpaceService {
         )
     }
 
+    /// 预览模式：不指定 agent_type，生成最大可见范围的 address space
+    pub fn build_preview_address_space(
+        &self,
+        project: &agentdash_domain::project::Project,
+        story: Option<&agentdash_domain::story::Story>,
+        workspace: Option<&agentdash_domain::workspace::Workspace>,
+        target: SessionMountTarget,
+    ) -> Result<ExecutionAddressSpace, String> {
+        build_derived_address_space(project, story, workspace, None, target)
+    }
+
     pub fn list_mounts(
         &self,
         address_space: &ExecutionAddressSpace,

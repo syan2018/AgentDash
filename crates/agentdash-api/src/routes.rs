@@ -217,6 +217,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/address-spaces/{space_id}/entries",
             get(address_spaces::list_address_entries),
         )
+        .route(
+            "/address-spaces/mounts/{mount_id}/entries",
+            get(address_spaces::list_mount_entries),
+        )
+        .route(
+            "/address-spaces/read-file",
+            post(address_spaces::read_mount_file),
+        )
+        .route(
+            "/address-spaces/preview",
+            post(address_spaces::preview_address_space),
+        )
         // Workspace Files（内部 API，用于 @ 文件引用选择器）
         .route("/workspace-files", get(workspace_files::list_files))
         .route("/workspace-files/read", post(workspace_files::read_file))

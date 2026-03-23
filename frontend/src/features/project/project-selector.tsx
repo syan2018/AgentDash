@@ -25,6 +25,7 @@ import {
   createDefaultSessionComposition,
 } from "../../components/context-config-defaults";
 import { ProjectWorkflowPanel } from "../workflow/project-workflow-panel";
+import { AgentPresetEditor } from "./agent-preset-editor";
 
 interface ProjectSelectorProps {
   projects: Project[];
@@ -203,9 +204,7 @@ function ProjectDetailDrawer({
   const [defaultWorkspaceId, setDefaultWorkspaceId] = useState(
     project?.config.default_workspace_id ?? "",
   );
-  const [agentPresetsJson, setAgentPresetsJson] = useState(
-    JSON.stringify(project?.config.agent_presets ?? [], null, 2),
-  );
+  const [isPresetSaving, setIsPresetSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
@@ -231,54 +230,34 @@ function ProjectDetailDrawer({
   };
 
   const handleSaveConfig = async () => {
-    let parsedPresets: ProjectConfig["agent_presets"] = [];
-
-    try {
-      const parsed = JSON.parse(agentPresetsJson.trim() || "[]") as unknown;
-      if (!Array.isArray(parsed)) {
-        setFormError("agent_presets 必须是数组");
-        return;
-      }
-      parsedPresets = parsed.map((item, index) => {
-        if (!item || typeof item !== "object") {
-          throw new Error(`第 ${index + 1} 项必须是对象`);
-        }
-        const preset = item as Record<string, unknown>;
-        const presetName = typeof preset.name === "string" ? preset.name.trim() : "";
-        const presetAgentType =
-          typeof preset.agent_type === "string" ? preset.agent_type.trim() : "";
-
-        if (!presetName || !presetAgentType) {
-          throw new Error(`第 ${index + 1} 项缺少 name 或 agent_type`);
-        }
-
-        return {
-          name: presetName,
-          agent_type: presetAgentType,
-          config:
-            preset.config && typeof preset.config === "object"
-              ? (preset.config as Record<string, unknown>)
-              : {},
-        };
-      });
-    } catch (parseErr) {
-      setFormError(
-        parseErr instanceof Error ? parseErr.message : "agent_presets JSON 解析失败",
-      );
-      return;
-    }
-
     const saved = await updateProjectConfig(project.id, {
       default_agent_type: defaultAgentType.trim() || null,
       default_workspace_id: defaultWorkspaceId || null,
-      agent_presets: parsedPresets,
+      agent_presets: project.config.agent_presets ?? [],
       context_containers: project.config.context_containers ?? [],
       mount_policy: project.config.mount_policy ?? { include_local_workspace: true, local_workspace_capabilities: [] },
       session_composition: project.config.session_composition ?? { workflow_steps: [], required_context_blocks: [] },
     });
     if (!saved) return;
-
     setFormError(null);
+  };
+
+  const handleSavePresets = async (nextPresets: ProjectConfig["agent_presets"]) => {
+    setIsPresetSaving(true);
+    try {
+      const saved = await updateProjectConfig(project.id, {
+        default_agent_type: project.config.default_agent_type ?? null,
+        default_workspace_id: project.config.default_workspace_id ?? null,
+        agent_presets: nextPresets,
+        context_containers: project.config.context_containers ?? [],
+        mount_policy: project.config.mount_policy ?? { include_local_workspace: true, local_workspace_capabilities: [] },
+        session_composition: project.config.session_composition ?? { workflow_steps: [], required_context_blocks: [] },
+      });
+      if (!saved) setFormError("保存预设失败");
+      else setFormError(null);
+    } finally {
+      setIsPresetSaving(false);
+    }
   };
 
   const handleDeleteProject = async () => {
@@ -433,21 +412,23 @@ function ProjectDetailDrawer({
                   </option>
                 ))}
               </select>
-              <textarea
-                value={agentPresetsJson}
-                onChange={(event) => setAgentPresetsJson(event.target.value)}
-                rows={8}
-                placeholder='agent_presets JSON，例如 [{"name":"默认","agent_type":"claude-code","config":{}}]'
-                className="agentdash-form-textarea font-mono text-xs"
-              />
               <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={() => void handleSaveConfig()}
                   className="agentdash-button-primary"
                 >
-                  保存配置
+                  保存默认配置
                 </button>
+              </div>
+
+              <div className="mt-2 border-t border-border pt-3">
+                <p className="mb-2 text-sm font-medium text-foreground">Agent 预设</p>
+                <AgentPresetEditor
+                  presets={project.config.agent_presets ?? []}
+                  onSave={handleSavePresets}
+                  isSaving={isPresetSaving}
+                />
               </div>
             </DetailSection>
           )}

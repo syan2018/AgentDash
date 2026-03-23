@@ -15,6 +15,7 @@ export function DashboardPage() {
     agentsByProjectId,
     fetchProjectAgents,
     openProjectAgentSession,
+    forceNewProjectAgentSession,
     error: projectError,
   } = useProjectStore();
   const { stories, isLoading, error: storyError, fetchStoriesByProject } = useStoryStore();
@@ -43,15 +44,14 @@ export function DashboardPage() {
     navigate(`/story/${story.id}`);
   };
 
-  const handleOpenAgent = async (agent: ProjectAgentSummary) => {
-    if (!currentProjectId) return;
-    const result = await openProjectAgentSession(currentProjectId, agent.key);
-    if (!result) return;
-
+  const navigateToSession = (
+    result: { agent: ProjectAgentSummary; session_id: string },
+    projectId: string,
+  ) => {
     const navigationState: SessionNavigationState = {
       return_to: {
         owner_type: "project",
-        project_id: currentProjectId,
+        project_id: projectId,
       },
       project_agent: {
         agent_key: result.agent.key,
@@ -60,6 +60,20 @@ export function DashboardPage() {
       },
     };
     navigate(`/session/${result.session_id}`, { state: navigationState });
+  };
+
+  const handleOpenAgent = async (agent: ProjectAgentSummary) => {
+    if (!currentProjectId) return;
+    const result = await openProjectAgentSession(currentProjectId, agent.key);
+    if (!result) return;
+    navigateToSession(result, currentProjectId);
+  };
+
+  const handleForceNewSession = async (agent: ProjectAgentSummary) => {
+    if (!currentProjectId) return;
+    const result = await forceNewProjectAgentSession(currentProjectId, agent.key);
+    if (!result) return;
+    navigateToSession(result, currentProjectId);
   };
 
   if (!currentProjectId) {
@@ -127,14 +141,15 @@ export function DashboardPage() {
           projectId={currentProjectId}
           backendId={currentProject?.backend_id ?? ""}
         />
-      ) : (
+      ) : currentProject ? (
         <ProjectAgentView
-          projectName={currentProject?.name ?? "当前项目"}
+          project={currentProject}
           agents={currentAgents}
           error={projectError}
           onOpenAgent={handleOpenAgent}
+          onForceNewSession={handleForceNewSession}
         />
-      )}
+      ) : null}
     </div>
   );
 }

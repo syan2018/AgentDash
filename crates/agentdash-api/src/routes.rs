@@ -61,6 +61,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(project_agents::open_project_agent_session),
         )
         .route(
+            "/projects/{id}/agents/{agent_key}/sessions",
+            get(project_agents::list_project_agent_sessions),
+        )
+        .route(
             "/projects/{id}/sessions/{binding_id}",
             get(project_sessions::get_project_session),
         )

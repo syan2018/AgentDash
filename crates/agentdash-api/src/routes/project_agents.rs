@@ -15,9 +15,9 @@ use agentdash_domain::{
 use agentdash_executor::AgentDashExecutorConfig;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{app_state::AppState, rpc::ApiError, session_context::normalize_optional_string};
@@ -155,9 +155,16 @@ pub async fn list_project_agents(
     Ok(Json(response))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OpenSessionQuery {
+    #[serde(default)]
+    pub force_new: bool,
+}
+
 pub async fn open_project_agent_session(
     State(state): State<Arc<AppState>>,
     Path((project_id, agent_key)): Path<(String, String)>,
+    Query(query): Query<OpenSessionQuery>,
 ) -> Result<Json<OpenProjectAgentSessionResponse>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     let project = load_project(&state, project_id).await?;
@@ -165,44 +172,48 @@ pub async fn open_project_agent_session(
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
 
     let label = project_agent_session_label(&agent.key);
-    let existing_binding = state
-        .repos
-        .session_binding_repo
-        .find_by_owner_and_label(SessionOwnerType::Project, project.id, &label)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
 
-    if let Some(binding) = existing_binding
-        && let Some(meta) = state
-            .services
-            .executor_hub
-            .get_session_meta(&binding.session_id)
+    if !query.force_new {
+        let existing_binding = state
+            .repos
+            .session_binding_repo
+            .find_by_owner_and_label(SessionOwnerType::Project, project.id, &label)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    {
-        let session = Some(ProjectAgentSessionResponse {
-            binding_id: binding.id.to_string(),
-            session_id: binding.session_id,
-            session_title: Some(meta.title),
-            last_activity: Some(meta.updated_at),
-        });
-        let summary = build_project_agent_summary(&project, &agent, session);
-        return Ok(Json(OpenProjectAgentSessionResponse {
-            created: false,
-            session_id: summary
-                .session
-                .as_ref()
-                .map(|item| item.session_id.clone())
-                .unwrap_or_default(),
-            binding_id: summary
-                .session
-                .as_ref()
-                .map(|item| item.binding_id.clone())
-                .unwrap_or_default(),
-            agent: summary,
-        }));
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+        if let Some(binding) = existing_binding
+            && let Some(meta) = state
+                .services
+                .executor_hub
+                .get_session_meta(&binding.session_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+        {
+            let session = Some(ProjectAgentSessionResponse {
+                binding_id: binding.id.to_string(),
+                session_id: binding.session_id,
+                session_title: Some(meta.title),
+                last_activity: Some(meta.updated_at),
+            });
+            let summary = build_project_agent_summary(&project, &agent, session);
+            return Ok(Json(OpenProjectAgentSessionResponse {
+                created: false,
+                session_id: summary
+                    .session
+                    .as_ref()
+                    .map(|item| item.session_id.clone())
+                    .unwrap_or_default(),
+                binding_id: summary
+                    .session
+                    .as_ref()
+                    .map(|item| item.binding_id.clone())
+                    .unwrap_or_default(),
+                agent: summary,
+            }));
+        }
     }
 
+    // Clean up stale binding (session gone from executor hub) -- but only the latest one
     if let Some(binding) = state
         .repos
         .session_binding_repo
@@ -210,12 +221,22 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
     {
-        state
-            .repos
-            .session_binding_repo
-            .delete(binding.id)
+        let session_alive = state
+            .services
+            .executor_hub
+            .get_session_meta(&binding.session_id)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .is_some();
+
+        if !session_alive {
+            state
+                .repos
+                .session_binding_repo
+                .delete(binding.id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+        }
     }
 
     let title = format!("{} · {}", project.name.trim(), agent.display_name.trim());
@@ -426,16 +447,82 @@ async fn find_project_agent_session(
     }))
 }
 
+pub async fn list_project_agent_sessions(
+    State(state): State<Arc<AppState>>,
+    Path((project_id, agent_key)): Path<(String, String)>,
+) -> Result<Json<Vec<ProjectAgentSessionResponse>>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let project = load_project(&state, project_id).await?;
+    let _agent = resolve_project_agent_bridge(&project, &agent_key)
+        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
+
+    let label = project_agent_session_label(&agent_key);
+    let bindings = state
+        .repos
+        .session_binding_repo
+        .list_by_owner(SessionOwnerType::Project, project.id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    let matching: Vec<_> = bindings.into_iter().filter(|b| b.label == label).collect();
+
+    let mut sessions = Vec::with_capacity(matching.len());
+    for binding in matching {
+        let meta = state
+            .services
+            .executor_hub
+            .get_session_meta(&binding.session_id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+        sessions.push(ProjectAgentSessionResponse {
+            binding_id: binding.id.to_string(),
+            session_id: binding.session_id,
+            session_title: meta.as_ref().map(|m| m.title.clone()),
+            last_activity: meta.as_ref().map(|m| m.updated_at),
+        });
+    }
+
+    sessions.sort_by(|a, b| {
+        let at = b.last_activity.unwrap_or(0);
+        let bt = a.last_activity.unwrap_or(0);
+        at.cmp(&bt)
+    });
+
+    Ok(Json(sessions))
+}
+
 fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
     let executor_config = executor_config_from_preset(preset)
         .unwrap_or_else(|| AgentDashExecutorConfig::new(preset.agent_type.clone()));
+
+    let display_name = preset
+        .config
+        .get("display_name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(&preset.name)
+        .to_string();
+
+    let description = preset
+        .config
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            format!(
+                "来自 Project Agent 预设，底层执行器为 {}。",
+                preset.agent_type.trim()
+            )
+        });
+
     ProjectAgentBridge {
         key: format!("preset:{}", preset.name),
-        display_name: preset.name.clone(),
-        description: format!(
-            "来自 Project Agent 预设，底层执行器为 {}。",
-            preset.agent_type.trim()
-        ),
+        display_name,
+        description,
         executor_config,
         preset_name: Some(preset.name.clone()),
         source: format!("project.config.agent_presets[{}]", preset.name),

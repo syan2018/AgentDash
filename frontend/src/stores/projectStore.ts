@@ -3,6 +3,7 @@ import type {
   ContextContainerDefinition,
   MountDerivationPolicy,
   OpenProjectAgentSessionResult,
+  ProjectAgentSession,
   ProjectSessionInfo,
   SessionContextSnapshot,
   ProjectAgentSummary,
@@ -33,6 +34,8 @@ interface ProjectState {
   updateProjectConfig: (id: string, config: Partial<ProjectConfig>) => Promise<Project | null>;
   fetchProjectAgents: (projectId: string) => Promise<ProjectAgentSummary[]>;
   openProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
+  forceNewProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
+  fetchProjectAgentSessions: (projectId: string, agentKey: string) => Promise<ProjectAgentSession[]>;
   fetchProjectSessionInfo: (projectId: string, bindingId: string) => Promise<ProjectSessionInfo | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
@@ -231,6 +234,51 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       set({ error: (e as Error).message });
       return null;
+    }
+  },
+
+  forceNewProjectAgentSession: async (projectId, agentKey) => {
+    try {
+      const response = await api.post<Record<string, unknown>>(
+        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session?force_new=true`,
+        {},
+      );
+      const result = mapOpenProjectAgentSessionResult(response);
+      set((state) => {
+        const existing = state.agentsByProjectId[projectId] ?? [];
+        const hasExisting = existing.some((item) => item.key === result.agent.key);
+        const nextAgents = hasExisting
+          ? existing.map((item) => (item.key === result.agent.key ? result.agent : item))
+          : [...existing, result.agent];
+        return {
+          agentsByProjectId: {
+            ...state.agentsByProjectId,
+            [projectId]: nextAgents,
+          },
+          error: null,
+        };
+      });
+      return result;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  fetchProjectAgentSessions: async (projectId, agentKey) => {
+    try {
+      const response = await api.get<Record<string, unknown>[]>(
+        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
+      );
+      return response.map((raw) => ({
+        binding_id: String(raw.binding_id ?? ''),
+        session_id: String(raw.session_id ?? ''),
+        session_title: raw.session_title != null ? String(raw.session_title) : null,
+        last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
+      }));
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return [];
     }
   },
 

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-03-10
+- **Total Sessions**: 17
+- **Last Active**: 2026-03-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~610 | Active |
+| `journal-1.md` | ~816 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 17 | 2026-03-23 | Hook 系统前端重构 + Session Context 迁移 + 执行层 Bug 修复 | `81c701f`, `c383f9c`, `408bd95`, `13be286` |
+| 16 | 2026-03-23 | Project/Backend 解耦架构分析 + MCP 连接配置任务规划 | none |
 | 15 | 2026-03-10 | Relay P1-P3: executor aggregation, workspace_files relay, backend management UI | `ee29fb8`, `612750f`, `a327fbc`, `f0201fe` |
 | 14 | 2026-03-02 | feat(file-reference): @ 引用工作空间文件功能实现 | `0635bb1` |
 | 13 | 2026-02-27 | 归档任务: Project 配置增强与 Story 下 Task 创建流程 | `6fa8e43` |

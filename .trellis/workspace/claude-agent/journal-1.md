@@ -607,3 +607,209 @@ P1 discovery API aggregation, P2 remote workspace_files relay, P3 backend manage
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Project/Backend 解耦架构分析 + MCP 连接配置任务规划
+
+**Date**: 2026-03-23
+**Task**: Project/Backend 解耦架构分析 + MCP 连接配置任务规划
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 本次工作内容
+
+纯分析和任务规划，无代码提交。
+
+### 分析：Project ↔ Backend ↔ Workspace 诡异关系
+
+对 Project、Workspace、Story、Task 四个实体的 `backend_id` 字段进行全面审查：
+
+**发现的核心问题：**
+- `Project.backend_id` 当前承担两个错误职责：1）创建 Workspace 时自动继承；2）作为 `resolve_task_backend_id` 的最终兜底
+- 继承链 `Workspace → Story → Project` 全部是 `backend_id` 字符串传递，绕过 Workspace 实体
+- `Story.backend_id` 无独立意义，仅作路由 fallback，掩盖 Task 未绑定 Workspace 的配置缺失
+- `coordinatorStore.currentBackendId` 死状态，从未被消费
+- `fetchStoriesByBackend` 死函数，无 UI 调用
+- Workspace 创建时用户填绝对路径但不知道是哪台机器（UI 缺少 backend 选择）
+
+**目标设计（清晰继承链）：**
+```
+Task.workspace_id（显式绑定）
+  ↓ 未绑定时
+Story.default_workspace_id（新增字段）
+  ↓ 未设置时
+Project.config.default_workspace_id（已存在！）
+  ↓ 均无
+Error
+```
+`backend_id` 永远从 Workspace 实体解析，Project/Story 只持有 `default_workspace_id`。
+
+---
+
+### 分析：MCP 连接配置问题
+
+**发现两处 relay 路径硬编码丢弃：**
+- `task_execution_gateway.rs:1369` — `mcp_servers: vec![]`（`built.mcp_servers` 未透传）
+- `command_handler.rs:164` — `mcp_servers: vec![]`（`payload.mcp_servers` 被忽略）
+
+**MCP 声明位于 `AgentPreset.config["mcp_servers"]`**（不是 Project/Story/Task 层），与 Agent 定义伴随。
+
+**现有类型体系已完整**（`agent_client_protocol` v0.9.4）：
+- `McpServer::Http` — 含 `headers: Vec<HttpHeader>` 字段（当前解析草率，只取 `name`+`url`）
+- `McpServer::Sse` — 同上
+- `McpServer::Stdio` — `command + args + env`（当前完全不支持）
+
+---
+
+### 新建任务
+
+| 任务 | Slug | 主要内容 |
+|------|------|---------|
+| 从 Project 解耦 backend_id | `03-23-decouple-project-backend-id` | 移除 Project/Story 的 backend_id，建立 default_workspace_id 继承链，重写 resolve_task_backend_id |
+| Agent MCP 连接完整支持 | `03-23-workspace-local-mcp-client` | 完整解析三种 transport（Http/SSE/Stdio）、打通 relay 透传、local 端 stdio 进程管理、前端结构化配置 UI |
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `none` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 17: Hook 系统前端重构 + Session Context 迁移 + 执行层 Bug 修复
+
+**Date**: 2026-03-23
+**Task**: Hook 系统前端重构 + Session Context 迁移 + 执行层 Bug 修复
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 本轮工作内容
+
+本次 session 围绕 Hook 系统前端展示质量问题展开 review，发现并修复了多个相关问题，同时完成了 session context 注入架构的重构。
+
+---
+
+### 1. Hook 系统前端展示完整重构（refactor/hook）
+
+**问题**：noop/stop/terminal_observed 等无意义 hook 事件无条件渲染为完整大卡片，会话流噪音严重；context_fragments 在 HookRuntimeSurfaceCard 中只显示计数，内容完全不可见。
+
+**后端过滤逻辑重写**（`hook_events.rs`）：
+- `should_emit_hook_trace_event` 改为基于"有无实际效果"判断，不再用 matched_rule_keys 数量触发
+- 新增静默决策集合：stop / terminal_observed / refresh_requested
+- 新增 success severity 映射 phase_advanced 等里程碑事件
+- 扩展测试覆盖 7 个场景
+
+**前端三路渲染分级**（`AcpSystemEventCard.tsx` 完整重构）：
+- 高优先级干预型（deny/ask/rewrite/continue/block_reason）→ 完整大卡片
+- 信息型（context_injected/steering_injected/phase_advanced）→ 可展开细条
+- 通用系统事件 → 原有完整卡片
+
+**Guard 重构**（`AcpSystemEventGuard.ts`）：
+- turn_started / turn_completed 静默（发送按钮状态已表达）
+- hook_event 增加 decision 级二次过滤
+
+**SessionPage 扩展**：
+- context_fragments 从纯计数 badge 改为 HookContextFragmentRow 可展开列表
+- 新建 `AcpOwnerContextCard.tsx`：agentdash://project-context/ 和 story-context/ 专属渲染，蓝/紫 badge + 可展开
+
+---
+
+### 2. Project/Story 会话上下文迁移到 system_context（refactor/session）
+
+**问题**：每次用户发消息，`augment_prompt_request_for_owner` 都把 Instruction + 来源摘要（`project_core(project), project_agent_identity(project)...`）塞进用户消息的 prompt_blocks，用户看到的消息流包含大量技术性无意义文本。
+
+**架构调整**：
+- `PromptSessionRequest` 新增 `system_context: Option<String>` 字段
+- `ExecutionContext` 同步新增字段，hub 构建时传递
+- `PiAgentConnector::build_runtime_system_prompt` 将 system_context 注入 system prompt 头部
+- `build_project/story_system_context` 新函数：构造 system prompt 注入内容
+- `build_project/story_owner_prompt_blocks` 重构：移除 instruction text block，仅保留 resource 展示锚点 + 用户原始消息
+
+**效果**：用户消息流不再出现技术文本，resource block 渲染为专属 AcpOwnerContextCard。
+
+---
+
+### 3. 执行层 Bug 修复（fix/executor）
+
+**Bug 1：before_stop 无 workflow 时误发 continue（导致 Agent 重复输出）**
+
+根因：`completion_satisfied` 依赖 `is_some_and()`，无 workflow 时 `completion = None`，返回 false，导致 stop 条件永远不满足，发出空 steering 的 continue，Agent 重新进入对话输出相同内容。
+
+修复：引入 `has_completion_gate`，无 gate 时视为可以停止。
+
+**Bug 2：agent_message_chunk 重复渲染**
+
+根因：`MessageEnd` 发出全量文本 chunk（正确行为），与前面 TextDelta 累积的内容无 overlap，`mergeStreamChunk` 走 `${previous}${incoming}` 拼接，产生重复渲染。
+
+修复：前端 `useAcpStream.applyNotification` 在 chunk 合并前增加 entryIndex upsert。MessageEnd 和所有 TextDelta 共享相同 `entry_index`，通过 `(turnId, entryIndex, sessionUpdate)` 三元组识别同一消息，找到则直接覆盖而非拼接。**MessageEnd 行为不变**。
+
+---
+
+### 4. Spec 文档更新（docs/spec）
+
+- `hook-guidelines.md`：更新可见事件列表、decision 级过滤规则、渲染分级说明、fragments 展示规范
+- `execution-hook-runtime.md`：BeforeStop 无 workflow 约束、agent_message_chunk 合并协议
+- `quality-guidelines.md`：system_context vs prompt_blocks 分工规范、PromptSessionRequest 扩展字段规范
+
+---
+
+## 关键文件
+
+**后端**：
+- `crates/agentdash-executor/src/hook_events.rs`
+- `crates/agentdash-executor/src/runtime_delegate.rs`
+- `crates/agentdash-executor/src/connector.rs` / `hub.rs`
+- `crates/agentdash-executor/src/connectors/pi_agent.rs`
+- `crates/agentdash-application/src/project/context_builder.rs`
+- `crates/agentdash-application/src/story/context_builder.rs`
+- `crates/agentdash-api/src/routes/acp_sessions.rs`
+
+**前端**：
+- `frontend/src/features/acp-session/ui/AcpSystemEventCard.tsx`（完整重构）
+- `frontend/src/features/acp-session/ui/AcpSystemEventGuard.ts`
+- `frontend/src/features/acp-session/ui/AcpOwnerContextCard.tsx`（新建）
+- `frontend/src/features/acp-session/model/useAcpStream.ts`
+- `frontend/src/pages/SessionPage.tsx`
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `81c701f` | (see git log) |
+| `c383f9c` | (see git log) |
+| `408bd95` | (see git log) |
+| `13be286` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

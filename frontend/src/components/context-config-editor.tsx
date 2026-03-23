@@ -8,8 +8,6 @@ import type {
 } from "../types";
 import { CONTEXT_CAPABILITY_OPTIONS } from "./context-config-defaults";
 
-const READONLY_PROVIDER_HINT = "当前 provider 首轮仅支持只读能力，write / exec / default_write 会被禁用。";
-
 function cloneContainer(
   container: ContextContainerDefinition,
 ): ContextContainerDefinition {
@@ -63,6 +61,16 @@ function cloneSessionComposition(
   };
 }
 
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9\u4e00-\u9fff-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    || "container";
+}
+
 function createDefaultContainer(): ContextContainerDefinition {
   return {
     id: "",
@@ -70,7 +78,7 @@ function createDefaultContainer(): ContextContainerDefinition {
     display_name: "",
     provider: {
       kind: "inline_files",
-      files: [{ path: "README.md", content: "请填写容器内容" }],
+      files: [{ path: "context.md", content: "" }],
     },
     capabilities: ["read", "list"],
     default_write: false,
@@ -194,364 +202,14 @@ function ContextContainersEditorForm({
       )}
 
       {draft.map((container, index) => (
-        <div
+        <ContainerEditorItem
           key={`container-editor-${index}`}
-          className="space-y-3 rounded-[12px] border border-border bg-background/70 p-3"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium text-foreground">
-                {container.display_name.trim() || `容器 ${index + 1}`}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                provider / capabilities / exposure 会一起保存
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setDraft((current) => current.filter((_, currentIndex) => currentIndex !== index))}
-              disabled={isSaving}
-              className="rounded-[8px] border border-destructive/20 bg-destructive/5 px-2 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
-            >
-              删除
-            </button>
-          </div>
-
-          <div className="grid gap-2 md:grid-cols-3">
-            <input
-              value={container.id}
-              onChange={(event) => updateContainerAt(index, (current) => ({
-                ...current,
-                id: event.target.value,
-              }))}
-              placeholder="容器 ID"
-              className="agentdash-form-input"
-            />
-            <input
-              value={container.mount_id}
-              onChange={(event) => updateContainerAt(index, (current) => ({
-                ...current,
-                mount_id: event.target.value,
-              }))}
-              placeholder="挂载 ID"
-              className="agentdash-form-input"
-            />
-            <input
-              value={container.display_name}
-              onChange={(event) => updateContainerAt(index, (current) => ({
-                ...current,
-                display_name: event.target.value,
-              }))}
-              placeholder="显示名称"
-              className="agentdash-form-input"
-            />
-          </div>
-
-          <div className="space-y-2 rounded-[10px] border border-border/70 bg-secondary/20 p-3">
-            <div className="grid gap-2 md:grid-cols-[180px_minmax(0,1fr)]">
-              <select
-                value={container.provider.kind}
-                onChange={(event) =>
-                  updateContainerAt(index, (current) => ({
-                    ...current,
-                    provider:
-                      event.target.value === "external_service"
-                        ? {
-                            kind: "external_service",
-                            service_id: "",
-                            root_ref: "",
-                          }
-                        : {
-                            kind: "inline_files",
-                            files:
-                              current.provider.kind === "inline_files"
-                                ? current.provider.files.map((file) => ({ ...file }))
-                                : [{ path: "README.md", content: "请填写容器内容" }],
-                          },
-                    capabilities: current.capabilities.filter((capability) =>
-                      containerSupportsCapability(current, capability),
-                    ),
-                    default_write: false,
-                  }))
-                }
-                className="agentdash-form-select"
-              >
-                <option value="inline_files">inline_files</option>
-                <option value="external_service">external_service</option>
-              </select>
-
-              <div className="rounded-[8px] border border-border bg-background/80 px-3 py-2 text-[11px] text-muted-foreground">
-                {container.provider.kind === "inline_files"
-                  ? "内联文件容器会把文件内容直接注入虚拟 mount。"
-                  : "外部服务容器通过 service_id + root_ref 映射到远端 provider。"}
-              </div>
-            </div>
-
-            {container.provider.kind === "inline_files" ? (
-              <div className="space-y-2">
-                {container.provider.files.map((file, fileIndex) => (
-                  <div
-                    key={`inline-file-${fileIndex}`}
-                    className="space-y-2 rounded-[10px] border border-border bg-background/80 p-3"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <input
-                        value={file.path}
-                        onChange={(event) =>
-                          updateContainerAt(index, (current) => ({
-                            ...current,
-                            provider: {
-                              kind: "inline_files",
-                              files: current.provider.kind === "inline_files"
-                                ? current.provider.files.map((entry, currentFileIndex) =>
-                                    currentFileIndex === fileIndex
-                                      ? { ...entry, path: event.target.value }
-                                      : entry,
-                                  )
-                                : [{ path: event.target.value, content: "" }],
-                            },
-                          }))
-                        }
-                        placeholder="文件路径，例如 docs/spec.md"
-                        className="agentdash-form-input"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateContainerAt(index, (current) => ({
-                            ...current,
-                            provider: {
-                              kind: "inline_files",
-                              files:
-                                current.provider.kind === "inline_files"
-                                  ? current.provider.files.filter((_, currentFileIndex) => currentFileIndex !== fileIndex)
-                                  : [],
-                            },
-                          }))
-                        }
-                        disabled={
-                          isSaving
-                          || container.provider.kind !== "inline_files"
-                          || container.provider.files.length <= 1
-                        }
-                        className="rounded-[8px] border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-                      >
-                        删除文件
-                      </button>
-                    </div>
-                    <textarea
-                      value={file.content}
-                      onChange={(event) =>
-                        updateContainerAt(index, (current) => ({
-                          ...current,
-                          provider: {
-                            kind: "inline_files",
-                            files: current.provider.kind === "inline_files"
-                              ? current.provider.files.map((entry, currentFileIndex) =>
-                                  currentFileIndex === fileIndex
-                                    ? { ...entry, content: event.target.value }
-                                    : entry,
-                                )
-                              : [{ path: file.path, content: event.target.value }],
-                          },
-                        }))
-                      }
-                      rows={4}
-                      placeholder="文件内容"
-                      className="agentdash-form-textarea font-mono text-xs"
-                    />
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateContainerAt(index, (current) => ({
-                      ...current,
-                      provider: {
-                        kind: "inline_files",
-                        files:
-                          current.provider.kind === "inline_files"
-                            ? [...current.provider.files, { path: "", content: "" }]
-                            : [{ path: "", content: "" }],
-                      },
-                    }))
-                  }
-                  disabled={isSaving}
-                  className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:opacity-40"
-                >
-                  + 添加内联文件
-                </button>
-              </div>
-            ) : (
-              <div className="grid gap-2 md:grid-cols-2">
-                <input
-                  value={container.provider.service_id}
-                  onChange={(event) =>
-                    updateContainerAt(index, (current) => ({
-                      ...current,
-                      provider:
-                        current.provider.kind === "external_service"
-                          ? { ...current.provider, service_id: event.target.value }
-                          : { kind: "external_service", service_id: event.target.value, root_ref: "" },
-                    }))
-                  }
-                  placeholder="service_id"
-                  className="agentdash-form-input"
-                />
-                <input
-                  value={container.provider.root_ref}
-                  onChange={(event) =>
-                    updateContainerAt(index, (current) => ({
-                      ...current,
-                      provider:
-                        current.provider.kind === "external_service"
-                          ? { ...current.provider, root_ref: event.target.value }
-                          : { kind: "external_service", service_id: "", root_ref: event.target.value },
-                    }))
-                  }
-                  placeholder="root_ref"
-                  className="agentdash-form-input"
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex flex-wrap gap-2">
-              {CONTEXT_CAPABILITY_OPTIONS.map((option) => {
-                const supported = containerSupportsCapability(container, option.value);
-                const checked = container.capabilities.includes(option.value);
-                return (
-                  <label
-                    key={option.value}
-                    className={`inline-flex items-center gap-2 rounded-[8px] border px-2.5 py-1.5 text-xs ${
-                      supported
-                        ? "border-border bg-background text-foreground"
-                        : "border-border/70 bg-muted/40 text-muted-foreground"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={!supported || isSaving}
-                      onChange={(event) =>
-                        updateContainerAt(index, (current) => ({
-                          ...current,
-                          capabilities: updateCapabilityList(
-                            current.capabilities,
-                            option.value,
-                            event.target.checked,
-                          ),
-                          default_write:
-                            option.value === "write" && !event.target.checked
-                              ? false
-                              : current.default_write,
-                        }))
-                      }
-                      className="h-4 w-4 rounded border-border"
-                    />
-                    {option.label}
-                  </label>
-                );
-              })}
-            </div>
-            <p className="text-[11px] text-muted-foreground">{READONLY_PROVIDER_HINT}</p>
-          </div>
-
-          <div className="grid gap-3 rounded-[10px] border border-border bg-secondary/20 p-3 md:grid-cols-2">
-            <div className="space-y-2">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                Exposure
-              </p>
-              <label className="flex items-center gap-2 text-xs text-foreground">
-                <input
-                  type="checkbox"
-                  checked={container.exposure.include_in_project_sessions}
-                  onChange={(event) =>
-                    updateContainerAt(index, (current) => ({
-                      ...current,
-                      exposure: {
-                        ...current.exposure,
-                        include_in_project_sessions: event.target.checked,
-                      },
-                    }))
-                  }
-                  disabled={isSaving}
-                  className="h-4 w-4 rounded border-border"
-                />
-                包含在 Project Sessions
-              </label>
-              <label className="flex items-center gap-2 text-xs text-foreground">
-                <input
-                  type="checkbox"
-                  checked={container.exposure.include_in_story_sessions}
-                  onChange={(event) =>
-                    updateContainerAt(index, (current) => ({
-                      ...current,
-                      exposure: {
-                        ...current.exposure,
-                        include_in_story_sessions: event.target.checked,
-                      },
-                    }))
-                  }
-                  disabled={isSaving}
-                  className="h-4 w-4 rounded border-border"
-                />
-                包含在 Story Sessions
-              </label>
-              <label className="flex items-center gap-2 text-xs text-foreground">
-                <input
-                  type="checkbox"
-                  checked={container.exposure.include_in_task_sessions}
-                  onChange={(event) =>
-                    updateContainerAt(index, (current) => ({
-                      ...current,
-                      exposure: {
-                        ...current.exposure,
-                        include_in_task_sessions: event.target.checked,
-                      },
-                    }))
-                  }
-                  disabled={isSaving}
-                  className="h-4 w-4 rounded border-border"
-                />
-                包含在 Task Sessions
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={container.default_write}
-                  disabled
-                  className="h-4 w-4 rounded border-border"
-                />
-                default_write（当前 provider 不支持）
-              </label>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                Agent Filter
-              </p>
-              <input
-                value={joinAgentTypeList(container.exposure.allowed_agent_types)}
-                onChange={(event) =>
-                  updateContainerAt(index, (current) => ({
-                    ...current,
-                    exposure: {
-                      ...current.exposure,
-                      allowed_agent_types: parseAgentTypeList(event.target.value),
-                    },
-                  }))
-                }
-                placeholder="allowed_agent_types，逗号分隔；留空表示全部 Agent"
-                className="agentdash-form-input"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                例如：`codex`, `claude-code`。留空表示不做 agent 类型过滤。
-              </p>
-            </div>
-          </div>
-        </div>
+          container={container}
+          index={index}
+          isSaving={isSaving}
+          onUpdate={(updater) => updateContainerAt(index, updater)}
+          onRemove={() => setDraft((current) => current.filter((_, i) => i !== index))}
+        />
       ))}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -585,6 +243,312 @@ function ContextContainersEditorForm({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function ContainerEditorItem({
+  container,
+  index,
+  isSaving,
+  onUpdate,
+  onRemove,
+}: {
+  container: ContextContainerDefinition;
+  index: number;
+  isSaving: boolean;
+  onUpdate: (updater: (c: ContextContainerDefinition) => ContextContainerDefinition) => void;
+  onRemove: () => void;
+}) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const handleDisplayNameChange = (value: string) => {
+    onUpdate((current) => {
+      const slug = slugify(value);
+      const shouldSync = current.id === "" || current.id === slugify(current.display_name);
+      return {
+        ...current,
+        display_name: value,
+        id: shouldSync ? slug : current.id,
+        mount_id: shouldSync ? slug : current.mount_id,
+      };
+    });
+  };
+
+  return (
+    <div className="space-y-3 rounded-[12px] border border-border bg-background/70 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-medium text-foreground">
+          {container.display_name.trim() || `容器 ${index + 1}`}
+          {container.id && (
+            <span className="ml-2 rounded-[4px] bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {container.id}
+            </span>
+          )}
+        </p>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={isSaving}
+          className="rounded-[8px] border border-destructive/20 bg-destructive/5 px-2 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
+        >
+          删除
+        </button>
+      </div>
+
+      {/* 核心字段：显示名称（自动同步 id / mount_id） */}
+      <input
+        value={container.display_name}
+        onChange={(e) => handleDisplayNameChange(e.target.value)}
+        placeholder="容器名称（自动生成 ID 和挂载点）"
+        className="agentdash-form-input"
+      />
+
+      {/* Provider 内容区 */}
+      {container.provider.kind === "inline_files" ? (
+        <div className="space-y-2">
+          {container.provider.files.map((file, fileIndex) => (
+            <div
+              key={`inline-file-${fileIndex}`}
+              className="space-y-1.5 rounded-[10px] border border-border bg-background/80 p-2.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <input
+                  value={file.path}
+                  onChange={(e) =>
+                    onUpdate((current) => ({
+                      ...current,
+                      provider: {
+                        kind: "inline_files",
+                        files: current.provider.kind === "inline_files"
+                          ? current.provider.files.map((entry, i) =>
+                              i === fileIndex ? { ...entry, path: e.target.value } : entry,
+                            )
+                          : [{ path: e.target.value, content: "" }],
+                      },
+                    }))
+                  }
+                  placeholder="文件路径，例如 docs/spec.md"
+                  className="agentdash-form-input"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdate((current) => ({
+                      ...current,
+                      provider: {
+                        kind: "inline_files",
+                        files:
+                          current.provider.kind === "inline_files"
+                            ? current.provider.files.filter((_, i) => i !== fileIndex)
+                            : [],
+                      },
+                    }))
+                  }
+                  disabled={isSaving || (container.provider.kind === "inline_files" && container.provider.files.length <= 1)}
+                  className="shrink-0 rounded-[6px] border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                >
+                  ×
+                </button>
+              </div>
+              <textarea
+                value={file.content}
+                onChange={(e) =>
+                  onUpdate((current) => ({
+                    ...current,
+                    provider: {
+                      kind: "inline_files",
+                      files: current.provider.kind === "inline_files"
+                        ? current.provider.files.map((entry, i) =>
+                            i === fileIndex ? { ...entry, content: e.target.value } : entry,
+                          )
+                        : [{ path: file.path, content: e.target.value }],
+                    },
+                  }))
+                }
+                rows={3}
+                placeholder="文件内容"
+                className="agentdash-form-textarea font-mono text-xs"
+              />
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() =>
+              onUpdate((current) => ({
+                ...current,
+                provider: {
+                  kind: "inline_files",
+                  files:
+                    current.provider.kind === "inline_files"
+                      ? [...current.provider.files, { path: "", content: "" }]
+                      : [{ path: "", content: "" }],
+                },
+              }))
+            }
+            disabled={isSaving}
+            className="rounded-[8px] border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:opacity-40"
+          >
+            + 添加文件
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-2 md:grid-cols-2">
+          <input
+            value={container.provider.service_id}
+            onChange={(e) =>
+              onUpdate((current) => ({
+                ...current,
+                provider:
+                  current.provider.kind === "external_service"
+                    ? { ...current.provider, service_id: e.target.value }
+                    : { kind: "external_service", service_id: e.target.value, root_ref: "" },
+              }))
+            }
+            placeholder="service_id"
+            className="agentdash-form-input"
+          />
+          <input
+            value={container.provider.root_ref}
+            onChange={(e) =>
+              onUpdate((current) => ({
+                ...current,
+                provider:
+                  current.provider.kind === "external_service"
+                    ? { ...current.provider, root_ref: e.target.value }
+                    : { kind: "external_service", service_id: "", root_ref: e.target.value },
+              }))
+            }
+            placeholder="root_ref"
+            className="agentdash-form-input"
+          />
+        </div>
+      )}
+
+      {/* 高级选项折叠区 */}
+      <details
+        open={showAdvanced}
+        onToggle={(e) => setShowAdvanced((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+          高级选项（ID / 能力 / 可见性 / Agent 过滤）
+        </summary>
+        <div className="mt-2 space-y-3">
+          {/* 手动 ID 编辑 */}
+          <div className="grid gap-2 md:grid-cols-2">
+            <div>
+              <label className="text-[10px] text-muted-foreground">容器 ID</label>
+              <input
+                value={container.id}
+                onChange={(e) => onUpdate((c) => ({ ...c, id: e.target.value }))}
+                placeholder="容器 ID"
+                className="agentdash-form-input"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground">挂载 ID</label>
+              <input
+                value={container.mount_id}
+                onChange={(e) => onUpdate((c) => ({ ...c, mount_id: e.target.value }))}
+                placeholder="挂载 ID"
+                className="agentdash-form-input"
+              />
+            </div>
+          </div>
+
+          {/* Provider 类型切换 */}
+          <select
+            value={container.provider.kind}
+            onChange={(e) =>
+              onUpdate((current) => ({
+                ...current,
+                provider:
+                  e.target.value === "external_service"
+                    ? { kind: "external_service", service_id: "", root_ref: "" }
+                    : {
+                        kind: "inline_files",
+                        files:
+                          current.provider.kind === "inline_files"
+                            ? current.provider.files.map((f) => ({ ...f }))
+                            : [{ path: "context.md", content: "" }],
+                      },
+                capabilities: current.capabilities.filter((cap) =>
+                  containerSupportsCapability(current, cap),
+                ),
+                default_write: false,
+              }))
+            }
+            className="agentdash-form-select"
+          >
+            <option value="inline_files">inline_files（内联文件）</option>
+            <option value="external_service">external_service（外部服务）</option>
+          </select>
+
+          {/* 能力 */}
+          <div className="flex flex-wrap gap-2">
+            {CONTEXT_CAPABILITY_OPTIONS.map((option) => {
+              const supported = containerSupportsCapability(container, option.value);
+              return (
+                <label
+                  key={option.value}
+                  className={`inline-flex items-center gap-1.5 rounded-[6px] border px-2 py-1 text-[11px] ${
+                    supported ? "border-border text-foreground" : "border-border/50 text-muted-foreground/50"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={container.capabilities.includes(option.value)}
+                    disabled={!supported || isSaving}
+                    onChange={(e) =>
+                      onUpdate((c) => ({
+                        ...c,
+                        capabilities: updateCapabilityList(c.capabilities, option.value, e.target.checked),
+                      }))
+                    }
+                    className="h-3.5 w-3.5 rounded border-border"
+                  />
+                  {option.label}
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Exposure */}
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-medium text-muted-foreground">可见性</p>
+              {(["include_in_project_sessions", "include_in_story_sessions", "include_in_task_sessions"] as const).map((key) => (
+                <label key={key} className="flex items-center gap-1.5 text-[11px] text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={container.exposure[key]}
+                    onChange={(e) =>
+                      onUpdate((c) => ({ ...c, exposure: { ...c.exposure, [key]: e.target.checked } }))
+                    }
+                    disabled={isSaving}
+                    className="h-3.5 w-3.5 rounded border-border"
+                  />
+                  {key.replace("include_in_", "").replace("_sessions", "")}
+                </label>
+              ))}
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-medium text-muted-foreground">Agent 过滤</p>
+              <input
+                value={joinAgentTypeList(container.exposure.allowed_agent_types)}
+                onChange={(e) =>
+                  onUpdate((c) => ({
+                    ...c,
+                    exposure: { ...c.exposure, allowed_agent_types: parseAgentTypeList(e.target.value) },
+                  }))
+                }
+                placeholder="留空 = 全部 Agent"
+                className="agentdash-form-input text-[11px]"
+              />
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

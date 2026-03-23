@@ -48,22 +48,6 @@ export async function listWorkspaceFiles(pattern?: string): Promise<ListFilesRes
   return res.json();
 }
 
-export async function readWorkspaceFile(relPath: string): Promise<ReadFileResponse> {
-  const url = buildApiPath("/workspace-files/read");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ relPath }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `readWorkspaceFile failed: HTTP ${res.status}`);
-  }
-
-  return res.json();
-}
-
 export async function batchReadWorkspaceFiles(paths: string[]): Promise<BatchReadFilesResponse> {
   const url = buildApiPath("/workspace-files/batch-read");
   const res = await fetch(url, {

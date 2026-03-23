@@ -7,11 +7,6 @@ export interface CreateWorkspaceOpts {
   container_ref?: string;
 }
 
-interface PickDirectoryResponse {
-  selected: boolean;
-  container_ref?: string;
-}
-
 interface WorkspaceState {
   workspacesByProjectId: Record<string, Workspace[]>;
   isLoading: boolean;
@@ -24,7 +19,6 @@ interface WorkspaceState {
     projectId: string,
     payload: { name?: string; container_ref?: string; workspace_type?: WorkspaceType },
   ) => Promise<Workspace | null>;
-  pickDirectory: (initialPath?: string) => Promise<string | null>;
   updateStatus: (id: string, status: WorkspaceStatus) => Promise<void>;
   deleteWorkspace: (id: string, projectId: string) => Promise<void>;
 }
@@ -93,22 +87,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     } catch (e) {
       set({ error: (e as Error).message });
       return null;
-    }
-  },
-
-  pickDirectory: async (initialPath) => {
-    try {
-      set({ error: null });
-      const result = await api.post<PickDirectoryResponse>("/workspaces/pick-directory", {
-        initial_path: initialPath?.trim() || null,
-      });
-      if (!result.selected) {
-        return null;
-      }
-      return result.container_ref?.trim() ?? null;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      throw e;
     }
   },
 

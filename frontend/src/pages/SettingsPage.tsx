@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
+import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
 import type { SettingUpdate } from "../api/settings";
 import type { BackendConfig } from "../types";
 
@@ -13,6 +14,38 @@ function readVal(settings: { key: string; value: unknown }[], key: string, fallb
   const entry = settings.find((s) => s.key === key);
   if (entry === undefined || entry.value === null || entry.value === undefined) return fallback;
   return String(entry.value);
+}
+
+function parseModelConfigs(value: unknown): ModelConfig[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const id = String(record.id ?? "").trim();
+    if (!id) return [];
+    return [{
+      id,
+      name: String(record.name ?? "").trim(),
+      context_window: Number(record.context_window ?? 128000) || 128000,
+      reasoning: record.reasoning === true,
+      max_tokens: typeof record.max_tokens === "number" ? record.max_tokens : undefined,
+    }];
+  });
+}
+
+function parseStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item).trim())
+      .filter((item) => item.length > 0);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +117,8 @@ interface LlmProviderDef {
   apiKeySettingKey?: string;
   baseUrlSettingKey?: string;
   defaultModelSettingKey?: string;
+  modelsSettingKey?: string;
+  blockedModelsSettingKey?: string;
   wireApiSettingKey?: string;
   supportsBaseUrl: boolean;
   /** 无需 API Key（如本地 Ollama） */
@@ -92,12 +127,23 @@ interface LlmProviderDef {
   baseUrlPlaceholder?: string;
 }
 
+/** 模型配置 */
+interface ModelConfig {
+  id: string;
+  name: string;
+  context_window: number;
+  reasoning: boolean;
+  max_tokens?: number;
+}
+
 const LLM_PROVIDERS: LlmProviderDef[] = [
   {
     id: "anthropic",
     name: "Anthropic Claude",
     description: "Claude Opus、Sonnet 等模型",
     apiKeySettingKey: "llm.anthropic.api_key",
+    modelsSettingKey: "llm.anthropic.models",
+    blockedModelsSettingKey: "llm.anthropic.blocked_models",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "sk-ant-...",
   },
@@ -106,6 +152,8 @@ const LLM_PROVIDERS: LlmProviderDef[] = [
     name: "Google Gemini",
     description: "Gemini 2.5 Pro、Flash 等模型",
     apiKeySettingKey: "llm.gemini.api_key",
+    modelsSettingKey: "llm.gemini.models",
+    blockedModelsSettingKey: "llm.gemini.blocked_models",
     supportsBaseUrl: false,
   },
   {
@@ -113,6 +161,8 @@ const LLM_PROVIDERS: LlmProviderDef[] = [
     name: "DeepSeek",
     description: "DeepSeek Chat、DeepSeek Reasoner (R1)",
     apiKeySettingKey: "llm.deepseek.api_key",
+    modelsSettingKey: "llm.deepseek.models",
+    blockedModelsSettingKey: "llm.deepseek.blocked_models",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "sk-...",
   },
@@ -123,6 +173,8 @@ const LLM_PROVIDERS: LlmProviderDef[] = [
     apiKeySettingKey: "llm.openai.api_key",
     baseUrlSettingKey: "llm.openai.base_url",
     defaultModelSettingKey: "llm.openai.default_model",
+    modelsSettingKey: "llm.openai.models",
+    blockedModelsSettingKey: "llm.openai.blocked_models",
     wireApiSettingKey: "llm.openai.wire_api",
     supportsBaseUrl: true,
     apiKeyPlaceholder: "sk-...",
@@ -133,6 +185,8 @@ const LLM_PROVIDERS: LlmProviderDef[] = [
     name: "Groq",
     description: "Llama、QwQ 等模型（高速推理）",
     apiKeySettingKey: "llm.groq.api_key",
+    modelsSettingKey: "llm.groq.models",
+    blockedModelsSettingKey: "llm.groq.blocked_models",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "gsk_...",
   },
@@ -141,17 +195,10 @@ const LLM_PROVIDERS: LlmProviderDef[] = [
     name: "xAI (Grok)",
     description: "Grok 3、Grok 3 Mini 等模型",
     apiKeySettingKey: "llm.xai.api_key",
+    modelsSettingKey: "llm.xai.models",
+    blockedModelsSettingKey: "llm.xai.blocked_models",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "xai-...",
-  },
-  {
-    id: "ollama",
-    name: "Ollama（本地）",
-    description: "本地部署的开源模型，无需 API Key",
-    baseUrlSettingKey: "llm.ollama.base_url",
-    supportsBaseUrl: true,
-    noApiKey: true,
-    baseUrlPlaceholder: "http://localhost:11434",
   },
 ];
 
@@ -169,6 +216,9 @@ function LlmProvidersSection({
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
+  const discovered = useExecutorDiscoveredOptions("PI_AGENT", "");
+  const discoveredModels = discovered.options?.model_selector.models ?? [];
+
   return (
     <SectionCard title="LLM Providers">
       <p className="text-xs text-muted-foreground -mt-2 mb-1">
@@ -180,6 +230,7 @@ function LlmProvidersSection({
             key={provider.id}
             provider={provider}
             settings={settings}
+            discoveredModels={discoveredModels}
             saving={saving}
             onSave={onSave}
           />
@@ -192,11 +243,13 @@ function LlmProvidersSection({
 function LlmProviderRow({
   provider,
   settings,
+  discoveredModels,
   saving,
   onSave,
 }: {
   provider: LlmProviderDef;
   settings: { key: string; value: unknown; masked: boolean }[];
+  discoveredModels: Array<{ id: string; name: string; provider_id?: string | null; blocked?: boolean }>;
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
@@ -207,6 +260,16 @@ function LlmProviderRow({
   const savedBaseUrl = provider.baseUrlSettingKey ? readVal(settings, provider.baseUrlSettingKey) : "";
   const savedModel = provider.defaultModelSettingKey ? readVal(settings, provider.defaultModelSettingKey) : "";
   const savedWireApi = provider.wireApiSettingKey ? readVal(settings, provider.wireApiSettingKey, "responses") : "";
+
+  // 读取模型列表配置
+  const savedModelsRaw = provider.modelsSettingKey
+    ? settings.find((s) => s.key === provider.modelsSettingKey)?.value
+    : undefined;
+  const savedModels = parseModelConfigs(savedModelsRaw);
+  const savedBlockedModelsRaw = provider.blockedModelsSettingKey
+    ? settings.find((s) => s.key === provider.blockedModelsSettingKey)?.value
+    : undefined;
+  const savedBlockedModels = parseStringList(savedBlockedModelsRaw);
 
   // 对于有 API Key 的 provider，以 API Key 存在为判断依据；对于 noApiKey 的 provider，以 baseUrl 为判断依据
   const configured = provider.noApiKey
@@ -251,12 +314,15 @@ function LlmProviderRow({
 
       {expanded && (
         <LlmProviderForm
-          key={`${provider.id}-${savedApiKey}-${savedBaseUrl}`}
+          key={`${provider.id}-${savedApiKey}-${savedBaseUrl}-${savedModel}-${JSON.stringify(savedModels)}-${savedBlockedModels.join(",")}`}
           provider={provider}
           initialApiKey={savedApiKey}
           initialBaseUrl={savedBaseUrl}
           initialModel={savedModel}
           initialWireApi={savedWireApi}
+          initialModels={savedModels}
+          initialBlockedModels={savedBlockedModels}
+          discoveredModels={discoveredModels.filter((model) => (model.provider_id ?? "") === provider.id)}
           saving={saving}
           onSave={onSave}
         />
@@ -271,6 +337,9 @@ function LlmProviderForm({
   initialBaseUrl,
   initialModel,
   initialWireApi,
+  initialModels,
+  initialBlockedModels,
+  discoveredModels,
   saving,
   onSave,
 }: {
@@ -279,6 +348,9 @@ function LlmProviderForm({
   initialBaseUrl: string;
   initialModel: string;
   initialWireApi: string;
+  initialModels: ModelConfig[];
+  initialBlockedModels: string[];
+  discoveredModels: Array<{ id: string; name: string; blocked?: boolean }>;
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
@@ -287,6 +359,20 @@ function LlmProviderForm({
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [model, setModel] = useState(initialModel);
   const [wireApi, setWireApi] = useState(initialWireApi || "responses");
+  const [models, setModels] = useState<ModelConfig[]>(initialModels);
+  const [modelsTouched, setModelsTouched] = useState(false);
+  const [blockedModels, setBlockedModels] = useState<string[]>(initialBlockedModels);
+  const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
+  const toggleBlockedModel = (modelId: string) => {
+    setBlockedModels((current) => {
+      const exists = current.includes(modelId);
+      const next = exists
+        ? current.filter((item) => item !== modelId)
+        : [...current, modelId];
+      return next;
+    });
+    setBlockedModelsTouched(true);
+  };
 
   const handleSave = () => {
     const updates: SettingUpdate[] = [];
@@ -301,20 +387,60 @@ function LlmProviderForm({
       updates.push({ key: provider.baseUrlSettingKey, value: baseUrl });
     }
 
-    // 默认模型（仅 OpenAI 类 provider 有此选项）
+    // 默认模型
     if (provider.defaultModelSettingKey) {
       updates.push({ key: provider.defaultModelSettingKey, value: model });
     }
 
-    // Wire API（仅 OpenAI 有此选项）
+    // Wire API（仅 OpenAI）
     if (provider.wireApiSettingKey) {
       updates.push({ key: provider.wireApiSettingKey, value: wireApi });
+    }
+
+    // 模型列表
+    if (modelsTouched && provider.modelsSettingKey) {
+      updates.push({ key: provider.modelsSettingKey, value: models });
+    }
+
+    if (blockedModelsTouched && provider.blockedModelsSettingKey) {
+      updates.push({
+        key: provider.blockedModelsSettingKey,
+        value: blockedModels,
+      });
     }
 
     if (updates.length > 0) {
       onSave(updates);
       setApiKeyTouched(false);
+      setModelsTouched(false);
+      setBlockedModelsTouched(false);
     }
+  };
+
+  const handleAddModel = () => {
+    const newModel: ModelConfig = {
+      id: "",
+      name: "",
+      context_window: 128000,
+      reasoning: false,
+    };
+    setModels([...models, newModel]);
+    setModelsTouched(true);
+  };
+
+  const handleRemoveModel = (index: number) => {
+    const newModels = models.filter((_, i) => i !== index);
+    setModels(newModels);
+    setModelsTouched(true);
+  };
+
+  const handleUpdateModel = (index: number, field: keyof ModelConfig, value: string | number | boolean) => {
+    const newModels = models.map((m, i) => {
+      if (i !== index) return m;
+      return { ...m, [field]: value };
+    });
+    setModels(newModels);
+    setModelsTouched(true);
   };
 
   return (
@@ -348,7 +474,7 @@ function LlmProviderForm({
         </Field>
       )}
 
-      {/* 默认模型（仅有 defaultModelSettingKey 的 provider） */}
+      {/* 默认模型 */}
       {provider.defaultModelSettingKey && (
         <Field label="默认模型">
           <input
@@ -377,6 +503,109 @@ function LlmProviderForm({
                 {opt}
               </label>
             ))}
+          </div>
+        </Field>
+      )}
+
+      {/* 模型列表编辑器 */}
+      {provider.modelsSettingKey && (
+        <Field label="可用模型" desc="配置此 Provider 的可用模型列表（可选，留空则自动获取）">
+          <div className="space-y-2">
+            {models.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">未配置自定义模型，将自动从 Provider API 获取</p>
+            ) : (
+              <div className="space-y-2">
+                {models.map((m, index) => (
+                  <div key={index} className="rounded-[8px] border border-border bg-secondary/30 p-3 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        className={inputCls}
+                        value={m.id}
+                        placeholder="模型 ID"
+                        onChange={(e) => handleUpdateModel(index, "id", e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        className={inputCls}
+                        value={m.name}
+                        placeholder="显示名称"
+                        onChange={(e) => handleUpdateModel(index, "name", e.target.value)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        className={inputCls}
+                        value={m.context_window}
+                        placeholder="Context Window"
+                        onChange={(e) => handleUpdateModel(index, "context_window", parseInt(e.target.value) || 0)}
+                      />
+                      <label className="flex items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={m.reasoning}
+                          onChange={(e) => handleUpdateModel(index, "reasoning", e.target.checked)}
+                          className="accent-primary"
+                        />
+                        支持推理
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveModel(index)}
+                      className="text-xs text-destructive hover:underline"
+                    >
+                      删除此模型
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleAddModel}
+              className="rounded-[8px] border border-border bg-secondary px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary/80"
+            >
+              + 添加模型
+            </button>
+          </div>
+        </Field>
+      )}
+
+      {provider.blockedModelsSettingKey && (
+        <Field label="屏蔽模型" desc="点击自动发现的模型开关。关闭后，该模型会从会话选择器中隐藏。">
+          <div className="space-y-2">
+            {discoveredModels.length === 0 ? (
+              <p className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                暂无自动发现模型。请先保存 Provider 配置，然后回到这里调整可见模型。
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {discoveredModels.map((model) => {
+                  const enabled = !blockedModels.includes(model.id);
+                  return (
+                    <button
+                      key={model.id}
+                      type="button"
+                      onClick={() => toggleBlockedModel(model.id)}
+                      className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                        enabled
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                          : "border-border bg-muted/60 text-muted-foreground line-through"
+                      }`}
+                    >
+                      {model.name || model.id}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {blockedModels.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                已屏蔽：{blockedModels.join("，")}
+              </p>
+            )}
           </div>
         </Field>
       )}
@@ -459,10 +688,15 @@ function ExecutorSection({
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
+  const { executors, isLoading } = useExecutorDiscovery();
+  const currentExecutor = readVal(settings, "executor.default.executor") || "PI_AGENT";
+
   return (
     <ExecutorSectionForm
-      key={readVal(settings, "executor.default.executor")}
-      initialExecutor={readVal(settings, "executor.default.executor")}
+      key={currentExecutor}
+      executors={executors}
+      isLoading={isLoading}
+      currentExecutor={currentExecutor}
       saving={saving}
       onSave={onSave}
     />
@@ -470,15 +704,22 @@ function ExecutorSection({
 }
 
 function ExecutorSectionForm({
-  initialExecutor,
+  executors,
+  isLoading,
+  currentExecutor,
   saving,
   onSave,
 }: {
-  initialExecutor: string;
+  executors: Array<{ id: string; name: string; available: boolean }>;
+  isLoading: boolean;
+  currentExecutor: string;
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
-  const [executor, setExecutor] = useState(initialExecutor);
+  const [executor, setExecutor] = useState(currentExecutor);
+
+  // 只显示可用的执行器
+  const availableExecutors = executors.filter((e) => e.available);
 
   const handleSave = () => {
     onSave([{ key: "executor.default.executor", value: executor }]);
@@ -486,15 +727,37 @@ function ExecutorSectionForm({
 
   return (
     <SectionCard title="默认 Executor">
-      <Field label="Executor" desc="默认执行器标识">
-        <input
-          type="text"
-          className={inputCls}
-          value={executor}
-          placeholder="e.g. local-docker"
-          onChange={(e) => setExecutor(e.target.value)}
-        />
-      </Field>
+      <label className="block space-y-1.5">
+        <span className="text-sm font-medium text-foreground">执行器</span>
+        <p className="text-xs text-muted-foreground">选择默认使用的执行器（新会话或没有显式绑定时使用）</p>
+        <div className="relative">
+          <select
+            value={executor}
+            onChange={(e) => setExecutor(e.target.value)}
+            disabled={isLoading}
+            className="h-10 w-full appearance-none rounded-[10px] border border-border bg-background pl-3.5 pr-9 text-sm text-foreground outline-none transition-colors ring-ring focus:border-primary/30 focus:ring-1 focus:ring-ring/40 disabled:opacity-50"
+          >
+            <option value="">
+              {isLoading ? "加载中…" : "选择执行器…"}
+            </option>
+            {availableExecutors.map((info) => (
+              <option key={info.id} value={info.id}>
+                {info.name}
+              </option>
+            ))}
+          </select>
+          <svg
+            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      </label>
 
       <div className="flex justify-end pt-1">
         <button type="button" disabled={saving} className={btnPrimaryCls} onClick={handleSave}>

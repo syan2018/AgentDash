@@ -65,6 +65,8 @@ export interface ModelInfo {
   context_window: number;
   /** 最大输出 tokens */
   max_tokens: number;
+  /** 是否被当前 provider 设置为屏蔽 */
+  blocked?: boolean;
 }
 
 export interface AgentInfo {
@@ -110,6 +112,7 @@ export interface UseExecutorDiscoveredOptionsResult {
 export interface PersistedExecutorConfig {
   executor: string;
   variant?: string;
+  providerId?: string;
   modelId?: string;
   /** 推理级别，替代旧的 reasoningId 字段（v2 格式） */
   thinkingLevel?: string;
@@ -119,6 +122,7 @@ export interface PersistedExecutorConfig {
 /** 最近使用记录 */
 export interface RecentExecutorEntry {
   executor: string;
+  providerId?: string;
   modelId?: string;
   timestamp: number;
 }
@@ -127,6 +131,7 @@ export interface RecentExecutorEntry {
 export interface UseExecutorConfigResult {
   executor: string;
   variant: string;
+  providerId: string;
   modelId: string;
   /** 推理级别，替代旧的 reasoningId 字段 */
   thinkingLevel: string;
@@ -134,6 +139,7 @@ export interface UseExecutorConfigResult {
   recentEntries: RecentExecutorEntry[];
   setExecutor: (executor: string) => void;
   setVariant: (variant: string) => void;
+  setProviderId: (providerId: string) => void;
   setModelId: (modelId: string) => void;
   setThinkingLevel: (thinkingLevel: string) => void;
   setPermissionPolicy: (policy: string) => void;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { SessionChatView, type PromptTemplate } from "../features/acp-session";
+import { SessionChatView } from "../features/acp-session";
 import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
@@ -27,41 +27,6 @@ import type {
   StoryNavigationState,
   TaskSessionExecutorSummary,
 } from "../types";
-
-// ─── Prompt 模板 ────────────────────────────────────────
-
-const defaultPromptTemplates: PromptTemplate[] = [
-  {
-    id: "project-assistant",
-    label: "创建项目助手",
-    content: [
-      `你是一个\u201C创建项目/Story 辅助 Agent\u201D。`,
-      "",
-      "请按步骤引导我澄清需求，并最终输出：",
-      "1) 建议的 Story 标题",
-      "2) 建议的 Story 描述（2-4 句）",
-      "3) 3~6 条可执行的下一步任务清单（中文）",
-      "",
-      "约束：",
-      "- 只问一个问题再等待我的回答",
-      "- 不要假设我已经决定技术栈/语言/平台",
-      "- 先确认目标用户与核心价值",
-    ].join("\n"),
-  },
-  {
-    id: "plan",
-    label: "生成执行计划",
-    content: [
-      "请基于我接下来描述的目标，生成一个清晰、可执行的计划：",
-      "- 目标",
-      "- 里程碑",
-      "- 风险与验证方式",
-      "- 第一件马上能做的事情",
-      "",
-      "注意：内容必须使用中文。",
-    ].join("\n"),
-  },
-];
 
 const EMPTY_SESSION_BINDINGS: SessionBindingOwner[] = [];
 
@@ -1165,6 +1130,7 @@ function ExecutorSummaryCard({ executor }: { executor: TaskSessionExecutorSummar
         </div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
           {executor.variant && <span>variant: <span className="font-mono text-foreground/80">{executor.variant}</span></span>}
+          {executor.provider_id && <span>provider: <span className="font-mono text-foreground/80">{executor.provider_id}</span></span>}
           {executor.model_id && <span>model: <span className="font-mono text-foreground/80">{executor.model_id}</span></span>}
           {executor.agent_id && <span>agent_id: <span className="font-mono text-foreground/80">{executor.agent_id}</span></span>}
           {executor.thinking_level && <span>thinking: <span className="font-mono text-foreground/80">{executor.thinking_level}</span></span>}
@@ -1731,7 +1697,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           onTurnEnd={handleTurnEnd}
           onSystemEvent={handleSystemEvent}
           executorHint={executorHint}
-          promptTemplates={defaultPromptTemplates}
           inputPrefix={ownerBindingBar}
         />
       </div>

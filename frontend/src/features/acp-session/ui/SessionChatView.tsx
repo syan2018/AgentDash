@@ -313,18 +313,41 @@ export function SessionChatView({
     setExecutor(resolvedHint);
   }, [resolvedHint, sessionId, setExecutor]);
 
+  useEffect(() => {
+    if (execConfig.providerId.trim() || !execConfig.modelId.trim()) return;
+    const matches = (discovered.options?.model_selector.models ?? []).filter(
+      (model) => model.id === execConfig.modelId.trim(),
+    );
+    if (matches.length === 1) {
+      execConfig.setProviderId(matches[0].provider_id ?? "");
+    }
+  }, [
+    discovered.options?.model_selector.models,
+    execConfig.modelId,
+    execConfig.providerId,
+    execConfig.setProviderId,
+  ]);
+
   const executorConfig: ExecutorConfig | undefined = useMemo(() => {
     const trimmed = execConfig.executor.trim();
     if (!trimmed) return undefined;
     return {
       executor: trimmed,
       variant: execConfig.variant.trim() || undefined,
+      provider_id: execConfig.providerId.trim() || undefined,
       model_id: execConfig.modelId.trim() || undefined,
       // 将 camelCase 的 thinkingLevel 转为 snake_case 发给后端
       thinking_level: (execConfig.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
       permission_policy: (execConfig.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     };
-  }, [execConfig.executor, execConfig.variant, execConfig.modelId, execConfig.thinkingLevel, execConfig.permissionPolicy]);
+  }, [
+    execConfig.executor,
+    execConfig.variant,
+    execConfig.providerId,
+    execConfig.modelId,
+    execConfig.thinkingLevel,
+    execConfig.permissionPolicy,
+  ]);
 
   // ─── ACP 会话流 ──────────────────────────────────────
 
@@ -697,11 +720,13 @@ export function SessionChatView({
               onDiscoveredReconnect={discovered.reconnect}
               executor={execConfig.executor}
               variant={execConfig.variant}
+              providerId={execConfig.providerId}
               modelId={execConfig.modelId}
               thinkingLevel={execConfig.thinkingLevel}
               permissionPolicy={execConfig.permissionPolicy}
               onExecutorChange={execConfig.setExecutor}
               onVariantChange={execConfig.setVariant}
+              onProviderIdChange={execConfig.setProviderId}
               onModelIdChange={execConfig.setModelId}
               onThinkingLevelChange={execConfig.setThinkingLevel}
               onPermissionPolicyChange={execConfig.setPermissionPolicy}

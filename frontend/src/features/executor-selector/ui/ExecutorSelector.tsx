@@ -14,6 +14,7 @@ export interface ExecutorSelectorProps {
 
   executor: string;
   variant: string;
+  providerId: string;
   modelId: string;
   /** 推理级别，替代旧的 reasoningId */
   thinkingLevel: string;
@@ -21,6 +22,7 @@ export interface ExecutorSelectorProps {
 
   onExecutorChange: (executor: string) => void;
   onVariantChange: (variant: string) => void;
+  onProviderIdChange: (providerId: string) => void;
   onModelIdChange: (modelId: string) => void;
   /** 推理级别变更回调，替代旧的 onReasoningIdChange */
   onThinkingLevelChange: (thinkingLevel: string) => void;
@@ -74,11 +76,13 @@ export function ExecutorSelector({
   onDiscoveredReconnect,
   executor,
   variant,
+  providerId,
   modelId,
   thinkingLevel,
   permissionPolicy,
   onExecutorChange,
   onVariantChange,
+  onProviderIdChange,
   onModelIdChange,
   onThinkingLevelChange,
   onPermissionPolicyChange,
@@ -86,6 +90,11 @@ export function ExecutorSelector({
   onRefetch,
 }: ExecutorSelectorProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const selectedModelOptionValue = useMemo(() => {
+    const trimmedModelId = modelId.trim();
+    if (!trimmedModelId) return "";
+    return `${providerId.trim()}::${trimmedModelId}`;
+  }, [modelId, providerId]);
 
   const errorBanner = error ? (
     <div className="flex items-center gap-2 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -116,6 +125,9 @@ export function ExecutorSelector({
     [executors, executor],
   );
 
+  // 只显示可用的执行器
+  const availableExecutors = useMemo(() => executors.filter((e) => e.available), [executors]);
+
   const variantOptions = useMemo(() => {
     if (!currentExecutorInfo) return [];
     return currentExecutorInfo.variants.filter((v) => v !== "DEFAULT");
@@ -143,6 +155,7 @@ export function ExecutorSelector({
   const modelsByProvider = useMemo(() => {
     const out = new Map<string, ModelInfo[]>();
     for (const m of modelSelector?.models ?? []) {
+      if (m.blocked) continue;
       const pid = m.provider_id ?? "";
       const list = out.get(pid) ?? [];
       list.push(m);
@@ -157,8 +170,11 @@ export function ExecutorSelector({
   const selectedModel = useMemo(() => {
     const id = modelId.trim();
     if (!id) return null;
-    return (modelSelector?.models ?? []).find((m) => m.id === id) ?? null;
-  }, [modelSelector, modelId]);
+    const pid = providerId.trim();
+    return (modelSelector?.models ?? []).find(
+      (m) => m.id === id && (pid ? (m.provider_id ?? "") === pid : true),
+    ) ?? null;
+  }, [modelSelector, modelId, providerId]);
 
   // 仅当选中模型支持 reasoning 时显示推理级别选择器；未选模型时默认显示
   const showThinkingSelector = !selectedModel || selectedModel.reasoning === true;
@@ -181,9 +197,9 @@ export function ExecutorSelector({
               <option value="">
                 {isLoading ? "加载中…" : "选择执行器…"}
               </option>
-              {executors.map((info) => (
+              {availableExecutors.map((info) => (
                 <option key={info.id} value={info.id}>
-                  {info.name}{info.available ? "" : " (不可用)"}
+                  {info.name}
                 </option>
               ))}
             </select>
@@ -218,8 +234,12 @@ export function ExecutorSelector({
           <span className={FIELD_LABEL_CLASS}>模型</span>
           <div className="relative">
             <select
-              value={modelId}
-              onChange={(e) => onModelIdChange(e.target.value)}
+              value={selectedModelOptionValue}
+              onChange={(e) => {
+                const [nextProviderId, nextModelId] = e.target.value.split("::");
+                onProviderIdChange(nextProviderId ?? "");
+                onModelIdChange(nextModelId ?? "");
+              }}
               disabled={!executor || isDiscoveredLoading || (modelSelector?.models?.length ?? 0) === 0}
               className={SELECT_CLASS}
             >
@@ -240,7 +260,7 @@ export function ExecutorSelector({
                 return (
                   <optgroup key={providerId || "default"} label={label}>
                     {models.map((m) => (
-                      <option key={m.id} value={m.id}>
+                      <option key={`${providerId || "default"}::${m.id}`} value={`${providerId}::${m.id}`}>
                         {m.name}
                       </option>
                     ))}
@@ -251,6 +271,27 @@ export function ExecutorSelector({
             <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           </div>
         </div>
+
+        {/* 推理级别选择（固定枚举，不依赖 discovered-options） */}
+        {showThinkingSelector && (
+          <div className="min-w-[120px]">
+            <span className={FIELD_LABEL_CLASS}>推理级别</span>
+            <div className="relative">
+              <select
+                value={thinkingLevel}
+                onChange={(e) => onThinkingLevelChange(e.target.value)}
+                className={SELECT_CLASS}
+              >
+                {THINKING_LEVEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            </div>
+          </div>
+        )}
 
         {/* 高级选项切换 + 重置 */}
         <div className="flex items-center gap-1.5 self-end pb-0.5">
@@ -272,6 +313,31 @@ export function ExecutorSelector({
         </div>
       </div>
 
+      {selectedModel && (
+        <div className="flex flex-wrap items-center gap-2 rounded-[10px] border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+          {selectedModel.provider_id && (
+            <span className="rounded-full bg-secondary px-2 py-0.5">
+              provider: {providersById.get(selectedModel.provider_id) ?? selectedModel.provider_id}
+            </span>
+          )}
+          <span className="rounded-full bg-secondary px-2 py-0.5">
+            context: {Math.round(selectedModel.context_window / 1000)}k
+          </span>
+          <span className="rounded-full bg-secondary px-2 py-0.5">
+            max: {Math.round(selectedModel.max_tokens / 1000)}k
+          </span>
+          <span
+            className={`rounded-full px-2 py-0.5 ${
+              selectedModel.reasoning
+                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                : "bg-secondary"
+            }`}
+          >
+            {selectedModel.reasoning ? "支持推理" : "不支持推理"}
+          </span>
+        </div>
+      )}
+
       {/* 当前选择概览（紧凑标签） */}
       {executor && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 pt-3">
@@ -279,6 +345,7 @@ export function ExecutorSelector({
             label={displayLabel}
             available={currentExecutorInfo?.available}
           />
+          {providerId && <ConfigTag label={`provider: ${providerId}`} />}
           {modelId && <ConfigTag label={`model: ${modelId}`} />}
           {thinkingLevel && <ConfigTag label={`thinking: ${thinkingLevel}`} />}
           {permissionPolicy && (
@@ -291,27 +358,36 @@ export function ExecutorSelector({
       {showAdvanced && (
         <div className="rounded-[12px] border border-border bg-background/70 p-3">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {/* 推理级别选择（固定枚举，不依赖 discovered-options） */}
-            {showThinkingSelector && (
-              <div>
-                <span className={FIELD_LABEL_CLASS}>推理级别</span>
-                <div className="relative">
-                  <select
-                    value={thinkingLevel}
-                    onChange={(e) => onThinkingLevelChange(e.target.value)}
-                    className={SELECT_CLASS}
-                  >
-                    <option value="">不设置</option>
-                    {THINKING_LEVEL_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                </div>
+            <div>
+              <span className={FIELD_LABEL_CLASS}>模型提供方</span>
+              <div className="relative">
+                <select
+                  value={providerId}
+                  onChange={(e) => onProviderIdChange(e.target.value)}
+                  className={SELECT_CLASS}
+                  disabled={!executor || (modelSelector?.providers?.length ?? 0) === 0}
+                >
+                  <option value="">默认 / 自动判断</option>
+                  {(modelSelector?.providers ?? []).map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               </div>
-            )}
+            </div>
+
+            <div>
+              <span className={FIELD_LABEL_CLASS}>手动模型 ID</span>
+              <input
+                type="text"
+                value={modelId}
+                onChange={(e) => onModelIdChange(e.target.value)}
+                placeholder="可手动输入未出现在下拉中的模型"
+                className={SELECT_CLASS}
+              />
+            </div>
 
             <div>
               <span className={FIELD_LABEL_CLASS}>权限策略</span>

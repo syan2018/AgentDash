@@ -140,6 +140,7 @@ export interface TaskSessionRuntimePolicySummary {
 export interface TaskSessionExecutorSummary {
   executor?: string | null;
   variant?: string | null;
+  provider_id?: string | null;
   model_id?: string | null;
   agent_id?: string | null;
   /** 推理级别（替代旧的 reasoning_id） */
@@ -424,6 +425,7 @@ export type ProjectAgentWritebackMode = "read_only" | "confirm_before_write";
 export interface ProjectAgentExecutor {
   executor: string;
   variant?: string | null;
+  provider_id?: string | null;
   model_id?: string | null;
   agent_id?: string | null;
   thinking_level?: ThinkingLevel | null;

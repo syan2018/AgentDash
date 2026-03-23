@@ -15,6 +15,7 @@ interface PresetFormState {
   description: string;
   agent_type: string;
   variant: string;
+  provider_id: string;
   model_id: string;
   agent_id: string;
   thinking_level: ThinkingLevel | "";
@@ -31,6 +32,7 @@ function presetToForm(preset?: AgentPreset): PresetFormState {
     description: String(cfg.description ?? ""),
     agent_type: preset?.agent_type ?? "",
     variant: String(cfg.variant ?? ""),
+    provider_id: String(cfg.provider_id ?? ""),
     model_id: String(cfg.model_id ?? ""),
     agent_id: String(cfg.agent_id ?? ""),
     thinking_level: isThinkingLevel(cfg.thinking_level) ? cfg.thinking_level : "",
@@ -44,6 +46,7 @@ function formToPreset(form: PresetFormState): AgentPreset {
   if (form.display_name.trim()) config.display_name = form.display_name.trim();
   if (form.description.trim()) config.description = form.description.trim();
   if (form.variant.trim()) config.variant = form.variant.trim();
+  if (form.provider_id.trim()) config.provider_id = form.provider_id.trim();
   if (form.model_id.trim()) config.model_id = form.model_id.trim();
   if (form.agent_id.trim()) config.agent_id = form.agent_id.trim();
   if (form.thinking_level) config.thinking_level = form.thinking_level;
@@ -378,6 +381,10 @@ function PresetFormFields({
           <div>
             <label className="agentdash-form-label">Variant</label>
             <input value={form.variant} onChange={(e) => patchForm({ variant: e.target.value })} placeholder="可选" className="agentdash-form-input" />
+          </div>
+          <div>
+            <label className="agentdash-form-label">Provider ID</label>
+            <input value={form.provider_id} onChange={(e) => patchForm({ provider_id: e.target.value })} placeholder="可选" className="agentdash-form-input" />
           </div>
           <div>
             <label className="agentdash-form-label">Model ID</label>

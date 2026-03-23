@@ -1,10 +1,14 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { PersistedExecutorConfig, RecentExecutorEntry, UseExecutorConfigResult } from "./types";
 
 // v2 格式 key：包含 thinkingLevel 字段（旧 v1 key 包含 reasoningId，自动丢弃不迁移）
 const STORAGE_KEY = "agentdash:executor-config-v2";
 const RECENT_KEY = "agentdash:recent-executors";
 const MAX_RECENT = 8;
+const DEFAULT_THINKING_LEVEL = "medium";
+
+// 默认执行器标识
+const DEFAULT_EXECUTOR = "PI_AGENT";
 
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
@@ -22,6 +26,7 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
     if (typeof record.executor !== "string") return null;
     if (
       !isOptionalString(record.variant)
+      || !isOptionalString(record.providerId)
       || !isOptionalString(record.modelId)
       || !isOptionalString(record.thinkingLevel)
       || !isOptionalString(record.permissionPolicy)
@@ -32,6 +37,7 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
     return {
       executor: record.executor,
       variant: record.variant,
+      providerId: record.providerId,
       modelId: record.modelId,
       thinkingLevel: record.thinkingLevel,
       permissionPolicy: record.permissionPolicy,
@@ -50,7 +56,12 @@ function persistConfig(config: PersistedExecutorConfig): void {
 }
 
 function loadOrDefault(field: keyof PersistedExecutorConfig): string {
-  return loadPersistedConfig()?.[field] ?? "";
+  const persisted = loadPersistedConfig()?.[field];
+  if (persisted) return persisted;
+  // 如果没有本地存储配置，返回默认值
+  if (field === "executor") return DEFAULT_EXECUTOR;
+  if (field === "thinkingLevel") return DEFAULT_THINKING_LEVEL;
+  return "";
 }
 
 function loadRecentEntries(): RecentExecutorEntry[] {
@@ -66,7 +77,11 @@ function loadRecentEntries(): RecentExecutorEntry[] {
 function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
   try {
     const existing = loadRecentEntries().filter(
-      (e) => !(e.executor === entry.executor && e.modelId === entry.modelId),
+      (e) => !(
+        e.executor === entry.executor
+        && e.providerId === entry.providerId
+        && e.modelId === entry.modelId
+      ),
     );
     const updated = [entry, ...existing].slice(0, MAX_RECENT);
     localStorage.setItem(RECENT_KEY, JSON.stringify(updated));
@@ -85,45 +100,74 @@ function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
  * 支持最近使用记录追踪（LRU，最多 MAX_RECENT 条）。
  */
 export function useExecutorConfig(): UseExecutorConfigResult {
-  const [executor, setExecutorRaw] = useState(() => loadOrDefault("executor"));
-  const [variant, setVariantRaw] = useState(() => loadOrDefault("variant"));
-  const [modelId, setModelIdRaw] = useState(() => loadOrDefault("modelId"));
-  const [thinkingLevel, setThinkingLevelRaw] = useState(() => loadOrDefault("thinkingLevel"));
-  const [permissionPolicy, setPolicyRaw] = useState(() => loadOrDefault("permissionPolicy"));
+  const initialConfigRef = useRef<PersistedExecutorConfig>({
+    executor: loadOrDefault("executor"),
+    variant: loadOrDefault("variant"),
+    providerId: loadOrDefault("providerId"),
+    modelId: loadOrDefault("modelId"),
+    thinkingLevel: loadOrDefault("thinkingLevel"),
+    permissionPolicy: loadOrDefault("permissionPolicy"),
+  });
+  const persistedStateRef = useRef<PersistedExecutorConfig>({ ...initialConfigRef.current });
+
+  const [executor, setExecutorRaw] = useState(() => initialConfigRef.current.executor);
+  const [variant, setVariantRaw] = useState(() => initialConfigRef.current.variant ?? "");
+  const [providerId, setProviderIdRaw] = useState(() => initialConfigRef.current.providerId ?? "");
+  const [modelId, setModelIdRaw] = useState(() => initialConfigRef.current.modelId ?? "");
+  const [thinkingLevel, setThinkingLevelRaw] = useState(() => initialConfigRef.current.thinkingLevel ?? "");
+  const [permissionPolicy, setPolicyRaw] = useState(() => initialConfigRef.current.permissionPolicy ?? "");
   const [recentEntries, setRecentEntries] = useState<RecentExecutorEntry[]>(() => loadRecentEntries());
 
-  const save = useCallback(
+  const persistPatch = useCallback(
     (patch: Partial<PersistedExecutorConfig>) => {
       const next: PersistedExecutorConfig = {
-        executor: patch.executor ?? executor,
-        variant: patch.variant ?? variant,
-        modelId: patch.modelId ?? modelId,
-        thinkingLevel: patch.thinkingLevel ?? thinkingLevel,
-        permissionPolicy: patch.permissionPolicy ?? permissionPolicy,
+        executor: patch.executor ?? persistedStateRef.current.executor,
+        variant: patch.variant ?? persistedStateRef.current.variant,
+        providerId: patch.providerId ?? persistedStateRef.current.providerId,
+        modelId: patch.modelId ?? persistedStateRef.current.modelId,
+        thinkingLevel: patch.thinkingLevel ?? persistedStateRef.current.thinkingLevel,
+        permissionPolicy: patch.permissionPolicy ?? persistedStateRef.current.permissionPolicy,
       };
+      persistedStateRef.current = next;
       persistConfig(next);
     },
-    [executor, variant, modelId, thinkingLevel, permissionPolicy],
+    [],
   );
 
   const setExecutor = useCallback(
     (v: string) => {
       setExecutorRaw(v);
       setVariantRaw("");
+      setProviderIdRaw("");
       setModelIdRaw("");
-      setThinkingLevelRaw("");
+      setThinkingLevelRaw(DEFAULT_THINKING_LEVEL);
       setPolicyRaw("");
-      save({ executor: v, variant: "", modelId: "", thinkingLevel: "", permissionPolicy: "" });
+      persistPatch({
+        executor: v,
+        variant: "",
+        providerId: "",
+        modelId: "",
+        thinkingLevel: DEFAULT_THINKING_LEVEL,
+        permissionPolicy: "",
+      });
     },
-    [save],
+    [persistPatch],
   );
 
   const setVariant = useCallback(
     (v: string) => {
       setVariantRaw(v);
-      save({ variant: v });
+      persistPatch({ variant: v });
     },
-    [save],
+    [persistPatch],
+  );
+
+  const setProviderId = useCallback(
+    (v: string) => {
+      setProviderIdRaw(v);
+      persistPatch({ providerId: v });
+    },
+    [persistPatch],
   );
 
   const setModelId = useCallback(
@@ -131,43 +175,53 @@ export function useExecutorConfig(): UseExecutorConfigResult {
       setModelIdRaw(v);
       // 变更模型时，默认清空推理级别（由 UI 根据模型可选项重置）
       setThinkingLevelRaw("");
-      save({ modelId: v });
+      persistPatch({ modelId: v, thinkingLevel: "" });
     },
-    [save],
+    [persistPatch],
   );
 
   const setThinkingLevel = useCallback(
     (v: string) => {
       setThinkingLevelRaw(v);
-      save({ thinkingLevel: v });
+      persistPatch({ thinkingLevel: v });
     },
-    [save],
+    [persistPatch],
   );
 
   const setPermissionPolicy = useCallback(
     (v: string) => {
       setPolicyRaw(v);
-      save({ permissionPolicy: v });
+      persistPatch({ permissionPolicy: v });
     },
-    [save],
+    [persistPatch],
   );
 
   const recordUsage = useCallback(() => {
     if (!executor) return;
     const entry: RecentExecutorEntry = {
       executor,
+      providerId: providerId || undefined,
       modelId: modelId || undefined,
       timestamp: Date.now(),
     };
     setRecentEntries(persistRecentEntry(entry));
-  }, [executor, modelId]);
+  }, [executor, providerId, modelId]);
 
   const reset = useCallback(() => {
-    setExecutorRaw("");
+    setExecutorRaw(DEFAULT_EXECUTOR);
     setVariantRaw("");
+    setProviderIdRaw("");
     setModelIdRaw("");
-    setThinkingLevelRaw("");
+    setThinkingLevelRaw(DEFAULT_THINKING_LEVEL);
     setPolicyRaw("");
+    persistedStateRef.current = {
+      executor: DEFAULT_EXECUTOR,
+      variant: "",
+      providerId: "",
+      modelId: "",
+      thinkingLevel: DEFAULT_THINKING_LEVEL,
+      permissionPolicy: "",
+    };
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -178,12 +232,14 @@ export function useExecutorConfig(): UseExecutorConfigResult {
   return {
     executor,
     variant,
+    providerId,
     modelId,
     thinkingLevel,
     permissionPolicy,
     recentEntries,
     setExecutor,
     setVariant,
+    setProviderId,
     setModelId,
     setThinkingLevel,
     setPermissionPolicy,

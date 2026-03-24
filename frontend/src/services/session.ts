@@ -1,6 +1,7 @@
 import { buildApiPath } from "../api/origin";
 import type {
   HookSessionRuntimeInfo,
+  ProjectSessionEntry,
   SessionBindingOwner,
   SessionExecutionState,
   SessionExecutionStatus,
@@ -128,4 +129,58 @@ export async function cancelSession(id: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
   });
   if (!res.ok) throw new Error(`取消会话失败: HTTP ${res.status}`);
+}
+
+// ─── 项目会话列表 ─────────────────────────────────────
+// 获取指定项目的所有活跃会话（包含 agent / story / task 层级）
+
+function normalizeProjectSessionEntryStatus(
+  value: unknown,
+): ProjectSessionEntry["execution_status"] {
+  switch (value) {
+    case "idle":
+    case "running":
+    case "completed":
+    case "failed":
+    case "interrupted":
+      return value;
+    default:
+      return "idle";
+  }
+}
+
+function normalizeOwnerType(value: unknown): ProjectSessionEntry["owner_type"] {
+  switch (value) {
+    case "project":
+    case "story":
+    case "task":
+      return value;
+    default:
+      return "project";
+  }
+}
+
+function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEntry {
+  return {
+    session_id: String(raw.session_id ?? ""),
+    session_title: raw.session_title != null ? String(raw.session_title) : null,
+    last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
+    execution_status: normalizeProjectSessionEntryStatus(raw.execution_status),
+    owner_type: normalizeOwnerType(raw.owner_type),
+    owner_id: String(raw.owner_id ?? ""),
+    owner_title: raw.owner_title != null ? String(raw.owner_title) : null,
+    story_id: raw.story_id != null ? String(raw.story_id) : null,
+    story_title: raw.story_title != null ? String(raw.story_title) : null,
+    agent_key: raw.agent_key != null ? String(raw.agent_key) : null,
+    agent_display_name: raw.agent_display_name != null ? String(raw.agent_display_name) : null,
+    parent_session_id: raw.parent_session_id != null ? String(raw.parent_session_id) : null,
+  };
+}
+
+export async function fetchProjectSessions(projectId: string): Promise<ProjectSessionEntry[]> {
+  // TODO: 后端 API 可能尚未部署，调用失败时 fallback 为空数组
+  const res = await fetch(buildApiPath(`/projects/${encodeURIComponent(projectId)}/sessions`));
+  if (!res.ok) throw new Error(`获取项目会话列表失败: HTTP ${res.status}`);
+  const raw = (await res.json()) as Record<string, unknown>[];
+  return raw.map(mapProjectSessionEntry);
 }

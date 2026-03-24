@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, ThinkingLevel } from "../../types";
 import { THINKING_LEVEL_OPTIONS, isThinkingLevel } from "../../types";
-import { useExecutorDiscovery } from "../executor-selector";
+import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
+import type { ExecutorInfo, ModelInfo, PermissionPolicy } from "../executor-selector";
 
 export interface AgentPresetEditorProps {
   presets: AgentPreset[];
@@ -310,12 +311,98 @@ function PresetFormFields({
   patchForm,
   agentTypeOptions,
   isDiscoveryLoading,
+  executors,
 }: {
   form: PresetFormState;
   patchForm: (patch: Partial<PresetFormState>) => void;
   agentTypeOptions: Array<{ value: string; label: string }>;
   isDiscoveryLoading: boolean;
+  executors: ExecutorInfo[];
 }) {
+  const discovered = useExecutorDiscoveredOptions(form.agent_type, form.variant);
+  const modelSelector = discovered.options?.model_selector ?? null;
+  const isModelLoading = !discovered.isInitialized || (discovered.options?.loading_models ?? false);
+
+  const currentExecutor = useMemo(
+    () => executors.find((e) => e.id === form.agent_type),
+    [executors, form.agent_type],
+  );
+
+  const variantOptions = useMemo(() => {
+    if (!currentExecutor) return [];
+    return currentExecutor.variants.filter((v) => v !== "DEFAULT");
+  }, [currentExecutor]);
+
+  const providersById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of modelSelector?.providers ?? []) {
+      map.set(p.id, p.name);
+    }
+    return map;
+  }, [modelSelector]);
+
+  const modelsByProvider = useMemo(() => {
+    const out = new Map<string, ModelInfo[]>();
+    for (const m of modelSelector?.models ?? []) {
+      if (m.blocked) continue;
+      const pid = m.provider_id ?? "";
+      const list = out.get(pid) ?? [];
+      list.push(m);
+      out.set(pid, list);
+    }
+    for (const list of out.values()) {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return out;
+  }, [modelSelector]);
+
+  const selectedModelOptionValue = useMemo(() => {
+    const trimmedModelId = form.model_id.trim();
+    if (!trimmedModelId) return "";
+    return `${form.provider_id.trim()}::${trimmedModelId}`;
+  }, [form.model_id, form.provider_id]);
+
+  const hasModelInDiscovery = useMemo(() => {
+    if (!selectedModelOptionValue) return false;
+    return [...modelsByProvider.values()].flat().some(
+      (m) => `${m.provider_id ?? ""}::${m.id}` === selectedModelOptionValue,
+    );
+  }, [modelsByProvider, selectedModelOptionValue]);
+
+  const selectedModel = useMemo(() => {
+    const id = form.model_id.trim();
+    if (!id) return null;
+    const pid = form.provider_id.trim();
+    return (modelSelector?.models ?? []).find(
+      (m) => m.id === id && (pid ? (m.provider_id ?? "") === pid : true),
+    ) ?? null;
+  }, [modelSelector, form.model_id, form.provider_id]);
+
+  const showThinkingSelector = !selectedModel || selectedModel.reasoning === true;
+  const agents = modelSelector?.agents ?? [];
+  const permissions = modelSelector?.permissions ?? [];
+
+  const handleAgentTypeChange = (newType: string) => {
+    patchForm({
+      agent_type: newType,
+      variant: "",
+      provider_id: "",
+      model_id: "",
+      agent_id: "",
+    });
+  };
+
+  const handleModelChange = (value: string) => {
+    if (!value) {
+      patchForm({ provider_id: "", model_id: "" });
+      return;
+    }
+    const sep = value.indexOf("::");
+    const nextProviderId = sep >= 0 ? value.slice(0, sep) : "";
+    const nextModelId = sep >= 0 ? value.slice(sep + 2) : value;
+    patchForm({ provider_id: nextProviderId, model_id: nextModelId });
+  };
+
   return (
     <>
       <div>
@@ -356,7 +443,7 @@ function PresetFormFields({
         <label className="agentdash-form-label">Agent 类型</label>
         <select
           value={form.agent_type}
-          onChange={(e) => patchForm({ agent_type: e.target.value })}
+          onChange={(e) => handleAgentTypeChange(e.target.value)}
           className="agentdash-form-select"
         >
           <option value="">
@@ -373,50 +460,164 @@ function PresetFormFields({
         </select>
       </div>
 
+      {/* 模型选择 — 与 ExecutorSelector 复用相同的 discovery 数据 */}
+      <div className="sm:col-span-2">
+        <label className="agentdash-form-label">模型</label>
+        <select
+          value={selectedModelOptionValue}
+          onChange={(e) => handleModelChange(e.target.value)}
+          disabled={!form.agent_type || (isModelLoading && [...modelsByProvider.values()].flat().length === 0)}
+          className="agentdash-form-select"
+        >
+          <option value="">
+            {!form.agent_type
+              ? "先选择 Agent 类型"
+              : isModelLoading && [...modelsByProvider.values()].flat().length === 0
+                ? "加载模型中..."
+                : "不指定模型"}
+          </option>
+          {[...modelsByProvider.entries()].map(([pid, models]) => {
+            const label = pid && providersById.get(pid)
+              ? providersById.get(pid)
+              : pid || "Other";
+            return (
+              <optgroup key={pid || "default"} label={label}>
+                {models.map((m) => (
+                  <option key={`${pid || "default"}::${m.id}`} value={`${pid}::${m.id}`}>
+                    {m.name}
+                  </option>
+                ))}
+              </optgroup>
+            );
+          })}
+          {selectedModelOptionValue && !hasModelInDiscovery && (
+            <option value={selectedModelOptionValue}>
+              {form.model_id} (当前值)
+            </option>
+          )}
+        </select>
+      </div>
+
       <details className="sm:col-span-2">
         <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
           执行器高级配置
         </summary>
         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div>
-            <label className="agentdash-form-label">Variant</label>
-            <input value={form.variant} onChange={(e) => patchForm({ variant: e.target.value })} placeholder="可选" className="agentdash-form-input" />
-          </div>
-          <div>
-            <label className="agentdash-form-label">Provider ID</label>
-            <input value={form.provider_id} onChange={(e) => patchForm({ provider_id: e.target.value })} placeholder="可选" className="agentdash-form-input" />
-          </div>
-          <div>
-            <label className="agentdash-form-label">Model ID</label>
-            <input value={form.model_id} onChange={(e) => patchForm({ model_id: e.target.value })} placeholder="可选" className="agentdash-form-input" />
-          </div>
-          <div>
-            <label className="agentdash-form-label">Agent ID</label>
-            <input value={form.agent_id} onChange={(e) => patchForm({ agent_id: e.target.value })} placeholder="可选" className="agentdash-form-input" />
-          </div>
-          <div>
-            <label className="agentdash-form-label">Thinking Level</label>
+            <label className="agentdash-form-label">变体</label>
             <select
-              value={form.thinking_level}
-              onChange={(e) => patchForm({ thinking_level: (e.target.value as ThinkingLevel) || "" })}
+              value={form.variant}
+              onChange={(e) => patchForm({ variant: e.target.value })}
+              className="agentdash-form-select"
+              disabled={!form.agent_type || variantOptions.length === 0}
+            >
+              <option value="">默认</option>
+              {variantOptions.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+              {form.variant && !variantOptions.includes(form.variant) && (
+                <option value={form.variant}>{form.variant} (当前值)</option>
+              )}
+            </select>
+          </div>
+
+          {(agents.length > 0 || form.agent_id) && (
+            <div>
+              <label className="agentdash-form-label">Agent</label>
+              {agents.length > 0 ? (
+                <select
+                  value={form.agent_id}
+                  onChange={(e) => patchForm({ agent_id: e.target.value })}
+                  className="agentdash-form-select"
+                >
+                  <option value="">默认</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label}{a.is_default ? " (默认)" : ""}
+                    </option>
+                  ))}
+                  {form.agent_id && !agents.some((a) => a.id === form.agent_id) && (
+                    <option value={form.agent_id}>{form.agent_id} (当前值)</option>
+                  )}
+                </select>
+              ) : (
+                <input
+                  value={form.agent_id}
+                  onChange={(e) => patchForm({ agent_id: e.target.value })}
+                  placeholder="可选"
+                  className="agentdash-form-input"
+                />
+              )}
+            </div>
+          )}
+
+          {showThinkingSelector && (
+            <div>
+              <label className="agentdash-form-label">推理级别</label>
+              <select
+                value={form.thinking_level}
+                onChange={(e) => patchForm({ thinking_level: (e.target.value as ThinkingLevel) || "" })}
+                className="agentdash-form-select"
+              >
+                <option value="">不设置</option>
+                {THINKING_LEVEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label className="agentdash-form-label">权限策略</label>
+            <select
+              value={form.permission_policy}
+              onChange={(e) => patchForm({ permission_policy: e.target.value })}
               className="agentdash-form-select"
             >
-              <option value="">不设置</option>
-              {THINKING_LEVEL_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
+              <option value="">默认</option>
+              {permissions.length > 0
+                ? permissions.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))
+                : (
+                  <>
+                    <option value="AUTO">AUTO</option>
+                    <option value="SUPERVISED">SUPERVISED</option>
+                    <option value="PLAN">PLAN</option>
+                  </>
+                )
+              }
+              {form.permission_policy && permissions.length > 0 &&
+                !permissions.includes(form.permission_policy as PermissionPolicy) && (
+                <option value={form.permission_policy}>{form.permission_policy} (当前值)</option>
+              )}
             </select>
           </div>
-          <div className="sm:col-span-2">
-            <label className="agentdash-form-label">Permission Policy</label>
-            <select value={form.permission_policy} onChange={(e) => patchForm({ permission_policy: e.target.value })} className="agentdash-form-select">
-              <option value="">默认</option>
-              <option value="AUTO">AUTO</option>
-              <option value="SUPERVISED">SUPERVISED</option>
-              <option value="PLAN">PLAN</option>
-            </select>
+
+          <div className="sm:col-span-2 mt-1 border-t border-border/50 pt-2">
+            <p className="mb-1.5 text-[10px] text-muted-foreground/60">手动覆盖</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div>
+                <label className="agentdash-form-label">Provider ID</label>
+                <input
+                  value={form.provider_id}
+                  onChange={(e) => patchForm({ provider_id: e.target.value })}
+                  placeholder="留空自动判断"
+                  className="agentdash-form-input"
+                />
+              </div>
+              <div>
+                <label className="agentdash-form-label">Model ID</label>
+                <input
+                  value={form.model_id}
+                  onChange={(e) => patchForm({ model_id: e.target.value })}
+                  placeholder="留空使用上方下拉选择"
+                  className="agentdash-form-input"
+                />
+              </div>
+            </div>
           </div>
         </div>
       </details>
@@ -444,7 +645,7 @@ function useAgentTypeOptions() {
       label: `${executor.name}${!executor.available ? " (不可用)" : ""}`,
     }));
   }, [executors]);
-  return { agentTypeOptions: options, isDiscoveryLoading: isLoading };
+  return { agentTypeOptions: options, isDiscoveryLoading: isLoading, executors };
 }
 
 function validateForm(form: PresetFormState, existingNames: string[], editingName?: string): string | null {
@@ -472,7 +673,7 @@ function formatPresetSummary(preset: AgentPreset): string {
 }
 
 export function AgentPresetEditor({ presets, onSave, isSaving = false }: AgentPresetEditorProps) {
-  const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
+  const { agentTypeOptions, isDiscoveryLoading, executors } = useAgentTypeOptions();
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [form, setForm] = useState<PresetFormState>(presetToForm());
@@ -574,6 +775,7 @@ export function AgentPresetEditor({ presets, onSave, isSaving = false }: AgentPr
               patchForm={patchForm}
               agentTypeOptions={agentTypeOptions}
               isDiscoveryLoading={isDiscoveryLoading}
+              executors={executors}
             />
           </div>
 
@@ -623,7 +825,7 @@ export function SinglePresetDialog({
   onClose,
   isSaving = false,
 }: SinglePresetDialogProps) {
-  const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
+  const { agentTypeOptions, isDiscoveryLoading, executors } = useAgentTypeOptions();
   const [form, setForm] = useState<PresetFormState>(presetToForm(initialPreset));
   const [validationError, setValidationError] = useState<string | null>(null);
   const isEditing = Boolean(initialPreset);
@@ -663,6 +865,7 @@ export function SinglePresetDialog({
                 patchForm={patchForm}
                 agentTypeOptions={agentTypeOptions}
                 isDiscoveryLoading={isDiscoveryLoading}
+                executors={executors}
               />
             </div>
 

@@ -282,32 +282,40 @@ export function ProjectAgentView({
   }
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-6">
-      <div className="mb-5 max-w-3xl">
-        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
-          Agent Hub
-        </p>
-        <h2 className="mt-1 text-2xl font-semibold text-foreground">{project.name} 的协作 Agent</h2>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          每个 Agent 都对应一条项目级会话入口，用来维护共享资料、沉淀背景信息，或者为后续 Story 做准备。
-        </p>
-      </div>
-
-      {agents.length > 0 && (
-        <div className="mb-5 flex items-center gap-4 text-xs text-muted-foreground">
-          <span>{agents.length} 个 Agent</span>
-          <span className="text-muted-foreground/40">·</span>
-          <span>{activeCount} 个活跃会话</span>
+    <>
+      <div className="flex h-full flex-col overflow-hidden">
+      {/* ── Header：对齐 StoryListView 的 h-14 固定栏 ── */}
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-6">
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            AGENT
+          </span>
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight text-foreground">Agent Hub</h2>
+            <p className="text-xs text-muted-foreground">
+              {agents.length} 个 Agent
+              {activeCount > 0 && `  ·  ${activeCount} 个活跃会话`}
+            </p>
+          </div>
         </div>
-      )}
+        <button
+          type="button"
+          onClick={() => setIsCreateOpen(true)}
+          className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
+        >
+          + 新建预设
+        </button>
+      </header>
 
       {error && (
-        <div className="mb-4 rounded-[14px] border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-6 py-2.5 text-sm text-destructive">
           Agent 列表加载异常：{error}
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+      {/* ── 卡片列表 ── */}
+      <div className="flex-1 overflow-y-auto p-4 pt-3">
+        <div className="flex flex-col gap-3">
         {sortedAgents.map((agent) => {
           const activity = getActivityLevel(agent.session?.last_activity);
           const preset = findPresetForAgent(agent);
@@ -316,7 +324,7 @@ export function ProjectAgentView({
           return (
             <article
               key={agent.key}
-              className="flex min-h-[250px] flex-col rounded-[22px] border border-border bg-background/75 p-5 shadow-sm"
+              className="flex flex-col rounded-[14px] border border-border bg-background/75 p-4"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2.5">
@@ -403,18 +411,21 @@ export function ProjectAgentView({
                   />
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onOpenAgent(agent)}
-                    className="flex-1 rounded-[12px] border border-primary bg-primary px-3 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
-                  >
-                    {agent.session ? "继续对话" : "打开 Agent 会话"}
-                  </button>
+                  {/* 有活跃 session 且外部提供了新对话入口时，隐藏"继续对话"——右栏已展示该 session */}
+                  {(!onForceNewSession || !agent.session) && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAgent(agent)}
+                      className="flex-1 rounded-[10px] border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
+                    >
+                      {agent.session ? "继续对话" : "打开 Agent 会话"}
+                    </button>
+                  )}
                   {agent.session && onForceNewSession && (
                     <button
                       type="button"
                       onClick={() => onForceNewSession(agent)}
-                      className="rounded-[12px] border border-border bg-background px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                      className="flex-1 rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                       title="新建一个全新的会话"
                     >
                       新对话
@@ -426,38 +437,33 @@ export function ProjectAgentView({
           );
         })}
 
-        {/* Create Agent entry card */}
-        <button
-          type="button"
-          onClick={() => setIsCreateOpen(true)}
-          className="flex min-h-[250px] flex-col items-center justify-center rounded-[22px] border-2 border-dashed border-border bg-background/40 p-5 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-        >
-          <span className="text-3xl leading-none">+</span>
-          <span className="mt-3 text-sm font-medium">新建 Agent 预设</span>
-          <span className="mt-1 text-xs text-muted-foreground">添加新的 Agent 到看板</span>
-        </button>
+        {agents.length === 0 && (
+          <p className="mt-6 text-center text-sm text-muted-foreground">暂无 Agent 配置，点击右上角新建预设</p>
+        )}
       </div>
+    </div>
 
+    <SinglePresetDialog
+      key={isCreateOpen ? "create" : "closed"}
+      open={isCreateOpen}
+      existingNames={existingPresetNames}
+      onSave={handleCreatePreset}
+      onClose={() => setIsCreateOpen(false)}
+      isSaving={isSaving}
+    />
+
+    {editingPreset && (
       <SinglePresetDialog
-        key={isCreateOpen ? "create" : "closed"}
-        open={isCreateOpen}
+        key={`edit-${editingPreset.name}`}
+        open
+        initialPreset={editingPreset}
         existingNames={existingPresetNames}
-        onSave={handleCreatePreset}
-        onClose={() => setIsCreateOpen(false)}
+        onSave={handleEditPreset}
+        onClose={() => setEditingPreset(null)}
         isSaving={isSaving}
       />
-
-      {editingPreset && (
-        <SinglePresetDialog
-          key={`edit-${editingPreset.name}`}
-          open
-          initialPreset={editingPreset}
-          existingNames={existingPresetNames}
-          onSave={handleEditPreset}
-          onClose={() => setEditingPreset(null)}
-          isSaving={isSaving}
-        />
       )}
     </div>
+    </>
   );
 }

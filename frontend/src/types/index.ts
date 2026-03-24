@@ -891,3 +891,21 @@ export type StreamEvent =
   | { type: "Connected"; data: { last_event_id: number } }
   | { type: "StateChanged"; data: StateChange }
   | { type: "Heartbeat"; data: { timestamp: number } };
+
+// ─── 项目活跃会话条目 ──────────────────────────────────
+// 对应后端 GET /api/projects/{id}/sessions 响应体中的单条记录
+
+export interface ProjectSessionEntry {
+  session_id: string;
+  session_title: string | null;
+  last_activity: number | null;
+  execution_status: "idle" | "running" | "completed" | "failed" | "interrupted";
+  owner_type: "project" | "story" | "task";
+  owner_id: string;
+  owner_title: string | null;
+  story_id: string | null;
+  story_title: string | null;
+  agent_key: string | null;
+  agent_display_name: string | null;
+  parent_session_id: string | null;
+}

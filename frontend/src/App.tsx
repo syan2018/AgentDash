@@ -1,10 +1,11 @@
-import { Suspense, lazy, useCallback, useEffect, useRef } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
-import { WorkspaceLayout, type WorkspaceView } from "./components/layout/workspace-layout";
+import { Suspense, lazy, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
+import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
 import { useEventStore } from "./stores/eventStore";
-import { useSessionHistoryStore } from "./stores/sessionHistoryStore";
+
+// ─── 懒加载页面组件 ────────────────────────────────────
 
 const DashboardPage = lazy(async () => {
   const module = await import("./pages/DashboardPage");
@@ -26,6 +27,18 @@ const SettingsPage = lazy(async () => {
   return { default: module.SettingsPage };
 });
 
+const AgentTabView = lazy(async () => {
+  const m = await import("./features/agent/agent-tab-view");
+  return { default: m.AgentTabView };
+});
+
+const StoryTabView = lazy(async () => {
+  const m = await import("./features/story/story-tab-view");
+  return { default: m.StoryTabView };
+});
+
+// ─── 通用加载占位 ──────────────────────────────────────
+
 function RouteFallback() {
   return (
     <div className="flex h-full items-center justify-center">
@@ -37,79 +50,56 @@ function RouteFallback() {
   );
 }
 
+// ─── /session/:sessionId 路由包装器 ───────────────────
+
 function SessionRouteWrapper() {
   const { sessionId } = useParams<{ sessionId: string }>();
   return <SessionPage sessionId={sessionId} />;
 }
 
+// ─── 应用主路由结构 ────────────────────────────────────
+
 function AppContent() {
   const { fetchProjects } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect } = useEventStore();
-  const reloadSessions = useSessionHistoryStore(state => state.reload);
-  const navigate = useNavigate();
-  const location = useLocation();
 
-  // 用于防止重复加载的 ref
-  const hasLoadedSessionsRef = useRef(false);
-
-  const activeView: WorkspaceView = location.pathname.startsWith("/session")
-    ? "session"
-    : location.pathname.startsWith("/settings")
-      ? "settings"
-      : "dashboard";
-
+  // 应用初始化：拉取项目列表、后端列表，建立 SSE 连接
   useEffect(() => {
     void fetchBackends();
     void fetchProjects();
     connect();
   }, [fetchBackends, fetchProjects, connect]);
 
-  // 使用 useCallback 稳定 reloadSessions 调用，避免循环依赖
-  const loadSessionsOnce = useCallback(() => {
-    if (activeView === "session" && !hasLoadedSessionsRef.current) {
-      hasLoadedSessionsRef.current = true;
-      void reloadSessions();
-    }
-  }, [activeView, reloadSessions]);
-
-  useEffect(() => {
-    loadSessionsOnce();
-  }, [loadSessionsOnce]);
-
-  // 当离开 session 视图时重置标记，允许下次进入时重新加载
-  useEffect(() => {
-    if (activeView !== "session") {
-      hasLoadedSessionsRef.current = false;
-    }
-  }, [activeView]);
-
-  const handleChangeView = useCallback(
-    (view: WorkspaceView) => {
-      if (view === "dashboard") {
-        navigate("/");
-      } else if (view === "settings") {
-        navigate("/settings");
-      } else {
-        navigate("/session");
-      }
-    },
-    [navigate],
-  );
-
   return (
-    <WorkspaceLayout activeView={activeView} onChangeView={handleChangeView}>
-      <Suspense fallback={<RouteFallback />}>
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        {/* WorkspaceLayout 作为所有主要页面的 Layout Route */}
+        <Route element={<WorkspaceLayout />}>
+          {/* 根路径重定向到 Agent Tab */}
+          <Route index element={<Navigate to="/dashboard/agent" replace />} />
+
+          {/* Dashboard 容器路由，包含 Agent / Story 子 Tab */}
+          <Route path="/dashboard" element={<DashboardPage />}>
+            <Route index element={<Navigate to="agent" replace />} />
+            <Route path="agent" element={<AgentTabView />} />
+            <Route path="story" element={<StoryTabView />} />
+          </Route>
+
+          {/* Story 详情页 */}
           <Route path="/story/:storyId" element={<StoryPage />} />
-          <Route path="/session" element={<SessionPage />} />
+
+          {/* Session 独立全屏页 */}
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
+
+          {/* 设置页 */}
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    </WorkspaceLayout>
+
+          {/* 未匹配路由重定向到默认 Tab */}
+          <Route path="*" element={<Navigate to="/dashboard/agent" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
   );
 }
 

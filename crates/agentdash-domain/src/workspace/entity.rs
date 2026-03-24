@@ -62,7 +62,10 @@ impl Workspace {
 
     pub fn refresh_default_binding(&mut self) {
         if let Some(default_binding_id) = self.default_binding_id
-            && self.bindings.iter().any(|binding| binding.id == default_binding_id)
+            && self
+                .bindings
+                .iter()
+                .any(|binding| binding.id == default_binding_id)
         {
             return;
         }

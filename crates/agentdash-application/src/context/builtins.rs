@@ -196,11 +196,13 @@ impl ContextContributor for CoreContextContributor {
 
         if let Some(workspace) = input.workspace {
             let binding_summary = selected_workspace_binding(workspace)
-                .map(|binding| format!(
-                    "{} @ {}",
-                    trim_or_dash(&binding.backend_id),
-                    trim_or_dash(&binding.root_ref)
-                ))
+                .map(|binding| {
+                    format!(
+                        "{} @ {}",
+                        trim_or_dash(&binding.backend_id),
+                        trim_or_dash(&binding.root_ref)
+                    )
+                })
                 .unwrap_or_else(|| "-".to_string());
             fragments.push(ContextFragment {
                 slot: "workspace",

@@ -139,9 +139,14 @@ pub async fn create_workspace(
     .await?;
 
     let workspace_name = normalize_workspace_name(&req.name)?;
-    let (identity_kind, identity_payload, initial_bindings) =
-        derive_workspace_shape(&state, req.identity_kind, req.identity_payload, req.bindings, req.shortcut_binding)
-            .await?;
+    let (identity_kind, identity_payload, initial_bindings) = derive_workspace_shape(
+        &state,
+        req.identity_kind,
+        req.identity_payload,
+        req.bindings,
+        req.shortcut_binding,
+    )
+    .await?;
 
     let mut workspace = Workspace::new(
         project_id,
@@ -287,8 +292,7 @@ pub async fn detect_workspace(
     )
     .await?;
 
-    let detected =
-        detect_workspace_from_backend(&state, &req.backend_id, &req.root_ref).await?;
+    let detected = detect_workspace_from_backend(&state, &req.backend_id, &req.root_ref).await?;
     let existing = state
         .repos
         .workspace_repo
@@ -365,7 +369,9 @@ async fn derive_workspace_shape(
         ));
     };
 
-    let detected = detect_workspace_from_backend(state, &first_binding.backend_id, &first_binding.root_ref).await?;
+    let detected =
+        detect_workspace_from_backend(state, &first_binding.backend_id, &first_binding.root_ref)
+            .await?;
     let replacement_binding = WorkspaceBinding {
         id: first_binding.id,
         workspace_id: Uuid::nil(),

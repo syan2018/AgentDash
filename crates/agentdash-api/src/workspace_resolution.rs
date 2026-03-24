@@ -67,11 +67,9 @@ pub async fn resolve_workspace_binding(
                 .or_else(|| select_first_online(&online_candidates))
                 .or_else(|| online_candidates.first().map(|(binding, _)| *binding))
         }
-        WorkspaceResolutionPolicy::PreferOnline => {
-            select_first_online(&online_candidates)
-                .or_else(|| select_default_binding(workspace, &online_candidates))
-                .or_else(|| online_candidates.first().map(|(binding, _)| *binding))
-        }
+        WorkspaceResolutionPolicy::PreferOnline => select_first_online(&online_candidates)
+            .or_else(|| select_default_binding(workspace, &online_candidates))
+            .or_else(|| online_candidates.first().map(|(binding, _)| *binding)),
     };
 
     let Some(binding) = selected else {
@@ -118,7 +116,9 @@ fn build_resolution_reason(workspace: &Workspace, binding: &WorkspaceBinding) ->
         return "命中默认 binding".to_string();
     }
     match workspace.resolution_policy {
-        WorkspaceResolutionPolicy::PreferDefaultBinding => "默认 binding 不可用，回退到候选 binding".to_string(),
+        WorkspaceResolutionPolicy::PreferDefaultBinding => {
+            "默认 binding 不可用，回退到候选 binding".to_string()
+        }
         WorkspaceResolutionPolicy::PreferOnline => "根据在线 backend 选择候选 binding".to_string(),
     }
 }
@@ -142,7 +142,8 @@ pub async fn detect_workspace_from_backend(
         )));
     }
 
-    let git = crate::routes::workspaces::detect_git_via_backend(state, backend_id, root_ref).await?;
+    let git =
+        crate::routes::workspaces::detect_git_via_backend(state, backend_id, root_ref).await?;
     let mut warnings = Vec::new();
     let (identity_kind, identity_payload, confidence) = if git.is_git_repo {
         (
@@ -155,7 +156,8 @@ pub async fn detect_workspace_from_backend(
             "high".to_string(),
         )
     } else {
-        warnings.push("当前未识别为 Git 仓库，已按 local_dir 处理。P4 自动识别尚未接入。".to_string());
+        warnings
+            .push("当前未识别为 Git 仓库，已按 local_dir 处理。P4 自动识别尚未接入。".to_string());
         (
             WorkspaceIdentityKind::LocalDir,
             json!({ "root_hint": root_ref }),

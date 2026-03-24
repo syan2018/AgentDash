@@ -64,19 +64,14 @@ impl SqliteWorkspaceRepository {
             .await?;
         self.ensure_workspace_column("identity_payload", "TEXT NOT NULL DEFAULT '{}'")
             .await?;
-        self.ensure_workspace_column(
-            "resolution_policy",
-            "TEXT NOT NULL DEFAULT 'prefer_online'",
-        )
-        .await?;
+        self.ensure_workspace_column("resolution_policy", "TEXT NOT NULL DEFAULT 'prefer_online'")
+            .await?;
         self.ensure_workspace_column("default_binding_id", "TEXT")
             .await?;
         self.ensure_workspace_column("status", "TEXT NOT NULL DEFAULT 'pending'")
             .await?;
-        self.ensure_workspace_column("created_at", "TEXT")
-            .await?;
-        self.ensure_workspace_column("updated_at", "TEXT")
-            .await?;
+        self.ensure_workspace_column("created_at", "TEXT").await?;
+        self.ensure_workspace_column("updated_at", "TEXT").await?;
 
         Ok(())
     }
@@ -145,7 +140,10 @@ impl SqliteWorkspaceRepository {
         Ok(())
     }
 
-    async fn load_bindings(&self, workspace_id: Uuid) -> Result<Vec<WorkspaceBinding>, DomainError> {
+    async fn load_bindings(
+        &self,
+        workspace_id: Uuid,
+    ) -> Result<Vec<WorkspaceBinding>, DomainError> {
         let rows = sqlx::query(
             "SELECT id, workspace_id, backend_id, root_ref, status, detected_facts, last_verified_at, priority, created_at, updated_at
              FROM workspace_bindings WHERE workspace_id = ? ORDER BY priority DESC, created_at ASC",
@@ -337,7 +335,9 @@ fn workspace_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Workspace, Domain
     })
 }
 
-fn workspace_binding_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<WorkspaceBinding, DomainError> {
+fn workspace_binding_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<WorkspaceBinding, DomainError> {
     Ok(WorkspaceBinding {
         id: parse_uuid(
             row.try_get::<String, _>("id")
@@ -349,9 +349,7 @@ fn workspace_binding_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Workspace
                 .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
             "workspace",
         )?,
-        backend_id: row
-            .try_get::<String, _>("backend_id")
-            .unwrap_or_default(),
+        backend_id: row.try_get::<String, _>("backend_id").unwrap_or_default(),
         root_ref: row.try_get::<String, _>("root_ref").unwrap_or_default(),
         status: str_to_binding_status(
             &row.try_get::<String, _>("status")
@@ -383,10 +381,7 @@ fn workspace_binding_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Workspace
 }
 
 fn parse_uuid(value: String, entity: &'static str) -> Result<Uuid, DomainError> {
-    Uuid::parse_str(&value).map_err(move |_| DomainError::NotFound {
-        entity,
-        id: value,
-    })
+    Uuid::parse_str(&value).map_err(move |_| DomainError::NotFound { entity, id: value })
 }
 
 fn parse_datetime(value: Option<String>) -> DateTime<Utc> {

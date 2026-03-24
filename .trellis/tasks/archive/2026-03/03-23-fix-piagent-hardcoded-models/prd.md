@@ -4,7 +4,7 @@
 
 PiAgent Connector 当前硬编码了各 LLM Provider 的模型列表：
 
-- `OPENAI_MODELS` - 硬编码 gpt-4o, o3, o4-mini
+- `OPENAI_MODELS` - 硬编码 gpt-5.4, o3, o4-mini
 - `ANTHROPIC_MODELS` - 硬编码 claude-opus-4-6, claude-sonnet-4-6 等
 - `GEMINI_MODELS`、`DEEPSEEK_MODELS`、`GROQ_MODELS`、`XAI_MODELS`
 
@@ -65,8 +65,8 @@ trait ListModels {
   "llm.openai.api_key": "sk-xxx",
   "llm.openai.base_url": "https://api.openai.com/v1",
   "llm.openai.models": [
-    {"id": "gpt-4o", "name": "GPT-4o", "context_window": 128000, "supports_reasoning": false},
-    {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "context_window": 128000, "supports_reasoning": false}
+    {"id": "gpt-5.4", "name": "gpt-5.4", "context_window": 128000, "supports_reasoning": false},
+    {"id": "gpt-5.4-mini", "name": "gpt-5.4 Mini", "context_window": 128000, "supports_reasoning": false}
   ]
 }
 ```

@@ -182,7 +182,7 @@ const PROVIDER_SPECS: &[ProviderSpec] = &[
         provider_name: "OpenAI",
         api_key_setting_key: "llm.openai.api_key",
         api_key_env_var: "OPENAI_API_KEY",
-        default_model: "gpt-4o",
+        default_model: "gpt-5.4",
         default_model_setting_key: Some("llm.openai.default_model"),
         base_url_setting_key: Some("llm.openai.base_url"),
         base_url_env_var: Some("OPENAI_BASE_URL"),

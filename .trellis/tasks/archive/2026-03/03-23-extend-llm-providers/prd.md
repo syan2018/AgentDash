@@ -123,7 +123,7 @@
 - [ ] 各 provider 的 API Key 已配置时，ExecutorSelector 中能看到对应 provider 及其模型（通过 discover_options 流）
 - [ ] Ollama 本地模型能在 ExecutorSelector 中动态列出
 - [ ] 选择支持 reasoning 的模型（如 claude-opus-4-6）时才显示 ThinkingLevel 选择器
-- [ ] 选择不支持 reasoning 的模型（如 gpt-4o、llama-3.3-70b）时 ThinkingLevel 选择器消失
+- [ ] 选择不支持 reasoning 的模型（如 gpt-5.4、llama-3.3-70b）时 ThinkingLevel 选择器消失
 - [ ] Agent Preset Editor 中 model 选择是下拉而非文本框
 - [ ] PiAgent 的 `supports_model_override` 为 true，用户在 ExecutorSelector 切换模型后实际生效
 

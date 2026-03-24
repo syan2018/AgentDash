@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::{
@@ -21,6 +21,7 @@ impl SqliteStoryRepository {
             CREATE TABLE IF NOT EXISTS stories (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id),
+                default_workspace_id TEXT,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'created',
@@ -53,12 +54,43 @@ impl SqliteStoryRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        self.ensure_story_column("default_workspace_id", "TEXT")
+            .await?;
+
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_state_changes_project ON state_changes(project_id)",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn ensure_story_column(
+        &self,
+        column_name: &str,
+        column_definition: &str,
+    ) -> Result<(), DomainError> {
+        let rows = sqlx::query("PRAGMA table_info(stories)")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let column_exists = rows.iter().any(|row| {
+            row.try_get::<String, _>("name")
+                .map(|name| name == column_name)
+                .unwrap_or(false)
+        });
+
+        if !column_exists {
+            sqlx::query(&format!(
+                "ALTER TABLE stories ADD COLUMN {column_name} {column_definition}"
+            ))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        }
 
         Ok(())
     }
@@ -441,5 +473,92 @@ impl TryFrom<StateChangeRow> for StateChange {
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now()),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn new_repo_with_legacy_story_table() -> SqliteStoryRepository {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY
+            );
+
+            CREATE TABLE stories (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'created',
+                priority TEXT NOT NULL DEFAULT 'p2',
+                story_type TEXT NOT NULL DEFAULT 'feature',
+                tags TEXT NOT NULL DEFAULT '[]',
+                task_count INTEGER NOT NULL DEFAULT 0,
+                context TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("应能创建旧版 stories 表");
+
+        let repo = SqliteStoryRepository::new(pool);
+        repo.initialize().await.expect("初始化时应能自动补齐缺失列");
+        repo
+    }
+
+    #[tokio::test]
+    async fn initialize_adds_default_workspace_id_for_legacy_story_table() {
+        let repo = new_repo_with_legacy_story_table().await;
+        let columns = sqlx::query("PRAGMA table_info(stories)")
+            .fetch_all(&repo.pool)
+            .await
+            .expect("应能读取 stories 表结构");
+
+        let has_default_workspace_id = columns.iter().any(|row| {
+            row.try_get::<String, _>("name")
+                .map(|name| name == "default_workspace_id")
+                .unwrap_or(false)
+        });
+
+        assert!(
+            has_default_workspace_id,
+            "initialize 后 stories 表应包含 default_workspace_id 列"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_story_table_can_read_story_after_initialize() {
+        let repo = new_repo_with_legacy_story_table().await;
+        let project_id = uuid::Uuid::new_v4();
+        let story = Story::new(project_id, "Story".to_string(), "desc".to_string());
+
+        sqlx::query("INSERT INTO projects (id) VALUES (?)")
+            .bind(project_id.to_string())
+            .execute(&repo.pool)
+            .await
+            .expect("应能插入 project");
+
+        repo.create(&story)
+            .await
+            .expect("补齐列后应能按新 schema 写入 story");
+
+        let loaded = repo
+            .get_by_id(story.id)
+            .await
+            .expect("应能查询 story")
+            .expect("story 应存在");
+
+        assert_eq!(loaded.id, story.id);
+        assert_eq!(loaded.default_workspace_id, None);
     }
 }

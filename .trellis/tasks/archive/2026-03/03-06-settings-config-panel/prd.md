@@ -242,7 +242,7 @@ PUT /api/settings (含 llm.*.api_key 或 agent.pi.*)
 
 ### Base
 - 未配置任何 API Key：Pi Agent 不出现在执行器列表中
-- 只配置了 OpenAI：Pi Agent 使用 GPT-4o
+- 只配置了 OpenAI：Pi Agent 使用 gpt-5.4
 - 修改 API Key 为无效值：保存成功，但 Pi Agent 调用时返回 LLM 错误
 
 ### Bad

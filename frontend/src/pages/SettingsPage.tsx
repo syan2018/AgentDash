@@ -165,7 +165,7 @@ const LLM_PROVIDERS: LlmProviderDef[] = [
   {
     id: "gemini",
     name: "Google Gemini",
-    description: "Gemini 2.5 Pro、Flash 等模型",
+    description: "Gemini 3.0 Pro、Flash 等模型",
     apiKeySettingKey: "llm.gemini.api_key",
     modelsSettingKey: "llm.gemini.models",
     blockedModelsSettingKey: "llm.gemini.blocked_models",
@@ -184,7 +184,7 @@ const LLM_PROVIDERS: LlmProviderDef[] = [
   {
     id: "openai",
     name: "OpenAI",
-    description: "GPT-4o、o3 等模型，支持兼容端点",
+    description: "gpt-5.4、gpt-5.3-codex 等模型，支持兼容端点",
     apiKeySettingKey: "llm.openai.api_key",
     baseUrlSettingKey: "llm.openai.base_url",
     defaultModelSettingKey: "llm.openai.default_model",
@@ -568,7 +568,7 @@ function LlmProviderForm({
               type="text"
               className={inputCls}
               value={model}
-              placeholder="例如 gpt-4o"
+              placeholder="例如 gpt-5.4"
               onChange={(e) => setModel(e.target.value)}
             />
           )}

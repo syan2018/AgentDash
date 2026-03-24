@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { useCurrentUserStore } from "../stores/currentUserStore";
@@ -51,6 +52,10 @@ function parseStringList(value: unknown): string[] {
 }
 
 type SettingsScopeKind = SettingsScopeRequest["scope"];
+
+interface SettingsNavigationState {
+  return_to?: string;
+}
 
 const SETTINGS_SCOPE_LABELS: Record<SettingsScopeKind, string> = {
   system: "系统",
@@ -1128,6 +1133,8 @@ function RawScopedSettingsSection({
 // ---------------------------------------------------------------------------
 
 export function SettingsPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { settings, loading, saving, error, fetchSettings, updateSettings, deleteSetting } = useSettingsStore();
   const { backends, fetchBackends, removeBackend } = useCoordinatorStore();
   const { currentUser } = useCurrentUserStore();
@@ -1135,6 +1142,8 @@ export function SettingsPage() {
   const [activeScope, setActiveScope] = useState<SettingsScopeKind>("system");
   const [toast, setToast] = useState<string | null>(null);
   const [llmDiscoveryRefreshKey, setLlmDiscoveryRefreshKey] = useState(0);
+  const routeState = (location.state as SettingsNavigationState | null) ?? null;
+  const returnTarget = routeState?.return_to?.trim() || "/dashboard/agent";
 
   const currentProject = projects.find((project) => project.id === currentProjectId) ?? null;
   const canManageSystemScope = currentUser?.auth_mode === "personal" || currentUser?.is_admin === true;
@@ -1183,6 +1192,10 @@ export function SettingsPage() {
     [deleteSetting, scopeRequest],
   );
 
+  const handleBack = useCallback(() => {
+    navigate(returnTarget);
+  }, [navigate, returnTarget]);
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -1197,11 +1210,33 @@ export function SettingsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-2xl space-y-6 px-6 py-8">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">设置</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            管理 system / user / project 三层 scope 设置。system 更偏宿主级配置，user 和 project 用来承接企业化后的个体偏好与项目策略。
-          </p>
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={handleBack}
+            className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+            返回
+          </button>
+          <div>
+            <h1 className="text-xl font-semibold text-foreground">设置</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              管理 system / user / project 三层 scope 设置。system 更偏宿主级配置，user 和 project 用来承接企业化后的个体偏好与项目策略。
+            </p>
+          </div>
         </div>
 
         <SectionCard title="Scope">

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { NavLink, Outlet, useMatch, type NavLinkRenderProps } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation, useMatch, type NavLinkRenderProps } from "react-router-dom";
 import { ThemeToggle } from "../ui/theme-toggle";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -11,17 +11,28 @@ import { ProjectSelector } from "../../features/project/project-selector";
 // WorkspaceView 类型已废弃，改为 React Router NavLink 驱动导航
 
 export function WorkspaceLayout() {
+  const location = useLocation();
   const { projects, currentProjectId, selectProject } = useProjectStore();
   const { fetchWorkspaces } = useWorkspaceStore();
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
   const { currentUser } = useCurrentUserStore();
+  const lastNonSettingsPathRef = useRef("/dashboard/agent");
+
+  const currentPath = `${location.pathname}${location.search}${location.hash}`;
+  const isSettingsRoute = location.pathname === "/settings";
 
   useEffect(() => {
     if (currentProjectId) {
       void fetchWorkspaces(currentProjectId);
     }
   }, [currentProjectId, fetchWorkspaces]);
+
+  useEffect(() => {
+    if (!isSettingsRoute) {
+      lastNonSettingsPathRef.current = currentPath;
+    }
+  }, [currentPath, isSettingsRoute]);
 
   const streamStatusLabel =
     connectionState === "connected"
@@ -47,6 +58,29 @@ export function WorkspaceLayout() {
   const isStoryActive =
     !!storyDashboardMatch ||
     !!storyRouteMatch;       // Story 详情页从 Story Tab 进入，高亮 Story
+
+  const rememberedPath = lastNonSettingsPathRef.current;
+  const agentNavTarget = useMemo(() => {
+    if (!isSettingsRoute) return "/dashboard/agent";
+    if (
+      rememberedPath.startsWith("/dashboard/agent")
+      || rememberedPath.startsWith("/session/")
+    ) {
+      return rememberedPath;
+    }
+    return "/dashboard/agent";
+  }, [isSettingsRoute, rememberedPath]);
+
+  const storyNavTarget = useMemo(() => {
+    if (!isSettingsRoute) return "/dashboard/story";
+    if (
+      rememberedPath.startsWith("/dashboard/story")
+      || rememberedPath.startsWith("/story/")
+    ) {
+      return rememberedPath;
+    }
+    return "/dashboard/story";
+  }, [isSettingsRoute, rememberedPath]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -77,7 +111,7 @@ export function WorkspaceLayout() {
             <div className="space-y-1.5 rounded-[12px] border border-border bg-secondary/35 p-2.5">
               <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">视图</p>
               <NavLink
-                to="/dashboard/agent"
+                to={agentNavTarget}
                 className={() =>
                   `flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
                     isAgentActive
@@ -89,7 +123,7 @@ export function WorkspaceLayout() {
                 Agent
               </NavLink>
               <NavLink
-                to="/dashboard/story"
+                to={storyNavTarget}
                 className={() =>
                   `flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
                     isStoryActive
@@ -102,6 +136,7 @@ export function WorkspaceLayout() {
               </NavLink>
             </div>
           </div>
+
         </nav>
 
         {/* 后端连接状态 */}
@@ -119,6 +154,7 @@ export function WorkspaceLayout() {
         <div className="border-t border-border p-3">
           <NavLink
             to="/settings"
+            state={{ return_to: rememberedPath }}
             className={({ isActive }: NavLinkRenderProps) =>
               `mb-2 flex w-full items-center gap-2 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
                 isActive

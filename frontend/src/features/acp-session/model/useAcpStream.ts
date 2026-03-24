@@ -98,6 +98,34 @@ function getEntryIndex(update: SessionUpdate): number | undefined {
   return typeof idx === "number" ? idx : undefined;
 }
 
+function extractTextContent(update: SessionUpdate): Record<string, unknown> | null {
+  const content = (update as unknown as { content?: unknown }).content;
+  if (!content || typeof content !== "object" || Array.isArray(content)) {
+    return null;
+  }
+  const record = content as Record<string, unknown>;
+  return record.type === "text" ? record : null;
+}
+
+function replaceTextContentPreservingMeta(
+  existingUpdate: SessionUpdate,
+  incomingUpdate: SessionUpdate,
+  text: string,
+): SessionUpdate {
+  const existingContent = extractTextContent(existingUpdate);
+  const incomingContent = extractTextContent(incomingUpdate);
+
+  return {
+    ...existingUpdate,
+    content: {
+      ...(existingContent ?? {}),
+      ...(incomingContent ?? {}),
+      type: "text",
+      text,
+    },
+  } as SessionUpdate;
+}
+
 /**
  * 将 tool_call_update 的字段合并到已有 tool_call entry 中。
  * 仿照 Zed 的 update_fields 策略：只覆盖非空字段，保留已有值。
@@ -305,17 +333,19 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
         const candidateEntryIndex = getEntryIndex(candidate.update);
         if (candidateEntryIndex !== incomingEntryIndex) continue;
 
-        const candidateUpdateAny = candidate.update as unknown as { content?: { type?: string; text?: string } };
-        const previousText = candidateUpdateAny.content?.type === "text" ? (candidateUpdateAny.content.text ?? "") : "";
+        const candidateContent = extractTextContent(candidate.update);
+        const previousText =
+          typeof candidateContent?.text === "string" ? candidateContent.text : "";
         const mergedText = mergeStreamChunk(previousText, incomingText);
         if (mergedText === previousText) {
           return prev;
         }
 
-        const overwrittenUpdate: SessionUpdate = {
-          ...candidate.update,
-          content: { type: "text" as const, text: mergedText },
-        } as SessionUpdate;
+        const overwrittenUpdate = replaceTextContentPreservingMeta(
+          candidate.update,
+          update,
+          mergedText,
+        );
         const next = [...prev];
         next[i] = { ...candidate, update: overwrittenUpdate };
         return next;
@@ -336,22 +366,24 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       return [...prev, makeEntry(update)];
     }
 
-    const targetUpdateAny = lastEntry.update as unknown as { content?: { type?: string; text?: string } };
-    if (targetUpdateAny.content?.type !== "text" || newUpdateAny.content?.type !== "text") {
+    const lastContent = extractTextContent(lastEntry.update);
+    const incomingContent = extractTextContent(update);
+    if (!lastContent || !incomingContent) {
       return [...prev, makeEntry(update)];
     }
 
-    const previousText = targetUpdateAny.content.text ?? "";
+    const previousText = typeof lastContent.text === "string" ? lastContent.text : "";
     const mergedText = mergeStreamChunk(previousText, incomingText ?? "");
 
     if (mergedText === previousText) {
       return prev;
     }
 
-    const mergedUpdate: SessionUpdate = {
-      ...lastEntry.update,
-      content: { type: "text" as const, text: mergedText },
-    } as SessionUpdate;
+    const mergedUpdate = replaceTextContentPreservingMeta(
+      lastEntry.update,
+      update,
+      mergedText,
+    );
 
     const next = [...prev];
     next[next.length - 1] = { ...lastEntry, update: mergedUpdate };

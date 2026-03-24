@@ -182,17 +182,45 @@ const displayName = String(raw.display_name ?? "");
 
 ---
 
-## Testing Requirements
+## Session 执行状态持久化规范
 
-关键 API 需要：
+### 原则
 
-1. 正常流程测试
-2. 错误处理测试
-3. 跨层契约测试
+Session 的执行状态（idle / running / completed / failed / interrupted）必须持久化在 `SessionMeta.last_execution_status`，不允许靠扫 JSONL 历史或读内存 map 来推断。
 
-涉及 DTO 变更时，至少补一条字段命名断言，避免回归为混合风格。
+**禁止模式：**
+
+```rust
+// ❌ 扫 JSONL 历史推断状态 — O(N) IO，重启后内存无状态
+let history = store.read_all(session_id).await?;
+for notification in history { /* 推断 terminal */ }
+
+// ❌ 纯内存 map — 重启后全部丢失，无法持久查询
+let running = sessions.lock().await.get(id).map(|r| r.running);
+```
+
+**正确模式：**
+
+```rust
+// ✅ 每次 turn 开始/结束时写入 meta
+session_meta.last_execution_status = "running".to_string();
+store.write_meta(&session_meta).await?;
+// turn 结束后
+meta.last_execution_status = terminal_kind.state_tag().to_string(); // completed/failed/interrupted
+store.write_meta(&meta).await?;
+```
+
+### 启动恢复
+
+进程重启时必须调用 `executor_hub.recover_interrupted_sessions()`，将残留的 `running` 状态修正为 `interrupted`。云端和本机两个 binary 的启动流程都必须调用。
+
+### 合法值枚举
+
+`last_execution_status` 只有五个合法值：`idle` / `running` / `completed` / `failed` / `interrupted`。查询时非法值应 `unreachable!`。
 
 ---
+
+## Testing Requirements
 
 ## Code Review Checklist
 

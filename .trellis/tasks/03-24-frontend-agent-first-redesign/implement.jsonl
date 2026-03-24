@@ -1,0 +1,7 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "数据获取 Hook 模式和 ACP 事件归并契约"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "业务 API snake_case 映射边界，前端类型安全规范"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "前端目录结构规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端 DTO 命名契约，新增 API 端点的规范"}

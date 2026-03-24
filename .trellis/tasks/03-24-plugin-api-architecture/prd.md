@@ -26,7 +26,7 @@
 
 ### P2: 稳定外部合同必须尽量小
 
-- `plugin-api`（或未来更名后的 contract crate）只承载真正稳定的外部契约
+- `plugin-api` 与其下游合同层 crate（当前为 `agentdash-connector-contract`）只承载真正稳定的外部契约
 - 未闭环、未经过 first-party 验证、仍处于内部演进期的扩展点不能直接承诺给企业仓
 
 ### P3: 宿主先聚合注册结果，再构建运行时
@@ -55,7 +55,7 @@
 
 ### 当前最主要的问题
 
-- `agentdash-plugin-api` 仍然透传了 `agentdash-executor` 的运行时依赖，契约面还不够轻
+- `agentdash-plugin-api` 当前虽然已切出，但连接器合同仍需要进一步下沉到独立轻量 crate
 - `agent_connectors()`、`source_resolvers()`、`external_service_clients()` 在宿主里尚未形成可靠闭环
 - 当前 `agentdash_injection::AddressSpaceProvider` 只是 descriptor / discovery provider，不是统一 runtime provider，不适合现在就冻结成长期外部 SPI
 - 文档里“对外承诺的插件能力”已经超过了“当前真实可用、可长期维护的能力”
@@ -120,7 +120,7 @@
 说明：
 
 - 这里的“连接器注册抽象”不一定沿用当前 `agentdash-executor` 整包依赖的形式
-- 如有必要，应把 `AgentConnector` trait 及其 DTO 拆到真正的 trait-only contract crate
+- 当前代码已先切出 `agentdash-connector-contract`，后续可以继续收敛其依赖与暴露面
 
 ### 2. Experimental SPI（开源仓可试验，不对企业仓长期承诺）
 
@@ -150,16 +150,12 @@
 ```text
 crates/
   agentdash-domain/              # 领域模型
+  agentdash-connector-contract/  # 连接器/执行上下文合同层
   agentdash-plugin-api/          # 现阶段 contract crate（后续可按需要更名）
   agentdash-api/                 # 宿主服务 + 组合根
   agentdash-executor/            # 执行器实现
   agentdash-injection/           # 注入与 descriptor 发现实现
-  plugins/
-    auth-none/
-    auth-basic/
-    connector-codex/
-    connector-claude/
-    ...                          # first-party plugins
+  agentdash-first-party-plugins/ # first-party plugin 骨架与默认集合
 ```
 
 ### 仓库 B：`agentdash-enterprise`（私有）
@@ -289,6 +285,8 @@ run_server(plugins).await
 
 - `crates/agentdash-api/src/lib.rs` — `run_server()` 公共入口
 - `crates/agentdash-api/src/app_state.rs` — 当前组合根与插件注入位置
-- `crates/agentdash-plugin-api/` — 当前第一版 contract 草案
+- `crates/agentdash-plugin-api/` — 插件 SPI 聚合入口
+- `crates/agentdash-connector-contract/` — 连接器合同层
+- `crates/agentdash-first-party-plugins/` — first-party plugin 骨架
 - `.trellis/spec/backend/plugin-api.md` — 本次收敛后的插件规范
 - `.trellis/spec/backend/address-space-access.md` — Address Space 长期方向

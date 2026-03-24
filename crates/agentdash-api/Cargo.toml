@@ -22,6 +22,7 @@ agentdash-acp-meta = { workspace = true }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
 agentdash-plugin-api = { workspace = true }
+agentdash-first-party-plugins = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
@@ -49,4 +50,3 @@ agentdash-agent = { workspace = true }
 # ACP 协议（仅用于路由层的类型引用）
 agent-client-protocol = { workspace = true }
 json-patch = "2.0"
-

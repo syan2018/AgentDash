@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use agentdash_connector_contract::AgentConnector;
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_executor::AgentConnector;
 use agentdash_injection::{AddressSpaceProvider, SourceResolver};
 
 use crate::auth::AuthProvider;

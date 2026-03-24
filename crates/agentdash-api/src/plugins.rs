@@ -7,11 +7,8 @@ use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
 use thiserror::Error;
 
 /// 开源版内置插件集合。
-///
-/// 当前仓库暂未拆出 first-party plugin crates，先保留为空实现。
-/// 后续开源内置认证/连接器插件应统一从这里注册。
 pub fn builtin_plugins() -> Vec<Box<dyn AgentDashPlugin>> {
-    vec![]
+    agentdash_first_party_plugins::builtin_plugins()
 }
 
 /// 插件注册结果。

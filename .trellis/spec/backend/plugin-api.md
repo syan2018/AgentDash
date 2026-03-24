@@ -29,8 +29,9 @@
 ```text
 agentdash（开源仓）
   ├─ 核心宿主（agentdash-api / app_state / routes）
-  ├─ contract crate（当前为 agentdash-plugin-api）
-  └─ first-party plugins
+  ├─ plugin SPI（agentdash-plugin-api）
+  ├─ connector contract（agentdash-connector-contract）
+  └─ first-party plugins（agentdash-first-party-plugins）
 
 agentdash-enterprise（私有仓）
   ├─ enterprise plugins
@@ -187,7 +188,8 @@ contract crate 的职责是：
 - 将 `AgentConnector` trait 与其必要 DTO 拆到真正的 trait-only crate
 - 或在 contract crate 中定义更轻的 connector registration 抽象，再由宿主适配到运行时实现
 
-不推荐继续让企业仓为了实现一个连接器而直接依赖整个运行时 crate。
+当前代码已经先切出 `agentdash-connector-contract` 作为第一步，但它仍可继续减重；
+不推荐再让企业仓为了实现一个连接器而直接依赖整个运行时 crate。
 
 ---
 
@@ -214,7 +216,8 @@ contract crate 的职责是：
 
 ## 7. First-Party Plugin 策略
 
-开源仓必须提供并维护一批 first-party plugins，用于验证插件合同：
+开源仓必须提供并维护一批 first-party plugins，用于验证插件合同。
+当前代码中，这层骨架已经收敛到 `agentdash-first-party-plugins` crate。
 
 推荐优先从以下类型开始：
 
@@ -336,5 +339,7 @@ contract crate 的职责是：
 
 - [plugin-api PRD](../../tasks/03-24-plugin-api-architecture/prd.md)
 - [Address Space Access](./address-space-access.md)
+- [agentdash-connector-contract](../../../crates/agentdash-connector-contract/src/lib.rs)
+- [agentdash-first-party-plugins](../../../crates/agentdash-first-party-plugins/src/lib.rs)
 - [app_state.rs](../../../crates/agentdash-api/src/app_state.rs)
 - [lib.rs](../../../crates/agentdash-api/src/lib.rs)

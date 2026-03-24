@@ -1,0 +1,9 @@
+[package]
+name = "agentdash-first-party-plugins"
+description = "AgentDash 开源 first-party plugin 骨架集合"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-plugin-api = { workspace = true }

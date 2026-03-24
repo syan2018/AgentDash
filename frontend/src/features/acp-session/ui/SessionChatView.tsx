@@ -606,8 +606,8 @@ export function SessionChatView({
     ? "待创建"
     : isConnected ? "已连接" : isLoading ? "连接中…" : "未连接";
   const connectionColor = !hasSession
-    ? "bg-gray-400"
-    : isConnected ? "bg-emerald-500" : isLoading ? "bg-amber-400 animate-pulse" : "bg-red-500";
+    ? "bg-muted-foreground/40"
+    : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
 

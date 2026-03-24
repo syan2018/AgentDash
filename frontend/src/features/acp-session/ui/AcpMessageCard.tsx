@@ -66,7 +66,7 @@ export const AcpMessageCard = memo(function AcpMessageCard({
 
   if (type === "thinking" && !collapsible) {
     return (
-      <div className="rounded-[10px] border border-dashed border-border bg-secondary/60 px-3.5 py-2.5">
+      <div className="rounded-[12px] border border-dashed border-border bg-secondary/60 px-4 py-3.5">
         <button
           type="button"
           onClick={() => setIsCollapsed(!isCollapsed)}

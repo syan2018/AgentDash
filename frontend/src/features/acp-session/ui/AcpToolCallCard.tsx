@@ -1,21 +1,24 @@
 /**
  * ACP 工具调用卡片
  *
- * 显示工具调用的状态、输入和输出。
- * 对照 Zed 实现完整支持所有 ToolCallStatus：
- * pending / in_progress / completed / failed / canceled / rejected
+ * header 行复用与 EventStripCard / EventFullCard 一致的排版语言：
+ *   [kind badge]  [title / subtitle]  [status dot · label]  [▲▼]
+ *
+ * 样式原则：badge 是唯一染色点，卡片外框保持 border-border。
+ * 状态色仅影响 header 行右侧的 dot + label，不影响外框。
  */
 
 import { useState } from "react";
 import type { SessionUpdate, ToolKind, ToolCallContent } from "@agentclientprotocol/sdk";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
 
-/**
- * 扩展的工具调用状态：SDK 标准 + Zed 扩展（canceled/rejected）。
- * SDK v0.14 只定义了 pending/in_progress/completed/failed，
- * 但后端可能发送扩展状态。
- */
-type ExtendedToolCallStatus = "pending" | "in_progress" | "completed" | "failed" | "canceled" | "rejected";
+type ExtendedToolCallStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "rejected";
 
 export interface AcpToolCallCardProps {
   update: SessionUpdate;
@@ -62,9 +65,7 @@ export function AcpToolCallCard({
 
   if (!toolCallInfo) return null;
 
-  const { toolCallId, title, kind, status, rawInput, rawOutput, content } =
-    toolCallInfo;
-
+  const { toolCallId, title, kind, status, rawInput, rawOutput, content } = toolCallInfo;
   const displayStatus = resolveDisplayStatus(status, rawOutput);
   const statusConfig = getStatusConfig(displayStatus, isPendingApproval);
   const kindConfig = getKindConfig(kind);
@@ -95,73 +96,86 @@ export function AcpToolCallCard({
     }
   };
 
+  // ── compact 模式 ───────────────────────────────────────────────────────────
   if (compact) {
     return (
       <div className="rounded-[10px] border border-border bg-background px-2.5 py-2 text-xs">
         <div className="flex items-center gap-2">
-          <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{kindConfig.icon}</span>
-          <span className="flex-1 truncate">{title}</span>
-          <span className={statusConfig.color}>{statusConfig.label}</span>
+          <span className="inline-flex shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+            {kindConfig.icon}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-foreground/80">{title}</span>
+          <span className={`shrink-0 text-[10px] ${statusConfig.color}`}>
+            {statusConfig.label}
+          </span>
         </div>
       </div>
     );
   }
 
+  // ── 完整卡片 ───────────────────────────────────────────────────────────────
   return (
     <div
-      className={`rounded-[12px] border ${statusConfig.borderColor} bg-background transition-colors ${
-        isPendingApproval
-          ? "ring-2 ring-warning/20"
-          : displayStatus === "failed" || displayStatus === "canceled" || displayStatus === "rejected"
-            ? "opacity-90"
-            : ""
+      className={`rounded-[12px] border border-border bg-background transition-colors ${
+        displayStatus === "failed" ||
+        displayStatus === "canceled" ||
+        displayStatus === "rejected"
+          ? "opacity-90"
+          : ""
       }`}
     >
+      {/* header 行 */}
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left"
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-secondary/35 transition-colors"
       >
-        <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {/* kind badge — 中性，不染色 */}
+        <span className="inline-flex shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
           {kindConfig.icon}
         </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-foreground truncate">
-            {title}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {kindConfig.label}
-          </p>
+
+        {/* title + subtitle */}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          <p className="text-xs text-muted-foreground">{kindConfig.label}</p>
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className={`inline-block h-2 w-2 rounded-full ${statusConfig.dot}`} />
-          <span className={`text-xs ${statusConfig.color}`}>
-            {statusConfig.label}
-          </span>
+
+        {/* 状态：dot + label，是唯一的状态染色点 */}
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusConfig.dot}`} />
+          <span className={`text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
         </div>
-        <span className="text-xs text-muted-foreground/50">
+
+        <span className="shrink-0 text-[10px] text-muted-foreground/40">
           {expanded ? "▲" : "▼"}
         </span>
       </button>
 
+      {/* 展开区 */}
       {expanded && (
         <div className="space-y-3 border-t border-border px-3 py-3">
+          {/* 待审批提示 */}
           {isPendingApproval && (
-            <div className="flex items-center gap-2 rounded-[10px] border border-warning/20 bg-warning/10 p-2.5 text-sm text-warning">
-              <span className="inline-flex rounded-[6px] border border-warning/30 bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em]">审批</span>
-              <span>等待用户审批</span>
+            <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
+              <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-warning">
+                审批
+              </span>
+              等待用户审批
             </div>
           )}
 
+          {/* 取消/拒绝提示 */}
           {(displayStatus === "canceled" || displayStatus === "rejected") && (
-            <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/70 p-2.5 text-sm text-muted-foreground">
-              <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em]">
+            <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
+              <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
                 {displayStatus === "canceled" ? "取消" : "拒绝"}
               </span>
-              <span>{displayStatus === "canceled" ? "已取消执行" : "已拒绝执行"}</span>
+              {displayStatus === "canceled" ? "已取消执行" : "已拒绝执行"}
             </div>
           )}
 
+          {/* 审批按钮 */}
           {isPendingApproval && sessionId && (
             <div className="flex flex-wrap gap-2">
               <button
@@ -183,15 +197,17 @@ export function AcpToolCallCard({
             </div>
           )}
 
+          {/* 审批错误 */}
           {approvalError && (
             <div className="rounded-[10px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
               {approvalError}
             </div>
           )}
 
+          {/* 内容块 */}
           {content && content.length > 0 && (
             <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground">内容</p>
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">内容</p>
               <div className="space-y-2">
                 {content.map((item: ToolCallContent, index: number) => (
                   <ContentBlockView key={index} content={item} />
@@ -200,25 +216,24 @@ export function AcpToolCallCard({
             </div>
           )}
 
+          {/* 输入 */}
           {rawInput !== undefined && (
             <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground">输入</p>
-              <pre className="agentdash-chat-code-block">
-                {safeJson(rawInput)}
-              </pre>
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">输入</p>
+              <pre className="agentdash-chat-code-block">{safeJson(rawInput)}</pre>
             </div>
           )}
 
+          {/* 输出 */}
           {rawOutput !== undefined && (
             <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground">输出</p>
-              <pre className="agentdash-chat-code-block max-h-64">
-                {safeJson(rawOutput)}
-              </pre>
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">输出</p>
+              <pre className="agentdash-chat-code-block max-h-64">{safeJson(rawOutput)}</pre>
             </div>
           )}
 
-          <p className="text-xs text-muted-foreground/25 font-mono select-none">
+          {/* tool call ID */}
+          <p className="select-none font-mono text-[10px] text-muted-foreground/25">
             {toolCallId.slice(0, 8)}
           </p>
         </div>
@@ -227,28 +242,13 @@ export function AcpToolCallCard({
   );
 }
 
-function resolveDisplayStatus(
-  status: ExtendedToolCallStatus,
-  rawOutput: unknown,
-): ExtendedToolCallStatus {
-  if (
-    rawOutput &&
-    typeof rawOutput === "object" &&
-    "approval_state" in rawOutput &&
-    (rawOutput as { approval_state?: unknown }).approval_state === "rejected"
-  ) {
-    return "rejected";
-  }
-  return status;
-}
+// ─── 辅助组件 ─────────────────────────────────────────────────────────────────
 
 function ContentBlockView({ content }: { content: ToolCallContent }) {
   if (content.type === "content") {
     const block = content.content;
     if (block.type === "text") {
-      return (
-        <div className="whitespace-pre-wrap text-sm leading-7">{block.text}</div>
-      );
+      return <div className="whitespace-pre-wrap text-sm leading-7">{block.text}</div>;
     }
     if (block.type === "image") {
       return (
@@ -271,9 +271,7 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
         </a>
       );
     }
-    return (
-      <pre className="text-xs font-mono">{safeJson(block)}</pre>
-    );
+    return <pre className="font-mono text-xs">{safeJson(block)}</pre>;
   }
 
   if (content.type === "diff") {
@@ -281,12 +279,12 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
       <div className="rounded-[10px] border border-border bg-secondary/70 p-2.5 font-mono text-xs">
         <p className="mb-1.5 text-muted-foreground">{content.path}</p>
         {content.oldText && (
-          <div className="text-destructive/70 line-through whitespace-pre-wrap">
+          <div className="whitespace-pre-wrap text-destructive/70 line-through">
             {content.oldText.slice(0, 200)}
             {content.oldText.length > 200 ? "..." : ""}
           </div>
         )}
-        <div className="text-success whitespace-pre-wrap">
+        <div className="whitespace-pre-wrap text-success">
           {content.newText.slice(0, 200)}
           {content.newText.length > 200 ? "..." : ""}
         </div>
@@ -297,9 +295,11 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
   if (content.type === "terminal") {
     return (
       <div className="rounded-[10px] border border-border bg-secondary/70 p-2.5">
-        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em]">终端</span>
-          终端: {content.terminalId}
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em]">
+            终端
+          </span>
+          {content.terminalId}
         </p>
       </div>
     );
@@ -308,64 +308,66 @@ function ContentBlockView({ content }: { content: ToolCallContent }) {
   return null;
 }
 
+// ─── 辅助函数 ─────────────────────────────────────────────────────────────────
+
+function resolveDisplayStatus(
+  status: ExtendedToolCallStatus,
+  rawOutput: unknown,
+): ExtendedToolCallStatus {
+  if (
+    rawOutput &&
+    typeof rawOutput === "object" &&
+    "approval_state" in rawOutput &&
+    (rawOutput as { approval_state?: unknown }).approval_state === "rejected"
+  ) {
+    return "rejected";
+  }
+  return status;
+}
+
 function getStatusConfig(
   status: ExtendedToolCallStatus,
-  isPendingApproval?: boolean
-): { label: string; color: string; dot: string; borderColor: string } {
+  isPendingApproval?: boolean,
+): { label: string; color: string; dot: string } {
   if (isPendingApproval) {
-    return { label: "等待审批", color: "text-warning", dot: "bg-warning animate-pulse", borderColor: "border-warning/30" };
+    return { label: "等待审批", color: "text-warning", dot: "bg-warning animate-pulse" };
   }
-
   switch (status) {
     case "pending":
-      return { label: "等待中", color: "text-muted-foreground", dot: "bg-muted-foreground", borderColor: "border-border" };
+      return { label: "等待中", color: "text-muted-foreground", dot: "bg-muted-foreground/50" };
     case "in_progress":
-      return { label: "执行中", color: "text-primary", dot: "bg-primary animate-pulse", borderColor: "border-primary/30" };
+      return { label: "执行中", color: "text-primary", dot: "bg-primary animate-pulse" };
     case "completed":
-      return { label: "已完成", color: "text-success", dot: "bg-success", borderColor: "border-success/30" };
+      return { label: "已完成", color: "text-success", dot: "bg-success" };
     case "failed":
-      return { label: "失败", color: "text-destructive", dot: "bg-destructive", borderColor: "border-destructive/30" };
+      return { label: "失败", color: "text-destructive", dot: "bg-destructive" };
     case "canceled":
-      return { label: "已取消", color: "text-muted-foreground", dot: "bg-muted-foreground", borderColor: "border-border" };
+      return { label: "已取消", color: "text-muted-foreground", dot: "bg-muted-foreground/50" };
     case "rejected":
-      return { label: "已拒绝", color: "text-warning", dot: "bg-warning", borderColor: "border-warning/30" };
+      return { label: "已拒绝", color: "text-warning", dot: "bg-warning" };
     default:
-      return { label: "未知", color: "text-muted-foreground", dot: "bg-muted-foreground", borderColor: "border-border" };
+      return { label: "未知", color: "text-muted-foreground", dot: "bg-muted-foreground/50" };
   }
 }
 
 function getKindConfig(kind: ToolKind): { label: string; icon: string } {
   switch (kind) {
-    case "read":
-      return { label: "读取", icon: "READ" };
-    case "edit":
-      return { label: "编辑", icon: "EDIT" };
-    case "delete":
-      return { label: "删除", icon: "DEL" };
-    case "move":
-      return { label: "移动", icon: "MOVE" };
-    case "search":
-      return { label: "搜索", icon: "FIND" };
-    case "execute":
-      return { label: "执行", icon: "RUN" };
-    case "think":
-      return { label: "思考", icon: "THNK" };
-    case "fetch":
-      return { label: "获取", icon: "NET" };
-    case "switch_mode":
-      return { label: "切换模式", icon: "MODE" };
+    case "read":        return { label: "读取", icon: "READ" };
+    case "edit":        return { label: "编辑", icon: "EDIT" };
+    case "delete":      return { label: "删除", icon: "DEL" };
+    case "move":        return { label: "移动", icon: "MOVE" };
+    case "search":      return { label: "搜索", icon: "FIND" };
+    case "execute":     return { label: "执行", icon: "RUN" };
+    case "think":       return { label: "思考", icon: "THNK" };
+    case "fetch":       return { label: "获取", icon: "NET" };
+    case "switch_mode": return { label: "切换模式", icon: "MODE" };
     case "other":
-    default:
-      return { label: "工具", icon: "TOOL" };
+    default:            return { label: "工具", icon: "TOOL" };
   }
 }
 
 function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
 export default AcpToolCallCard;

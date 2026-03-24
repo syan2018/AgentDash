@@ -10,7 +10,7 @@
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-03-24",
-  "completedAt": "2026-03-24",
+  "completedAt": "2026-03-25",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -33,7 +33,7 @@
       "action": "create-pr"
     }
   ],
-  "commit": null,
+  "commit": "c5da82f",
   "pr_url": null,
   "subtasks": [
     {

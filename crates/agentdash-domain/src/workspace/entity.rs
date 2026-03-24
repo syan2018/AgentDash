@@ -1,28 +1,28 @@
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
-use super::value_objects::{GitConfig, WorkspaceStatus, WorkspaceType};
+use super::value_objects::{
+    WorkspaceBinding, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceStatus,
+};
 
-/// Workspace — 物理工作空间
+/// Workspace — 逻辑工作空间聚合。
 ///
-/// 代表一个实际的代码目录，可被多个 Task 共享。
-/// 与 vibe-kanban 的 Workspace 概念对齐，container_ref 指向物理路径。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 表达 Project 依赖的“工作空间身份”，而不是某个 backend 上的单一目录。
+/// 物理目录、backend 与探测事实都通过 bindings 挂在该聚合下。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Workspace {
     pub id: Uuid,
-    /// 所属项目
     pub project_id: Uuid,
-    /// 物理目录所属的本机后端
-    pub backend_id: String,
-    /// 显示名称
     pub name: String,
-    /// 物理路径（磁盘目录）
-    pub container_ref: String,
-    pub workspace_type: WorkspaceType,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub identity_payload: Value,
+    pub resolution_policy: WorkspaceResolutionPolicy,
+    pub default_binding_id: Option<Uuid>,
     pub status: WorkspaceStatus,
-    /// Git worktree 配置（仅 GitWorktree 类型使用）
-    pub git_config: Option<GitConfig>,
+    pub bindings: Vec<WorkspaceBinding>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -30,23 +30,42 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(
         project_id: Uuid,
-        backend_id: String,
         name: String,
-        container_ref: String,
-        workspace_type: WorkspaceType,
+        identity_kind: WorkspaceIdentityKind,
+        identity_payload: Value,
+        resolution_policy: WorkspaceResolutionPolicy,
     ) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
-            backend_id,
             name,
-            container_ref,
-            workspace_type,
+            identity_kind,
+            identity_payload,
+            resolution_policy,
+            default_binding_id: None,
             status: WorkspaceStatus::Pending,
-            git_config: None,
+            bindings: Vec::new(),
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn set_bindings(&mut self, mut bindings: Vec<WorkspaceBinding>) {
+        for binding in &mut bindings {
+            binding.workspace_id = self.id;
+        }
+        self.bindings = bindings;
+        self.updated_at = Utc::now();
+        self.refresh_default_binding();
+    }
+
+    pub fn refresh_default_binding(&mut self) {
+        if let Some(default_binding_id) = self.default_binding_id
+            && self.bindings.iter().any(|binding| binding.id == default_binding_id)
+        {
+            return;
+        }
+        self.default_binding_id = self.bindings.first().map(|binding| binding.id);
     }
 }

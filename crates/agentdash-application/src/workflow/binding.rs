@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::address_space::selected_workspace_binding;
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
@@ -397,7 +398,9 @@ pub fn binding_display_title_from_snapshot(binding: &WorkflowResolvedBindingSnap
 fn candidate_roots(workspace: Option<&Workspace>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(workspace) = workspace {
-        let trimmed = workspace.container_ref.trim();
+        let trimmed = selected_workspace_binding(workspace)
+            .map(|binding| binding.root_ref.trim().to_string())
+            .unwrap_or_default();
         if !trimmed.is_empty() {
             roots.push(PathBuf::from(trimmed));
         }

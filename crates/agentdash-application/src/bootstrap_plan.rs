@@ -6,6 +6,7 @@ use agentdash_domain::story::Story;
 use agentdash_domain::workspace::Workspace;
 use agentdash_executor::{AgentDashExecutorConfig, ExecutionAddressSpace};
 
+use crate::address_space::selected_workspace_binding;
 use crate::session_context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
     SessionProjectDefaults, SessionStoryOverrides, SharedContextMount,
@@ -92,7 +93,8 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
         workspace_root = input
             .workspace
             .as_ref()
-            .map(|ws| PathBuf::from(ws.container_ref.clone()));
+            .and_then(selected_workspace_binding)
+            .map(|binding| PathBuf::from(binding.root_ref.clone()));
     }
 
     let owner_kind = match &input.owner_variant {
@@ -203,16 +205,28 @@ mod tests {
 
     #[test]
     fn build_plan_applies_workspace_defaults() {
-        use agentdash_domain::workspace::{Workspace, WorkspaceType};
+        use agentdash_domain::workspace::{
+            Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
+            WorkspaceResolutionPolicy,
+        };
 
         let project = Project::new("test".to_string(), "desc".to_string());
-        let workspace = Workspace::new(
+        let mut workspace = Workspace::new(
             project.id,
-            "backend".to_string(),
             "test-ws".to_string(),
-            "/workspace/test".to_string(),
-            WorkspaceType::Static,
+            WorkspaceIdentityKind::LocalDir,
+            serde_json::json!({ "root_hint": "/workspace/test" }),
+            WorkspaceResolutionPolicy::PreferOnline,
         );
+        let mut binding = WorkspaceBinding::new(
+            workspace.id,
+            "backend".to_string(),
+            "/workspace/test".to_string(),
+            serde_json::json!({}),
+        );
+        binding.status = WorkspaceBindingStatus::Ready;
+        workspace.set_bindings(vec![binding]);
+        workspace.refresh_default_binding();
 
         let plan = build_bootstrap_plan(BootstrapPlanInput {
             project: project.clone(),

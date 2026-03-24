@@ -28,6 +28,11 @@ const SettingsPage = lazy(async () => {
   return { default: module.SettingsPage };
 });
 
+const ProjectSettingsPage = lazy(async () => {
+  const module = await import("./pages/ProjectSettingsPage");
+  return { default: module.ProjectSettingsPage };
+});
+
 const AgentTabView = lazy(async () => {
   const m = await import("./features/agent/agent-tab-view");
   return { default: m.AgentTabView };
@@ -162,6 +167,7 @@ function AppContent() {
 
           {/* 设置页 */}
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
 
           {/* 未匹配路由重定向到默认 Tab */}
           <Route path="*" element={<Navigate to="/dashboard/agent" replace />} />

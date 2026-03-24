@@ -13,6 +13,7 @@ use crate::address_space_access::{
     inline_files_from_mount, normalize_mount_relative_path,
 };
 use crate::app_state::AppState;
+use agentdash_application::address_space::selected_workspace_binding;
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_workspace_and_project_with_permission,
@@ -111,7 +112,7 @@ pub async fn list_address_entries(
                 ProjectPermission::View,
             )
             .await?;
-            require_backend_online(&state, &workspace.backend_id).await?;
+            require_backend_online(&state, &workspace).await?;
 
             let session = state
                 .services
@@ -627,11 +628,17 @@ async fn load_project_and_optional_story(
     }
 }
 
-async fn require_backend_online(state: &Arc<AppState>, backend_id: &str) -> Result<(), ApiError> {
+async fn require_backend_online(
+    state: &Arc<AppState>,
+    workspace: &agentdash_domain::workspace::Workspace,
+) -> Result<(), ApiError> {
+    let backend_id = selected_workspace_binding(workspace)
+        .map(|binding| binding.backend_id.as_str())
+        .unwrap_or("");
     let trimmed = backend_id.trim();
     if trimmed.is_empty() {
         return Err(ApiError::BadRequest(
-            "Workspace.backend_id 不能为空".to_string(),
+            "Workspace 当前没有可用 binding.backend_id".to_string(),
         ));
     }
     if !state.services.backend_registry.is_online(trimmed).await {
@@ -655,11 +662,5 @@ async fn resolve_project_workspace(
             .ok()
             .flatten();
     }
-    state
-        .repos
-        .workspace_repo
-        .list_by_project(project.id)
-        .await
-        .ok()
-        .and_then(|ws| ws.into_iter().next())
+    None
 }

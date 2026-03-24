@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path};
 use std::sync::Arc;
 
+use agentdash_application::address_space::selected_workspace_binding;
 use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
 use agentdash_domain::workspace::Workspace;
 use agentdash_injection::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
@@ -123,9 +124,11 @@ fn sorted_sources(sources: &[ContextSourceRef]) -> Vec<&ContextSourceRef> {
 }
 
 fn normalize_workspace_backend_id(workspace: &Workspace) -> Result<&str, String> {
-    let backend_id = workspace.backend_id.trim();
+    let backend_id = selected_workspace_binding(workspace)
+        .map(|binding| binding.backend_id.trim())
+        .unwrap_or("");
     if backend_id.is_empty() {
-        Err("Workspace.backend_id 不能为空".to_string())
+        Err("Workspace 当前没有可用 binding.backend_id".to_string())
     } else {
         Ok(backend_id)
     }
@@ -206,7 +209,9 @@ async fn resolve_workspace_snapshot_source(
         content: render_source_section(
             source,
             build_workspace_snapshot_from_entries(
-                &workspace.container_ref,
+                selected_workspace_binding(workspace)
+                    .map(|binding| binding.root_ref.as_str())
+                    .unwrap_or("."),
                 sub_path.as_deref(),
                 &listed.entries,
                 source.max_chars,

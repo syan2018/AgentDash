@@ -1,0 +1,85 @@
+{
+  "id": "project-workspace-backend-refactor",
+  "name": "project-workspace-backend-refactor",
+  "title": "Project / Workspace / Backend 关系重构与配置体验收敛",
+  "description": "",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "large",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-24",
+  "completedAt": "2026-03-24",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 6,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "workspace-domain-and-resolution",
+      "title": "重构 Workspace 领域模型与运行时解析链路",
+      "status": "completed",
+      "phase": 2,
+      "area": "backend/domain",
+      "summary": "已将 Workspace 收敛为逻辑工作空间聚合，引入 WorkspaceBinding / resolution_policy，并让 task execution、address space 和 workspace files 显式走 binding 解析。"
+    },
+    {
+      "key": "workspace-api-and-shortcut-detection",
+      "title": "重写 Workspace API 与 backend 直选目录快捷入口",
+      "status": "completed",
+      "phase": 3,
+      "area": "backend/api",
+      "summary": "已新增 project-scoped workspace detect/create/update 语义，支持 backend + root_ref 快速识别并回收为 logical workspace + binding。"
+    },
+    {
+      "key": "frontend-project-settings-reframe",
+      "title": "拆出独立 Project Settings 并重构 Workspace 配置体验",
+      "status": "completed",
+      "phase": 4,
+      "area": "frontend",
+      "summary": "已新增独立项目设置页，按概览、执行默认、上下文资源、工作空间、共享/模板/危险操作重排信息架构，并把 Runtime Preview 作为派生结果展示。"
+    },
+    {
+      "key": "seed-tests-and-doc-sync",
+      "title": "补齐 seed、e2e 与规范同步",
+      "status": "completed",
+      "phase": 5,
+      "area": "qa/docs",
+      "summary": "已更新 mock seed 与 story context e2e 用例到新 workspace identity/binding 模型，并同步前后端规范，减少后续继续引用旧 container_ref/workspace_type 的风险。"
+    }
+  ],
+  "relatedFiles": [
+    "crates/agentdash-domain/src/workspace/",
+    "crates/agentdash-api/src/routes/workspaces.rs",
+    "crates/agentdash-api/src/workspace_resolution.rs",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-infrastructure/src/persistence/sqlite/workspace_repository.rs",
+    "frontend/src/pages/ProjectSettingsPage.tsx",
+    "frontend/src/features/workspace/workspace-list.tsx",
+    "frontend/src/stores/workspaceStore.ts",
+    "scripts/seed-mock-data.py",
+    "tests/e2e/story-context-injection.spec.ts"
+  ],
+  "notes": "2026-03-24 已完成 Project -> Workspace(identity) -> WorkspaceBinding -> RuntimeResolution -> AddressSpace 主链重构，移除了默认 workspace 缺失时取第一个 workspace 的错误兜底，并保留 backend 直选目录 + 自动识别快捷入口。P4 identity 已纳入领域模型与前端配置，但自动探测仍等待后端新增真实 P4 检测能力，当前会显式回退为 local_dir 并给出 warning。"
+}

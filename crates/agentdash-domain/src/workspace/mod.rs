@@ -4,4 +4,7 @@ mod value_objects;
 
 pub use entity::Workspace;
 pub use repository::WorkspaceRepository;
-pub use value_objects::{GitConfig, WorkspaceStatus, WorkspaceType};
+pub use value_objects::{
+    WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
+    WorkspaceStatus,
+};

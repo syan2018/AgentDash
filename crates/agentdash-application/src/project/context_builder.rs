@@ -4,6 +4,7 @@ use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{ContextComposer, MergeStrategy};
 use serde_json::json;
 
+use crate::address_space::selected_workspace_binding;
 use crate::session_plan::{
     SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
 };
@@ -57,16 +58,24 @@ pub fn build_project_context_markdown(
     );
 
     if let Some(workspace) = input.workspace {
+        let binding_summary = selected_workspace_binding(workspace)
+            .map(|binding| format!(
+                "{} @ {}",
+                trim_or_dash(&binding.backend_id),
+                trim_or_dash(&binding.root_ref)
+            ))
+            .unwrap_or_else(|| "-".to_string());
         composer.push(
             "workspace",
             "workspace_context",
             30,
             MergeStrategy::Append,
             format!(
-                "## Workspace\n- id: {}\n- backend_id: {}\n- name: {}\n- working_dir: .",
+                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
                 workspace.id,
-                trim_or_dash(&workspace.backend_id),
+                workspace.identity_kind,
                 trim_or_dash(&workspace.name),
+                binding_summary,
             ),
         );
     }

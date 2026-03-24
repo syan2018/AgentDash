@@ -357,14 +357,7 @@ pub(crate) async fn resolve_project_workspace(
             .await
             .map_err(|error| ApiError::Internal(error.to_string()));
     }
-
-    let workspaces = state
-        .repos
-        .workspace_repo
-        .list_by_project(project.id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(workspaces.into_iter().next())
+    Ok(None)
 }
 
 pub(crate) fn project_agent_session_label(agent_key: &str) -> String {

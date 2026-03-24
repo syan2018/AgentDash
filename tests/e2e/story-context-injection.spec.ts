@@ -22,9 +22,14 @@ interface ProjectEntity {
 
 interface WorkspaceEntity {
   id: string;
-  backend_id: string;
   name: string;
-  container_ref: string;
+  identity_kind: "git_repo" | "p4_workspace" | "local_dir";
+  default_binding_id?: string | null;
+  bindings: Array<{
+    id: string;
+    backend_id: string;
+    root_ref: string;
+  }>;
 }
 
 interface ContextSourceRef {
@@ -112,13 +117,18 @@ async function createWorkspace(
   const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/workspaces`, {
     data: {
       name: `E2E Workspace ${suffix}`,
-      backend_id: backendId,
-      container_ref: REPO_ROOT,
-      workspace_type: "static",
+      shortcut_binding: {
+        backend_id: backendId,
+        root_ref: REPO_ROOT,
+      },
     },
   });
   expect(resp.ok()).toBeTruthy();
-  return (await resp.json()) as WorkspaceEntity;
+  const workspace = (await resp.json()) as WorkspaceEntity;
+  expect(workspace.bindings.length).toBeGreaterThan(0);
+  expect(workspace.bindings[0]?.backend_id).toBe(backendId);
+  expect(workspace.bindings[0]?.root_ref).toBe(REPO_ROOT);
+  return workspace;
 }
 
 async function updateProjectDefaultWorkspace(
@@ -397,10 +407,10 @@ test("Story 伴随会话在 prompt 前会自动注入 Story 上下文资源", as
 test("Story 会话可识别 owner 绑定并返回最新 Story 页面", async ({ page, request }) => {
   const suffix = `${Date.now()}-owner`;
   const backend = await ensureBackend(request, suffix);
-  const project = await createProject(request, backend.id, suffix);
-  const workspace = await createWorkspace(request, project.id, suffix);
+  const project = await createProject(request, suffix);
+  const workspace = await createWorkspace(request, project.id, backend.id, suffix);
   await updateProjectDefaultWorkspace(request, project, workspace.id);
-  const story = await createStory(request, project.id, backend.id, suffix);
+  const story = await createStory(request, project.id, suffix);
   const binding = await createStorySession(request, story.id, suffix);
   const sessionId = getBindingSessionId(binding);
   const updatedTitle = `${story.title}（已更新）`;

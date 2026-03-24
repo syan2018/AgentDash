@@ -2777,18 +2777,24 @@ mod tests {
     use crate::relay::registry::ConnectedBackend;
 
     fn sample_workspace() -> Workspace {
-        Workspace {
-            id: uuid::Uuid::new_v4(),
-            project_id: uuid::Uuid::new_v4(),
-            backend_id: "backend-a".to_string(),
-            name: "repo".to_string(),
-            container_ref: "/workspace/repo".to_string(),
-            workspace_type: agentdash_domain::workspace::WorkspaceType::Static,
-            status: agentdash_domain::workspace::WorkspaceStatus::Ready,
-            git_config: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        }
+        let mut workspace = Workspace::new(
+            uuid::Uuid::new_v4(),
+            "repo".to_string(),
+            agentdash_domain::workspace::WorkspaceIdentityKind::LocalDir,
+            serde_json::json!({ "root_hint": "/workspace/repo" }),
+            agentdash_domain::workspace::WorkspaceResolutionPolicy::PreferOnline,
+        );
+        let mut binding = agentdash_domain::workspace::WorkspaceBinding::new(
+            workspace.id,
+            "backend-a".to_string(),
+            "/workspace/repo".to_string(),
+            serde_json::json!({}),
+        );
+        binding.status = agentdash_domain::workspace::WorkspaceBindingStatus::Ready;
+        workspace.status = agentdash_domain::workspace::WorkspaceStatus::Ready;
+        workspace.set_bindings(vec![binding]);
+        workspace.refresh_default_binding();
+        workspace
     }
 
     fn inline_container(

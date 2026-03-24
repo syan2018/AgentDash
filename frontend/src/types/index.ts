@@ -20,8 +20,10 @@ export type TaskStatus =
 export type TaskExecutionMode = "standard" | "auto_retry" | "one_shot";
 
 export type BackendType = "local" | "remote";
-export type WorkspaceType = "git_worktree" | "static" | "ephemeral";
 export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "archived" | "error";
+export type WorkspaceIdentityKind = "git_repo" | "p4_workspace" | "local_dir";
+export type WorkspaceBindingStatus = "pending" | "ready" | "offline" | "error";
+export type WorkspaceResolutionPolicy = "prefer_default_binding" | "prefer_online";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type AuthMode = "personal" | "enterprise";
 export type ProjectVisibility = "private" | "template_visible";
@@ -539,23 +541,40 @@ export interface OpenProjectAgentSessionResult {
 
 // ─── Workspace ────────────────────────────────────────
 
-export interface GitConfig {
-  source_repo: string;
-  branch: string;
-  commit_hash?: string | null;
+export interface WorkspaceBinding {
+  id: string;
+  workspace_id: string;
+  backend_id: string;
+  root_ref: string;
+  status: WorkspaceBindingStatus;
+  detected_facts: Record<string, unknown>;
+  last_verified_at?: string | null;
+  priority: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Workspace {
   id: string;
   project_id: string;
-  backend_id: string;
   name: string;
-  container_ref: string;
-  workspace_type: WorkspaceType;
+  identity_kind: WorkspaceIdentityKind;
+  identity_payload: Record<string, unknown>;
+  resolution_policy: WorkspaceResolutionPolicy;
+  default_binding_id?: string | null;
   status: WorkspaceStatus;
-  git_config?: GitConfig | null;
+  bindings: WorkspaceBinding[];
   created_at: string;
   updated_at: string;
+}
+
+export interface WorkspaceDetectionResult {
+  identity_kind: WorkspaceIdentityKind;
+  identity_payload: Record<string, unknown>;
+  binding: WorkspaceBinding;
+  confidence: string;
+  warnings: string[];
+  matched_workspace_ids: string[];
 }
 
 // ─── Story ────────────────────────────────────────────

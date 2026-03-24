@@ -1,11 +1,30 @@
 import { create } from 'zustand';
-import type { Workspace, WorkspaceType, WorkspaceStatus } from '../types';
+import type {
+  Workspace,
+  WorkspaceBinding,
+  WorkspaceBindingStatus,
+  WorkspaceDetectionResult,
+  WorkspaceIdentityKind,
+  WorkspaceResolutionPolicy,
+  WorkspaceStatus,
+} from '../types';
 import { api } from '../api/client';
 
-export interface CreateWorkspaceOpts {
+export interface WorkspaceBindingInput {
+  id?: string;
   backend_id: string;
-  workspace_type?: WorkspaceType;
-  container_ref?: string;
+  root_ref: string;
+  status?: WorkspaceBindingStatus;
+  detected_facts?: Record<string, unknown>;
+  priority?: number;
+}
+
+export interface CreateWorkspaceOpts {
+  identity_kind?: WorkspaceIdentityKind;
+  identity_payload?: Record<string, unknown>;
+  resolution_policy?: WorkspaceResolutionPolicy;
+  bindings?: WorkspaceBindingInput[];
+  shortcut_binding?: WorkspaceBindingInput;
 }
 
 interface WorkspaceState {
@@ -14,14 +33,33 @@ interface WorkspaceState {
   error: string | null;
 
   fetchWorkspaces: (projectId: string) => Promise<void>;
+  detectWorkspace: (projectId: string, backendId: string, rootRef: string) => Promise<WorkspaceDetectionResult | null>;
   createWorkspace: (projectId: string, name: string, opts?: CreateWorkspaceOpts) => Promise<Workspace | null>;
   updateWorkspace: (
     id: string,
     projectId: string,
-    payload: { name?: string; container_ref?: string; workspace_type?: WorkspaceType },
+    payload: {
+      name?: string;
+      identity_kind?: WorkspaceIdentityKind;
+      identity_payload?: Record<string, unknown>;
+      resolution_policy?: WorkspaceResolutionPolicy;
+      default_binding_id?: string | null;
+      bindings?: WorkspaceBindingInput[];
+    },
   ) => Promise<Workspace | null>;
   updateStatus: (id: string, status: WorkspaceStatus) => Promise<void>;
   deleteWorkspace: (id: string, projectId: string) => Promise<void>;
+}
+
+function upsertWorkspace(
+  existing: Workspace[],
+  workspace: Workspace,
+): Workspace[] {
+  const hasExisting = existing.some((item) => item.id === workspace.id);
+  if (!hasExisting) {
+    return [workspace, ...existing];
+  }
+  return existing.map((item) => (item.id === workspace.id ? workspace : item));
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
@@ -33,41 +71,51 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const workspaces = await api.get<Workspace[]>(`/projects/${projectId}/workspaces`);
-      set((s) => ({
-        workspacesByProjectId: { ...s.workspacesByProjectId, [projectId]: workspaces },
+      set((state) => ({
+        workspacesByProjectId: { ...state.workspacesByProjectId, [projectId]: workspaces },
         isLoading: false,
       }));
-    } catch (e) {
-      set({ error: (e as Error).message, isLoading: false });
+    } catch (error) {
+      set({ error: (error as Error).message, isLoading: false });
+    }
+  },
+
+  detectWorkspace: async (projectId, backendId, rootRef) => {
+    try {
+      set({ error: null });
+      return await api.post<WorkspaceDetectionResult>(
+        `/projects/${projectId}/workspaces/detect`,
+        { backend_id: backendId, root_ref: rootRef },
+      );
+    } catch (error) {
+      set({ error: (error as Error).message });
+      return null;
     }
   },
 
   createWorkspace: async (projectId, name, opts) => {
-    const containerRef = opts?.container_ref?.trim();
     try {
       set({ error: null });
-      const payload: Record<string, unknown> = {
+      const workspace = await api.post<Workspace>(`/projects/${projectId}/workspaces`, {
         name,
-        backend_id: opts?.backend_id ?? '',
-        workspace_type: opts?.workspace_type ?? 'static',
-      };
-      if (containerRef) {
-        payload.container_ref = containerRef;
-      }
-
-      const workspace = await api.post<Workspace>(`/projects/${projectId}/workspaces`, payload);
-      set((s) => {
-        const existing = s.workspacesByProjectId[projectId] ?? [];
+        identity_kind: opts?.identity_kind,
+        identity_payload: opts?.identity_payload,
+        resolution_policy: opts?.resolution_policy ?? 'prefer_online',
+        bindings: opts?.bindings,
+        shortcut_binding: opts?.shortcut_binding,
+      });
+      set((state) => {
+        const existing = state.workspacesByProjectId[projectId] ?? [];
         return {
           workspacesByProjectId: {
-            ...s.workspacesByProjectId,
-            [projectId]: [workspace, ...existing],
+            ...state.workspacesByProjectId,
+            [projectId]: upsertWorkspace(existing, workspace),
           },
         };
       });
       return workspace;
-    } catch (e) {
-      set({ error: (e as Error).message });
+    } catch (error) {
+      set({ error: (error as Error).message });
       return null;
     }
   },
@@ -76,18 +124,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     try {
       set({ error: null });
       const workspace = await api.put<Workspace>(`/workspaces/${id}`, payload);
-      set((s) => {
-        const existing = s.workspacesByProjectId[projectId] ?? [];
+      set((state) => {
+        const existing = state.workspacesByProjectId[projectId] ?? [];
         return {
           workspacesByProjectId: {
-            ...s.workspacesByProjectId,
-            [projectId]: existing.map((item) => (item.id === id ? workspace : item)),
+            ...state.workspacesByProjectId,
+            [projectId]: upsertWorkspace(existing, workspace),
           },
         };
       });
       return workspace;
-    } catch (e) {
-      set({ error: (e as Error).message });
+    } catch (error) {
+      set({ error: (error as Error).message });
       return null;
     }
   },
@@ -95,34 +143,48 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   updateStatus: async (id, status) => {
     try {
       await api.patch(`/workspaces/${id}/status`, { status });
-      set((s) => {
-        const updated = { ...s.workspacesByProjectId };
-        for (const pid in updated) {
-          updated[pid] = updated[pid].map((ws) =>
-            ws.id === id ? { ...ws, status } : ws,
+      set((state) => {
+        const updated = { ...state.workspacesByProjectId };
+        for (const projectId in updated) {
+          updated[projectId] = updated[projectId].map((workspace) =>
+            workspace.id === id ? { ...workspace, status } : workspace,
           );
         }
         return { workspacesByProjectId: updated };
       });
-    } catch (e) {
-      set({ error: (e as Error).message });
+    } catch (error) {
+      set({ error: (error as Error).message });
     }
   },
 
   deleteWorkspace: async (id, projectId) => {
     try {
       await api.delete(`/workspaces/${id}`);
-      set((s) => {
-        const existing = s.workspacesByProjectId[projectId] ?? [];
-        return {
-          workspacesByProjectId: {
-            ...s.workspacesByProjectId,
-            [projectId]: existing.filter((ws) => ws.id !== id),
-          },
-        };
-      });
-    } catch (e) {
-      set({ error: (e as Error).message });
+      set((state) => ({
+        workspacesByProjectId: {
+          ...state.workspacesByProjectId,
+          [projectId]: (state.workspacesByProjectId[projectId] ?? []).filter(
+            (workspace) => workspace.id !== id,
+          ),
+        },
+      }));
+    } catch (error) {
+      set({ error: (error as Error).message });
     }
   },
 }));
+
+export function findWorkspaceBinding(
+  workspace: Workspace,
+  bindingId?: string | null,
+): WorkspaceBinding | null {
+  if (bindingId) {
+    const matched = workspace.bindings.find((binding) => binding.id === bindingId);
+    if (matched) return matched;
+  }
+  if (workspace.default_binding_id) {
+    const defaultBinding = workspace.bindings.find((binding) => binding.id === workspace.default_binding_id);
+    if (defaultBinding) return defaultBinding;
+  }
+  return workspace.bindings[0] ?? null;
+}

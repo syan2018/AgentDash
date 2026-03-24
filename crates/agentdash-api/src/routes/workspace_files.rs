@@ -1,6 +1,7 @@
 use std::path::{Component, Path};
 use std::sync::Arc;
 
+use agentdash_application::address_space::selected_workspace_binding;
 use axum::Json;
 use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
@@ -93,7 +94,7 @@ pub async fn list_files(
         ProjectPermission::View,
     )
     .await?;
-    let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+    let backend_id = require_online_backend(&state, &workspace).await?;
     relay_list_files(&state, backend_id, &workspace, &pattern).await
 }
 
@@ -113,7 +114,7 @@ pub async fn read_file(
         ProjectPermission::View,
     )
     .await?;
-    let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+    let backend_id = require_online_backend(&state, &workspace).await?;
     relay_read_file(&state, backend_id, &workspace, &rel).await
 }
 
@@ -138,7 +139,7 @@ pub async fn batch_read_files(
         ProjectPermission::View,
     )
     .await?;
-    let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+    let backend_id = require_online_backend(&state, &workspace).await?;
     relay_batch_read_files(&state, backend_id, &workspace, &req.paths).await
 }
 
@@ -246,12 +247,15 @@ pub(crate) fn guess_mime(rel_path: &str) -> String {
 
 async fn require_online_backend<'a>(
     state: &Arc<AppState>,
-    backend_id: &'a str,
+    workspace: &'a agentdash_domain::workspace::Workspace,
 ) -> Result<&'a str, ApiError> {
+    let backend_id = selected_workspace_binding(workspace)
+        .map(|binding| binding.backend_id.as_str())
+        .unwrap_or("");
     let trimmed = backend_id.trim();
     if trimmed.is_empty() {
         return Err(ApiError::BadRequest(
-            "Workspace.backend_id 不能为空".to_string(),
+            "Workspace 当前没有可用 binding.backend_id".to_string(),
         ));
     }
     if !state.services.backend_registry.is_online(trimmed).await {
@@ -307,7 +311,9 @@ async fn relay_list_files(
         .collect();
     Ok(Json(ListFilesResponse {
         files,
-        root: workspace.container_ref.clone(),
+        root: selected_workspace_binding(workspace)
+            .map(|binding| binding.root_ref.clone())
+            .unwrap_or_default(),
     }))
 }
 

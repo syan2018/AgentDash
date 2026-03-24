@@ -4,7 +4,11 @@ use agentdash_domain::context_container::{
     ContextContainerCapability, ContextContainerDefinition, ContextContainerProvider,
     MountDerivationPolicy,
 };
-use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
+use agentdash_domain::{
+    project::Project,
+    story::Story,
+    workspace::{Workspace, WorkspaceBinding},
+};
 use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
 use agentdash_relay::FileEntryRelay;
 
@@ -79,12 +83,14 @@ pub fn workspace_mount_from_policy(
     workspace: &Workspace,
     policy: &MountDerivationPolicy,
 ) -> Result<ExecutionMount, String> {
-    let backend_id = workspace.backend_id.trim();
+    let binding = selected_workspace_binding(workspace)
+        .ok_or_else(|| "Workspace 当前没有可用 binding".to_string())?;
+    let backend_id = binding.backend_id.trim();
     if backend_id.is_empty() {
-        return Err("Workspace.backend_id 不能为空".to_string());
+        return Err("Workspace binding.backend_id 不能为空".to_string());
     }
-    if workspace.container_ref.trim().is_empty() {
-        return Err("Workspace.container_ref 不能为空".to_string());
+    if binding.root_ref.trim().is_empty() {
+        return Err("Workspace binding.root_ref 不能为空".to_string());
     }
 
     let capabilities = if policy.local_workspace_capabilities.is_empty() {
@@ -103,7 +109,7 @@ pub fn workspace_mount_from_policy(
         id: "main".to_string(),
         provider: PROVIDER_RELAY_FS.to_string(),
         backend_id: backend_id.to_string(),
-        root_ref: workspace.container_ref.clone(),
+        root_ref: binding.root_ref.clone(),
         capabilities,
         default_write: true,
         display_name: if workspace.name.trim().is_empty() {
@@ -113,6 +119,18 @@ pub fn workspace_mount_from_policy(
         },
         metadata: serde_json::Value::Null,
     })
+}
+
+pub fn selected_workspace_binding(workspace: &Workspace) -> Option<&WorkspaceBinding> {
+    if let Some(default_binding_id) = workspace.default_binding_id
+        && let Some(binding) = workspace
+            .bindings
+            .iter()
+            .find(|binding| binding.id == default_binding_id)
+    {
+        return Some(binding);
+    }
+    workspace.bindings.first()
 }
 
 pub fn effective_context_containers(

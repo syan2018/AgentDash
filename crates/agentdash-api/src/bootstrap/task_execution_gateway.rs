@@ -39,6 +39,7 @@ use crate::{
         TaskExecutionPhase, build_declared_source_warning_fragment, build_task_agent_context,
         resolve_workspace_declared_sources,
     },
+    workspace_resolution::{ResolvedWorkspaceBinding, resolve_workspace_binding},
 };
 
 pub struct AppStateTaskExecutionGateway {
@@ -189,9 +190,18 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         .map_err(TaskExecutionError::UnprocessableEntity)?;
 
         if use_cloud_native_agent {
-            let workspace_root = workspace
+            let resolved_binding = if let Some(workspace) = workspace.as_ref() {
+                Some(
+                    resolve_workspace_binding(&self.state, workspace)
+                        .await
+                        .map_err(map_internal_error)?,
+                )
+            } else {
+                None
+            };
+            let workspace_root = resolved_binding
                 .as_ref()
-                .map(|item| std::path::PathBuf::from(item.container_ref.clone()));
+                .map(|item| std::path::PathBuf::from(item.root_ref.clone()));
             let prompt_req = PromptSessionRequest {
                 prompt: None,
                 prompt_blocks: Some(built.prompt_blocks),
@@ -229,7 +239,10 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                         .into(),
                 )
             })?;
-            let backend_id = normalize_backend_id(&workspace.backend_id)?;
+            let resolved_binding = resolve_workspace_binding(&self.state, workspace)
+                .await
+                .map_err(map_internal_error)?;
+            let backend_id = normalize_backend_id(&resolved_binding.backend_id)?;
             if !self
                 .state
                 .services
@@ -248,7 +261,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 session_id,
                 &built,
                 resolved_config,
-                workspace,
+                &resolved_binding,
             )
             .await?;
 
@@ -1244,21 +1257,7 @@ async fn load_related_context(
             TaskExecutionError::NotFound(format!("Task 所属 Project {} 不存在", task.project_id))
         })?;
 
-    let workspace = if let Some(ws_id) = task.workspace_id {
-        Some(
-            state
-                .repos
-                .workspace_repo
-                .get_by_id(ws_id)
-                .await
-                .map_err(map_domain_error)?
-                .ok_or_else(|| {
-                    TaskExecutionError::NotFound(format!("Task 关联 Workspace {ws_id} 不存在"))
-                })?,
-        )
-    } else {
-        None
-    };
+    let workspace = resolve_effective_task_workspace(state, task, &story, &project).await?;
 
     Ok((story, project, workspace))
 }
@@ -1307,27 +1306,6 @@ async fn resolve_task_backend_id(
     state: &Arc<AppState>,
     task: &Task,
 ) -> Result<String, TaskExecutionError> {
-    // 继承链（从具体到通用）：
-    // 1. Task.workspace_id → Workspace.backend_id
-    // 2. Story.default_workspace_id → Workspace.backend_id
-    // 3. Project.config.default_workspace_id → Workspace.backend_id
-    // 4. Error
-
-    if let Some(workspace_id) = task.workspace_id {
-        let workspace = state
-            .repos
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .map_err(map_domain_error)?
-            .ok_or_else(|| {
-                TaskExecutionError::NotFound(format!("Task 关联 Workspace {workspace_id} 不存在"))
-            })?;
-        if let Ok(bid) = normalize_backend_id(&workspace.backend_id) {
-            return Ok(bid.to_string());
-        }
-    }
-
     let story = state
         .repos
         .story_repo
@@ -1335,21 +1313,6 @@ async fn resolve_task_backend_id(
         .await
         .map_err(map_domain_error)?
         .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {} 不存在", task.story_id)))?;
-
-    if let Some(default_ws_id) = story.default_workspace_id {
-        let workspace = state
-            .repos
-            .workspace_repo
-            .get_by_id(default_ws_id)
-            .await
-            .map_err(map_domain_error)?
-            .ok_or_else(|| {
-                TaskExecutionError::NotFound(format!("Story 默认 Workspace {default_ws_id} 不存在"))
-            })?;
-        if let Ok(bid) = normalize_backend_id(&workspace.backend_id) {
-            return Ok(bid.to_string());
-        }
-    }
 
     let project = state
         .repos
@@ -1361,21 +1324,19 @@ async fn resolve_task_backend_id(
             TaskExecutionError::NotFound(format!("Story 所属 Project {} 不存在", story.project_id))
         })?;
 
-    if let Some(default_ws_id) = project.config.default_workspace_id {
-        let workspace = state
-            .repos
-            .workspace_repo
-            .get_by_id(default_ws_id)
-            .await
-            .map_err(map_domain_error)?
-            .ok_or_else(|| {
-                TaskExecutionError::NotFound(format!(
-                    "Project 默认 Workspace {default_ws_id} 不存在"
-                ))
-            })?;
-        if let Ok(bid) = normalize_backend_id(&workspace.backend_id) {
-            return Ok(bid.to_string());
-        }
+    let workspace = resolve_effective_task_workspace(state, task, &story, &project)
+        .await?
+        .ok_or_else(|| {
+            TaskExecutionError::BadRequest(
+                "Task 执行需要绑定 Workspace：请为 Task、Story 或 Project 配置默认 Workspace"
+                    .to_string(),
+            )
+        })?;
+    let binding = resolve_workspace_binding(state, &workspace)
+        .await
+        .map_err(map_internal_error)?;
+    if let Ok(bid) = normalize_backend_id(&binding.backend_id) {
+        return Ok(bid.to_string());
     }
 
     Err(TaskExecutionError::BadRequest(
@@ -1430,7 +1391,7 @@ async fn relay_start_prompt(
     session_id: &str,
     built: &BuiltTaskAgentContext,
     executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
-    workspace: &Workspace,
+    binding: &ResolvedWorkspaceBinding,
 ) -> Result<String, TaskExecutionError> {
     let relay_config = executor_config.map(|c| ExecutorConfigRelay {
         executor: c.executor,
@@ -1459,7 +1420,7 @@ async fn relay_start_prompt(
             follow_up_session_id: None,
             prompt: None,
             prompt_blocks: Some(serde_json::Value::Array(built.prompt_blocks.clone())),
-            workspace_root: workspace.container_ref.clone(),
+            workspace_root: binding.root_ref.clone(),
             working_dir: built.working_dir.clone(),
             env: Default::default(),
             executor_config: relay_config,
@@ -1501,6 +1462,56 @@ async fn relay_start_prompt(
             other.id()
         ))),
     }
+}
+
+async fn resolve_effective_task_workspace(
+    state: &Arc<AppState>,
+    task: &Task,
+    story: &Story,
+    project: &Project,
+) -> Result<Option<Workspace>, TaskExecutionError> {
+    if let Some(workspace_id) = task.workspace_id {
+        return state
+            .repos
+            .workspace_repo
+            .get_by_id(workspace_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!("Task 关联 Workspace {workspace_id} 不存在"))
+            })
+            .map(Some);
+    }
+
+    if let Some(default_ws_id) = story.default_workspace_id {
+        return state
+            .repos
+            .workspace_repo
+            .get_by_id(default_ws_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!("Story 默认 Workspace {default_ws_id} 不存在"))
+            })
+            .map(Some);
+    }
+
+    if let Some(default_ws_id) = project.config.default_workspace_id {
+        return state
+            .repos
+            .workspace_repo
+            .get_by_id(default_ws_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "Project 默认 Workspace {default_ws_id} 不存在"
+                ))
+            })
+            .map(Some);
+    }
+
+    Ok(None)
 }
 
 async fn relay_cancel(

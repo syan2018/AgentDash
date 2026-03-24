@@ -24,13 +24,13 @@
 
 ```
 Project（项目）
-├── Workspace（工作空间）  ← 物理目录/Git Worktree
+├── Workspace（逻辑工作空间）  ← identity + bindings
 ├── Story（需求故事）      ← 包含结构化 StoryContext
 │   └── Task（执行任务）   ← 绑定到 Workspace + AgentBinding
 ```
 
-- **Project** 是顶层组织单元，关联一个 Backend
-- **Workspace** 是物理工作目录（静态目录/Git Worktree/临时环境）
+- **Project** 是顶层组织单元，维护默认执行配置、上下文资源和逻辑 Workspace
+- **Workspace** 是逻辑工作空间身份；具体 backend/root 通过 bindings 表达
 - **Story** 挂在 Project 下，包含 PRD/规格引用/资源列表
 - **Task** 挂在 Story 下，可绑定 Workspace 和 Agent
 
@@ -106,7 +106,7 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 - 前端以 **Project** 为核心导航单元（不再以 Backend 为中心）
 - Story 列表按 `projectId` 加载，不再按 `backendId`
 - Workspace 列表按 `projectId` 加载
-- Backend 信息保留在 Project 配置中，作为连接层使用
+- Backend 信息不再挂在 Project 本体上，而是服务于 Workspace binding 创建和 runtime resolution 诊断
 
 ### 实时状态原则
 
@@ -118,6 +118,7 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 
 - Workspace 数据在 Store 中按 `projectId` 隔离（`workspacesByProjectId`）
 - 切换 Project 时自动加载对应的 Workspace 和 Story
+- 项目设置页必须明确区分逻辑 Workspace、物理 bindings 和派生出的 runtime preview
 
 ---
 

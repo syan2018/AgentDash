@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::address_space::selected_workspace_binding;
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_injection::{
     ContextFragment, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
@@ -194,17 +195,24 @@ impl ContextContributor for CoreContextContributor {
         });
 
         if let Some(workspace) = input.workspace {
+            let binding_summary = selected_workspace_binding(workspace)
+                .map(|binding| format!(
+                    "{} @ {}",
+                    trim_or_dash(&binding.backend_id),
+                    trim_or_dash(&binding.root_ref)
+                ))
+                .unwrap_or_else(|| "-".to_string());
             fragments.push(ContextFragment {
                 slot: "workspace",
                 label: "workspace_context",
                 order: 50,
                 strategy: MergeStrategy::Append,
                 content: format!(
-                    "## Workspace\n- id: {}\n- backend_id: {}\n- name: {}\n- working_dir: .\n- type: {:?}\n- status: {:?}",
+                    "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- working_dir: .\n- binding: {}\n- status: {:?}",
                     workspace.id,
-                    trim_or_dash(&workspace.backend_id),
+                    workspace.identity_kind,
                     trim_or_dash(&workspace.name),
-                    workspace.workspace_type,
+                    binding_summary,
                     workspace.status,
                 ),
             });

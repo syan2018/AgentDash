@@ -18,10 +18,117 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS backends (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    auth_token TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    backend_type TEXT NOT NULL DEFAULT 'local'
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    config TEXT NOT NULL DEFAULT '{}',
+    created_by_user_id TEXT NOT NULL DEFAULT 'system',
+    updated_by_user_id TEXT NOT NULL DEFAULT 'system',
+    visibility TEXT NOT NULL DEFAULT 'private',
+    is_template INTEGER NOT NULL DEFAULT 0,
+    cloned_from_project_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_subject_grants (
+    project_id TEXT NOT NULL,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    granted_by_user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, subject_type, subject_id)
+);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    identity_kind TEXT NOT NULL DEFAULT 'local_dir',
+    identity_payload TEXT NOT NULL DEFAULT '{}',
+    resolution_policy TEXT NOT NULL DEFAULT 'prefer_online',
+    default_binding_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workspace_bindings (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    backend_id TEXT NOT NULL,
+    root_ref TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    detected_facts TEXT NOT NULL DEFAULT '{}',
+    last_verified_at TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stories (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    default_workspace_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'created',
+    priority TEXT NOT NULL DEFAULT 'p2',
+    story_type TEXT NOT NULL DEFAULT 'feature',
+    tags TEXT NOT NULL DEFAULT '[]',
+    task_count INTEGER NOT NULL DEFAULT 0,
+    context TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS state_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL DEFAULT '',
+    entity_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    backend_id TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    story_id TEXT NOT NULL REFERENCES stories(id),
+    workspace_id TEXT REFERENCES workspaces(id),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    session_id TEXT,
+    executor_session_id TEXT,
+    execution_mode TEXT NOT NULL DEFAULT 'standard',
+    agent_binding TEXT NOT NULL DEFAULT '{}',
+    artifacts TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
 
 
 # ─── Mock 数据定义 ─────────────────────────────────────────
@@ -39,7 +146,6 @@ PROJECT = {
     "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, "agentdash-dev-project")),
     "name": "AgentDash 开发",
     "description": "AgentDash 看板系统核心功能开发",
-    "backend_id": "local-dev",
     "config": {
         "default_agent_type": "claude-code",
         "default_workspace_id": None,
@@ -52,32 +158,83 @@ PROJECT = {
 
 WORKSPACES = [
     {
-        "backend_id": BACKEND["id"],
         "name": "主仓库工作区",
-        "container_ref": "/workspace/agentdash-main",
-        "workspace_type": "static",
-        "status": "ready",
-        "git_config": None,
-    },
-    {
-        "backend_id": BACKEND["id"],
-        "name": "前端特性分支",
-        "container_ref": "/workspace/agentdash-feature-ui",
-        "workspace_type": "git_worktree",
-        "status": "active",
-        "git_config": {
-            "source_repo": "/repos/agentdash",
-            "branch": "feature/new-ui",
-            "commit_hash": None,
+        "identity_kind": "git_repo",
+        "identity_payload": {
+            "remote_url": "https://example.com/agentdash/agentdash.git",
+            "branch": "main",
+            "root_hint": "/workspace/agentdash-main",
         },
+        "resolution_policy": "prefer_online",
+        "status": "ready",
+        "bindings": [
+            {
+                "backend_id": BACKEND["id"],
+                "root_ref": "/workspace/agentdash-main",
+                "status": "ready",
+                "priority": 100,
+                "detected_facts": {
+                    "git": {
+                        "is_repo": True,
+                        "source_repo": "https://example.com/agentdash/agentdash.git",
+                        "branch": "main",
+                        "commit_hash": None,
+                    },
+                },
+            }
+        ],
     },
     {
-        "backend_id": BACKEND["id"],
+        "name": "前端特性分支",
+        "identity_kind": "git_repo",
+        "identity_payload": {
+            "remote_url": "https://example.com/agentdash/agentdash.git",
+            "branch": "feature/new-ui",
+            "root_hint": "/workspace/agentdash-feature-ui",
+        },
+        "resolution_policy": "prefer_default_binding",
+        "status": "active",
+        "bindings": [
+            {
+                "backend_id": BACKEND["id"],
+                "root_ref": "/workspace/agentdash-feature-ui",
+                "status": "ready",
+                "priority": 120,
+                "detected_facts": {
+                    "git": {
+                        "is_repo": True,
+                        "source_repo": "https://example.com/agentdash/agentdash.git",
+                        "branch": "feature/new-ui",
+                        "commit_hash": None,
+                    },
+                },
+            }
+        ],
+    },
+    {
         "name": "临时调试环境",
-        "container_ref": "/tmp/agentdash-debug",
-        "workspace_type": "ephemeral",
+        "identity_kind": "local_dir",
+        "identity_payload": {
+            "root_hint": "/tmp/agentdash-debug",
+        },
+        "resolution_policy": "prefer_online",
         "status": "pending",
-        "git_config": None,
+        "bindings": [
+            {
+                "backend_id": BACKEND["id"],
+                "root_ref": "/tmp/agentdash-debug",
+                "status": "pending",
+                "priority": 10,
+                "detected_facts": {
+                    "git": {
+                        "is_repo": False,
+                        "source_repo": None,
+                        "branch": None,
+                        "commit_hash": None,
+                    },
+                },
+            }
+        ],
     },
 ]
 
@@ -218,16 +375,29 @@ STORIES = [
 # ─── 数据库操作 ─────────────────────────────────────────────
 
 
-def clean_db(conn: sqlite3.Connection):
-    """清空所有业务数据（按外键依赖逆序）"""
-    conn.execute("DELETE FROM state_changes")
-    conn.execute("DELETE FROM tasks")
-    conn.execute("DELETE FROM stories")
-    conn.execute("DELETE FROM workspaces")
-    conn.execute("DELETE FROM projects")
-    conn.execute("DELETE FROM backends")
+def ensure_schema(conn: sqlite3.Connection):
+    """确保 mock 所需业务表存在"""
+    conn.executescript(SCHEMA_SQL)
     conn.commit()
-    print("[清理] 已清空所有业务数据")
+
+
+def reset_schema(conn: sqlite3.Connection):
+    """重建 mock 所需业务表结构"""
+    conn.executescript(
+        """
+        DROP TABLE IF EXISTS tasks;
+        DROP TABLE IF EXISTS state_changes;
+        DROP TABLE IF EXISTS stories;
+        DROP TABLE IF EXISTS workspace_bindings;
+        DROP TABLE IF EXISTS workspaces;
+        DROP TABLE IF EXISTS project_subject_grants;
+        DROP TABLE IF EXISTS projects;
+        DROP TABLE IF EXISTS backends;
+        """
+    )
+    conn.executescript(SCHEMA_SQL)
+    conn.commit()
+    print("[清理] 已重建 mock 所需业务表结构")
 
 
 def seed_backend(conn: sqlite3.Connection):
@@ -249,9 +419,31 @@ def seed_project(conn: sqlite3.Connection) -> str:
     config_json = json.dumps(p["config"], ensure_ascii=False)
 
     conn.execute(
-        """INSERT OR REPLACE INTO projects (id, name, description, backend_id, config, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (p["id"], p["name"], p["description"], p["backend_id"], config_json, ts, ts),
+        """INSERT OR REPLACE INTO projects (
+               id, name, description, config,
+               created_by_user_id, updated_by_user_id,
+               visibility, is_template, cloned_from_project_id,
+               created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            p["id"],
+            p["name"],
+            p["description"],
+            config_json,
+            "system",
+            "system",
+            "private",
+            0,
+            None,
+            ts,
+            ts,
+        ),
+    )
+    conn.execute(
+        """INSERT OR REPLACE INTO project_subject_grants (
+               project_id, subject_type, subject_id, role, granted_by_user_id, created_at, updated_at
+           ) VALUES (?, 'user', 'system', 'owner', 'system', ?, ?)""",
+        (p["id"], ts, ts),
     )
     conn.commit()
     print(f"[项目] {p['name']} ({p['id'][:8]}...)")
@@ -266,49 +458,105 @@ def seed_workspaces(conn: sqlite3.Connection, project_id: str) -> list[str]:
     for ws_def in WORKSPACES:
         ws_id = str(uuid.uuid4())
         workspace_ids.append(ws_id)
-        git_config_json = json.dumps(ws_def["git_config"], ensure_ascii=False) if ws_def["git_config"] else None
+        bindings = ws_def.get("bindings", [])
+        default_binding_id = str(uuid.uuid4()) if bindings else None
+        identity_payload_json = json.dumps(ws_def["identity_payload"], ensure_ascii=False)
 
         conn.execute(
-            """INSERT INTO workspaces (id, project_id, backend_id, name, container_ref, workspace_type, status, git_config, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO workspaces (
+                   id, project_id, name, identity_kind, identity_payload,
+                   resolution_policy, default_binding_id, status, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ws_id,
                 project_id,
-                ws_def["backend_id"],
                 ws_def["name"],
-                ws_def["container_ref"],
-                ws_def["workspace_type"],
+                ws_def["identity_kind"],
+                identity_payload_json,
+                ws_def["resolution_policy"],
+                default_binding_id,
                 ws_def["status"],
-                git_config_json,
                 ts,
                 ts,
             ),
         )
-        print(f"  [Workspace] {ws_def['name']}  type={ws_def['workspace_type']}  status={ws_def['status']}")
+
+        for index, binding_def in enumerate(bindings):
+            binding_id = default_binding_id if index == 0 else str(uuid.uuid4())
+            detected_facts_json = json.dumps(
+                binding_def.get("detected_facts", {}),
+                ensure_ascii=False,
+            )
+            conn.execute(
+                """INSERT INTO workspace_bindings (
+                       id, workspace_id, backend_id, root_ref, status, detected_facts,
+                       last_verified_at, priority, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    binding_id,
+                    ws_id,
+                    binding_def["backend_id"],
+                    binding_def["root_ref"],
+                    binding_def["status"],
+                    detected_facts_json,
+                    ts if binding_def["status"] == "ready" else None,
+                    binding_def.get("priority", 0),
+                    ts,
+                    ts,
+                ),
+            )
+        print(
+            f"  [Workspace] {ws_def['name']}  identity={ws_def['identity_kind']}  status={ws_def['status']}  bindings={len(bindings)}"
+        )
 
     conn.commit()
     return workspace_ids
 
 
+def set_project_default_workspace(
+    conn: sqlite3.Connection,
+    project_id: str,
+    default_workspace_id: str | None,
+):
+    """更新项目默认工作空间"""
+    ts = now_iso()
+    config = dict(PROJECT["config"])
+    config["default_workspace_id"] = default_workspace_id
+    conn.execute(
+        """UPDATE projects
+           SET config = ?, updated_at = ?
+           WHERE id = ?""",
+        (json.dumps(config, ensure_ascii=False), ts, project_id),
+    )
+    conn.commit()
+
+
 def seed_stories_and_tasks(conn: sqlite3.Connection, project_id: str, workspace_ids: list[str]):
     """插入 mock Story 和 Task"""
     ts = now_iso()
-    backend_id = BACKEND["id"]
+    default_story_workspace_id = workspace_ids[0] if workspace_ids else None
 
     for story_def in STORIES:
         story_id = str(uuid.uuid4())
         context_json = json.dumps(story_def["context"], ensure_ascii=False)
 
         conn.execute(
-            """INSERT INTO stories (id, project_id, backend_id, title, description, status, context, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO stories (
+                   id, project_id, default_workspace_id,
+                   title, description, status, priority, story_type, tags, task_count,
+                   context, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 story_id,
                 project_id,
-                backend_id,
+                default_story_workspace_id,
                 story_def["title"],
                 story_def["description"],
                 story_def["status"],
+                "p2",
+                "feature",
+                "[]",
+                len(story_def.get("tasks", [])),
                 context_json,
                 ts,
                 ts,
@@ -316,9 +564,9 @@ def seed_stories_and_tasks(conn: sqlite3.Connection, project_id: str, workspace_
         )
 
         conn.execute(
-            """INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
-               VALUES (?, 'story_created', '{}', ?, ?)""",
-            (story_id, backend_id, ts),
+            """INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
+               VALUES (?, ?, 'story_created', '{}', NULL, ?)""",
+            (project_id, story_id, ts),
         )
 
         task_count = len(story_def.get("tasks", []))
@@ -331,15 +579,19 @@ def seed_stories_and_tasks(conn: sqlite3.Connection, project_id: str, workspace_
             agent_binding_json = json.dumps(task_def["agent_binding"], ensure_ascii=False)
 
             conn.execute(
-                """INSERT INTO tasks (id, story_id, workspace_id, title, description, status, agent_binding, artifacts, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)""",
+                """INSERT INTO tasks (
+                       id, project_id, story_id, workspace_id, title, description, status,
+                       execution_mode, agent_binding, artifacts, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)""",
                 (
                     task_id,
+                    project_id,
                     story_id,
                     workspace_id,
                     task_def["title"],
                     task_def.get("description", ""),
                     task_def["status"],
+                    "standard",
                     agent_binding_json,
                     ts,
                     ts,
@@ -358,12 +610,18 @@ def main():
     parser.add_argument("--clean", action="store_true", help="清空后重新生成")
     args = parser.parse_args()
 
-    conn = sqlite3.Connection(args.db)
+    db_path = Path(args.db)
+    if db_path.parent != Path("."):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
 
     if args.clean:
-        clean_db(conn)
+        reset_schema(conn)
+    else:
+        ensure_schema(conn)
 
     print(f"\n{'='*50}")
     print(f"Mock 数据生成 → {args.db}")
@@ -372,10 +630,12 @@ def main():
     seed_backend(conn)
     project_id = seed_project(conn)
     workspace_ids = seed_workspaces(conn, project_id)
+    set_project_default_workspace(conn, project_id, workspace_ids[0] if workspace_ids else None)
     seed_stories_and_tasks(conn, project_id, workspace_ids)
 
     project_count = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
     workspace_count = conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0]
+    binding_count = conn.execute("SELECT COUNT(*) FROM workspace_bindings").fetchone()[0]
     story_count = conn.execute("SELECT COUNT(*) FROM stories").fetchone()[0]
     task_count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
 
@@ -383,6 +643,7 @@ def main():
     print(f"完成！数据库: {args.db}")
     print(f"  Projects:   {project_count}")
     print(f"  Workspaces: {workspace_count}")
+    print(f"  Bindings:   {binding_count}")
     print(f"  Stories:    {story_count}")
     print(f"  Tasks:      {task_count}")
     print(f"{'='*50}\n")

@@ -12,6 +12,7 @@ pub mod session_context;
 pub mod session_plan;
 pub mod stream;
 pub mod task_agent_context;
+pub mod workspace_resolution;
 
 use std::sync::Arc;
 

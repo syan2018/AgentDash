@@ -1,43 +1,80 @@
+use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
 
-/// Workspace 类型
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// 逻辑工作空间身份类型。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkspaceType {
-    /// Git worktree（基于现有仓库创建分支工作目录）
-    GitWorktree,
-    /// 静态目录（指向已有代码库，不做 clone）
-    Static,
-    /// 临时目录（任务完成后可清理）
-    Ephemeral,
+pub enum WorkspaceIdentityKind {
+    GitRepo,
+    P4Workspace,
+    LocalDir,
 }
 
-/// Workspace 状态
-/// 生命周期: Pending → Preparing → Ready → Active → Archived
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// 工作空间绑定状态。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkspaceStatus {
-    /// 待创建
+pub enum WorkspaceBindingStatus {
     Pending,
-    /// 准备中（clone/setup）
-    Preparing,
-    /// 就绪，可分配 Task
     Ready,
-    /// 有 Task 正在运行
-    Active,
-    /// 已归档
-    Archived,
-    /// 错误状态
+    Offline,
     Error,
 }
 
-/// Git 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitConfig {
-    /// 源仓库路径
-    pub source_repo: String,
-    /// 分支名
-    pub branch: String,
-    /// 固定 commit（可选）
-    pub commit_hash: Option<String>,
+/// 运行时绑定解析策略。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceResolutionPolicy {
+    PreferDefaultBinding,
+    PreferOnline,
+}
+
+/// 逻辑工作空间整体状态。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceStatus {
+    Pending,
+    Ready,
+    Active,
+    Archived,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceBinding {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub backend_id: String,
+    pub root_ref: String,
+    pub status: WorkspaceBindingStatus,
+    pub detected_facts: Value,
+    pub last_verified_at: Option<DateTime<Utc>>,
+    pub priority: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl WorkspaceBinding {
+    pub fn new(
+        workspace_id: Uuid,
+        backend_id: String,
+        root_ref: String,
+        detected_facts: Value,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            workspace_id,
+            backend_id,
+            root_ref,
+            status: WorkspaceBindingStatus::Pending,
+            detected_facts,
+            last_verified_at: None,
+            priority: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }

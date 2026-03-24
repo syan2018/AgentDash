@@ -1,10 +1,11 @@
 import { buildApiPath } from "../api/origin";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import type { ThinkingLevel } from "../types";
+import type { PermissionPolicy } from "../features/executor-selector/model/types";
 
 export type ExecutorProfile = string;
 
-export type PermissionPolicy = "AUTO" | "SUPERVISED" | "PLAN";
+export type { PermissionPolicy };
 
 export interface ExecutorConfig {
   executor: ExecutorProfile;

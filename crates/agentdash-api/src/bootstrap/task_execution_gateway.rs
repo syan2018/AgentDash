@@ -1418,7 +1418,11 @@ async fn relay_start_prompt(
             working_dir: built.working_dir.clone(),
             env: Default::default(),
             executor_config: relay_config,
-            mcp_servers: vec![],
+            mcp_servers: built
+                .mcp_servers
+                .iter()
+                .filter_map(|s| serde_json::to_value(s).ok())
+                .collect(),
         },
     };
 

@@ -257,11 +257,13 @@ function SharedFoldersSurfaceCard({
   emptyText,
   helperText,
   addressSpace,
+  preview,
 }: {
   folders: ContextFolderItem[];
   emptyText: string;
   helperText: string;
   addressSpace?: ExecutionAddressSpace | null;
+  preview?: { projectId: string; storyId?: string; target?: "project" | "story" | "task" };
 }) {
   const [browserOpen, setBrowserOpen] = useState(false);
 
@@ -299,6 +301,7 @@ function SharedFoldersSurfaceCard({
             <div className="mt-2">
               <AddressSpaceBrowser
                 addressSpace={addressSpace}
+                preview={preview}
               />
             </div>
           )}
@@ -942,6 +945,7 @@ function StorySessionContextPanel({
           emptyText="当前 Story 还没有整理出额外共享资料目录。"
           helperText="这些目录才是对用户真正可见的上下文表面，底层 provider / mount 细节默认不直接暴露。"
           addressSpace={addressSpace}
+          preview={{ projectId: story.project_id, storyId: story.id, target: "story" }}
         />
         <SessionBehaviorSurfaceCard
           composition={effectiveComposition}
@@ -1016,6 +1020,7 @@ function StorySessionContextPanel({
 }
 
 function ProjectSessionContextPanel({
+  projectId,
   projectName,
   contextSnapshot,
   addressSpace,
@@ -1023,6 +1028,7 @@ function ProjectSessionContextPanel({
   isOpen,
   onToggle,
 }: {
+  projectId: string;
   projectName: string;
   contextSnapshot: SessionContextSnapshot;
   addressSpace?: ExecutionAddressSpace | null;
@@ -1059,6 +1065,7 @@ function ProjectSessionContextPanel({
           emptyText="当前 Project Session 还没有对用户暴露可用共享目录。"
           helperText="共享上下文默认表达成近似文件系统的目录，而不是 provider、mount policy 或权限矩阵。"
           addressSpace={addressSpace}
+          preview={{ projectId, target: "project" }}
         />
         <SessionBehaviorSurfaceCard
           composition={composition}
@@ -1662,6 +1669,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
       {sessionContextSnapshot?.owner_context.owner_level === "project" && (
         <ProjectSessionContextPanel
+          projectId={sessionOwnerBinding?.project_id ?? ""}
           projectName={ownerProjectName}
           contextSnapshot={sessionContextSnapshot}
           addressSpace={sessionAddressSpace}

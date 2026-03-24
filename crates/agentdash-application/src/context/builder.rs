@@ -8,7 +8,7 @@ use super::contributor::{
 };
 use crate::session_plan::{
     SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
-    resolve_effective_session_composition,
+    resolve_story_session_composition,
 };
 
 pub fn build_task_agent_context(
@@ -48,8 +48,7 @@ pub fn build_task_agent_context(
         }
     }
 
-    let effective_session_composition =
-        resolve_effective_session_composition(input.project, Some(input.story));
+    let effective_session_composition = resolve_story_session_composition(Some(input.story));
     let session_plan = build_session_plan_fragments(SessionPlanInput {
         owner_kind: SessionPlanOwnerKind::TaskExecution,
         phase: match input.phase {
@@ -58,7 +57,7 @@ pub fn build_task_agent_context(
         },
         address_space: input.address_space,
         mcp_servers: &mcp_servers,
-        session_composition: Some(&effective_session_composition),
+        session_composition: effective_session_composition.as_ref(),
         agent_type: input.effective_agent_type,
         preset_name: input.task.agent_binding.preset_name.as_deref(),
         has_custom_prompt_template: input

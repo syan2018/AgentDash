@@ -11,7 +11,6 @@ import type {
   ProjectAgentSummary,
   Project,
   ProjectConfig,
-  SessionComposition,
 } from '../types';
 import { isThinkingLevel } from '../types';
 import { api } from '../api/client';
@@ -32,7 +31,6 @@ interface ProjectState {
     config?: ProjectConfig;
     context_containers?: ContextContainerDefinition[];
     mount_policy?: MountDerivationPolicy;
-    session_composition?: SessionComposition;
     visibility?: Project["visibility"];
     is_template?: boolean;
   }) => Promise<Project | null>;
@@ -164,7 +162,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           agent_presets: [],
           context_containers: [],
           mount_policy: { include_local_workspace: true, local_workspace_capabilities: [] },
-          session_composition: { workflow_steps: [], required_context_blocks: [] },
         },
       });
       set((s) => ({

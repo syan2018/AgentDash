@@ -55,7 +55,6 @@ pub struct SessionProjectDefaults {
     pub default_agent_type: Option<String>,
     pub context_containers: Vec<ContextContainerDefinition>,
     pub mount_policy: MountDerivationPolicy,
-    pub session_composition: SessionComposition,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +62,7 @@ pub struct SessionStoryOverrides {
     pub context_containers: Vec<ContextContainerDefinition>,
     pub disabled_container_ids: Vec<String>,
     pub mount_policy_override: Option<MountDerivationPolicy>,
-    pub session_composition_override: Option<SessionComposition>,
+    pub session_composition: Option<SessionComposition>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,7 +124,7 @@ pub fn extract_story_overrides(story: &Story) -> SessionStoryOverrides {
         context_containers: story.context.context_containers.clone(),
         disabled_container_ids: story.context.disabled_container_ids.clone(),
         mount_policy_override: story.context.mount_policy_override.clone(),
-        session_composition_override: story.context.session_composition_override.clone(),
+        session_composition: story.context.session_composition.clone(),
     }
 }
 

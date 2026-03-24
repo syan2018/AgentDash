@@ -314,22 +314,16 @@ fn unresolved_binding(binding: &WorkflowContextBinding, summary: &str) -> Resolv
 
 fn render_project_runtime_context(project: &Project) -> String {
     format!(
-        "### Project Session Context\n- project: {}\n- default_agent_type: {}\n- context_containers: {}\n- workflow_steps: {}\n- required_context_blocks: {}",
+        "### Project Session Context\n- project: {}\n- default_agent_type: {}\n- context_containers: {}",
         clean_text(Some(project.name.as_str())).unwrap_or("-"),
         clean_text(project.config.default_agent_type.as_deref()).unwrap_or("-"),
         project.config.context_containers.len(),
-        project.config.session_composition.workflow_steps.len(),
-        project
-            .config
-            .session_composition
-            .required_context_blocks
-            .len(),
     )
 }
 
 fn render_story_runtime_context(story: &Story) -> String {
     format!(
-        "### Story Context Snapshot\n- story: {}\n- prd: {}\n- spec_refs: {}\n- resources: {}\n- source_refs: {}\n- context_containers: {}\n- workflow_override_steps: {}",
+        "### Story Context Snapshot\n- story: {}\n- prd: {}\n- spec_refs: {}\n- resources: {}\n- source_refs: {}\n- context_containers: {}\n- session_composition_steps: {}",
         clean_text(Some(story.title.as_str())).unwrap_or("-"),
         yes_no(clean_text(story.context.prd_doc.as_deref()).is_some()),
         story.context.spec_refs.len(),
@@ -338,7 +332,7 @@ fn render_story_runtime_context(story: &Story) -> String {
         story.context.context_containers.len(),
         story
             .context
-            .session_composition_override
+            .session_composition
             .as_ref()
             .map(|item| item.workflow_steps.len())
             .unwrap_or(0),

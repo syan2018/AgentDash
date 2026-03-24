@@ -16,7 +16,6 @@ use crate::services::McpServices;
 use agentdash_domain::context_container::{
     ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
 };
-use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -76,8 +75,6 @@ pub struct UpdateProjectContextConfigParams {
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     #[schemars(description = "覆盖项目级 mount_policy")]
     pub mount_policy: Option<MountDerivationPolicy>,
-    #[schemars(description = "覆盖项目级 session_composition")]
-    pub session_composition: Option<SessionComposition>,
 }
 
 // ─── Server 定义 ──────────────────────────────────────────────
@@ -375,14 +372,8 @@ impl RelayMcpServer {
         if let Some(mount_policy) = params.mount_policy {
             project.config.mount_policy = mount_policy;
         }
-        if let Some(session_composition) = params.session_composition {
-            project.config.session_composition = session_composition;
-        }
-
         validate_context_containers(&project.config.context_containers)
             .map_err(|error| McpError::invalid_param("context_containers", error))?;
-        validate_session_composition(&project.config.session_composition)
-            .map_err(|error| McpError::invalid_param("session_composition", error))?;
 
         project.updated_at = chrono::Utc::now();
         self.services
@@ -395,7 +386,6 @@ impl RelayMcpServer {
             "project_id": project.id.to_string(),
             "context_container_count": project.config.context_containers.len(),
             "mount_policy": project.config.mount_policy,
-            "session_composition": project.config.session_composition,
         });
 
         Ok(CallToolResult::success(vec![Content::text(

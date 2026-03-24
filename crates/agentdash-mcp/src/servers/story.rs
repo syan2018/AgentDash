@@ -46,10 +46,10 @@ pub struct UpdateStoryContextParams {
     pub mount_policy_override: Option<MountDerivationPolicy>,
     #[schemars(description = "是否清空 mount_policy_override")]
     pub clear_mount_policy_override: Option<bool>,
-    #[schemars(description = "覆盖 session_composition_override")]
-    pub session_composition_override: Option<SessionComposition>,
-    #[schemars(description = "是否清空 session_composition_override")]
-    pub clear_session_composition_override: Option<bool>,
+    #[schemars(description = "覆盖 session_composition")]
+    pub session_composition: Option<SessionComposition>,
+    #[schemars(description = "是否清空 session_composition")]
+    pub clear_session_composition: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -243,7 +243,7 @@ impl StoryMcpServer {
                 "context_containers": story.context.context_containers,
                 "disabled_container_ids": story.context.disabled_container_ids,
                 "mount_policy_override": story.context.mount_policy_override,
-                "session_composition_override": story.context.session_composition_override,
+                "session_composition": story.context.session_composition,
             },
         });
 
@@ -316,11 +316,11 @@ impl StoryMcpServer {
         if params.clear_mount_policy_override.unwrap_or(false) {
             story.context.mount_policy_override = None;
         }
-        if let Some(session_composition_override) = params.session_composition_override {
-            story.context.session_composition_override = Some(session_composition_override);
+        if let Some(session_composition) = params.session_composition {
+            story.context.session_composition = Some(session_composition);
         }
-        if params.clear_session_composition_override.unwrap_or(false) {
-            story.context.session_composition_override = None;
+        if params.clear_session_composition.unwrap_or(false) {
+            story.context.session_composition = None;
         }
 
         validate_context_containers(&story.context.context_containers)
@@ -330,9 +330,9 @@ impl StoryMcpServer {
             &project.config.context_containers,
         )
         .map_err(|error| McpError::invalid_param("replace_disabled_container_ids", error))?;
-        if let Some(session_composition_override) = &story.context.session_composition_override {
-            validate_session_composition(session_composition_override)
-                .map_err(|error| McpError::invalid_param("session_composition_override", error))?;
+        if let Some(session_composition) = &story.context.session_composition {
+            validate_session_composition(session_composition)
+                .map_err(|error| McpError::invalid_param("session_composition", error))?;
         }
 
         story.updated_at = chrono::Utc::now();
@@ -344,12 +344,12 @@ impl StoryMcpServer {
             .map_err(McpError::from)?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Story {} 上下文已更新（spec_refs: {} 项, resources: {} 项, containers: {} 项, session_override: {}）",
+            "Story {} 上下文已更新（spec_refs: {} 项, resources: {} 项, containers: {} 项, session_composition: {}）",
             self.story_id,
             story.context.spec_refs.len(),
             story.context.resource_list.len(),
             story.context.context_containers.len(),
-            if story.context.session_composition_override.is_some() {
+            if story.context.session_composition.is_some() {
                 "yes"
             } else {
                 "no"

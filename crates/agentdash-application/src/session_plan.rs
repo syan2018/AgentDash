@@ -1,5 +1,4 @@
 use agent_client_protocol::McpServer;
-use agentdash_domain::project::Project;
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
 use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
@@ -73,30 +72,8 @@ pub struct SessionPlanFragments {
     pub fragments: Vec<ContextFragment>,
 }
 
-pub fn resolve_effective_session_composition(
-    project: &Project,
-    story: Option<&Story>,
-) -> SessionComposition {
-    let mut effective = project.config.session_composition.clone();
-
-    if let Some(override_config) =
-        story.and_then(|item| item.context.session_composition_override.as_ref())
-    {
-        if let Some(persona_label) = override_config.persona_label.clone() {
-            effective.persona_label = Some(persona_label);
-        }
-        if let Some(persona_prompt) = override_config.persona_prompt.clone() {
-            effective.persona_prompt = Some(persona_prompt);
-        }
-        if !override_config.workflow_steps.is_empty() {
-            effective.workflow_steps = override_config.workflow_steps.clone();
-        }
-        if !override_config.required_context_blocks.is_empty() {
-            effective.required_context_blocks = override_config.required_context_blocks.clone();
-        }
-    }
-
-    effective
+pub fn resolve_story_session_composition(story: Option<&Story>) -> Option<SessionComposition> {
+    story.and_then(|item| item.context.session_composition.clone())
 }
 
 pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanFragments {
@@ -838,22 +815,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_effective_session_composition_merges_project_default_and_story_override() {
-        let mut project = Project::new("demo".to_string(), "desc".to_string());
-        project.config.session_composition = SessionComposition {
-            persona_label: Some("项目级角色".to_string()),
-            persona_prompt: Some("默认先读项目规则".to_string()),
-            workflow_steps: vec!["项目级步骤".to_string()],
-            required_context_blocks: vec![SessionRequiredContextBlock {
-                title: "项目级上下文".to_string(),
-                content: "项目默认约束".to_string(),
-            }],
-        };
-
+    fn resolve_story_session_composition_reads_story_level_config() {
+        let project = Project::new("demo".to_string(), "desc".to_string());
         let mut story = Story::new(project.id, "story".to_string(), "desc".to_string());
-        story.context.session_composition_override = Some(SessionComposition {
+        story.context.session_composition = Some(SessionComposition {
             persona_label: Some("故事级角色".to_string()),
-            persona_prompt: None,
+            persona_prompt: Some("先读 Story 约束".to_string()),
             workflow_steps: vec!["故事级步骤".to_string()],
             required_context_blocks: vec![SessionRequiredContextBlock {
                 title: "故事级上下文".to_string(),
@@ -861,13 +828,11 @@ mod tests {
             }],
         });
 
-        let effective = resolve_effective_session_composition(&project, Some(&story));
+        let effective =
+            resolve_story_session_composition(Some(&story)).expect("story session composition");
 
         assert_eq!(effective.persona_label.as_deref(), Some("故事级角色"));
-        assert_eq!(
-            effective.persona_prompt.as_deref(),
-            Some("默认先读项目规则")
-        );
+        assert_eq!(effective.persona_prompt.as_deref(), Some("先读 Story 约束"));
         assert_eq!(effective.workflow_steps, vec!["故事级步骤".to_string()]);
         assert_eq!(
             effective.required_context_blocks,

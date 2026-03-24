@@ -44,7 +44,7 @@ function hasStoryContextInfo(story: Story): boolean {
   const ctx = story.context;
   return (
     ctx.context_containers.length > 0
-    || ctx.session_composition_override != null
+    || ctx.session_composition != null
     || ctx.mount_policy_override != null
     || ctx.disabled_container_ids.length > 0
   );
@@ -917,7 +917,7 @@ function StorySessionContextPanel({
   onToggle: () => void;
 }) {
   const effectiveComposition = contextSnapshot?.effective.session_composition
-    ?? story.context.session_composition_override
+    ?? story.context.session_composition
     ?? null;
   const folders = resolveEffectiveStoryContextFolders(story, contextSnapshot);
   const badges = [
@@ -936,7 +936,7 @@ function StorySessionContextPanel({
       isOpen={isOpen}
       onToggle={onToggle}
     >
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-2">
         <AgentSummarySurfaceCard
           label={executorSummary?.executor || "Story 会话 Agent"}
           executor={executorSummary}
@@ -1008,8 +1008,8 @@ function StorySessionContextPanel({
               {story.context.mount_policy_override && (
                 <MountPolicyCard title="Story 挂载策略覆盖" policy={story.context.mount_policy_override} />
               )}
-              {story.context.session_composition_override && (
-                <SessionCompositionCard title="Story 会话编排覆盖" composition={story.context.session_composition_override} />
+              {story.context.session_composition && (
+                <SessionCompositionCard title="Story 会话编排" composition={story.context.session_composition} />
               )}
               <AddressSpaceCard addressSpace={addressSpace} />
               {hookRuntime && <HookRuntimeDiagnosticsCard hookRuntime={hookRuntime} />}
@@ -1041,11 +1041,9 @@ function ProjectSessionContextPanel({
   const snapshot = contextSnapshot;
   const projectOwner = snapshot.owner_context.owner_level === "project" ? snapshot.owner_context : null;
   const folders = resolveProjectContextFolders(contextSnapshot);
-  const composition = snapshot.effective.session_composition ?? null;
   const badges = [
     projectOwner?.agent_display_name ? `Agent · ${projectOwner.agent_display_name}` : "",
     `${folders.length} 个共享目录`,
-    composition?.persona_label ? `Persona · ${composition.persona_label}` : "",
   ].filter((item): item is string => Boolean(item));
 
   return (
@@ -1056,7 +1054,7 @@ function ProjectSessionContextPanel({
       isOpen={isOpen}
       onToggle={onToggle}
     >
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-2">
         <AgentSummarySurfaceCard
           label={projectOwner?.agent_display_name || "Project Agent"}
           executor={snapshot.executor}
@@ -1068,10 +1066,6 @@ function ProjectSessionContextPanel({
           helperText="共享上下文默认表达成近似文件系统的目录，而不是 provider、mount policy 或权限矩阵。"
           addressSpace={addressSpace}
           preview={{ projectId, target: "project" }}
-        />
-        <SessionBehaviorSurfaceCard
-          composition={composition}
-          emptyText="当前 Project 没有为这个 Agent 定义额外的 persona 或固定工作流。"
         />
       </div>
 
@@ -1108,7 +1102,6 @@ function ProjectSessionContextPanel({
                 emptyText="Project 未配置容器"
               />
               <MountPolicyCard title="Project 默认挂载策略" policy={snapshot.project_defaults.mount_policy} />
-              <SessionCompositionCard title="Project 默认会话编排" composition={snapshot.project_defaults.session_composition} />
               <ToolVisibilityCard summary={snapshot.effective.tool_visibility} />
               <RuntimePolicyCard summary={snapshot.effective.runtime_policy} />
               <AddressSpaceCard addressSpace={addressSpace} />

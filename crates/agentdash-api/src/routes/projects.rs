@@ -12,7 +12,6 @@ use agentdash_domain::context_container::{
 use agentdash_domain::project::{
     Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType, ProjectVisibility,
 };
-use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
 use agentdash_domain::workflow::WorkflowAssignment;
 use agentdash_plugin_api::AuthIdentity;
 
@@ -31,7 +30,6 @@ pub struct CreateProjectRequest {
     pub cloned_from_project_id: Option<Uuid>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub mount_policy: Option<MountDerivationPolicy>,
-    pub session_composition: Option<SessionComposition>,
 }
 
 #[derive(Deserialize)]
@@ -44,7 +42,6 @@ pub struct UpdateProjectRequest {
     pub cloned_from_project_id: Option<Uuid>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub mount_policy: Option<MountDerivationPolicy>,
-    pub session_composition: Option<SessionComposition>,
 }
 
 #[derive(Deserialize)]
@@ -100,9 +97,6 @@ pub async fn create_project(
     }
     if let Some(mount_policy) = req.mount_policy {
         project.config.mount_policy = mount_policy;
-    }
-    if let Some(session_composition) = req.session_composition {
-        project.config.session_composition = session_composition;
     }
     validate_project_config(&project.config)?;
     validate_project_contract(&project)?;
@@ -199,10 +193,6 @@ pub async fn update_project(
     if let Some(mount_policy) = req.mount_policy {
         project.config.mount_policy = mount_policy;
     }
-    if let Some(session_composition) = req.session_composition {
-        project.config.session_composition = session_composition;
-    }
-
     validate_project_config(&project.config)?;
     validate_project_contract(&project)?;
     project.touch_updated_by(current_user.user_id.clone());
@@ -396,7 +386,6 @@ pub async fn revoke_project_group(
 
 fn validate_project_config(config: &ProjectConfig) -> Result<(), ApiError> {
     validate_context_containers(&config.context_containers).map_err(ApiError::BadRequest)?;
-    validate_session_composition(&config.session_composition).map_err(ApiError::BadRequest)?;
     Ok(())
 }
 

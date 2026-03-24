@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::context_container::{ContextContainerDefinition, MountDerivationPolicy};
-use crate::session_composition::SessionComposition;
 
 /// 项目级配置
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -20,9 +19,6 @@ pub struct ProjectConfig {
     /// 项目级挂载派生策略
     #[serde(default)]
     pub mount_policy: MountDerivationPolicy,
-    /// 项目级会话编排默认配置
-    #[serde(default)]
-    pub session_composition: SessionComposition,
 }
 
 /// Agent 预设配置

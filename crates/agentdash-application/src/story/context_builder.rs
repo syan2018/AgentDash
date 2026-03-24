@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::address_space::selected_workspace_binding;
 use crate::session_plan::{
     SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
-    resolve_effective_session_composition,
+    resolve_story_session_composition,
 };
 
 /// Story Owner Session 的上下文构建输入
@@ -60,11 +60,13 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
     );
     if let Some(workspace) = input.workspace {
         let binding_summary = selected_workspace_binding(workspace)
-            .map(|binding| format!(
-                "{} @ {}",
-                trim_or_dash(&binding.backend_id),
-                trim_or_dash(&binding.root_ref)
-            ))
+            .map(|binding| {
+                format!(
+                    "{} @ {}",
+                    trim_or_dash(&binding.backend_id),
+                    trim_or_dash(&binding.root_ref)
+                )
+            })
             .unwrap_or_else(|| "-".to_string());
         composer.push(
             "workspace",
@@ -81,14 +83,13 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
         );
     }
 
-    let effective_session_composition =
-        resolve_effective_session_composition(input.project, Some(input.story));
+    let effective_session_composition = resolve_story_session_composition(Some(input.story));
     let session_plan = build_session_plan_fragments(SessionPlanInput {
         owner_kind: SessionPlanOwnerKind::StoryOwner,
         phase: SessionPlanPhase::StoryOwner,
         address_space: input.address_space,
         mcp_servers: input.mcp_servers,
-        session_composition: Some(&effective_session_composition),
+        session_composition: effective_session_composition.as_ref(),
         agent_type: input.effective_agent_type,
         preset_name: None,
         has_custom_prompt_template: false,

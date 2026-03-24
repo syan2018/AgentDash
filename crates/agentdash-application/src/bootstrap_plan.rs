@@ -158,7 +158,7 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
         .and_then(|s| s.context.mount_policy_override.clone())
         .unwrap_or_else(|| project.config.mount_policy.clone());
     let effective_session_composition =
-        crate::session_plan::resolve_effective_session_composition(project, story);
+        crate::session_plan::resolve_story_session_composition(story).unwrap_or_default();
 
     let owner_context = match &plan.owner.variant {
         BootstrapOwnerVariant::Task { story_overrides } => SessionOwnerContext::Task {
@@ -186,7 +186,6 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
             ),
             context_containers: project.config.context_containers.clone(),
             mount_policy: project.config.mount_policy.clone(),
-            session_composition: project.config.session_composition.clone(),
         },
         effective: SessionEffectiveContext {
             mount_policy: effective_mount_policy,

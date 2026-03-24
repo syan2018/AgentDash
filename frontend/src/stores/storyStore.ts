@@ -79,8 +79,8 @@ interface StoryState {
       disabled_container_ids?: string[];
       mount_policy_override?: MountDerivationPolicy | null;
       clear_mount_policy_override?: boolean;
-      session_composition_override?: SessionComposition | null;
-      clear_session_composition_override?: boolean;
+      session_composition?: SessionComposition | null;
+      clear_session_composition?: boolean;
     },
   ) => Promise<Story | null>;
   deleteStory: (storyId: string) => Promise<void>;
@@ -225,7 +225,7 @@ const defaultContext: StoryContext = {
   context_containers: [],
   disabled_container_ids: [],
   mount_policy_override: null,
-  session_composition_override: null,
+  session_composition: null,
 };
 
 const normalizeStoryPriority = (value: string): Story['priority'] => {
@@ -283,7 +283,7 @@ const mapStory = (raw: Record<string, unknown>): Story => {
           ? ctx.disabled_container_ids as string[]
           : [],
         mount_policy_override: (ctx.mount_policy_override as MountDerivationPolicy) ?? null,
-        session_composition_override: (ctx.session_composition_override as SessionComposition) ?? null,
+        session_composition: (ctx.session_composition as SessionComposition) ?? null,
       };
     }
   }

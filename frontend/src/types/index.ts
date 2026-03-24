@@ -203,14 +203,13 @@ export interface SessionProjectDefaults {
   default_agent_type?: string | null;
   context_containers: ContextContainerDefinition[];
   mount_policy: MountDerivationPolicy;
-  session_composition: SessionComposition;
 }
 
 export interface SessionStoryOverrides {
   context_containers: ContextContainerDefinition[];
   disabled_container_ids: string[];
   mount_policy_override?: MountDerivationPolicy | null;
-  session_composition_override?: SessionComposition | null;
+  session_composition?: SessionComposition | null;
 }
 
 export interface SessionEffectiveContext {
@@ -457,7 +456,6 @@ export interface ProjectConfig {
   agent_presets: AgentPreset[];
   context_containers: ContextContainerDefinition[];
   mount_policy: MountDerivationPolicy;
-  session_composition: SessionComposition;
 }
 
 export interface Project {
@@ -618,7 +616,7 @@ export interface StoryContext {
   context_containers: ContextContainerDefinition[];
   disabled_container_ids: string[];
   mount_policy_override?: MountDerivationPolicy | null;
-  session_composition_override?: SessionComposition | null;
+  session_composition?: SessionComposition | null;
 }
 
 export interface Story {

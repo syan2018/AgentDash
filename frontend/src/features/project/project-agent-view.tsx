@@ -238,7 +238,6 @@ export function ProjectAgentView({
         agent_presets: nextPresets,
         context_containers: project.config.context_containers ?? [],
         mount_policy: project.config.mount_policy ?? { include_local_workspace: true, local_workspace_capabilities: [] },
-        session_composition: project.config.session_composition ?? { workflow_steps: [], required_context_blocks: [] },
       });
       await fetchProjectAgents(project.id);
     } finally {

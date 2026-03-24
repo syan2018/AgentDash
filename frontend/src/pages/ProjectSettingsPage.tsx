@@ -19,11 +19,9 @@ import { AgentPresetEditor } from "../features/project/agent-preset-editor";
 import {
   ContextContainersEditor,
   MountPolicyEditor,
-  SessionCompositionEditor,
 } from "../components/context-config-editor";
 import {
   createDefaultMountPolicy,
-  createDefaultSessionComposition,
 } from "../components/context-config-defaults";
 import {
   DangerConfirmDialog,
@@ -41,7 +39,7 @@ interface SettingsTabItem {
 const SETTINGS_TABS: SettingsTabItem[] = [
   { key: "overview", label: "概览", description: "项目身份、摘要与基础信息" },
   { key: "execution", label: "执行默认", description: "默认 agent、默认 workspace 与 workflow" },
-  { key: "context", label: "上下文资源", description: "context containers、挂载策略与 session composition" },
+  { key: "context", label: "上下文资源", description: "context containers 与挂载策略" },
   { key: "workspace", label: "工作空间", description: "逻辑 workspace、bindings 与 runtime preview" },
   { key: "management", label: "管理动作", description: "共享、模板、clone 与删除" },
 ];
@@ -294,7 +292,6 @@ export function ProjectSettingsPage() {
   const canEditProject = project.access.can_edit;
   const canManageSharing = project.access.can_manage_sharing;
   const mountPolicy = project.config.mount_policy ?? createDefaultMountPolicy();
-  const composition = project.config.session_composition ?? createDefaultSessionComposition();
   const contextContainers = project.config.context_containers ?? [];
   const availableUsers = directoryUsers.filter((item) => item.user_id !== currentUser?.user_id);
   const activeTabMeta = SETTINGS_TABS.find((item) => item.key === activeTab) ?? SETTINGS_TABS[0];
@@ -332,7 +329,6 @@ export function ProjectSettingsPage() {
       agent_presets: overrides?.agent_presets ?? project.config.agent_presets ?? [],
       context_containers: contextContainers,
       mount_policy: mountPolicy,
-      session_composition: composition,
     });
     if (!result) {
       setError("执行默认保存失败");
@@ -620,9 +616,9 @@ export function ProjectSettingsPage() {
               {activeTab === "context" && (
                 <SectionCard
                   title="上下文资源"
-                  description="这里是 Project 的上下文容器、挂载策略和 session composition。它们是运行时资源，不是 Workspace 管理的一部分。"
+                  description="这里是 Project 的上下文容器和挂载策略。它们是运行时资源，不是 Workspace 管理的一部分。"
                 >
-                  <div className="grid gap-6 xl:grid-cols-3">
+                  <div className="grid gap-6 xl:grid-cols-2">
                     <ContentGroup title="上下文容器">
                       <ContextContainersEditor
                         value={contextContainers}
@@ -644,15 +640,6 @@ export function ProjectSettingsPage() {
                       />
                     </ContentGroup>
 
-                    <ContentGroup title="会话编排">
-                      <SessionCompositionEditor
-                        value={composition}
-                        isSaving={false}
-                        onSave={async (next) => {
-                          await saveContext({ session_composition: next });
-                        }}
-                      />
-                    </ContentGroup>
                   </div>
                 </SectionCard>
               )}

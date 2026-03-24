@@ -185,7 +185,7 @@ function OptionalMountPolicyOverrideEditor({
   );
 }
 
-function OptionalSessionCompositionOverrideEditor({
+function OptionalSessionCompositionEditor({
   value,
   isSaving,
   onSave,
@@ -202,14 +202,14 @@ function OptionalSessionCompositionOverrideEditor({
     return (
       <div className="space-y-2">
         <p className="text-xs text-muted-foreground">
-          当前没有显式会话编排覆盖，将继承 Project 默认的 persona / workflow / required_context_blocks。
+          当前没有为这个 Story 配置显式会话编排，将仅使用会话内置的默认协作阶段提示。
         </p>
         <button
           type="button"
           onClick={() => setIsCreating(true)}
           className="agentdash-button-secondary"
         >
-          新建会话编排覆盖
+          新建会话编排
         </button>
       </div>
     );
@@ -234,7 +234,7 @@ function OptionalSessionCompositionOverrideEditor({
             disabled={isSaving}
             className="agentdash-button-secondary"
           >
-            清空覆盖
+            清空配置
           </button>
         ) : (
           <button
@@ -776,17 +776,17 @@ function ContextPanel({
       <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            会话编排覆盖
+            会话编排
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Story 可以只覆盖 persona / workflow / required_context_blocks 中确实需要变化的部分。
+            这里定义 Story 自己的 persona / workflow / required_context_blocks，不再继承 Project 级默认值。
           </p>
         </div>
-        <OptionalSessionCompositionOverrideEditor
-          value={ctx.session_composition_override ?? null}
+        <OptionalSessionCompositionEditor
+          value={ctx.session_composition ?? null}
           isSaving={isSaving}
-          onSave={(next) => persistStoryContext({ session_composition_override: next }, "已保存会话编排覆盖")}
-          onClear={() => persistStoryContext({ clear_session_composition_override: true }, "已清空会话编排覆盖")}
+          onSave={(next) => persistStoryContext({ session_composition: next }, "已保存会话编排")}
+          onClear={() => persistStoryContext({ clear_session_composition: true }, "已清空会话编排")}
         />
       </div>
 
@@ -811,7 +811,7 @@ function ContextPanel({
         && ctx.context_containers.length === 0
         && ctx.disabled_container_ids.length === 0
         && !ctx.mount_policy_override
-        && !ctx.session_composition_override && (
+        && !ctx.session_composition && (
         <p className="py-3 text-center text-xs text-muted-foreground/70">
           暂无上下文源
         </p>
@@ -1458,9 +1458,9 @@ export function StoryPage() {
                     📦 {story.context.context_containers.length} 容器
                   </span>
                 )}
-                {story.context.session_composition_override && (
+                {story.context.session_composition && (
                   <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-600">
-                    🎭 编排覆盖
+                    🎭 会话编排
                   </span>
                 )}
               </div>

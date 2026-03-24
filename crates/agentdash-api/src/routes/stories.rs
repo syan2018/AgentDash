@@ -41,7 +41,7 @@ pub struct CreateStoryRequest {
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
     pub mount_policy_override: Option<MountDerivationPolicy>,
-    pub session_composition_override: Option<SessionComposition>,
+    pub session_composition: Option<SessionComposition>,
 }
 
 #[derive(Deserialize, Default)]
@@ -58,8 +58,8 @@ pub struct UpdateStoryRequest {
     pub disabled_container_ids: Option<Vec<String>>,
     pub mount_policy_override: Option<MountDerivationPolicy>,
     pub clear_mount_policy_override: Option<bool>,
-    pub session_composition_override: Option<SessionComposition>,
-    pub clear_session_composition_override: Option<bool>,
+    pub session_composition: Option<SessionComposition>,
+    pub clear_session_composition: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -159,8 +159,8 @@ pub async fn create_story(
     if let Some(mount_policy_override) = req.mount_policy_override {
         next_story.context.mount_policy_override = Some(mount_policy_override);
     }
-    if let Some(session_composition_override) = req.session_composition_override {
-        next_story.context.session_composition_override = Some(session_composition_override);
+    if let Some(session_composition) = req.session_composition {
+        next_story.context.session_composition = Some(session_composition);
     }
     validate_story_context(&next_story, &project)?;
 
@@ -252,11 +252,11 @@ pub async fn update_story(
     if req.clear_mount_policy_override.unwrap_or(false) {
         story.context.mount_policy_override = None;
     }
-    if let Some(session_composition_override) = req.session_composition_override {
-        story.context.session_composition_override = Some(session_composition_override);
+    if let Some(session_composition) = req.session_composition {
+        story.context.session_composition = Some(session_composition);
     }
-    if req.clear_session_composition_override.unwrap_or(false) {
-        story.context.session_composition_override = None;
+    if req.clear_session_composition.unwrap_or(false) {
+        story.context.session_composition = None;
     }
 
     validate_story_context(&story, &project)?;
@@ -589,8 +589,8 @@ fn validate_story_context(story: &Story, project: &Project) -> Result<(), ApiErr
         &project.config.context_containers,
     )
     .map_err(ApiError::BadRequest)?;
-    if let Some(session_composition_override) = &story.context.session_composition_override {
-        validate_session_composition(session_composition_override).map_err(ApiError::BadRequest)?;
+    if let Some(session_composition) = &story.context.session_composition {
+        validate_session_composition(session_composition).map_err(ApiError::BadRequest)?;
     }
     Ok(())
 }

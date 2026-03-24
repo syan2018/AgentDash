@@ -59,11 +59,13 @@ pub fn build_project_context_markdown(
 
     if let Some(workspace) = input.workspace {
         let binding_summary = selected_workspace_binding(workspace)
-            .map(|binding| format!(
-                "{} @ {}",
-                trim_or_dash(&binding.backend_id),
-                trim_or_dash(&binding.root_ref)
-            ))
+            .map(|binding| {
+                format!(
+                    "{} @ {}",
+                    trim_or_dash(&binding.backend_id),
+                    trim_or_dash(&binding.root_ref)
+                )
+            })
             .unwrap_or_else(|| "-".to_string());
         composer.push(
             "workspace",
@@ -85,7 +87,7 @@ pub fn build_project_context_markdown(
         phase: SessionPlanPhase::ProjectAgent,
         address_space: input.address_space,
         mcp_servers: input.mcp_servers,
-        session_composition: Some(&input.project.config.session_composition),
+        session_composition: None,
         agent_type: input.effective_agent_type,
         preset_name: input.preset_name,
         has_custom_prompt_template: false,

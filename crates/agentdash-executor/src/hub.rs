@@ -278,12 +278,22 @@ pub struct SessionMeta {
     pub title: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// 最后一次执行的终态：idle | running | completed | failed | interrupted
+    /// 由 ExecutorHub 在 turn 结束时写入，是执行状态的持久化 source of truth。
+    #[serde(default = "SessionMeta::default_status")]
+    pub last_execution_status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub companion_context: Option<CompanionSessionContext>,
+}
+
+impl SessionMeta {
+    fn default_status() -> String {
+        "idle".to_string()
+    }
 }
 
 #[derive(Clone)]
@@ -375,6 +385,26 @@ impl ExecutorHub {
         }
     }
 
+    /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。
+    ///
+    /// 进程正常退出时，所有 session 的终态已经由 prompt 流写入 meta。
+    /// 若进程被 kill，内存状态丢失，meta 里的 `running` 就是孤儿状态，需要在下次启动时修正。
+    pub async fn recover_interrupted_sessions(&self) -> std::io::Result<()> {
+        let sessions = self.store.list_sessions().await?;
+        for mut meta in sessions {
+            if meta.last_execution_status == "running" {
+                tracing::warn!(
+                    session_id = %meta.id,
+                    "启动恢复：session 上次未正常结束，标记为 interrupted"
+                );
+                meta.last_execution_status = "interrupted".to_string();
+                meta.updated_at = chrono::Utc::now().timestamp_millis();
+                self.store.write_meta(&meta).await?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn workspace_root(&self) -> &Path {
         &self.workspace_root
     }
@@ -391,6 +421,7 @@ impl ExecutorHub {
             title: title.to_string(),
             created_at: now,
             updated_at: now,
+            last_execution_status: "idle".to_string(),
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
@@ -405,6 +436,100 @@ impl ExecutorHub {
 
     pub async fn get_session_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
         self.store.read_meta(session_id).await
+    }
+
+    /// 批量获取多个 session 的 meta，并发读取，返回 (session_id → SessionMeta) 映射。
+    /// 不存在的 session_id 不出现在结果 map 中。
+    pub async fn get_session_metas_bulk(
+        &self,
+        session_ids: &[String],
+    ) -> std::io::Result<std::collections::HashMap<String, SessionMeta>> {
+        use futures::future::join_all;
+
+        let futures: Vec<_> = session_ids
+            .iter()
+            .map(|id| {
+                let store = self.store.clone();
+                let id = id.clone();
+                async move {
+                    let meta = store.read_meta(&id).await?;
+                    Ok::<_, std::io::Error>((id, meta))
+                }
+            })
+            .collect();
+
+        let results = join_all(futures).await;
+        let mut map = std::collections::HashMap::with_capacity(session_ids.len());
+        for result in results {
+            let (id, maybe_meta) = result?;
+            if let Some(meta) = maybe_meta {
+                map.insert(id, meta);
+            }
+        }
+        Ok(map)
+    }
+
+    /// 批量查询 session 执行状态。
+    ///
+    /// 优先从内存 map 判断是否正在运行（无延迟），
+    /// 否则读 meta 的 last_execution_status（持久化的终态）。
+    /// 不扫 JSONL 历史。
+    pub async fn inspect_execution_states_bulk(
+        &self,
+        session_ids: &[String],
+    ) -> std::collections::HashMap<String, SessionExecutionState> {
+        // 单次 lock 读内存运行状态
+        let running_set: std::collections::HashSet<String> = {
+            let sessions = self.sessions.lock().await;
+            session_ids
+                .iter()
+                .filter(|id| {
+                    sessions
+                        .get(id.as_str())
+                        .is_some_and(|r| r.running)
+                })
+                .cloned()
+                .collect()
+        };
+
+        let mut result = std::collections::HashMap::with_capacity(session_ids.len());
+        for id in session_ids {
+            if running_set.contains(id) {
+                result.insert(id.clone(), SessionExecutionState::Running { turn_id: None });
+            } else {
+                // 读 meta 中持久化的终态
+                let status = self
+                    .store
+                    .read_meta(id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|meta| match meta.last_execution_status.as_str() {
+                        "idle" => SessionExecutionState::Idle,
+                        "completed" => SessionExecutionState::Completed {
+                            turn_id: String::new(),
+                        },
+                        "failed" => SessionExecutionState::Failed {
+                            turn_id: String::new(),
+                            message: None,
+                        },
+                        "interrupted" => SessionExecutionState::Interrupted {
+                            turn_id: None,
+                            message: None,
+                        },
+                        // "running" 在启动恢复时已被修正为 "interrupted"，
+                        // 正常运行时由内存 map 已经处理，不应落到这里
+                        "running" => {
+                            tracing::warn!(session_id = %id, "bulk 查询遇到 running 状态但内存 map 无记录，视为 interrupted");
+                            SessionExecutionState::Interrupted { turn_id: None, message: None }
+                        }
+                        other => unreachable!("last_execution_status 出现了非法值: {other:?}，这是 ExecutorHub 的 bug"),
+                    })
+                    .unwrap_or(SessionExecutionState::Idle);
+                result.insert(id.clone(), status);
+            }
+        }
+        result
     }
 
     pub async fn update_session_meta<F>(
@@ -634,15 +759,18 @@ impl ExecutorHub {
         let now = chrono::Utc::now().timestamp_millis();
         let mut session_meta = match store.read_meta(&sid).await {
             Ok(Some(meta)) => meta,
-            Ok(None) | Err(_) => SessionMeta {
-                id: sid.clone(),
-                title: title_hint.clone(),
-                created_at: now,
-                updated_at: now,
-                executor_config: None,
-                executor_session_id: None,
-                companion_context: None,
-            },
+            Ok(None) => {
+                // session_id 不存在：调用方没有先调 create_session，这是 API 层的 bug
+                return Err(ConnectorError::Runtime(format!(
+                    "session {sid} 不存在，请先调用 create_session 再 prompt"
+                )));
+            }
+            Err(e) => {
+                // 文件 IO 失败：不能静默创建一个空 meta 继续，会导致状态丢失
+                return Err(ConnectorError::Runtime(format!(
+                    "读取 session {sid} meta 失败: {e}"
+                )));
+            }
         };
         let executor_config = req
             .executor_config
@@ -695,6 +823,7 @@ impl ExecutorHub {
         };
 
         session_meta.updated_at = now;
+        session_meta.last_execution_status = "running".to_string();
         session_meta.executor_config = Some(context.executor_config.clone());
         if session_meta.title.trim().is_empty() {
             session_meta.title = title_hint;
@@ -771,6 +900,12 @@ impl ExecutorHub {
                     Some(error.to_string()),
                 );
                 let _ = store.append(&sid, &failed).await;
+                // 持久化终态到 meta
+                if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
+                    meta.last_execution_status = "failed".to_string();
+                    meta.updated_at = chrono::Utc::now().timestamp_millis();
+                    let _ = store.write_meta(&meta).await;
+                }
                 let _ = tx.send(failed);
                 return Err(error);
             }
@@ -874,6 +1009,14 @@ impl ExecutorHub {
             if let Some(done) = terminal_notification {
                 let _ = store.append(&session_id, &done).await;
                 let _ = tx.send(done);
+            }
+
+            // 持久化终态到 meta — 这是执行状态的 source of truth，后续查询直接读这个字段
+            let status_str = terminal_kind.state_tag().to_string();
+            if let Ok(Some(mut meta)) = store.read_meta(&session_id).await {
+                meta.last_execution_status = status_str;
+                meta.updated_at = chrono::Utc::now().timestamp_millis();
+                let _ = store.write_meta(&meta).await;
             }
 
             if let Some(hook_session) = hook_session_for_spawn {
@@ -1442,9 +1585,10 @@ mod tests {
         let workspace = tempfile::tempdir().expect("workspace");
         let connector = Arc::new(RecordingConnector::default());
         let hub = ExecutorHub::new(base.path().to_path_buf(), connector.clone());
+        let session = hub.create_session("test").await.expect("create session");
 
         hub.start_prompt(
-            "sess-1",
+            &session.id,
             PromptSessionRequest {
                 prompt: Some("hello".to_string()),
                 prompt_blocks: None,
@@ -1648,10 +1792,11 @@ mod tests {
 
         let base = tempfile::tempdir().expect("tempdir");
         let hub = ExecutorHub::new(base.path().to_path_buf(), Arc::new(FailingConnector));
+        let session = hub.create_session("test").await.expect("create session");
 
         let error = hub
             .start_prompt(
-                "sess-failing",
+                &session.id,
                 PromptSessionRequest {
                     prompt: Some("hello".to_string()),
                     prompt_blocks: None,
@@ -1671,7 +1816,7 @@ mod tests {
 
         let history = hub
             .store
-            .read_all("sess-failing")
+            .read_all(&session.id)
             .await
             .expect("history should load");
         let terminal = history
@@ -1768,10 +1913,11 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(CancelAwareConnector::default());
         let hub = ExecutorHub::new(base.path().to_path_buf(), connector);
+        let session = hub.create_session("test").await.expect("create session");
 
         let turn_id = hub
             .start_prompt(
-                "sess-cancel",
+                &session.id,
                 PromptSessionRequest {
                     prompt: Some("hello".to_string()),
                     prompt_blocks: None,
@@ -1788,13 +1934,13 @@ mod tests {
             .await
             .expect("prompt should start");
 
-        hub.cancel("sess-cancel")
+        hub.cancel(&session.id)
             .await
             .expect("cancel should succeed");
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 
         let state = hub
-            .inspect_session_execution_state("sess-cancel")
+            .inspect_session_execution_state(&session.id)
             .await
             .expect("state should load");
         assert_eq!(
@@ -1807,7 +1953,7 @@ mod tests {
 
         let history = hub
             .store
-            .read_all("sess-cancel")
+            .read_all(&session.id)
             .await
             .expect("history should load");
         let terminal = history

@@ -186,6 +186,12 @@ impl AppState {
         let executor_hub =
             ExecutorHub::new_with_hooks(workspace_root, connector.clone(), Some(hook_provider));
         executor_hub_handle.set(executor_hub.clone()).await;
+
+        // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
+        if let Err(e) = executor_hub.recover_interrupted_sessions().await {
+            tracing::warn!("启动恢复 session 状态失败（非致命）: {e}");
+        }
+
         let restart_tracker = RestartTracker::default();
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();

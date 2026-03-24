@@ -1,8 +1,9 @@
 use sqlx::SqlitePool;
+use uuid::Uuid;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::session_binding::{
-    SessionBinding, SessionBindingRepository, SessionOwnerType,
+    ProjectSessionBinding, SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 
 pub struct SqliteSessionBindingRepository {
@@ -194,6 +195,120 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
                 .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// 一次 SQL 获取项目下所有层级的 bindings，内联归属上下文。
+    ///
+    /// 查询逻辑：
+    ///   - owner_type = 'project' → owner_id = project_id
+    ///   - owner_type = 'story'   → JOIN stories ON owner_id = stories.id WHERE stories.project_id = ?
+    ///   - owner_type = 'task'    → JOIN tasks ON owner_id = tasks.id
+    ///                              JOIN stories ON tasks.story_id = stories.id WHERE stories.project_id = ?
+    ///
+    /// 用 UNION ALL 合并三段，避免复杂 LEFT JOIN 带来的行膨胀。
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectSessionBinding>, DomainError> {
+        let pid = project_id.to_string();
+
+        #[derive(sqlx::FromRow)]
+        struct ProjectBindingRow {
+            id: String,
+            session_id: String,
+            owner_type: String,
+            owner_id: String,
+            label: String,
+            created_at: String,
+            owner_title: Option<String>,
+            story_id: Option<String>,
+            story_title: Option<String>,
+        }
+
+        let rows = sqlx::query_as::<_, ProjectBindingRow>(
+            r#"
+            -- Project 级 bindings
+            SELECT
+                sb.id, sb.session_id, sb.owner_type, sb.owner_id, sb.label, sb.created_at,
+                NULL AS owner_title,
+                NULL AS story_id,
+                NULL AS story_title
+            FROM session_bindings sb
+            WHERE sb.owner_type = 'project'
+              AND sb.owner_id = ?
+
+            UNION ALL
+
+            -- Story 级 bindings
+            SELECT
+                sb.id, sb.session_id, sb.owner_type, sb.owner_id, sb.label, sb.created_at,
+                s.title AS owner_title,
+                NULL    AS story_id,
+                NULL    AS story_title
+            FROM session_bindings sb
+            INNER JOIN stories s ON sb.owner_id = s.id
+            WHERE sb.owner_type = 'story'
+              AND s.project_id = ?
+
+            UNION ALL
+
+            -- Task 级 bindings
+            SELECT
+                sb.id, sb.session_id, sb.owner_type, sb.owner_id, sb.label, sb.created_at,
+                t.title  AS owner_title,
+                s.id     AS story_id,
+                s.title  AS story_title
+            FROM session_bindings sb
+            INNER JOIN tasks    t ON sb.owner_id = t.id
+            INNER JOIN stories  s ON t.story_id  = s.id
+            WHERE sb.owner_type = 'task'
+              AND s.project_id = ?
+            "#,
+        )
+        .bind(&pid)
+        .bind(&pid)
+        .bind(&pid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let owner_type =
+                    SessionOwnerType::from_str_loose(&row.owner_type).ok_or_else(|| {
+                        DomainError::InvalidConfig(format!(
+                            "无效的 owner_type: {}",
+                            row.owner_type
+                        ))
+                    })?;
+                let binding = SessionBinding {
+                    id: row.id.parse().map_err(|_| DomainError::NotFound {
+                        entity: "session_binding",
+                        id: row.id.clone(),
+                    })?,
+                    session_id: row.session_id,
+                    owner_type,
+                    owner_id: row.owner_id.parse().map_err(|_| DomainError::NotFound {
+                        entity: "session_binding",
+                        id: row.owner_id.clone(),
+                    })?,
+                    label: row.label,
+                    created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                };
+                let story_id = row
+                    .story_id
+                    .as_deref()
+                    .and_then(|s| s.parse::<Uuid>().ok());
+                Ok(ProjectSessionBinding {
+                    binding,
+                    story_title: row.story_title,
+                    story_id,
+                    owner_title: row.owner_title,
+                })
+            })
+            .collect()
     }
 }
 

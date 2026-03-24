@@ -91,6 +91,11 @@ async fn main() -> anyhow::Result<()> {
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let hub = ExecutorHub::new(workspace_root, connector.clone());
 
+        // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
+        if let Err(e) = hub.recover_interrupted_sessions().await {
+            tracing::warn!("启动恢复 session 状态失败（非致命）: {e}");
+        }
+
         tracing::info!("ExecutorHub 已初始化");
         (Some(hub), Some(connector))
     } else {

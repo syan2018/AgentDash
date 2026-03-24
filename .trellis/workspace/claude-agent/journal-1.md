@@ -905,3 +905,76 @@ Error
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: Agent-First 前端重构 + Session 聚合端点 + 执行状态持久化
+
+**Date**: 2026-03-24
+**Task**: Agent-First 前端重构 + Session 聚合端点 + 执行状态持久化
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 本次会话完成内容
+
+### 前端信息架构重构（Agent-First）
+
+路由与导航：
+- Layout Route 重构：WorkspaceLayout 升为真正的 Layout Route，`<Outlet />` 替代 `children`
+- 默认路由 `/` 重定向至 `/dashboard/agent`，Tab 切换用 URL 表达（`/dashboard/agent`、`/dashboard/story`）
+- 侧边栏精简：移除"看板/会话"导航，改为项目选择器（置顶）+ Tab 导航（Agent/Story）+ 后端状态
+- Tab 高亮继承：`/session/:id` 时 Agent Tab 高亮，`/story/:storyId` 时 Story Tab 高亮（用 `useMatch` 各自独立调用，避免 Hook 顺序问题）
+
+Agent Tab 主视图：
+- 双栏布局：左栏 ProjectAgentView（完整 Agent Hub，含创建/编辑/删除预设）+ 右栏活跃 Session 列表
+- 左栏复用现有 ProjectAgentView，新增逻辑：有活跃 session 时只显示"新对话"按钮，单列竖排，对齐 h-14 Header 设计语言
+- 右栏 ActiveSessionList：Companion 树形嵌套（父子会话连接线）、Task/Story 归属链接（`e.stopPropagation` + 导航）、running 脉冲动画、状态 badge
+- 点击 Session 卡片右栏原地展开 SessionChatView + 面包屑返回，"全屏↗"导航到 `/session/:id`
+
+状态管理：
+- `activeSessionsStore`：竞态保护（`loadedProjectId` 比对丢弃旧请求），`clearForProject` 切换时立即清空旧数据
+
+### 后端 Session 聚合端点（GET /api/projects/{id}/sessions）
+
+性能重构（O(N×M) → O(1 DB + N parallel IO + 1 lock)）：
+- Domain 层新增 `ProjectSessionBinding` 类型，携带归属上下文
+- `SessionBindingRepository` 新增 `list_by_project` 接口：一条 UNION SQL 查出所有层级 bindings + 归属上下文（JOIN stories/tasks）
+- `ExecutorHub` 新增 `get_session_metas_bulk`（并发读取）和 `inspect_execution_states_bulk`（单次 lock 读内存 + meta）
+- Handler 重写：`tokio::join!` 并发拉取项目信息和 bindings，批量处理替代串行
+
+### Session 执行状态持久化
+
+- `SessionMeta` 新增 `last_execution_status` 字段（`serde(default)` 兼容旧文件）
+- 在 turn 开始时写入 `running`，turn 结束时写入 `completed/failed/interrupted`
+- 新增 `recover_interrupted_sessions()`：启动时扫所有 meta，修正残留 `running` 为 `interrupted`
+- 两个 binary（cloud + local）启动时都调用恢复
+- 移除 `Ok(None)|Err(_)` fallback 构造，session 不存在或 IO 失败均返回明确错误
+- 修复 3 个测试：改为先 `create_session` 再 `start_prompt`，用返回 ID 替代硬编码
+
+### Spec 文档更新
+
+- `spec/backend/quality-guidelines.md`：新增 Session 执行状态持久化规范（字段约束、启动恢复机制、合法值枚举）
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `30fb074` | (see git log) |
+| `e3f79c6` | (see git log) |
+| `69a2e55` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

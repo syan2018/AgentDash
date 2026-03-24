@@ -293,8 +293,10 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     const incomingText = newUpdateAny.content?.type === "text" ? (newUpdateAny.content.text ?? "") : null;
 
     // ── entryIndex upsert：按 (turnId, entryIndex, sessionUpdate) 查找同一消息的已有 entry ──
-    // MessageEnd 发出的全量快照和之前所有 TextDelta 共享相同的 entryIndex（entry_index 在
-    // MessageEnd 之后才递增）。找到同一消息 → 用全量文本直接覆盖，不拼接。
+    // 同一条消息可能同时出现“增量 chunk”和“全量快照”两种形态，因此不能直接覆盖。
+    // 统一走 mergeStreamChunk：
+    // - incoming 是全量快照时（startsWith previous）会自然覆盖为全量文本
+    // - incoming 是增量片段时会追加并去重重叠部分
     if (incomingTurnId !== undefined && incomingEntryIndex !== undefined && incomingText !== null) {
       for (let i = prev.length - 1; i >= 0; i -= 1) {
         const candidate = prev[i]!;
@@ -303,10 +305,16 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
         const candidateEntryIndex = getEntryIndex(candidate.update);
         if (candidateEntryIndex !== incomingEntryIndex) continue;
 
-        // 找到同一消息的 entry：覆盖文本（全量快照覆盖增量累积版本）
+        const candidateUpdateAny = candidate.update as unknown as { content?: { type?: string; text?: string } };
+        const previousText = candidateUpdateAny.content?.type === "text" ? (candidateUpdateAny.content.text ?? "") : "";
+        const mergedText = mergeStreamChunk(previousText, incomingText);
+        if (mergedText === previousText) {
+          return prev;
+        }
+
         const overwrittenUpdate: SessionUpdate = {
           ...candidate.update,
-          content: { type: "text" as const, text: incomingText },
+          content: { type: "text" as const, text: mergedText },
         } as SessionUpdate;
         const next = [...prev];
         next[i] = { ...candidate, update: overwrittenUpdate };

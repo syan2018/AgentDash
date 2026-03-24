@@ -483,7 +483,7 @@ export function SessionChatView({
   useEffect(() => {
     if (!containerRef.current || !shouldScrollRef.current) return;
     containerRef.current.scrollTop = containerRef.current.scrollHeight;
-  }, [displayItems.length]);
+  }, [displayItems.length, rawEntries, streamingEntryId]);
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;

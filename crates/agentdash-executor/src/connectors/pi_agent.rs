@@ -56,9 +56,15 @@ pub struct PiAgentConnector {
 }
 
 struct ProviderRuntimeState {
-    default_bridge: Arc<dyn LlmBridge>,
-    default_model: String,
+    default_bridge: Option<Arc<dyn LlmBridge>>,
+    default_model: Option<String>,
     providers: Vec<ProviderEntry>,
+}
+
+impl ProviderRuntimeState {
+    fn is_configured(&self) -> bool {
+        self.default_bridge.is_some() && self.default_model.is_some()
+    }
 }
 
 impl PiAgentConnector {
@@ -100,23 +106,33 @@ impl PiAgentConnector {
     async fn load_provider_runtime_state(&self) -> ProviderRuntimeState {
         if let Some(settings_repo) = &self.settings_repo {
             let providers = build_provider_entries(settings_repo.as_ref()).await;
-            if !providers.is_empty() {
-                let default_model = providers[0].entry.default_model.clone();
-                let default_bridge = providers[0].default_bridge.clone();
-                return ProviderRuntimeState {
-                    default_bridge,
-                    default_model,
-                    providers: providers
-                        .into_iter()
-                        .map(|provider| provider.entry)
-                        .collect(),
-                };
-            }
+            let default_model = providers
+                .first()
+                .map(|provider| provider.entry.default_model.clone());
+            let default_bridge = providers
+                .first()
+                .map(|provider| provider.default_bridge.clone());
+            return ProviderRuntimeState {
+                default_bridge,
+                default_model,
+                providers: providers
+                    .into_iter()
+                    .map(|provider| provider.entry)
+                    .collect(),
+            };
+        }
+
+        if self.providers.is_empty() || self.model_id.trim().is_empty() {
+            return ProviderRuntimeState {
+                default_bridge: None,
+                default_model: None,
+                providers: Vec::new(),
+            };
         }
 
         ProviderRuntimeState {
-            default_bridge: self.bridge.clone(),
-            default_model: self.model_id.clone(),
+            default_bridge: Some(self.bridge.clone()),
+            default_model: Some(self.model_id.clone()),
             providers: self.providers.clone(),
         }
     }
@@ -141,12 +157,15 @@ impl PiAgentConnector {
         provider_state: &ProviderRuntimeState,
         provider_id: Option<&str>,
         model_id: Option<&str>,
-    ) -> Arc<dyn LlmBridge> {
+    ) -> Result<Arc<dyn LlmBridge>, ConnectorError> {
+        let default_bridge = provider_state.default_bridge.clone().ok_or_else(|| {
+            ConnectorError::InvalidConfig("Pi Agent 尚未配置任何可用的 LLM Provider".to_string())
+        })?;
         let provider_id = provider_id.map(str::trim).filter(|item| !item.is_empty());
         let model_id = model_id.map(str::trim).filter(|item| !item.is_empty());
 
         if provider_id.is_none() && model_id.is_none() {
-            return provider_state.default_bridge.clone();
+            return Ok(default_bridge);
         }
 
         if let Some(provider_id) = provider_id {
@@ -156,23 +175,23 @@ impl PiAgentConnector {
                 .find(|provider| provider.provider_id == provider_id)
             {
                 let resolved_model = model_id.unwrap_or(provider.default_model.as_str());
-                return provider.create_bridge(resolved_model);
+                return Ok(provider.create_bridge(resolved_model));
             }
         }
 
         if let Some(model_id) = model_id {
-            if model_id == provider_state.default_model {
-                return provider_state.default_bridge.clone();
+            if provider_state.default_model.as_deref() == Some(model_id) {
+                return Ok(default_bridge.clone());
             }
 
             for provider in &provider_state.providers {
                 if provider.supports_model(model_id).await {
-                    return provider.create_bridge(model_id);
+                    return Ok(provider.create_bridge(model_id));
                 }
             }
         }
 
-        provider_state.default_bridge.clone()
+        Ok(default_bridge)
     }
 
     fn build_runtime_system_prompt(
@@ -413,8 +432,12 @@ impl AgentConnector for PiAgentConnector {
         }
 
         // 若没有注册任何 provider，退化为单模型显示（向后兼容）
-        if all_providers.is_empty() {
-            let model_id = provider_state.default_model.clone();
+        if all_providers.is_empty()
+            && let Some(model_id) = provider_state
+                .default_model
+                .clone()
+                .filter(|item| !item.trim().is_empty())
+        {
             all_providers.push(serde_json::json!({
                 "id": "default",
                 "name": "Default",
@@ -466,13 +489,19 @@ impl AgentConnector for PiAgentConnector {
             agent
         } else {
             let provider_state = self.load_provider_runtime_state().await;
+            if !provider_state.is_configured() {
+                return Err(ConnectorError::InvalidConfig(
+                    "Pi Agent 尚未配置任何可用的 LLM Provider，请先在设置页保存 Provider 配置"
+                        .to_string(),
+                ));
+            }
             let bridge = self
                 .resolve_bridge_for_execution(
                     &provider_state,
                     context.executor_config.provider_id.as_deref(),
                     context.executor_config.model_id.as_deref(),
                 )
-                .await;
+                .await?;
             self.create_agent_with_bridge(bridge)
         };
 
@@ -1057,6 +1086,18 @@ fn content_part_to_block(part: &ContentPart) -> Option<ContentBlock> {
     }
 }
 
+struct NoopBridge;
+
+#[async_trait::async_trait]
+impl LlmBridge for NoopBridge {
+    async fn stream_complete(
+        &self,
+        _request: agentdash_agent::BridgeRequest,
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>> {
+        Box::pin(tokio_stream::empty())
+    }
+}
+
 // ─── Factory ────────────────────────────────────────────────────────
 
 /// 从 `SettingsRepository` 和环境变量构建 `PiAgentConnector`。
@@ -1078,15 +1119,17 @@ pub async fn build_pi_agent_connector(
 
     let providers = build_provider_entries(settings).await;
 
-    // ── 组装 connector ─────────────────────────────────────────────
-    if providers.is_empty() {
-        tracing::warn!("PiAgentConnector: 未检测到任何 LLM provider 配置，Pi Agent 不可用");
-        return None;
-    }
-
-    // 取首个 provider 的默认模型和 bridge 作为全局默认，同时保留所有 provider 完整注册
-    let global_default_model = providers[0].entry.default_model.clone();
-    let global_default_bridge = providers[0].default_bridge.clone();
+    let (global_default_bridge, global_default_model) = if let Some(provider) = providers.first() {
+        (
+            provider.default_bridge.clone(),
+            provider.entry.default_model.clone(),
+        )
+    } else {
+        tracing::warn!(
+            "PiAgentConnector: 启动时未检测到任何 LLM provider 配置，将以动态占位模式注册"
+        );
+        (Arc::new(NoopBridge) as Arc<dyn LlmBridge>, String::new())
+    };
 
     let mut connector = PiAgentConnector::new(
         workspace_root.to_path_buf(),
@@ -1100,11 +1143,15 @@ pub async fn build_pi_agent_connector(
         connector.add_provider(provider.entry);
     }
 
-    tracing::info!(
-        "PiAgentConnector 已初始化（默认模型：{}，provider 数量：{}）",
-        global_default_model,
-        connector.providers.len()
-    );
+    if connector.providers.is_empty() {
+        tracing::info!("PiAgentConnector 已初始化（动态占位模式，等待 settings 注入 provider）");
+    } else {
+        tracing::info!(
+            "PiAgentConnector 已初始化（默认模型：{}，provider 数量：{}）",
+            global_default_model,
+            connector.providers.len()
+        );
+    }
     Some(connector)
 }
 
@@ -1124,9 +1171,150 @@ async fn read_setting_str(
 mod tests {
     use super::*;
     use agentdash_agent::{AssistantStreamEvent, StopReason};
+    use agentdash_domain::DomainError;
+    use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
+    use chrono::Utc;
+    use std::sync::RwLock;
 
     fn test_source() -> AgentDashSourceV1 {
         AgentDashSourceV1::new("pi-agent", "local_executor")
+    }
+
+    #[derive(Default)]
+    struct TestSettingsRepository {
+        entries: RwLock<HashMap<(String, String, String), serde_json::Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SettingsRepository for TestSettingsRepository {
+        async fn list(
+            &self,
+            scope: &SettingScope,
+            category_prefix: Option<&str>,
+        ) -> Result<Vec<Setting>, DomainError> {
+            let scope_kind = scope.kind.as_str().to_string();
+            let scope_id = scope.storage_scope_id().to_string();
+            let entries = self
+                .entries
+                .read()
+                .expect("test settings lock poisoned")
+                .iter()
+                .filter(|((entry_scope_kind, entry_scope_id, key), _)| {
+                    entry_scope_kind == &scope_kind
+                        && entry_scope_id == &scope_id
+                        && category_prefix.is_none_or(|prefix| key.starts_with(prefix))
+                })
+                .map(|((_, _, key), value)| Setting {
+                    scope_kind: scope.kind,
+                    scope_id: scope.scope_id.clone(),
+                    key: key.clone(),
+                    value: value.clone(),
+                    updated_at: Utc::now(),
+                })
+                .collect::<Vec<_>>();
+            Ok(entries)
+        }
+
+        async fn get(
+            &self,
+            scope: &SettingScope,
+            key: &str,
+        ) -> Result<Option<Setting>, DomainError> {
+            let value = self
+                .entries
+                .read()
+                .expect("test settings lock poisoned")
+                .get(&(
+                    scope.kind.as_str().to_string(),
+                    scope.storage_scope_id().to_string(),
+                    key.to_string(),
+                ))
+                .cloned();
+            Ok(value.map(|value| Setting {
+                scope_kind: scope.kind,
+                scope_id: scope.scope_id.clone(),
+                key: key.to_string(),
+                value,
+                updated_at: Utc::now(),
+            }))
+        }
+
+        async fn set(
+            &self,
+            scope: &SettingScope,
+            key: &str,
+            value: serde_json::Value,
+        ) -> Result<(), DomainError> {
+            self.entries
+                .write()
+                .expect("test settings lock poisoned")
+                .insert(
+                    (
+                        scope.kind.as_str().to_string(),
+                        scope.storage_scope_id().to_string(),
+                        key.to_string(),
+                    ),
+                    value,
+                );
+            Ok(())
+        }
+
+        async fn set_batch(
+            &self,
+            scope: &SettingScope,
+            entries: &[(String, serde_json::Value)],
+        ) -> Result<(), DomainError> {
+            for (key, value) in entries {
+                self.set(scope, key, value.clone()).await?;
+            }
+            Ok(())
+        }
+
+        async fn delete(&self, scope: &SettingScope, key: &str) -> Result<bool, DomainError> {
+            let removed = self
+                .entries
+                .write()
+                .expect("test settings lock poisoned")
+                .remove(&(
+                    scope.kind.as_str().to_string(),
+                    scope.storage_scope_id().to_string(),
+                    key.to_string(),
+                ))
+                .is_some();
+            Ok(removed)
+        }
+    }
+
+    async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Value {
+        let patches = connector
+            .discover_options_stream("PI_AGENT", None, None)
+            .await
+            .expect("discover should succeed")
+            .collect::<Vec<_>>()
+            .await;
+        let mut state = serde_json::json!({
+            "options": {
+                "model_selector": {
+                    "providers": [],
+                    "models": [],
+                    "default_model": null,
+                    "agents": [],
+                    "permissions": [],
+                },
+                "slash_commands": [],
+                "loading_models": true,
+                "loading_agents": true,
+                "loading_slash_commands": true,
+                "error": null,
+            },
+            "commands": [],
+            "discovering": false,
+            "error": null,
+        });
+        for patch in patches {
+            json_patch::patch(&mut state, &patch).expect("patch should apply");
+        }
+        state
     }
 
     #[test]
@@ -1340,16 +1528,121 @@ mod tests {
         ));
     }
 
-    struct NoopBridge;
+    #[tokio::test]
+    async fn discovery_reflects_settings_added_after_startup_without_restart() {
+        let repo = Arc::new(TestSettingsRepository::default());
+        let mut connector =
+            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref())
+                .await
+                .expect("connector should initialize even without provider");
+        connector.set_settings_repository(repo.clone());
 
-    #[async_trait::async_trait]
-    impl LlmBridge for NoopBridge {
-        async fn stream_complete(
-            &self,
-            _request: agentdash_agent::BridgeRequest,
-        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>>
-        {
-            Box::pin(tokio_stream::empty())
+        let initial = discover_options_state(&connector).await;
+        assert_eq!(
+            initial["options"]["model_selector"]["providers"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            initial["options"]["model_selector"]["default_model"],
+            serde_json::Value::Null
+        );
+
+        repo.set(
+            &SettingScope::system(),
+            "llm.anthropic.api_key",
+            serde_json::json!("test-key"),
+        )
+        .await
+        .expect("should store anthropic key");
+
+        let refreshed = discover_options_state(&connector).await;
+        assert_eq!(
+            refreshed["options"]["model_selector"]["providers"],
+            serde_json::json!([{ "id": "anthropic", "name": "Anthropic Claude" }])
+        );
+        assert_eq!(
+            refreshed["options"]["model_selector"]["default_model"],
+            serde_json::json!(rig::providers::anthropic::completion::CLAUDE_4_SONNET)
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_does_not_fall_back_to_startup_provider_after_settings_cleared() {
+        let repo = Arc::new(TestSettingsRepository::default());
+        repo.set(
+            &SettingScope::system(),
+            "llm.anthropic.api_key",
+            serde_json::json!("test-key"),
+        )
+        .await
+        .expect("should store anthropic key");
+
+        let mut connector =
+            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref())
+                .await
+                .expect("connector should initialize");
+        connector.set_settings_repository(repo.clone());
+
+        let initial = discover_options_state(&connector).await;
+        assert_eq!(
+            initial["options"]["model_selector"]["providers"],
+            serde_json::json!([{ "id": "anthropic", "name": "Anthropic Claude" }])
+        );
+
+        repo.delete(&SettingScope::system(), "llm.anthropic.api_key")
+            .await
+            .expect("should delete anthropic key");
+
+        let refreshed = discover_options_state(&connector).await;
+        assert_eq!(
+            refreshed["options"]["model_selector"]["providers"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            refreshed["options"]["model_selector"]["models"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            refreshed["options"]["model_selector"]["default_model"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_without_provider_configuration_returns_clear_error() {
+        let repo = Arc::new(TestSettingsRepository::default());
+        let mut connector =
+            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref())
+                .await
+                .expect("connector should initialize even without provider");
+        connector.set_settings_repository(repo);
+
+        let result = connector
+            .prompt(
+                "session-1",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                ExecutionContext {
+                    turn_id: "turn-1".to_string(),
+                    workspace_root: PathBuf::from("F:/Projects/AgentDash"),
+                    working_directory: PathBuf::from("F:/Projects/AgentDash"),
+                    environment_variables: HashMap::new(),
+                    executor_config: crate::connector::AgentDashExecutorConfig::new("PI_AGENT"),
+                    mcp_servers: vec![],
+                    address_space: None,
+                    hook_session: None,
+                    flow_capabilities: Default::default(),
+                    system_context: None,
+                },
+            )
+            .await;
+
+        match result {
+            Err(ConnectorError::InvalidConfig(message)) => {
+                assert!(message.contains("尚未配置任何可用的 LLM Provider"));
+            }
+            Ok(_) => panic!("prompt should fail without configured provider"),
+            Err(other) => panic!("unexpected connector error: {other}"),
         }
     }
 }

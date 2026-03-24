@@ -254,5 +254,4 @@ mod tests {
         assert_eq!(user_entries[0].scope_id.as_deref(), Some("alice"));
         assert!(project_entries.is_empty());
     }
-
 }

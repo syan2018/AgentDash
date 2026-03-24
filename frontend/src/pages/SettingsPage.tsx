@@ -217,17 +217,43 @@ function isConfigured(val: string): boolean {
   return val.length > 0;
 }
 
+function isProviderConfigured(
+  provider: LlmProviderDef,
+  settings: { key: string; value: unknown; masked: boolean }[],
+): boolean {
+  const savedApiKey = provider.apiKeySettingKey ? readVal(settings, provider.apiKeySettingKey) : "";
+  const savedBaseUrl = provider.baseUrlSettingKey ? readVal(settings, provider.baseUrlSettingKey) : "";
+  return provider.noApiKey ? isConfigured(savedBaseUrl) : isConfigured(savedApiKey);
+}
+
 function LlmProvidersSection({
   settings,
   saving,
   onSave,
+  discoveryRefreshKey,
 }: {
   settings: { key: string; value: unknown; masked: boolean }[];
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
+  discoveryRefreshKey: number;
 }) {
-  const discovered = useExecutorDiscoveredOptions("PI_AGENT", "");
+  const discovered = useExecutorDiscoveredOptions("PI_AGENT", "", discoveryRefreshKey);
   const discoveredModels = discovered.options?.model_selector.models ?? [];
+  const sortedProviders = useMemo(() => (
+    LLM_PROVIDERS
+      .map((provider, index) => ({
+        provider,
+        index,
+        configured: isProviderConfigured(provider, settings),
+      }))
+      .sort((left, right) => {
+        if (left.configured !== right.configured) {
+          return left.configured ? -1 : 1;
+        }
+        return left.index - right.index;
+      })
+      .map((entry) => entry.provider)
+  ), [settings]);
 
   return (
     <SectionCard title="LLM Providers">
@@ -235,7 +261,7 @@ function LlmProvidersSection({
         配置各 LLM 服务商的 API 密钥和端点，按需开启
       </p>
       <div className="space-y-2">
-        {LLM_PROVIDERS.map((provider) => (
+        {sortedProviders.map((provider) => (
           <LlmProviderRow
             key={provider.id}
             provider={provider}
@@ -373,6 +399,33 @@ function LlmProviderForm({
   const [modelsTouched, setModelsTouched] = useState(false);
   const [blockedModels, setBlockedModels] = useState<string[]>(initialBlockedModels);
   const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
+  const defaultModelOptions = useMemo(() => {
+    const options =
+      models.length > 0
+        ? models
+          .filter((candidate) => candidate.id.trim().length > 0)
+          .map((candidate) => ({
+            id: candidate.id,
+            name: candidate.name.trim() || candidate.id,
+          }))
+        : discoveredModels
+          .filter((candidate) => candidate.id.trim().length > 0 && candidate.blocked !== true)
+          .map((candidate) => ({
+            id: candidate.id,
+            name: candidate.name.trim() || candidate.id,
+          }));
+
+    if (model.trim().length > 0 && !options.some((candidate) => candidate.id === model)) {
+      options.unshift({
+        id: model,
+        name: `${model}（当前值）`,
+      });
+    }
+
+    return options.filter((candidate, index, list) => (
+      list.findIndex((item) => item.id === candidate.id) === index
+    ));
+  }, [discoveredModels, model, models]);
   const toggleBlockedModel = (modelId: string) => {
     setBlockedModels((current) => {
       const exists = current.includes(modelId);
@@ -486,14 +539,34 @@ function LlmProviderForm({
 
       {/* 默认模型 */}
       {provider.defaultModelSettingKey && (
-        <Field label="默认模型">
-          <input
-            type="text"
-            className={inputCls}
-            value={model}
-            placeholder="例如 gpt-4o"
-            onChange={(e) => setModel(e.target.value)}
-          />
+        <Field
+          label="默认模型"
+          desc={defaultModelOptions.length > 0
+            ? "从当前候选模型中选择默认值"
+            : "当前还没有候选模型，先保存 Provider 配置后会自动出现下拉"}
+        >
+          {defaultModelOptions.length > 0 ? (
+            <select
+              className={`${inputCls} h-10 appearance-none`}
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            >
+              <option value="">选择默认模型…</option>
+              {defaultModelOptions.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              className={inputCls}
+              value={model}
+              placeholder="例如 gpt-4o"
+              onChange={(e) => setModel(e.target.value)}
+            />
+          )}
         </Field>
       )}
 
@@ -1061,6 +1134,7 @@ export function SettingsPage() {
   const { currentProjectId, projects } = useProjectStore();
   const [activeScope, setActiveScope] = useState<SettingsScopeKind>("system");
   const [toast, setToast] = useState<string | null>(null);
+  const [llmDiscoveryRefreshKey, setLlmDiscoveryRefreshKey] = useState(0);
 
   const currentProject = projects.find((project) => project.id === currentProjectId) ?? null;
   const canManageSystemScope = currentUser?.auth_mode === "personal" || currentUser?.is_admin === true;
@@ -1091,6 +1165,9 @@ export function SettingsPage() {
       if (!scopeRequest) return;
       const updated = await updateSettings(scopeRequest, updates);
       if (updated.length > 0) {
+        if (updated.some((key) => key.startsWith("llm."))) {
+          setLlmDiscoveryRefreshKey((current) => current + 1);
+        }
         setToast("设置已保存");
       }
     },
@@ -1161,7 +1238,12 @@ export function SettingsPage() {
         {activeScope === "system" && canManageSystemScope && (
           <>
             <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
-            <LlmProvidersSection settings={settings} saving={saving} onSave={handleSave} />
+            <LlmProvidersSection
+              settings={settings}
+              saving={saving}
+              onSave={handleSave}
+              discoveryRefreshKey={llmDiscoveryRefreshKey}
+            />
             <AgentSection settings={settings} saving={saving} onSave={handleSave} />
             <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />
           </>

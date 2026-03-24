@@ -185,7 +185,7 @@ impl AppState {
 
         if let Some(pi_connector) = build_pi_agent_connector(
             &workspace_root,
-            settings_repo.as_ref(),
+            settings_repo.clone(),
             address_space_service.clone(),
             session_binding_repo.clone(),
             workflow_repo.clone(),
@@ -300,7 +300,7 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
 /// 尝试构建 PiAgentConnector，委托给 executor 层的 factory 后附加 runtime tool provider。
 async fn build_pi_agent_connector(
     workspace_root: &std::path::Path,
-    settings: &dyn SettingsRepository,
+    settings_repo: Arc<dyn SettingsRepository>,
     address_space_service: Arc<RelayAddressSpaceService>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
@@ -310,9 +310,10 @@ async fn build_pi_agent_connector(
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
         workspace_root,
-        settings,
+        settings_repo.as_ref(),
     )
     .await?;
+    connector.set_settings_repository(settings_repo);
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         address_space_service,
         session_binding_repo,

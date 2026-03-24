@@ -200,6 +200,7 @@ pub(crate) struct BuiltProviderEntry {
     pub default_bridge: Arc<dyn LlmBridge>,
 }
 
+#[derive(Clone)]
 pub(crate) struct ProviderEntry {
     pub provider_id: &'static str,
     pub provider_name: &'static str,

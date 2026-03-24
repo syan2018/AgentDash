@@ -24,6 +24,7 @@ use agentdash_agent::{
     Agent, AgentConfig, AgentEvent, AgentMessage, AgentToolResult, ContentPart, DynAgentTool,
     LlmBridge,
 };
+use agentdash_domain::settings::SettingsRepository;
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
@@ -48,9 +49,16 @@ pub struct PiAgentConnector {
     providers: Vec<ProviderEntry>,
     tools: Vec<DynAgentTool>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
+    settings_repo: Option<Arc<dyn SettingsRepository>>,
     system_prompt: String,
     model_id: String,
     agents: Arc<Mutex<HashMap<String, Agent>>>,
+}
+
+struct ProviderRuntimeState {
+    default_bridge: Arc<dyn LlmBridge>,
+    default_model: String,
+    providers: Vec<ProviderEntry>,
 }
 
 impl PiAgentConnector {
@@ -66,6 +74,7 @@ impl PiAgentConnector {
             providers: Vec::new(),
             tools: Vec::new(),
             runtime_tool_provider: None,
+            settings_repo: None,
             system_prompt: system_prompt.into(),
             model_id: model_id.into(),
             agents: Arc::new(Mutex::new(HashMap::new())),
@@ -80,8 +89,36 @@ impl PiAgentConnector {
         self.runtime_tool_provider = Some(provider);
     }
 
+    pub fn set_settings_repository(&mut self, settings_repo: Arc<dyn SettingsRepository>) {
+        self.settings_repo = Some(settings_repo);
+    }
+
     fn add_provider(&mut self, provider: ProviderEntry) {
         self.providers.push(provider);
+    }
+
+    async fn load_provider_runtime_state(&self) -> ProviderRuntimeState {
+        if let Some(settings_repo) = &self.settings_repo {
+            let providers = build_provider_entries(settings_repo.as_ref()).await;
+            if !providers.is_empty() {
+                let default_model = providers[0].entry.default_model.clone();
+                let default_bridge = providers[0].default_bridge.clone();
+                return ProviderRuntimeState {
+                    default_bridge,
+                    default_model,
+                    providers: providers
+                        .into_iter()
+                        .map(|provider| provider.entry)
+                        .collect(),
+                };
+            }
+        }
+
+        ProviderRuntimeState {
+            default_bridge: self.bridge.clone(),
+            default_model: self.model_id.clone(),
+            providers: self.providers.clone(),
+        }
     }
 
     fn create_agent_with_bridge(&self, bridge: Arc<dyn LlmBridge>) -> Agent {
@@ -101,6 +138,7 @@ impl PiAgentConnector {
 
     async fn resolve_bridge_for_execution(
         &self,
+        provider_state: &ProviderRuntimeState,
         provider_id: Option<&str>,
         model_id: Option<&str>,
     ) -> Arc<dyn LlmBridge> {
@@ -108,11 +146,11 @@ impl PiAgentConnector {
         let model_id = model_id.map(str::trim).filter(|item| !item.is_empty());
 
         if provider_id.is_none() && model_id.is_none() {
-            return self.bridge.clone();
+            return provider_state.default_bridge.clone();
         }
 
         if let Some(provider_id) = provider_id {
-            if let Some(provider) = self
+            if let Some(provider) = provider_state
                 .providers
                 .iter()
                 .find(|provider| provider.provider_id == provider_id)
@@ -123,18 +161,18 @@ impl PiAgentConnector {
         }
 
         if let Some(model_id) = model_id {
-            if model_id == self.model_id {
-                return self.bridge.clone();
+            if model_id == provider_state.default_model {
+                return provider_state.default_bridge.clone();
             }
 
-            for provider in &self.providers {
+            for provider in &provider_state.providers {
                 if provider.supports_model(model_id).await {
                     return provider.create_bridge(model_id);
                 }
             }
         }
 
-        self.bridge.clone()
+        provider_state.default_bridge.clone()
     }
 
     fn build_runtime_system_prompt(
@@ -351,10 +389,11 @@ impl AgentConnector for PiAgentConnector {
         _variant: Option<&str>,
         _working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        let provider_state = self.load_provider_runtime_state().await;
         let mut all_providers: Vec<serde_json::Value> = vec![];
         let mut all_models: Vec<serde_json::Value> = vec![];
 
-        for provider in &self.providers {
+        for provider in &provider_state.providers {
             all_providers.push(serde_json::json!({
                 "id": provider.provider_id,
                 "name": provider.provider_name,
@@ -375,7 +414,7 @@ impl AgentConnector for PiAgentConnector {
 
         // 若没有注册任何 provider，退化为单模型显示（向后兼容）
         if all_providers.is_empty() {
-            let model_id = self.model_id.clone();
+            let model_id = provider_state.default_model.clone();
             all_providers.push(serde_json::json!({
                 "id": "default",
                 "name": "Default",
@@ -391,7 +430,7 @@ impl AgentConnector for PiAgentConnector {
             }));
         }
 
-        let default_model = self.model_id.clone();
+        let default_model = provider_state.default_model.clone();
 
         let patch: json_patch::Patch = serde_json::from_value(serde_json::json!([
             { "op": "replace", "path": "/options/model_selector/providers", "value": all_providers },
@@ -426,8 +465,10 @@ impl AgentConnector for PiAgentConnector {
         let mut agent = if let Some(agent) = existing_agent {
             agent
         } else {
+            let provider_state = self.load_provider_runtime_state().await;
             let bridge = self
                 .resolve_bridge_for_execution(
+                    &provider_state,
                     context.executor_config.provider_id.as_deref(),
                     context.executor_config.model_id.as_deref(),
                 )

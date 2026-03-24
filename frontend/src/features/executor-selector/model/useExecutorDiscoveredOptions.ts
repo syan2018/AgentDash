@@ -41,6 +41,7 @@ type ServerMessage =
 export function useExecutorDiscoveredOptions(
   executor: string,
   variant: string,
+  refreshKey = 0,
 ): UseExecutorDiscoveredOptionsResult {
   const [options, setOptions] = useState<ExecutorDiscoveryStreamState["options"]>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -149,7 +150,7 @@ export function useExecutorDiscoveredOptions(
     return () => {
       controller.abort();
     };
-  }, [executor, variant, reconnectNonce]);
+  }, [executor, variant, reconnectNonce, refreshKey]);
 
   return {
     options,

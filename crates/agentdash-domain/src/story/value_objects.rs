@@ -105,6 +105,7 @@ pub enum ChangeKind {
 pub struct StateChange {
     /// 单调递增 ID，用于 Resume 的游标定位
     pub id: i64,
+    pub project_id: Uuid,
     pub entity_id: Uuid,
     pub kind: ChangeKind,
     /// 变更载荷（差异数据）

@@ -139,10 +139,7 @@ fn preserve_session_level_metadata(
         return;
     };
     for &key in SESSION_LEVEL_METADATA_KEYS {
-        if target
-            .get(key)
-            .map_or(true, serde_json::Value::is_null)
-        {
+        if target.get(key).map_or(true, serde_json::Value::is_null) {
             if let Some(value) = previous.get(key).filter(|v| !v.is_null()) {
                 target.insert(key.to_string(), value.clone());
             }
@@ -815,11 +812,7 @@ mod tests {
             ..Default::default()
         };
         let provider = Arc::new(NoopExecutionHookProvider);
-        let runtime = HookSessionRuntime::new(
-            "sess-1".into(),
-            provider,
-            initial_snapshot,
-        );
+        let runtime = HookSessionRuntime::new("sess-1".into(), provider, initial_snapshot);
 
         let refreshed = runtime
             .refresh(SessionHookRefreshQuery {

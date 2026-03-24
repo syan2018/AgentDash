@@ -6,5 +6,6 @@ pub use persistence::sqlite::SqliteSessionBindingRepository;
 pub use persistence::sqlite::SqliteSettingsRepository;
 pub use persistence::sqlite::SqliteStoryRepository;
 pub use persistence::sqlite::SqliteTaskRepository;
+pub use persistence::sqlite::SqliteUserDirectoryRepository;
 pub use persistence::sqlite::SqliteWorkflowRepository;
 pub use persistence::sqlite::SqliteWorkspaceRepository;

@@ -11,9 +11,7 @@ use agentdash_agent::DynAgentTool;
 use async_trait::async_trait;
 
 #[cfg(feature = "pi-agent")]
-pub fn to_agent_runtime_thinking_level(
-    level: ThinkingLevel,
-) -> agentdash_agent::ThinkingLevel {
+pub fn to_agent_runtime_thinking_level(level: ThinkingLevel) -> agentdash_agent::ThinkingLevel {
     match level {
         ThinkingLevel::Off => agentdash_agent::ThinkingLevel::Off,
         ThinkingLevel::Minimal => agentdash_agent::ThinkingLevel::Minimal,

@@ -74,6 +74,7 @@ pub struct WorkflowAssignmentResponse {
 #[derive(Debug, Serialize)]
 pub struct WorkflowRunResponse {
     pub id: Uuid,
+    pub project_id: Uuid,
     pub workflow_id: Uuid,
     pub target_kind: WorkflowTargetKind,
     pub target_id: Uuid,
@@ -185,6 +186,7 @@ impl From<WorkflowRun> for WorkflowRunResponse {
     fn from(value: WorkflowRun) -> Self {
         Self {
             id: value.id,
+            project_id: value.project_id,
             workflow_id: value.workflow_id,
             target_kind: value.target_kind,
             target_id: value.target_id,

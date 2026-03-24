@@ -20,6 +20,7 @@ impl SqliteTaskRepository {
             r#"
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
                 story_id TEXT NOT NULL REFERENCES stories(id),
                 workspace_id TEXT REFERENCES workspaces(id),
                 title TEXT NOT NULL,
@@ -27,6 +28,7 @@ impl SqliteTaskRepository {
                 status TEXT NOT NULL DEFAULT 'pending',
                 session_id TEXT,
                 executor_session_id TEXT,
+                execution_mode TEXT NOT NULL DEFAULT 'standard',
                 agent_binding TEXT NOT NULL DEFAULT '{}',
                 artifacts TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
@@ -36,47 +38,13 @@ impl SqliteTaskRepository {
             CREATE INDEX IF NOT EXISTS idx_tasks_story_id ON tasks(story_id);
             CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
             CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_executor_session_id ON tasks(executor_session_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
             "#,
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        // 历史库升级：旧表可能缺少 executor_session_id 列
-        if let Err(err) = sqlx::query("ALTER TABLE tasks ADD COLUMN executor_session_id TEXT")
-            .execute(&self.pool)
-            .await
-        {
-            let duplicate_column = err
-                .to_string()
-                .to_ascii_lowercase()
-                .contains("duplicate column name");
-            if !duplicate_column {
-                return Err(DomainError::InvalidConfig(err.to_string()));
-            }
-        }
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_executor_session_id ON tasks(executor_session_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        if let Err(err) = sqlx::query(
-            "ALTER TABLE tasks ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'standard'",
-        )
-        .execute(&self.pool)
-        .await
-        {
-            let duplicate_column = err
-                .to_string()
-                .to_ascii_lowercase()
-                .contains("duplicate column name");
-            if !duplicate_column {
-                return Err(DomainError::InvalidConfig(err.to_string()));
-            }
-        }
 
         Ok(())
     }
@@ -105,15 +73,17 @@ impl SqliteTaskRepository {
     async fn insert_state_change(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        project_id: uuid::Uuid,
         entity_id: uuid::Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,
         backend_id: Option<&str>,
     ) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(project_id.to_string())
         .bind(entity_id.to_string())
         .bind(serde_json::to_string(&kind)?.trim_matches('"'))
         .bind(payload.to_string())
@@ -130,33 +100,12 @@ impl SqliteTaskRepository {
 #[async_trait::async_trait]
 impl TaskRepository for SqliteTaskRepository {
     async fn create(&self, task: &Task) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(task.id.to_string())
-        .bind(task.story_id.to_string())
-        .bind(task.workspace_id.map(|id| id.to_string()))
-        .bind(&task.title)
-        .bind(&task.description)
-        .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
-        .bind(task.session_id.as_deref())
-        .bind(task.executor_session_id.as_deref())
-        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
-        .bind(serde_json::to_string(&task.agent_binding)?)
-        .bind(serde_json::to_string(&task.artifacts)?)
-        .bind(task.created_at.to_rfc3339())
-        .bind(task.updated_at.to_rfc3339())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        self.create_task_with_story_update(task).await
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Task>, DomainError> {
         let row = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE id = ?",
         )
         .bind(id.to_string())
@@ -167,9 +116,22 @@ impl TaskRepository for SqliteTaskRepository {
         row.map(|r| r.try_into()).transpose()
     }
 
+    async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
+        let rows = sqlx::query_as::<_, TaskRow>(
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+             FROM tasks WHERE project_id = ? ORDER BY created_at ASC",
+        )
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        rows.into_iter().map(|r| r.try_into()).collect()
+    }
+
     async fn list_by_story(&self, story_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
         let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE story_id = ? ORDER BY created_at ASC",
         )
         .bind(story_id.to_string())
@@ -182,7 +144,7 @@ impl TaskRepository for SqliteTaskRepository {
 
     async fn list_by_workspace(&self, workspace_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
         let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE workspace_id = ? ORDER BY created_at ASC",
         )
         .bind(workspace_id.to_string())
@@ -195,9 +157,10 @@ impl TaskRepository for SqliteTaskRepository {
 
     async fn update(&self, task: &Task) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "UPDATE tasks SET story_id = ?, workspace_id = ?, title = ?, description = ?, status = ?, session_id = ?, executor_session_id = ?, execution_mode = ?, agent_binding = ?, artifacts = ?, updated_at = ?
+            "UPDATE tasks SET project_id = ?, story_id = ?, workspace_id = ?, title = ?, description = ?, status = ?, session_id = ?, executor_session_id = ?, execution_mode = ?, agent_binding = ?, artifacts = ?, updated_at = ?
              WHERE id = ?",
         )
+        .bind(task.project_id.to_string())
         .bind(task.story_id.to_string())
         .bind(task.workspace_id.map(|id| id.to_string()))
         .bind(&task.title)
@@ -242,18 +205,7 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
-        let result = sqlx::query("DELETE FROM tasks WHERE id = ?")
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            return Err(DomainError::NotFound {
-                entity: "task",
-                id: id.to_string(),
-            });
-        }
+        self.delete_task_with_story_update(id).await?;
         Ok(())
     }
 
@@ -268,10 +220,11 @@ impl TaskRepository for SqliteTaskRepository {
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO tasks (id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(task.id.to_string())
+        .bind(task.project_id.to_string())
         .bind(task.story_id.to_string())
         .bind(task.workspace_id.map(|id| id.to_string()))
         .bind(&task.title)
@@ -308,6 +261,7 @@ impl TaskRepository for SqliteTaskRepository {
 
         self.insert_state_change(
             &mut tx,
+            task.project_id,
             task.id,
             ChangeKind::TaskCreated,
             build_task_created_payload(task),
@@ -316,6 +270,7 @@ impl TaskRepository for SqliteTaskRepository {
         .await?;
         self.insert_state_change(
             &mut tx,
+            task.project_id,
             task.story_id,
             ChangeKind::StoryUpdated,
             story.to_payload("task_created_by_user"),
@@ -340,7 +295,7 @@ impl TaskRepository for SqliteTaskRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let row = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE id = ?",
         )
         .bind(task_id.to_string())
@@ -390,10 +345,12 @@ impl TaskRepository for SqliteTaskRepository {
 
         self.insert_state_change(
             &mut tx,
+            task.project_id,
             task_id,
             ChangeKind::TaskDeleted,
             serde_json::json!({
                 "task_id": task_id,
+                "project_id": task.project_id,
                 "story_id": task.story_id,
                 "reason": "task_deleted_by_user"
             }),
@@ -402,6 +359,7 @@ impl TaskRepository for SqliteTaskRepository {
         .await?;
         self.insert_state_change(
             &mut tx,
+            task.project_id,
             task.story_id,
             ChangeKind::StoryUpdated,
             story.to_payload("task_deleted_by_user"),
@@ -421,6 +379,7 @@ impl TaskRepository for SqliteTaskRepository {
 #[derive(sqlx::FromRow)]
 struct TaskRow {
     id: String,
+    project_id: String,
     story_id: String,
     workspace_id: Option<String>,
     title: String,
@@ -466,6 +425,10 @@ impl TryFrom<TaskRow> for Task {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
                 entity: "task",
                 id: row.id.clone(),
+            })?,
+            project_id: row.project_id.parse().map_err(|_| DomainError::NotFound {
+                entity: "project",
+                id: row.project_id.clone(),
             })?,
             story_id: row.story_id.parse().map_err(|_| DomainError::NotFound {
                 entity: "story",
@@ -514,6 +477,7 @@ fn build_task_created_payload(task: &Task) -> serde_json::Value {
 
     serde_json::json!({
         "task_id": task.id,
+        "project_id": task.project_id,
         "story_id": task.story_id,
         "reason": "task_created_by_user"
     })

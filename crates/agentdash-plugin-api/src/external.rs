@@ -30,7 +30,10 @@ pub enum ProviderError {
 impl ProviderError {
     /// 此错误是否可以安全重试
     pub fn is_retryable(&self) -> bool {
-        matches!(self, ProviderError::Timeout | ProviderError::ServiceUnavailable(_))
+        matches!(
+            self,
+            ProviderError::Timeout | ProviderError::ServiceUnavailable(_)
+        )
     }
 }
 
@@ -141,7 +144,11 @@ pub trait ExternalServiceClient: Send + Sync {
     async fn capabilities(&self) -> Result<ProviderCapabilities, ProviderError>;
 
     /// 列出指定路径下的资源条目
-    async fn list(&self, path: &str, opts: &ListOptions) -> Result<Vec<ResourceEntry>, ProviderError>;
+    async fn list(
+        &self,
+        path: &str,
+        opts: &ListOptions,
+    ) -> Result<Vec<ResourceEntry>, ProviderError>;
 
     /// 读取指定路径资源的内容
     async fn read(&self, path: &str) -> Result<ResourceContent, ProviderError>;

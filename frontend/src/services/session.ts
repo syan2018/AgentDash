@@ -20,9 +20,7 @@ function mapSessionBindingOwner(raw: Record<string, unknown>): SessionBindingOwn
         ? String(raw.owner_title)
         : null,
     project_id:
-      raw.project_id != null
-        ? String(raw.project_id)
-        : null,
+      String(raw.project_id ?? ""),
     story_id:
       raw.story_id != null
         ? String(raw.story_id)

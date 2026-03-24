@@ -45,9 +45,7 @@ where
     let assignments = assignment_repo
         .list_by_project_and_role(input.project_id, input.role)
         .await?;
-    let default_assignment = assignments
-        .into_iter()
-        .find(|a| a.enabled && a.is_default);
+    let default_assignment = assignments.into_iter().find(|a| a.enabled && a.is_default);
 
     let assignment = match default_assignment {
         Some(a) => a,
@@ -88,6 +86,7 @@ where
     }
 
     let mut run = WorkflowRun::new(
+        input.project_id,
         definition.id,
         input.target_kind,
         input.target_id,
@@ -124,9 +123,8 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        WorkflowAgentRole, WorkflowAssignment, WorkflowAssignmentRepository,
-        WorkflowDefinition, WorkflowDefinitionRepository, WorkflowRun, WorkflowRunRepository,
-        WorkflowTargetKind,
+        WorkflowAgentRole, WorkflowAssignment, WorkflowAssignmentRepository, WorkflowDefinition,
+        WorkflowDefinitionRepository, WorkflowRun, WorkflowRunRepository, WorkflowTargetKind,
     };
 
     use super::*;
@@ -149,16 +147,39 @@ mod tests {
             Ok(self.definitions.lock().unwrap().get(&id).cloned())
         }
         async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(self.definitions.lock().unwrap().values().find(|w| w.key == key).cloned())
+            Ok(self
+                .definitions
+                .lock()
+                .unwrap()
+                .values()
+                .find(|w| w.key == key)
+                .cloned())
         }
         async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
             Ok(self.definitions.lock().unwrap().values().cloned().collect())
         }
         async fn list_enabled(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self.definitions.lock().unwrap().values().filter(|w| w.enabled).cloned().collect())
+            Ok(self
+                .definitions
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|w| w.enabled)
+                .cloned()
+                .collect())
         }
-        async fn list_by_target_kind(&self, tk: WorkflowTargetKind) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self.definitions.lock().unwrap().values().filter(|w| w.target_kind == tk).cloned().collect())
+        async fn list_by_target_kind(
+            &self,
+            tk: WorkflowTargetKind,
+        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+            Ok(self
+                .definitions
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|w| w.target_kind == tk)
+                .cloned()
+                .collect())
         }
         async fn update(&self, w: &WorkflowDefinition) -> Result<(), DomainError> {
             self.definitions.lock().unwrap().insert(w.id, w.clone());
@@ -180,10 +201,28 @@ mod tests {
             Ok(self.assignments.lock().unwrap().get(&id).cloned())
         }
         async fn list_by_project(&self, pid: Uuid) -> Result<Vec<WorkflowAssignment>, DomainError> {
-            Ok(self.assignments.lock().unwrap().values().filter(|a| a.project_id == pid).cloned().collect())
+            Ok(self
+                .assignments
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|a| a.project_id == pid)
+                .cloned()
+                .collect())
         }
-        async fn list_by_project_and_role(&self, pid: Uuid, role: WorkflowAgentRole) -> Result<Vec<WorkflowAssignment>, DomainError> {
-            Ok(self.assignments.lock().unwrap().values().filter(|a| a.project_id == pid && a.role == role).cloned().collect())
+        async fn list_by_project_and_role(
+            &self,
+            pid: Uuid,
+            role: WorkflowAgentRole,
+        ) -> Result<Vec<WorkflowAssignment>, DomainError> {
+            Ok(self
+                .assignments
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|a| a.project_id == pid && a.role == role)
+                .cloned()
+                .collect())
         }
         async fn update(&self, a: &WorkflowAssignment) -> Result<(), DomainError> {
             self.assignments.lock().unwrap().insert(a.id, a.clone());
@@ -204,11 +243,39 @@ mod tests {
         async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowRun>, DomainError> {
             Ok(self.runs.lock().unwrap().get(&id).cloned())
         }
-        async fn list_by_workflow(&self, wid: Uuid) -> Result<Vec<WorkflowRun>, DomainError> {
-            Ok(self.runs.lock().unwrap().values().filter(|r| r.workflow_id == wid).cloned().collect())
+        async fn list_by_project(&self, pid: Uuid) -> Result<Vec<WorkflowRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|r| r.project_id == pid)
+                .cloned()
+                .collect())
         }
-        async fn list_by_target(&self, tk: WorkflowTargetKind, tid: Uuid) -> Result<Vec<WorkflowRun>, DomainError> {
-            Ok(self.runs.lock().unwrap().values().filter(|r| r.target_kind == tk && r.target_id == tid).cloned().collect())
+        async fn list_by_workflow(&self, wid: Uuid) -> Result<Vec<WorkflowRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|r| r.workflow_id == wid)
+                .cloned()
+                .collect())
+        }
+        async fn list_by_target(
+            &self,
+            tk: WorkflowTargetKind,
+            tid: Uuid,
+        ) -> Result<Vec<WorkflowRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|r| r.target_kind == tk && r.target_id == tid)
+                .cloned()
+                .collect())
         }
         async fn update(&self, r: &WorkflowRun) -> Result<(), DomainError> {
             self.runs.lock().unwrap().insert(r.id, r.clone());
@@ -279,7 +346,9 @@ mod tests {
         let target_id = Uuid::new_v4();
 
         let first = resolve_assignment_and_ensure_run(
-            &store, &store, &store,
+            &store,
+            &store,
+            &store,
             ResolveAssignmentInput {
                 project_id,
                 role: WorkflowAgentRole::TaskExecutionWorker,
@@ -293,7 +362,9 @@ mod tests {
         .unwrap();
 
         let second = resolve_assignment_and_ensure_run(
-            &store, &store, &store,
+            &store,
+            &store,
+            &store,
             ResolveAssignmentInput {
                 project_id,
                 role: WorkflowAgentRole::TaskExecutionWorker,
@@ -317,7 +388,9 @@ mod tests {
         let target_id = Uuid::new_v4();
 
         let result = resolve_assignment_and_ensure_run(
-            &store, &store, &store,
+            &store,
+            &store,
+            &store,
             ResolveAssignmentInput {
                 project_id,
                 role: WorkflowAgentRole::TaskExecutionWorker,

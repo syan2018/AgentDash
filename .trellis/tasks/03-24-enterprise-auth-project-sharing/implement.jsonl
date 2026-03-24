@@ -1,0 +1,15 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/tasks/03-24-enterprise-auth-project-sharing/prd.md", "reason": "总任务目标、范围与验收标准"}
+{"file": ".trellis/tasks/03-24-enterprise-auth-project-sharing/implementation-plan.md", "reason": "分阶段实施顺序与依赖"}
+{"file": ".trellis/tasks/03-24-enterprise-auth-project-sharing/authorization-matrix.md", "reason": "Project 角色与资源权限矩阵"}
+{"file": ".trellis/tasks/03-24-plugin-api-architecture/prd.md", "reason": "认证插件化与宿主装配约束"}
+{"file": ".trellis/spec/backend/plugin-api.md", "reason": "插件 API 长期约束与稳定性边界"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "身份、授权、会话与前端跨层数据流检查"}
+{"file": "crates/agentdash-plugin-api/src/auth.rs", "reason": "当前认证契约起点"}
+{"file": "crates/agentdash-api/src/app_state.rs", "reason": "认证 provider 注入与宿主组合根"}
+{"file": "crates/agentdash-api/src/routes/projects.rs", "reason": "Project CRUD 当前全局可见入口"}
+{"file": "crates/agentdash-api/src/routes/acp_sessions.rs", "reason": "Session 全局访问入口与后续授权收口点"}
+{"file": "crates/agentdash-api/src/stream.rs", "reason": "全局事件流当前实现与 project-scoped 改造入口"}
+{"file": "crates/agentdash-api/src/routes/workspace_files.rs", "reason": "Workspace 文件访问与 root fallback 风险点"}

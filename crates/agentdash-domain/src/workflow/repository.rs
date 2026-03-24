@@ -40,6 +40,7 @@ pub trait WorkflowAssignmentRepository: Send + Sync {
 pub trait WorkflowRunRepository: Send + Sync {
     async fn create(&self, run: &WorkflowRun) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowRun>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<WorkflowRun>, DomainError>;
     async fn list_by_workflow(&self, workflow_id: Uuid) -> Result<Vec<WorkflowRun>, DomainError>;
     async fn list_by_target(
         &self,

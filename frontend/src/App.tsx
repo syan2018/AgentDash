@@ -1,9 +1,10 @@
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useCallback, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
 import { useEventStore } from "./stores/eventStore";
+import { useCurrentUserStore } from "./stores/currentUserStore";
 
 // ─── 懒加载页面组件 ────────────────────────────────────
 
@@ -50,6 +51,30 @@ function RouteFallback() {
   );
 }
 
+function BootstrapErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center bg-background">
+      <div className="max-w-md rounded-[16px] border border-destructive/20 bg-destructive/5 p-6 text-center">
+        <h2 className="text-lg font-semibold text-foreground">无法完成身份初始化</h2>
+        <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-4 rounded-[10px] border border-border bg-background px-4 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+        >
+          重新加载
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── /session/:sessionId 路由包装器 ───────────────────
 
 function SessionRouteWrapper() {
@@ -60,16 +85,59 @@ function SessionRouteWrapper() {
 // ─── 应用主路由结构 ────────────────────────────────────
 
 function AppContent() {
-  const { fetchProjects } = useProjectStore();
+  const { fetchProjects, currentProjectId } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
-  const { connect } = useEventStore();
+  const { connect, disconnect } = useEventStore();
+  const {
+    currentUser,
+    isLoading: isLoadingCurrentUser,
+    hasLoaded: hasLoadedCurrentUser,
+    error: currentUserError,
+    fetchCurrentUser,
+  } = useCurrentUserStore();
 
-  // 应用初始化：拉取项目列表、后端列表，建立 SSE 连接
+  const initializeApp = useCallback(async (signal?: { cancelled: boolean }) => {
+    const user = await fetchCurrentUser();
+    if (!user || signal?.cancelled) return;
+
+    await Promise.allSettled([
+      fetchBackends(),
+      fetchProjects(),
+    ]);
+
+  }, [fetchBackends, fetchProjects, fetchCurrentUser]);
+
   useEffect(() => {
-    void fetchBackends();
-    void fetchProjects();
-    connect();
-  }, [fetchBackends, fetchProjects, connect]);
+    const signal = { cancelled: false };
+    void initializeApp(signal);
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [initializeApp]);
+
+  useEffect(() => {
+    if (!hasLoadedCurrentUser || isLoadingCurrentUser) return;
+    if (!currentProjectId) {
+      disconnect();
+      return;
+    }
+    connect(currentProjectId);
+  }, [connect, currentProjectId, disconnect, hasLoadedCurrentUser, isLoadingCurrentUser]);
+
+  if (!hasLoadedCurrentUser || isLoadingCurrentUser) {
+    return <RouteFallback />;
+  }
+
+  if (!currentUser) {
+    return (
+      <BootstrapErrorState
+        message={currentUserError ?? "当前服务未返回有效用户身份"}
+        onRetry={() => {
+          void initializeApp();
+        }}
+      />
+    );
+  }
 
   return (
     <Suspense fallback={<RouteFallback />}>

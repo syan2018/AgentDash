@@ -23,6 +23,10 @@ export type BackendType = "local" | "remote";
 export type WorkspaceType = "git_worktree" | "static" | "ephemeral";
 export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "archived" | "error";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type AuthMode = "personal" | "enterprise";
+export type ProjectVisibility = "private" | "template_visible";
+export type ProjectRole = "owner" | "editor" | "viewer";
+export type ProjectSubjectType = "user" | "group";
 
 export const THINKING_LEVEL_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = [
   { value: "off", label: "关闭" },
@@ -42,6 +46,48 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevel {
     || value === "high"
     || value === "xhigh"
   );
+}
+
+export function isAuthMode(value: unknown): value is AuthMode {
+  return value === "personal" || value === "enterprise";
+}
+
+// ─── 当前用户 / 身份 ─────────────────────────────────
+
+export interface AuthGroup {
+  group_id: string;
+  display_name?: string | null;
+}
+
+export interface CurrentUser {
+  auth_mode: AuthMode;
+  user_id: string;
+  subject: string;
+  display_name?: string | null;
+  email?: string | null;
+  groups: AuthGroup[];
+  is_admin: boolean;
+  provider?: string | null;
+  extra: unknown;
+}
+
+export interface DirectoryUser {
+  user_id: string;
+  subject: string;
+  auth_mode: string;
+  display_name?: string | null;
+  email?: string | null;
+  is_admin: boolean;
+  provider?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DirectoryGroup {
+  group_id: string;
+  display_name?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // ─── 上下文容器 / 挂载策略 / 会话编排 ──────────────────
@@ -343,6 +389,7 @@ export interface WorkflowRecordArtifact {
 
 export interface WorkflowRun {
   id: string;
+  project_id: string;
   workflow_id: string;
   target_kind: WorkflowTargetKind;
   target_id: string;
@@ -416,6 +463,31 @@ export interface Project {
   name: string;
   description: string;
   config: ProjectConfig;
+  created_by_user_id: string;
+  updated_by_user_id: string;
+  visibility: ProjectVisibility;
+  is_template: boolean;
+  cloned_from_project_id?: string | null;
+  access: ProjectAccessSummary;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectAccessSummary {
+  role?: ProjectRole | null;
+  can_view: boolean;
+  can_edit: boolean;
+  can_manage_sharing: boolean;
+  via_admin_bypass: boolean;
+  via_template_visibility: boolean;
+}
+
+export interface ProjectSubjectGrant {
+  project_id: string;
+  subject_type: ProjectSubjectType;
+  subject_id: string;
+  role: ProjectRole;
+  granted_by_user_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -560,6 +632,7 @@ export interface AgentBinding {
 
 export interface Task {
   id: string;
+  project_id: string;
   story_id: string;
   workspace_id?: string | null;
   session_id?: string | null;
@@ -580,6 +653,7 @@ export type SessionOwnerType = "project" | "story" | "task";
 
 export interface SessionBinding {
   id: string;
+  project_id: string;
   session_id: string;
   owner_type: SessionOwnerType;
   owner_id: string;
@@ -611,13 +685,13 @@ export type SessionReturnTarget =
 
 export interface SessionBindingOwner {
   id: string;
+  project_id: string;
   session_id: string;
   owner_type: SessionOwnerType;
   owner_id: string;
   label: string;
   created_at: string;
   owner_title?: string | null;
-  project_id?: string | null;
   story_id?: string | null;
   task_id?: string | null;
 }
@@ -880,6 +954,7 @@ export interface ViewConfig {
 
 export interface StateChange {
   id: number;
+  project_id: string;
   entity_id: string;
   kind: string;
   payload: Record<string, unknown>;

@@ -66,7 +66,9 @@ pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<AgentDashExec
         }
         if let Some(v) = obj.get("thinking_level").and_then(|v| v.as_str()) {
             // Parse thinking_level from JSON string using serde
-            if let Ok(level) = serde_json::from_value::<ThinkingLevel>(serde_json::Value::String(v.to_string())) {
+            if let Ok(level) =
+                serde_json::from_value::<ThinkingLevel>(serde_json::Value::String(v.to_string()))
+            {
                 config.thinking_level = Some(level);
             }
         }

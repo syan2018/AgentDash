@@ -83,6 +83,7 @@ impl WorkflowAssignment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRun {
     pub id: Uuid,
+    pub project_id: Uuid,
     pub workflow_id: Uuid,
     pub target_kind: WorkflowTargetKind,
     pub target_id: Uuid,
@@ -99,6 +100,7 @@ pub struct WorkflowRun {
 
 impl WorkflowRun {
     pub fn new(
+        project_id: Uuid,
         workflow_id: Uuid,
         target_kind: WorkflowTargetKind,
         target_id: Uuid,
@@ -125,6 +127,7 @@ impl WorkflowRun {
 
         Self {
             id: Uuid::new_v4(),
+            project_id,
             workflow_id,
             target_kind,
             target_id,
@@ -300,6 +303,7 @@ mod tests {
     fn workflow_run_ready_with_first_phase_selected() {
         let run = WorkflowRun::new(
             Uuid::new_v4(),
+            Uuid::new_v4(),
             WorkflowTargetKind::Story,
             Uuid::new_v4(),
             &[phase("start"), phase("implement")],
@@ -316,6 +320,7 @@ mod tests {
     #[test]
     fn workflow_run_complete_phase_advances_to_next() {
         let mut run = WorkflowRun::new(
+            Uuid::new_v4(),
             Uuid::new_v4(),
             WorkflowTargetKind::Story,
             Uuid::new_v4(),
@@ -337,6 +342,7 @@ mod tests {
     fn workflow_run_rejects_activation_for_non_current_phase() {
         let mut run = WorkflowRun::new(
             Uuid::new_v4(),
+            Uuid::new_v4(),
             WorkflowTargetKind::Story,
             Uuid::new_v4(),
             &[phase("start"), phase("implement")],
@@ -350,6 +356,7 @@ mod tests {
     #[test]
     fn workflow_run_can_attach_session_binding_and_record_artifact() {
         let mut run = WorkflowRun::new(
+            Uuid::new_v4(),
             Uuid::new_v4(),
             WorkflowTargetKind::Story,
             Uuid::new_v4(),

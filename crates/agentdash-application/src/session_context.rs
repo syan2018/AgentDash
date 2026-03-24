@@ -145,7 +145,6 @@ pub fn apply_workspace_defaults(
         *working_dir = Some(".".to_string());
     }
     if workspace_root.is_none() {
-        *workspace_root =
-            workspace.map(|item| PathBuf::from(item.container_ref.clone()));
+        *workspace_root = workspace.map(|item| PathBuf::from(item.container_ref.clone()));
     }
 }

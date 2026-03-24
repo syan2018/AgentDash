@@ -9,10 +9,14 @@ use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
 use crate::address_space_access::{
-    ListOptions, ReadResult, ResourceRef, SessionMountTarget, inline_files_from_mount,
-    normalize_mount_relative_path, PROVIDER_INLINE_FS,
+    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, SessionMountTarget,
+    inline_files_from_mount, normalize_mount_relative_path,
 };
 use crate::app_state::AppState;
+use crate::auth::{
+    CurrentUser, ProjectPermission, load_project_with_permission,
+    load_story_and_project_with_permission, load_workspace_and_project_with_permission,
+};
 use crate::rpc::ApiError;
 
 const MAX_ENTRIES: usize = 200;
@@ -32,19 +36,21 @@ pub struct AddressSpacesResponse {
 /// `GET /api/address-spaces` — 能力发现端点
 pub async fn list_address_spaces(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Query(query): Query<AddressSpacesQuery>,
 ) -> Result<Json<AddressSpacesResponse>, ApiError> {
     let workspace_available = if let Some(ws_id_str) = &query.workspace_id {
         let ws_id = Uuid::parse_str(ws_id_str)
             .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-        state
-            .repos
-            .workspace_repo
-            .get_by_id(ws_id)
-            .await
-            .ok()
-            .flatten()
-            .is_some()
+        let (workspace, _) = load_workspace_and_project_with_permission(
+            state.as_ref(),
+            &current_user,
+            ws_id,
+            ProjectPermission::View,
+        )
+        .await?;
+        let _ = workspace;
+        true
     } else {
         false
     };
@@ -92,12 +98,19 @@ pub struct ListEntriesResponse {
 /// `GET /api/address-spaces/{space_id}/entries` — 条目搜索端点
 pub async fn list_address_entries(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(space_id): Path<String>,
     Query(query): Query<ListEntriesQuery>,
 ) -> Result<Json<ListEntriesResponse>, ApiError> {
     match space_id.as_str() {
         "workspace_file" => {
-            let workspace = load_workspace(&state, &query.workspace_id).await?;
+            let workspace = load_workspace(
+                &state,
+                &current_user,
+                &query.workspace_id,
+                ProjectPermission::View,
+            )
+            .await?;
             require_backend_online(&state, &workspace.backend_id).await?;
 
             let session = state
@@ -185,13 +198,16 @@ pub struct ListMountEntriesResponse {
 /// 通过 project_id + story_id 构建完整 address space，然后列出指定 mount 下的条目。
 pub async fn list_mount_entries(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(mount_id): Path<String>,
     Query(query): Query<ListMountEntriesQuery>,
 ) -> Result<Json<ListMountEntriesResponse>, ApiError> {
     let address_space = resolve_address_space(
         &state,
+        &current_user,
         &query.project_id,
         &query.story_id,
+        ProjectPermission::View,
     )
     .await?;
 
@@ -232,10 +248,7 @@ pub async fn list_mount_entries(
         })
         .collect();
 
-    Ok(Json(ListMountEntriesResponse {
-        mount_id,
-        entries,
-    }))
+    Ok(Json(ListMountEntriesResponse { mount_id, entries }))
 }
 
 // ─── Mount 级文件读取 ──────────────────────────────────────
@@ -262,12 +275,15 @@ pub struct ReadMountFileResponse {
 /// 通过 project_id + story_id 构建完整 address space，然后读取指定 mount 下的文件。
 pub async fn read_mount_file(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<ReadMountFileRequest>,
 ) -> Result<Json<ReadMountFileResponse>, ApiError> {
     let address_space = resolve_address_space(
         &state,
+        &current_user,
         &req.project_id,
         &req.story_id,
+        ProjectPermission::View,
     )
     .await?;
 
@@ -321,12 +337,15 @@ pub struct WriteMountFileResponse {
 /// 写入文件到指定 mount。relay_fs 走远端 relay；inline_fs 持久化到 project/story 的容器配置。
 pub async fn write_mount_file(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<WriteMountFileRequest>,
 ) -> Result<Json<WriteMountFileResponse>, ApiError> {
     let address_space = resolve_address_space(
         &state,
+        &current_user,
         &req.project_id,
         &req.story_id,
+        ProjectPermission::Edit,
     )
     .await?;
 
@@ -343,15 +362,16 @@ pub async fn write_mount_file(
         )));
     }
 
-    let normalized_path = normalize_mount_relative_path(&req.path, false)
-        .map_err(ApiError::BadRequest)?;
+    let normalized_path =
+        normalize_mount_relative_path(&req.path, false).map_err(ApiError::BadRequest)?;
 
     if mount.provider == PROVIDER_INLINE_FS {
         let persister = crate::address_space_access::DbInlineContentPersister::new(
             state.repos.project_repo.clone(),
             state.repos.story_repo.clone(),
         );
-        let overlay = crate::address_space_access::InlineContentOverlay::new(std::sync::Arc::new(persister));
+        let overlay =
+            crate::address_space_access::InlineContentOverlay::new(std::sync::Arc::new(persister));
         overlay
             .write(&address_space, mount, &normalized_path, &req.content)
             .await
@@ -431,18 +451,19 @@ pub struct PreviewAddressSpaceResponse {
 /// 根据 project_id + 可选 story_id 预览将要生成的 ExecutionAddressSpace。
 pub async fn preview_address_space(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<PreviewAddressSpaceRequest>,
 ) -> Result<Json<PreviewAddressSpaceResponse>, ApiError> {
     let project_id = Uuid::parse_str(&req.project_id)
         .map_err(|_| ApiError::BadRequest("无效的 project_id".into()))?;
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(project_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))?;
-
-    let story = load_story_optional(&state, &req.story_id).await?;
+    let (project, story) = load_project_and_optional_story(
+        &state,
+        &current_user,
+        project_id,
+        &req.story_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let workspace = resolve_project_workspace(&state, &project).await;
 
     let target = match req.target.as_str() {
@@ -472,9 +493,7 @@ pub async fn preview_address_space(
         };
 
         let file_count = if mount.provider == PROVIDER_INLINE_FS {
-            inline_files_from_mount(mount)
-                .ok()
-                .map(|files| files.len())
+            inline_files_from_mount(mount).ok().map(|files| files.len())
         } else {
             None
         };
@@ -484,7 +503,11 @@ pub async fn preview_address_space(
             provider: mount.provider.clone(),
             backend_id: mount.backend_id.clone(),
             root_ref: mount.root_ref.clone(),
-            capabilities: mount.capabilities.iter().map(|c| format!("{c:?}").to_lowercase()).collect(),
+            capabilities: mount
+                .capabilities
+                .iter()
+                .map(|c| format!("{c:?}").to_lowercase())
+                .collect(),
             default_write: mount.default_write,
             display_name: mount.display_name.clone(),
             backend_online,
@@ -508,7 +531,12 @@ async fn check_mount_backend_online(
 ) -> Result<(), ApiError> {
     if let Some(mount) = address_space.mounts.iter().find(|m| m.id == mount_id) {
         if mount.provider != PROVIDER_INLINE_FS && !mount.backend_id.is_empty() {
-            if !state.services.backend_registry.is_online(&mount.backend_id).await {
+            if !state
+                .services
+                .backend_registry
+                .is_online(&mount.backend_id)
+                .await
+            {
                 return Err(ApiError::Conflict(format!(
                     "挂载点 \"{}\" 的 Backend 当前不在线（{}），无法浏览文件。请确认 Backend 已连接。",
                     mount.display_name, mount.backend_id,
@@ -523,22 +551,18 @@ async fn check_mount_backend_online(
 /// 这确保 inline_fs / relay_fs 等所有 mount 都能被正确解析。
 async fn resolve_address_space(
     state: &Arc<AppState>,
+    current_user: &agentdash_plugin_api::AuthIdentity,
     project_id: &Option<String>,
     story_id: &Option<String>,
+    permission: ProjectPermission,
 ) -> Result<ExecutionAddressSpace, ApiError> {
     let pid_str = project_id
         .as_deref()
         .ok_or_else(|| ApiError::BadRequest("需要提供 project_id".into()))?;
-    let pid = Uuid::parse_str(pid_str)
-        .map_err(|_| ApiError::BadRequest("无效的 project_id".into()))?;
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(pid)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {pid} 不存在")))?;
-
-    let story = load_story_optional(state, story_id).await?;
+    let pid =
+        Uuid::parse_str(pid_str).map_err(|_| ApiError::BadRequest("无效的 project_id".into()))?;
+    let (project, story) =
+        load_project_and_optional_story(state, current_user, pid, story_id, permission).await?;
     let workspace = resolve_project_workspace(state, &project).await;
 
     let target = if story.is_some() {
@@ -556,46 +580,54 @@ async fn resolve_address_space(
 
 async fn load_workspace(
     state: &Arc<AppState>,
+    current_user: &agentdash_plugin_api::AuthIdentity,
     workspace_id: &Option<String>,
+    permission: ProjectPermission,
 ) -> Result<agentdash_domain::workspace::Workspace, ApiError> {
     let ws_id_str = workspace_id
         .as_deref()
         .ok_or_else(|| ApiError::BadRequest("需要提供 workspace_id".into()))?;
     let ws_id = Uuid::parse_str(ws_id_str)
         .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-    state
-        .repos
-        .workspace_repo
-        .get_by_id(ws_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Workspace {ws_id} 不存在")))
+    let (workspace, _) =
+        load_workspace_and_project_with_permission(state.as_ref(), current_user, ws_id, permission)
+            .await?;
+    Ok(workspace)
 }
 
-async fn load_story_optional(
+async fn load_project_and_optional_story(
     state: &Arc<AppState>,
+    current_user: &agentdash_plugin_api::AuthIdentity,
+    project_id: Uuid,
     story_id: &Option<String>,
-) -> Result<Option<agentdash_domain::story::Story>, ApiError> {
+    permission: ProjectPermission,
+) -> Result<
+    (
+        agentdash_domain::project::Project,
+        Option<agentdash_domain::story::Story>,
+    ),
+    ApiError,
+> {
+    let project =
+        load_project_with_permission(state.as_ref(), current_user, project_id, permission).await?;
     if let Some(sid_str) = story_id {
-        let sid = Uuid::parse_str(sid_str)
-            .map_err(|_| ApiError::BadRequest("无效的 story_id".into()))?;
-        Ok(Some(
-            state
-                .repos
-                .story_repo
-                .get_by_id(sid)
-                .await?
-                .ok_or_else(|| ApiError::NotFound(format!("Story {sid} 不存在")))?,
-        ))
+        let sid =
+            Uuid::parse_str(sid_str).map_err(|_| ApiError::BadRequest("无效的 story_id".into()))?;
+        let (story, _) =
+            load_story_and_project_with_permission(state.as_ref(), current_user, sid, permission)
+                .await?;
+        if story.project_id != project.id {
+            return Err(ApiError::Conflict(
+                "story_id 与 project_id 不属于同一 Project".into(),
+            ));
+        }
+        Ok((project, Some(story)))
     } else {
-        Ok(None)
+        Ok((project, None))
     }
 }
 
-async fn require_backend_online(
-    state: &Arc<AppState>,
-    backend_id: &str,
-) -> Result<(), ApiError> {
+async fn require_backend_online(state: &Arc<AppState>, backend_id: &str) -> Result<(), ApiError> {
     let trimmed = backend_id.trim();
     if trimmed.is_empty() {
         return Err(ApiError::BadRequest(

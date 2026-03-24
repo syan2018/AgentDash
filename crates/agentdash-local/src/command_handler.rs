@@ -134,9 +134,9 @@ impl CommandHandler {
             cfg.provider_id = c.provider_id;
             cfg.model_id = c.model_id;
             cfg.agent_id = c.agent_id;
-            cfg.thinking_level = c.thinking_level.and_then(|value| {
-                serde_json::from_value(serde_json::Value::String(value)).ok()
-            });
+            cfg.thinking_level = c
+                .thinking_level
+                .and_then(|value| serde_json::from_value(serde_json::Value::String(value)).ok());
             cfg.permission_policy = c.permission_policy;
             cfg
         });

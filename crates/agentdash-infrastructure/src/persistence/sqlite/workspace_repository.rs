@@ -38,20 +38,6 @@ impl SqliteWorkspaceRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        let has_backend_id = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'backend_id'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        if has_backend_id == 0 {
-            sqlx::query("ALTER TABLE workspaces ADD COLUMN backend_id TEXT NOT NULL DEFAULT ''")
-                .execute(&self.pool)
-                .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        }
-
         Ok(())
     }
 }

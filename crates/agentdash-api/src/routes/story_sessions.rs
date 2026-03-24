@@ -17,6 +17,7 @@ use agentdash_application::session_context::{
 
 use crate::{
     app_state::AppState,
+    auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
     routes::project_agents::resolve_project_workspace,
     rpc::ApiError,
 };
@@ -47,6 +48,7 @@ struct BuiltStorySessionContextResponse {
 #[serde(rename_all = "snake_case")]
 pub struct SessionBindingResponse {
     pub id: String,
+    pub project_id: String,
     pub session_id: String,
     pub owner_type: String,
     pub owner_id: String,
@@ -60,6 +62,7 @@ impl SessionBindingResponse {
     fn from_binding(binding: &SessionBinding) -> Self {
         Self {
             id: binding.id.to_string(),
+            project_id: binding.project_id.to_string(),
             session_id: binding.session_id.clone(),
             owner_type: binding.owner_type.to_string(),
             owner_id: binding.owner_id.to_string(),
@@ -74,11 +77,19 @@ impl SessionBindingResponse {
 /// GET /stories/{id}/sessions
 pub async fn list_story_sessions(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(story_id): Path<String>,
 ) -> Result<Json<Vec<SessionBindingResponse>>, ApiError> {
     let story_uuid: Uuid = story_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
+    load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_uuid,
+        ProjectPermission::View,
+    )
+    .await?;
 
     let bindings = state
         .repos
@@ -107,6 +118,7 @@ pub async fn list_story_sessions(
 /// GET /stories/{id}/sessions/{binding_id}
 pub async fn get_story_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path((story_id, binding_id)): Path<(String, String)>,
 ) -> Result<Json<StorySessionDetailResponse>, ApiError> {
     let story_uuid: Uuid = story_id
@@ -116,13 +128,13 @@ pub async fn get_story_session(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
 
-    let story = state
-        .repos
-        .story_repo
-        .get_by_id(story_uuid)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
+    let (story, _) = load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_uuid,
+        ProjectPermission::View,
+    )
+    .await?;
 
     let bindings = state
         .repos
@@ -177,6 +189,7 @@ mod tests {
     fn session_binding_response_serializes_as_snake_case() {
         let value = serde_json::to_value(SessionBindingResponse {
             id: "binding-1".to_string(),
+            project_id: "project-1".to_string(),
             session_id: "sess-1".to_string(),
             owner_type: "story".to_string(),
             owner_id: "story-1".to_string(),
@@ -188,6 +201,7 @@ mod tests {
         .expect("serialize session binding response");
 
         assert!(value.get("session_id").is_some());
+        assert!(value.get("project_id").is_some());
         assert!(value.get("session_title").is_some());
         assert!(value.get("session_updated_at").is_some());
         assert!(value.get("sessionId").is_none());
@@ -211,6 +225,7 @@ mod tests {
 /// POST /stories/{id}/sessions
 pub async fn create_story_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(story_id): Path<String>,
     Json(req): Json<CreateStorySessionRequest>,
 ) -> Result<Json<SessionBindingResponse>, ApiError> {
@@ -218,13 +233,13 @@ pub async fn create_story_session(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
 
-    state
-        .repos
-        .story_repo
-        .get_by_id(story_uuid)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
+    let (story, _) = load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_uuid,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     let label = req.label.unwrap_or_else(|| "companion".to_string());
 
@@ -257,6 +272,7 @@ pub async fn create_story_session(
     };
 
     let binding = SessionBinding::new(
+        story.project_id,
         session_id.clone(),
         SessionOwnerType::Story,
         story_uuid,
@@ -281,14 +297,35 @@ pub async fn create_story_session(
 /// DELETE /stories/{id}/sessions/{binding_id}
 pub async fn unbind_story_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path((story_id, binding_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let _story_uuid: Uuid = story_id
+    let story_uuid: Uuid = story_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
     let binding_uuid: Uuid = binding_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
+    load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_uuid,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let binding_exists = state
+        .repos
+        .session_binding_repo
+        .list_by_owner(SessionOwnerType::Story, story_uuid)
+        .await?
+        .into_iter()
+        .any(|binding| binding.id == binding_uuid);
+    if !binding_exists {
+        return Err(ApiError::NotFound(format!(
+            "Story Session binding {binding_id} 不存在"
+        )));
+    }
 
     state
         .repos
@@ -330,7 +367,9 @@ async fn build_story_session_context_response(
         .as_ref()
         .and_then(|c| normalize_optional_string(Some(c.executor.clone())))
         .or(default_agent_type.clone());
-    let use_address_space = resolved_config.as_ref().is_some_and(|c| c.is_native_agent())
+    let use_address_space = resolved_config
+        .as_ref()
+        .is_some_and(|c| c.is_native_agent())
         || (resolved_config.is_none() && default_agent_type.is_some());
     let address_space = if use_address_space {
         state

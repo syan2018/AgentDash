@@ -7,13 +7,13 @@ pub mod hub;
 #[cfg(feature = "pi-agent")]
 mod runtime_delegate;
 
+#[cfg(feature = "pi-agent")]
+pub use connector::RuntimeToolProvider;
 pub use connector::{
     AgentConnector, AgentDashExecutorConfig, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
     ExecutionStream, ExecutorInfo, FlowCapabilities, PromptPayload, ThinkingLevel,
 };
-#[cfg(feature = "pi-agent")]
-pub use connector::RuntimeToolProvider;
 pub use hook_events::build_hook_trace_notification;
 pub use hooks::{
     ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,

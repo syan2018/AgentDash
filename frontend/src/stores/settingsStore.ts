@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { settingsApi, type SettingEntry, type SettingUpdate } from '../api/settings';
+import { settingsApi, type SettingEntry, type SettingUpdate, type SettingsScopeRequest } from '../api/settings';
 
 interface SettingsState {
   settings: SettingEntry[];
@@ -7,9 +7,9 @@ interface SettingsState {
   error: string | null;
   saving: boolean;
 
-  fetchSettings: (category?: string) => Promise<void>;
-  updateSettings: (updates: SettingUpdate[]) => Promise<string[]>;
-  deleteSetting: (key: string) => Promise<void>;
+  fetchSettings: (scope: SettingsScopeRequest) => Promise<void>;
+  updateSettings: (scope: SettingsScopeRequest, updates: SettingUpdate[]) => Promise<string[]>;
+  deleteSetting: (scope: SettingsScopeRequest, key: string) => Promise<void>;
   getSetting: (key: string) => SettingEntry | undefined;
 }
 
@@ -19,21 +19,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   error: null,
   saving: false,
 
-  fetchSettings: async (category) => {
+  fetchSettings: async (scope) => {
     set({ loading: true, error: null });
     try {
-      const settings = await settingsApi.list(category);
+      const settings = await settingsApi.list(scope);
       set({ settings, loading: false });
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
     }
   },
 
-  updateSettings: async (updates) => {
+  updateSettings: async (scope, updates) => {
     set({ saving: true, error: null });
     try {
-      const result = await settingsApi.update(updates);
-      await get().fetchSettings();
+      const result = await settingsApi.update(scope, updates);
+      await get().fetchSettings(scope);
       set({ saving: false });
       return result.updated;
     } catch (e) {
@@ -42,9 +42,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  deleteSetting: async (key) => {
+  deleteSetting: async (scope, key) => {
     try {
-      await settingsApi.remove(key);
+      await settingsApi.remove(scope, key);
       set((s) => ({ settings: s.settings.filter((e) => e.key !== key) }));
     } catch (e) {
       set({ error: (e as Error).message });

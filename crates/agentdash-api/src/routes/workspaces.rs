@@ -9,6 +9,10 @@ use agentdash_domain::workspace::{GitConfig, Workspace, WorkspaceStatus, Workspa
 use agentdash_relay::{CommandWorkspaceDetectGitPayload, RelayMessage};
 
 use crate::app_state::AppState;
+use crate::auth::{
+    CurrentUser, ProjectPermission, load_project_with_permission,
+    load_workspace_and_project_with_permission,
+};
 use crate::dto::WorkspaceResponse;
 use crate::rpc::ApiError;
 
@@ -70,10 +74,18 @@ const PICK_DIRECTORY_UNAVAILABLE_MESSAGE: &str = "当前部署不支持浏览目
 
 pub async fn list_workspaces(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     AxumPath(project_id): AxumPath<String>,
 ) -> Result<Json<Vec<WorkspaceResponse>>, ApiError> {
     let project_id = Uuid::parse_str(&project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
 
     let workspaces = state
         .repos
@@ -90,6 +102,7 @@ pub async fn list_workspaces(
 
 pub async fn create_workspace(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     AxumPath(project_id): AxumPath<String>,
     Json(req): Json<CreateWorkspaceRequest>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
@@ -100,11 +113,20 @@ pub async fn create_workspace(
 
     let backend_id = req.backend_id.trim().to_string();
     if backend_id.is_empty() {
-        return Err(ApiError::BadRequest("创建 Workspace 必须显式指定 backend_id".into()));
+        return Err(ApiError::BadRequest(
+            "创建 Workspace 必须显式指定 backend_id".into(),
+        ));
     }
 
     let project_id = Uuid::parse_str(&project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     let ws_type = req.workspace_type.unwrap_or(WorkspaceType::GitWorktree);
     let (container_ref, git_config) =
@@ -128,35 +150,38 @@ pub async fn create_workspace(
 
 pub async fn get_workspace(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
-
-    let workspace = state
-        .repos
-        .workspace_repo
-        .get_by_id(workspace_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Workspace {id} 不存在")))?;
+    let (workspace, _) = load_workspace_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        workspace_id,
+        ProjectPermission::View,
+    )
+    .await?;
 
     Ok(Json(WorkspaceResponse::from(workspace)))
 }
 
 pub async fn update_workspace(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     AxumPath(id): AxumPath<String>,
     Json(req): Json<UpdateWorkspaceRequest>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
 
-    let mut workspace = state
-        .repos
-        .workspace_repo
-        .get_by_id(workspace_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Workspace {id} 不存在")))?;
+    let (mut workspace, _) = load_workspace_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        workspace_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     if let Some(name) = req.name {
         let trimmed = name.trim();
@@ -194,11 +219,19 @@ pub async fn update_workspace(
 
 pub async fn update_workspace_status(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     AxumPath(id): AxumPath<String>,
     Json(req): Json<UpdateWorkspaceStatusRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
+    load_workspace_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        workspace_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     state
         .repos
@@ -211,10 +244,18 @@ pub async fn update_workspace_status(
 
 pub async fn delete_workspace(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let workspace_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
+    load_workspace_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        workspace_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     state.repos.workspace_repo.delete(workspace_id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))

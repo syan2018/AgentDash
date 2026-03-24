@@ -282,6 +282,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
   return (
     <SessionChatView
       sessionId={sessionId}
+      workspaceId={task.workspace_id ?? null}
       showStatusBar={false}
       showExecutorSelector={false}
       headerSlot={headerSlot}

@@ -7,6 +7,7 @@ use agentdash_domain::task::{AgentBinding, Artifact, Task, TaskExecutionMode, Ta
 #[derive(Debug, Serialize)]
 pub struct TaskResponse {
     pub id: Uuid,
+    pub project_id: Uuid,
     pub story_id: Uuid,
     pub workspace_id: Option<Uuid>,
     pub session_id: Option<String>,
@@ -25,6 +26,7 @@ impl From<Task> for TaskResponse {
     fn from(t: Task) -> Self {
         Self {
             id: t.id,
+            project_id: t.project_id,
             story_id: t.story_id,
             workspace_id: t.workspace_id,
             session_id: t.session_id,

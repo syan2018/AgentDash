@@ -721,9 +721,11 @@ mod tests {
         assert!(summary.tool_names.contains(&"mounts_list".to_string()));
         assert!(summary.tool_names.contains(&"fs_write".to_string()));
         assert!(summary.tool_names.contains(&"shell_exec".to_string()));
-        assert!(summary
-            .tool_names
-            .contains(&"mcp:agentdash-story-tools".to_string()));
+        assert!(
+            summary
+                .tool_names
+                .contains(&"mcp:agentdash-story-tools".to_string())
+        );
         assert!(summary.markdown.contains("## Tool Visibility"));
         assert!(summary.markdown.contains("`agentdash-story-tools`"));
     }
@@ -837,10 +839,7 @@ mod tests {
 
     #[test]
     fn resolve_effective_session_composition_merges_project_default_and_story_override() {
-        let mut project = Project::new(
-            "demo".to_string(),
-            "desc".to_string(),
-        );
+        let mut project = Project::new("demo".to_string(), "desc".to_string());
         project.config.session_composition = SessionComposition {
             persona_label: Some("项目级角色".to_string()),
             persona_prompt: Some("默认先读项目规则".to_string()),
@@ -851,11 +850,7 @@ mod tests {
             }],
         };
 
-        let mut story = Story::new(
-            project.id,
-            "story".to_string(),
-            "desc".to_string(),
-        );
+        let mut story = Story::new(project.id, "story".to_string(), "desc".to_string());
         story.context.session_composition_override = Some(SessionComposition {
             persona_label: Some("故事级角色".to_string()),
             persona_prompt: None,

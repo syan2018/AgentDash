@@ -1,3 +1,4 @@
+mod identity_directory;
 /// API Response DTO 层
 ///
 /// 隔离 Domain 实体与 HTTP 响应契约。Route handler 通过 DTO 输出，
@@ -8,6 +9,7 @@ mod task;
 mod workflow;
 mod workspace;
 
+pub use identity_directory::*;
 pub use project::*;
 pub use story::*;
 pub use task::*;

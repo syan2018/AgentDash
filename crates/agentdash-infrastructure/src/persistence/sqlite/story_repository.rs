@@ -37,6 +37,7 @@ impl SqliteStoryRepository {
 
             CREATE TABLE IF NOT EXISTS state_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL DEFAULT '',
                 entity_id TEXT NOT NULL,
                 kind TEXT NOT NULL,
                 payload TEXT NOT NULL DEFAULT '{}',
@@ -52,68 +53,30 @@ impl SqliteStoryRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        self.add_story_column_if_missing("priority TEXT NOT NULL DEFAULT 'p2'")
-            .await?;
-        self.add_story_column_if_missing("story_type TEXT NOT NULL DEFAULT 'feature'")
-            .await?;
-        self.add_story_column_if_missing("tags TEXT NOT NULL DEFAULT '[]'")
-            .await?;
-        self.add_story_column_if_missing("task_count INTEGER NOT NULL DEFAULT 0")
-            .await?;
-        self.add_story_column_if_missing("default_workspace_id TEXT")
-            .await?;
-
-        // 向后兼容：如果旧 stories 表还有 backend_id 列，忽略错误
-        let _ = sqlx::query("ALTER TABLE stories DROP COLUMN backend_id")
-            .execute(&self.pool)
-            .await;
-
-        Ok(())
-    }
-
-    async fn add_story_column_if_missing(&self, ddl: &str) -> Result<(), DomainError> {
-        let statement = format!("ALTER TABLE stories ADD COLUMN {ddl}");
-        if let Err(err) = sqlx::query(&statement).execute(&self.pool).await {
-            let is_duplicate = err
-                .to_string()
-                .to_ascii_lowercase()
-                .contains("duplicate column name");
-            if !is_duplicate {
-                return Err(DomainError::InvalidConfig(err.to_string()));
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn reconcile_task_counts(&self) -> Result<(), DomainError> {
         sqlx::query(
-            r#"
-            UPDATE stories
-            SET task_count = (
-              SELECT COUNT(*)
-              FROM tasks
-              WHERE tasks.story_id = stories.id
-            )
-            "#,
+            "CREATE INDEX IF NOT EXISTS idx_state_changes_project ON state_changes(project_id)",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
         Ok(())
     }
 
     async fn record_change(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        project_id: uuid::Uuid,
         entity_id: uuid::Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,
         backend_id: Option<&str>,
     ) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(project_id.to_string())
         .bind(entity_id.to_string())
         .bind(serde_json::to_string(&kind)?.trim_matches('"'))
         .bind(payload.to_string())
@@ -159,6 +122,7 @@ impl StoryRepository for SqliteStoryRepository {
 
         self.record_change(
             &mut tx,
+            story.project_id,
             story.id,
             ChangeKind::StoryCreated,
             serde_json::to_value(story).unwrap_or_default(),
@@ -234,6 +198,7 @@ impl StoryRepository for SqliteStoryRepository {
 
         self.record_change(
             &mut tx,
+            story.project_id,
             story.id,
             ChangeKind::StoryUpdated,
             serde_json::to_value(story).unwrap_or_default(),
@@ -269,9 +234,32 @@ impl StoryRepository for SqliteStoryRepository {
         limit: i64,
     ) -> Result<Vec<StateChange>, DomainError> {
         let rows = sqlx::query_as::<_, StateChangeRow>(
-            "SELECT id, entity_id, kind, payload, backend_id, created_at
+            "SELECT id, project_id, entity_id, kind, payload, backend_id, created_at
              FROM state_changes WHERE id > ? ORDER BY id ASC LIMIT ?",
         )
+        .bind(since_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        rows.into_iter().map(|r| r.try_into()).collect()
+    }
+
+    async fn get_changes_since_by_project(
+        &self,
+        project_id: uuid::Uuid,
+        since_id: i64,
+        limit: i64,
+    ) -> Result<Vec<StateChange>, DomainError> {
+        let rows = sqlx::query_as::<_, StateChangeRow>(
+            "SELECT id, project_id, entity_id, kind, payload, backend_id, created_at
+             FROM state_changes
+             WHERE project_id = ? AND id > ?
+             ORDER BY id ASC
+             LIMIT ?",
+        )
+        .bind(project_id.to_string())
         .bind(since_id)
         .bind(limit)
         .fetch_all(&self.pool)
@@ -289,17 +277,29 @@ impl StoryRepository for SqliteStoryRepository {
         Ok(row.0)
     }
 
+    async fn latest_event_id_by_project(&self, project_id: uuid::Uuid) -> Result<i64, DomainError> {
+        let row: (i64,) =
+            sqlx::query_as("SELECT COALESCE(MAX(id), 0) FROM state_changes WHERE project_id = ?")
+                .bind(project_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        Ok(row.0)
+    }
+
     async fn append_change(
         &self,
+        project_id: uuid::Uuid,
         entity_id: uuid::Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,
         backend_id: Option<&str>,
     ) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO state_changes (entity_id, kind, payload, backend_id, created_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(project_id.to_string())
         .bind(entity_id.to_string())
         .bind(serde_json::to_string(&kind)?.trim_matches('"'))
         .bind(payload.to_string())
@@ -401,6 +401,7 @@ impl TryFrom<StoryRow> for Story {
 #[derive(sqlx::FromRow)]
 struct StateChangeRow {
     id: i64,
+    project_id: String,
     entity_id: String,
     kind: String,
     payload: String,
@@ -414,6 +415,10 @@ impl TryFrom<StateChangeRow> for StateChange {
     fn try_from(row: StateChangeRow) -> Result<Self, Self::Error> {
         Ok(StateChange {
             id: row.id,
+            project_id: row.project_id.parse().map_err(|_| DomainError::NotFound {
+                entity: "project",
+                id: row.project_id.clone(),
+            })?,
             entity_id: row.entity_id.parse().map_err(|_| DomainError::NotFound {
                 entity: "state_change",
                 id: row.entity_id.clone(),

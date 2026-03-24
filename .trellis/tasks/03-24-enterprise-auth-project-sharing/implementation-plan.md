@@ -158,6 +158,13 @@
   - user
   - project
 
+### 当前收口进展（2026-03-24）
+
+- `workspace-files` 已强制要求 `workspace_id`，并在后端通过 `workspace.project_id -> ProjectPermission::View` 校验；未指定 `workspace_id` 读取服务端 root 的 fallback 已移除。
+- `SessionChatView` 已补齐 `workspaceId` 透传，`Task / Story / Project Agent / SessionPage` 四条主要会话链路都已按上下文解析工作空间；若当前会话无可用工作空间，会显式关闭 `@` 文件引用能力而不是走越权兜底。
+- `/events/stream`、`/events/stream/ndjson`、`/events/since/{id}` 已改为必须携带 `project_id`，并在后端按 `ProjectPermission::View` + project-scoped `state_changes` 查询返回实时事件。
+- 前端事件流连接已改为随 `currentProjectId` 建连与重连，切换项目时会重置连接游标，不再保留全局共享事件流。
+
 ## Phase 5: 前端企业化体验
 
 ### 目标
@@ -176,6 +183,13 @@
 ### 风险
 
 - 若仍沿用“空数组代表没数据”而不是区分 403/404，用户会误以为数据丢失
+
+### 当前进展（2026-03-24）
+
+- 已新增 `GET /api/directory/users` 与 `GET /api/directory/groups`，前端不再需要手输 `user_id/group_id` 才能管理共享。
+- `ProjectResponse` / `ProjectDetailResponse` 已附带 access summary，前端可直接展示当前用户的 `role`、`can_edit`、`can_manage_sharing`、模板可见来源和管理员旁路状态。
+- `ProjectDetailDrawer` 已新增“共享管理”和“模板策略”面板，支持给用户 / 用户组授予与撤销 `owner/editor/viewer` 授权，并按权限切换为只读或可管理视图。
+- 已新增模板 clone 流程：`POST /api/projects/{id}/clone` 会复制项目基础配置与 workflow assignments，清空默认 workspace，且不会复制源 Project grants/workspaces/stories/tasks/sessions。
 
 ## Phase 6: 测试与发布策略
 
@@ -198,6 +212,12 @@
 
 - 优先以 feature flag 或独立分支完成大部分 schema 与服务层改造
 - 在权限链未打通前，不建议零碎上线 UI
+
+### 当前进展（2026-03-24）
+
+- 已为 `settings` 仓储增加 scoped schema 与旧平铺表自动迁移测试。
+- 已增加 `system scope` 权限测试，明确 personal 可访问、enterprise 非 admin 拒绝、enterprise admin 允许。
+- 已补充运维/开发说明文档 [docs/enterprise-auth-project-sharing.md](../../docs/enterprise-auth-project-sharing.md)，覆盖 auth mode、Project 共享、模板 clone、settings scope 与回归清单。
 
 ## 建议拆分的子任务
 

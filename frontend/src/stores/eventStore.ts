@@ -11,29 +11,45 @@ export type EventConnectionState =
   | 'reconnecting';
 
 interface EventState {
+  activeProjectId: string | null;
   lastEventId: number;
   connected: boolean;
   connectionState: EventConnectionState;
   eventSource: EventSource | null;
   unregisterStream: (() => void) | null;
 
-  connect: () => void;
+  connect: (projectId: string) => void;
   disconnect: () => void;
 }
 
 export const useEventStore = create<EventState>((set, get) => ({
+  activeProjectId: null,
   lastEventId: 0,
   connected: false,
   connectionState: 'disconnected',
   eventSource: null,
   unregisterStream: null,
 
-  connect: () => {
-    if (get().eventSource) return;
-    set({ connectionState: 'connecting', connected: false });
+  connect: (projectId) => {
+    const current = get();
+    if (current.eventSource && current.activeProjectId === projectId) return;
+    if (current.eventSource) {
+      current.eventSource.close();
+      current.unregisterStream?.();
+    }
+    set({
+      activeProjectId: projectId,
+      lastEventId: 0,
+      connectionState: 'connecting',
+      connected: false,
+      eventSource: null,
+      unregisterStream: null,
+    });
 
     const source = connectEventStream(
+      projectId,
       (event: StreamEvent) => {
+        if (get().eventSource !== source) return;
         switch (event.type) {
           case 'Connected':
             set({
@@ -51,9 +67,11 @@ export const useEventStore = create<EventState>((set, get) => ({
         }
       },
       () => {
+        if (get().eventSource !== source) return;
         set({ connected: true, connectionState: 'connected' });
       },
       () => {
+        if (get().eventSource !== source) return;
         set((state) => ({
           connected: false,
           connectionState: state.lastEventId > 0 ? 'reconnecting' : 'connecting',
@@ -75,6 +93,8 @@ export const useEventStore = create<EventState>((set, get) => ({
     }
     unregisterStream?.();
     set({
+      activeProjectId: null,
+      lastEventId: 0,
       eventSource: null,
       unregisterStream: null,
       connected: false,

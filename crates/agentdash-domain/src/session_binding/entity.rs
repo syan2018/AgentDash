@@ -11,6 +11,7 @@ use super::value_objects::SessionOwnerType;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionBinding {
     pub id: Uuid,
+    pub project_id: Uuid,
     /// ExecutorHub session ID（如 "sess-1234..."）
     pub session_id: String,
     /// 归属实体类型
@@ -24,6 +25,7 @@ pub struct SessionBinding {
 
 impl SessionBinding {
     pub fn new(
+        project_id: Uuid,
         session_id: String,
         owner_type: SessionOwnerType,
         owner_id: Uuid,
@@ -31,6 +33,7 @@ impl SessionBinding {
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
+            project_id,
             session_id,
             owner_type,
             owner_id,

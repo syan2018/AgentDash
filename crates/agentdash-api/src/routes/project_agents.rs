@@ -21,7 +21,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{app_state::AppState, rpc::ApiError, session_context::normalize_optional_string};
+use crate::{
+    app_state::AppState,
+    auth::{CurrentUser, ProjectPermission, load_project_with_permission},
+    rpc::ApiError,
+    session_context::normalize_optional_string,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectAgentBridge {
@@ -145,10 +150,17 @@ mod tests {
 
 pub async fn list_project_agents(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(project_id): Path<String>,
 ) -> Result<Json<Vec<ProjectAgentSummaryResponse>>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
-    let project = load_project(&state, project_id).await?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
 
     let mut agents = list_project_agent_bridges(&project);
     agents.sort_by(|left, right| left.display_name.cmp(&right.display_name));
@@ -170,11 +182,18 @@ pub struct OpenSessionQuery {
 
 pub async fn open_project_agent_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
     Query(query): Query<OpenSessionQuery>,
 ) -> Result<Json<OpenProjectAgentSessionResponse>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
-    let project = load_project(&state, project_id).await?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let agent = resolve_project_agent_bridge(&project, &agent_key)
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
 
@@ -254,6 +273,7 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let binding = SessionBinding::new(
+        project.id,
         meta.id.clone(),
         SessionOwnerType::Project,
         project.id,
@@ -459,10 +479,17 @@ async fn find_project_agent_session(
 
 pub async fn list_project_agent_sessions(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
 ) -> Result<Json<Vec<ProjectAgentSessionResponse>>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
-    let project = load_project(&state, project_id).await?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let _agent = resolve_project_agent_bridge(&project, &agent_key)
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
 
@@ -557,10 +584,7 @@ fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
 fn parse_preset_mcp_servers(
     config: &serde_json::Value,
 ) -> (Vec<McpServer>, Vec<serde_json::Value>) {
-    let raw_list = match config
-        .get("mcp_servers")
-        .and_then(|v| v.as_array())
-    {
+    let raw_list = match config.get("mcp_servers").and_then(|v| v.as_array()) {
         Some(list) => list,
         None => return (vec![], vec![]),
     };
@@ -671,16 +695,6 @@ fn parse_preset_mcp_servers(
     }
 
     (mcp_servers, stdio_decls)
-}
-
-async fn load_project(state: &Arc<AppState>, project_id: Uuid) -> Result<Project, ApiError> {
-    state
-        .repos
-        .project_repo
-        .get_by_id(project_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))
 }
 
 fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {

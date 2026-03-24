@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +13,6 @@ use axum::{
 };
 use futures::stream::Stream;
 use serde::Deserialize;
-use std::convert::Infallible;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
@@ -28,9 +29,14 @@ use agentdash_executor::{
     HookSessionRuntimeSnapshot, PromptSessionRequest, SessionExecutionState, SessionMeta,
 };
 use agentdash_mcp::injection::McpInjectionConfig;
+use agentdash_plugin_api::AuthIdentity;
 use serde::Serialize;
 
 use super::project_agents::{resolve_project_agent_bridge, resolve_project_workspace};
+use crate::auth::{
+    CurrentUser, ProjectPermission, load_project_with_permission,
+    load_story_and_project_with_permission, load_task_story_project_with_permission,
+};
 use crate::session_context::apply_workspace_defaults;
 use crate::task_agent_context::resolve_workspace_declared_sources;
 
@@ -51,6 +57,7 @@ pub struct ListSessionsQuery {
 
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
     if let (Some(owner_type_str), Some(owner_id_str)) = (&query.owner_type, &query.owner_id) {
@@ -59,6 +66,7 @@ pub async fn list_sessions(
         let owner_id: uuid::Uuid = owner_id_str
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id_str}")))?;
+        authorize_owner_scope(&state, &current_user, owner_type, owner_id).await?;
 
         let bindings = state
             .repos
@@ -88,19 +96,36 @@ pub async fn list_sessions(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    if query.exclude_bound.unwrap_or(false) {
-        let bound_ids = state
+    let exclude_bound = query.exclude_bound.unwrap_or(false);
+    let mut visible_sessions = Vec::with_capacity(sessions.len());
+    for session in sessions.drain(..) {
+        let bindings = state
             .repos
             .session_binding_repo
-            .list_bound_session_ids()
+            .list_by_session(&session.id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let bound_set: std::collections::HashSet<&str> =
-            bound_ids.iter().map(|s| s.as_str()).collect();
-        sessions.retain(|s| !bound_set.contains(s.id.as_str()));
+
+        if bindings.is_empty() {
+            visible_sessions.push(session);
+            continue;
+        }
+
+        if exclude_bound {
+            continue;
+        }
+
+        ensure_bindings_permission(
+            state.as_ref(),
+            &current_user,
+            &bindings,
+            ProjectPermission::View,
+        )
+        .await?;
+        visible_sessions.push(session);
     }
 
-    Ok(Json(sessions))
+    Ok(Json(visible_sessions))
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,8 +150,16 @@ pub async fn create_session(
 
 pub async fn get_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionMeta>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let meta = state
         .services
         .executor_hub
@@ -139,8 +172,16 @@ pub async fn get_session(
 
 pub async fn get_session_hook_runtime(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<HookSessionRuntimeSnapshot>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let runtime = state
         .services
         .executor_hub
@@ -168,8 +209,16 @@ pub struct SessionExecutionStateResponse {
 
 pub async fn get_session_state(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionExecutionStateResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     state
         .services
         .executor_hub
@@ -231,7 +280,7 @@ pub struct SessionBindingOwnerResponse {
     pub label: String,
     pub created_at: String,
     pub owner_title: Option<String>,
-    pub project_id: Option<String>,
+    pub project_id: String,
     pub story_id: Option<String>,
     pub task_id: Option<String>,
 }
@@ -250,7 +299,7 @@ mod tests {
             label: "project_agent:default".to_string(),
             created_at: "2026-03-20T00:00:00Z".to_string(),
             owner_title: Some("AgentDash".to_string()),
-            project_id: Some("project-1".to_string()),
+            project_id: "project-1".to_string(),
             story_id: None,
             task_id: None,
         })
@@ -267,19 +316,21 @@ mod tests {
 
 pub async fn get_session_bindings(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<SessionBindingOwnerResponse>>, ApiError> {
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(&session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let bindings = ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
 
     let mut responses = Vec::with_capacity(bindings.len());
     for binding in bindings {
         let mut owner_title = None;
-        let mut project_id = None;
+        let project_id = binding.project_id.to_string();
         let mut story_id = None;
         let mut task_id = None;
 
@@ -293,7 +344,6 @@ pub async fn get_session_bindings(
                     .map_err(|e| ApiError::Internal(e.to_string()))?
                 {
                     owner_title = Some(project.name);
-                    project_id = Some(project.id.to_string());
                 }
             }
             SessionOwnerType::Story => {
@@ -342,14 +392,30 @@ pub async fn get_session_bindings(
 
 pub async fn delete_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let bindings = ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .executor_hub
         .delete_session(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    for binding in bindings {
+        state
+            .repos
+            .session_binding_repo
+            .delete(binding.id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
     Ok(Json(
         serde_json::json!({ "deleted": true, "sessionId": session_id }),
     ))
@@ -357,9 +423,17 @@ pub async fn delete_session(
 
 pub async fn prompt_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<PromptSessionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let req = augment_prompt_request_for_owner(&state, &session_id, req).await?;
     let turn_id = state
         .services
@@ -475,17 +549,16 @@ async fn build_story_owner_prompt_request(
             .await
             .map_err(ApiError::BadRequest)?;
 
-    let (context_markdown, source_summary) =
-        build_story_context_markdown(StoryContextBuildInput {
-            story,
-            project,
-            workspace,
-            address_space: address_space.as_ref(),
-            mcp_servers: &effective_mcp_servers,
-            effective_agent_type,
-            workspace_source_fragments: resolved_workspace_sources.fragments,
-            workspace_source_warnings: resolved_workspace_sources.warnings,
-        });
+    let (context_markdown, source_summary) = build_story_context_markdown(StoryContextBuildInput {
+        story,
+        project,
+        workspace,
+        address_space: address_space.as_ref(),
+        mcp_servers: &effective_mcp_servers,
+        effective_agent_type,
+        workspace_source_fragments: resolved_workspace_sources.fragments,
+        workspace_source_warnings: resolved_workspace_sources.warnings,
+    });
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
         context_markdown,
@@ -556,7 +629,8 @@ async fn build_project_owner_prompt_request(
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
     // Inject Stdio MCP servers (deserialized from relay JSON decls)
     for decl in &project_agent.preset_stdio_mcp_decls {
-        if let Ok(server) = serde_json::from_value::<agent_client_protocol::McpServer>(decl.clone()) {
+        if let Ok(server) = serde_json::from_value::<agent_client_protocol::McpServer>(decl.clone())
+        {
             effective_mcp_servers.push(server);
         }
     }
@@ -583,7 +657,11 @@ async fn build_project_owner_prompt_request(
     req.prompt = None;
     req.prompt_blocks = Some(prompt_blocks);
 
-    apply_workspace_defaults(&mut req.working_dir, &mut req.workspace_root, workspace.as_ref());
+    apply_workspace_defaults(
+        &mut req.working_dir,
+        &mut req.workspace_root,
+        workspace.as_ref(),
+    );
     if req.address_space.is_none() {
         req.address_space = address_space;
     }
@@ -604,8 +682,16 @@ async fn build_project_owner_prompt_request(
 
 pub async fn cancel_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .executor_hub
@@ -651,8 +737,16 @@ pub struct RejectToolApprovalRequest {
 
 pub async fn approve_tool_call(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path((session_id, tool_call_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .executor_hub
@@ -669,9 +763,17 @@ pub async fn approve_tool_call(
 
 pub async fn reject_tool_call(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path((session_id, tool_call_id)): Path<(String, String)>,
     Json(req): Json<RejectToolApprovalRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .executor_hub
@@ -689,9 +791,17 @@ pub async fn reject_tool_call(
 /// ACP 会话流（Streaming HTTP / SSE）
 pub async fn acp_session_stream_sse(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let last_event_id = headers
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
@@ -755,16 +865,24 @@ pub async fn acp_session_stream_sse(
         }
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// ACP 会话流（Fetch Streaming / NDJSON）
 pub async fn acp_session_stream_ndjson(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     headers: HeaderMap,
     Query(query): Query<NdjsonStreamQuery>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let resume_from = parse_ndjson_resume_from(&headers, query.since_id);
     tracing::info!(
         session_id = %session_id,
@@ -853,7 +971,7 @@ pub async fn acp_session_stream_ndjson(
         }
     };
 
-    (
+    Ok((
         [
             (
                 axum::http::header::CONTENT_TYPE,
@@ -864,7 +982,7 @@ pub async fn acp_session_stream_ndjson(
             (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         Body::from_stream(stream),
-    )
+    ))
 }
 
 fn parse_ndjson_resume_from(headers: &HeaderMap, query_since_id: Option<u64>) -> u64 {
@@ -887,4 +1005,73 @@ fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {
             None
         }
     }
+}
+
+async fn authorize_owner_scope(
+    state: &Arc<AppState>,
+    current_user: &AuthIdentity,
+    owner_type: SessionOwnerType,
+    owner_id: uuid::Uuid,
+) -> Result<(), ApiError> {
+    match owner_type {
+        SessionOwnerType::Project => {
+            load_project_with_permission(
+                state.as_ref(),
+                current_user,
+                owner_id,
+                ProjectPermission::View,
+            )
+            .await?;
+        }
+        SessionOwnerType::Story => {
+            load_story_and_project_with_permission(
+                state.as_ref(),
+                current_user,
+                owner_id,
+                ProjectPermission::View,
+            )
+            .await?;
+        }
+        SessionOwnerType::Task => {
+            load_task_story_project_with_permission(
+                state.as_ref(),
+                current_user,
+                owner_id,
+                ProjectPermission::View,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn ensure_session_permission(
+    state: &AppState,
+    current_user: &AuthIdentity,
+    session_id: &str,
+    permission: ProjectPermission,
+) -> Result<Vec<agentdash_domain::session_binding::SessionBinding>, ApiError> {
+    let bindings = state
+        .repos
+        .session_binding_repo
+        .list_by_session(session_id)
+        .await?;
+    ensure_bindings_permission(state, current_user, &bindings, permission).await?;
+    Ok(bindings)
+}
+
+async fn ensure_bindings_permission(
+    state: &AppState,
+    current_user: &AuthIdentity,
+    bindings: &[agentdash_domain::session_binding::SessionBinding],
+    permission: ProjectPermission,
+) -> Result<(), ApiError> {
+    let mut visited_project_ids = HashSet::new();
+    for binding in bindings {
+        if visited_project_ids.insert(binding.project_id) {
+            load_project_with_permission(state, current_user, binding.project_id, permission)
+                .await?;
+        }
+    }
+    Ok(())
 }

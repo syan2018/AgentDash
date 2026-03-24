@@ -1,8 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
+import { useCurrentUserStore } from "../stores/currentUserStore";
+import { useProjectStore } from "../stores/projectStore";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
-import type { SettingUpdate } from "../api/settings";
+import type { SettingEntry, SettingUpdate, SettingsScopeRequest } from "../api/settings";
 import type { BackendConfig } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -47,6 +49,14 @@ function parseStringList(value: unknown): string[] {
   }
   return [];
 }
+
+type SettingsScopeKind = SettingsScopeRequest["scope"];
+
+const SETTINGS_SCOPE_LABELS: Record<SettingsScopeKind, string> = {
+  system: "系统",
+  user: "我的设置",
+  project: "当前项目",
+};
 
 // ---------------------------------------------------------------------------
 // Toast
@@ -899,28 +909,201 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
   );
 }
 
+function ScopeTabs({
+  activeScope,
+  onChange,
+}: {
+  activeScope: SettingsScopeKind;
+  onChange: (scope: SettingsScopeKind) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {(Object.keys(SETTINGS_SCOPE_LABELS) as SettingsScopeKind[]).map((scope) => (
+        <button
+          key={scope}
+          type="button"
+          onClick={() => onChange(scope)}
+          className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+            activeScope === scope
+              ? "border-primary/30 bg-primary/10 text-foreground"
+              : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+          }`}
+        >
+          {SETTINGS_SCOPE_LABELS[scope]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RawScopedSettingsSection({
+  title,
+  description,
+  settings,
+  saving,
+  onSave,
+  onDelete,
+}: {
+  title: string;
+  description: string;
+  settings: SettingEntry[];
+  saving: boolean;
+  onSave: (updates: SettingUpdate[]) => void;
+  onDelete: (key: string) => void;
+}) {
+  const [editingKey, setEditingKey] = useState("");
+  const [editingValue, setEditingValue] = useState("{}");
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleSubmit = () => {
+    const trimmedKey = editingKey.trim();
+    if (!trimmedKey) {
+      setLocalError("key 不能为空");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(editingValue);
+      setLocalError(null);
+      onSave([{ key: trimmedKey, value: parsed }]);
+    } catch (error) {
+      setLocalError(`JSON 解析失败：${(error as Error).message}`);
+    }
+  };
+
+  const loadEntry = (entry: SettingEntry) => {
+    setEditingKey(entry.key);
+    setEditingValue(JSON.stringify(entry.value, null, 2));
+    setLocalError(null);
+  };
+
+  return (
+    <SectionCard title={title}>
+      <p className="text-xs text-muted-foreground -mt-2 mb-1">{description}</p>
+
+      <div className="space-y-3 rounded-[10px] border border-border bg-background/70 p-4">
+        <Field label="Key">
+          <input
+            className={inputCls}
+            value={editingKey}
+            placeholder="例如 ui.dashboard.layout"
+            onChange={(e) => setEditingKey(e.target.value)}
+          />
+        </Field>
+        <Field label="Value (JSON)" desc="这里要求填写合法 JSON，例如字符串请写成 &quot;hello&quot;">
+          <textarea
+            className={`${inputCls} min-h-[140px] resize-y font-mono text-xs`}
+            value={editingValue}
+            onChange={(e) => setEditingValue(e.target.value)}
+          />
+        </Field>
+        {localError && (
+          <div className="rounded-[8px] border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {localError}
+          </div>
+        )}
+        <div className="flex justify-end">
+          <button type="button" disabled={saving} className={btnPrimaryCls} onClick={handleSubmit}>
+            {saving ? "保存中…" : "保存此项"}
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {settings.length === 0 ? (
+          <p className="rounded-[10px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+            当前 scope 还没有设置项
+          </p>
+        ) : (
+          settings.map((entry) => (
+            <div key={entry.key} className="rounded-[10px] border border-border bg-background/80 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-mono text-sm text-foreground">{entry.key}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">updated_at: {entry.updated_at}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => loadEntry(entry)}
+                    className="rounded-[8px] border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(entry.key)}
+                    className="rounded-[8px] border border-destructive/30 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+              <pre className="mt-3 overflow-x-auto rounded-[8px] border border-border bg-secondary/25 px-3 py-2 text-xs leading-5 text-foreground/85">
+                {JSON.stringify(entry.value, null, 2)}
+              </pre>
+            </div>
+          ))
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export function SettingsPage() {
-  const { settings, loading, saving, error, fetchSettings, updateSettings } = useSettingsStore();
+  const { settings, loading, saving, error, fetchSettings, updateSettings, deleteSetting } = useSettingsStore();
   const { backends, fetchBackends, removeBackend } = useCoordinatorStore();
+  const { currentUser } = useCurrentUserStore();
+  const { currentProjectId, projects } = useProjectStore();
+  const [activeScope, setActiveScope] = useState<SettingsScopeKind>("system");
   const [toast, setToast] = useState<string | null>(null);
 
+  const currentProject = projects.find((project) => project.id === currentProjectId) ?? null;
+  const canManageSystemScope = currentUser?.auth_mode === "personal" || currentUser?.is_admin === true;
+  const scopeRequest = useMemo<SettingsScopeRequest | null>(() => {
+    if (activeScope === "system") {
+      return canManageSystemScope ? { scope: "system" } : null;
+    }
+    if (activeScope === "user") {
+      return { scope: "user" };
+    }
+    if (!currentProjectId) {
+      return null;
+    }
+    return { scope: "project", project_id: currentProjectId };
+  }, [activeScope, canManageSystemScope, currentProjectId]);
+
   useEffect(() => {
-    void fetchSettings();
     void fetchBackends();
-  }, [fetchSettings, fetchBackends]);
+  }, [fetchBackends]);
+
+  useEffect(() => {
+    if (!scopeRequest) return;
+    void fetchSettings(scopeRequest);
+  }, [fetchSettings, scopeRequest]);
 
   const handleSave = useCallback(
     async (updates: SettingUpdate[]) => {
-      const updated = await updateSettings(updates);
+      if (!scopeRequest) return;
+      const updated = await updateSettings(scopeRequest, updates);
       if (updated.length > 0) {
         setToast("设置已保存");
       }
     },
-    [updateSettings],
+    [scopeRequest, updateSettings],
+  );
+
+  const handleDelete = useCallback(
+    async (key: string) => {
+      if (!scopeRequest) return;
+      await deleteSetting(scopeRequest, key);
+      setToast("设置已删除");
+    },
+    [deleteSetting, scopeRequest],
   );
 
   if (loading) {
@@ -939,8 +1122,29 @@ export function SettingsPage() {
       <div className="mx-auto max-w-2xl space-y-6 px-6 py-8">
         <div>
           <h1 className="text-xl font-semibold text-foreground">设置</h1>
-          <p className="mt-1 text-sm text-muted-foreground">管理 LLM 服务、Agent 参数与执行器配置</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            管理 system / user / project 三层 scope 设置。system 更偏宿主级配置，user 和 project 用来承接企业化后的个体偏好与项目策略。
+          </p>
         </div>
+
+        <SectionCard title="Scope">
+          <ScopeTabs activeScope={activeScope} onChange={setActiveScope} />
+          <div className="space-y-1 text-xs text-muted-foreground">
+            <p>当前 scope：{SETTINGS_SCOPE_LABELS[activeScope]}</p>
+            {activeScope === "system" && (
+              <p>system scope 仅 personal 模式或管理员可访问，适合放全局执行器、LLM Provider 和系统级 Agent 配置。</p>
+            )}
+            {activeScope === "user" && (
+              <p>user scope 绑定当前登录用户，适合放个人偏好、个体协作策略和不会影响他人的私有配置。</p>
+            )}
+            {activeScope === "project" && (
+              <p>
+                project scope 绑定当前选中 Project。
+                {currentProject ? ` 当前项目：${currentProject.name}` : " 请先在侧边栏选择一个 Project。"}
+              </p>
+            )}
+          </div>
+        </SectionCard>
 
         {error && (
           <div className="rounded-[10px] border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -948,10 +1152,48 @@ export function SettingsPage() {
           </div>
         )}
 
-        <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
-        <LlmProvidersSection settings={settings} saving={saving} onSave={handleSave} />
-        <AgentSection settings={settings} saving={saving} onSave={handleSave} />
-        <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />
+        {activeScope === "system" && !canManageSystemScope && (
+          <div className="rounded-[10px] border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            当前企业身份不是管理员，system scope 设置已被收口。你仍然可以查看和维护 user / project scope。
+          </div>
+        )}
+
+        {activeScope === "system" && canManageSystemScope && (
+          <>
+            <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
+            <LlmProvidersSection settings={settings} saving={saving} onSave={handleSave} />
+            <AgentSection settings={settings} saving={saving} onSave={handleSave} />
+            <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />
+          </>
+        )}
+
+        {activeScope === "user" && scopeRequest && (
+          <RawScopedSettingsSection
+            title="我的设置"
+            description="这里是当前用户自己的设置层。它不会影响其他用户，也不应该承担 system 级或 Project 级共享配置。"
+            settings={settings}
+            saving={saving}
+            onSave={handleSave}
+            onDelete={(key) => void handleDelete(key)}
+          />
+        )}
+
+        {activeScope === "project" && !scopeRequest && (
+          <div className="rounded-[10px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+            还没有选中的 Project，暂时无法进入 project scope。
+          </div>
+        )}
+
+        {activeScope === "project" && scopeRequest && currentProject && (
+          <RawScopedSettingsSection
+            title={`项目设置 · ${currentProject.name}`}
+            description="project scope 适合放某个 Project 自己的协作策略或局部配置。写入时会受当前用户对该 Project 的编辑权限约束。"
+            settings={settings}
+            saving={saving}
+            onSave={handleSave}
+            onDelete={(key) => void handleDelete(key)}
+          />
+        )}
       </div>
 
       {toast && <Toast message={toast} onDone={() => setToast(null)} />}

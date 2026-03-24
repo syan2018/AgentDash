@@ -7,3 +7,5 @@ license.workspace = true
 
 [dependencies]
 agentdash-plugin-api = { workspace = true }
+async-trait = "0.1"
+serde_json = { workspace = true }

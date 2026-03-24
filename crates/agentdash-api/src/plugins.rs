@@ -130,7 +130,9 @@ mod tests {
         AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
         ExecutionStream, ExecutorInfo, PromptPayload,
     };
-    use agentdash_plugin_api::{AgentDashPlugin, AuthError, AuthIdentity, AuthProvider, AuthRequest};
+    use agentdash_plugin_api::{
+        AgentDashPlugin, AuthError, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
+    };
     use async_trait::async_trait;
     use futures::stream::{self, BoxStream};
 
@@ -148,7 +150,8 @@ mod tests {
         }
 
         fn auth_provider(&self) -> Option<Box<dyn AuthProvider>> {
-            self.auth.then(|| Box::new(TestAuthProvider) as Box<dyn AuthProvider>)
+            self.auth
+                .then(|| Box::new(TestAuthProvider) as Box<dyn AuthProvider>)
         }
 
         fn agent_connectors(&self) -> Vec<Arc<dyn AgentConnector>> {
@@ -157,7 +160,11 @@ mod tests {
             }
             vec![Arc::new(TestConnector {
                 id: self.name,
-                executors: self.executor_ids.iter().map(|id| (*id).to_string()).collect(),
+                executors: self
+                    .executor_ids
+                    .iter()
+                    .map(|id| (*id).to_string())
+                    .collect(),
             })]
         }
     }
@@ -168,10 +175,14 @@ mod tests {
     impl AuthProvider for TestAuthProvider {
         async fn authenticate(&self, _req: &AuthRequest) -> Result<AuthIdentity, AuthError> {
             Ok(AuthIdentity {
+                auth_mode: AuthMode::Enterprise,
                 user_id: "test-user".to_string(),
+                subject: "test-subject".to_string(),
                 display_name: Some("Test User".to_string()),
-                roles: vec!["agentdash-user".to_string()],
-                tenant_id: None,
+                email: Some("test@example.com".to_string()),
+                groups: vec![],
+                is_admin: false,
+                provider: Some("test.auth".to_string()),
                 extra: serde_json::Value::Null,
             })
         }
@@ -341,8 +352,8 @@ mod tests {
             }),
         ];
 
-        let err = validate_connector_executor_ids(&connectors)
-            .expect_err("内置与插件执行器重复时应失败");
+        let err =
+            validate_connector_executor_ids(&connectors).expect_err("内置与插件执行器重复时应失败");
 
         assert!(matches!(
             err,

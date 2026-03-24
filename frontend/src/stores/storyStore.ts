@@ -26,6 +26,7 @@ export interface CreateTaskInput {
 
 export interface TaskSessionInfo {
   task_id: string;
+  workspace_id: string | null;
   session_id: string | null;
   executor_session_id: string | null;
   task_status: Task["status"];
@@ -381,6 +382,7 @@ const upsertStoryInList = (stories: Story[], story: Story): Story[] => {
 
 const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
   id: String(raw.id ?? ''),
+  project_id: String(raw.project_id ?? ''),
   session_id: String(raw.session_id ?? ''),
   owner_type: (raw.owner_type ?? 'story') as SessionBinding['owner_type'],
   owner_id: String(raw.owner_id ?? ''),
@@ -400,6 +402,7 @@ const taskRefreshInFlight = new Set<string>();
 const mapTask = (raw: Record<string, unknown>): Task => {
   return {
     id: String(raw.id ?? ''),
+    project_id: String(raw.project_id ?? ''),
     story_id: String(raw.story_id ?? ''),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
     session_id: raw.session_id ? String(raw.session_id) : null,
@@ -624,6 +627,7 @@ export const useStoryStore = create<StoryState>((set) => ({
       const raw = await api.get<Record<string, unknown>>(`/tasks/${taskId}/session`);
       return {
         task_id: String(raw.task_id ?? taskId),
+        workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
         session_id: raw.session_id ? String(raw.session_id) : null,
         executor_session_id: raw.executor_session_id ? String(raw.executor_session_id) : null,
         task_status: normalizeTaskStatus(String(raw.task_status ?? 'pending')),

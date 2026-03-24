@@ -483,11 +483,7 @@ impl ExecutorHub {
             let sessions = self.sessions.lock().await;
             session_ids
                 .iter()
-                .filter(|id| {
-                    sessions
-                        .get(id.as_str())
-                        .is_some_and(|r| r.running)
-                })
+                .filter(|id| sessions.get(id.as_str()).is_some_and(|r| r.running))
                 .cloned()
                 .collect()
         };

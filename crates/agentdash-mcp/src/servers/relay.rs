@@ -216,11 +216,7 @@ impl RelayMcpServer {
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Project", &params.project_id))?;
 
-        let story = Story::new(
-            project_id,
-            params.title,
-            params.description,
-        );
+        let story = Story::new(project_id, params.title, params.description);
 
         self.services
             .story_repo

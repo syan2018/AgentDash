@@ -151,6 +151,8 @@ export interface PromptTemplate {
 export interface SessionChatViewProps {
   /** 当前会话 ID，null 表示尚未创建 */
   sessionId: string | null;
+  /** 文件引用依赖的工作空间上下文 */
+  workspaceId?: string | null;
 
   // ─── 会话生命周期 ────────────────────────────────────
 
@@ -222,6 +224,7 @@ const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
 
 export function SessionChatView({
   sessionId,
+  workspaceId,
   onCreateSession,
   onSessionIdChange,
   onMessageSent,
@@ -255,7 +258,7 @@ export function SessionChatView({
   const shouldScrollRef = useRef(true);
   const initialValueAppliedRef = useRef(false);
 
-  const fileRef = useFileReference();
+  const fileRef = useFileReference(workspaceId);
 
   const clearInput = useCallback(() => {
     richInputRef.current?.setValue("");
@@ -521,8 +524,11 @@ export function SessionChatView({
         }
 
         if (fileRef.references.length > 0) {
+          if (!workspaceId) {
+            throw new Error("当前会话没有可用的工作空间，无法附加文件引用");
+          }
           const paths = fileRef.references.map((r) => r.relPath);
-          const batchResult = await batchReadWorkspaceFiles(paths);
+          const batchResult = await batchReadWorkspaceFiles(workspaceId, paths);
           const blocks = buildPromptBlocks(trimmed, batchResult.files);
           await promptSession(sid, { promptBlocks: blocks, executorConfig });
           fileRef.clearReferences();
@@ -586,7 +592,7 @@ export function SessionChatView({
   );
 
   const handleAtTrigger = useCallback((query: string) => {
-    if (fileRef.canAddMore) {
+    if (fileRef.canAddMore && fileRef.hasWorkspaceContext) {
       richInputRef.current?.saveSelection();
       fileRef.openPicker(query);
     }
@@ -798,7 +804,9 @@ export function SessionChatView({
               </div>
             </div>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground/60">Ctrl+Enter 快捷发送 · @ 引用工作空间文件</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">
+            Ctrl+Enter 快捷发送 · {workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}
+          </p>
         </div>
       </div>
     </div>

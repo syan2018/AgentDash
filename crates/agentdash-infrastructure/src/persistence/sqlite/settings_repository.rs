@@ -2,7 +2,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::SqlitePool;
 
 use agentdash_domain::common::error::DomainError;
-use agentdash_domain::settings::{Setting, SettingsRepository};
+use agentdash_domain::settings::{Setting, SettingScope, SettingScopeKind, SettingsRepository};
 
 pub struct SqliteSettingsRepository {
     pool: SqlitePool,
@@ -14,38 +14,42 @@ impl SqliteSettingsRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
+        create_scoped_settings_table(&self.pool, "settings").await?;
         Ok(())
     }
 }
 
 #[async_trait::async_trait]
 impl SettingsRepository for SqliteSettingsRepository {
-    async fn list(&self, category_prefix: Option<&str>) -> Result<Vec<Setting>, DomainError> {
+    async fn list(
+        &self,
+        scope: &SettingScope,
+        category_prefix: Option<&str>,
+    ) -> Result<Vec<Setting>, DomainError> {
         let rows = match category_prefix {
             Some(prefix) => {
                 let pattern = format!("{prefix}%");
                 sqlx::query_as::<_, SettingRow>(
-                    "SELECT key, value, updated_at FROM settings WHERE key LIKE ? ORDER BY key",
+                    "SELECT scope_kind, scope_id, key, value, updated_at
+                     FROM settings
+                     WHERE scope_kind = ? AND scope_id = ? AND key LIKE ?
+                     ORDER BY key",
                 )
+                .bind(scope.kind.as_str())
+                .bind(scope.storage_scope_id())
                 .bind(pattern)
                 .fetch_all(&self.pool)
                 .await
             }
             None => {
                 sqlx::query_as::<_, SettingRow>(
-                    "SELECT key, value, updated_at FROM settings ORDER BY key",
+                    "SELECT scope_kind, scope_id, key, value, updated_at
+                     FROM settings
+                     WHERE scope_kind = ? AND scope_id = ?
+                     ORDER BY key",
                 )
+                .bind(scope.kind.as_str())
+                .bind(scope.storage_scope_id())
                 .fetch_all(&self.pool)
                 .await
             }
@@ -55,10 +59,14 @@ impl SettingsRepository for SqliteSettingsRepository {
         rows.into_iter().map(Setting::try_from).collect()
     }
 
-    async fn get(&self, key: &str) -> Result<Option<Setting>, DomainError> {
+    async fn get(&self, scope: &SettingScope, key: &str) -> Result<Option<Setting>, DomainError> {
         let row = sqlx::query_as::<_, SettingRow>(
-            "SELECT key, value, updated_at FROM settings WHERE key = ?",
+            "SELECT scope_kind, scope_id, key, value, updated_at
+             FROM settings
+             WHERE scope_kind = ? AND scope_id = ? AND key = ?",
         )
+        .bind(scope.kind.as_str())
+        .bind(scope.storage_scope_id())
         .bind(key)
         .fetch_optional(&self.pool)
         .await
@@ -67,11 +75,19 @@ impl SettingsRepository for SqliteSettingsRepository {
         row.map(Setting::try_from).transpose()
     }
 
-    async fn set(&self, key: &str, value: serde_json::Value) -> Result<(), DomainError> {
+    async fn set(
+        &self,
+        scope: &SettingScope,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<(), DomainError> {
         let value_str = serde_json::to_string(&value)?;
         sqlx::query(
-            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+            "INSERT OR REPLACE INTO settings (scope_kind, scope_id, key, value, updated_at)
+             VALUES (?, ?, ?, ?, datetime('now'))",
         )
+        .bind(scope.kind.as_str())
+        .bind(scope.storage_scope_id())
         .bind(key)
         .bind(value_str)
         .execute(&self.pool)
@@ -81,28 +97,35 @@ impl SettingsRepository for SqliteSettingsRepository {
         Ok(())
     }
 
-    async fn set_batch(&self, entries: &[(String, serde_json::Value)]) -> Result<(), DomainError> {
+    async fn set_batch(
+        &self,
+        scope: &SettingScope,
+        entries: &[(String, serde_json::Value)],
+    ) -> Result<(), DomainError> {
         for (key, value) in entries {
-            self.set(key, value.clone()).await?;
+            self.set(scope, key, value.clone()).await?;
         }
         Ok(())
     }
 
-    async fn delete(&self, key: &str) -> Result<bool, DomainError> {
-        let result = sqlx::query("DELETE FROM settings WHERE key = ?")
-            .bind(key)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    async fn delete(&self, scope: &SettingScope, key: &str) -> Result<bool, DomainError> {
+        let result =
+            sqlx::query("DELETE FROM settings WHERE scope_kind = ? AND scope_id = ? AND key = ?")
+                .bind(scope.kind.as_str())
+                .bind(scope.storage_scope_id())
+                .bind(key)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(result.rows_affected() > 0)
     }
 }
 
-// --- SQLx 行映射 ---
-
 #[derive(sqlx::FromRow)]
 struct SettingRow {
+    scope_kind: String,
+    scope_id: String,
     key: String,
     value: String,
     updated_at: String,
@@ -117,11 +140,119 @@ impl TryFrom<SettingRow> for Setting {
         let naive = NaiveDateTime::parse_from_str(&row.updated_at, "%Y-%m-%d %H:%M:%S")
             .map_err(|e| DomainError::InvalidConfig(format!("日期解析失败: {e}")))?;
         let updated_at: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive, Utc);
+        let scope_kind = parse_scope_kind(&row.scope_kind);
 
         Ok(Setting {
+            scope_kind,
+            scope_id: normalize_scope_id(scope_kind, row.scope_id),
             key: row.key,
             value,
             updated_at,
         })
     }
+}
+
+fn parse_scope_kind(value: &str) -> SettingScopeKind {
+    match value {
+        "user" => SettingScopeKind::User,
+        "project" => SettingScopeKind::Project,
+        _ => SettingScopeKind::System,
+    }
+}
+
+fn normalize_scope_id(kind: SettingScopeKind, scope_id: String) -> Option<String> {
+    match kind {
+        SettingScopeKind::System => None,
+        SettingScopeKind::User | SettingScopeKind::Project => {
+            let trimmed = scope_id.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+    }
+}
+
+async fn create_scoped_settings_table(pool: &SqlitePool, table: &str) -> Result<(), DomainError> {
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {table} (
+            scope_kind TEXT NOT NULL,
+            scope_id TEXT NOT NULL DEFAULT '',
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (scope_kind, scope_id, key)
+        )"
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    sqlx::query(&format!(
+        "CREATE INDEX IF NOT EXISTS idx_{table}_scope_key ON {table}(scope_kind, scope_id, key)"
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::SqlitePool;
+
+    use super::*;
+    use agentdash_domain::settings::SettingScope;
+
+    async fn new_repo() -> SqliteSettingsRepository {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteSettingsRepository::new(pool);
+        repo.initialize().await.expect("应能初始化 settings schema");
+        repo
+    }
+
+    #[tokio::test]
+    async fn persists_settings_by_scope() {
+        let repo = new_repo().await;
+        repo.set(
+            &SettingScope::system(),
+            "llm.openai.api_key",
+            serde_json::json!("system-key"),
+        )
+        .await
+        .expect("应能写入 system setting");
+        repo.set(
+            &SettingScope::user("alice"),
+            "agent.pi.system_prompt",
+            serde_json::json!("hello"),
+        )
+        .await
+        .expect("应能写入 user setting");
+
+        let system_entries = repo
+            .list(&SettingScope::system(), Some("llm."))
+            .await
+            .expect("应能读取 system scope");
+        let user_entries = repo
+            .list(&SettingScope::user("alice"), Some("agent."))
+            .await
+            .expect("应能读取 user scope");
+        let project_entries = repo
+            .list(&SettingScope::project("project-1"), None)
+            .await
+            .expect("应能读取 project scope");
+
+        assert_eq!(system_entries.len(), 1);
+        assert_eq!(system_entries[0].scope_kind, SettingScopeKind::System);
+        assert_eq!(system_entries[0].scope_id, None);
+        assert_eq!(user_entries.len(), 1);
+        assert_eq!(user_entries[0].scope_kind, SettingScopeKind::User);
+        assert_eq!(user_entries[0].scope_id.as_deref(), Some("alice"));
+        assert!(project_entries.is_empty());
+    }
+
 }

@@ -7,6 +7,9 @@ mod error;
 pub mod projection;
 mod run;
 
+pub use assignment_resolution::{
+    ResolveAssignmentInput, ResolvedAssignment, resolve_assignment_and_ensure_run,
+};
 pub use catalog::{AssignWorkflowCommand, WorkflowCatalogService};
 pub use completion::{
     WorkflowCompletionDecision, WorkflowCompletionEvidence, WorkflowCompletionSignalSet,
@@ -22,9 +25,6 @@ pub use error::WorkflowApplicationError;
 pub use projection::{
     ActiveWorkflowProjection, WorkflowProjectionSnapshot, WorkflowTargetSummary,
     resolve_active_workflow_projection,
-};
-pub use assignment_resolution::{
-    ResolveAssignmentInput, ResolvedAssignment, resolve_assignment_and_ensure_run,
 };
 pub use run::{
     ActivateWorkflowPhaseCommand, AppendWorkflowPhaseArtifactsCommand,

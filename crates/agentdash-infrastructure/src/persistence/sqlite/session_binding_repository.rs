@@ -20,6 +20,7 @@ impl SqliteSessionBindingRepository {
             r#"
             CREATE TABLE IF NOT EXISTS session_bindings (
                 id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT '',
                 session_id TEXT NOT NULL,
                 owner_type TEXT NOT NULL,
                 owner_id TEXT NOT NULL,
@@ -29,42 +30,12 @@ impl SqliteSessionBindingRepository {
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_sb_unique
                 ON session_bindings(session_id, owner_type, owner_id);
+            CREATE INDEX IF NOT EXISTS idx_sb_project
+                ON session_bindings(project_id);
             CREATE INDEX IF NOT EXISTS idx_sb_owner
                 ON session_bindings(owner_type, owner_id);
             CREATE INDEX IF NOT EXISTS idx_sb_session
                 ON session_bindings(session_id);
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        self.backfill_from_tasks().await?;
-
-        Ok(())
-    }
-
-    /// 启动时回填：将 tasks 表中已有 session_id 的记录同步到 session_bindings
-    async fn backfill_from_tasks(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            INSERT OR IGNORE INTO session_bindings (id, session_id, owner_type, owner_id, label, created_at)
-            SELECT
-                lower(
-                    hex(randomblob(4)) || '-' ||
-                    hex(randomblob(2)) || '-4' ||
-                    substr(hex(randomblob(2)),2) || '-' ||
-                    substr('89ab', abs(random()) % 4 + 1, 1) ||
-                    substr(hex(randomblob(2)),2) || '-' ||
-                    hex(randomblob(6))
-                ),
-                session_id,
-                'task',
-                id,
-                'execution',
-                COALESCE(updated_at, datetime('now'))
-            FROM tasks
-            WHERE session_id IS NOT NULL
             "#,
         )
         .execute(&self.pool)
@@ -78,11 +49,29 @@ impl SqliteSessionBindingRepository {
 #[async_trait::async_trait]
 impl SessionBindingRepository for SqliteSessionBindingRepository {
     async fn create(&self, binding: &SessionBinding) -> Result<(), DomainError> {
+        let existing_project_ids: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT project_id FROM session_bindings WHERE session_id = ?")
+                .bind(&binding.session_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        if existing_project_ids
+            .iter()
+            .any(|(project_id,)| project_id != &binding.project_id.to_string())
+        {
+            return Err(DomainError::InvalidConfig(format!(
+                "session `{}` 已绑定到其他 Project，禁止跨 Project 复用",
+                binding.session_id
+            )));
+        }
+
         sqlx::query(
-            "INSERT INTO session_bindings (id, session_id, owner_type, owner_id, label, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO session_bindings (id, project_id, session_id, owner_type, owner_id, label, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(binding.id.to_string())
+        .bind(binding.project_id.to_string())
         .bind(&binding.session_id)
         .bind(binding.owner_type.to_string())
         .bind(binding.owner_id.to_string())
@@ -136,7 +125,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
         owner_id: uuid::Uuid,
     ) -> Result<Vec<SessionBinding>, DomainError> {
         let rows = sqlx::query_as::<_, BindingRow>(
-            "SELECT id, session_id, owner_type, owner_id, label, created_at
+            "SELECT id, project_id, session_id, owner_type, owner_id, label, created_at
              FROM session_bindings
              WHERE owner_type = ? AND owner_id = ?
              ORDER BY created_at ASC",
@@ -152,7 +141,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
 
     async fn list_by_session(&self, session_id: &str) -> Result<Vec<SessionBinding>, DomainError> {
         let rows = sqlx::query_as::<_, BindingRow>(
-            "SELECT id, session_id, owner_type, owner_id, label, created_at
+            "SELECT id, project_id, session_id, owner_type, owner_id, label, created_at
              FROM session_bindings
              WHERE session_id = ?
              ORDER BY created_at ASC",
@@ -172,7 +161,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
         label: &str,
     ) -> Result<Option<SessionBinding>, DomainError> {
         let row = sqlx::query_as::<_, BindingRow>(
-            "SELECT id, session_id, owner_type, owner_id, label, created_at
+            "SELECT id, project_id, session_id, owner_type, owner_id, label, created_at
              FROM session_bindings
              WHERE owner_type = ? AND owner_id = ? AND label = ?
              LIMIT 1",
@@ -199,13 +188,6 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
 
     /// 一次 SQL 获取项目下所有层级的 bindings，内联归属上下文。
     ///
-    /// 查询逻辑：
-    ///   - owner_type = 'project' → owner_id = project_id
-    ///   - owner_type = 'story'   → JOIN stories ON owner_id = stories.id WHERE stories.project_id = ?
-    ///   - owner_type = 'task'    → JOIN tasks ON owner_id = tasks.id
-    ///                              JOIN stories ON tasks.story_id = stories.id WHERE stories.project_id = ?
-    ///
-    /// 用 UNION ALL 合并三段，避免复杂 LEFT JOIN 带来的行膨胀。
     async fn list_by_project(
         &self,
         project_id: Uuid,
@@ -215,6 +197,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
         #[derive(sqlx::FromRow)]
         struct ProjectBindingRow {
             id: String,
+            project_id: String,
             session_id: String,
             owner_type: String,
             owner_id: String,
@@ -227,46 +210,44 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
 
         let rows = sqlx::query_as::<_, ProjectBindingRow>(
             r#"
-            -- Project 级 bindings
             SELECT
-                sb.id, sb.session_id, sb.owner_type, sb.owner_id, sb.label, sb.created_at,
-                NULL AS owner_title,
-                NULL AS story_id,
-                NULL AS story_title
+                sb.id,
+                sb.project_id,
+                sb.session_id,
+                sb.owner_type,
+                sb.owner_id,
+                sb.label,
+                sb.created_at,
+                CASE
+                    WHEN sb.owner_type = 'project' THEN p.name
+                    WHEN sb.owner_type = 'story' THEN s.title
+                    WHEN sb.owner_type = 'task' THEN t.title
+                    ELSE NULL
+                END AS owner_title,
+                CASE
+                    WHEN sb.owner_type = 'task' THEN s.id
+                    ELSE NULL
+                END AS story_id,
+                CASE
+                    WHEN sb.owner_type = 'task' THEN s.title
+                    ELSE NULL
+                END AS story_title
             FROM session_bindings sb
-            WHERE sb.owner_type = 'project'
-              AND sb.owner_id = ?
-
-            UNION ALL
-
-            -- Story 级 bindings
-            SELECT
-                sb.id, sb.session_id, sb.owner_type, sb.owner_id, sb.label, sb.created_at,
-                s.title AS owner_title,
-                NULL    AS story_id,
-                NULL    AS story_title
-            FROM session_bindings sb
-            INNER JOIN stories s ON sb.owner_id = s.id
-            WHERE sb.owner_type = 'story'
-              AND s.project_id = ?
-
-            UNION ALL
-
-            -- Task 级 bindings
-            SELECT
-                sb.id, sb.session_id, sb.owner_type, sb.owner_id, sb.label, sb.created_at,
-                t.title  AS owner_title,
-                s.id     AS story_id,
-                s.title  AS story_title
-            FROM session_bindings sb
-            INNER JOIN tasks    t ON sb.owner_id = t.id
-            INNER JOIN stories  s ON t.story_id  = s.id
-            WHERE sb.owner_type = 'task'
-              AND s.project_id = ?
+            LEFT JOIN projects p ON sb.owner_type = 'project' AND sb.owner_id = p.id
+            LEFT JOIN stories s ON (
+                (sb.owner_type = 'story' AND sb.owner_id = s.id)
+                OR
+                (sb.owner_type = 'task' AND EXISTS (
+                    SELECT 1
+                    FROM tasks tx
+                    WHERE tx.id = sb.owner_id AND tx.story_id = s.id
+                ))
+            )
+            LEFT JOIN tasks t ON sb.owner_type = 'task' AND sb.owner_id = t.id
+            WHERE sb.project_id = ?
+            ORDER BY sb.created_at ASC
             "#,
         )
-        .bind(&pid)
-        .bind(&pid)
         .bind(&pid)
         .fetch_all(&self.pool)
         .await
@@ -276,15 +257,16 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
             .map(|row| {
                 let owner_type =
                     SessionOwnerType::from_str_loose(&row.owner_type).ok_or_else(|| {
-                        DomainError::InvalidConfig(format!(
-                            "无效的 owner_type: {}",
-                            row.owner_type
-                        ))
+                        DomainError::InvalidConfig(format!("无效的 owner_type: {}", row.owner_type))
                     })?;
                 let binding = SessionBinding {
                     id: row.id.parse().map_err(|_| DomainError::NotFound {
                         entity: "session_binding",
                         id: row.id.clone(),
+                    })?,
+                    project_id: row.project_id.parse().map_err(|_| DomainError::NotFound {
+                        entity: "project",
+                        id: row.project_id.clone(),
                     })?,
                     session_id: row.session_id,
                     owner_type,
@@ -297,10 +279,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
                         .map(|dt| dt.with_timezone(&chrono::Utc))
                         .unwrap_or_else(|_| chrono::Utc::now()),
                 };
-                let story_id = row
-                    .story_id
-                    .as_deref()
-                    .and_then(|s| s.parse::<Uuid>().ok());
+                let story_id = row.story_id.as_deref().and_then(|s| s.parse::<Uuid>().ok());
                 Ok(ProjectSessionBinding {
                     binding,
                     story_title: row.story_title,
@@ -315,6 +294,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
 #[derive(sqlx::FromRow)]
 struct BindingRow {
     id: String,
+    project_id: String,
     session_id: String,
     owner_type: String,
     owner_id: String,
@@ -338,6 +318,10 @@ impl TryFrom<BindingRow> for SessionBinding {
                 entity: "session_binding",
                 id: row.id.clone(),
             })?,
+            project_id: row.project_id.parse().map_err(|_| DomainError::NotFound {
+                entity: "project",
+                id: row.project_id.clone(),
+            })?,
             session_id: row.session_id,
             owner_type,
             owner_id: row.owner_id.parse().map_err(|_| DomainError::NotFound {
@@ -349,5 +333,105 @@ impl TryFrom<BindingRow> for SessionBinding {
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now()),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::SqlitePool;
+
+    use super::*;
+
+    async fn new_repo() -> SqliteSessionBindingRepository {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        sqlx::query(
+            r#"
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                story_id TEXT NOT NULL,
+                session_id TEXT,
+                updated_at TEXT
+            );
+            CREATE TABLE stories (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("应能创建 session_binding 初始化依赖表");
+
+        let repo = SqliteSessionBindingRepository::new(pool);
+        repo.initialize()
+            .await
+            .expect("应能初始化 session_binding schema");
+        repo
+    }
+
+    #[tokio::test]
+    async fn allows_reusing_session_within_same_project() {
+        let repo = new_repo().await;
+        let project_id = Uuid::new_v4();
+        let story_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        let story_binding = SessionBinding::new(
+            project_id,
+            "sess-shared".to_string(),
+            SessionOwnerType::Story,
+            story_id,
+            "companion",
+        );
+        let task_binding = SessionBinding::new(
+            project_id,
+            "sess-shared".to_string(),
+            SessionOwnerType::Task,
+            task_id,
+            "execution",
+        );
+
+        SessionBindingRepository::create(&repo, &story_binding)
+            .await
+            .expect("同一 project 内应允许复用 session");
+        SessionBindingRepository::create(&repo, &task_binding)
+            .await
+            .expect("同一 project 内第二个 owner 也应允许绑定");
+    }
+
+    #[tokio::test]
+    async fn rejects_cross_project_session_reuse() {
+        let repo = new_repo().await;
+        let first_binding = SessionBinding::new(
+            Uuid::new_v4(),
+            "sess-cross-project".to_string(),
+            SessionOwnerType::Story,
+            Uuid::new_v4(),
+            "companion",
+        );
+        let second_binding = SessionBinding::new(
+            Uuid::new_v4(),
+            "sess-cross-project".to_string(),
+            SessionOwnerType::Task,
+            Uuid::new_v4(),
+            "execution",
+        );
+
+        SessionBindingRepository::create(&repo, &first_binding)
+            .await
+            .expect("首个 binding 应成功");
+        let error = SessionBindingRepository::create(&repo, &second_binding)
+            .await
+            .expect_err("跨 project 复用同一 session 应失败");
+
+        match error {
+            DomainError::InvalidConfig(message) => {
+                assert!(message.contains("禁止跨 Project 复用"));
+            }
+            other => panic!("预期 InvalidConfig，实际得到: {other:?}"),
+        }
     }
 }

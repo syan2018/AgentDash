@@ -3,45 +3,69 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::body::{Body, Bytes};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, header};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::Stream;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
+use uuid::Uuid;
 
 use agentdash_domain::common::events::StreamEvent;
 use agentdash_domain::story::StateChange;
 
 use crate::app_state::AppState;
+use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
 
 const STREAM_BATCH_LIMIT: i64 = 256;
 const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const STREAM_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
-/// 全局事件流（SSE）
+#[derive(Debug, Deserialize)]
+pub struct EventStreamQuery {
+    pub project_id: String,
+}
+
+/// Project 级事件流（SSE）
 pub async fn event_stream(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Query(query): Query<EventStreamQuery>,
     headers: HeaderMap,
-) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let resume_from = parse_last_event_id(&headers);
+
     tracing::info!(
+        project_id = %project.id,
         last_event_id = ?resume_from,
         has_resume_cursor = resume_from.is_some(),
-        "全局事件流连接建立（SSE）"
+        "Project 事件流连接建立（SSE）"
     );
 
     let stream = async_stream::stream! {
         let mut cursor = match resume_from {
             Some(value) => value,
-            None => state.repos.story_repo.latest_event_id().await.unwrap_or(0),
+            None => state
+                .repos
+                .story_repo
+                .latest_event_id_by_project(project.id)
+                .await
+                .unwrap_or(0),
         };
         let mut replayed = 0usize;
 
         if resume_from.is_some() {
-            match load_state_changes_since(&state, cursor).await {
+            match load_state_changes_since(&state, project.id, cursor).await {
                 Ok(changes) => {
                     for change in changes {
                         cursor = change.id;
@@ -54,20 +78,28 @@ pub async fn event_stream(
                     }
                 }
                 Err(err) => {
-                    tracing::error!(error = %err, "全局事件流补发失败");
+                    tracing::error!(project_id = %project.id, error = %err, "Project 事件流补发失败");
                 }
             }
         }
 
-        let latest_event_id = state.repos.story_repo.latest_event_id().await.unwrap_or(cursor);
+        let latest_event_id = state
+            .repos
+            .story_repo
+            .latest_event_id_by_project(project.id)
+            .await
+            .unwrap_or(cursor);
         cursor = cursor.max(latest_event_id);
-        if let Some(event) = build_sse_event(&StreamEvent::Connected { last_event_id: cursor }, Some(cursor)) {
+        if let Some(event) =
+            build_sse_event(&StreamEvent::Connected { last_event_id: cursor }, Some(cursor))
+        {
             yield Ok(event);
         }
         tracing::info!(
+            project_id = %project.id,
             replayed_count = replayed,
             cursor = cursor,
-            "全局事件流补发完成（SSE）"
+            "Project 事件流补发完成（SSE）"
         );
 
         let mut poll_tick = tokio::time::interval(STREAM_POLL_INTERVAL);
@@ -78,7 +110,7 @@ pub async fn event_stream(
         loop {
             tokio::select! {
                 _ = poll_tick.tick() => {
-                    match load_state_changes_since(&state, cursor).await {
+                    match load_state_changes_since(&state, project.id, cursor).await {
                         Ok(changes) => {
                             for change in changes {
                                 cursor = change.id;
@@ -88,7 +120,7 @@ pub async fn event_stream(
                             }
                         }
                         Err(err) => {
-                            tracing::error!(error = %err, "全局事件流轮询 state_changes 失败");
+                            tracing::error!(project_id = %project.id, error = %err, "Project 事件流轮询 state_changes 失败");
                         }
                     }
                 }
@@ -104,34 +136,51 @@ pub async fn event_stream(
         }
     };
 
-    Sse::new(stream).keep_alive(
+    Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(STREAM_HEARTBEAT_INTERVAL)
             .text("keep-alive"),
-    )
+    ))
 }
 
-/// 全局事件流（NDJSON）
+/// Project 级事件流（NDJSON）
 pub async fn event_stream_ndjson(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Query(query): Query<EventStreamQuery>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, ApiError> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let resume_from = parse_last_event_id(&headers);
+
     tracing::info!(
+        project_id = %project.id,
         last_event_id = ?resume_from,
         has_resume_cursor = resume_from.is_some(),
-        "全局事件流连接建立（NDJSON）"
+        "Project 事件流连接建立（NDJSON）"
     );
 
     let stream = async_stream::stream! {
         let mut cursor = match resume_from {
             Some(value) => value,
-            None => state.repos.story_repo.latest_event_id().await.unwrap_or(0),
+            None => state
+                .repos
+                .story_repo
+                .latest_event_id_by_project(project.id)
+                .await
+                .unwrap_or(0),
         };
         let mut replayed = 0usize;
 
         if resume_from.is_some() {
-            match load_state_changes_since(&state, cursor).await {
+            match load_state_changes_since(&state, project.id, cursor).await {
                 Ok(changes) => {
                     for change in changes {
                         cursor = change.id;
@@ -142,20 +191,26 @@ pub async fn event_stream_ndjson(
                     }
                 }
                 Err(err) => {
-                    tracing::error!(error = %err, "NDJSON 事件流补发失败");
+                    tracing::error!(project_id = %project.id, error = %err, "Project NDJSON 事件流补发失败");
                 }
             }
         }
 
-        let latest_event_id = state.repos.story_repo.latest_event_id().await.unwrap_or(cursor);
+        let latest_event_id = state
+            .repos
+            .story_repo
+            .latest_event_id_by_project(project.id)
+            .await
+            .unwrap_or(cursor);
         cursor = cursor.max(latest_event_id);
         if let Some(line) = to_ndjson_line(&StreamEvent::Connected { last_event_id: cursor }) {
             yield Ok::<Bytes, std::convert::Infallible>(line);
         }
         tracing::info!(
+            project_id = %project.id,
             replayed_count = replayed,
             cursor = cursor,
-            "全局事件流补发完成（NDJSON）"
+            "Project 事件流补发完成（NDJSON）"
         );
 
         let mut poll_tick = tokio::time::interval(STREAM_POLL_INTERVAL);
@@ -166,7 +221,7 @@ pub async fn event_stream_ndjson(
         loop {
             tokio::select! {
                 _ = poll_tick.tick() => {
-                    match load_state_changes_since(&state, cursor).await {
+                    match load_state_changes_since(&state, project.id, cursor).await {
                         Ok(changes) => {
                             for change in changes {
                                 cursor = change.id;
@@ -176,7 +231,7 @@ pub async fn event_stream_ndjson(
                             }
                         }
                         Err(err) => {
-                            tracing::error!(error = %err, "NDJSON 事件流轮询 state_changes 失败");
+                            tracing::error!(project_id = %project.id, error = %err, "Project NDJSON 事件流轮询 state_changes 失败");
                         }
                     }
                 }
@@ -192,7 +247,7 @@ pub async fn event_stream_ndjson(
         }
     };
 
-    (
+    Ok((
         [
             (header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8"),
             (header::CACHE_CONTROL, "no-cache, no-transform"),
@@ -200,20 +255,38 @@ pub async fn event_stream_ndjson(
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         Body::from_stream(stream),
-    )
+    ))
 }
 
 /// Resume 端点
 pub async fn get_events_since(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Query(query): Query<EventStreamQuery>,
     Path(since_id): Path<i64>,
 ) -> Result<Json<Vec<StateChange>>, ApiError> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let changes = state
         .repos
         .story_repo
-        .get_changes_since(since_id, 1000)
+        .get_changes_since_by_project(project.id, since_id, 1000)
         .await?;
     Ok(Json(changes))
+}
+
+fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
+    let trimmed = project_id.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest("project_id 不能为空".into()));
+    }
+    Uuid::parse_str(trimmed).map_err(|_| ApiError::BadRequest("无效的 project_id".into()))
 }
 
 fn parse_last_event_id(headers: &HeaderMap) -> Option<i64> {
@@ -255,6 +328,7 @@ fn to_ndjson_line<T: Serialize>(value: &T) -> Option<Bytes> {
 
 async fn load_state_changes_since(
     state: &Arc<AppState>,
+    project_id: Uuid,
     since_id: i64,
 ) -> Result<Vec<StateChange>, agentdash_domain::DomainError> {
     let mut cursor = since_id;
@@ -264,7 +338,7 @@ async fn load_state_changes_since(
         let batch = state
             .repos
             .story_repo
-            .get_changes_since(cursor, STREAM_BATCH_LIMIT)
+            .get_changes_since_by_project(project_id, cursor, STREAM_BATCH_LIMIT)
             .await?;
         if batch.is_empty() {
             break;

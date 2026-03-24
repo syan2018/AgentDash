@@ -96,9 +96,15 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
     }
 
     let owner_kind = match &input.owner_variant {
-        BootstrapOwnerVariant::Task { .. } => crate::session_plan::SessionPlanOwnerKind::TaskExecution,
-        BootstrapOwnerVariant::Story { .. } => crate::session_plan::SessionPlanOwnerKind::StoryOwner,
-        BootstrapOwnerVariant::Project { .. } => crate::session_plan::SessionPlanOwnerKind::ProjectAgent,
+        BootstrapOwnerVariant::Task { .. } => {
+            crate::session_plan::SessionPlanOwnerKind::TaskExecution
+        }
+        BootstrapOwnerVariant::Story { .. } => {
+            crate::session_plan::SessionPlanOwnerKind::StoryOwner
+        }
+        BootstrapOwnerVariant::Project { .. } => {
+            crate::session_plan::SessionPlanOwnerKind::ProjectAgent
+        }
     };
     let tool_visibility = crate::session_plan::summarize_tool_visibility_with_context(
         input.address_space.as_ref(),
@@ -199,10 +205,7 @@ mod tests {
     fn build_plan_applies_workspace_defaults() {
         use agentdash_domain::workspace::{Workspace, WorkspaceType};
 
-        let project = Project::new(
-            "test".to_string(),
-            "desc".to_string(),
-        );
+        let project = Project::new("test".to_string(), "desc".to_string());
         let workspace = Workspace::new(
             project.id,
             "backend".to_string(),
@@ -232,19 +235,13 @@ mod tests {
         });
 
         assert_eq!(plan.working_dir.as_deref(), Some("."));
-        assert_eq!(
-            plan.workspace_root,
-            Some(PathBuf::from("/workspace/test"))
-        );
+        assert_eq!(plan.workspace_root, Some(PathBuf::from("/workspace/test")));
         assert!(plan.owner.workspace_attached);
     }
 
     #[test]
     fn derive_snapshot_from_plan_produces_consistent_output() {
-        let project = Project::new(
-            "test".to_string(),
-            "desc".to_string(),
-        );
+        let project = Project::new("test".to_string(), "desc".to_string());
 
         let plan = build_bootstrap_plan(BootstrapPlanInput {
             project: project.clone(),

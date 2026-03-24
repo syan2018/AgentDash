@@ -4,6 +4,8 @@ pub mod backends;
 pub mod discovered_options;
 pub mod discovery;
 pub mod health;
+pub mod identity_directory;
+pub mod me;
 pub mod project_agents;
 pub mod project_sessions;
 pub mod projects;
@@ -19,8 +21,8 @@ use std::sync::Arc;
 
 use agentdash_mcp::{services::McpServices, transport::McpRouterBuilder};
 use axum::{
-    Router,
-    routing::{delete, get, patch, post},
+    Router, middleware,
+    routing::{delete, get, patch, post, put},
 };
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -39,8 +41,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     });
     let mcp = McpRouterBuilder::new(mcp_services).build();
 
-    let api = Router::new()
-        .route("/health", get(health::health_check))
+    let secured_api = Router::new()
+        .route("/me", get(me::get_current_user))
+        .route(
+            "/directory/users",
+            get(identity_directory::list_directory_users),
+        )
+        .route(
+            "/directory/groups",
+            get(identity_directory::list_directory_groups),
+        )
         // Project CRUD
         .route(
             "/projects",
@@ -51,6 +61,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(projects::get_project)
                 .put(projects::update_project)
                 .delete(projects::delete_project),
+        )
+        .route("/projects/{id}/clone", post(projects::clone_project))
+        .route("/projects/{id}/grants", get(projects::list_project_grants))
+        .route(
+            "/projects/{id}/grants/users/{user_id}",
+            put(projects::grant_project_user).delete(projects::revoke_project_user),
+        )
+        .route(
+            "/projects/{id}/grants/groups/{group_id}",
+            put(projects::grant_project_group).delete(projects::revoke_project_group),
         )
         .route(
             "/projects/{id}/agents",
@@ -250,6 +270,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/agents/discovered-options/stream",
             get(discovered_options::discovered_options_stream),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::authenticate_request,
+        ));
+
+    let api = Router::new()
+        .route("/health", get(health::health_check))
+        .merge(secured_api)
         .with_state(state.clone());
 
     Router::new()

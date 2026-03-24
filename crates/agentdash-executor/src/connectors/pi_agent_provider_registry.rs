@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use agentdash_agent::{LlmBridge, RigBridge};
-use agentdash_domain::settings::SettingsRepository;
+use agentdash_domain::settings::{SettingScope, SettingsRepository};
 use futures::future::BoxFuture;
 use rig::client::CompletionClient as _;
 use tokio::sync::RwLock;
@@ -88,9 +88,7 @@ enum DiscoveryKind {
     ConfigOnly,
     GeminiApi,
     OpenAiCompatibleFixed(&'static str),
-    OpenAiCompatibleFromBaseUrl {
-        default_base_url: &'static str,
-    },
+    OpenAiCompatibleFromBaseUrl { default_base_url: &'static str },
 }
 
 struct ProviderSpec {
@@ -329,8 +327,7 @@ async fn build_provider_entry(
         .into_iter()
         .collect::<HashSet<_>>();
 
-    let bridge_factory =
-        build_bridge_factory(spec.bridge_kind, api_key.clone(), base_url.clone());
+    let bridge_factory = build_bridge_factory(spec.bridge_kind, api_key.clone(), base_url.clone());
     let default_bridge = bridge_factory(&default_model);
     let list_models = build_model_lister(spec.discovery_kind, api_key, base_url);
 
@@ -420,37 +417,34 @@ fn build_model_lister(
             let url = url.to_string();
             Box::pin(async move { list_openai_compatible_models(&url, &api_key).await })
         })),
-        DiscoveryKind::OpenAiCompatibleFromBaseUrl { default_base_url } => Some(Arc::new(move || {
-            let api_key = api_key.clone();
-            let api_base = base_url
-                .clone()
-                .unwrap_or_else(|| default_base_url.to_string());
-            Box::pin(async move { list_openai_compatible_models(&api_base, &api_key).await })
-        })),
+        DiscoveryKind::OpenAiCompatibleFromBaseUrl { default_base_url } => {
+            Some(Arc::new(move || {
+                let api_key = api_key.clone();
+                let api_base = base_url
+                    .clone()
+                    .unwrap_or_else(|| default_base_url.to_string());
+                Box::pin(async move { list_openai_compatible_models(&api_base, &api_key).await })
+            }))
+        }
     }
 }
 
-async fn read_setting_value(
-    repo: &dyn SettingsRepository,
-    key: &str,
-) -> Option<serde_json::Value> {
-    repo.get(key).await.ok().flatten().map(|setting| setting.value)
+async fn read_setting_value(repo: &dyn SettingsRepository, key: &str) -> Option<serde_json::Value> {
+    repo.get(&SettingScope::system(), key)
+        .await
+        .ok()
+        .flatten()
+        .map(|setting| setting.value)
 }
 
-async fn read_setting_str(
-    repo: &dyn SettingsRepository,
-    key: &str,
-) -> Option<String> {
+async fn read_setting_str(repo: &dyn SettingsRepository, key: &str) -> Option<String> {
     read_setting_value(repo, key)
         .await
         .and_then(|value| value.as_str().map(str::trim).map(ToOwned::to_owned))
         .filter(|value| !value.is_empty())
 }
 
-async fn read_model_list(
-    repo: &dyn SettingsRepository,
-    key: &str,
-) -> Vec<ModelMeta> {
+async fn read_model_list(repo: &dyn SettingsRepository, key: &str) -> Vec<ModelMeta> {
     let Some(value) = read_setting_value(repo, key).await else {
         return Vec::new();
     };
@@ -466,7 +460,8 @@ fn parse_model_list(value: &serde_json::Value) -> Option<Vec<ModelMeta>> {
                 match item {
                     serde_json::Value::String(id) => models.push(ModelMeta::from_id(id.clone())),
                     serde_json::Value::Object(_) => {
-                        let parsed = serde_json::from_value::<StoredModelMeta>(item.clone()).ok()?;
+                        let parsed =
+                            serde_json::from_value::<StoredModelMeta>(item.clone()).ok()?;
                         models.push(parsed.into());
                     }
                     _ => return None,
@@ -487,10 +482,7 @@ fn parse_model_list(value: &serde_json::Value) -> Option<Vec<ModelMeta>> {
     }
 }
 
-async fn read_string_list(
-    repo: &dyn SettingsRepository,
-    key: &str,
-) -> Vec<String> {
+async fn read_string_list(repo: &dyn SettingsRepository, key: &str) -> Vec<String> {
     let Some(value) = read_setting_value(repo, key).await else {
         return Vec::new();
     };
@@ -597,8 +589,7 @@ struct GeminiModel {
 
 async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
     let client = reqwest::Client::new();
-    let url =
-        format!("https://generativelanguage.googleapis.com/v1beta/models?key={api_key}");
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models?key={api_key}");
 
     let response = client
         .get(&url)
@@ -629,9 +620,7 @@ async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
                 } else {
                     model.display_name
                 },
-                context_window: model
-                    .input_token_limit
-                    .unwrap_or(inferred.context_window),
+                context_window: model.input_token_limit.unwrap_or(inferred.context_window),
                 max_tokens: model.output_token_limit.unwrap_or(inferred.max_tokens),
                 ..inferred
             }

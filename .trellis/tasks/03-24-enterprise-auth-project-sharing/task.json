@@ -3,18 +3,18 @@
   "name": "enterprise-auth-project-sharing",
   "title": "企业身份接入与 Project 授权共享重构",
   "description": "为 AgentDash 设计并落地单企业实例 + 个人模式并存的身份接入与 Project 授权共享重构方案，统一收敛 SSO / claim 用户组 / Project 私有共享 / Session 跟随 Project / 模板 clone 等关键约束。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": "fullstack",
   "scope": "large",
   "priority": "P2",
   "creator": "claude-agent",
   "assignee": "claude-agent",
   "createdAt": "2026-03-24",
-  "completedAt": null,
+  "completedAt": "2026-03-24",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
+  "current_phase": 6,
   "next_action": [
     {
       "phase": 1,
@@ -35,7 +35,192 @@
   ],
   "commit": null,
   "pr_url": null,
-  "subtasks": [],
+  "subtasks": [
+    {
+      "key": "identity-contract-and-modes",
+      "title": "收敛个人模式 / 企业模式统一认证合同",
+      "status": "completed",
+      "phase": 1,
+      "area": "backend/plugin",
+      "summary": "收敛 AuthProvider 输出合同、auth_mode 区分、admin_bypass 语义，以及 personal / enterprise provider 的共同字段。"
+    },
+    {
+      "key": "request-identity-middleware",
+      "title": "挂载认证中间件并注入 CurrentUser / RequestIdentity",
+      "status": "completed",
+      "phase": 1,
+      "area": "backend/api",
+      "depends_on": [
+        "identity-contract-and-modes"
+      ],
+      "summary": "在宿主真正挂载认证链路，保证所有业务路由都能拿到当前用户、groups、is_admin、auth_mode。"
+    },
+    {
+      "key": "me-endpoint-and-frontend-bootstrap",
+      "title": "补齐 /api/me 与前端当前用户启动流程",
+      "status": "completed",
+      "phase": 1,
+      "area": "fullstack",
+      "depends_on": [
+        "request-identity-middleware"
+      ],
+      "summary": "新增当前用户接口，前端启动时拉取身份上下文，为后续 Project 授权、分享 UI 和 403 态奠定基础。"
+    },
+    {
+      "key": "user-group-claim-projection-schema",
+      "title": "新增 users / groups / group_memberships 与 claim 投影策略",
+      "status": "completed",
+      "phase": 2,
+      "area": "backend/schema",
+      "depends_on": [
+        "identity-contract-and-modes"
+      ],
+      "summary": "建立用户与用户组投影表，明确组信息优先来自 claim，同时允许持久化快照供授权和审计使用。"
+    },
+    {
+      "key": "project-grants-schema-and-repo",
+      "title": "新增 project_subject_grants 与 Project 审计字段",
+      "status": "completed",
+      "phase": 2,
+      "area": "backend/schema",
+      "depends_on": [
+        "user-group-claim-projection-schema"
+      ],
+      "summary": "给 projects 增加 created_by / updated_by / is_template / cloned_from_project_id，并新增 Project 共享授权表与仓储接口。"
+    },
+    {
+      "key": "project-authorization-service",
+      "title": "实现 ProjectAuthorizationService 与角色判定",
+      "status": "completed",
+      "phase": 2,
+      "area": "backend/application",
+      "depends_on": [
+        "project-grants-schema-and-repo"
+      ],
+      "summary": "统一实现 can_view_project / can_edit_project / can_manage_project_sharing / can_admin_bypass，避免在路由层散落权限判断。"
+    },
+    {
+      "key": "project-route-authorization-and-sharing-api",
+      "title": "收口 Project CRUD 并新增分享管理 API",
+      "status": "completed",
+      "phase": 2,
+      "area": "backend/api",
+      "depends_on": [
+        "project-authorization-service",
+        "request-identity-middleware"
+      ],
+      "summary": "让 /projects 只返回当前用户可访问数据，并新增按用户 / 用户组授予与撤销 Project 权限的 API。"
+    },
+    {
+      "key": "project-scoped-entity-schema-refactor",
+      "title": "为 tasks / session_bindings / workflow_runs / state_changes 显式补 project_id",
+        "status": "completed",
+        "phase": 3,
+        "area": "backend/schema",
+        "depends_on": [
+          "project-authorization-service"
+        ],
+        "summary": "已为 tasks / session_bindings / workflow_runs / state_changes 显式补 project_id，并把 Task create/delete 与 SessionBinding 的 project 归属约束收口到更一致的仓储路径。"
+      },
+      {
+        "key": "story-task-workspace-route-authorization",
+        "title": "让 Story / Task / Workspace 路由全部走 Project 授权",
+        "status": "completed",
+        "phase": 3,
+        "area": "backend/api",
+        "depends_on": [
+          "project-scoped-entity-schema-refactor",
+          "request-identity-middleware"
+        ],
+        "summary": "stories / tasks / workspaces / task_execution / story_sessions / project_sessions / project_agents / workflows / address-spaces / workspace-files 均已统一走 Project 授权与 project-scoped 上下文。"
+      },
+      {
+        "key": "session-scope-closure",
+        "title": "收口 Session 访问模型并移除全局泄露路径",
+        "status": "completed",
+        "phase": 4,
+        "area": "backend/api",
+        "depends_on": [
+          "project-scoped-entity-schema-refactor",
+          "story-task-workspace-route-authorization"
+        ],
+        "summary": "已完成 project/story session API project-scoped 化、全局 /sessions 与 session 详情/状态/hook runtime/流式接口判权，以及 binding.project_id 与跨 Project 复用约束；前端会话页也已按 workspace/project 上下文完成透传收口。"
+      },
+    {
+      "key": "project-scoped-event-stream",
+      "title": "把全局事件流改造成 project-scoped 实时流",
+      "status": "completed",
+      "phase": 4,
+      "area": "backend/stream",
+      "depends_on": [
+        "project-scoped-entity-schema-refactor",
+        "project-authorization-service"
+      ],
+      "summary": "已将 /events/stream、/events/stream/ndjson、/events/since/{id} 收口为必须携带 project_id，并基于 Project 权限与 project-scoped state_changes 查询返回事件。"
+    },
+    {
+      "key": "workspace-files-hardening",
+      "title": "收紧 workspace-files 与服务端 root 文件访问",
+      "status": "completed",
+      "phase": 4,
+      "area": "backend/security",
+      "depends_on": [
+        "story-task-workspace-route-authorization"
+      ],
+      "summary": "workspace-files 已强制要求 workspace_id，并校验所属 Project 权限；服务端 root fallback 已移除，前端 Session/Story/Task/Project 会话场景已改为显式透传 workspaceId。"
+    },
+    {
+      "key": "settings-scope-refactor",
+      "title": "把 settings 拆成 system / user / project 三层 scope",
+      "status": "completed",
+      "phase": 4,
+      "area": "backend/fullstack",
+      "depends_on": [
+        "request-identity-middleware",
+        "project-authorization-service"
+      ],
+      "summary": "已将 settings 仓储和 API 改为显式 system/user/project scope，system scope 在 enterprise 下仅管理员可访问；前端设置页已支持 scope 切换，并为 user/project scope 提供通用 JSON 键值读写入口。"
+    },
+    {
+      "key": "frontend-sharing-and-permission-state",
+      "title": "补前端分享管理、无权限态与按授权加载 Project 数据",
+      "status": "completed",
+      "phase": 5,
+      "area": "frontend",
+      "depends_on": [
+        "me-endpoint-and-frontend-bootstrap",
+        "project-route-authorization-and-sharing-api",
+        "session-scope-closure"
+      ],
+      "summary": "已补 Project access summary、目录查询接入、ProjectDetailDrawer 里的共享管理 UI、权限态展示与只读/可管理区分，前端现在能显式理解当前用户对各 Project 的角色与可操作范围。"
+    },
+    {
+      "key": "project-template-clone-flow",
+      "title": "实现模板 Project 与 clone 私有化流程",
+      "status": "completed",
+      "phase": 5,
+      "area": "fullstack",
+      "depends_on": [
+        "project-grants-schema-and-repo",
+        "frontend-sharing-and-permission-state"
+      ],
+      "summary": "已新增 /projects/{id}/clone、目录查询 API、模板与 visibility 前端面板，以及 clone 后复制项目配置和 workflow assignments、默认不复制 grants/workspaces/stories/tasks/sessions 的私有化流程。"
+    },
+    {
+      "key": "authorization-regression-and-deploy-docs",
+      "title": "补授权回归测试、模式说明与部署文档",
+      "status": "completed",
+      "phase": 6,
+      "area": "qa/docs",
+      "depends_on": [
+        "project-template-clone-flow",
+        "project-scoped-event-stream",
+        "workspace-files-hardening",
+        "settings-scope-refactor"
+      ],
+      "summary": "已补 settings scope 仓储迁移测试、system scope 权限测试，以及企业身份 / Project 共享 / 模板 clone / settings scope 的运维与回归说明文档。"
+    }
+  ],
   "relatedFiles": [
     "crates/agentdash-plugin-api/",
     "crates/agentdash-api/src/app_state.rs",
@@ -45,5 +230,5 @@
     "frontend/src/services/",
     ".trellis/tasks/03-24-plugin-api-architecture/prd.md"
   ],
-  "notes": "约束：单企业实例优先，用户/企业认证都走 trait/plugin 模型；需要保留个人模式；Project 默认私有，可共享给指定用户/用户组；Session 权限跟随 Project；私有变体通过 clone Project 模板实现。"
+  "notes": "约束：单企业实例优先，用户/企业认证都走 trait/plugin 模型；需要保留个人模式；Project 默认私有，可共享给指定用户/用户组；Session 权限跟随 Project；私有变体通过 clone Project 模板实现。2026-03-24 已补齐旧 SQLite 库在 tasks/state_changes/session_bindings/settings 上的 project-scoped 自动迁移与 settings_v2 半迁移恢复，并完成后端健康检查、核心 API 与前端 dev/proxy smoke 验证。"
 }

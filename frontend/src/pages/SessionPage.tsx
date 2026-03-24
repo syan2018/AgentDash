@@ -5,6 +5,7 @@ import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/sessi
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { useStoryStore } from "../stores/storyStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddressSpaceBrowser } from "../features/address-space";
 import type {
   ActiveWorkflowHookMetadata,
@@ -29,6 +30,7 @@ import type {
 } from "../types";
 
 const EMPTY_SESSION_BINDINGS: SessionBindingOwner[] = [];
+const EMPTY_WORKSPACES: [] = [];
 
 // ─── SessionPage ────────────────────────────────────────
 
@@ -1260,7 +1262,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const selectProject = useProjectStore((state) => state.selectProject);
+  const projects = useProjectStore((state) => state.projects);
   const fetchProjectSessionInfo = useProjectStore((state) => state.fetchProjectSessionInfo);
+  const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const fetchTaskSession = useStoryStore((state) => state.fetchTaskSession);
   const fetchStorySessionInfo = useStoryStore((state) => state.fetchStorySessionInfo);
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
@@ -1270,6 +1274,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const [loadedHookRuntime, setLoadedHookRuntime] = useState<HookSessionRuntimeInfo | null>(null);
   const [loadedSessionContext, setLoadedSessionContext] = useState<{
     source_key: string;
+    workspace_id: string | null;
     task_agent_binding: AgentBinding | null;
     address_space: ExecutionAddressSpace | null;
     context_snapshot: SessionContextSnapshot | null;
@@ -1414,6 +1419,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         if (cancelled) return;
         setLoadedSessionContext({
           source_key: `task:${taskIdHint}`,
+          workspace_id: taskSession?.workspace_id ?? null,
           task_agent_binding: taskSession?.agent_binding ?? null,
           address_space: taskSession?.address_space ?? null,
           context_snapshot: taskSession?.context_snapshot ?? null,
@@ -1437,6 +1443,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         if (cancelled) return;
         setLoadedSessionContext({
           source_key: `story:${storyId}:${bindingId}`,
+          workspace_id: null,
           task_agent_binding: null,
           address_space: storySession?.address_space ?? null,
           context_snapshot: storySession?.context_snapshot ?? null,
@@ -1457,6 +1464,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         if (cancelled) return;
         setLoadedSessionContext({
           source_key: `project:${projectId}:${bindingId}`,
+          workspace_id: null,
           task_agent_binding: null,
           address_space: info?.address_space ?? null,
           context_snapshot: info?.context_snapshot ?? null,
@@ -1474,6 +1482,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const taskAgentBinding = taskContextFromRoute?.agent_binding
     ?? activeSessionContext?.task_agent_binding
     ?? null;
+  const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
   const sessionAddressSpace = activeSessionContext?.address_space ?? null;
   const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
   const taskExecutorSummary = sessionContextSnapshot?.executor ?? null;
@@ -1511,6 +1520,19 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     }
     return null;
   }, [loadedOwnerStory, ownerStoryId, stories]);
+  const ownerProjectId = sessionOwnerBinding?.project_id ?? ownerStory?.project_id ?? null;
+  const ownerProject = ownerProjectId
+    ? projects.find((project) => project.id === ownerProjectId) ?? null
+    : null;
+  const projectWorkspaces = useWorkspaceStore((s) =>
+    ownerProjectId ? s.workspacesByProjectId[ownerProjectId] : undefined,
+  );
+  const ownerProjectWorkspaces = projectWorkspaces ?? EMPTY_WORKSPACES;
+
+  useEffect(() => {
+    if (!ownerProjectId) return;
+    void fetchWorkspaces(ownerProjectId);
+  }, [fetchWorkspaces, ownerProjectId]);
 
   const effectiveReturnTarget = useMemo(() => {
     if (returnTarget) return returnTarget;
@@ -1533,6 +1555,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const executorHint = taskAgentBinding?.agent_type
     ?? projectAgentContext?.executor_hint
     ?? taskExecutorSummary?.executor
+    ?? null;
+  const chatWorkspaceId =
+    sessionWorkspaceId
+    ?? ownerStory?.default_workspace_id
+    ?? ownerProject?.config.default_workspace_id
+    ?? ownerProjectWorkspaces[0]?.id
     ?? null;
 
   const handleCreateSession = useCallback(async (title: string) => {
@@ -1699,6 +1727,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       <div className="flex-1 overflow-hidden">
         <SessionChatView
           sessionId={currentSessionId}
+          workspaceId={chatWorkspaceId}
           onCreateSession={handleCreateSession}
           onSessionIdChange={handleSessionIdChange}
           onMessageSent={handleMessageSent}

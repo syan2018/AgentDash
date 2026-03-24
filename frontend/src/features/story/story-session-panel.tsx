@@ -9,6 +9,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { SessionBinding, SessionNavigationState, Story } from "../../types";
 import { useStoryStore, type CreateStorySessionInput } from "../../stores/storyStore";
+import { useProjectStore } from "../../stores/projectStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { SessionChatView } from "../acp-session";
 
 interface StorySessionPanelProps {
@@ -22,6 +24,8 @@ const LABEL_DISPLAY: Record<string, string> = {
   execution: "执行",
 };
 
+const EMPTY_WORKSPACES: [] = [];
+
 function labelText(label: string): string {
   return (LABEL_DISPLAY[label] ?? label) || "通用";
 }
@@ -30,6 +34,9 @@ const EMPTY_SESSIONS: SessionBinding[] = [];
 
 export function StorySessionPanel({ story }: StorySessionPanelProps) {
   const navigate = useNavigate();
+  const projects = useProjectStore((s) => s.projects);
+  const projectWorkspaces = useWorkspaceStore((s) => s.workspacesByProjectId[story.project_id]);
+  const workspaces = projectWorkspaces ?? EMPTY_WORKSPACES;
   const sessions = useStoryStore((s) => s.sessionsByStoryId[story.id] ?? EMPTY_SESSIONS);
   const fetchStorySessions = useStoryStore((s) => s.fetchStorySessions);
   const createStorySession = useStoryStore((s) => s.createStorySession);
@@ -40,6 +47,12 @@ export function StorySessionPanel({ story }: StorySessionPanelProps) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newLabel, setNewLabel] = useState("companion");
+  const project = projects.find((item) => item.id === story.project_id);
+  const workspaceId =
+    story.default_workspace_id
+    ?? project?.config.default_workspace_id
+    ?? workspaces[0]?.id
+    ?? null;
 
   useEffect(() => {
     void fetchStorySessions(story.id);
@@ -208,6 +221,7 @@ export function StorySessionPanel({ story }: StorySessionPanelProps) {
       <div className="flex-1 overflow-hidden">
         <SessionChatView
           sessionId={activeSessionId}
+          workspaceId={workspaceId}
           onCreateSession={handleCreateFromChat}
           onSessionIdChange={handleSessionIdChange}
           onMessageSent={handleMessageSent}

@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use agentdash_application::workflow::binding::{self, BindingResolutionContext};
 use agentdash_application::workflow::{
     ActiveWorkflowProjection, CompleteWorkflowPhaseCommand, WorkflowCompletionDecision,
     WorkflowCompletionSignalSet, WorkflowRecordArtifactDraft, WorkflowRunService,
     WorkflowSessionTerminalState, build_phase_completion_artifact_drafts, completion_mode_tag,
     evaluate_phase_completion, resolve_active_workflow_projection,
 };
-use agentdash_application::workflow::binding::{self, BindingResolutionContext};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
@@ -223,7 +223,10 @@ impl AppExecutionHookProvider {
         let project = if let Some(pid) = owner.project_id.as_deref() {
             let pid = Uuid::parse_str(pid)
                 .map_err(|e| HookError::Runtime(format!("project_id parse: {e}")))?;
-            self.project_repo.get_by_id(pid).await.map_err(map_hook_error)?
+            self.project_repo
+                .get_by_id(pid)
+                .await
+                .map_err(map_hook_error)?
         } else {
             None
         };
@@ -234,7 +237,10 @@ impl AppExecutionHookProvider {
         let story = if let Some(sid) = owner.story_id.as_deref() {
             let sid = Uuid::parse_str(sid)
                 .map_err(|e| HookError::Runtime(format!("story_id parse: {e}")))?;
-            self.story_repo.get_by_id(sid).await.map_err(map_hook_error)?
+            self.story_repo
+                .get_by_id(sid)
+                .await
+                .map_err(map_hook_error)?
         } else {
             None
         };
@@ -242,13 +248,19 @@ impl AppExecutionHookProvider {
         let task = if let Some(tid) = owner.task_id.as_deref() {
             let tid = Uuid::parse_str(tid)
                 .map_err(|e| HookError::Runtime(format!("task_id parse: {e}")))?;
-            self.task_repo.get_by_id(tid).await.map_err(map_hook_error)?
+            self.task_repo
+                .get_by_id(tid)
+                .await
+                .map_err(map_hook_error)?
         } else {
             None
         };
 
         let workspace = if let Some(ws_id) = task.as_ref().and_then(|t| t.workspace_id) {
-            self.workspace_repo.get_by_id(ws_id).await.map_err(map_hook_error)?
+            self.workspace_repo
+                .get_by_id(ws_id)
+                .await
+                .map_err(map_hook_error)?
         } else {
             let target_kind = match owner.owner_type.as_str() {
                 "project" => Some(WorkflowTargetKind::Project),
@@ -395,11 +407,13 @@ impl AppExecutionHookProvider {
             summary: completion_summary,
             record_artifacts: record_artifacts
                 .into_iter()
-                .map(|a| serde_json::json!({
-                    "title": a.title,
-                    "artifact_type": a.artifact_type,
-                    "content": a.content,
-                }))
+                .map(|a| {
+                    serde_json::json!({
+                        "title": a.title,
+                        "artifact_type": a.artifact_type,
+                        "content": a.content,
+                    })
+                })
                 .collect(),
         });
         resolution.diagnostics.push(HookDiagnosticEntry {

@@ -419,7 +419,12 @@ impl StoryMcpServer {
             })
             .transpose()?;
 
-        let mut task = Task::new(self.story_id, params.title, params.description);
+        let mut task = Task::new(
+            self.project_id,
+            self.story_id,
+            params.title,
+            params.description,
+        );
         task.workspace_id = workspace_id;
         task.agent_binding = AgentBinding {
             agent_type: params.agent_type,
@@ -435,7 +440,7 @@ impl StoryMcpServer {
 
         self.services
             .task_repo
-            .create(&task)
+            .create_task_with_story_update(&task)
             .await
             .map_err(McpError::from)?;
 
@@ -471,6 +476,7 @@ impl StoryMcpServer {
                 .transpose()?;
 
             let mut task = Task::new(
+                self.project_id,
                 self.story_id,
                 input.title.clone(),
                 input.description.clone(),
@@ -491,7 +497,7 @@ impl StoryMcpServer {
 
             self.services
                 .task_repo
-                .create(&task)
+                .create_task_with_story_update(&task)
                 .await
                 .map_err(McpError::from)?;
 

@@ -1,5 +1,6 @@
 pub mod address_space_access;
 pub mod app_state;
+pub mod auth;
 pub mod bootstrap;
 pub mod dto;
 pub mod execution_hooks;

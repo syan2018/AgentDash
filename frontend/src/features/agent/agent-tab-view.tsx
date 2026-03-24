@@ -13,9 +13,12 @@ import { useNavigate } from "react-router-dom";
 import type { ProjectAgentSummary, SessionNavigationState } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useActiveSessionsStore } from "../../stores/activeSessionsStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { SessionChatView } from "../acp-session";
 import { ActiveSessionList } from "./active-session-list";
 import { ProjectAgentView } from "../project/project-agent-view";
+
+const EMPTY_WORKSPACES: [] = [];
 
 export function AgentTabView() {
   const navigate = useNavigate();
@@ -29,6 +32,10 @@ export function AgentTabView() {
     isLoading: projectLoading,
     error: projectError,
   } = useProjectStore();
+  const projectWorkspaces = useWorkspaceStore((s) =>
+    currentProjectId ? s.workspacesByProjectId[currentProjectId] : undefined,
+  );
+  const workspaces = projectWorkspaces ?? EMPTY_WORKSPACES;
 
   const { sessions, isLoading: sessionsLoading, loadForProject, clearForProject } = useActiveSessionsStore();
 
@@ -36,6 +43,10 @@ export function AgentTabView() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   const currentProject = projects.find((p) => p.id === currentProjectId);
+  const workspaceId =
+    currentProject?.config.default_workspace_id
+    ?? workspaces[0]?.id
+    ?? null;
   const agents: ProjectAgentSummary[] = currentProjectId
     ? (agentsByProjectId[currentProjectId] ?? [])
     : [];
@@ -156,6 +167,7 @@ export function AgentTabView() {
             <div className="flex-1 overflow-hidden">
               <SessionChatView
                 sessionId={selectedSessionId}
+                workspaceId={workspaceId}
                 showStatusBar={false}
                 showExecutorSelector
               />

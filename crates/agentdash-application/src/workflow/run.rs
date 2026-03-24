@@ -11,6 +11,7 @@ use super::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
 pub struct StartWorkflowRunCommand {
+    pub project_id: Uuid,
     pub workflow_id: Option<Uuid>,
     pub workflow_key: Option<String>,
     pub target_kind: WorkflowTargetKind,
@@ -179,9 +180,7 @@ where
         let conflicting_run = existing_runs.iter().find(|run| {
             matches!(
                 run.status,
-                WorkflowRunStatus::Ready
-                    | WorkflowRunStatus::Running
-                    | WorkflowRunStatus::Blocked
+                WorkflowRunStatus::Ready | WorkflowRunStatus::Running | WorkflowRunStatus::Blocked
             )
         });
         if let Some(conflicting) = conflicting_run {
@@ -192,6 +191,7 @@ where
         }
 
         let run = WorkflowRun::new(
+            cmd.project_id,
             definition.id,
             cmd.target_kind,
             cmd.target_id,
@@ -483,6 +483,17 @@ mod tests {
             Ok(self.runs.lock().expect("lock").get(&id).cloned())
         }
 
+        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<WorkflowRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .expect("lock")
+                .values()
+                .filter(|run| run.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
         async fn list_by_workflow(
             &self,
             workflow_id: Uuid,
@@ -535,6 +546,7 @@ mod tests {
         let service = WorkflowRunService::new(&store, &store);
         let run = service
             .start_run(StartWorkflowRunCommand {
+                project_id: Uuid::new_v4(),
                 workflow_id: None,
                 workflow_key: Some(TRELLIS_DEV_TASK_TEMPLATE_KEY.to_string()),
                 target_kind: WorkflowTargetKind::Task,
@@ -561,6 +573,7 @@ mod tests {
         let target_id = Uuid::new_v4();
         service
             .start_run(StartWorkflowRunCommand {
+                project_id: Uuid::new_v4(),
                 workflow_id: Some(definition.id),
                 workflow_key: None,
                 target_kind: WorkflowTargetKind::Task,
@@ -571,6 +584,7 @@ mod tests {
 
         let error = service
             .start_run(StartWorkflowRunCommand {
+                project_id: Uuid::new_v4(),
                 workflow_id: Some(definition.id),
                 workflow_key: None,
                 target_kind: WorkflowTargetKind::Task,
@@ -594,6 +608,7 @@ mod tests {
         let service = WorkflowRunService::new(&store, &store);
         let run = service
             .start_run(StartWorkflowRunCommand {
+                project_id: Uuid::new_v4(),
                 workflow_id: Some(definition.id),
                 workflow_key: None,
                 target_kind: WorkflowTargetKind::Task,
@@ -636,6 +651,7 @@ mod tests {
         let service = WorkflowRunService::new(&store, &store);
         let run = service
             .start_run(StartWorkflowRunCommand {
+                project_id: Uuid::new_v4(),
                 workflow_id: Some(definition.id),
                 workflow_key: None,
                 target_kind: WorkflowTargetKind::Task,
@@ -702,6 +718,7 @@ mod tests {
         let target_id = Uuid::new_v4();
         service
             .start_run(StartWorkflowRunCommand {
+                project_id: Uuid::new_v4(),
                 workflow_id: Some(definition_a.id),
                 workflow_key: None,
                 target_kind: WorkflowTargetKind::Task,
@@ -712,6 +729,7 @@ mod tests {
 
         let error = service
             .start_run(StartWorkflowRunCommand {
+                project_id: Uuid::new_v4(),
                 workflow_id: Some(definition_b.id),
                 workflow_key: None,
                 target_kind: WorkflowTargetKind::Task,

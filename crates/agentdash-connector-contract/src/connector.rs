@@ -109,14 +109,17 @@ impl AgentDashExecutorConfig {
             variant: self.variant.clone(),
             model_id: self.model_id.clone(),
             agent_id: self.agent_id.clone(),
-            reasoning_id: self.thinking_level.map(|level| match level {
-                ThinkingLevel::Off => "off",
-                ThinkingLevel::Minimal => "minimal",
-                ThinkingLevel::Low => "low",
-                ThinkingLevel::Medium => "medium",
-                ThinkingLevel::High => "high",
-                ThinkingLevel::Xhigh => "xhigh",
-            }.to_string()),
+            reasoning_id: self.thinking_level.map(|level| {
+                match level {
+                    ThinkingLevel::Off => "off",
+                    ThinkingLevel::Minimal => "minimal",
+                    ThinkingLevel::Low => "low",
+                    ThinkingLevel::Medium => "medium",
+                    ThinkingLevel::High => "high",
+                    ThinkingLevel::Xhigh => "xhigh",
+                }
+                .to_string()
+            }),
             permission_policy,
         })
     }

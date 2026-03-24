@@ -18,6 +18,7 @@ use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_domain::backend::BackendRepository;
+use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -32,10 +33,11 @@ use agentdash_executor::{AgentConnector, ExecutorHub};
 use agentdash_infrastructure::{
     SqliteBackendRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
     SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
-    SqliteWorkflowRepository, SqliteWorkspaceRepository,
+    SqliteUserDirectoryRepository, SqliteWorkflowRepository, SqliteWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
+use agentdash_plugin_api::AuthMode;
 
 /// 持久化层端口 — 所有 Repository trait 对象的集合
 pub struct RepositorySet {
@@ -45,6 +47,7 @@ pub struct RepositorySet {
     pub task_repo: Arc<dyn TaskRepository>,
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
+    pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
@@ -78,6 +81,8 @@ pub struct TaskRuntime {
 pub struct AppConfig {
     /// MCP 服务基础 URL（用于向 Agent 注入 MCP 端点信息）
     pub mcp_base_url: Option<String>,
+    /// 当前宿主配置的认证模式
+    pub auth_mode: AuthMode,
 }
 
 /// 全局应用状态
@@ -134,11 +139,6 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        story_repo
-            .reconcile_task_counts()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-
         let session_binding_repo = Arc::new(SqliteSessionBindingRepository::new(pool.clone()));
         session_binding_repo
             .initialize()
@@ -147,6 +147,12 @@ impl AppState {
 
         let backend_repo = Arc::new(SqliteBackendRepository::new(pool.clone()));
         backend_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let user_directory_repo = Arc::new(SqliteUserDirectoryRepository::new(pool.clone()));
+        user_directory_repo
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -232,6 +238,13 @@ impl AppState {
             let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
             Some(format!("http://127.0.0.1:{port}"))
         });
+        let auth_mode = resolve_configured_auth_mode()?;
+
+        if plugin_registration.auth_provider.is_none() {
+            anyhow::bail!("认证模式 `{auth_mode}` 未注册 AuthProvider，无法启动服务");
+        }
+
+        tracing::info!(auth_mode = %auth_mode, "认证模式已加载");
 
         let mut address_space_registry = agentdash_injection::builtin_address_space_registry();
         for provider in plugin_registration.address_space_providers {
@@ -246,6 +259,7 @@ impl AppState {
                 task_repo,
                 session_binding_repo,
                 backend_repo,
+                user_directory_repo,
                 settings_repo,
                 workflow_definition_repo: workflow_repo.clone(),
                 workflow_assignment_repo: workflow_repo.clone(),
@@ -263,10 +277,23 @@ impl AppState {
                 lock_map: TaskLockMap::new(),
                 restart_tracker,
             },
-            config: AppConfig { mcp_base_url },
+            config: AppConfig {
+                mcp_base_url,
+                auth_mode,
+            },
             remote_sessions: Arc::new(RwLock::new(HashMap::new())),
             auth_provider: plugin_registration.auth_provider,
         })
+    }
+}
+
+fn resolve_configured_auth_mode() -> Result<AuthMode> {
+    match std::env::var("AGENTDASH_AUTH_MODE") {
+        Ok(raw) => raw
+            .parse::<AuthMode>()
+            .map_err(|err| anyhow::anyhow!("AGENTDASH_AUTH_MODE 配置无效: {err}")),
+        Err(std::env::VarError::NotPresent) => Ok(AuthMode::Personal),
+        Err(err) => Err(anyhow::anyhow!("读取 AGENTDASH_AUTH_MODE 失败: {err}")),
     }
 }
 
@@ -281,9 +308,11 @@ async fn build_pi_agent_connector(
     executor_hub_handle: SharedExecutorHubHandle,
     inline_persister: Option<Arc<dyn crate::address_space_access::InlineContentPersister>>,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
-    let mut connector =
-        agentdash_executor::connectors::pi_agent::build_pi_agent_connector(workspace_root, settings)
-            .await?;
+    let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
+        workspace_root,
+        settings,
+    )
+    .await?;
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         address_space_service,
         session_binding_repo,

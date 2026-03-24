@@ -100,7 +100,10 @@ impl InlineContentOverlay {
     }
 
     /// 返回指定 mount 下所有被覆盖的文件（用于 list 时合并新增文件）
-    pub async fn overridden_files(&self, mount_id: &str) -> std::collections::HashMap<String, String> {
+    pub async fn overridden_files(
+        &self,
+        mount_id: &str,
+    ) -> std::collections::HashMap<String, String> {
         self.overrides
             .read()
             .await
@@ -120,12 +123,7 @@ impl InlineContentOverlay {
         let container_id = mount
             .root_ref
             .strip_prefix("context://inline/")
-            .ok_or_else(|| {
-                format!(
-                    "无法从 root_ref 解析 container_id: {}",
-                    mount.root_ref
-                )
-            })?;
+            .ok_or_else(|| format!("无法从 root_ref 解析 container_id: {}", mount.root_ref))?;
 
         let project_id = address_space
             .source_project_id
@@ -189,9 +187,7 @@ impl DbInlineContentPersister {
                 files,
             } => {
                 if let Some(file) = files.iter_mut().find(|f| {
-                    normalize_mount_relative_path(&f.path, false)
-                        .unwrap_or_default()
-                        == path
+                    normalize_mount_relative_path(&f.path, false).unwrap_or_default() == path
                 }) {
                     file.content = content.to_string();
                 } else {
@@ -202,10 +198,7 @@ impl DbInlineContentPersister {
                 }
                 Ok(())
             }
-            _ => Err(format!(
-                "容器 {} 不是 inline_files 类型",
-                container_id
-            )),
+            _ => Err(format!("容器 {} 不是 inline_files 类型", container_id)),
         }
     }
 }
@@ -225,8 +218,8 @@ impl InlineContentPersister for DbInlineContentPersister {
 
         // 优先尝试在 story 中查找（story 级 container 覆盖 project 级）
         if let Some(story_id_str) = source_story_id {
-            let story_uuid = uuid::Uuid::parse_str(story_id_str)
-                .map_err(|e| format!("无效的 story_id: {e}"))?;
+            let story_uuid =
+                uuid::Uuid::parse_str(story_id_str).map_err(|e| format!("无效的 story_id: {e}"))?;
             if let Some(mut story) = self
                 .story_repo
                 .get_by_id(story_uuid)
@@ -1355,6 +1348,7 @@ impl CompanionDispatchTool {
                 "当前 session 没有关联 owner，无法创建 companion session".to_string(),
             )
         })?;
+        let project_id = companion_project_id_for_owner(&snapshot, owner_type, owner_id)?;
         let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "ExecutorHub 尚未完成初始化，无法创建 companion session".to_string(),
@@ -1369,7 +1363,8 @@ impl CompanionDispatchTool {
             )
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        let binding = SessionBinding::new(meta.id, owner_type, owner_id, label.to_string());
+        let binding =
+            SessionBinding::new(project_id, meta.id, owner_type, owner_id, label.to_string());
         self.session_binding_repo
             .create(&binding)
             .await
@@ -2287,6 +2282,40 @@ fn parse_owner_candidate(
     Ok(Some((owner_type, owner_id, label)))
 }
 
+fn companion_project_id_for_owner(
+    snapshot: &agentdash_executor::SessionHookSnapshot,
+    owner_type: SessionOwnerType,
+    owner_id: Uuid,
+) -> Result<Uuid, AgentToolError> {
+    let owner_id_raw = owner_id.to_string();
+    let matching_owner = snapshot
+        .owners
+        .iter()
+        .find(|owner| owner.owner_type == owner_type.to_string() && owner.owner_id == owner_id_raw)
+        .ok_or_else(|| {
+            AgentToolError::ExecutionFailed("当前 session owner 缺少 project 范围信息".to_string())
+        })?;
+
+    match owner_type {
+        SessionOwnerType::Project => Ok(owner_id),
+        SessionOwnerType::Story | SessionOwnerType::Task => matching_owner
+            .project_id
+            .as_deref()
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "当前 session owner 缺少 project_id，无法创建 companion session".to_string(),
+                )
+            })
+            .and_then(|project_id| {
+                Uuid::parse_str(project_id).map_err(|error| {
+                    AgentToolError::ExecutionFailed(format!(
+                        "owner.project_id 不是有效 UUID: {error}"
+                    ))
+                })
+            }),
+    }
+}
+
 #[derive(Clone)]
 struct MountsListTool {
     service: Arc<RelayAddressSpaceService>,
@@ -2810,10 +2839,7 @@ mod tests {
     fn build_task_address_space_merges_project_story_and_workspace_policy() {
         let registry = crate::relay::registry::BackendRegistry::new();
         let service = RelayAddressSpaceService::new(registry);
-        let mut project = agentdash_domain::project::Project::new(
-            "proj".into(),
-            "desc".into(),
-        );
+        let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![inline_container(
             "project-spec",
             "spec",
@@ -2828,11 +2854,8 @@ mod tests {
             ],
         };
 
-        let mut story = agentdash_domain::story::Story::new(
-            project.id,
-            "story".into(),
-            "desc".into(),
-        );
+        let mut story =
+            agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
         story.context.context_containers = vec![inline_container(
             "story-brief",
             "brief",
@@ -2866,20 +2889,14 @@ mod tests {
     fn story_containers_can_disable_and_override_project_defaults() {
         let registry = crate::relay::registry::BackendRegistry::new();
         let service = RelayAddressSpaceService::new(registry);
-        let mut project = agentdash_domain::project::Project::new(
-            "proj".into(),
-            "desc".into(),
-        );
+        let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![
             inline_container("project-spec", "shared", "spec.md", "project spec"),
             inline_container("project-km", "km", "index.md", "project km"),
         ];
 
-        let mut story = agentdash_domain::story::Story::new(
-            project.id,
-            "story".into(),
-            "desc".into(),
-        );
+        let mut story =
+            agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
         story.context.disabled_container_ids = vec!["project-km".into()];
         story.context.context_containers = vec![inline_container(
             "story-spec",

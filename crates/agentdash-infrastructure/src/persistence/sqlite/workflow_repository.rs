@@ -59,6 +59,7 @@ impl SqliteWorkflowRepository {
             r#"
             CREATE TABLE IF NOT EXISTS workflow_runs (
                 id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL DEFAULT '',
                 workflow_id TEXT NOT NULL,
                 target_kind TEXT NOT NULL,
                 target_id TEXT NOT NULL,
@@ -71,6 +72,13 @@ impl SqliteWorkflowRepository {
                 last_activity_at TEXT NOT NULL
             );
             "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_workflow_runs_project_id ON workflow_runs(project_id)",
         )
         .execute(&self.pool)
         .await
@@ -364,10 +372,11 @@ impl WorkflowRunRepository for SqliteWorkflowRepository {
     async fn create(&self, run: &WorkflowRun) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO workflow_runs
-            (id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, project_id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(run.id.to_string())
+        .bind(run.project_id.to_string())
         .bind(run.workflow_id.to_string())
         .bind(serde_json::to_string(&run.target_kind)?)
         .bind(run.target_id.to_string())
@@ -387,7 +396,7 @@ impl WorkflowRunRepository for SqliteWorkflowRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<WorkflowRun>, DomainError> {
         let row = sqlx::query_as::<_, WorkflowRunRow>(
-            "SELECT id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at
+            "SELECT id, project_id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at
              FROM workflow_runs WHERE id = ?",
         )
         .bind(id.to_string())
@@ -398,12 +407,28 @@ impl WorkflowRunRepository for SqliteWorkflowRepository {
         row.map(TryInto::try_into).transpose()
     }
 
+    async fn list_by_project(
+        &self,
+        project_id: uuid::Uuid,
+    ) -> Result<Vec<WorkflowRun>, DomainError> {
+        let rows = sqlx::query_as::<_, WorkflowRunRow>(
+            "SELECT id, project_id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at
+             FROM workflow_runs WHERE project_id = ? ORDER BY created_at DESC",
+        )
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+
     async fn list_by_workflow(
         &self,
         workflow_id: uuid::Uuid,
     ) -> Result<Vec<WorkflowRun>, DomainError> {
         let rows = sqlx::query_as::<_, WorkflowRunRow>(
-            "SELECT id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at
+            "SELECT id, project_id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at
              FROM workflow_runs WHERE workflow_id = ? ORDER BY created_at DESC",
         )
         .bind(workflow_id.to_string())
@@ -420,7 +445,7 @@ impl WorkflowRunRepository for SqliteWorkflowRepository {
         target_id: uuid::Uuid,
     ) -> Result<Vec<WorkflowRun>, DomainError> {
         let rows = sqlx::query_as::<_, WorkflowRunRow>(
-            "SELECT id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at
+            "SELECT id, project_id, workflow_id, target_kind, target_id, status, current_phase_key, phase_states, record_artifacts, created_at, updated_at, last_activity_at
              FROM workflow_runs WHERE target_kind = ? AND target_id = ? ORDER BY created_at DESC",
         )
         .bind(serde_json::to_string(&target_kind)?)
@@ -435,9 +460,10 @@ impl WorkflowRunRepository for SqliteWorkflowRepository {
     async fn update(&self, run: &WorkflowRun) -> Result<(), DomainError> {
         let result = sqlx::query(
             "UPDATE workflow_runs
-             SET workflow_id = ?, target_kind = ?, target_id = ?, status = ?, current_phase_key = ?, phase_states = ?, record_artifacts = ?, updated_at = ?, last_activity_at = ?
+             SET project_id = ?, workflow_id = ?, target_kind = ?, target_id = ?, status = ?, current_phase_key = ?, phase_states = ?, record_artifacts = ?, updated_at = ?, last_activity_at = ?
              WHERE id = ?",
         )
+        .bind(run.project_id.to_string())
         .bind(run.workflow_id.to_string())
         .bind(serde_json::to_string(&run.target_kind)?)
         .bind(run.target_id.to_string())
@@ -561,6 +587,7 @@ impl TryFrom<WorkflowAssignmentRow> for WorkflowAssignment {
 #[derive(sqlx::FromRow)]
 struct WorkflowRunRow {
     id: String,
+    project_id: String,
     workflow_id: String,
     target_kind: String,
     target_id: String,
@@ -581,6 +608,10 @@ impl TryFrom<WorkflowRunRow> for WorkflowRun {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
                 entity: "workflow_run",
                 id: row.id.clone(),
+            })?,
+            project_id: row.project_id.parse().map_err(|_| DomainError::NotFound {
+                entity: "project",
+                id: row.project_id.clone(),
             })?,
             workflow_id: row.workflow_id.parse().map_err(|_| DomainError::NotFound {
                 entity: "workflow_definition",
@@ -622,6 +653,24 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("应能创建内存 sqlite");
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY
+            );
+            CREATE TABLE IF NOT EXISTS stories (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("应能准备 workflow 依赖表");
         let repo = SqliteWorkflowRepository::new(pool);
         repo.initialize().await.expect("应能初始化 workflow schema");
         repo

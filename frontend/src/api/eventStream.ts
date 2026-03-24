@@ -8,11 +8,13 @@ import { buildApiPath } from './origin';
  * 当连接断开时浏览器会自动尝试重连。
  */
 export function connectEventStream(
+  projectId: string,
   onEvent: (event: StreamEvent) => void,
   onOpen?: () => void,
   onError?: (error: Event) => void,
 ): EventSource {
-  const source = new EventSource(buildApiPath('/events/stream'));
+  const params = new URLSearchParams({ project_id: projectId });
+  const source = new EventSource(buildApiPath(`/events/stream?${params.toString()}`));
 
   source.onopen = () => {
     onOpen?.();
@@ -37,8 +39,9 @@ export function connectEventStream(
 /**
  * 手动获取 since_id 之后的变更（用于 Resume 场景）
  */
-export async function fetchEventsSince(sinceId: number) {
-  const res = await fetch(buildApiPath(`/events/since/${sinceId}`));
+export async function fetchEventsSince(projectId: string, sinceId: number) {
+  const params = new URLSearchParams({ project_id: projectId });
+  const res = await fetch(buildApiPath(`/events/since/${sinceId}?${params.toString()}`));
   if (!res.ok) throw new Error(`Resume 失败: HTTP ${res.status}`);
   return res.json();
 }

@@ -197,29 +197,45 @@ mod tests {
 
     #[test]
     fn skip_pure_allow_trace() {
-        let notification =
-            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("allow"));
+        let notification = build_hook_trace_notification(
+            "sess-1",
+            Some("t-1"),
+            sample_source(),
+            &silent_entry("allow"),
+        );
         assert!(notification.is_none());
     }
 
     #[test]
     fn skip_stop_trace() {
-        let notification =
-            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("stop"));
+        let notification = build_hook_trace_notification(
+            "sess-1",
+            Some("t-1"),
+            sample_source(),
+            &silent_entry("stop"),
+        );
         assert!(notification.is_none());
     }
 
     #[test]
     fn skip_terminal_observed_trace() {
-        let notification =
-            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("terminal_observed"));
+        let notification = build_hook_trace_notification(
+            "sess-1",
+            Some("t-1"),
+            sample_source(),
+            &silent_entry("terminal_observed"),
+        );
         assert!(notification.is_none());
     }
 
     #[test]
     fn skip_refresh_requested_trace() {
-        let notification =
-            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &silent_entry("refresh_requested"));
+        let notification = build_hook_trace_notification(
+            "sess-1",
+            Some("t-1"),
+            sample_source(),
+            &silent_entry("refresh_requested"),
+        );
         assert!(notification.is_none());
     }
 

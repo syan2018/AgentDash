@@ -220,6 +220,7 @@ export function mapWorkflowAssignment(raw: Record<string, unknown>): WorkflowAss
 export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
   return {
     id: String(raw.id ?? ""),
+    project_id: String(raw.project_id ?? ""),
     workflow_id: String(raw.workflow_id ?? ""),
     target_kind: normalizeWorkflowTargetKind(String(raw.target_kind ?? "task")),
     target_id: String(raw.target_id ?? ""),
@@ -337,4 +338,3 @@ export async function completeWorkflowPhase(input: {
   );
   return mapWorkflowRun(raw);
 }
-

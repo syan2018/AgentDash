@@ -33,8 +33,12 @@ export interface BatchReadFilesResponse {
   totalSize: number;
 }
 
-export async function listWorkspaceFiles(pattern?: string): Promise<ListFilesResponse> {
+export async function listWorkspaceFiles(
+  workspaceId: string,
+  pattern?: string,
+): Promise<ListFilesResponse> {
   const params = new URLSearchParams();
+  params.set("workspace_id", workspaceId);
   if (pattern) params.set("pattern", pattern);
 
   const url = buildApiPath(`/workspace-files${params.toString() ? `?${params}` : ""}`);
@@ -48,12 +52,15 @@ export async function listWorkspaceFiles(pattern?: string): Promise<ListFilesRes
   return res.json();
 }
 
-export async function batchReadWorkspaceFiles(paths: string[]): Promise<BatchReadFilesResponse> {
+export async function batchReadWorkspaceFiles(
+  workspaceId: string,
+  paths: string[],
+): Promise<BatchReadFilesResponse> {
   const url = buildApiPath("/workspace-files/batch-read");
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ paths }),
+    body: JSON.stringify({ workspace_id: workspaceId, paths }),
   });
 
   if (!res.ok) {

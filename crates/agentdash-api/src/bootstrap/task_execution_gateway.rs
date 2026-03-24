@@ -275,7 +275,14 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         let owner_type = SessionOwnerType::from_str_loose(owner_type).ok_or_else(|| {
             TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
         })?;
-        let binding = SessionBinding::new(session_id.to_string(), owner_type, owner_id, label);
+        let project_id = resolve_project_scope_for_owner(&self.state, owner_type, owner_id).await?;
+        let binding = SessionBinding::new(
+            project_id,
+            session_id.to_string(),
+            owner_type,
+            owner_id,
+            label,
+        );
         self.state
             .repos
             .session_binding_repo
@@ -900,11 +907,13 @@ async fn clear_task_session_binding(
             .repos
             .story_repo
             .append_change(
+                task.project_id,
                 task.id,
                 ChangeKind::TaskUpdated,
                 json!({
                     "reason": format!("session_cleared_{reason}"),
                     "task_id": task.id,
+                    "project_id": task.project_id,
                     "story_id": task.story_id,
                     "cleared_session_id": cleared_session_id,
                     "cleared_executor_session_id": cleared_executor_session_id,
@@ -1150,6 +1159,15 @@ async fn append_task_change(
     kind: ChangeKind,
     payload: Value,
 ) -> Result<(), agentdash_domain::DomainError> {
+    let task = state
+        .repos
+        .task_repo
+        .get_by_id(task_id)
+        .await?
+        .ok_or_else(|| agentdash_domain::DomainError::NotFound {
+            entity: "task",
+            id: task_id.to_string(),
+        })?;
     let backend_id_opt = if backend_id.trim().is_empty() {
         None
     } else {
@@ -1158,7 +1176,7 @@ async fn append_task_change(
     state
         .repos
         .story_repo
-        .append_change(task_id, kind, payload, backend_id_opt)
+        .append_change(task.project_id, task_id, kind, payload, backend_id_opt)
         .await
 }
 
@@ -1219,11 +1237,11 @@ async fn load_related_context(
     let project = state
         .repos
         .project_repo
-        .get_by_id(story.project_id)
+        .get_by_id(task.project_id)
         .await
         .map_err(map_domain_error)?
         .ok_or_else(|| {
-            TaskExecutionError::NotFound(format!("Story 所属 Project {} 不存在", story.project_id))
+            TaskExecutionError::NotFound(format!("Task 所属 Project {} 不存在", task.project_id))
         })?;
 
     let workspace = if let Some(ws_id) = task.workspace_id {
@@ -1326,9 +1344,7 @@ async fn resolve_task_backend_id(
             .await
             .map_err(map_domain_error)?
             .ok_or_else(|| {
-                TaskExecutionError::NotFound(format!(
-                    "Story 默认 Workspace {default_ws_id} 不存在"
-                ))
+                TaskExecutionError::NotFound(format!("Story 默认 Workspace {default_ws_id} 不存在"))
             })?;
         if let Ok(bid) = normalize_backend_id(&workspace.backend_id) {
             return Ok(bid.to_string());
@@ -1367,6 +1383,32 @@ async fn resolve_task_backend_id(
     ))
 }
 
+async fn resolve_project_scope_for_owner(
+    state: &Arc<AppState>,
+    owner_type: SessionOwnerType,
+    owner_id: Uuid,
+) -> Result<Uuid, TaskExecutionError> {
+    match owner_type {
+        SessionOwnerType::Project => Ok(owner_id),
+        SessionOwnerType::Story => state
+            .repos
+            .story_repo
+            .get_by_id(owner_id)
+            .await
+            .map_err(map_domain_error)?
+            .map(|story| story.project_id)
+            .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {owner_id} 不存在"))),
+        SessionOwnerType::Task => state
+            .repos
+            .task_repo
+            .get_by_id(owner_id)
+            .await
+            .map_err(map_domain_error)?
+            .map(|task| task.project_id)
+            .ok_or_else(|| TaskExecutionError::NotFound(format!("Task {owner_id} 不存在"))),
+    }
+}
+
 fn normalize_backend_id(raw: &str) -> Result<&str, TaskExecutionError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -1396,14 +1438,17 @@ async fn relay_start_prompt(
         provider_id: c.provider_id,
         model_id: c.model_id,
         agent_id: c.agent_id,
-        thinking_level: c.thinking_level.map(|level| match level {
-            agentdash_executor::ThinkingLevel::Off => "off",
-            agentdash_executor::ThinkingLevel::Minimal => "minimal",
-            agentdash_executor::ThinkingLevel::Low => "low",
-            agentdash_executor::ThinkingLevel::Medium => "medium",
-            agentdash_executor::ThinkingLevel::High => "high",
-            agentdash_executor::ThinkingLevel::Xhigh => "xhigh",
-        }.to_string()),
+        thinking_level: c.thinking_level.map(|level| {
+            match level {
+                agentdash_executor::ThinkingLevel::Off => "off",
+                agentdash_executor::ThinkingLevel::Minimal => "minimal",
+                agentdash_executor::ThinkingLevel::Low => "low",
+                agentdash_executor::ThinkingLevel::Medium => "medium",
+                agentdash_executor::ThinkingLevel::High => "high",
+                agentdash_executor::ThinkingLevel::Xhigh => "xhigh",
+            }
+            .to_string()
+        }),
         permission_policy: c.permission_policy,
     });
 

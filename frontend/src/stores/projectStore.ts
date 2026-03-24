@@ -5,6 +5,8 @@ import type {
   OpenProjectAgentSessionResult,
   ProjectAgentSession,
   ProjectSessionInfo,
+  ProjectRole,
+  ProjectSubjectGrant,
   SessionContextSnapshot,
   ProjectAgentSummary,
   Project,
@@ -17,6 +19,7 @@ import { api } from '../api/client';
 interface ProjectState {
   projects: Project[];
   agentsByProjectId: Record<string, ProjectAgentSummary[]>;
+  grantsByProjectId: Record<string, ProjectSubjectGrant[]>;
   currentProjectId: string | null;
   isLoading: boolean;
   error: string | null;
@@ -30,8 +33,16 @@ interface ProjectState {
     context_containers?: ContextContainerDefinition[];
     mount_policy?: MountDerivationPolicy;
     session_composition?: SessionComposition;
+    visibility?: Project["visibility"];
+    is_template?: boolean;
   }) => Promise<Project | null>;
   updateProjectConfig: (id: string, config: Partial<ProjectConfig>) => Promise<Project | null>;
+  fetchProjectGrants: (projectId: string) => Promise<ProjectSubjectGrant[]>;
+  grantProjectUser: (projectId: string, userId: string, role: ProjectRole) => Promise<ProjectSubjectGrant | null>;
+  revokeProjectUser: (projectId: string, userId: string) => Promise<boolean>;
+  grantProjectGroup: (projectId: string, groupId: string, role: ProjectRole) => Promise<ProjectSubjectGrant | null>;
+  revokeProjectGroup: (projectId: string, groupId: string) => Promise<boolean>;
+  cloneProject: (projectId: string, payload?: { name?: string; description?: string }) => Promise<Project | null>;
   fetchProjectAgents: (projectId: string) => Promise<ProjectAgentSummary[]>;
   openProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
   forceNewProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
@@ -126,6 +137,7 @@ function mapProjectSessionInfo(raw: Record<string, unknown>, fallbackBindingId: 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   agentsByProjectId: {},
+  grantsByProjectId: {},
   currentProjectId: null,
   isLoading: false,
   error: null,
@@ -186,6 +198,126 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       });
       set((s) => ({
         projects: s.projects.map((item) => (item.id === id ? project : item)),
+      }));
+      return project;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  fetchProjectGrants: async (projectId) => {
+    try {
+      const grants = await api.get<ProjectSubjectGrant[]>(`/projects/${projectId}/grants`);
+      set((state) => ({
+        grantsByProjectId: {
+          ...state.grantsByProjectId,
+          [projectId]: grants,
+        },
+        error: null,
+      }));
+      return grants;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return [];
+    }
+  },
+
+  grantProjectUser: async (projectId, userId, role) => {
+    try {
+      const grant = await api.put<ProjectSubjectGrant>(`/projects/${projectId}/grants/users/${encodeURIComponent(userId)}`, {
+        role,
+      });
+      set((state) => {
+        const current = state.grantsByProjectId[projectId] ?? [];
+        const next = current.filter((item) => !(item.subject_type === "user" && item.subject_id === userId));
+        next.push(grant);
+        next.sort((left, right) => `${left.subject_type}:${left.subject_id}`.localeCompare(`${right.subject_type}:${right.subject_id}`));
+        return {
+          grantsByProjectId: {
+            ...state.grantsByProjectId,
+            [projectId]: next,
+          },
+          error: null,
+        };
+      });
+      return grant;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  revokeProjectUser: async (projectId, userId) => {
+    try {
+      await api.delete(`/projects/${projectId}/grants/users/${encodeURIComponent(userId)}`);
+      set((state) => ({
+        grantsByProjectId: {
+          ...state.grantsByProjectId,
+          [projectId]: (state.grantsByProjectId[projectId] ?? []).filter(
+            (item) => !(item.subject_type === "user" && item.subject_id === userId),
+          ),
+        },
+        error: null,
+      }));
+      return true;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return false;
+    }
+  },
+
+  grantProjectGroup: async (projectId, groupId, role) => {
+    try {
+      const grant = await api.put<ProjectSubjectGrant>(`/projects/${projectId}/grants/groups/${encodeURIComponent(groupId)}`, {
+        role,
+      });
+      set((state) => {
+        const current = state.grantsByProjectId[projectId] ?? [];
+        const next = current.filter((item) => !(item.subject_type === "group" && item.subject_id === groupId));
+        next.push(grant);
+        next.sort((left, right) => `${left.subject_type}:${left.subject_id}`.localeCompare(`${right.subject_type}:${right.subject_id}`));
+        return {
+          grantsByProjectId: {
+            ...state.grantsByProjectId,
+            [projectId]: next,
+          },
+          error: null,
+        };
+      });
+      return grant;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  revokeProjectGroup: async (projectId, groupId) => {
+    try {
+      await api.delete(`/projects/${projectId}/grants/groups/${encodeURIComponent(groupId)}`);
+      set((state) => ({
+        grantsByProjectId: {
+          ...state.grantsByProjectId,
+          [projectId]: (state.grantsByProjectId[projectId] ?? []).filter(
+            (item) => !(item.subject_type === "group" && item.subject_id === groupId),
+          ),
+        },
+        error: null,
+      }));
+      return true;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return false;
+    }
+  },
+
+  cloneProject: async (projectId, payload) => {
+    try {
+      const project = await api.post<Project>(`/projects/${projectId}/clone`, payload ?? {});
+      set((state) => ({
+        projects: [project, ...state.projects],
+        currentProjectId: project.id,
+        error: null,
       }));
       return project;
     } catch (e) {
@@ -305,10 +437,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const nextCurrentProjectId =
           s.currentProjectId === id ? (remaining[0]?.id ?? null) : s.currentProjectId;
         const nextAgentsByProjectId = { ...s.agentsByProjectId };
+        const nextGrantsByProjectId = { ...s.grantsByProjectId };
         delete nextAgentsByProjectId[id];
+        delete nextGrantsByProjectId[id];
         return {
           projects: remaining,
           agentsByProjectId: nextAgentsByProjectId,
+          grantsByProjectId: nextGrantsByProjectId,
           currentProjectId: nextCurrentProjectId,
           error: null,
         };

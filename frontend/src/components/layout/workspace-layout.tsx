@@ -5,6 +5,7 @@ import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
+import { useCurrentUserStore } from "../../stores/currentUserStore";
 import { ProjectSelector } from "../../features/project/project-selector";
 
 // WorkspaceView 类型已废弃，改为 React Router NavLink 驱动导航
@@ -14,6 +15,7 @@ export function WorkspaceLayout() {
   const { fetchWorkspaces } = useWorkspaceStore();
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
+  const { currentUser } = useCurrentUserStore();
 
   useEffect(() => {
     if (currentProjectId) {
@@ -107,6 +109,12 @@ export function WorkspaceLayout() {
           <BackendConnectionPanel backends={backends} />
         </div>
 
+        {currentUser && (
+          <div className="border-t border-border p-3">
+            <CurrentUserPanel />
+          </div>
+        )}
+
         {/* 底部：设置 + 主题切换 */}
         <div className="border-t border-border p-3">
           <NavLink
@@ -130,6 +138,53 @@ export function WorkspaceLayout() {
       <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>
+    </div>
+  );
+}
+
+function CurrentUserPanel() {
+  const { currentUser } = useCurrentUserStore();
+
+  if (!currentUser) return null;
+
+  const title = currentUser.display_name?.trim()
+    || currentUser.email?.trim()
+    || currentUser.user_id;
+  const subtitle = currentUser.email?.trim()
+    || currentUser.user_id;
+  const modeLabel = currentUser.auth_mode === "enterprise" ? "企业模式" : "个人模式";
+  const groupCount = currentUser.groups.length;
+
+  return (
+    <div className="rounded-[12px] border border-border bg-secondary/35 p-2.5">
+      <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">当前身份</p>
+      <div className="mt-2 rounded-[10px] border border-transparent bg-background/80 px-3 py-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-foreground">{title}</p>
+            <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {currentUser.is_admin && (
+              <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                Admin
+              </span>
+            )}
+            <span className="rounded-[6px] border border-border bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
+              {modeLabel}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className="rounded-[6px] border border-border bg-secondary/70 px-2 py-0.5 text-[10px] text-muted-foreground">
+            provider: {currentUser.provider ?? "unknown"}
+          </span>
+          <span className="rounded-[6px] border border-border bg-secondary/70 px-2 py-0.5 text-[10px] text-muted-foreground">
+            groups: {groupCount}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

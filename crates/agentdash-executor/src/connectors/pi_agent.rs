@@ -104,9 +104,7 @@ impl PiAgentConnector {
         provider_id: Option<&str>,
         model_id: Option<&str>,
     ) -> Arc<dyn LlmBridge> {
-        let provider_id = provider_id
-            .map(str::trim)
-            .filter(|item| !item.is_empty());
+        let provider_id = provider_id.map(str::trim).filter(|item| !item.is_empty());
         let model_id = model_id.map(str::trim).filter(|item| !item.is_empty());
 
         if provider_id.is_none() && model_id.is_none() {
@@ -1073,7 +1071,7 @@ async fn read_setting_str(
     repo: &dyn agentdash_domain::settings::SettingsRepository,
     key: &str,
 ) -> Option<String> {
-    repo.get(key)
+    repo.get(&agentdash_domain::settings::SettingScope::system(), key)
         .await
         .ok()
         .flatten()

@@ -1,0 +1,8 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".trellis/tasks/03-24-enterprise-auth-project-sharing/prd.md", "reason": "检查实现是否仍符合总任务目标与边界"}
+{"file": ".trellis/tasks/03-24-enterprise-auth-project-sharing/authorization-matrix.md", "reason": "检查权限判定是否符合角色矩阵"}
+{"file": ".trellis/tasks/03-24-enterprise-auth-project-sharing/implementation-plan.md", "reason": "检查推进顺序与收口范围是否跑偏"}
+{"file": ".trellis/spec/backend/plugin-api.md", "reason": "检查认证插件化方案是否破坏宿主边界"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层契约与实时链路是否完整"}

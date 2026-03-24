@@ -4,15 +4,16 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::address_space_access::{ListOptions, ResourceRef};
 use crate::app_state::AppState;
+use crate::auth::{CurrentUser, ProjectPermission, load_workspace_and_project_with_permission};
 use crate::rpc::ApiError;
 
 pub(crate) const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
 pub(crate) const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB
 pub(crate) const MAX_REFERENCES: usize = 10;
-pub(crate) const MAX_LIST_RESULTS: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct ListFilesQuery {
@@ -56,6 +57,7 @@ pub struct ReadFileResponse {
 #[serde(rename_all = "camelCase")]
 pub struct BatchReadFilesRequest {
     pub paths: Vec<String>,
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,92 +81,46 @@ pub struct ReadFileResult {
 /// GET /api/workspace-files
 pub async fn list_files(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListFilesQuery>,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
+    let workspace_id = parse_workspace_id(query.workspace_id.as_deref())?;
     let pattern = query.pattern.clone().unwrap_or_default();
-
-    if let Some(ws_id) = &query.workspace_id {
-        let workspace = load_workspace_by_id(&state, ws_id).await?;
-        let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
-        return relay_list_files(&state, backend_id, &workspace, &pattern).await;
-    }
-
-    let root = state.services.executor_hub.workspace_root().to_path_buf();
-    let pattern_lower = pattern.to_lowercase();
-
-    let files =
-        tokio::task::spawn_blocking(move || walk_files(&root, &pattern_lower, MAX_LIST_RESULTS))
-            .await
-            .map_err(|e| ApiError::Internal(format!("文件列表任务异常: {e}")))?;
-
-    let root_display = normalize_path_display(state.services.executor_hub.workspace_root());
-
-    Ok(Json(ListFilesResponse {
-        files,
-        root: root_display,
-    }))
+    let (workspace, _) = load_workspace_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        workspace_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+    relay_list_files(&state, backend_id, &workspace, &pattern).await
 }
 
 /// POST /api/workspace-files/read
 pub async fn read_file(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<ReadFileRequest>,
 ) -> Result<Json<ReadFileResponse>, ApiError> {
     let rel = req.rel_path.trim().to_string();
     validate_path_safe(&rel)?;
-
-    if let Some(ws_id) = &req.workspace_id {
-        let workspace = load_workspace_by_id(&state, ws_id).await?;
-        let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
-        return relay_read_file(&state, backend_id, &workspace, &rel).await;
-    }
-
-    let root = state.services.executor_hub.workspace_root().to_path_buf();
-
-    let abs_path = root.join(&rel);
-    let canonical = tokio::fs::canonicalize(&abs_path)
-        .await
-        .map_err(|_| ApiError::NotFound(format!("文件不存在: {rel}")))?;
-
-    let canonical_root = tokio::fs::canonicalize(&root)
-        .await
-        .map_err(|e| ApiError::Internal(format!("根目录解析失败: {e}")))?;
-
-    if !canonical.starts_with(&canonical_root) {
-        return Err(ApiError::BadRequest("禁止访问工作空间外文件".into()));
-    }
-
-    let metadata = tokio::fs::metadata(&canonical)
-        .await
-        .map_err(|_| ApiError::NotFound(format!("文件不存在: {rel}")))?;
-
-    if metadata.len() > MAX_FILE_SIZE {
-        return Err(ApiError::BadRequest(format!(
-            "文件过大 ({} bytes)，最大允许 {} bytes",
-            metadata.len(),
-            MAX_FILE_SIZE
-        )));
-    }
-
-    let content = tokio::fs::read_to_string(&canonical)
-        .await
-        .map_err(|_| ApiError::BadRequest(format!("文件不是有效文本: {rel}")))?;
-
-    let mime = guess_mime(&rel);
-    let uri = path_to_file_uri(&canonical);
-
-    Ok(Json(ReadFileResponse {
-        rel_path: rel,
-        uri,
-        mime_type: mime,
-        content,
-        size: metadata.len(),
-    }))
+    let workspace_id = parse_workspace_id(req.workspace_id.as_deref())?;
+    let (workspace, _) = load_workspace_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        workspace_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+    relay_read_file(&state, backend_id, &workspace, &rel).await
 }
 
 /// POST /api/workspace-files/batch-read
 pub async fn batch_read_files(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<BatchReadFilesRequest>,
 ) -> Result<Json<BatchReadFilesResponse>, ApiError> {
     if req.paths.len() > MAX_REFERENCES {
@@ -174,125 +130,16 @@ pub async fn batch_read_files(
         )));
     }
 
-    let root = state.services.executor_hub.workspace_root().to_path_buf();
-    let canonical_root = tokio::fs::canonicalize(&root)
-        .await
-        .map_err(|e| ApiError::Internal(format!("根目录解析失败: {e}")))?;
-
-    let mut results = Vec::new();
-    let mut total_size: u64 = 0;
-
-    for rel in &req.paths {
-        let rel = rel.trim().to_string();
-        if let Err(e) = validate_path_safe(&rel) {
-            results.push(ReadFileResult {
-                rel_path: rel,
-                uri: String::new(),
-                mime_type: String::new(),
-                content: None,
-                size: 0,
-                error: Some(e.to_string()),
-            });
-            continue;
-        }
-
-        let abs_path = root.join(&rel);
-        let canonical = match tokio::fs::canonicalize(&abs_path).await {
-            Ok(p) => p,
-            Err(_) => {
-                results.push(ReadFileResult {
-                    rel_path: rel,
-                    uri: String::new(),
-                    mime_type: String::new(),
-                    content: None,
-                    size: 0,
-                    error: Some("文件不存在".into()),
-                });
-                continue;
-            }
-        };
-
-        if !canonical.starts_with(&canonical_root) {
-            results.push(ReadFileResult {
-                rel_path: rel,
-                uri: String::new(),
-                mime_type: String::new(),
-                content: None,
-                size: 0,
-                error: Some("禁止访问工作空间外文件".into()),
-            });
-            continue;
-        }
-
-        let metadata = match tokio::fs::metadata(&canonical).await {
-            Ok(m) => m,
-            Err(_) => {
-                results.push(ReadFileResult {
-                    rel_path: rel,
-                    uri: String::new(),
-                    mime_type: String::new(),
-                    content: None,
-                    size: 0,
-                    error: Some("文件不存在".into()),
-                });
-                continue;
-            }
-        };
-
-        if metadata.len() > MAX_FILE_SIZE {
-            results.push(ReadFileResult {
-                rel_path: rel.clone(),
-                uri: path_to_file_uri(&canonical),
-                mime_type: guess_mime(&rel),
-                content: None,
-                size: metadata.len(),
-                error: Some(format!("文件过大 ({} bytes)", metadata.len())),
-            });
-            continue;
-        }
-
-        if total_size + metadata.len() > MAX_TOTAL_SIZE {
-            results.push(ReadFileResult {
-                rel_path: rel.clone(),
-                uri: path_to_file_uri(&canonical),
-                mime_type: guess_mime(&rel),
-                content: None,
-                size: metadata.len(),
-                error: Some("总嵌入大小超限".into()),
-            });
-            continue;
-        }
-
-        match tokio::fs::read_to_string(&canonical).await {
-            Ok(content) => {
-                total_size += metadata.len();
-                let uri = path_to_file_uri(&canonical);
-                results.push(ReadFileResult {
-                    rel_path: rel.clone(),
-                    uri,
-                    mime_type: guess_mime(&rel),
-                    content: Some(content),
-                    size: metadata.len(),
-                    error: None,
-                });
-            }
-            Err(_) => {
-                results.push(ReadFileResult {
-                    rel_path: rel.clone(),
-                    uri: path_to_file_uri(&canonical),
-                    mime_type: guess_mime(&rel),
-                    content: None,
-                    size: metadata.len(),
-                    error: Some("文件不是有效文本".into()),
-                });
-            }
-        }
-    }
-
-    Ok(Json(BatchReadFilesResponse {
-        files: results,
-        total_size,
-    }))
+    let workspace_id = parse_workspace_id(req.workspace_id.as_deref())?;
+    let (workspace, _) = load_workspace_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        workspace_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let backend_id = require_online_backend(&state, &workspace.backend_id).await?;
+    relay_batch_read_files(&state, backend_id, &workspace, &req.paths).await
 }
 
 pub(crate) fn validate_path_safe(rel_path: &str) -> Result<(), ApiError> {
@@ -311,87 +158,12 @@ pub(crate) fn validate_path_safe(rel_path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub(crate) fn walk_files(root: &Path, pattern: &str, max_results: usize) -> Vec<FileEntry> {
-    let mut results = Vec::new();
-    walk_dir_recursive(root, root, pattern, max_results, &mut results);
-    results.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-    results
-}
-
-fn walk_dir_recursive(
-    base: &Path,
-    dir: &Path,
-    pattern: &str,
-    max_results: usize,
-    results: &mut Vec<FileEntry>,
-) {
-    if results.len() >= max_results {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        if results.len() >= max_results {
-            return;
-        }
-
-        let path = entry.path();
-        let file_name = entry.file_name().to_string_lossy().to_string();
-
-        if should_skip(&file_name) {
-            continue;
-        }
-
-        if path.is_dir() {
-            walk_dir_recursive(base, &path, pattern, max_results, results);
-        } else if path.is_file() {
-            let rel = match path.strip_prefix(base) {
-                Ok(r) => r.to_string_lossy().replace('\\', "/"),
-                Err(_) => continue,
-            };
-
-            if !pattern.is_empty() && !rel.to_lowercase().contains(pattern) {
-                continue;
-            }
-
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            let is_text = is_likely_text(&rel);
-
-            results.push(FileEntry {
-                rel_path: rel,
-                size,
-                is_text,
-            });
-        }
-    }
-}
-
-fn should_skip(name: &str) -> bool {
-    matches!(
-        name,
-        ".git"
-            | "node_modules"
-            | "target"
-            | "__pycache__"
-            | ".next"
-            | ".agentdash"
-            | "dist"
-            | "build"
-            | ".trellis"
-            | ".venv"
-            | ".mypy_cache"
-            | ".pytest_cache"
-            | ".ruff_cache"
-            | "references"
-            | "third_party"
-            | ".cursor"
-            | ".claude"
-            | ".agents"
-    ) || name.starts_with('.') && matches!(name, ".env" | ".env.local" | ".DS_Store")
+fn parse_workspace_id(workspace_id: Option<&str>) -> Result<Uuid, ApiError> {
+    let raw = workspace_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("workspace_id 不能为空".into()))?;
+    Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))
 }
 
 fn is_likely_text(rel_path: &str) -> bool {
@@ -470,40 +242,6 @@ pub(crate) fn guess_mime(rel_path: &str) -> String {
         _ => "text/plain",
     }
     .to_string()
-}
-
-pub(crate) fn path_to_file_uri(path: &Path) -> String {
-    let s = path.to_string_lossy().to_string();
-    let cleaned = if cfg!(windows) {
-        s.trim_start_matches(r"\\?\").replace('\\', "/")
-    } else {
-        s
-    };
-    let trimmed = cleaned.trim_start_matches('/');
-    format!("file:///{trimmed}")
-}
-
-pub(crate) fn normalize_path_display(path: &Path) -> String {
-    let s = path.to_string_lossy().to_string();
-    if cfg!(windows) {
-        s.trim_start_matches(r"\\?\").to_string()
-    } else {
-        s
-    }
-}
-
-async fn load_workspace_by_id(
-    state: &Arc<AppState>,
-    workspace_id: &str,
-) -> Result<agentdash_domain::workspace::Workspace, ApiError> {
-    let workspace_uuid = uuid::Uuid::parse_str(workspace_id)
-        .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
-    state
-        .repos
-        .workspace_repo
-        .get_by_id(workspace_uuid)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Workspace 不存在: {workspace_id}")))
 }
 
 async fn require_online_backend<'a>(
@@ -608,13 +346,113 @@ async fn relay_read_file(
     }))
 }
 
+async fn relay_batch_read_files(
+    state: &Arc<AppState>,
+    _backend_id: &str,
+    workspace: &agentdash_domain::workspace::Workspace,
+    paths: &[String],
+) -> Result<Json<BatchReadFilesResponse>, ApiError> {
+    let session = state
+        .services
+        .address_space_service
+        .session_for_workspace(workspace)
+        .map_err(ApiError::BadRequest)?;
+    let mut results = Vec::new();
+    let mut total_size: u64 = 0;
+
+    for raw_rel in paths {
+        let rel = raw_rel.trim().to_string();
+        if let Err(err) = validate_path_safe(&rel) {
+            results.push(ReadFileResult {
+                rel_path: rel,
+                uri: String::new(),
+                mime_type: String::new(),
+                content: None,
+                size: 0,
+                error: Some(err.to_string()),
+            });
+            continue;
+        }
+
+        let read = match state
+            .services
+            .address_space_service
+            .read_text(
+                &session,
+                &ResourceRef {
+                    mount_id: "main".to_string(),
+                    path: rel.clone(),
+                },
+                None,
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                results.push(ReadFileResult {
+                    rel_path: rel,
+                    uri: String::new(),
+                    mime_type: String::new(),
+                    content: None,
+                    size: 0,
+                    error: Some(err),
+                });
+                continue;
+            }
+        };
+
+        let size = read.content.len() as u64;
+        if size > MAX_FILE_SIZE {
+            results.push(ReadFileResult {
+                rel_path: read.path.clone(),
+                uri: String::new(),
+                mime_type: guess_mime(&read.path),
+                content: None,
+                size,
+                error: Some(format!("文件过大 ({} bytes)", size)),
+            });
+            continue;
+        }
+
+        if total_size + size > MAX_TOTAL_SIZE {
+            results.push(ReadFileResult {
+                rel_path: read.path.clone(),
+                uri: String::new(),
+                mime_type: guess_mime(&read.path),
+                content: None,
+                size,
+                error: Some("总嵌入大小超限".into()),
+            });
+            continue;
+        }
+
+        total_size += size;
+        results.push(ReadFileResult {
+            rel_path: read.path.clone(),
+            uri: String::new(),
+            mime_type: guess_mime(&read.path),
+            content: Some(read.content),
+            size,
+            error: None,
+        });
+    }
+
+    Ok(Json(BatchReadFilesResponse {
+        files: results,
+        total_size,
+    }))
+}
+
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ApiError::BadRequest(msg) => write!(f, "{}", msg),
+            ApiError::Unauthorized(msg) => write!(f, "{}", msg),
+            ApiError::Forbidden(msg) => write!(f, "{}", msg),
             ApiError::NotFound(msg) => write!(f, "{}", msg),
             ApiError::Conflict(msg) => write!(f, "{}", msg),
             ApiError::UnprocessableEntity(msg) => write!(f, "{}", msg),
+            ApiError::ServiceUnavailable(msg) => write!(f, "{}", msg),
             ApiError::Internal(msg) => write!(f, "{}", msg),
         }
     }

@@ -171,6 +171,7 @@ mod tests {
         let definition =
             build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
         let run = WorkflowRun::new(
+            Uuid::new_v4(),
             definition.id,
             WorkflowTargetKind::Task,
             Uuid::new_v4(),

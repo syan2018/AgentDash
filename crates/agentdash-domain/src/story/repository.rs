@@ -19,9 +19,17 @@ pub trait StoryRepository: Send + Sync {
         since_id: i64,
         limit: i64,
     ) -> Result<Vec<StateChange>, DomainError>;
+    async fn get_changes_since_by_project(
+        &self,
+        project_id: Uuid,
+        since_id: i64,
+        limit: i64,
+    ) -> Result<Vec<StateChange>, DomainError>;
     async fn latest_event_id(&self) -> Result<i64, DomainError>;
+    async fn latest_event_id_by_project(&self, project_id: Uuid) -> Result<i64, DomainError>;
     async fn append_change(
         &self,
+        project_id: Uuid,
         entity_id: Uuid,
         kind: ChangeKind,
         payload: serde_json::Value,

@@ -16,6 +16,10 @@ use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, Sto
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
 use crate::app_state::AppState;
+use crate::auth::{
+    CurrentUser, ProjectPermission, load_project_with_permission,
+    load_story_and_project_with_permission, load_task_story_project_with_permission,
+};
 use crate::dto::{StoryResponse, TaskResponse};
 use crate::rpc::ApiError;
 
@@ -87,16 +91,17 @@ pub struct UpdateTaskRequest {
 
 pub async fn list_stories(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListStoriesQuery>,
 ) -> Result<Json<Vec<StoryResponse>>, ApiError> {
     let stories = if let Some(project_id) = &query.project_id {
         let pid = Uuid::parse_str(project_id)
             .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
+        load_project_with_permission(state.as_ref(), &current_user, pid, ProjectPermission::View)
+            .await?;
         state.repos.story_repo.list_by_project(pid).await?
     } else {
-        return Err(ApiError::BadRequest(
-            "需要 project_id 参数".into(),
-        ));
+        return Err(ApiError::BadRequest("需要 project_id 参数".into()));
     };
 
     Ok(Json(stories.into_iter().map(StoryResponse::from).collect()))
@@ -104,16 +109,18 @@ pub async fn list_stories(
 
 pub async fn create_story(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateStoryRequest>,
 ) -> Result<Json<StoryResponse>, ApiError> {
     let project_id = Uuid::parse_str(&req.project_id)
         .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(project_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let title = req.title.trim();
     if title.is_empty() {
         return Err(ApiError::BadRequest("Story 标题不能为空".into()));
@@ -163,41 +170,38 @@ pub async fn create_story(
 
 pub async fn get_story(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<StoryResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
-
-    let story = state
-        .repos
-        .story_repo
-        .get_by_id(story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
+    let (story, _) = load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_id,
+        ProjectPermission::View,
+    )
+    .await?;
 
     Ok(Json(StoryResponse::from(story)))
 }
 
 pub async fn update_story(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateStoryRequest>,
 ) -> Result<Json<StoryResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
-    let mut story = state
-        .repos
-        .story_repo
-        .get_by_id(story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(story.project_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
+    let (mut story, project) = load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     if let Some(title) = req.title {
         let trimmed = title.trim();
@@ -263,36 +267,23 @@ pub async fn update_story(
 
 pub async fn delete_story(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
-    let story = state
-        .repos
-        .story_repo
-        .get_by_id(story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
+    let (story, _) = load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     let tasks = state.repos.task_repo.list_by_story(story_id).await?;
     for task in &tasks {
         state.repos.task_repo.delete(task.id).await?;
-        state
-            .repos
-            .story_repo
-            .append_change(
-                task.id,
-                ChangeKind::TaskDeleted,
-                serde_json::json!({
-                    "task_id": task.id,
-                    "story_id": story_id,
-                    "reason": "cascade_delete_with_story"
-                }),
-                None,
-            )
-            .await
-            .ok();
     }
 
     state.repos.story_repo.delete(story_id).await?;
@@ -301,9 +292,11 @@ pub async fn delete_story(
         .repos
         .story_repo
         .append_change(
+            story.project_id,
             story_id,
             ChangeKind::StoryDeleted,
             serde_json::json!({
+                "project_id": story.project_id,
                 "story_id": story_id,
                 "reason": "story_deleted_by_user"
             }),
@@ -317,16 +310,25 @@ pub async fn delete_story(
 
 pub async fn list_tasks(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<TaskResponse>>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
+    load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let tasks = state.repos.task_repo.list_by_story(story_id).await?;
     Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))
 }
 
 pub async fn create_task(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<Json<TaskResponse>, ApiError> {
@@ -338,21 +340,13 @@ pub async fn create_task(
         return Err(ApiError::BadRequest("Task 标题不能为空".into()));
     }
 
-    let story = state
-        .repos
-        .story_repo
-        .get_by_id(story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
-
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(story.project_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("Story 所属 Project {} 不存在", story.project_id))
-        })?;
+    let (story, project) = load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     let workspace_id = match req.workspace_id.as_deref() {
         Some(raw) if !raw.trim().is_empty() => {
@@ -403,6 +397,7 @@ pub async fn create_task(
     }
 
     let mut task = Task::new(
+        story.project_id,
         story_id,
         title.to_string(),
         req.description.unwrap_or_default(),
@@ -421,44 +416,41 @@ pub async fn create_task(
 
 pub async fn get_task(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
 
-    let task = state
-        .repos
-        .task_repo
-        .get_by_id(task_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
+    let (task, _, _) = load_task_story_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        task_id,
+        ProjectPermission::View,
+    )
+    .await?;
 
     Ok(Json(TaskResponse::from(task)))
 }
 
 pub async fn update_task(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateTaskRequest>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
 
-    let mut task = state
-        .repos
-        .task_repo
-        .get_by_id(task_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {id} 不存在")))?;
+    let (mut task, story, _) = load_task_story_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        task_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     let old_status = task.status.clone();
-
-    let story = state
-        .repos
-        .story_repo
-        .get_by_id(task.story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id)))?;
 
     if let Some(title) = req.title {
         let trimmed = title.trim();
@@ -511,6 +503,7 @@ pub async fn update_task(
         .repos
         .story_repo
         .append_change(
+            task.project_id,
             task.id,
             change_kind,
             serde_json::to_value(&task).unwrap_or_default(),
@@ -519,16 +512,23 @@ pub async fn update_task(
         .await
         .ok();
 
-    let _ = &story; // story used above for workspace project_id check
     Ok(Json(TaskResponse::from(task)))
 }
 
 pub async fn delete_task(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
+    load_task_story_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        task_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     state
         .repos

@@ -11,6 +11,7 @@ use super::value_objects::{AgentBinding, Artifact, TaskExecutionMode, TaskStatus
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: Uuid,
+    pub project_id: Uuid,
     pub story_id: Uuid,
     /// 关联的 Workspace（外键，替代原 workspace_path 字符串）
     pub workspace_id: Option<Uuid>,
@@ -32,10 +33,11 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(story_id: Uuid, title: String, description: String) -> Self {
+    pub fn new(project_id: Uuid, story_id: Uuid, title: String, description: String) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
+            project_id,
             story_id,
             workspace_id: None,
             title,

@@ -22,6 +22,7 @@ use agentdash_application::session_context::{
 
 use crate::{
     app_state::AppState,
+    auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
     bootstrap::task_execution_gateway::{
         execute_cancel_task, execute_continue_task, execute_get_task_session, execute_start_task,
         resolve_task_agent_config,
@@ -68,6 +69,7 @@ pub struct ContinueTaskResponse {
 #[derive(Debug, Serialize)]
 pub struct TaskSessionResponse {
     pub task_id: Uuid,
+    pub workspace_id: Option<Uuid>,
     pub session_id: Option<String>,
     pub executor_session_id: Option<String>,
     pub task_status: TaskStatus,
@@ -88,10 +90,18 @@ struct BuiltTaskSessionContextResponse {
 
 pub async fn start_task(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<StartTaskRequest>,
 ) -> Result<Json<StartTaskResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
+    load_task_story_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        task_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let result = execute_start_task(state, task_id, req.override_prompt, req.executor_config)
         .await
         .map_err(map_task_execution_error)?;
@@ -108,10 +118,18 @@ pub async fn start_task(
 
 pub async fn continue_task(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<ContinueTaskRequest>,
 ) -> Result<Json<ContinueTaskResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
+    load_task_story_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        task_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let result = execute_continue_task(state, task_id, req.additional_prompt, req.executor_config)
         .await
         .map_err(map_task_execution_error)?;
@@ -128,9 +146,17 @@ pub async fn continue_task(
 
 pub async fn cancel_task(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
+    load_task_story_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        task_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let task = execute_cancel_task(state, task_id)
         .await
         .map_err(map_task_execution_error)?;
@@ -139,9 +165,17 @@ pub async fn cancel_task(
 
 pub async fn get_task_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<TaskSessionResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
+    let (task, _, _) = load_task_story_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        task_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let result = execute_get_task_session(state.clone(), task_id)
         .await
         .map_err(map_task_execution_error)?;
@@ -151,6 +185,7 @@ pub async fn get_task_session(
 
     Ok(Json(TaskSessionResponse {
         task_id: result.task_id,
+        workspace_id: task.workspace_id,
         session_id: result.session_id,
         executor_session_id: result.executor_session_id,
         task_status: result.task_status,
@@ -171,11 +206,16 @@ async fn build_task_session_context_response(
     task_id: Uuid,
 ) -> Option<BuiltTaskSessionContextResponse> {
     let task = state.repos.task_repo.get_by_id(task_id).await.ok()??;
-    let story = state.repos.story_repo.get_by_id(task.story_id).await.ok()??;
+    let story = state
+        .repos
+        .story_repo
+        .get_by_id(task.story_id)
+        .await
+        .ok()??;
     let project = state
         .repos
         .project_repo
-        .get_by_id(story.project_id)
+        .get_by_id(task.project_id)
         .await
         .ok()??;
     let workspace = if let Some(ws_id) = task.workspace_id {
@@ -190,7 +230,9 @@ async fn build_task_session_context_response(
         Err(err) => (None, Some(err.to_string())),
     };
     let effective_agent_type = resolved_config.as_ref().map(|c| c.executor.as_str());
-    let use_address_space = resolved_config.as_ref().is_some_and(|c| c.is_native_agent());
+    let use_address_space = resolved_config
+        .as_ref()
+        .is_some_and(|c| c.is_native_agent());
     let address_space = if use_address_space {
         state
             .services
@@ -208,7 +250,7 @@ async fn build_task_session_context_response(
             vec![
                 McpInjectionConfig::for_task(
                     base_url.clone(),
-                    story.project_id,
+                    task.project_id,
                     task.story_id,
                     task.id,
                 )

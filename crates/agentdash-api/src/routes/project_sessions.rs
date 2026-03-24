@@ -16,6 +16,7 @@ use agentdash_executor::SessionExecutionState;
 
 use crate::{
     app_state::AppState,
+    auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::project_agents::{
         build_project_agent_visible_mounts, resolve_project_agent_bridge, resolve_project_workspace,
     },
@@ -44,6 +45,7 @@ struct BuiltProjectSessionContextResponse {
 
 pub async fn get_project_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path((project_id, binding_id)): Path<(String, String)>,
 ) -> Result<Json<ProjectSessionDetailResponse>, ApiError> {
     let project_uuid = Uuid::parse_str(&project_id)
@@ -51,13 +53,13 @@ pub async fn get_project_session(
     let binding_uuid = Uuid::parse_str(&binding_id)
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
 
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(project_uuid)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))?;
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_uuid,
+        ProjectPermission::View,
+    )
+    .await?;
 
     let bindings = state
         .repos
@@ -125,7 +127,9 @@ async fn build_project_session_context_response(
         .executor_config
         .clone()
         .or_else(|| Some(project_agent.executor_config.clone()));
-    let use_address_space = resolved_config.as_ref().is_some_and(|c| c.is_native_agent());
+    let use_address_space = resolved_config
+        .as_ref()
+        .is_some_and(|c| c.is_native_agent());
     let address_space = if use_address_space {
         state
             .services
@@ -144,9 +148,7 @@ async fn build_project_session_context_response(
         .mcp_base_url
         .as_ref()
         .map(|base_url| {
-            vec![
-                McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server(),
-            ]
+            vec![McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server()]
         })
         .unwrap_or_default();
     mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
@@ -251,6 +253,7 @@ pub struct ListProjectSessionsQuery {
 ///   复杂度从 O(N×M) 降为 O(1 DB + N parallel IO + 1 lock)
 pub async fn list_project_sessions(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(project_id): Path<String>,
     Query(query): Query<ListProjectSessionsQuery>,
 ) -> Result<Json<Vec<ProjectSessionEntry>>, ApiError> {
@@ -259,16 +262,21 @@ pub async fn list_project_sessions(
 
     // ── Step 1: 并发拉取项目信息 + 所有 bindings（一次 SQL UNION）───────────
     let (project_result, bindings_result) = tokio::join!(
-        state.repos.project_repo.get_by_id(project_uuid),
-        state.repos.session_binding_repo.list_by_project(project_uuid),
+        load_project_with_permission(
+            state.as_ref(),
+            &current_user,
+            project_uuid,
+            ProjectPermission::View
+        ),
+        state
+            .repos
+            .session_binding_repo
+            .list_by_project(project_uuid),
     );
 
-    let project = project_result
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {project_id} 不存在")))?;
+    let project = project_result?;
 
-    let project_bindings = bindings_result
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let project_bindings = bindings_result.map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if project_bindings.is_empty() {
         return Ok(Json(vec![]));
@@ -309,8 +317,7 @@ pub async fn list_project_sessions(
             // meta 不存在 → session 已被删除，跳过
             let meta = meta_map.get(&pb.binding.session_id)?;
 
-            let execution_status =
-                execution_state_to_str(status_map.get(&pb.binding.session_id));
+            let execution_status = execution_state_to_str(status_map.get(&pb.binding.session_id));
 
             // 状态过滤
             if let Some(filter) = &status_filter {
@@ -324,8 +331,7 @@ pub async fn list_project_sessions(
                 .as_ref()
                 .map(|c| c.parent_session_id.clone());
 
-            let (agent_key, agent_display_name) =
-                resolve_agent_info(&pb.binding, &project, meta);
+            let (agent_key, agent_display_name) = resolve_agent_info(&pb.binding, &project, meta);
 
             let story_id = pb.story_id.map(|id| id.to_string());
 
@@ -382,9 +388,9 @@ fn resolve_agent_info(
             .trim()
             .strip_prefix("project_agent:")
             .map(|k| k.to_string());
-        let agent_display_name = agent_key.as_deref().and_then(|key| {
-            resolve_project_agent_bridge(project, key).map(|b| b.display_name)
-        });
+        let agent_display_name = agent_key
+            .as_deref()
+            .and_then(|key| resolve_project_agent_bridge(project, key).map(|b| b.display_name));
         return (agent_key, agent_display_name);
     }
 

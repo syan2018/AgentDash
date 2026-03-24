@@ -126,6 +126,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | ✅ 已更新（含业务 API DTO 命名契约） |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Relay Protocol](../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
+| [Plugin API](./plugin-api.md) | 开源核心 + 企业扩展插件架构、各扩展点实现指南 | ✅ 已创建 |
 
 ---
 

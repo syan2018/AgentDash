@@ -10,6 +10,9 @@ use crate::address_space_access::{
 };
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use crate::execution_hooks::AppExecutionHookProvider;
+use crate::plugins::{
+    builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
+};
 use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_application::task_lock::TaskLockMap;
@@ -32,6 +35,7 @@ use agentdash_infrastructure::{
     SqliteWorkflowRepository, SqliteWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceRegistry;
+use agentdash_plugin_api::AgentDashPlugin;
 
 /// 持久化层端口 — 所有 Repository trait 对象的集合
 pub struct RepositorySet {
@@ -87,10 +91,25 @@ pub struct AppState {
     pub config: AppConfig,
     /// 远程会话映射：session_id → backend_id（路由到远程后端的会话）
     pub remote_sessions: Arc<RwLock<HashMap<String, String>>>,
+    /// 认证/授权提供者（由插件注入，None 表示无认证）
+    pub auth_provider: Option<Arc<dyn agentdash_plugin_api::AuthProvider>>,
 }
 
 impl AppState {
     pub async fn new(pool: SqlitePool) -> Result<Self> {
+        Self::new_with_plugins(pool, builtin_plugins()).await
+    }
+
+    /// 携带插件列表构建 AppState
+    ///
+    /// 宿主会先聚合所有插件注册结果，再统一构建运行时。
+    pub async fn new_with_plugins(
+        pool: SqlitePool,
+        plugins: Vec<Box<dyn AgentDashPlugin>>,
+    ) -> Result<Self> {
+        let plugin_registration = collect_plugin_registration(plugins)
+            .map_err(|err| anyhow::anyhow!("插件注册失败: {err}"))?;
+
         // 按依赖顺序初始化：projects → workspaces → stories → tasks
         let project_repo = Arc::new(SqliteProjectRepository::new(pool.clone()));
         project_repo
@@ -172,6 +191,9 @@ impl AppState {
         {
             sub_connectors.push(Arc::new(pi_connector));
         }
+        sub_connectors.extend(plugin_registration.connectors);
+        validate_connector_executor_ids(&sub_connectors)
+            .map_err(|err| anyhow::anyhow!("连接器注册失败: {err}"))?;
 
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let hook_provider = Arc::new(AppExecutionHookProvider::new(
@@ -211,6 +233,11 @@ impl AppState {
             Some(format!("http://127.0.0.1:{port}"))
         });
 
+        let mut address_space_registry = agentdash_injection::builtin_address_space_registry();
+        for provider in plugin_registration.address_space_providers {
+            address_space_registry.register(provider);
+        }
+
         Ok(Self {
             repos: RepositorySet {
                 project_repo,
@@ -230,7 +257,7 @@ impl AppState {
                 address_space_service,
                 backend_registry,
                 contributor_registry: ContextContributorRegistry::with_builtins(),
-                address_space_registry: agentdash_injection::builtin_address_space_registry(),
+                address_space_registry,
             },
             task_runtime: TaskRuntime {
                 lock_map: TaskLockMap::new(),
@@ -238,6 +265,7 @@ impl AppState {
             },
             config: AppConfig { mcp_base_url },
             remote_sessions: Arc::new(RwLock::new(HashMap::new())),
+            auth_provider: plugin_registration.auth_provider,
         })
     }
 }

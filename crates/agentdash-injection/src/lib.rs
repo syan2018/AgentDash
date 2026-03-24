@@ -10,6 +10,6 @@ pub use address_space::{
 pub use composer::{ContextComposer, ContextFragment, MergeStrategy};
 pub use error::InjectionError;
 pub use resolver::{
-    ResolveSourcesOutput, ResolveSourcesRequest, SourceResolverRegistry, resolve_declared_sources,
-    resolve_declared_sources_with_registry,
+    ResolveSourcesOutput, ResolveSourcesRequest, SourceResolver, SourceResolverRegistry,
+    resolve_declared_sources, resolve_declared_sources_with_registry,
 };

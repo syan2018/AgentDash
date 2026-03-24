@@ -1,0 +1,16 @@
+[package]
+name = "agentdash-plugin-api"
+description = "AgentDash 插件 SPI — 开源核心与企业扩展的唯一契约面，只含 trait 与类型定义"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-domain = { workspace = true }
+agentdash-injection = { workspace = true }
+agentdash-executor = { workspace = true, default-features = false }
+async-trait = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

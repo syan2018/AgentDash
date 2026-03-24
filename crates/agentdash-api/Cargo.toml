@@ -8,6 +8,10 @@ edition.workspace = true
 name = "agentdash-server"
 path = "src/main.rs"
 
+[lib]
+name = "agentdash_api"
+path = "src/lib.rs"
+
 [dependencies]
 agentdash-domain = { workspace = true }
 agentdash-application = { workspace = true }
@@ -17,6 +21,7 @@ agentdash-executor = { workspace = true, features = ["pi-agent"] }
 agentdash-acp-meta = { workspace = true }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
+agentdash-plugin-api = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

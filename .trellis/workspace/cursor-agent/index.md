@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-03-21
+- **Total Sessions**: 7
+- **Last Active**: 2026-03-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~306 | Active |
+| `journal-1.md` | ~338 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 7 | 2026-03-25 | Project Workspace Backend 重构收口 | `c5da82f` |
 | 6 | 2026-03-21 | Workflow runtime 注入落地与 hook 任务拆分 | `9c8e262` |
 | 5 | 2026-03-21 | Trellis workflow 平台化与收尾验证 | `087dde7` |
 | 4 | 2026-03-20 | Project Agent / Session 产品面压缩与 API 契约统一 | `d452101`, `2ace093`, `c1151ae` |

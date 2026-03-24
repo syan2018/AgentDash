@@ -304,3 +304,35 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Project Workspace Backend 重构收口
+
+**Date**: 2026-03-25
+**Task**: Project Workspace Backend 重构收口
+
+### Summary
+
+完成 Project -> Workspace(identity) -> WorkspaceBinding -> RuntimeResolution -> AddressSpace 主链重构，补齐独立 Project Settings 页、workspace 快捷识别入口、seed/e2e/spec 同步，并完成任务归档收口。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c5da82f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

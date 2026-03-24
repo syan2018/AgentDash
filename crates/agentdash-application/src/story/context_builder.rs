@@ -195,12 +195,10 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
 
 /// 构建 Story Owner 的 prompt_blocks
 ///
-/// 将 context markdown 打包为 resource block + instruction block + user blocks。
+/// 将 context markdown 打包为 resource block + user blocks。
 pub fn build_story_owner_prompt_blocks(
     story_id: uuid::Uuid,
     context_markdown: String,
-    source_summary: &[String],
-    workflow_instruction: Option<String>,
     original_prompt: Option<String>,
     original_prompt_blocks: Option<Vec<serde_json::Value>>,
 ) -> Vec<serde_json::Value> {
@@ -213,28 +211,6 @@ pub fn build_story_owner_prompt_blocks(
                 "mimeType": "text/markdown",
                 "text": context_markdown,
             }
-        }));
-    }
-
-    let story_instruction = format!(
-        "## Instruction\n你是该 Story 的主代理。请围绕 Story 进行分析、补充上下文、拆解并创建 Task。\n\n可优先使用 Story MCP 工具直接更新 Story、维护上下文引用，并在创建 Task 时为 Task Agent 分配合适的上下文引用。\n\n当前来源摘要：{}",
-        if source_summary.is_empty() {
-            "-".to_string()
-        } else {
-            source_summary.join(", ")
-        }
-    );
-    prefix_blocks.push(json!({
-        "type": "text",
-        "text": story_instruction,
-    }));
-    if let Some(workflow_instruction) = workflow_instruction
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        prefix_blocks.push(json!({
-            "type": "text",
-            "text": workflow_instruction,
         }));
     }
 

@@ -549,7 +549,7 @@ async fn build_story_owner_prompt_request(
             .await
             .map_err(ApiError::BadRequest)?;
 
-    let (context_markdown, source_summary) = build_story_context_markdown(StoryContextBuildInput {
+    let (context_markdown, _) = build_story_context_markdown(StoryContextBuildInput {
         story,
         project,
         workspace,
@@ -562,8 +562,6 @@ async fn build_story_owner_prompt_request(
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
         context_markdown,
-        &source_summary,
-        None,
         req.prompt.take(),
         req.prompt_blocks.take(),
     );
@@ -635,21 +633,18 @@ async fn build_project_owner_prompt_request(
         }
     }
 
-    let (context_markdown, source_summary) =
-        build_project_context_markdown(ProjectContextBuildInput {
-            project,
-            workspace: workspace.as_ref(),
-            address_space: address_space.as_ref(),
-            mcp_servers: &effective_mcp_servers,
-            effective_agent_type,
-            preset_name: project_agent.preset_name.as_deref(),
-            agent_display_name: project_agent.display_name.as_str(),
-        });
+    let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {
+        project,
+        workspace: workspace.as_ref(),
+        address_space: address_space.as_ref(),
+        mcp_servers: &effective_mcp_servers,
+        effective_agent_type,
+        preset_name: project_agent.preset_name.as_deref(),
+        agent_display_name: project_agent.display_name.as_str(),
+    });
     let prompt_blocks = build_project_owner_prompt_blocks(
         project.id,
         context_markdown,
-        &source_summary,
-        None,
         req.prompt.take(),
         req.prompt_blocks.take(),
     );

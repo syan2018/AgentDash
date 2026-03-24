@@ -28,7 +28,6 @@ pub fn build_task_agent_context(
     let working_dir = input.workspace.map(|_| ".".to_string());
 
     let mut context_composer = ContextComposer::default();
-    let mut instruction_composer = ContextComposer::default();
     let mut mcp_servers: Vec<McpServer> = Vec::new();
 
     let all_contributors = registry
@@ -43,11 +42,8 @@ pub fn build_task_agent_context(
         mcp_servers.extend(contribution.mcp_servers);
 
         for fragment in contribution.context_fragments {
-            match fragment.slot {
-                "instruction" | "instruction_append" => {
-                    instruction_composer.push_fragment(fragment)
-                }
-                _ => context_composer.push_fragment(fragment),
+            if !matches!(fragment.slot, "instruction" | "instruction_append") {
+                context_composer.push_fragment(fragment);
             }
         }
     }
@@ -83,18 +79,9 @@ pub fn build_task_agent_context(
         context_composer.push_fragment(fragment);
     }
 
-    let (context_prompt, mut source_summary) = context_composer.compose();
-    let (instruction_prompt, instruction_sources) = instruction_composer.compose();
-    source_summary.extend(instruction_sources);
+    let (context_prompt, source_summary) = context_composer.compose();
 
-    let combined_prompt = [context_prompt.as_str(), instruction_prompt.as_str()]
-        .iter()
-        .filter(|chunk| !chunk.trim().is_empty())
-        .copied()
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    if combined_prompt.trim().is_empty() {
+    if context_prompt.trim().is_empty() {
         return Err("构建执行上下文失败：最终 prompt 为空".to_string());
     }
 
@@ -105,12 +92,6 @@ pub fn build_task_agent_context(
             input.phase,
             context_prompt,
         ));
-    }
-    if !instruction_prompt.trim().is_empty() {
-        prompt_blocks.push(json!({
-            "type": "text",
-            "text": instruction_prompt,
-        }));
     }
 
     Ok(BuiltTaskAgentContext {

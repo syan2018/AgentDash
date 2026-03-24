@@ -93,8 +93,6 @@ pub fn build_project_context_markdown(
 pub fn build_project_owner_prompt_blocks(
     project_id: uuid::Uuid,
     context_markdown: String,
-    source_summary: &[String],
-    workflow_instruction: Option<String>,
     original_prompt: Option<String>,
     original_prompt_blocks: Option<Vec<serde_json::Value>>,
 ) -> Vec<serde_json::Value> {
@@ -107,28 +105,6 @@ pub fn build_project_owner_prompt_blocks(
                 "mimeType": "text/markdown",
                 "text": context_markdown,
             }
-        }));
-    }
-
-    let project_instruction = format!(
-        "## Instruction\n你是该 Project 下的共享协作 Agent。请围绕项目共享上下文、资料整理、决策沉淀和后续 Story 准备展开工作。\n\n默认应把上下文组织成用户可理解的资料目录，而不是向用户强调底层 provider、mount derivation 或 runtime capability 细节。\n\n当前来源摘要：{}",
-        if source_summary.is_empty() {
-            "-".to_string()
-        } else {
-            source_summary.join(", ")
-        }
-    );
-    prefix_blocks.push(json!({
-        "type": "text",
-        "text": project_instruction,
-    }));
-    if let Some(workflow_instruction) = workflow_instruction
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        prefix_blocks.push(json!({
-            "type": "text",
-            "text": workflow_instruction,
         }));
     }
 

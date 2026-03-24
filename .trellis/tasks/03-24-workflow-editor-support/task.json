@@ -1,0 +1,52 @@
+﻿{
+  "id": "workflow-editor-support",
+  "name": "workflow-editor-support",
+  "title": "前端正式支持 Workflow 编辑",
+  "description": "为 AgentDashboard 提供正式的 Workflow Definition 前端制定与编辑能力，补齐 definition 写接口、语义校验、binding 元数据、preview 与编辑器 UI。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "workflow-editor",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-domain/src/workflow/entity.rs",
+    "crates/agentdash-domain/src/workflow/value_objects.rs",
+    "crates/agentdash-application/src/workflow/catalog.rs",
+    "crates/agentdash-application/src/workflow/projection.rs",
+    "crates/agentdash-application/src/workflow/binding.rs",
+    "crates/agentdash-api/src/routes/workflows.rs",
+    "crates/agentdash-api/src/dto/workflow.rs",
+    "frontend/src/services/workflow.ts",
+    "frontend/src/stores/workflowStore.ts",
+    "frontend/src/features/workflow/project-workflow-panel.tsx"
+  ],
+  "notes": "该任务聚焦把 workflow 制定/编辑能力正式前端化，但保持后端作为语义真源；优先补齐 definition 写接口、校验和 preview，再落前端 editor。"
+}

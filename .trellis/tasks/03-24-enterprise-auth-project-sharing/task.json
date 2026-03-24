@@ -1,0 +1,49 @@
+﻿{
+  "id": "enterprise-auth-project-sharing",
+  "name": "enterprise-auth-project-sharing",
+  "title": "企业身份接入与 Project 授权共享重构",
+  "description": "为 AgentDash 设计并落地单企业实例 + 个人模式并存的身份接入与 Project 授权共享重构方案，统一收敛 SSO / claim 用户组 / Project 私有共享 / Session 跟随 Project / 模板 clone 等关键约束。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "large",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-plugin-api/",
+    "crates/agentdash-api/src/app_state.rs",
+    "crates/agentdash-api/src/routes/",
+    "crates/agentdash-infrastructure/src/persistence/sqlite/",
+    "frontend/src/stores/",
+    "frontend/src/services/",
+    ".trellis/tasks/03-24-plugin-api-architecture/prd.md"
+  ],
+  "notes": "约束：单企业实例优先，用户/企业认证都走 trait/plugin 模型；需要保留个人模式；Project 默认私有，可共享给指定用户/用户组；Session 权限跟随 Project；私有变体通过 clone Project 模板实现。"
+}

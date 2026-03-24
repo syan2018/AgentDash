@@ -1,0 +1,8 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": "crates/agentdash-domain/src/workflow/value_objects.rs", "reason": "校验 definition 语义约束是否完整"}
+{"file": "crates/agentdash-application/src/workflow/projection.rs", "reason": "确认 preview 与 runtime projection 语义一致"}
+{"file": "crates/agentdash-api/src/routes/workflows.rs", "reason": "检查 workflow 编辑 API 错误模型与路由一致性"}
+{"file": "frontend/src/stores/workflowStore.ts", "reason": "检查编辑态状态管理与错误处理"}
+{"file": "frontend/src/features/workflow/project-workflow-panel.tsx", "reason": "检查工作流编辑入口与现有项目页集成"}

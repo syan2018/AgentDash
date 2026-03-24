@@ -302,6 +302,9 @@ export function SessionChatView({
   const execConfig = useExecutorConfig();
   const discovered = useExecutorDiscoveredOptions(execConfig.executor, execConfig.variant);
   const setExecutor = execConfig.setExecutor;
+  const execProviderId = execConfig.providerId;
+  const execModelId = execConfig.modelId;
+  const setExecProviderId = execConfig.setProviderId;
 
   const resolvedHint = useMemo(
     () => resolveExecutorFromHint(executorHint, discovery.executors),
@@ -317,18 +320,18 @@ export function SessionChatView({
   }, [resolvedHint, sessionId, setExecutor]);
 
   useEffect(() => {
-    if (execConfig.providerId.trim() || !execConfig.modelId.trim()) return;
+    if (execProviderId.trim() || !execModelId.trim()) return;
     const matches = (discovered.options?.model_selector.models ?? []).filter(
-      (model) => model.id === execConfig.modelId.trim(),
+      (model) => model.id === execModelId.trim(),
     );
     if (matches.length === 1) {
-      execConfig.setProviderId(matches[0].provider_id ?? "");
+      setExecProviderId(matches[0].provider_id ?? "");
     }
   }, [
     discovered.options?.model_selector.models,
-    execConfig.modelId,
-    execConfig.providerId,
-    execConfig.setProviderId,
+    execModelId,
+    execProviderId,
+    setExecProviderId,
   ]);
 
   const executorConfig: ExecutorConfig | undefined = useMemo(() => {
@@ -548,7 +551,7 @@ export function SessionChatView({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput, refreshExecutionState]);
+  }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput, refreshExecutionState, workspaceId]);
 
   const handleCancel = useCallback(async () => {
     if (!hasSession || !sessionId || isCancelling) return;

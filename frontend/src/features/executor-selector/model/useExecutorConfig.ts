@@ -100,22 +100,22 @@ function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
  * 支持最近使用记录追踪（LRU，最多 MAX_RECENT 条）。
  */
 export function useExecutorConfig(): UseExecutorConfigResult {
-  const initialConfigRef = useRef<PersistedExecutorConfig>({
+  const initialConfig = {
     executor: loadOrDefault("executor"),
     variant: loadOrDefault("variant"),
     providerId: loadOrDefault("providerId"),
     modelId: loadOrDefault("modelId"),
     thinkingLevel: loadOrDefault("thinkingLevel"),
     permissionPolicy: loadOrDefault("permissionPolicy"),
-  });
-  const persistedStateRef = useRef<PersistedExecutorConfig>({ ...initialConfigRef.current });
+  };
+  const persistedStateRef = useRef<PersistedExecutorConfig>({ ...initialConfig });
 
-  const [executor, setExecutorRaw] = useState(() => initialConfigRef.current.executor);
-  const [variant, setVariantRaw] = useState(() => initialConfigRef.current.variant ?? "");
-  const [providerId, setProviderIdRaw] = useState(() => initialConfigRef.current.providerId ?? "");
-  const [modelId, setModelIdRaw] = useState(() => initialConfigRef.current.modelId ?? "");
-  const [thinkingLevel, setThinkingLevelRaw] = useState(() => initialConfigRef.current.thinkingLevel ?? "");
-  const [permissionPolicy, setPolicyRaw] = useState(() => initialConfigRef.current.permissionPolicy ?? "");
+  const [executor, setExecutorRaw] = useState(initialConfig.executor);
+  const [variant, setVariantRaw] = useState(initialConfig.variant ?? "");
+  const [providerId, setProviderIdRaw] = useState(initialConfig.providerId ?? "");
+  const [modelId, setModelIdRaw] = useState(initialConfig.modelId ?? "");
+  const [thinkingLevel, setThinkingLevelRaw] = useState(initialConfig.thinkingLevel ?? "");
+  const [permissionPolicy, setPolicyRaw] = useState(initialConfig.permissionPolicy ?? "");
   const [recentEntries, setRecentEntries] = useState<RecentExecutorEntry[]>(() => loadRecentEntries());
 
   const persistPatch = useCallback(

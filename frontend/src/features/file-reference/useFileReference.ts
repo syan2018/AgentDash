@@ -19,30 +19,7 @@ export function useFileReference(workspaceId?: string | null) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const openPicker = useCallback((initialQuery = "") => {
-    if (!workspaceId) {
-      setPickerOpen(false);
-      setPickerFiles([]);
-      setPickerLoading(false);
-      setPickerError("当前会话没有可用的工作空间，暂不支持 @ 文件引用");
-      return;
-    }
-    setPickerOpen(true);
-    setPickerQuery(initialQuery);
-    setSelectedIndex(0);
-    setPickerError(null);
-    void fetchFiles(initialQuery);
-  }, [workspaceId]);
-
-  const closePicker = useCallback(() => {
-    setPickerOpen(false);
-    setPickerQuery("");
-    setPickerFiles([]);
-    setPickerError(null);
-    setSelectedIndex(0);
-  }, []);
-
-  const fetchFiles = async (query: string) => {
+  const fetchFiles = useCallback(async (query: string) => {
     if (!workspaceId) {
       setPickerError("当前会话没有可用的工作空间，暂不支持 @ 文件引用");
       setPickerFiles([]);
@@ -60,7 +37,30 @@ export function useFileReference(workspaceId?: string | null) {
     } finally {
       setPickerLoading(false);
     }
-  };
+  }, [workspaceId]);
+
+  const openPicker = useCallback((initialQuery = "") => {
+    if (!workspaceId) {
+      setPickerOpen(false);
+      setPickerFiles([]);
+      setPickerLoading(false);
+      setPickerError("当前会话没有可用的工作空间，暂不支持 @ 文件引用");
+      return;
+    }
+    setPickerOpen(true);
+    setPickerQuery(initialQuery);
+    setSelectedIndex(0);
+    setPickerError(null);
+    void fetchFiles(initialQuery);
+  }, [fetchFiles, workspaceId]);
+
+  const closePicker = useCallback(() => {
+    setPickerOpen(false);
+    setPickerQuery("");
+    setPickerFiles([]);
+    setPickerError(null);
+    setSelectedIndex(0);
+  }, []);
 
   const updateQuery = useCallback((query: string) => {
     setPickerQuery(query);
@@ -69,7 +69,7 @@ export function useFileReference(workspaceId?: string | null) {
     debounceRef.current = setTimeout(() => {
       void fetchFiles(query);
     }, 200);
-  }, [workspaceId]);
+  }, [fetchFiles]);
 
   const addReference = useCallback(
     (file: FileEntry) => {

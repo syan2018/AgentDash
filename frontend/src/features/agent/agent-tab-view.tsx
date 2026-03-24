@@ -32,8 +32,14 @@ export function AgentTabView() {
 
   const { sessions, isLoading: sessionsLoading, loadForProject, clearForProject } = useActiveSessionsStore();
 
-  // 右栏当前选中的 session ID
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // 右栏当前选中的 session，按 project 作用域隔离，避免在 effect 内同步重置 state
+  const [selectedSession, setSelectedSession] = useState<{
+    projectId: string | null;
+    sessionId: string | null;
+  }>({
+    projectId: null,
+    sessionId: null,
+  });
 
   const currentProject = projects.find((p) => p.id === currentProjectId);
   const workspaceId = currentProject?.config.default_workspace_id ?? null;
@@ -41,6 +47,9 @@ export function AgentTabView() {
     ? (agentsByProjectId[currentProjectId] ?? [])
     : [];
 
+  const selectedSessionId = selectedSession.projectId === currentProjectId
+    ? selectedSession.sessionId
+    : null;
   // 当前选中会话的元数据（用于面包屑显示标题）
   const currentSession = sessions.find((s) => s.session_id === selectedSessionId);
 
@@ -51,7 +60,6 @@ export function AgentTabView() {
     if (prevProjectIdRef.current === currentProjectId) return;
     prevProjectIdRef.current = currentProjectId;
 
-    setSelectedSessionId(null);
     clearForProject(currentProjectId);           // 立即清空 + 标记目标项目
     void fetchProjectAgents(currentProjectId);
     void loadForProject(currentProjectId);       // 异步加载，竞态保护在 store 内
@@ -67,7 +75,10 @@ export function AgentTabView() {
       const result = await openProjectAgentSession(currentProjectId, agent.key);
       if (!result) return;
       await loadForProject(currentProjectId);
-      setSelectedSessionId(result.session_id);
+      setSelectedSession({
+        projectId: currentProjectId,
+        sessionId: result.session_id,
+      });
     },
     [currentProjectId, openProjectAgentSession, loadForProject],
   );
@@ -78,7 +89,10 @@ export function AgentTabView() {
       const result = await forceNewProjectAgentSession(currentProjectId, agent.key);
       if (!result) return;
       await loadForProject(currentProjectId);
-      setSelectedSessionId(result.session_id);
+      setSelectedSession({
+        projectId: currentProjectId,
+        sessionId: result.session_id,
+      });
     },
     [currentProjectId, forceNewProjectAgentSession, loadForProject],
   );
@@ -120,7 +134,10 @@ export function AgentTabView() {
             sessions={sessions}
             isLoading={sessionsLoading}
             selectedSessionId={null}
-            onSelectSession={setSelectedSessionId}
+            onSelectSession={(sessionId) => setSelectedSession({
+              projectId: currentProjectId,
+              sessionId,
+            })}
           />
         ) : (
           /* 展示面包屑 + 聊天视图 */
@@ -129,7 +146,10 @@ export function AgentTabView() {
             <div className="flex shrink-0 items-center gap-2 border-b border-border bg-background px-4 py-2">
               <button
                 type="button"
-                onClick={() => setSelectedSessionId(null)}
+                onClick={() => setSelectedSession({
+                  projectId: currentProjectId,
+                  sessionId: null,
+                })}
                 className="text-sm text-muted-foreground transition-colors hover:text-foreground"
               >
                 ← 活跃会话

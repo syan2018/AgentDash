@@ -52,8 +52,8 @@ describe("AcpSystemEventCard", () => {
     // 调试详情默认折叠——不在初始渲染中
     expect(html).not.toContain("trigger: before_stop");
     expect(html).not.toContain("decision: continue");
-    // 有"调试详情"入口
-    expect(html).toContain("调试详情");
+    // 调试内容默认折叠，不直接进入首屏摘要
+    expect(html).not.toContain("命中规则");
   });
 
   it("静默 turn_started 这类 info lifecycle 事件", () => {

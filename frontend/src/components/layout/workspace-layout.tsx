@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useMatch, type NavLinkRenderProps } from "react-router-dom";
 import { ThemeToggle } from "../ui/theme-toggle";
 import { useProjectStore } from "../../stores/projectStore";
@@ -17,22 +17,21 @@ export function WorkspaceLayout() {
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
   const { currentUser } = useCurrentUserStore();
-  const lastNonSettingsPathRef = useRef("/dashboard/agent");
 
-  const currentPath = `${location.pathname}${location.search}${location.hash}`;
   const isSettingsRoute = location.pathname === "/settings";
+  const rememberedPath = useMemo(() => {
+    if (!isSettingsRoute) {
+      return `${location.pathname}${location.search}${location.hash}`;
+    }
+    const state = location.state as { return_to?: string } | null;
+    return state?.return_to ?? "/dashboard/agent";
+  }, [isSettingsRoute, location.hash, location.pathname, location.search, location.state]);
 
   useEffect(() => {
     if (currentProjectId) {
       void fetchWorkspaces(currentProjectId);
     }
   }, [currentProjectId, fetchWorkspaces]);
-
-  useEffect(() => {
-    if (!isSettingsRoute) {
-      lastNonSettingsPathRef.current = currentPath;
-    }
-  }, [currentPath, isSettingsRoute]);
 
   const streamStatusLabel =
     connectionState === "connected"
@@ -59,7 +58,6 @@ export function WorkspaceLayout() {
     !!storyDashboardMatch ||
     !!storyRouteMatch;       // Story 详情页从 Story Tab 进入，高亮 Story
 
-  const rememberedPath = lastNonSettingsPathRef.current;
   const agentNavTarget = useMemo(() => {
     if (!isSettingsRoute) return "/dashboard/agent";
     if (

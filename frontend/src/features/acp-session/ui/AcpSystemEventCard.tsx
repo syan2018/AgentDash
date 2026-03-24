@@ -264,11 +264,11 @@ function buildHookExpandData(hookData: HookEventData | null): {
   let completionLine: string | null = null;
   if (hookData.completion) {
     const { satisfied, advanced, reason, mode } = hookData.completion;
-    const statusText = satisfied ? "✓ 条件已满足" : "✗ 条件未满足";
-    const advancedText = advanced ? "，已推进阶段" : "";
+    const statusText = satisfied ? "已满足" : "未满足";
     const modeText = mode ? ` [${mode}]` : "";
-    const reasonText = reason ? `：${reason}` : "";
-    completionLine = `${statusText}${advancedText}${modeText}${reasonText}`;
+    const advancedText = advanced ? "；已推进阶段" : "";
+    const reasonText = reason ? `；${reason}` : "";
+    completionLine = `完成判定：${statusText}${modeText}${advancedText}${reasonText}`;
   }
 
   const diagnostics = (hookData.diagnostics ?? [])

@@ -118,6 +118,13 @@ pub enum RelayMessage {
         payload: ToolFileListPayload,
     },
 
+    /// 文本内容搜索（优先使用 ripgrep）
+    #[serde(rename = "command.tool.search")]
+    CommandToolSearch {
+        id: String,
+        payload: ToolSearchPayload,
+    },
+
     // ── 响应（本机 → 云端）──
     #[serde(rename = "response.prompt")]
     ResponsePrompt {
@@ -210,6 +217,15 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
+    #[serde(rename = "response.tool.search")]
+    ResponseToolSearch {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolSearchResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
     // ── 事件（本机 → 云端）──
     /// 能力变更通知
     #[serde(rename = "event.capabilities_changed")]
@@ -263,6 +279,7 @@ impl RelayMessage {
             | Self::CommandToolFileWrite { id, .. }
             | Self::CommandToolShellExec { id, .. }
             | Self::CommandToolFileList { id, .. }
+            | Self::CommandToolSearch { id, .. }
             | Self::ResponsePrompt { id, .. }
             | Self::ResponseCancel { id, .. }
             | Self::ResponseDiscover { id, .. }
@@ -273,6 +290,7 @@ impl RelayMessage {
             | Self::ResponseToolFileWrite { id, .. }
             | Self::ResponseToolShellExec { id, .. }
             | Self::ResponseToolFileList { id, .. }
+            | Self::ResponseToolSearch { id, .. }
             | Self::EventCapabilitiesChanged { id, .. }
             | Self::EventSessionNotification { id, .. }
             | Self::EventSessionStateChanged { id, .. }
@@ -479,6 +497,27 @@ pub struct ToolFileListPayload {
     pub recursive: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSearchPayload {
+    pub call_id: String,
+    pub workspace_root: String,
+    pub query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub is_regex: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_glob: Option<String>,
+    #[serde(default = "default_search_max_results")]
+    pub max_results: usize,
+    #[serde(default)]
+    pub context_lines: usize,
+}
+
+fn default_search_max_results() -> usize {
+    50
+}
+
 // ─── 响应 Payload ──────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -566,6 +605,25 @@ pub struct ToolShellExecResponse {
 pub struct ToolFileListResponse {
     pub call_id: String,
     pub entries: Vec<FileEntryRelay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSearchResponse {
+    pub call_id: String,
+    pub hits: Vec<SearchHit>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub path: String,
+    pub line_number: usize,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_before: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_after: Vec<String>,
 }
 
 // ─── 事件 Payload ──────────────────────────────────────────

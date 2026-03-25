@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agentdash_relay::FileEntryRelay;
+use agentdash_relay::{FileEntryRelay, SearchHit};
 
 #[derive(Debug, Clone)]
 pub struct ToolExecutor {
@@ -168,6 +168,290 @@ impl ToolExecutor {
         let mut entries = Vec::new();
         collect_entries(&base, &ws, &glob_matcher, recursive, &mut entries).await?;
         Ok(entries)
+    }
+
+    /// 文本内容搜索，优先使用 ripgrep，不可用时走逐文件 fallback
+    pub async fn search(
+        &self,
+        workspace_root: &str,
+        query: &str,
+        path: Option<&str>,
+        is_regex: bool,
+        include_glob: Option<&str>,
+        max_results: usize,
+        context_lines: usize,
+    ) -> Result<(Vec<SearchHit>, bool), ToolError> {
+        let ws = self.validate_workspace_root(workspace_root)?;
+        let search_dir = match path {
+            Some(p) if !p.trim().is_empty() && p.trim() != "." => {
+                resolve_existing_path_with_root(&ws, p)?
+            }
+            _ => ws.clone(),
+        };
+
+        if let Some(rg) = detect_ripgrep().await {
+            return run_ripgrep(
+                &rg,
+                &search_dir,
+                &ws,
+                query,
+                is_regex,
+                include_glob,
+                max_results,
+                context_lines,
+            )
+            .await;
+        }
+
+        fallback_search(&ws, &search_dir, query, is_regex, max_results, context_lines).await
+    }
+}
+
+async fn detect_ripgrep() -> Option<PathBuf> {
+    let candidates = if cfg!(windows) {
+        vec!["rg.exe", "rg"]
+    } else {
+        vec!["rg"]
+    };
+    for name in candidates {
+        if let Ok(output) = tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" })
+            .arg(name)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout);
+                let first_line = path_str.lines().next().unwrap_or("").trim();
+                if !first_line.is_empty() {
+                    return Some(PathBuf::from(first_line));
+                }
+            }
+        }
+    }
+    None
+}
+
+async fn run_ripgrep(
+    rg_path: &Path,
+    search_dir: &Path,
+    workspace_root: &Path,
+    query: &str,
+    is_regex: bool,
+    include_glob: Option<&str>,
+    max_results: usize,
+    context_lines: usize,
+) -> Result<(Vec<SearchHit>, bool), ToolError> {
+    let mut cmd = tokio::process::Command::new(rg_path);
+    cmd.arg("--json")
+        .arg("--max-count")
+        .arg(max_results.to_string());
+
+    if context_lines > 0 {
+        cmd.arg("-C").arg(context_lines.to_string());
+    }
+    if !is_regex {
+        cmd.arg("--fixed-strings");
+    }
+    if let Some(glob) = include_glob {
+        cmd.arg("--glob").arg(glob);
+    }
+
+    cmd.arg("--").arg(query).arg(search_dir);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let output = tokio::time::timeout(Duration::from_secs(30), cmd.output())
+        .await
+        .map_err(|_| ToolError::Timeout(30_000))?
+        .map_err(ToolError::Io)?;
+
+    let mut hits = Vec::new();
+    let mut truncated = false;
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let json: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if json.get("type").and_then(|t| t.as_str()) != Some("match") {
+            continue;
+        }
+
+        let data = match json.get("data") {
+            Some(d) => d,
+            None => continue,
+        };
+
+        let abs_path = data
+            .get("path")
+            .and_then(|p| p.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+
+        let rel_path = Path::new(abs_path)
+            .strip_prefix(workspace_root)
+            .unwrap_or(Path::new(abs_path))
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let line_number = data
+            .get("line_number")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as usize;
+
+        let content = data
+            .get("lines")
+            .and_then(|l| l.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .trim_end_matches('\n')
+            .trim_end_matches('\r')
+            .to_string();
+
+        hits.push(SearchHit {
+            path: rel_path,
+            line_number,
+            content,
+            context_before: Vec::new(),
+            context_after: Vec::new(),
+        });
+
+        if hits.len() >= max_results {
+            truncated = true;
+            break;
+        }
+    }
+
+    Ok((hits, truncated))
+}
+
+/// rg 不可用时的逐文件搜索 fallback
+async fn fallback_search(
+    workspace_root: &Path,
+    search_dir: &Path,
+    query: &str,
+    is_regex: bool,
+    max_results: usize,
+    context_lines: usize,
+) -> Result<(Vec<SearchHit>, bool), ToolError> {
+    let ws = workspace_root.to_path_buf();
+    let dir = search_dir.to_path_buf();
+    let query = query.to_string();
+    let regex = if is_regex {
+        Some(
+            regex::Regex::new(&query)
+                .map_err(|e| ToolError::InvalidPath(format!("无效正则: {e}")))?,
+        )
+    } else {
+        None
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let mut hits = Vec::new();
+        let mut truncated = false;
+        fallback_walk(&ws, &dir, &query, regex.as_ref(), max_results, context_lines, &mut hits, &mut truncated);
+        Ok((hits, truncated))
+    })
+    .await
+    .map_err(|e| ToolError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
+}
+
+const FALLBACK_MAX_FILE_BYTES: u64 = 256 * 1024;
+const FALLBACK_SKIP_DIRS: &[&str] = &[
+    ".git", "node_modules", "target", "__pycache__", ".next", "dist", "build", ".venv",
+];
+
+fn fallback_walk(
+    workspace_root: &Path,
+    dir: &Path,
+    query: &str,
+    regex: Option<&regex::Regex>,
+    max_results: usize,
+    context_lines: usize,
+    hits: &mut Vec<SearchHit>,
+    truncated: &mut bool,
+) {
+    if hits.len() >= max_results {
+        *truncated = true;
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        if hits.len() >= max_results {
+            *truncated = true;
+            return;
+        }
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if ft.is_dir() {
+            if FALLBACK_SKIP_DIRS.contains(&name_str.as_ref()) {
+                continue;
+            }
+            fallback_walk(workspace_root, &entry.path(), query, regex, max_results, context_lines, hits, truncated);
+        } else if ft.is_file() {
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.len() > FALLBACK_MAX_FILE_BYTES {
+                continue;
+            }
+            let content = match std::fs::read_to_string(entry.path()) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let lines: Vec<&str> = content.lines().collect();
+            let rel = entry
+                .path()
+                .strip_prefix(workspace_root)
+                .unwrap_or(&entry.path())
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            for (idx, line) in lines.iter().enumerate() {
+                let matched = match &regex {
+                    Some(re) => re.is_match(line),
+                    None => line.contains(query),
+                };
+                if matched {
+                    let ctx_before: Vec<String> = if context_lines > 0 {
+                        let start = idx.saturating_sub(context_lines);
+                        lines[start..idx].iter().map(|s| s.to_string()).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let ctx_after: Vec<String> = if context_lines > 0 {
+                        let end = (idx + 1 + context_lines).min(lines.len());
+                        lines[idx + 1..end].iter().map(|s| s.to_string()).collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    hits.push(SearchHit {
+                        path: rel.clone(),
+                        line_number: idx + 1,
+                        content: line.to_string(),
+                        context_before: ctx_before,
+                        context_after: ctx_after,
+                    });
+                    if hits.len() >= max_results {
+                        *truncated = true;
+                        return;
+                    }
+                }
+            }
+        }
     }
 }
 

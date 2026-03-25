@@ -92,6 +92,10 @@ impl CommandHandler {
                 vec![self.handle_tool_file_list(id, payload).await]
             }
 
+            RelayMessage::CommandToolSearch { id, payload } => {
+                vec![self.handle_tool_search(id, payload).await]
+            }
+
             RelayMessage::CommandWorkspaceFilesList { id, payload } => {
                 vec![self.handle_workspace_files_list(id, payload).await]
             }
@@ -369,6 +373,41 @@ impl CommandHandler {
                 id,
                 payload: None,
                 error: Some(RelayError::io_error(e.to_string())),
+            },
+        }
+    }
+
+    async fn handle_tool_search(
+        &self,
+        id: String,
+        payload: ToolSearchPayload,
+    ) -> RelayMessage {
+        match self
+            .tool_executor
+            .search(
+                &payload.workspace_root,
+                &payload.query,
+                payload.path.as_deref(),
+                payload.is_regex,
+                payload.include_glob.as_deref(),
+                payload.max_results,
+                payload.context_lines,
+            )
+            .await
+        {
+            Ok((hits, truncated)) => RelayMessage::ResponseToolSearch {
+                id,
+                payload: Some(ToolSearchResponse {
+                    call_id: payload.call_id,
+                    hits,
+                    truncated,
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseToolSearch {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e.to_string())),
             },
         }
     }

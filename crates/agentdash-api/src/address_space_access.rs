@@ -29,7 +29,7 @@ use agentdash_executor::{
 };
 use agentdash_relay::{
     RelayMessage, ToolFileListPayload, ToolFileReadPayload, ToolFileWritePayload,
-    ToolShellExecPayload,
+    ToolSearchPayload, ToolShellExecPayload,
 };
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -576,53 +576,185 @@ impl RelayAddressSpaceService {
         max_results: usize,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<Vec<String>, String> {
+        self.search_text_extended(
+            address_space,
+            mount_id,
+            path,
+            query,
+            false,
+            None,
+            max_results,
+            0,
+            overlay,
+        )
+        .await
+        .map(|(hits, _truncated)| hits)
+    }
+
+    /// 扩展搜索接口 — 支持正则、glob 过滤、上下文行
+    pub async fn search_text_extended(
+        &self,
+        address_space: &ExecutionAddressSpace,
+        mount_id: &str,
+        path: &str,
+        query: &str,
+        is_regex: bool,
+        include_glob: Option<&str>,
+        max_results: usize,
+        context_lines: usize,
+        overlay: Option<&InlineContentOverlay>,
+    ) -> Result<(Vec<String>, bool), String> {
         let mount = resolve_mount(address_space, mount_id, ExecutionMountCapability::Search)?;
         let base_path = normalize_mount_relative_path(path, true)?;
-        let listed = self
-            .list(
-                address_space,
-                &mount.id,
-                ListOptions {
-                    path: base_path,
-                    pattern: None,
-                    recursive: true,
+
+        if mount.provider == PROVIDER_INLINE_FS {
+            return self
+                .search_inline(mount, &base_path, query, is_regex, max_results, context_lines, overlay)
+                .await;
+        }
+
+        let response = self
+            .backend_registry
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolSearch {
+                    id: RelayMessage::new_id("addr-search"),
+                    payload: ToolSearchPayload {
+                        call_id: RelayMessage::new_id("call"),
+                        workspace_root: join_root_ref(&mount.root_ref, &base_path),
+                        query: query.to_string(),
+                        path: None,
+                        is_regex,
+                        include_glob: include_glob.map(String::from),
+                        max_results,
+                        context_lines,
+                    },
                 },
-                overlay,
             )
-            .await?;
+            .await
+            .map_err(|error| format!("relay search 失败: {error}"))?;
+
+        match response {
+            RelayMessage::ResponseToolSearch {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => {
+                let hits: Vec<String> = payload
+                    .hits
+                    .iter()
+                    .map(|hit| {
+                        let mut line = format!("{}:{}: {}", hit.path, hit.line_number, hit.content);
+                        if context_lines > 0 {
+                            if !hit.context_before.is_empty() {
+                                let before = hit
+                                    .context_before
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, c)| {
+                                        format!(
+                                            "{}:{}- {}",
+                                            hit.path,
+                                            hit.line_number - hit.context_before.len() + i,
+                                            c
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                line = format!("{}\n{}", before, line);
+                            }
+                            if !hit.context_after.is_empty() {
+                                let after = hit
+                                    .context_after
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, c)| {
+                                        format!("{}:{}- {}", hit.path, hit.line_number + 1 + i, c)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                line = format!("{}\n{}", line, after);
+                            }
+                        }
+                        line
+                    })
+                    .collect();
+                Ok((hits, payload.truncated))
+            }
+            RelayMessage::ResponseToolSearch {
+                error: Some(error), ..
+            } => Err(error.message),
+            other => Err(format!("search 返回意外响应: {}", other.id())),
+        }
+    }
+
+    async fn search_inline(
+        &self,
+        mount: &agentdash_executor::ExecutionMount,
+        base_path: &str,
+        query: &str,
+        is_regex: bool,
+        max_results: usize,
+        context_lines: usize,
+        overlay: Option<&InlineContentOverlay>,
+    ) -> Result<(Vec<String>, bool), String> {
+        let mut files = inline_files_from_mount(mount)?;
+        if let Some(ov) = overlay {
+            for (p, c) in ov.overridden_files(&mount.id).await {
+                files.insert(p, c);
+            }
+        }
+
+        let re = if is_regex {
+            Some(regex::Regex::new(query).map_err(|e| format!("无效正则: {e}"))?)
+        } else {
+            None
+        };
 
         let mut hits = Vec::new();
-        for entry in listed.entries {
-            if entry.is_dir || entry.size.unwrap_or(0) > MAX_SEARCH_FILE_BYTES {
+        let mut truncated = false;
+
+        for (file_path, content) in &files {
+            if !file_path.starts_with(base_path.trim_start_matches("./").trim_start_matches('/'))
+                && !base_path.is_empty()
+                && base_path != "."
+            {
                 continue;
             }
-
-            let read = match self
-                .read_text(
-                    address_space,
-                    &ResourceRef {
-                        mount_id: mount.id.clone(),
-                        path: entry.path.clone(),
-                    },
-                    overlay,
-                )
-                .await
-            {
-                Ok(result) => result,
-                Err(_) => continue,
-            };
-
-            for (index, line) in read.content.lines().enumerate() {
-                if line.contains(query) {
-                    hits.push(format!("{}:{}: {}", entry.path, index + 1, line.trim()));
+            let lines: Vec<&str> = content.lines().collect();
+            for (idx, line) in lines.iter().enumerate() {
+                let matched = match &re {
+                    Some(re) => re.is_match(line),
+                    None => line.contains(query),
+                };
+                if matched {
+                    let mut formatted = format!("{}:{}: {}", file_path, idx + 1, line.trim());
+                    if context_lines > 0 {
+                        let start = idx.saturating_sub(context_lines);
+                        let end = (idx + 1 + context_lines).min(lines.len());
+                        if start < idx {
+                            let before: Vec<String> = (start..idx)
+                                .map(|i| format!("{}:{}- {}", file_path, i + 1, lines[i].trim()))
+                                .collect();
+                            formatted = format!("{}\n{}", before.join("\n"), formatted);
+                        }
+                        if idx + 1 < end {
+                            let after: Vec<String> = (idx + 1..end)
+                                .map(|i| format!("{}:{}- {}", file_path, i + 1, lines[i].trim()))
+                                .collect();
+                            formatted = format!("{}\n{}", formatted, after.join("\n"));
+                        }
+                    }
+                    hits.push(formatted);
                     if hits.len() >= max_results {
-                        return Ok(hits);
+                        truncated = true;
+                        return Ok((hits, truncated));
                     }
                 }
             }
         }
 
-        Ok(hits)
+        Ok((hits, truncated))
     }
 }
 
@@ -2641,7 +2773,11 @@ struct FsSearchParams {
     pub mount: Option<String>,
     pub query: String,
     pub path: Option<String>,
+    #[serde(default)]
+    pub regex: bool,
+    pub include: Option<String>,
     pub max_results: Option<usize>,
+    pub context_lines: Option<usize>,
 }
 
 #[async_trait]
@@ -2650,7 +2786,7 @@ impl AgentTool for FsSearchTool {
         "fs_search"
     }
     fn description(&self) -> &str {
-        "在指定 mount 下进行文本搜索"
+        "在指定 mount 下进行文本搜索，支持正则和 glob 过滤"
     }
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<FsSearchParams>()
@@ -2666,23 +2802,30 @@ impl AgentTool for FsSearchTool {
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
         let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?;
-        let hits = self
+        let (hits, truncated) = self
             .service
-            .search_text(
+            .search_text_extended(
                 &self.address_space,
                 &mount_id,
                 params.path.as_deref().unwrap_or("."),
                 &params.query,
+                params.regex,
+                params.include.as_deref(),
                 params.max_results.unwrap_or(50).max(1),
+                params.context_lines.unwrap_or(0),
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
-        Ok(ok_text(if hits.is_empty() {
+        let mut output = if hits.is_empty() {
             "未找到匹配结果".to_string()
         } else {
             hits.join("\n")
-        }))
+        };
+        if truncated {
+            output.push_str("\n(结果已截断，请缩小搜索范围)");
+        }
+        Ok(ok_text(output))
     }
 }
 

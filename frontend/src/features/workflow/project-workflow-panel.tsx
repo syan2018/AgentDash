@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import type {
   WorkflowAgentRole,
@@ -12,6 +13,7 @@ import {
   BINDING_KIND_LABEL,
   COMPLETION_MODE_LABEL,
   DEFAULT_ROLE_BY_TARGET,
+  DEFINITION_STATUS_LABEL,
   ROLE_LABEL,
   ROLE_ORDER,
   TARGET_KIND_LABEL,
@@ -28,9 +30,9 @@ function findDefinitionByTemplate(
 
 function resolveDefinitionRole(
   definition: WorkflowDefinition,
-  templateMap: Map<string, WorkflowTemplate>,
+  _templateMap: Map<string, WorkflowTemplate>,
 ): WorkflowAgentRole {
-  return templateMap.get(definition.key)?.recommended_role
+  return definition.recommended_role
     ?? DEFAULT_ROLE_BY_TARGET[definition.target_kind];
 }
 
@@ -143,6 +145,9 @@ function DefinitionCard({
   isDefault,
   isAssigning,
   onAssign,
+  onEdit,
+  onEnable,
+  onDisable,
 }: {
   definition: WorkflowDefinition;
   role: WorkflowAgentRole;
@@ -150,6 +155,9 @@ function DefinitionCard({
   isDefault: boolean;
   isAssigning: boolean;
   onAssign: () => void;
+  onEdit: () => void;
+  onEnable: () => void;
+  onDisable: () => void;
 }) {
   return (
     <div className="rounded-[12px] border border-border bg-background p-4">
@@ -163,9 +171,19 @@ function DefinitionCard({
         <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
           v{definition.version}
         </span>
-        {definition.enabled && (
+        {definition.status === "active" && (
           <span className="rounded-full border border-emerald-300/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600">
-            已启用
+            已激活
+          </span>
+        )}
+        {definition.status === "draft" && (
+          <span className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-600">
+            草稿
+          </span>
+        )}
+        {definition.status === "disabled" && (
+          <span className="rounded-full border border-red-300/40 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-600">
+            已停用
           </span>
         )}
         {isAssigned && (
@@ -195,7 +213,31 @@ function DefinitionCard({
         </div>
       </div>
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <button
+          type="button"
+          onClick={onEdit}
+          className="agentdash-button-secondary text-sm"
+        >
+          编辑
+        </button>
+        {definition.status === "active" ? (
+          <button
+            type="button"
+            onClick={onDisable}
+            className="rounded-[10px] border border-amber-300/30 bg-amber-500/5 px-3 py-1.5 text-sm text-amber-700 transition-colors hover:bg-amber-500/10"
+          >
+            停用
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onEnable}
+            className="rounded-[10px] border border-emerald-300/30 bg-emerald-500/5 px-3 py-1.5 text-sm text-emerald-700 transition-colors hover:bg-emerald-500/10"
+          >
+            激活
+          </button>
+        )}
         <button
           type="button"
           onClick={onAssign}
@@ -210,6 +252,7 @@ function DefinitionCard({
 }
 
 export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
+  const navigate = useNavigate();
   const templates = useWorkflowStore((state) => state.templates);
   const definitions = useWorkflowStore((state) => state.definitions);
   const assignments = useWorkflowStore(
@@ -221,6 +264,8 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
   const fetchProjectAssignments = useWorkflowStore((state) => state.fetchProjectAssignments);
   const bootstrapTemplate = useWorkflowStore((state) => state.bootstrapTemplate);
   const assignWorkflowToProject = useWorkflowStore((state) => state.assignWorkflowToProject);
+  const enableDefinition = useWorkflowStore((state) => state.enableDefinition);
+  const disableDefinition = useWorkflowStore((state) => state.disableDefinition);
 
   const [message, setMessage] = useState<string | null>(null);
   const [bootstrappingTemplateKey, setBootstrappingTemplateKey] = useState<string | null>(null);
@@ -301,8 +346,22 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
             <p className="text-sm font-medium text-foreground">Workflow 模板与定义</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
               管理项目可用的工作流，按角色分配默认流程。
+              <button
+                type="button"
+                onClick={() => navigate("/dashboard/workflow")}
+                className="ml-2 text-primary underline underline-offset-2 hover:text-primary/80"
+              >
+                在 Workflow 视图中管理 →
+              </button>
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => navigate("/workflow-editor/new")}
+            className="agentdash-button-primary text-sm"
+          >
+            + 新建自定义 Workflow
+          </button>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -401,6 +460,9 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
                         isDefault={defaultAssignmentsByRole.get(role)?.id === definition.id}
                         isAssigning={assigningKey === `${definition.id}:${role}`}
                         onAssign={() => void handleAssign(definition, role)}
+                        onEdit={() => navigate(`/workflow-editor/${definition.id}`)}
+                        onEnable={() => void enableDefinition(definition.id)}
+                        onDisable={() => void disableDefinition(definition.id)}
                       />
                     );
                   })

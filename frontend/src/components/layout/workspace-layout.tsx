@@ -50,6 +50,8 @@ export function WorkspaceLayout() {
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const storyDashboardMatch = useMatch("/dashboard/story");
   const storyRouteMatch = useMatch("/story/:storyId");
+  const workflowDashboardMatch = useMatch("/dashboard/workflow");
+  const workflowEditorMatch = useMatch("/workflow-editor/:definitionId");
 
   const isAgentActive =
     !!agentDashboardMatch ||
@@ -57,6 +59,9 @@ export function WorkspaceLayout() {
   const isStoryActive =
     !!storyDashboardMatch ||
     !!storyRouteMatch;       // Story 详情页从 Story Tab 进入，高亮 Story
+  const isWorkflowActive =
+    !!workflowDashboardMatch ||
+    !!workflowEditorMatch;   // Workflow 编辑器页也高亮 Workflow Tab
 
   const agentNavTarget = useMemo(() => {
     if (!isSettingsRoute) return "/dashboard/agent";
@@ -78,6 +83,17 @@ export function WorkspaceLayout() {
       return rememberedPath;
     }
     return "/dashboard/story";
+  }, [isSettingsRoute, rememberedPath]);
+
+  const workflowNavTarget = useMemo(() => {
+    if (!isSettingsRoute) return "/dashboard/workflow";
+    if (
+      rememberedPath.startsWith("/dashboard/workflow")
+      || rememberedPath.startsWith("/workflow-editor/")
+    ) {
+      return rememberedPath;
+    }
+    return "/dashboard/workflow";
   }, [isSettingsRoute, rememberedPath]);
 
   return (
@@ -131,6 +147,18 @@ export function WorkspaceLayout() {
                 }
               >
                 Story
+              </NavLink>
+              <NavLink
+                to={workflowNavTarget}
+                className={() =>
+                  `flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
+                    isWorkflowActive
+                      ? "border-primary/20 bg-background font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:border-border hover:bg-background/80 hover:text-foreground"
+                  }`
+                }
+              >
+                Workflow
               </NavLink>
             </div>
           </div>

@@ -43,6 +43,16 @@ const StoryTabView = lazy(async () => {
   return { default: m.StoryTabView };
 });
 
+const WorkflowTabView = lazy(async () => {
+  const m = await import("./features/workflow/workflow-tab-view");
+  return { default: m.WorkflowTabView };
+});
+
+const WorkflowEditorPage = lazy(async () => {
+  const m = await import("./pages/WorkflowEditorPage");
+  return { default: m.WorkflowEditorPage };
+});
+
 // ─── 通用加载占位 ──────────────────────────────────────
 
 function RouteFallback() {
@@ -152,15 +162,19 @@ function AppContent() {
           {/* 根路径重定向到 Agent Tab */}
           <Route index element={<Navigate to="/dashboard/agent" replace />} />
 
-          {/* Dashboard 容器路由，包含 Agent / Story 子 Tab */}
+          {/* Dashboard 容器路由，包含 Agent / Story / Workflow 子 Tab */}
           <Route path="/dashboard" element={<DashboardPage />}>
             <Route index element={<Navigate to="agent" replace />} />
             <Route path="agent" element={<AgentTabView />} />
             <Route path="story" element={<StoryTabView />} />
+            <Route path="workflow" element={<WorkflowTabView />} />
           </Route>
 
           {/* Story 详情页 */}
           <Route path="/story/:storyId" element={<StoryPage />} />
+
+          {/* Workflow 编辑器独立页 */}
+          <Route path="/workflow-editor/:definitionId" element={<WorkflowEditorPage />} />
 
           {/* Session 独立全屏页 */}
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />

@@ -1,0 +1,63 @@
+{
+  "id": "domain-payload-typing-error-model",
+  "name": "domain-payload-typing-error-model",
+  "title": "领域负载类型化与错误边界收口",
+  "description": "逐步把领域层中高频的 serde_json::Value payload 收敛成结构化类型，并建立可消费的错误边界，优先覆盖 workflow、artifact、state change 等高频对象。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "domain-model",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "payload-inventory",
+      "title": "盘点领域层裸 JsonValue 的使用面与优先级",
+      "status": "pending"
+    },
+    {
+      "key": "workflow-error-model",
+      "title": "把 workflow 校验从 Result<String> 收口到结构化错误类型",
+      "status": "pending"
+    },
+    {
+      "key": "typed-events-artifacts",
+      "title": "为高频 StateChange 与 Artifact payload 建立显式 schema",
+      "status": "pending"
+    }
+  ],
+  "relatedFiles": [
+    "crates/agentdash-domain/src/project/value_objects.rs",
+    "crates/agentdash-domain/src/story/value_objects.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs",
+    "crates/agentdash-domain/src/workflow/value_objects.rs",
+    "crates/agentdash-domain/src/workflow/entity.rs"
+  ],
+  "notes": "这是中期收口任务，不建议和前四个止血任务抢优先级，但应尽早开始建约束，避免继续扩散任意 JSON。"
+}

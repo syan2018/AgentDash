@@ -1,0 +1,68 @@
+{
+  "id": "statechange-application-boundary-hardening",
+  "name": "statechange-application-boundary-hardening",
+  "title": "后端状态一致性与应用层收口",
+  "description": "修复 StateChange 被 best-effort 写入、关键删除/克隆流程无事务边界、API route 吸走应用层职责等问题，把 project/story/task 的关键用例收回到 application service，并恢复状态变更的一致性约束。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P0",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-25",
+  "completedAt": "2026-03-25",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 3,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "statechange-atomicity",
+      "title": "禁止关键状态变更吞掉 StateChange 写入失败",
+      "status": "completed"
+    },
+    {
+      "key": "usecase-lift",
+      "title": "把 project/story/task 关键 CRUD 编排抬升到 application use case",
+      "status": "completed"
+    },
+    {
+      "key": "transaction-boundary",
+      "title": "为 delete_project 和 clone_project 建立明确事务边界",
+      "status": "completed"
+    },
+    {
+      "key": "route-thin",
+      "title": "让 route 只保留协议解析、鉴权和 DTO 映射职责",
+      "status": "completed"
+    }
+  ],
+  "relatedFiles": [
+    "crates/agentdash-api/src/routes/projects.rs",
+    "crates/agentdash-api/src/routes/stories.rs",
+    "crates/agentdash-application/src/project",
+    "crates/agentdash-application/src/task",
+    "crates/agentdash-domain/src/story/value_objects.rs"
+  ],
+  "notes": "2026-03-25 已完成当前止血目标：关键 StateChange 写入失败不再被 best-effort 吞掉；project/story/task 关键 mutation 与聚合删除/克隆编排已收回 application 层；delete_project / delete_story / clone_project 已形成明确的聚合边界与补偿式回滚路径；相关路由与 application helper 已通过 cargo test -p agentdash-application、cargo check -p agentdash-application -p agentdash-api、cargo test -p agentdash-api routes::stories。"
+}

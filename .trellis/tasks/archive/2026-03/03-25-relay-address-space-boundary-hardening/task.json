@@ -1,0 +1,71 @@
+{
+  "id": "relay-address-space-boundary-hardening",
+  "name": "relay-address-space-boundary-hardening",
+  "title": "Relay 与 Address Space 边界加固",
+  "description": "收紧 relay、本机执行器与 Address Space 的职责边界，修复 compact slice 权限语义失真、workspace_detect_git 绕过 accessible_roots、discover_options 声明与实现不一致等问题。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "architecture",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-25",
+  "completedAt": "2026-03-25",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 3,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "compact-permission",
+      "title": "重新定义 compact companion slice 的 Exec/Write 权限语义",
+      "status": "completed"
+    },
+    {
+      "key": "detect-git-boundary",
+      "title": "让 workspace_detect_git 走统一 accessible_roots 与 mount 校验",
+      "status": "completed"
+    },
+    {
+      "key": "transport-clarify",
+      "title": "拆清 shell.exec transport 中 mount 根与 cwd 的字段语义",
+      "status": "completed"
+    },
+    {
+      "key": "capability-alignment",
+      "title": "消除 discover_options 和 AddressSpaceProvider 的能力命名漂移",
+      "status": "completed"
+    }
+  ],
+  "relatedFiles": [
+    "crates/agentdash-api/src/address_space_access.rs",
+    "crates/agentdash-api/src/routes/workspaces.rs",
+    "crates/agentdash-local/src/command_handler.rs",
+    "crates/agentdash-local/src/tool_executor.rs",
+    "crates/agentdash-local/src/ws_client.rs",
+    "crates/agentdash-relay/src/protocol.rs",
+    "crates/agentdash-injection/src/address_space.rs",
+    "crates/agentdash-api/src/plugins.rs"
+  ],
+  "notes": "2026-03-25 已完成：compact companion slice 的 Exec/Write 权限语义已收紧；workspace_detect_git 已纳入 accessible_roots 校验；shell.exec transport 已拆清 workspace_root 与 cwd 语义；discover_options 与本地能力声明已对齐。验证通过 cargo test -p agentdash-local、cargo test -p agentdash-relay、cargo check -p agentdash-api。"
+}

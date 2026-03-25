@@ -1,0 +1,70 @@
+{
+  "id": "frontend-project-isolation-resume-hardening",
+  "name": "frontend-project-isolation-resume-hardening",
+  "title": "前端项目隔离与会话恢复语义修复",
+  "description": "修复前端 story 全局状态未按 projectId 隔离、ACP transcript 在 reconnect 时被清空、页级组件过大等问题，先保证状态边界和恢复语义正确，再推进页面拆分。",
+  "status": "in_progress",
+  "dev_type": "frontend",
+  "scope": "state-management",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 2,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "story-cache-partition",
+      "title": "把 story/task/session store 按 projectId 进行隔离缓存",
+      "status": "completed"
+    },
+    {
+      "key": "resume-semantics",
+      "title": "修复 ACP reconnect 时 transcript 与 token usage 被清空的问题",
+      "status": "completed"
+    },
+    {
+      "key": "page-split",
+      "title": "拆分 SessionPage 与 StoryPage 的 God Component 结构",
+      "status": "pending"
+    },
+    {
+      "key": "error-surface",
+      "title": "补齐 session history 等关键 store 的错误可见性",
+      "status": "completed"
+    }
+  ],
+  "relatedFiles": [
+    "frontend/src/stores/storyStore.ts",
+    "frontend/src/features/story/story-tab-view.tsx",
+    "frontend/src/features/acp-session/model/useAcpStream.ts",
+    "frontend/src/features/acp-session/model/useAcpSession.ts",
+    "frontend/src/pages/SessionPage.tsx",
+    "frontend/src/pages/StoryPage.tsx",
+    "frontend/src/stores/sessionHistoryStore.ts"
+  ],
+  "notes": "2026-03-25 已完成 story cache 按 projectId 隔离、ACP reconnect transcript/token usage 保留、session history store 错误可见性补齐，并通过 pnpm --filter frontend exec tsc --noEmit、pnpm --filter frontend test 与触达文件 ESLint。剩余 page/component 结构拆分尚未展开，因此保持 in_progress。"
+}

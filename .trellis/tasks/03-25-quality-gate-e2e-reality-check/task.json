@@ -1,0 +1,69 @@
+{
+  "id": "quality-gate-e2e-reality-check",
+  "name": "quality-gate-e2e-reality-check",
+  "title": "质量门禁与 E2E 真实链路修复",
+  "description": "把默认质量门禁升级为真实反映系统健康的检查集合，并修复当前 E2E 对最关键云端↔本机执行链路的假绿设计。",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "quality",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 2,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "default-checks",
+      "title": "把 frontend typecheck、frontend test、Rust test 与关键 E2E 纳入默认检查",
+      "status": "completed"
+    },
+    {
+      "key": "real-relay-e2e",
+      "title": "让 Playwright 启动真实 agentdash-local 并验证关键链路成功态",
+      "status": "pending"
+    },
+    {
+      "key": "isolation",
+      "title": "消除固定数据库和复用 backend 带来的跨运行污染",
+      "status": "completed"
+    },
+    {
+      "key": "path-independence",
+      "title": "移除 E2E 对开发机绝对路径和盘符的硬编码依赖",
+      "status": "completed"
+    }
+  ],
+  "relatedFiles": [
+    "package.json",
+    "frontend/package.json",
+    "playwright.config.ts",
+    "tests/e2e/story-context-injection.spec.ts",
+    "tests/e2e/task-drawer-return.spec.ts",
+    "scripts/dev-joint.js"
+  ],
+  "notes": "2026-03-25 已把 frontend typecheck/test、Rust test 与关键 E2E 纳入默认检查，并将 Playwright 切到每次运行独立 DB/backend 环境，移除了对固定盘符与假后端成功态的依赖。真实 relay/local 全链路 E2E 仍存在超时与陈旧用例问题，尚未完成，因此保持 in_progress。"
+}

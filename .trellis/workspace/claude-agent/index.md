@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-03-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1015 | Active |
+| `journal-1.md` | ~1049 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 22 | 2026-03-25 | 上下文容器创建优化 + Address Space 搜索能力增强 | `475dfc8`, `fae1b6f`, `65a0a92` |
 | 21 | 2026-03-25 | 上下文容器创建优化 + Address Space 搜索能力增强 | `475dfc8`, `fae1b6f`, `65a0a92` |
 | 20 | 2026-03-24 | Agent-First 前端重构 + Session 聚合端点 + 执行状态持久化 | `30fb074`, `e3f79c6`, `69a2e55` |
 | 19 | 2026-03-23 | decouple-project-backend-id + workspace-local-mcp-client 实现完成 | `b1db9a9`, `bff647d` |

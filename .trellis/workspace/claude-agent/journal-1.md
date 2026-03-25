@@ -991,19 +991,32 @@ Agent Tab 主视图：
 
 ### Main Changes
 
+**前端容器创建优化（`475dfc8`）**
+- `context-config-editor.tsx`: 移除 slugify，新增 generateNextId（域+自增序号），display_name 仅作备注不驱动 ID
+- `context-config-editor.tsx`: 移除创建卡片的 inline_files 文件编辑区，Provider 内容编辑全部移入高级选项后改为只读展示
+- `context-config-defaults.ts`: 挂载策略默认能力改为全部五项
+- `ProjectSettingsPage.tsx` / `StoryPage.tsx`: 传入 domain prop
 
+**搜索增强（`65a0a92`）**
+- `agentdash-relay/protocol.rs`: 新增 CommandToolSearch/ResponseToolSearch + ToolSearchPayload/ToolSearchResponse/SearchHit
+- `agentdash-local/tool_executor.rs`: 新增 search() 方法，detect_ripgrep + run_ripgrep + fallback_search
+- `agentdash-local/command_handler.rs`: 新增 CommandToolSearch 路由 + handle_tool_search
+- `agentdash-api/address_space_access.rs`: search_text 重构为 search_text_extended，relay_fs 走专用搜索命令，inline_fs 升级正则匹配，FsSearchTool 新增 regex/include/context_lines
 
 ### Git Commits
 
 | Hash | Message |
 |------|---------|
-| `475dfc8` | (see git log) |
-| `fae1b6f` | (see git log) |
-| `65a0a92` | (see git log) |
+| `475dfc8` | fix(container): 优化上下文容器前端创建呈现 |
+| `fae1b6f` | docs(trellis): 追踪搜索实现重构 |
+| `65a0a92` | feat(search): 实现 Address Space 搜索能力增强——本地 ripgrep + 正则支持 |
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 前端 TypeScript 类型检查通过
+- [OK] agentdash-relay 编译通过
+- [OK] agentdash-local 编译通过
+- [OK] agentdash-api 编译通过（预存 workflow 错误与本次无关）
 
 ### Status
 

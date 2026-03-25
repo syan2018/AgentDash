@@ -1025,3 +1025,37 @@ Agent Tab 主视图：
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Workflow Editor 全栈实现 + 独立视图/编辑器页面
+
+**Date**: 2026-03-25
+**Task**: Workflow Editor 全栈实现 + 独立视图/编辑器页面
+
+### Summary
+
+实现 Workflow Definition 编辑器全栈支持：后端领域模型扩展、结构化校验、CRUD API、SQLite schema 自动迁移；前端编辑器组件和 Zustand store；新增 Workflow 顶级视图和独立编辑器页面
+
+### Main Changes
+
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `851055b` | (see git log) |
+| `300107f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

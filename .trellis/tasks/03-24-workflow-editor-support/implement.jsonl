@@ -1,8 +1,0 @@
-{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
-{"file": "crates/agentdash-domain/src/workflow/value_objects.rs", "reason": "workflow definition 结构与校验入口"}
-{"file": "crates/agentdash-application/src/workflow/binding.rs", "reason": "binding 语义与 locator 解析逻辑"}
-{"file": "crates/agentdash-api/src/routes/workflows.rs", "reason": "现有 workflow API 与待扩展写接口"}
-{"file": "frontend/src/stores/workflowStore.ts", "reason": "前端 workflow 状态与动作入口"}
-{"file": "frontend/src/features/workflow/project-workflow-panel.tsx", "reason": "现有 workflow 管理 UI 基线"}

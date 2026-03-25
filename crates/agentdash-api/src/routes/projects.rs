@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_application::project::{ProjectAuthorizationContext, ProjectAuthorizationService};
+use agentdash_application::project::{
+    ProjectAuthorizationContext, ProjectAuthorizationService, ProjectMutationInput,
+    apply_project_mutation, build_cloned_project, build_project, clone_project_assignments,
+    delete_project_aggregate, normalize_clone_name,
+};
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Deserialize;
@@ -12,7 +16,6 @@ use agentdash_domain::context_container::{
 use agentdash_domain::project::{
     Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType, ProjectVisibility,
 };
-use agentdash_domain::workflow::WorkflowAssignment;
 use agentdash_plugin_api::AuthIdentity;
 
 use crate::app_state::AppState;
@@ -75,29 +78,20 @@ pub async fn create_project(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateProjectRequest>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let mut project = Project::new_with_creator(
+    let project = build_project(
+        current_user.user_id.clone(),
         req.name,
         req.description.unwrap_or_default(),
-        current_user.user_id.clone(),
+        ProjectMutationInput {
+            config: req.config,
+            visibility: req.visibility,
+            is_template: req.is_template,
+            cloned_from_project_id: req.cloned_from_project_id,
+            context_containers: req.context_containers,
+            mount_policy: req.mount_policy,
+            ..ProjectMutationInput::default()
+        },
     );
-    if let Some(config) = req.config {
-        project.config = config;
-    }
-    if let Some(visibility) = req.visibility {
-        project.visibility = visibility;
-    }
-    if let Some(is_template) = req.is_template {
-        project.is_template = is_template;
-    }
-    if let Some(cloned_from_project_id) = req.cloned_from_project_id {
-        project.cloned_from_project_id = Some(cloned_from_project_id);
-    }
-    if let Some(context_containers) = req.context_containers {
-        project.config.context_containers = context_containers;
-    }
-    if let Some(mount_policy) = req.mount_policy {
-        project.config.mount_policy = mount_policy;
-    }
     validate_project_config(&project.config)?;
     validate_project_contract(&project)?;
     state.repos.project_repo.create(&project).await?;
@@ -169,33 +163,22 @@ pub async fn update_project(
     )
     .await?;
 
-    if let Some(name) = req.name {
-        project.name = name;
-    }
-    if let Some(description) = req.description {
-        project.description = description;
-    }
-    if let Some(config) = req.config {
-        project.config = config;
-    }
-    if let Some(visibility) = req.visibility {
-        project.visibility = visibility;
-    }
-    if let Some(is_template) = req.is_template {
-        project.is_template = is_template;
-    }
-    if let Some(cloned_from_project_id) = req.cloned_from_project_id {
-        project.cloned_from_project_id = Some(cloned_from_project_id);
-    }
-    if let Some(context_containers) = req.context_containers {
-        project.config.context_containers = context_containers;
-    }
-    if let Some(mount_policy) = req.mount_policy {
-        project.config.mount_policy = mount_policy;
-    }
+    apply_project_mutation(
+        &mut project,
+        ProjectMutationInput {
+            name: req.name,
+            description: req.description,
+            config: req.config,
+            visibility: req.visibility,
+            is_template: req.is_template,
+            cloned_from_project_id: req.cloned_from_project_id,
+            context_containers: req.context_containers,
+            mount_policy: req.mount_policy,
+        },
+        Some(current_user.user_id.clone()),
+    );
     validate_project_config(&project.config)?;
     validate_project_contract(&project)?;
-    project.touch_updated_by(current_user.user_id.clone());
 
     state.repos.project_repo.update(&project).await?;
     Ok(Json(
@@ -219,26 +202,14 @@ pub async fn delete_project(
     )
     .await?;
 
-    // 先删除 Project 下的 Task/Story/Workspace，再删除 Project 本身，避免外键约束失败
-    let stories = state.repos.story_repo.list_by_project(project_id).await?;
-    for story in stories {
-        let tasks = state.repos.task_repo.list_by_story(story.id).await?;
-        for task in tasks {
-            state.repos.task_repo.delete(task.id).await?;
-        }
-        state.repos.story_repo.delete(story.id).await?;
-    }
-
-    let workspaces = state
-        .repos
-        .workspace_repo
-        .list_by_project(project_id)
-        .await?;
-    for workspace in workspaces {
-        state.repos.workspace_repo.delete(workspace.id).await?;
-    }
-
-    state.repos.project_repo.delete(project_id).await?;
+    delete_project_aggregate(
+        state.repos.project_repo.as_ref(),
+        state.repos.story_repo.as_ref(),
+        state.repos.task_repo.as_ref(),
+        state.repos.workspace_repo.as_ref(),
+        project_id,
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
@@ -265,22 +236,35 @@ pub async fn clone_project(
         ));
     }
 
-    let mut cloned_project = Project::new_with_creator(
-        normalize_clone_name(req.name, &source_project.name)?,
-        req.description
-            .unwrap_or_else(|| source_project.description.clone()),
+    let clone_name =
+        normalize_clone_name(req.name, &source_project.name).map_err(ApiError::BadRequest)?;
+    let cloned_project = build_cloned_project(
+        &source_project,
         current_user.user_id.clone(),
+        clone_name,
+        req.description,
     );
-    cloned_project.config = source_project.config.clone();
-    cloned_project.config.default_workspace_id = None;
-    cloned_project.visibility = ProjectVisibility::Private;
-    cloned_project.is_template = false;
-    cloned_project.cloned_from_project_id = Some(source_project.id);
     validate_project_config(&cloned_project.config)?;
     validate_project_contract(&cloned_project)?;
 
     state.repos.project_repo.create(&cloned_project).await?;
-    clone_workflow_assignments(state.as_ref(), source_project.id, cloned_project.id).await?;
+    if let Err(err) = clone_project_assignments(
+        state.repos.workflow_assignment_repo.as_ref(),
+        source_project.id,
+        cloned_project.id,
+    )
+    .await
+    .map_err(ApiError::from)
+    {
+        tracing::error!(
+            source_project_id = %source_project.id,
+            cloned_project_id = %cloned_project.id,
+            error = %err,
+            "复制 Project workflow assignments 失败，开始回滚新建副本"
+        );
+        cleanup_cloned_project(state.as_ref(), cloned_project.id).await;
+        return Err(err);
+    }
 
     Ok(Json(
         project_response_for_user(state.as_ref(), &current_user, cloned_project).await?,
@@ -628,43 +612,44 @@ async fn project_response_for_user(
     Ok(ProjectResponse::new(project, access))
 }
 
-fn normalize_clone_name(raw_name: Option<String>, source_name: &str) -> Result<String, ApiError> {
-    match raw_name {
-        Some(name) => {
-            let trimmed = name.trim();
-            if trimmed.is_empty() {
-                return Err(ApiError::BadRequest(
-                    "clone 后的 Project 名称不能为空".into(),
-                ));
-            }
-            Ok(trimmed.to_string())
-        }
-        None => Ok(format!("{source_name}（副本）")),
-    }
-}
-
-async fn clone_workflow_assignments(
-    state: &AppState,
-    source_project_id: Uuid,
-    target_project_id: Uuid,
-) -> Result<(), ApiError> {
-    let assignments = state
+async fn cleanup_cloned_project(state: &AppState, project_id: Uuid) {
+    match state
         .repos
         .workflow_assignment_repo
-        .list_by_project(source_project_id)
-        .await?;
-
-    for assignment in assignments {
-        let mut cloned_assignment =
-            WorkflowAssignment::new(target_project_id, assignment.lifecycle_id, assignment.role);
-        cloned_assignment.enabled = assignment.enabled;
-        cloned_assignment.is_default = assignment.is_default;
-        state
-            .repos
-            .workflow_assignment_repo
-            .create(&cloned_assignment)
-            .await?;
+        .list_by_project(project_id)
+        .await
+    {
+        Ok(assignments) => {
+            for assignment in assignments {
+                if let Err(err) = state
+                    .repos
+                    .workflow_assignment_repo
+                    .delete(assignment.id)
+                    .await
+                {
+                    tracing::error!(
+                        project_id = %project_id,
+                        workflow_assignment_id = %assignment.id,
+                        error = %err,
+                        "回滚 cloned project workflow assignment 失败"
+                    );
+                }
+            }
+        }
+        Err(err) => {
+            tracing::error!(
+                project_id = %project_id,
+                error = %err,
+                "回滚 cloned project 前读取 workflow assignments 失败"
+            );
+        }
     }
 
-    Ok(())
+    if let Err(err) = state.repos.project_repo.delete(project_id).await {
+        tracing::error!(
+            project_id = %project_id,
+            error = %err,
+            "回滚 cloned project 失败"
+        );
+    }
 }

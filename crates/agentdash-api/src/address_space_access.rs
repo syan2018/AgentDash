@@ -44,8 +44,6 @@ pub use agentdash_application::address_space::*;
 
 use crate::relay::registry::BackendRegistry;
 
-const MAX_SEARCH_FILE_BYTES: u64 = 256 * 1024;
-
 // ─── Inline Content Persistence ─────────────────────────────
 
 /// 内联文件写入持久化接口。
@@ -544,7 +542,8 @@ impl RelayAddressSpaceService {
                     payload: ToolShellExecPayload {
                         call_id: RelayMessage::new_id("call"),
                         command: request.command.clone(),
-                        workspace_root: join_root_ref(&mount.root_ref, &cwd),
+                        workspace_root: mount.root_ref.clone(),
+                        cwd: if cwd.is_empty() { None } else { Some(cwd) },
                         timeout_ms: request.timeout_ms,
                     },
                 },

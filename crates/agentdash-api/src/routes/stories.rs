@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use agentdash_application::story::{
+    AgentBindingInput, StoryMutationInput, TaskMutationInput, apply_story_mutation,
+    apply_task_mutation, build_agent_binding, build_story, build_task, delete_story_aggregate,
+};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
@@ -13,7 +17,7 @@ use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::project::Project;
 use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
 use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, StoryType};
-use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
+use agentdash_domain::task::TaskStatus;
 
 use crate::app_state::AppState;
 use crate::auth::{
@@ -22,6 +26,7 @@ use crate::auth::{
 };
 use crate::dto::{StoryResponse, TaskResponse};
 use crate::rpc::ApiError;
+use agentdash_domain::story::StoryRepository;
 
 #[derive(Deserialize)]
 pub struct ListStoriesQuery {
@@ -131,37 +136,23 @@ pub async fn create_story(
         .as_deref()
         .and_then(|s| s.trim().parse::<Uuid>().ok());
 
-    let story = Story::new(
+    let next_story = build_story(
         project_id,
         title.to_string(),
         req.description.unwrap_or_default(),
+        StoryMutationInput {
+            default_workspace_id: Some(default_workspace_id),
+            priority: req.priority,
+            story_type: req.story_type,
+            tags: req.tags,
+            context_source_refs: req.context_source_refs,
+            context_containers: req.context_containers,
+            disabled_container_ids: req.disabled_container_ids,
+            mount_policy_override: req.mount_policy_override.map(Some),
+            session_composition: req.session_composition.map(Some),
+            ..StoryMutationInput::default()
+        },
     );
-    let mut next_story = story;
-    next_story.default_workspace_id = default_workspace_id;
-    if let Some(priority) = req.priority {
-        next_story.priority = priority;
-    }
-    if let Some(story_type) = req.story_type {
-        next_story.story_type = story_type;
-    }
-    if let Some(tags) = req.tags {
-        next_story.tags = normalize_tags(tags);
-    }
-    if let Some(context_source_refs) = req.context_source_refs {
-        next_story.context.source_refs = context_source_refs;
-    }
-    if let Some(context_containers) = req.context_containers {
-        next_story.context.context_containers = context_containers;
-    }
-    if let Some(disabled_container_ids) = req.disabled_container_ids {
-        next_story.context.disabled_container_ids = normalize_string_list(disabled_container_ids);
-    }
-    if let Some(mount_policy_override) = req.mount_policy_override {
-        next_story.context.mount_policy_override = Some(mount_policy_override);
-    }
-    if let Some(session_composition) = req.session_composition {
-        next_story.context.session_composition = Some(session_composition);
-    }
     validate_story_context(&next_story, &project)?;
 
     state.repos.story_repo.create(&next_story).await?;
@@ -203,61 +194,56 @@ pub async fn update_story(
     )
     .await?;
 
-    if let Some(title) = req.title {
-        let trimmed = title.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::BadRequest("Story 标题不能为空".into()));
+    let title = match req.title {
+        Some(title) => {
+            let trimmed = title.trim();
+            if trimmed.is_empty() {
+                return Err(ApiError::BadRequest("Story 标题不能为空".into()));
+            }
+            Some(trimmed.to_string())
         }
-        story.title = trimmed.to_string();
-    }
-    if let Some(description) = req.description {
-        story.description = description;
-    }
-    if let Some(default_workspace_id_raw) = req.default_workspace_id {
-        let trimmed = default_workspace_id_raw.trim();
-        story.default_workspace_id = if trimmed.is_empty() {
-            None
-        } else {
-            Some(
-                trimmed
-                    .parse::<Uuid>()
-                    .map_err(|_| ApiError::BadRequest("无效的 default_workspace_id".into()))?,
-            )
-        };
-    }
-    if let Some(status) = req.status {
-        story.status = status;
-    }
-    if let Some(priority) = req.priority {
-        story.priority = priority;
-    }
-    if let Some(story_type) = req.story_type {
-        story.story_type = story_type;
-    }
-    if let Some(tags) = req.tags {
-        story.tags = normalize_tags(tags);
-    }
-    if let Some(context_source_refs) = req.context_source_refs {
-        story.context.source_refs = context_source_refs;
-    }
-    if let Some(context_containers) = req.context_containers {
-        story.context.context_containers = context_containers;
-    }
-    if let Some(disabled_container_ids) = req.disabled_container_ids {
-        story.context.disabled_container_ids = normalize_string_list(disabled_container_ids);
-    }
-    if let Some(mount_policy_override) = req.mount_policy_override {
-        story.context.mount_policy_override = Some(mount_policy_override);
-    }
-    if req.clear_mount_policy_override.unwrap_or(false) {
-        story.context.mount_policy_override = None;
-    }
-    if let Some(session_composition) = req.session_composition {
-        story.context.session_composition = Some(session_composition);
-    }
-    if req.clear_session_composition.unwrap_or(false) {
-        story.context.session_composition = None;
-    }
+        None => None,
+    };
+    let default_workspace_id = match req.default_workspace_id {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                Some(None)
+            } else {
+                Some(Some(trimmed.parse::<Uuid>().map_err(|_| {
+                    ApiError::BadRequest("无效的 default_workspace_id".into())
+                })?))
+            }
+        }
+        None => None,
+    };
+    let mount_policy_override = if req.clear_mount_policy_override.unwrap_or(false) {
+        Some(None)
+    } else {
+        req.mount_policy_override.map(Some)
+    };
+    let session_composition = if req.clear_session_composition.unwrap_or(false) {
+        Some(None)
+    } else {
+        req.session_composition.map(Some)
+    };
+    apply_story_mutation(
+        &mut story,
+        StoryMutationInput {
+            title,
+            description: req.description,
+            default_workspace_id,
+            status: req.status,
+            priority: req.priority,
+            story_type: req.story_type,
+            tags: req.tags,
+            context_source_refs: req.context_source_refs,
+            context_containers: req.context_containers,
+            disabled_container_ids: req.disabled_container_ids,
+            mount_policy_override,
+            session_composition,
+        },
+    );
 
     validate_story_context(&story, &project)?;
 
@@ -281,29 +267,12 @@ pub async fn delete_story(
     )
     .await?;
 
-    let tasks = state.repos.task_repo.list_by_story(story_id).await?;
-    for task in &tasks {
-        state.repos.task_repo.delete(task.id).await?;
-    }
-
-    state.repos.story_repo.delete(story_id).await?;
-
-    state
-        .repos
-        .story_repo
-        .append_change(
-            story.project_id,
-            story_id,
-            ChangeKind::StoryDeleted,
-            serde_json::json!({
-                "project_id": story.project_id,
-                "story_id": story_id,
-                "reason": "story_deleted_by_user"
-            }),
-            None,
-        )
-        .await
-        .ok();
+    delete_story_aggregate(
+        state.repos.story_repo.as_ref(),
+        state.repos.task_repo.as_ref(),
+        &story,
+    )
+    .await?;
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -371,7 +340,14 @@ pub async fn create_task(
         _ => None,
     };
 
-    let mut agent_binding = to_agent_binding(req.agent_binding);
+    let mut agent_binding = build_agent_binding(req.agent_binding.map(|value| AgentBindingInput {
+        agent_type: value.agent_type,
+        agent_pid: value.agent_pid,
+        preset_name: value.preset_name,
+        prompt_template: value.prompt_template,
+        initial_context: value.initial_context,
+        context_sources: value.context_sources,
+    }));
 
     if let Some(preset_name) = agent_binding.preset_name.clone() {
         let preset = project
@@ -396,14 +372,14 @@ pub async fn create_task(
         ));
     }
 
-    let mut task = Task::new(
+    let task = build_task(
         story.project_id,
         story_id,
         title.to_string(),
         req.description.unwrap_or_default(),
+        workspace_id,
+        agent_binding,
     );
-    task.workspace_id = workspace_id;
-    task.agent_binding = agent_binding;
 
     state
         .repos
@@ -452,24 +428,21 @@ pub async fn update_task(
 
     let old_status = task.status.clone();
 
-    if let Some(title) = req.title {
-        let trimmed = title.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::BadRequest("Task 标题不能为空".into()));
+    let title = match req.title {
+        Some(title) => {
+            let trimmed = title.trim();
+            if trimmed.is_empty() {
+                return Err(ApiError::BadRequest("Task 标题不能为空".into()));
+            }
+            Some(trimmed.to_string())
         }
-        task.title = trimmed.to_string();
-    }
-    if let Some(description) = req.description {
-        task.description = description;
-    }
-    if let Some(status) = req.status {
-        task.status = status;
-    }
+        None => None,
+    };
 
-    if let Some(workspace_id_raw) = req.workspace_id {
+    let workspace_id = if let Some(workspace_id_raw) = req.workspace_id {
         let normalized = workspace_id_raw.trim();
-        task.workspace_id = if normalized.is_empty() {
-            None
+        if normalized.is_empty() {
+            Some(None)
         } else {
             let ws_id = Uuid::parse_str(normalized)
                 .map_err(|_| ApiError::BadRequest("无效的 Workspace ID".into()))?;
@@ -484,33 +457,47 @@ pub async fn update_task(
                     "Workspace 与 Task 所属 Story 不属于同一 Project".into(),
                 ));
             }
-            Some(ws_id)
-        };
-    }
+            Some(Some(ws_id))
+        }
+    } else {
+        None
+    };
 
-    if let Some(agent_binding_req) = req.agent_binding {
-        task.agent_binding = to_agent_binding(Some(agent_binding_req));
-    }
+    let agent_binding = req.agent_binding.map(|value| {
+        build_agent_binding(Some(AgentBindingInput {
+            agent_type: value.agent_type,
+            agent_pid: value.agent_pid,
+            preset_name: value.preset_name,
+            prompt_template: value.prompt_template,
+            initial_context: value.initial_context,
+            context_sources: value.context_sources,
+        }))
+    });
+    apply_task_mutation(
+        &mut task,
+        TaskMutationInput {
+            title,
+            description: req.description,
+            workspace_id,
+            status: req.status,
+            agent_binding,
+        },
+    );
 
     state.repos.task_repo.update(&task).await?;
 
-    let change_kind = if task.status != old_status {
-        ChangeKind::TaskStatusChanged
-    } else {
-        ChangeKind::TaskUpdated
-    };
-    state
-        .repos
-        .story_repo
-        .append_change(
-            task.project_id,
-            task.id,
-            change_kind,
-            serde_json::to_value(&task).unwrap_or_default(),
-            None,
-        )
-        .await
-        .ok();
+    let change_kind = classify_task_change_kind(&old_status, &task.status);
+    let payload = serde_json::to_value(&task)
+        .map_err(|err| ApiError::Internal(format!("序列化 Task 状态变更失败: {err}")))?;
+    append_required_story_change(
+        state.repos.story_repo.as_ref(),
+        task.project_id,
+        task.id,
+        change_kind,
+        payload,
+        None,
+    )
+    .await?;
 
     Ok(Json(TaskResponse::from(task)))
 }
@@ -541,47 +528,6 @@ pub async fn delete_task(
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
-fn normalize_option(value: Option<String>) -> Option<String> {
-    value.and_then(|v| {
-        let trimmed = v.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
-fn normalize_tags(tags: Vec<String>) -> Vec<String> {
-    tags.into_iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
-
-fn normalize_string_list(values: Vec<String>) -> Vec<String> {
-    values
-        .into_iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
-
-fn to_agent_binding(input: Option<CreateTaskAgentBindingRequest>) -> AgentBinding {
-    if let Some(value) = input {
-        AgentBinding {
-            agent_type: normalize_option(value.agent_type),
-            agent_pid: normalize_option(value.agent_pid),
-            preset_name: normalize_option(value.preset_name),
-            prompt_template: normalize_option(value.prompt_template),
-            initial_context: normalize_option(value.initial_context),
-            context_sources: value.context_sources.unwrap_or_default(),
-        }
-    } else {
-        AgentBinding::default()
-    }
-}
-
 fn validate_story_context(story: &Story, project: &Project) -> Result<(), ApiError> {
     validate_context_containers(&story.context.context_containers).map_err(ApiError::BadRequest)?;
     validate_disabled_container_ids(
@@ -593,4 +539,157 @@ fn validate_story_context(story: &Story, project: &Project) -> Result<(), ApiErr
         validate_session_composition(session_composition).map_err(ApiError::BadRequest)?;
     }
     Ok(())
+}
+
+fn classify_task_change_kind(old_status: &TaskStatus, new_status: &TaskStatus) -> ChangeKind {
+    if new_status != old_status {
+        ChangeKind::TaskStatusChanged
+    } else {
+        ChangeKind::TaskUpdated
+    }
+}
+
+async fn append_required_story_change(
+    repo: &dyn StoryRepository,
+    project_id: Uuid,
+    entity_id: Uuid,
+    kind: ChangeKind,
+    payload: serde_json::Value,
+    backend_id: Option<&str>,
+) -> Result<(), ApiError> {
+    repo.append_change(project_id, entity_id, kind, payload, backend_id)
+        .await
+        .map_err(|err| ApiError::Internal(format!("写入 StateChange 失败: {err}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::common::error::DomainError;
+    use agentdash_domain::story::StateChange;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    struct RecordingStoryRepo {
+        append_error: Option<DomainError>,
+        recorded: Mutex<Vec<(Uuid, Uuid, ChangeKind)>>,
+    }
+
+    #[async_trait]
+    impl StoryRepository for RecordingStoryRepo {
+        async fn create(&self, _story: &Story) -> Result<(), DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn get_by_id(&self, _id: Uuid) -> Result<Option<Story>, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn list_by_project(&self, _project_id: Uuid) -> Result<Vec<Story>, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn update(&self, _story: &Story) -> Result<(), DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn get_changes_since(
+            &self,
+            _since_id: i64,
+            _limit: i64,
+        ) -> Result<Vec<StateChange>, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn get_changes_since_by_project(
+            &self,
+            _project_id: Uuid,
+            _since_id: i64,
+            _limit: i64,
+        ) -> Result<Vec<StateChange>, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn latest_event_id(&self) -> Result<i64, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn latest_event_id_by_project(&self, _project_id: Uuid) -> Result<i64, DomainError> {
+            unreachable!("测试未使用");
+        }
+
+        async fn append_change(
+            &self,
+            project_id: Uuid,
+            entity_id: Uuid,
+            kind: ChangeKind,
+            _payload: serde_json::Value,
+            _backend_id: Option<&str>,
+        ) -> Result<(), DomainError> {
+            if let Some(err) = &self.append_error {
+                return Err(match err {
+                    DomainError::NotFound { entity, id } => DomainError::NotFound {
+                        entity,
+                        id: id.clone(),
+                    },
+                    DomainError::InvalidTransition { from, to } => DomainError::InvalidTransition {
+                        from: from.clone(),
+                        to: to.clone(),
+                    },
+                    DomainError::Serialization(err) => DomainError::InvalidConfig(err.to_string()),
+                    DomainError::InvalidConfig(message) => {
+                        DomainError::InvalidConfig(message.clone())
+                    }
+                });
+            }
+            self.recorded
+                .lock()
+                .expect("lock recorded")
+                .push((project_id, entity_id, kind));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn classify_task_change_kind_returns_status_changed_when_status_differs() {
+        let kind = classify_task_change_kind(&TaskStatus::Pending, &TaskStatus::Running);
+        assert!(matches!(kind, ChangeKind::TaskStatusChanged));
+    }
+
+    #[test]
+    fn classify_task_change_kind_returns_updated_when_status_is_same() {
+        let kind = classify_task_change_kind(&TaskStatus::Running, &TaskStatus::Running);
+        assert!(matches!(kind, ChangeKind::TaskUpdated));
+    }
+
+    #[tokio::test]
+    async fn append_required_story_change_maps_repo_failure_to_internal_error() {
+        let repo = RecordingStoryRepo {
+            append_error: Some(DomainError::InvalidConfig("db down".to_string())),
+            recorded: Mutex::new(Vec::new()),
+        };
+
+        let err = append_required_story_change(
+            &repo,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ChangeKind::TaskUpdated,
+            serde_json::json!({ "ok": true }),
+            None,
+        )
+        .await
+        .expect_err("应返回内部错误");
+
+        match err {
+            ApiError::Internal(message) => {
+                assert!(message.contains("写入 StateChange 失败"));
+                assert!(message.contains("db down"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 }

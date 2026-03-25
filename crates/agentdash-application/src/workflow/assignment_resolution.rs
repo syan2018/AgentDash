@@ -62,7 +62,7 @@ where
             ))
         })?;
 
-    if !definition.enabled {
+    if !definition.is_active() {
         return Ok(None);
     }
 
@@ -158,13 +158,16 @@ mod tests {
         async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
             Ok(self.definitions.lock().unwrap().values().cloned().collect())
         }
-        async fn list_enabled(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        async fn list_by_status(
+            &self,
+            status: agentdash_domain::workflow::WorkflowDefinitionStatus,
+        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
             Ok(self
                 .definitions
                 .lock()
                 .unwrap()
                 .values()
-                .filter(|w| w.enabled)
+                .filter(|w| w.status == status)
                 .cloned()
                 .collect())
         }

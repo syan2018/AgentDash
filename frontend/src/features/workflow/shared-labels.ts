@@ -1,8 +1,11 @@
 import type {
   WorkflowAgentRole,
   WorkflowContextBindingKind,
+  WorkflowDefinitionSource,
+  WorkflowDefinitionStatus,
   WorkflowPhaseCompletionMode,
   WorkflowPhaseExecutionStatus,
+  WorkflowRecordArtifactType,
   WorkflowRunStatus,
   WorkflowTargetKind,
 } from "../../types";
@@ -66,4 +69,24 @@ export const PHASE_STATUS_LABEL: Record<WorkflowPhaseExecutionStatus, string> = 
   completed: "已完成",
   failed: "失败",
   skipped: "已跳过",
+};
+
+export const DEFINITION_SOURCE_LABEL: Record<WorkflowDefinitionSource, string> = {
+  builtin_seed: "内置模板",
+  user_authored: "用户创建",
+  cloned: "克隆",
+};
+
+export const DEFINITION_STATUS_LABEL: Record<WorkflowDefinitionStatus, string> = {
+  draft: "草稿",
+  active: "已激活",
+  disabled: "已停用",
+};
+
+export const ARTIFACT_TYPE_LABEL: Record<WorkflowRecordArtifactType, string> = {
+  session_summary: "会话总结",
+  journal_update: "日志更新",
+  archive_suggestion: "归档建议",
+  phase_note: "阶段笔记",
+  checklist_evidence: "检查清单证据",
 };

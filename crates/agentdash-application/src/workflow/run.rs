@@ -159,10 +159,10 @@ where
     ) -> Result<WorkflowRun, WorkflowApplicationError> {
         let definition = self.resolve_definition(&cmd).await?;
 
-        if !definition.enabled {
+        if !definition.is_active() {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "workflow `{}` 已停用，不能启动 run",
-                definition.key
+                "workflow `{}` 状态为 {:?}，不能启动 run",
+                definition.key, definition.status
             )));
         }
 
@@ -387,7 +387,8 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        WorkflowDefinition, WorkflowDefinitionRepository, WorkflowRun, WorkflowRunRepository,
+        WorkflowDefinition, WorkflowDefinitionRepository, WorkflowDefinitionStatus, WorkflowRun,
+        WorkflowRunRepository,
     };
 
     use super::*;
@@ -433,13 +434,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_enabled(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        async fn list_by_status(
+            &self,
+            status: WorkflowDefinitionStatus,
+        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
             Ok(self
                 .definitions
                 .lock()
                 .expect("lock")
                 .values()
-                .filter(|workflow| workflow.enabled)
+                .filter(|workflow| workflow.status == status)
                 .cloned()
                 .collect())
         }

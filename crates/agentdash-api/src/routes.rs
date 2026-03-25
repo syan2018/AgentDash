@@ -150,8 +150,33 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/tasks/{id}/continue", post(task_execution::continue_task))
         .route("/tasks/{id}/cancel", post(task_execution::cancel_task))
         .route("/tasks/{id}/session", get(task_execution::get_task_session))
-        // Workflow
-        .route("/workflows", get(workflows::list_workflows))
+        // Workflow Definition CRUD
+        .route(
+            "/workflows",
+            get(workflows::list_workflows).post(workflows::create_workflow_definition),
+        )
+        .route(
+            "/workflow-definitions/validate",
+            post(workflows::validate_workflow_definition),
+        )
+        .route(
+            "/workflow-definitions/binding-metadata",
+            get(workflows::list_binding_metadata),
+        )
+        .route(
+            "/workflow-definitions/{id}",
+            get(workflows::get_workflow_definition)
+                .put(workflows::update_workflow_definition)
+                .delete(workflows::delete_workflow_definition),
+        )
+        .route(
+            "/workflow-definitions/{id}/enable",
+            post(workflows::enable_workflow_definition),
+        )
+        .route(
+            "/workflow-definitions/{id}/disable",
+            post(workflows::disable_workflow_definition),
+        )
         .route(
             "/workflow-templates",
             get(workflows::list_workflow_templates),

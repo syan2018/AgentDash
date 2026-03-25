@@ -3,9 +3,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{
-    WorkflowAgentRole, WorkflowPhaseDefinition, WorkflowPhaseExecutionStatus, WorkflowPhaseState,
-    WorkflowProgressionSource, WorkflowRecordArtifact, WorkflowRecordPolicy, WorkflowRunStatus,
-    WorkflowTargetKind, validate_workflow_definition,
+    ValidationIssue, WorkflowAgentRole, WorkflowContextBindingKind, WorkflowDefinitionSource,
+    WorkflowDefinitionStatus, WorkflowPhaseCompletionMode, WorkflowPhaseDefinition,
+    WorkflowPhaseExecutionStatus, WorkflowPhaseState, WorkflowProgressionSource,
+    WorkflowRecordArtifact, WorkflowRecordPolicy, WorkflowRunStatus, WorkflowTargetKind,
+    validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,8 +17,11 @@ pub struct WorkflowDefinition {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_role: Option<WorkflowAgentRole>,
+    pub source: WorkflowDefinitionSource,
+    pub status: WorkflowDefinitionStatus,
     pub version: i32,
-    pub enabled: bool,
     pub phases: Vec<WorkflowPhaseDefinition>,
     pub record_policy: WorkflowRecordPolicy,
     pub created_at: DateTime<Utc>,
@@ -29,6 +34,7 @@ impl WorkflowDefinition {
         name: impl Into<String>,
         description: impl Into<String>,
         target_kind: WorkflowTargetKind,
+        source: WorkflowDefinitionSource,
         phases: Vec<WorkflowPhaseDefinition>,
     ) -> Result<Self, String> {
         let key = key.into();
@@ -42,13 +48,87 @@ impl WorkflowDefinition {
             name,
             description: description.into(),
             target_kind,
+            recommended_role: None,
+            source,
+            status: match source {
+                WorkflowDefinitionSource::BuiltinSeed => WorkflowDefinitionStatus::Active,
+                _ => WorkflowDefinitionStatus::Draft,
+            },
             version: 1,
-            enabled: true,
             phases,
             record_policy: WorkflowRecordPolicy::default(),
             created_at: now,
             updated_at: now,
         })
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.status == WorkflowDefinitionStatus::Active
+    }
+
+    /// 结构化全量校验，覆盖基础字段 + 语义一致性检查。
+    pub fn validate_full(&self) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+
+        if self.key.trim().is_empty() {
+            issues.push(ValidationIssue::error("empty_key", "workflow.key 不能为空", "key"));
+        } else if self.key.chars().any(char::is_whitespace) {
+            issues.push(ValidationIssue::error("invalid_key", "workflow.key 不能包含空白字符", "key"));
+        }
+        if self.name.trim().is_empty() {
+            issues.push(ValidationIssue::error("empty_name", "workflow.name 不能为空", "name"));
+        }
+        if self.phases.is_empty() {
+            issues.push(ValidationIssue::error("no_phases", "workflow.phases 至少需要一个 phase", "phases"));
+            return issues;
+        }
+
+        let mut seen_keys = std::collections::BTreeSet::new();
+        for (i, phase) in self.phases.iter().enumerate() {
+            let prefix = format!("phases[{i}]");
+            if phase.key.trim().is_empty() {
+                issues.push(ValidationIssue::error("empty_phase_key", format!("{prefix}.key 不能为空"), format!("{prefix}.key")));
+            }
+            if phase.title.trim().is_empty() {
+                issues.push(ValidationIssue::error("empty_phase_title", format!("{prefix}.title 不能为空"), format!("{prefix}.title")));
+            }
+            if !seen_keys.insert(phase.key.trim().to_string()) {
+                issues.push(ValidationIssue::error("duplicate_phase_key", format!("{prefix}.key 重复: {}", phase.key.trim()), format!("{prefix}.key")));
+            }
+
+            for (j, binding) in phase.context_bindings.iter().enumerate() {
+                let bp = format!("{prefix}.context_bindings[{j}]");
+                if binding.locator.trim().is_empty() {
+                    issues.push(ValidationIssue::error("empty_locator", format!("{bp}.locator 不能为空"), format!("{bp}.locator")));
+                }
+                if binding.reason.trim().is_empty() {
+                    issues.push(ValidationIssue::error("empty_reason", format!("{bp}.reason 不能为空"), format!("{bp}.reason")));
+                }
+            }
+
+            // checklist_passed 必须有 Checklist binding
+            if phase.completion_mode == WorkflowPhaseCompletionMode::ChecklistPassed {
+                let has_checklist = phase.context_bindings.iter().any(|b| b.kind == WorkflowContextBindingKind::Checklist);
+                if !has_checklist {
+                    issues.push(ValidationIssue::error(
+                        "checklist_missing",
+                        format!("{prefix} 使用 checklist_passed 完成模式，但未配置 Checklist 类型 binding"),
+                        format!("{prefix}.completion_mode"),
+                    ));
+                }
+            }
+
+            // requires_session 的合理性提示
+            if phase.requires_session && self.target_kind == WorkflowTargetKind::Project {
+                issues.push(ValidationIssue::warning(
+                    "session_on_project",
+                    format!("{prefix} 要求 session，但 target_kind 为 project，project 级 session 可能无法满足"),
+                    format!("{prefix}.requires_session"),
+                ));
+            }
+        }
+
+        issues
     }
 }
 
@@ -277,6 +357,7 @@ mod tests {
     use super::*;
     use crate::workflow::value_objects::{
         WorkflowContextBinding, WorkflowContextBindingKind, WorkflowPhaseCompletionMode,
+        ValidationSeverity,
     };
 
     fn phase(key: &str) -> WorkflowPhaseDefinition {
@@ -296,6 +377,14 @@ mod tests {
             completion_mode: WorkflowPhaseCompletionMode::Manual,
             default_artifact_type: None,
             default_artifact_title: None,
+        }
+    }
+
+    fn checklist_phase(key: &str) -> WorkflowPhaseDefinition {
+        WorkflowPhaseDefinition {
+            completion_mode: WorkflowPhaseCompletionMode::ChecklistPassed,
+            context_bindings: vec![],
+            ..phase(key)
         }
     }
 
@@ -375,5 +464,204 @@ mod tests {
 
         assert_eq!(run.phase_states[0].session_binding_id, Some(binding_id));
         assert_eq!(run.record_artifacts.len(), 1);
+    }
+
+    #[test]
+    fn validate_full_detects_checklist_without_binding() {
+        let def = WorkflowDefinition::new(
+            "test-wf",
+            "Test",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![checklist_phase("check")],
+        )
+        .expect("create");
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "checklist_missing" && i.severity == ValidationSeverity::Error));
+    }
+
+    #[test]
+    fn validate_full_warns_session_on_project() {
+        let mut def = WorkflowDefinition::new(
+            "proj-wf",
+            "Proj",
+            "desc",
+            WorkflowTargetKind::Project,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start")],
+        )
+        .expect("create");
+        def.phases[0].requires_session = true;
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "session_on_project" && i.severity == ValidationSeverity::Warning));
+    }
+
+    #[test]
+    fn new_definition_builtin_seed_is_active() {
+        let def = WorkflowDefinition::new(
+            "builtin-wf",
+            "Builtin",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::BuiltinSeed,
+            vec![phase("start")],
+        )
+        .expect("create");
+
+        assert!(def.is_active());
+        assert_eq!(def.source, WorkflowDefinitionSource::BuiltinSeed);
+    }
+
+    #[test]
+    fn new_definition_user_authored_is_draft() {
+        let def = WorkflowDefinition::new(
+            "user-wf",
+            "User",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start")],
+        )
+        .expect("create");
+
+        assert!(!def.is_active());
+        assert_eq!(def.status, WorkflowDefinitionStatus::Draft);
+    }
+
+    #[test]
+    fn validate_full_detects_empty_key() {
+        let mut def = WorkflowDefinition::new(
+            "temp",
+            "Valid Name",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start")],
+        )
+        .expect("create");
+        def.key = "".to_string();
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "empty_key"));
+    }
+
+    #[test]
+    fn validate_full_detects_key_with_whitespace() {
+        let mut def = WorkflowDefinition::new(
+            "temp",
+            "Name",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start")],
+        )
+        .expect("create");
+        def.key = "has space".to_string();
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "invalid_key"));
+    }
+
+    #[test]
+    fn validate_full_detects_duplicate_phase_keys() {
+        let mut def = WorkflowDefinition::new(
+            "dup-keys",
+            "Dup",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start"), phase("implement")],
+        )
+        .expect("create");
+        def.phases[1].key = "start".to_string();
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "duplicate_phase_key"));
+    }
+
+    #[test]
+    fn validate_full_detects_empty_phase_title() {
+        let mut def = WorkflowDefinition::new(
+            "empty-title",
+            "Name",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start")],
+        )
+        .expect("create");
+        def.phases[0].title = "".to_string();
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "empty_phase_title"));
+    }
+
+    #[test]
+    fn validate_full_detects_empty_binding_locator() {
+        let mut def = WorkflowDefinition::new(
+            "empty-loc",
+            "Name",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("check")],
+        )
+        .expect("create");
+        def.phases[0].context_bindings[0].locator = "".to_string();
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "empty_locator"));
+    }
+
+    #[test]
+    fn validate_full_no_issues_for_valid_definition() {
+        let def = WorkflowDefinition::new(
+            "valid-wf",
+            "Valid Workflow",
+            "A well-formed definition",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start"), phase("implement"), phase("check")],
+        )
+        .expect("create");
+
+        let issues = def.validate_full();
+        assert!(issues.is_empty(), "Expected no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn validate_full_detects_no_phases() {
+        let mut def = WorkflowDefinition::new(
+            "temp",
+            "Name",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            vec![phase("start")],
+        )
+        .expect("create");
+        def.phases.clear();
+
+        let issues = def.validate_full();
+        assert!(issues.iter().any(|i| i.code == "no_phases"));
+    }
+
+    #[test]
+    fn cloned_definition_starts_as_draft() {
+        let def = WorkflowDefinition::new(
+            "cloned-wf",
+            "Cloned",
+            "desc",
+            WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::Cloned,
+            vec![phase("start")],
+        )
+        .expect("create");
+
+        assert_eq!(def.status, WorkflowDefinitionStatus::Draft);
+        assert_eq!(def.source, WorkflowDefinitionSource::Cloned);
     }
 }

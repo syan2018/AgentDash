@@ -3,7 +3,8 @@ use sqlx::SqlitePool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     WorkflowAgentRole, WorkflowAssignment, WorkflowAssignmentRepository, WorkflowDefinition,
-    WorkflowDefinitionRepository, WorkflowRun, WorkflowRunRepository, WorkflowTargetKind,
+    WorkflowDefinitionRepository, WorkflowDefinitionStatus, WorkflowRun, WorkflowRunRepository,
+    WorkflowTargetKind,
 };
 
 pub struct SqliteWorkflowRepository {
@@ -16,6 +17,22 @@ impl SqliteWorkflowRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
+        // Detect legacy schema: if `enabled` column exists, drop and recreate the table.
+        let has_legacy = sqlx::query_scalar::<_, i32>(
+            "SELECT COUNT(*) FROM pragma_table_info('workflow_definitions') WHERE name = 'enabled'"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+
+        if has_legacy > 0 {
+            tracing::info!("检测到旧版 workflow_definitions 表（含 enabled 列），重建表结构");
+            sqlx::query("DROP TABLE IF EXISTS workflow_definitions")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        }
+
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS workflow_definitions (
@@ -24,8 +41,10 @@ impl SqliteWorkflowRepository {
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 target_kind TEXT NOT NULL,
+                recommended_role TEXT,
+                source TEXT NOT NULL DEFAULT '"user_authored"',
+                status TEXT NOT NULL DEFAULT '"active"',
                 version INTEGER NOT NULL,
-                enabled INTEGER NOT NULL,
                 phases TEXT NOT NULL,
                 record_policy TEXT NOT NULL,
                 created_at TEXT NOT NULL,
@@ -131,16 +150,18 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
     async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO workflow_definitions
-            (id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(workflow.id.to_string())
         .bind(&workflow.key)
         .bind(&workflow.name)
         .bind(&workflow.description)
         .bind(serde_json::to_string(&workflow.target_kind)?)
+        .bind(workflow.recommended_role.map(|r| serde_json::to_string(&r).unwrap_or_default()))
+        .bind(serde_json::to_string(&workflow.source)?)
+        .bind(serde_json::to_string(&workflow.status)?)
         .bind(workflow.version)
-        .bind(workflow.enabled)
         .bind(serde_json::to_string(&workflow.phases)?)
         .bind(serde_json::to_string(&workflow.record_policy)?)
         .bind(workflow.created_at.to_rfc3339())
@@ -154,7 +175,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
         let row = sqlx::query_as::<_, WorkflowDefinitionRow>(
-            "SELECT id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at
+            "SELECT id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at
              FROM workflow_definitions WHERE id = ?",
         )
         .bind(id.to_string())
@@ -170,7 +191,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
 
     async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
         let row = sqlx::query_as::<_, WorkflowDefinitionRow>(
-            "SELECT id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at
+            "SELECT id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at
              FROM workflow_definitions WHERE key = ?",
         )
         .bind(key)
@@ -186,7 +207,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
 
     async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
         let rows = sqlx::query_as::<_, WorkflowDefinitionRow>(
-            "SELECT id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at
+            "SELECT id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at
              FROM workflow_definitions ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -196,11 +217,15 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
         self.collect_valid_definitions(rows).await
     }
 
-    async fn list_enabled(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
+    async fn list_by_status(
+        &self,
+        status: WorkflowDefinitionStatus,
+    ) -> Result<Vec<WorkflowDefinition>, DomainError> {
         let rows = sqlx::query_as::<_, WorkflowDefinitionRow>(
-            "SELECT id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at
-             FROM workflow_definitions WHERE enabled = 1 ORDER BY created_at DESC",
+            "SELECT id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at
+             FROM workflow_definitions WHERE status = ? ORDER BY created_at DESC",
         )
+        .bind(serde_json::to_string(&status)?)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
@@ -213,7 +238,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
         target_kind: WorkflowTargetKind,
     ) -> Result<Vec<WorkflowDefinition>, DomainError> {
         let rows = sqlx::query_as::<_, WorkflowDefinitionRow>(
-            "SELECT id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at
+            "SELECT id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at
              FROM workflow_definitions WHERE target_kind = ? ORDER BY created_at DESC",
         )
         .bind(serde_json::to_string(&target_kind)?)
@@ -227,15 +252,17 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
     async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
         let result = sqlx::query(
             "UPDATE workflow_definitions
-             SET key = ?, name = ?, description = ?, target_kind = ?, version = ?, enabled = ?, phases = ?, record_policy = ?, updated_at = ?
+             SET key = ?, name = ?, description = ?, target_kind = ?, recommended_role = ?, source = ?, status = ?, version = ?, phases = ?, record_policy = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&workflow.key)
         .bind(&workflow.name)
         .bind(&workflow.description)
         .bind(serde_json::to_string(&workflow.target_kind)?)
+        .bind(workflow.recommended_role.map(|r| serde_json::to_string(&r).unwrap_or_default()))
+        .bind(serde_json::to_string(&workflow.source)?)
+        .bind(serde_json::to_string(&workflow.status)?)
         .bind(workflow.version)
-        .bind(workflow.enabled)
         .bind(serde_json::to_string(&workflow.phases)?)
         .bind(serde_json::to_string(&workflow.record_policy)?)
         .bind(chrono::Utc::now().to_rfc3339())
@@ -515,8 +542,10 @@ struct WorkflowDefinitionRow {
     name: String,
     description: String,
     target_kind: String,
+    recommended_role: Option<String>,
+    source: String,
+    status: String,
     version: i32,
-    enabled: bool,
     phases: String,
     record_policy: String,
     created_at: String,
@@ -536,8 +565,10 @@ impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
             name: row.name,
             description: row.description,
             target_kind: serde_json::from_str(&row.target_kind)?,
+            recommended_role: row.recommended_role.as_deref().and_then(|v| serde_json::from_str(v).ok()),
+            source: serde_json::from_str(&row.source).unwrap_or(agentdash_domain::workflow::WorkflowDefinitionSource::BuiltinSeed),
+            status: serde_json::from_str(&row.status).unwrap_or(agentdash_domain::workflow::WorkflowDefinitionStatus::Active),
             version: row.version,
-            enabled: row.enabled,
             phases: serde_json::from_str(&row.phases)?,
             record_policy: serde_json::from_str(&row.record_policy)?,
             created_at: parse_time(&row.created_at),
@@ -644,7 +675,8 @@ mod tests {
     use super::*;
     use agentdash_domain::workflow::{
         WorkflowContextBinding, WorkflowContextBindingKind, WorkflowDefinition,
-        WorkflowPhaseCompletionMode, WorkflowPhaseDefinition, WorkflowTargetKind,
+        WorkflowDefinitionSource, WorkflowPhaseCompletionMode, WorkflowPhaseDefinition,
+        WorkflowTargetKind,
     };
 
     const TEST_WORKFLOW_KEY: &str = "trellis_dev_task";
@@ -702,6 +734,7 @@ mod tests {
             "Trellis Dev Workflow / Task",
             "valid workflow definition",
             WorkflowTargetKind::Task,
+            WorkflowDefinitionSource::BuiltinSeed,
             vec![phase("start"), phase("implement")],
         )
         .expect("应能构建 workflow definition")
@@ -713,16 +746,18 @@ mod tests {
         let row_id = uuid::Uuid::new_v4();
         sqlx::query(
             "INSERT INTO workflow_definitions
-            (id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(row_id.to_string())
         .bind("legacy_bad_workflow")
         .bind("Legacy Bad Workflow")
         .bind("corrupted phases payload")
         .bind("\"task\"")
+        .bind(Option::<String>::None)
+        .bind("\"builtin_seed\"")
+        .bind("\"active\"")
         .bind(1_i32)
-        .bind(true)
         .bind("{\"legacy\":true}")
         .bind("{\"emit_summary\":true}")
         .bind(chrono::Utc::now().to_rfc3339())
@@ -757,16 +792,18 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO workflow_definitions
-            (id, key, name, description, target_kind, version, enabled, phases, record_policy, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, key, name, description, target_kind, recommended_role, source, status, version, phases, record_policy, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind("legacy_corrupted_definition")
         .bind("Legacy Corrupted Definition")
         .bind("corrupted record_policy payload")
         .bind("\"task\"")
+        .bind(Option::<String>::None)
+        .bind("\"builtin_seed\"")
+        .bind("\"active\"")
         .bind(1_i32)
-        .bind(true)
         .bind(serde_json::to_string(&valid.phases).expect("serialize phases"))
         .bind("\"bad_policy\"")
         .bind(chrono::Utc::now().to_rfc3339())

@@ -81,10 +81,10 @@ where
                 ))
             })?;
 
-        if cmd.enabled && !workflow.enabled {
+        if cmd.enabled && !workflow.is_active() {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "workflow `{}` 已停用，不能创建启用态 assignment",
-                workflow.key
+                "workflow `{}` 状态为 {:?}，不能创建启用态 assignment",
+                workflow.key, workflow.status
             )));
         }
 
@@ -136,7 +136,7 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         WorkflowAssignment, WorkflowAssignmentRepository, WorkflowDefinition,
-        WorkflowDefinitionRepository, WorkflowTargetKind,
+        WorkflowDefinitionRepository, WorkflowDefinitionStatus, WorkflowTargetKind,
     };
 
     use super::*;
@@ -182,13 +182,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_enabled(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        async fn list_by_status(
+            &self,
+            status: WorkflowDefinitionStatus,
+        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
             Ok(self
                 .definitions
                 .lock()
                 .expect("lock")
                 .values()
-                .filter(|workflow| workflow.enabled)
+                .filter(|workflow| workflow.status == status)
                 .cloned()
                 .collect())
         }

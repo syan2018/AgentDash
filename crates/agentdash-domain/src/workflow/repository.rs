@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
 use super::entity::{WorkflowAssignment, WorkflowDefinition, WorkflowRun};
-use super::value_objects::{WorkflowAgentRole, WorkflowTargetKind};
+use super::value_objects::{WorkflowAgentRole, WorkflowDefinitionStatus, WorkflowTargetKind};
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
@@ -10,7 +10,10 @@ pub trait WorkflowDefinitionRepository: Send + Sync {
     async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError>;
     async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError>;
     async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError>;
-    async fn list_enabled(&self) -> Result<Vec<WorkflowDefinition>, DomainError>;
+    async fn list_by_status(
+        &self,
+        status: WorkflowDefinitionStatus,
+    ) -> Result<Vec<WorkflowDefinition>, DomainError>;
     async fn list_by_target_kind(
         &self,
         target_kind: WorkflowTargetKind,

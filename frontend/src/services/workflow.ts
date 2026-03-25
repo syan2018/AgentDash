@@ -1,9 +1,13 @@
 import { api } from "../api/client";
 import type {
+  BindingKindMetadata,
   WorkflowAgentRole,
   WorkflowAssignment,
+  WorkflowContextBinding,
   WorkflowContextBindingKind,
   WorkflowDefinition,
+  WorkflowDefinitionSource,
+  WorkflowDefinitionStatus,
   WorkflowPhaseCompletionMode,
   WorkflowPhaseDefinition,
   WorkflowPhaseExecutionStatus,
@@ -15,6 +19,7 @@ import type {
   WorkflowRun,
   WorkflowRunStatus,
   WorkflowTargetKind,
+  WorkflowValidationResult,
 } from "../types";
 
 function normalizeWorkflowTargetKind(value: string): WorkflowTargetKind {
@@ -168,6 +173,28 @@ function mapWorkflowRecordArtifact(raw: Record<string, unknown>): WorkflowRecord
   };
 }
 
+function normalizeWorkflowDefinitionSource(value: string): WorkflowDefinitionSource {
+  switch (value) {
+    case "builtin_seed":
+    case "user_authored":
+    case "cloned":
+      return value;
+    default:
+      return "user_authored";
+  }
+}
+
+function normalizeWorkflowDefinitionStatus(value: string): WorkflowDefinitionStatus {
+  switch (value) {
+    case "draft":
+    case "active":
+    case "disabled":
+      return value;
+    default:
+      return "draft";
+  }
+}
+
 export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDefinition {
   return {
     id: String(raw.id ?? ""),
@@ -175,8 +202,12 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
     name: String(raw.name ?? "未命名 Workflow"),
     description: String(raw.description ?? ""),
     target_kind: normalizeWorkflowTargetKind(String(raw.target_kind ?? "task")),
+    recommended_role: raw.recommended_role != null
+      ? normalizeWorkflowAgentRole(String(raw.recommended_role))
+      : null,
+    source: normalizeWorkflowDefinitionSource(String(raw.source ?? "user_authored")),
+    status: normalizeWorkflowDefinitionStatus(String(raw.status ?? "draft")),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
-    enabled: raw.enabled !== false,
     phases: Array.isArray(raw.phases)
       ? raw.phases
           .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
@@ -337,4 +368,94 @@ export async function completeWorkflowPhase(input: {
     },
   );
   return mapWorkflowRun(raw);
+}
+
+// ---- Workflow Definition Editor APIs ----
+
+export async function createWorkflowDefinition(input: {
+  key: string;
+  name: string;
+  description?: string;
+  target_kind: WorkflowTargetKind;
+  recommended_role?: WorkflowAgentRole | null;
+  phases: WorkflowPhaseDefinition[];
+  record_policy?: WorkflowRecordPolicy;
+}): Promise<WorkflowDefinition> {
+  const raw = await api.post<Record<string, unknown>>("/workflows", input);
+  return mapWorkflowDefinition(raw);
+}
+
+export async function getWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
+  const raw = await api.get<Record<string, unknown>>(`/workflow-definitions/${id}`);
+  return mapWorkflowDefinition(raw);
+}
+
+export async function updateWorkflowDefinition(
+  id: string,
+  input: {
+    name?: string;
+    description?: string;
+    recommended_role?: WorkflowAgentRole | null;
+    phases?: WorkflowPhaseDefinition[];
+    record_policy?: WorkflowRecordPolicy;
+  },
+): Promise<WorkflowDefinition> {
+  const raw = await api.put<Record<string, unknown>>(`/workflow-definitions/${id}`, input);
+  return mapWorkflowDefinition(raw);
+}
+
+export async function validateWorkflowDefinition(input: {
+  key: string;
+  name: string;
+  description?: string;
+  target_kind: WorkflowTargetKind;
+  recommended_role?: WorkflowAgentRole | null;
+  phases: WorkflowPhaseDefinition[];
+  record_policy?: WorkflowRecordPolicy;
+}): Promise<WorkflowValidationResult> {
+  const raw = await api.post<Record<string, unknown>>("/workflow-definitions/validate", input);
+  return {
+    valid: Boolean(raw.valid),
+    issues: Array.isArray(raw.issues)
+      ? raw.issues.map((item: Record<string, unknown>) => ({
+          code: String(item.code ?? ""),
+          message: String(item.message ?? ""),
+          field_path: String(item.field_path ?? ""),
+          severity: item.severity === "warning" ? "warning" as const : "error" as const,
+        }))
+      : [],
+  };
+}
+
+export async function enableWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
+  const raw = await api.post<Record<string, unknown>>(`/workflow-definitions/${id}/enable`, {});
+  return mapWorkflowDefinition(raw);
+}
+
+export async function disableWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
+  const raw = await api.post<Record<string, unknown>>(`/workflow-definitions/${id}/disable`, {});
+  return mapWorkflowDefinition(raw);
+}
+
+export async function deleteWorkflowDefinition(id: string): Promise<void> {
+  await api.delete(`/workflow-definitions/${id}`);
+}
+
+export async function fetchBindingMetadata(): Promise<BindingKindMetadata[]> {
+  const raw = await api.get<Record<string, unknown>[]>("/workflow-definitions/binding-metadata");
+  return raw.map((item) => ({
+    kind: normalizeWorkflowContextBindingKind(String(item.kind ?? "document_path")),
+    label: String(item.label ?? ""),
+    description: String(item.description ?? ""),
+    locator_options: Array.isArray(item.locator_options)
+      ? item.locator_options.map((opt: Record<string, unknown>) => ({
+          locator: String(opt.locator ?? ""),
+          label: String(opt.label ?? ""),
+          description: String(opt.description ?? ""),
+          applicable_target_kinds: Array.isArray(opt.applicable_target_kinds)
+            ? opt.applicable_target_kinds.map((tk: string) => normalizeWorkflowTargetKind(tk))
+            : [],
+        }))
+      : [],
+  }));
 }

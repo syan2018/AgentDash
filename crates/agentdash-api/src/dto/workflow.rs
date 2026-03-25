@@ -4,8 +4,9 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    WorkflowAgentRole, WorkflowAssignment, WorkflowContextBinding, WorkflowContextBindingKind,
-    WorkflowDefinition, WorkflowPhaseCompletionMode, WorkflowPhaseDefinition,
+    ValidationIssue, WorkflowAgentRole, WorkflowAssignment, WorkflowContextBinding,
+    WorkflowContextBindingKind, WorkflowDefinition, WorkflowDefinitionSource,
+    WorkflowDefinitionStatus, WorkflowPhaseCompletionMode, WorkflowPhaseDefinition,
     WorkflowPhaseExecutionStatus, WorkflowPhaseState, WorkflowRecordArtifact,
     WorkflowRecordArtifactType, WorkflowRecordPolicy, WorkflowRun, WorkflowRunStatus,
     WorkflowTargetKind,
@@ -18,12 +19,21 @@ pub struct WorkflowDefinitionResponse {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
+    pub recommended_role: Option<WorkflowAgentRole>,
+    pub source: WorkflowDefinitionSource,
+    pub status: WorkflowDefinitionStatus,
     pub version: i32,
-    pub enabled: bool,
     pub phases: Vec<WorkflowPhaseDefinitionResponse>,
     pub record_policy: WorkflowRecordPolicy,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// 校验结果 DTO。
+#[derive(Debug, Serialize)]
+pub struct WorkflowValidationResponse {
+    pub valid: bool,
+    pub issues: Vec<ValidationIssue>,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,8 +125,10 @@ impl From<WorkflowDefinition> for WorkflowDefinitionResponse {
             name: value.name,
             description: value.description,
             target_kind: value.target_kind,
+            recommended_role: value.recommended_role,
+            source: value.source,
+            status: value.status,
             version: value.version,
-            enabled: value.enabled,
             phases: value.phases.into_iter().map(Into::into).collect(),
             record_policy: value.record_policy,
             created_at: value.created_at,

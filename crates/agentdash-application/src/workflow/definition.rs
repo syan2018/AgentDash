@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
-    WorkflowAgentRole, WorkflowDefinition, WorkflowPhaseDefinition, WorkflowRecordPolicy,
-    WorkflowTargetKind,
+    WorkflowAgentRole, WorkflowDefinition, WorkflowDefinitionSource, WorkflowPhaseDefinition,
+    WorkflowRecordPolicy, WorkflowTargetKind,
 };
 
 pub const TRELLIS_DEV_PROJECT_TEMPLATE_KEY: &str = "trellis_dev_project";
@@ -29,9 +29,11 @@ impl BuiltinWorkflowTemplate {
             self.name.clone(),
             self.description.clone(),
             self.target_kind,
+            WorkflowDefinitionSource::BuiltinSeed,
             self.phases.clone(),
         )?;
         definition.record_policy = self.record_policy.clone();
+        definition.recommended_role = Some(self.recommended_role);
         Ok(definition)
     }
 }

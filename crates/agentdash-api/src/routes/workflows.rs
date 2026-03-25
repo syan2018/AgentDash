@@ -4,7 +4,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::workflow::{
@@ -15,14 +15,17 @@ use agentdash_application::workflow::{
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{
-    WorkflowAgentRole, WorkflowRecordArtifactType, WorkflowRun, WorkflowTargetKind,
+    ValidationSeverity, WorkflowAgentRole, WorkflowContextBinding, WorkflowContextBindingKind,
+    WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowPhaseCompletionMode, WorkflowPhaseDefinition, WorkflowRecordArtifactType,
+    WorkflowRecordPolicy, WorkflowRun, WorkflowTargetKind,
 };
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     WorkflowAssignmentResponse, WorkflowDefinitionResponse, WorkflowRunResponse,
-    WorkflowTemplateResponse,
+    WorkflowTemplateResponse, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
 use crate::session_context::normalize_string;
@@ -84,7 +87,13 @@ pub async fn list_workflows(
                 .list_by_target_kind(target_kind)
                 .await?
         }
-        (None, true) => state.repos.workflow_definition_repo.list_enabled().await?,
+        (None, true) => {
+            state
+                .repos
+                .workflow_definition_repo
+                .list_by_status(WorkflowDefinitionStatus::Active)
+                .await?
+        }
         (None, false) => state.repos.workflow_definition_repo.list_all().await?,
     };
 
@@ -521,6 +530,357 @@ impl From<WorkflowRecordArtifactDraftRequest> for WorkflowRecordArtifactDraft {
             artifact_type: value.artifact_type,
             title: value.title,
             content: value.content,
+        }
+    }
+}
+
+// ---- Workflow Definition CRUD / Validate / Preview / Enable / Disable ----
+
+#[derive(Debug, Deserialize)]
+pub struct CreateWorkflowDefinitionRequest {
+    pub key: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub target_kind: WorkflowTargetKind,
+    pub recommended_role: Option<WorkflowAgentRole>,
+    pub phases: Vec<WorkflowPhaseDefinitionRequest>,
+    #[serde(default)]
+    pub record_policy: Option<WorkflowRecordPolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateWorkflowDefinitionRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub recommended_role: Option<WorkflowAgentRole>,
+    pub phases: Option<Vec<WorkflowPhaseDefinitionRequest>>,
+    pub record_policy: Option<WorkflowRecordPolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowPhaseDefinitionRequest {
+    pub key: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub agent_instructions: Vec<String>,
+    #[serde(default)]
+    pub context_bindings: Vec<WorkflowContextBindingRequest>,
+    #[serde(default)]
+    pub requires_session: bool,
+    pub completion_mode: WorkflowPhaseCompletionMode,
+    pub default_artifact_type: Option<WorkflowRecordArtifactType>,
+    pub default_artifact_title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowContextBindingRequest {
+    pub kind: WorkflowContextBindingKind,
+    pub locator: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    pub title: Option<String>,
+}
+
+fn default_true() -> bool { true }
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateWorkflowDefinitionRequest {
+    pub key: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub target_kind: WorkflowTargetKind,
+    pub recommended_role: Option<WorkflowAgentRole>,
+    pub phases: Vec<WorkflowPhaseDefinitionRequest>,
+    #[serde(default)]
+    pub record_policy: Option<WorkflowRecordPolicy>,
+}
+
+pub async fn create_workflow_definition(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateWorkflowDefinitionRequest>,
+) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+    let phases = req.phases.into_iter().map(Into::into).collect::<Vec<WorkflowPhaseDefinition>>();
+    let mut definition = WorkflowDefinition::new(
+        req.key,
+        req.name,
+        req.description,
+        req.target_kind,
+        WorkflowDefinitionSource::UserAuthored,
+        phases,
+    )
+    .map_err(ApiError::BadRequest)?;
+
+    definition.recommended_role = req.recommended_role;
+    if let Some(policy) = req.record_policy {
+        definition.record_policy = policy;
+    }
+
+    let service = WorkflowCatalogService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.workflow_assignment_repo.as_ref(),
+    );
+    let saved = service.upsert_definition(definition).await?;
+    Ok(Json(WorkflowDefinitionResponse::from(saved)))
+}
+
+pub async fn get_workflow_definition(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+    let id = parse_uuid(&id, "workflow_id")?;
+    let definition = state
+        .repos
+        .workflow_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+    Ok(Json(WorkflowDefinitionResponse::from(definition)))
+}
+
+pub async fn update_workflow_definition(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateWorkflowDefinitionRequest>,
+) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+    let id = parse_uuid(&id, "workflow_id")?;
+    let mut definition = state
+        .repos
+        .workflow_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+
+    if let Some(name) = req.name {
+        definition.name = name;
+    }
+    if let Some(description) = req.description {
+        definition.description = description;
+    }
+    if let Some(role) = req.recommended_role {
+        definition.recommended_role = Some(role);
+    }
+    if let Some(phases) = req.phases {
+        definition.phases = phases.into_iter().map(Into::into).collect();
+    }
+    if let Some(policy) = req.record_policy {
+        definition.record_policy = policy;
+    }
+
+    let issues = definition.validate_full();
+    let has_errors = issues.iter().any(|i| i.severity == ValidationSeverity::Error);
+    if has_errors {
+        return Err(ApiError::BadRequest(format!(
+            "校验失败: {}",
+            issues
+                .iter()
+                .filter(|i| i.severity == ValidationSeverity::Error)
+                .map(|i| format!("[{}] {}", i.field_path, i.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
+
+    definition.version += 1;
+    definition.updated_at = chrono::Utc::now();
+    state.repos.workflow_definition_repo.update(&definition).await?;
+    Ok(Json(WorkflowDefinitionResponse::from(definition)))
+}
+
+pub async fn validate_workflow_definition(
+    Json(req): Json<ValidateWorkflowDefinitionRequest>,
+) -> Result<Json<WorkflowValidationResponse>, ApiError> {
+    let phases: Vec<WorkflowPhaseDefinition> = req.phases.into_iter().map(Into::into).collect();
+    let definition = WorkflowDefinition::new(
+        req.key,
+        req.name,
+        req.description,
+        req.target_kind,
+        WorkflowDefinitionSource::UserAuthored,
+        phases,
+    );
+    match definition {
+        Ok(def) => {
+            let issues = def.validate_full();
+            let valid = !issues.iter().any(|i| i.severity == ValidationSeverity::Error);
+            Ok(Json(WorkflowValidationResponse { valid, issues }))
+        }
+        Err(e) => {
+            Ok(Json(WorkflowValidationResponse {
+                valid: false,
+                issues: vec![agentdash_domain::workflow::ValidationIssue::error(
+                    "construction_error",
+                    e,
+                    "",
+                )],
+            }))
+        }
+    }
+}
+
+pub async fn enable_workflow_definition(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+    let id = parse_uuid(&id, "workflow_id")?;
+    let mut definition = state
+        .repos
+        .workflow_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+
+    let issues = definition.validate_full();
+    let has_errors = issues.iter().any(|i| i.severity == ValidationSeverity::Error);
+    if has_errors {
+        return Err(ApiError::BadRequest(format!(
+            "definition 存在校验错误，不能激活: {}",
+            issues
+                .iter()
+                .filter(|i| i.severity == ValidationSeverity::Error)
+                .map(|i| format!("[{}] {}", i.field_path, i.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
+
+    definition.status = WorkflowDefinitionStatus::Active;
+    definition.updated_at = chrono::Utc::now();
+    state.repos.workflow_definition_repo.update(&definition).await?;
+    Ok(Json(WorkflowDefinitionResponse::from(definition)))
+}
+
+pub async fn disable_workflow_definition(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+    let id = parse_uuid(&id, "workflow_id")?;
+    let mut definition = state
+        .repos
+        .workflow_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+
+    definition.status = WorkflowDefinitionStatus::Disabled;
+    definition.updated_at = chrono::Utc::now();
+    state.repos.workflow_definition_repo.update(&definition).await?;
+    Ok(Json(WorkflowDefinitionResponse::from(definition)))
+}
+
+pub async fn delete_workflow_definition(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = parse_uuid(&id, "workflow_id")?;
+    state.repos.workflow_definition_repo.delete(id).await?;
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// Binding 元数据 registry：返回所有可用的 binding kind 和合法 locator。
+pub async fn list_binding_metadata() -> Result<Json<Vec<BindingKindMetadata>>, ApiError> {
+    Ok(Json(build_binding_metadata()))
+}
+
+#[derive(Debug, Serialize)]
+pub struct BindingKindMetadata {
+    pub kind: WorkflowContextBindingKind,
+    pub label: String,
+    pub description: String,
+    pub locator_options: Vec<BindingLocatorOption>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BindingLocatorOption {
+    pub locator: String,
+    pub label: String,
+    pub description: String,
+    pub applicable_target_kinds: Vec<WorkflowTargetKind>,
+}
+
+fn build_binding_metadata() -> Vec<BindingKindMetadata> {
+    vec![
+        BindingKindMetadata {
+            kind: WorkflowContextBindingKind::DocumentPath,
+            label: "文档路径".to_string(),
+            description: "从工作空间读取指定相对路径的文件内容".to_string(),
+            locator_options: vec![
+                BindingLocatorOption {
+                    locator: ".trellis/workflow.md".to_string(),
+                    label: "Workflow 文档".to_string(),
+                    description: "Trellis 开发工作流文档".to_string(),
+                    applicable_target_kinds: vec![WorkflowTargetKind::Task, WorkflowTargetKind::Story],
+                },
+            ],
+        },
+        BindingKindMetadata {
+            kind: WorkflowContextBindingKind::RuntimeContext,
+            label: "运行时上下文".to_string(),
+            description: "注入运行时动态上下文信息".to_string(),
+            locator_options: vec![
+                BindingLocatorOption { locator: "project_session_context".to_string(), label: "项目会话上下文".to_string(), description: "项目级上下文配置快照".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Project, WorkflowTargetKind::Story, WorkflowTargetKind::Task] },
+                BindingLocatorOption { locator: "story_prd".to_string(), label: "Story PRD".to_string(), description: "Story 的产品需求文档".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Story, WorkflowTargetKind::Task] },
+                BindingLocatorOption { locator: "story_context_snapshot".to_string(), label: "Story 上下文快照".to_string(), description: "Story 的结构化上下文".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Story, WorkflowTargetKind::Task] },
+                BindingLocatorOption { locator: "task_execution_context".to_string(), label: "Task 执行上下文".to_string(), description: "Task 的执行配置快照".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Task] },
+            ],
+        },
+        BindingKindMetadata {
+            kind: WorkflowContextBindingKind::Checklist,
+            label: "检查清单".to_string(),
+            description: "结构化检查清单，用于 checklist_passed 完成模式".to_string(),
+            locator_options: vec![
+                BindingLocatorOption { locator: "code_quality_checklist".to_string(), label: "代码质量清单".to_string(), description: "代码质量自检清单".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Task] },
+                BindingLocatorOption { locator: "review_checklist".to_string(), label: "评审清单".to_string(), description: "代码评审检查清单".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Task] },
+            ],
+        },
+        BindingKindMetadata {
+            kind: WorkflowContextBindingKind::JournalTarget,
+            label: "日志目标".to_string(),
+            description: "指定 Trellis 日志写入目录".to_string(),
+            locator_options: vec![
+                BindingLocatorOption { locator: "trellis_workspace_journal".to_string(), label: "工作区日志".to_string(), description: "Trellis 工作区日志目录".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Task, WorkflowTargetKind::Story] },
+            ],
+        },
+        BindingKindMetadata {
+            kind: WorkflowContextBindingKind::ActionRef,
+            label: "动作引用".to_string(),
+            description: "引用可执行的动作，如归档".to_string(),
+            locator_options: vec![
+                BindingLocatorOption { locator: "workflow_archive_action".to_string(), label: "归档动作".to_string(), description: "触发 workflow 任务归档".to_string(), applicable_target_kinds: vec![WorkflowTargetKind::Task] },
+            ],
+        },
+    ]
+}
+
+impl From<WorkflowPhaseDefinitionRequest> for WorkflowPhaseDefinition {
+    fn from(value: WorkflowPhaseDefinitionRequest) -> Self {
+        Self {
+            key: value.key,
+            title: value.title,
+            description: value.description,
+            agent_instructions: value.agent_instructions,
+            context_bindings: value.context_bindings.into_iter().map(Into::into).collect(),
+            requires_session: value.requires_session,
+            completion_mode: value.completion_mode,
+            default_artifact_type: value.default_artifact_type,
+            default_artifact_title: value.default_artifact_title,
+        }
+    }
+}
+
+impl From<WorkflowContextBindingRequest> for WorkflowContextBinding {
+    fn from(value: WorkflowContextBindingRequest) -> Self {
+        Self {
+            kind: value.kind,
+            locator: value.locator,
+            reason: value.reason,
+            required: value.required,
+            title: value.title,
         }
     }
 }

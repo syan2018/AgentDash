@@ -21,6 +21,57 @@ pub enum WorkflowAgentRole {
     RecordAgent,
 }
 
+/// Workflow Definition 的来源标记。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowDefinitionSource {
+    /// 由内置模板 seed 注册。
+    BuiltinSeed,
+    /// 用户从编辑器手动创建。
+    UserAuthored,
+    /// 从已有 definition 克隆。
+    Cloned,
+}
+
+/// Workflow Definition 的生命周期状态。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowDefinitionStatus {
+    /// 草稿态，可编辑但不可分配/运行。
+    Draft,
+    /// 已激活，可分配到项目并启动 run。
+    Active,
+    /// 已停用，不可新建 assignment/run，已有 run 不受影响。
+    Disabled,
+}
+
+/// 校验问题的严重级别。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationSeverity {
+    Error,
+    Warning,
+}
+
+/// 结构化校验问题。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ValidationIssue {
+    pub code: String,
+    pub message: String,
+    pub field_path: String,
+    pub severity: ValidationSeverity,
+}
+
+impl ValidationIssue {
+    pub fn error(code: impl Into<String>, message: impl Into<String>, field_path: impl Into<String>) -> Self {
+        Self { code: code.into(), message: message.into(), field_path: field_path.into(), severity: ValidationSeverity::Error }
+    }
+
+    pub fn warning(code: impl Into<String>, message: impl Into<String>, field_path: impl Into<String>) -> Self {
+        Self { code: code.into(), message: message.into(), field_path: field_path.into(), severity: ValidationSeverity::Warning }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowContextBindingKind {

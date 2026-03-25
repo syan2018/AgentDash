@@ -342,14 +342,54 @@ export interface WorkflowTemplate {
   record_policy: WorkflowRecordPolicy;
 }
 
+export type WorkflowDefinitionSource =
+  | "builtin_seed"
+  | "user_authored"
+  | "cloned";
+
+export type WorkflowDefinitionStatus =
+  | "draft"
+  | "active"
+  | "disabled";
+
+export type ValidationSeverity = "error" | "warning";
+
+export interface ValidationIssue {
+  code: string;
+  message: string;
+  field_path: string;
+  severity: ValidationSeverity;
+}
+
+export interface WorkflowValidationResult {
+  valid: boolean;
+  issues: ValidationIssue[];
+}
+
+export interface BindingLocatorOption {
+  locator: string;
+  label: string;
+  description: string;
+  applicable_target_kinds: WorkflowTargetKind[];
+}
+
+export interface BindingKindMetadata {
+  kind: WorkflowContextBindingKind;
+  label: string;
+  description: string;
+  locator_options: BindingLocatorOption[];
+}
+
 export interface WorkflowDefinition {
   id: string;
   key: string;
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
+  recommended_role?: WorkflowAgentRole | null;
+  source: WorkflowDefinitionSource;
+  status: WorkflowDefinitionStatus;
   version: number;
-  enabled: boolean;
   phases: WorkflowPhaseDefinition[];
   record_policy: WorkflowRecordPolicy;
   created_at: string;

@@ -124,7 +124,7 @@ pub async fn resolve_active_workflow_projection(
         .get_by_id(run.workflow_id)
         .await
         .map_err(|e| format!("加载 workflow definition 失败: {e}"))?
-        .filter(|d| d.enabled);
+        .filter(|d| d.is_active());
     let Some(definition) = definition else {
         return Ok(None);
     };

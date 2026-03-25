@@ -978,3 +978,37 @@ Agent Tab 主视图：
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 上下文容器创建优化 + Address Space 搜索能力增强
+
+**Date**: 2026-03-25
+**Task**: 上下文容器创建优化 + Address Space 搜索能力增强
+
+### Summary
+
+1. 前端容器创建逻辑优化：ID 改为域+自增序号自动生成，display_name 仅作备注，移除创建卡片的 inline_files 编辑区，默认能力增加 write/search，挂载策略默认全部能力打开。2. 后端搜索增强：relay 协议新增 CommandToolSearch/ResponseToolSearch，本机后端优先 ripgrep 搜索+自动降级 fallback，云端按 provider 路由分发，inline_fs 升级正则匹配，FsSearchTool 新增 regex/include/context_lines 参数。
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `475dfc8` | (see git log) |
+| `fae1b6f` | (see git log) |
+| `65a0a92` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use super::entity::{WorkflowAssignment, WorkflowDefinition, WorkflowRun};
+use super::entity::{LifecycleDefinition, LifecycleRun, WorkflowAssignment, WorkflowDefinition};
 use super::value_objects::{WorkflowAgentRole, WorkflowDefinitionStatus, WorkflowTargetKind};
 use crate::common::error::DomainError;
 
@@ -23,6 +23,24 @@ pub trait WorkflowDefinitionRepository: Send + Sync {
 }
 
 #[async_trait::async_trait]
+pub trait LifecycleDefinitionRepository: Send + Sync {
+    async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleDefinition>, DomainError>;
+    async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError>;
+    async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError>;
+    async fn list_by_status(
+        &self,
+        status: WorkflowDefinitionStatus,
+    ) -> Result<Vec<LifecycleDefinition>, DomainError>;
+    async fn list_by_target_kind(
+        &self,
+        target_kind: WorkflowTargetKind,
+    ) -> Result<Vec<LifecycleDefinition>, DomainError>;
+    async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
 pub trait WorkflowAssignmentRepository: Send + Sync {
     async fn create(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowAssignment>, DomainError>;
@@ -40,16 +58,17 @@ pub trait WorkflowAssignmentRepository: Send + Sync {
 }
 
 #[async_trait::async_trait]
-pub trait WorkflowRunRepository: Send + Sync {
-    async fn create(&self, run: &WorkflowRun) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowRun>, DomainError>;
-    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<WorkflowRun>, DomainError>;
-    async fn list_by_workflow(&self, workflow_id: Uuid) -> Result<Vec<WorkflowRun>, DomainError>;
+pub trait LifecycleRunRepository: Send + Sync {
+    async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
+    async fn list_by_lifecycle(&self, lifecycle_id: Uuid)
+    -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_target(
         &self,
         target_kind: WorkflowTargetKind,
         target_id: Uuid,
-    ) -> Result<Vec<WorkflowRun>, DomainError>;
-    async fn update(&self, run: &WorkflowRun) -> Result<(), DomainError>;
+    ) -> Result<Vec<LifecycleRun>, DomainError>;
+    async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }

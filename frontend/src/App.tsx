@@ -53,6 +53,11 @@ const WorkflowEditorPage = lazy(async () => {
   return { default: m.WorkflowEditorPage };
 });
 
+const LifecycleEditorPage = lazy(async () => {
+  const m = await import("./pages/LifecycleEditorPage");
+  return { default: m.LifecycleEditorPage };
+});
+
 // ─── 通用加载占位 ──────────────────────────────────────
 
 function RouteFallback() {
@@ -175,6 +180,7 @@ function AppContent() {
 
           {/* Workflow 编辑器独立页 */}
           <Route path="/workflow-editor/:definitionId" element={<WorkflowEditorPage />} />
+          <Route path="/lifecycle-editor/:definitionId" element={<LifecycleEditorPage />} />
 
           {/* Session 独立全屏页 */}
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />

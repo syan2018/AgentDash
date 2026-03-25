@@ -377,11 +377,7 @@ impl CommandHandler {
         }
     }
 
-    async fn handle_tool_search(
-        &self,
-        id: String,
-        payload: ToolSearchPayload,
-    ) -> RelayMessage {
+    async fn handle_tool_search(&self, id: String, payload: ToolSearchPayload) -> RelayMessage {
         match self
             .tool_executor
             .search(

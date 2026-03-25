@@ -203,7 +203,15 @@ impl ToolExecutor {
             .await;
         }
 
-        fallback_search(&ws, &search_dir, query, is_regex, max_results, context_lines).await
+        fallback_search(
+            &ws,
+            &search_dir,
+            query,
+            is_regex,
+            max_results,
+            context_lines,
+        )
+        .await
     }
 }
 
@@ -214,12 +222,13 @@ async fn detect_ripgrep() -> Option<PathBuf> {
         vec!["rg"]
     };
     for name in candidates {
-        if let Ok(output) = tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" })
-            .arg(name)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .await
+        if let Ok(output) =
+            tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" })
+                .arg(name)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .await
         {
             if output.status.success() {
                 let path_str = String::from_utf8_lossy(&output.stdout);
@@ -352,7 +361,16 @@ async fn fallback_search(
     tokio::task::spawn_blocking(move || {
         let mut hits = Vec::new();
         let mut truncated = false;
-        fallback_walk(&ws, &dir, &query, regex.as_ref(), max_results, context_lines, &mut hits, &mut truncated);
+        fallback_walk(
+            &ws,
+            &dir,
+            &query,
+            regex.as_ref(),
+            max_results,
+            context_lines,
+            &mut hits,
+            &mut truncated,
+        );
         Ok((hits, truncated))
     })
     .await
@@ -361,7 +379,14 @@ async fn fallback_search(
 
 const FALLBACK_MAX_FILE_BYTES: u64 = 256 * 1024;
 const FALLBACK_SKIP_DIRS: &[&str] = &[
-    ".git", "node_modules", "target", "__pycache__", ".next", "dist", "build", ".venv",
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".next",
+    "dist",
+    "build",
+    ".venv",
 ];
 
 fn fallback_walk(
@@ -398,7 +423,16 @@ fn fallback_walk(
             if FALLBACK_SKIP_DIRS.contains(&name_str.as_ref()) {
                 continue;
             }
-            fallback_walk(workspace_root, &entry.path(), query, regex, max_results, context_lines, hits, truncated);
+            fallback_walk(
+                workspace_root,
+                &entry.path(),
+                query,
+                regex,
+                max_results,
+                context_lines,
+                hits,
+                truncated,
+            );
         } else if ft.is_file() {
             let meta = match entry.metadata() {
                 Ok(m) => m,

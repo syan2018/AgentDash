@@ -3,7 +3,7 @@
  *
  * 三类渲染路径，均复用 EventStripCard / EventFullCard 模板：
  *
- * 1. 信息型 hook 事件（context_injected / steering_injected / phase_advanced 等）
+ * 1. 信息型 hook 事件（context_injected / steering_injected / step_advanced 等）
  *    → EventStripCard：单行折叠，展开显示 diagnostics / completion
  *
  * 2. 高优先级干预 hook 事件（deny / ask / rewrite / continue / block_reason）
@@ -211,7 +211,7 @@ function resolveDecisionToken(decision: string | null | undefined): string {
   switch (decision) {
     case "context_injected":  return "CTX";
     case "steering_injected": return "STEER";
-    case "phase_advanced":    return "PHASE";
+    case "step_advanced":     return "STEP";
     case "continue":          return "HOLD";
     case "deny":              return "DENY";
     case "ask":               return "ASK";
@@ -246,7 +246,7 @@ function resolveStripLabel(
       return count > 0 ? `已注入动态上下文（${count} 条规则生效）` : "已注入动态上下文";
     }
     case "steering_injected": return "已追加流程约束（steering）";
-    case "phase_advanced":    return "Workflow 阶段已推进";
+    case "step_advanced":     return "Workflow Step 已推进";
     default:
       return hookData?.completion
         ? `流程决策：${decision ?? "unknown"}`

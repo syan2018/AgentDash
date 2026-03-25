@@ -15,6 +15,16 @@
 
 这套机制的目标不是把 workflow 再做成一套特化 prompt 拼接系统，而是把“动态注入、工具前后 gate、turn/stop 控制”收敛为一条正式的跨层契约。
 
+当前 authority 已经更新为：
+
+- `WorkflowDefinition.contract`：只定义三段核心 contract：
+  - `injection`：输入时注入什么内容
+  - `hook_policy`：hook 时如何放行 / 阻挡 / 改写 / 注入
+  - `completion`：结束检查与默认记录产物
+- `LifecycleDefinition.steps[*]`：定义生命周期 step、primary workflow、transition
+- `ActiveWorkflowProjection.effective_contract`：会话运行时的唯一注入/治理 contract
+- `execution_hooks.rs`：只负责解释 `effective_contract + active_step.transition`，不再把 lifecycle step 之外的兼容 view 当 authority
+
 ---
 
 ## Scenario: Session Hook Runtime（Pi Agent / Workflow / Frontend）
@@ -22,7 +32,7 @@
 ### 1. Scope / Trigger
 
 - Trigger: 新增或修改 Pi Agent 在 `transform_context / before_tool_call / after_tool_call / after_turn / before_stop` 的行为
-- Trigger: 新增或修改 workflow phase 对工具、结束条件、上下文注入的约束
+- Trigger: 新增或修改 workflow contract / lifecycle step 对工具、结束条件、上下文注入的约束
 - Trigger: 前端需要展示 session 级 hook runtime、policy、diagnostics、metadata
 - Trigger: 任何需求涉及“业务信息在 loop 外获取，但控制决策要在 loop 边界同步生效”
 
@@ -135,7 +145,7 @@ pub struct HookSessionRuntimeSnapshot {
 当前 `sources` / `source_summary` / `source_refs` 已约定：
 
 - `sources` 是 session 当前真实生效的来源注册表，不是静态 workflow 模板说明
-- `HookContextFragment` / `HookConstraint` / `HookPolicy` / `HookDiagnosticEntry` 都必须携带：
+- `HookContextFragment` / `HookConstraint` / `HookPolicyView` / `HookDiagnosticEntry` 都必须携带：
   - `source_summary: Vec<String>`
   - `source_refs: Vec<HookSourceRef>`
 - `HookSourceRef.layer` 当前支持：
@@ -150,15 +160,20 @@ pub struct HookSessionRuntimeSnapshot {
 
 当前 `metadata` 已约定包含：
 
-- `active_workflow.workflow_id`
-- `active_workflow.workflow_key`
-- `active_workflow.workflow_name`
+- `active_workflow.lifecycle_id`
+- `active_workflow.lifecycle_key`
+- `active_workflow.lifecycle_name`
 - `active_workflow.run_id`
 - `active_workflow.run_status`
-- `active_workflow.phase_key`
-- `active_workflow.phase_title`
-- `active_workflow.completion_mode`
+- `active_workflow.step_key`
+- `active_workflow.step_title`
+- `active_workflow.transition_policy`
+- `active_workflow.primary_workflow_id`
+- `active_workflow.primary_workflow_key`
+- `active_workflow.primary_workflow_name`
 - `active_workflow.requires_session`
+- `active_workflow.effective_contract`
+- `active_workflow.step_transition`
 - `active_task.task_id`
 - `active_task.task_title`
 - `active_task.status`
@@ -167,10 +182,11 @@ pub struct HookSessionRuntimeSnapshot {
 
 | Trigger | 必须行为 |
 |---|---|
-| `SessionStart` / `UserPromptSubmit` | 返回当前应注入的 `context_fragments + constraints + policies` |
+| `SessionStart` | 在 hook runtime 加载完成后执行 baseline setup / trace / 可选 refresh；可以返回当前规则面供调试，但**不得**作为第二条普通文本注入通道 |
+| `UserPromptSubmit` | 返回当前应注入的 `context_fragments + constraints + policies`，它是每轮 prompt 的唯一动态文本注入主通道 |
 | `BeforeTool` | 可以 `Allow / Deny / Ask / Rewrite`，其中 `Ask` 必须在当前 tool call 边界同步挂起等待审批，不得退化成“先报错，下一轮再猜” |
 | `AfterTool` | 可以附加 diagnostics，并决定是否 `refresh_snapshot` |
-| `AfterTurn` | 可以追加针对“本轮结果”的 steering / follow-up，但不能重复注入 phase 基线约束，避免 loop 因永续 steering 而无法抵达 `BeforeStop` |
+| `AfterTurn` | 可以追加针对“本轮结果”的 steering / follow-up，但不能重复注入 step 基线约束，避免 loop 因永续 steering 而无法抵达 `BeforeStop` |
 | `BeforeStop` | 必须在 loop 退出前同步返回 stop gate 决策。**关键约束：无 workflow 绑定时 `completion = None`，此时必须允许自然结束（视为无 gate），不得因 `completion_satisfied = false` 而错误阻止退出。** |
 | `BeforeSubagentDispatch` | 必须在 companion/subagent 真正启动前同步决定是否允许派发，并返回子 agent 应继承的 context/constraints |
 | `AfterSubagentDispatch` | 必须记录派发结果、目标 session/turn，并写入 trace/diagnostics |
@@ -178,10 +194,12 @@ pub struct HookSessionRuntimeSnapshot {
 
 #### 3.4 Workflow -> Hook Policy 契约
 
-- workflow phase 是 Hook 信息来源之一，不是 Hook 生命周期引擎
-- `agent_instructions` 生成 `constraints`
-- `completion_mode` 生成 completion policy
-- phase/tool/status gate 生成 `policies`
+- workflow contract 是 Hook 信息来源之一，但 authority 是 `effective_contract`
+- `effective_contract.injection.instructions` 通过注入 fragment 进入 loop，不再伪装成第二份 `constraints`
+- `effective_contract.hook_policy.constraints` 才是 hook 策略面的正式来源
+- `active_workflow_step` 这类 summary fragment 只负责说明当前 lifecycle step 背景，不得再重复展开 workflow 指令
+- `active_step.transition` 生成 completion / transition policy
+- step/tool/status gate 由 `hook_policy.constraints + completion.checks + transition` 共同生成 `policies`
 - provider 必须先把不同来源解释成 `HookContributionSet`，再 merge 进 session snapshot
 - policy / constraint / diagnostic 的来源必须可通过 `source_summary` / `source_refs` / `metadata` 解释
 - global builtin hook 也是正式来源层的一部分，不能绕过来源注册表直接塞进 rule engine
@@ -189,16 +207,15 @@ pub struct HookSessionRuntimeSnapshot {
 当前已落地的 policy 示例：
 
 - `tool:shell_exec:rewrite_absolute_cwd`
-- `workflow:*:*:completion_mode`
-- `workflow:*:*:task_status_gate`
-- `workflow:*:*:record_gate`
-- `workflow:*:*:checklist_gate`
+- `workflow:*:*:transition_policy`
+- `workflow:*:*:constraint:*`
+- `workflow:*:*:check_gate`
 
-其中 `checklist_gate` 的当前语义已经明确为：
+其中 `check_gate` 的当前语义已经明确为：
 
 - `Task.status in {awaiting_verification, completed}` 只是必要条件，不是充分条件
 - `BeforeStop` 还必须结合当前回合是否已经形成 checklist evidence（例如带检查结论/风险说明的阶段性总结）同步判定是否允许自然结束
-- 因此 check phase 不能只靠“更新了状态”就放行，也不能把 evidence 约束做成每轮永续 `after_turn` steering
+- 因此 check step 不能只靠“更新了状态”就放行，也不能把 evidence 约束做成每轮永续 `after_turn` steering
 
 #### 3.5 Frontend 契约
 
@@ -238,11 +255,16 @@ pub struct HookSessionRuntimeSnapshot {
 - 但只要该 trace 带有 `matched_rule_keys / diagnostics / completion / block_reason` 中任一信息，就必须发 `hook_event`
 - `SessionTerminal` 产生的 hook trace 也必须发入事件流，不能只保留在 runtime trace 面板
 
+补充约定：
+
+- `SessionStart` trace 用于观测 baseline setup 是否真实发生，不代表新增了一条用户消息注入
+- connector system prompt 不应再重复展开 workflow constraint / hook summary 静态副本；这些动态治理信息必须以 hook runtime 注入为准
+
 这样前端主事件流才能直接看到：
 
 - `user_prompt_submit` 注入了哪些流程上下文
 - `before_stop` 为何继续 / 阻止结束
-- `session_terminal` 是否推进了 phase、是否只是记录终态
+- `session_terminal` 是否推进了 step、是否只是记录终态
 - hook 判定与普通 `turn_started / turn_completed / tool_call` 事件在时间线上如何交错
 
 #### 3.5.1 Ask / Approval / Resume 契约
@@ -389,7 +411,33 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 #### Base
 
 ```text
-业务规则仍由 provider 解释，但已经统一通过 HookPolicy / HookResolution 输出
+业务规则仍由 provider 解释，但已经统一通过 `HookPolicyView` / `HookResolution` 输出
+```
+
+#### Design Decision: `HookPolicyView` 只是 runtime 观测面
+
+**Context**:
+
+- 当前 session hook runtime 同时需要“真正执行规则”和“向前端暴露当前生效规则面”
+- 若把两者都命名成 `HookPolicy`，后续很容易误判这里已经是可执行 rule engine
+
+**Decision**:
+
+- 合同层将该结构命名为 `HookPolicyView`
+- 它是从 workflow projection / snapshot / rule registry 派生出来的只读视图
+- 直接解释执行逻辑仍应收口在 hook rule registry，而不是在多个 view model 上分散实现
+
+**Wrong**:
+
+```text
+把 HookPolicyView 当作第二套执行 authority，继续手写一份与 rule engine 平行的行为逻辑。
+```
+
+**Correct**:
+
+```text
+让 HookPolicyView 负责展示“当前 runtime 实际生效的规则面”，
+让单一 hook rule registry 负责真正的 matches/apply。
 ```
 
 #### Bad
@@ -397,7 +445,7 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 ```text
 在 route/gateway 里继续直接拼 prompt 字符串表达流程 gate
 在 agent_loop 里直接查 repo / workflow run / task status
-前端只展示 workflow phase 文本，不展示实际 runtime policies
+前端只展示 workflow step 摘要文本，不展示实际 runtime policies
 ```
 
 ### 6. Tests Required
@@ -405,11 +453,11 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 至少应覆盖以下断言点：
 
 - `execution_hooks` 单测：
-  - implement phase 阻止直接 `completed`
+  - implement step 阻止直接 `completed`
   - `shell_exec` 绝对 `cwd` 会在 hook runtime 中被 rewrite
   - `permission_policy=SUPERVISED` 时，执行类工具会返回 approval request
-  - checklist phase 未满足时 `before_stop` 注入 gate
-  - checklist phase 满足时 `before_stop` 允许结束
+  - checklist step 未满足时 `before_stop` 注入 gate
+  - checklist step 满足时 `before_stop` 允许结束
   - `BeforeSubagentDispatch` 会继承 runtime context / constraints
   - `companion_dispatch` 会按 slice mode 过滤 fragments / constraints，并生成 return-channel 指令
   - `SubagentResult` 会记录结构化 return-channel diagnostic
@@ -440,8 +488,8 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 
 ```text
 workflow runtime 直接长成“工具前后如何决策”的一大坨 if/else 中心；
-agent_loop 再直接去问 workflow 当前 phase 和 task 状态；
-前端只能看到 workflow phase 文本，却看不到规则真正来自哪一层。
+agent_loop 再直接去问 workflow 当前 step 和 task 状态；
+前端只能看到 workflow step 文本，却看不到规则真正来自哪一层。
 ```
 
 问题：
@@ -507,13 +555,21 @@ report_workflow_artifact({
 })
 ```
 
-#### Workflow Phase Definition
+#### Workflow Completion Definition
 
 ```json
 {
-  "completion_mode": "checklist_passed",
-  "default_artifact_type": "checklist_evidence",
-  "default_artifact_title": "检查证据"
+  "completion": {
+    "checks": [
+      {
+        "key": "checklist_evidence_present",
+        "kind": "checklist_evidence_present",
+        "description": "必须产出 checklist evidence"
+      }
+    ],
+    "default_artifact_type": "checklist_evidence",
+    "default_artifact_title": "检查证据"
+  }
 }
 ```
 
@@ -531,19 +587,19 @@ report_workflow_artifact({
 
 ### 3. Contracts
 
-#### 3.1 Evidence 判据必须跟随 Phase 配置
+#### 3.1 Evidence 判据必须跟随 Completion 配置
 
 - `checklist_passed` 的正式 evidence 判据，不再硬编码为“某段 assistant 文本长得像检查结论”
-- provider 必须读取当前 active phase 的 `default_artifact_type`
-- hook runtime 必须以“当前 phase 下、artifact_type 等于该配置值、且内容非空”的 record artifacts 作为 checklist evidence
-- 若 phase 未声明 `default_artifact_type`，才允许回退到 `phase_note`
+- provider 必须读取当前 active workflow `completion.default_artifact_type`
+- hook runtime 必须以“当前 step 下、artifact_type 等于该配置值、且内容非空”的 record artifacts 作为 checklist evidence
+- 若 workflow completion 未声明 `default_artifact_type`，才允许回退到 `phase_note`
 
 #### 3.2 Builtin Workflow 仍然只是声明层
 
 - Trellis builtin workflow 只能通过 JSON phase 配置声明：
-  - `completion_mode`
-  - `default_artifact_type`
-  - `default_artifact_title`
+  - `completion.checks`
+  - `completion.default_artifact_type`
+  - `completion.default_artifact_title`
 - 禁止在 hook rule / route / tool 层写死：
   - `check phase -> phase_note`
   - `check phase -> 检查证据`
@@ -558,7 +614,7 @@ report_workflow_artifact({
 
 #### 3.4 Completion 产物契约
 
-- hook runtime 在 `checklist_passed` 满足并自动完成 phase 时，生成的 completion artifact 也必须沿用当前 phase 的 `default_artifact_type`
+- hook runtime 在 `checklist_passed` 满足并自动完成 step 时，生成的 completion artifact 也必须沿用当前 workflow completion 的 `default_artifact_type`
 - 不能再把自动 completion artifact 固定写成 `phase_note`
 
 ### 4. Validation & Error Matrix

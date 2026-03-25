@@ -25,7 +25,8 @@ use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workflow::{
-    WorkflowAssignmentRepository, WorkflowDefinitionRepository, WorkflowRunRepository,
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowAssignmentRepository,
+    WorkflowDefinitionRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::connectors::composite::CompositeConnector;
@@ -50,8 +51,9 @@ pub struct RepositorySet {
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
-    pub workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+    pub workflow_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
@@ -190,6 +192,7 @@ impl AppState {
             session_binding_repo.clone(),
             workflow_repo.clone(),
             workflow_repo.clone(),
+            workflow_repo.clone(),
             executor_hub_handle.clone(),
             Some(inline_persister),
         )
@@ -208,6 +211,7 @@ impl AppState {
             task_repo.clone(),
             workspace_repo.clone(),
             session_binding_repo.clone(),
+            workflow_repo.clone(),
             workflow_repo.clone(),
             workflow_repo.clone(),
         ));
@@ -262,6 +266,7 @@ impl AppState {
                 user_directory_repo,
                 settings_repo,
                 workflow_definition_repo: workflow_repo.clone(),
+                lifecycle_definition_repo: workflow_repo.clone(),
                 workflow_assignment_repo: workflow_repo.clone(),
                 workflow_run_repo: workflow_repo,
             },
@@ -304,7 +309,8 @@ async fn build_pi_agent_connector(
     address_space_service: Arc<RelayAddressSpaceService>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    workflow_run_repo: Arc<dyn LifecycleRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
     inline_persister: Option<Arc<dyn crate::address_space_access::InlineContentPersister>>,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
@@ -318,6 +324,7 @@ async fn build_pi_agent_connector(
         address_space_service,
         session_binding_repo,
         workflow_definition_repo,
+        lifecycle_definition_repo,
         workflow_run_repo,
         executor_hub_handle,
         inline_persister,

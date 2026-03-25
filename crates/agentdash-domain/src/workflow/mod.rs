@@ -2,15 +2,25 @@ mod entity;
 mod repository;
 mod value_objects;
 
-pub use entity::{WorkflowAssignment, WorkflowDefinition, WorkflowRun};
+pub use entity::{
+    LifecycleDefinition, LifecycleRun, WorkflowAssignment, WorkflowDefinition,
+    build_effective_contract,
+};
 pub use repository::{
-    WorkflowAssignmentRepository, WorkflowDefinitionRepository, WorkflowRunRepository,
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowAssignmentRepository,
+    WorkflowDefinitionRepository,
 };
 pub use value_objects::{
-    ValidationIssue, ValidationSeverity, WorkflowAgentRole, WorkflowContextBinding,
-    WorkflowContextBindingKind, WorkflowDefinitionSource, WorkflowDefinitionStatus,
-    WorkflowPhaseCompletionMode, WorkflowPhaseDefinition, WorkflowPhaseExecutionStatus,
-    WorkflowPhaseState, WorkflowProgressionSource, WorkflowRecordArtifact,
-    WorkflowRecordArtifactType, WorkflowRecordPolicy, WorkflowRunStatus, WorkflowTargetKind,
+    EffectiveSessionAttachment, EffectiveSessionContract, LifecycleFailureAction,
+    LifecycleProgressionSource, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, LifecycleStepState, LifecycleTransitionPolicy,
+    LifecycleTransitionPolicyKind, LifecycleTransitionSpec, ValidationIssue, ValidationSeverity,
+    WorkflowAgentRole, WorkflowAttachmentLifetime, WorkflowAttachmentMode, WorkflowAttachmentSpec,
+    WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
+    WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind, WorkflowContract,
+    WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookPolicySpec,
+    WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType,
+    WorkflowRecordPolicy, WorkflowRuntimeAttachment, WorkflowSessionBinding,
+    WorkflowSessionTerminalState, WorkflowTargetKind, validate_lifecycle_definition,
     validate_workflow_definition,
 };

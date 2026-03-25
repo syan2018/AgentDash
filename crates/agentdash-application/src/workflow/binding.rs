@@ -67,6 +67,7 @@ pub fn resolve_binding(
             resolve_journal_binding(binding, context.workspace)
         }
         WorkflowContextBindingKind::ActionRef => resolve_action_binding(binding),
+        WorkflowContextBindingKind::ArtifactRef => resolve_artifact_binding(binding),
     }
 }
 
@@ -284,6 +285,25 @@ fn resolve_action_binding(binding: &WorkflowContextBinding) -> ResolvedWorkflowB
             binding_display_title(binding),
             binding.locator.trim(),
             guidance
+        )),
+    }
+}
+
+fn resolve_artifact_binding(binding: &WorkflowContextBinding) -> ResolvedWorkflowBinding {
+    ResolvedWorkflowBinding {
+        snapshot: WorkflowResolvedBindingSnapshot {
+            kind: binding.kind,
+            locator: binding.locator.clone(),
+            reason: binding.reason.clone(),
+            required: binding.required,
+            title: binding.title.clone(),
+            resolved: true,
+            summary: "已注入产物引用语义提示".to_string(),
+        },
+        content_markdown: Some(format!(
+            "### {}\n- artifact_ref: `{}`\n- guidance: 当前 workflow 依赖该产物引用，请在输出中明确说明是否已生成、位于何处、如何复用。",
+            binding_display_title(binding),
+            binding.locator.trim()
         )),
     }
 }

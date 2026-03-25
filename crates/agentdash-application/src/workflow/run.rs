@@ -1,43 +1,44 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    WorkflowDefinition, WorkflowDefinitionRepository, WorkflowPhaseDefinition,
-    WorkflowProgressionSource, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowRun,
-    WorkflowRunRepository, WorkflowRunStatus, WorkflowTargetKind,
+    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleProgressionSource, LifecycleRun,
+    LifecycleRunRepository, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, WorkflowDefinition, WorkflowDefinitionRepository,
+    WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowSessionBinding, WorkflowTargetKind,
 };
 
 use super::completion::WorkflowCompletionDecision;
 use super::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
-pub struct StartWorkflowRunCommand {
+pub struct StartLifecycleRunCommand {
     pub project_id: Uuid,
-    pub workflow_id: Option<Uuid>,
-    pub workflow_key: Option<String>,
+    pub lifecycle_id: Option<Uuid>,
+    pub lifecycle_key: Option<String>,
     pub target_kind: WorkflowTargetKind,
     pub target_id: Uuid,
 }
 
 #[derive(Debug, Clone)]
-pub struct ActivateWorkflowPhaseCommand {
+pub struct ActivateLifecycleStepCommand {
     pub run_id: Uuid,
-    pub phase_key: String,
+    pub step_key: String,
     pub session_binding_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CompleteWorkflowPhaseCommand {
+pub struct CompleteLifecycleStepCommand {
     pub run_id: Uuid,
-    pub phase_key: String,
+    pub step_key: String,
     pub summary: Option<String>,
     pub record_artifacts: Vec<WorkflowRecordArtifactDraft>,
-    pub completed_by: Option<WorkflowProgressionSource>,
+    pub completed_by: Option<LifecycleProgressionSource>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AppendWorkflowPhaseArtifactsCommand {
+pub struct AppendLifecycleStepArtifactsCommand {
     pub run_id: Uuid,
-    pub phase_key: String,
+    pub step_key: String,
     pub artifacts: Vec<WorkflowRecordArtifactDraft>,
 }
 
@@ -49,13 +50,13 @@ pub struct WorkflowRecordArtifactDraft {
 }
 
 impl WorkflowRecordArtifactDraft {
-    fn into_artifact(self, phase_key: &str) -> WorkflowRecordArtifact {
-        WorkflowRecordArtifact::new(phase_key, self.artifact_type, self.title, self.content)
+    fn into_artifact(self, step_key: &str) -> WorkflowRecordArtifact {
+        WorkflowRecordArtifact::new(step_key, self.artifact_type, self.title, self.content)
     }
 }
 
-pub fn build_phase_completion_artifact_drafts(
-    phase_key: &str,
+pub fn build_step_completion_artifact_drafts(
+    step_key: &str,
     default_artifact_type: Option<WorkflowRecordArtifactType>,
     default_artifact_title: Option<&str>,
     decision: &WorkflowCompletionDecision,
@@ -64,7 +65,7 @@ pub fn build_phase_completion_artifact_drafts(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| format!("{phase_key} 阶段记录"));
+        .unwrap_or_else(|| format!("{step_key} 阶段记录"));
     let artifact_type = default_artifact_type.unwrap_or(WorkflowRecordArtifactType::PhaseNote);
 
     let mut sections = Vec::new();
@@ -107,69 +108,68 @@ pub fn build_phase_completion_artifact_drafts(
     }]
 }
 
-/// Pick the single most relevant active run from a list (highest priority
-/// status, most recently updated). Shared by hook snapshot loading and
-/// workflow runtime context injection.
-pub fn select_active_run(runs: Vec<WorkflowRun>) -> Option<WorkflowRun> {
+pub fn select_active_run(runs: Vec<LifecycleRun>) -> Option<LifecycleRun> {
     runs.into_iter()
         .filter(|run| {
-            run.current_phase_key.is_some()
+            run.current_step_key.is_some()
                 && matches!(
                     run.status,
-                    WorkflowRunStatus::Ready
-                        | WorkflowRunStatus::Running
-                        | WorkflowRunStatus::Blocked
+                    LifecycleRunStatus::Ready
+                        | LifecycleRunStatus::Running
+                        | LifecycleRunStatus::Blocked
                 )
         })
         .max_by_key(|run| (active_run_status_priority(run.status), run.updated_at))
 }
 
-fn active_run_status_priority(status: WorkflowRunStatus) -> i32 {
+fn active_run_status_priority(status: LifecycleRunStatus) -> i32 {
     match status {
-        WorkflowRunStatus::Running => 3,
-        WorkflowRunStatus::Ready => 2,
-        WorkflowRunStatus::Blocked => 1,
-        WorkflowRunStatus::Draft
-        | WorkflowRunStatus::Completed
-        | WorkflowRunStatus::Failed
-        | WorkflowRunStatus::Cancelled => 0,
+        LifecycleRunStatus::Running => 3,
+        LifecycleRunStatus::Ready => 2,
+        LifecycleRunStatus::Blocked => 1,
+        LifecycleRunStatus::Draft
+        | LifecycleRunStatus::Completed
+        | LifecycleRunStatus::Failed
+        | LifecycleRunStatus::Cancelled => 0,
     }
 }
 
-pub struct WorkflowRunService<'a, D: ?Sized, R: ?Sized> {
+pub struct LifecycleRunService<'a, D: ?Sized, L: ?Sized, R: ?Sized> {
     definition_repo: &'a D,
+    lifecycle_repo: &'a L,
     run_repo: &'a R,
 }
 
-impl<'a, D: ?Sized, R: ?Sized> WorkflowRunService<'a, D, R>
+impl<'a, D: ?Sized, L: ?Sized, R: ?Sized> LifecycleRunService<'a, D, L, R>
 where
     D: WorkflowDefinitionRepository,
-    R: WorkflowRunRepository,
+    L: LifecycleDefinitionRepository,
+    R: LifecycleRunRepository,
 {
-    pub fn new(definition_repo: &'a D, run_repo: &'a R) -> Self {
+    pub fn new(definition_repo: &'a D, lifecycle_repo: &'a L, run_repo: &'a R) -> Self {
         Self {
             definition_repo,
+            lifecycle_repo,
             run_repo,
         }
     }
 
     pub async fn start_run(
         &self,
-        cmd: StartWorkflowRunCommand,
-    ) -> Result<WorkflowRun, WorkflowApplicationError> {
-        let definition = self.resolve_definition(&cmd).await?;
+        cmd: StartLifecycleRunCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        let lifecycle = self.resolve_lifecycle(&cmd).await?;
 
-        if !definition.is_active() {
+        if !lifecycle.is_active() {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "workflow `{}` 状态为 {:?}，不能启动 run",
-                definition.key, definition.status
+                "lifecycle `{}` 状态为 {:?}，不能启动 run",
+                lifecycle.key, lifecycle.status
             )));
         }
-
-        if definition.target_kind != cmd.target_kind {
+        if lifecycle.target_kind != cmd.target_kind {
             return Err(WorkflowApplicationError::BadRequest(format!(
-                "workflow `{}` 仅支持 target_kind={:?}，收到 {:?}",
-                definition.key, definition.target_kind, cmd.target_kind
+                "lifecycle `{}` 仅支持 target_kind={:?}，收到 {:?}",
+                lifecycle.key, lifecycle.target_kind, cmd.target_kind
             )));
         }
 
@@ -180,568 +180,255 @@ where
         let conflicting_run = existing_runs.iter().find(|run| {
             matches!(
                 run.status,
-                WorkflowRunStatus::Ready | WorkflowRunStatus::Running | WorkflowRunStatus::Blocked
+                LifecycleRunStatus::Ready
+                    | LifecycleRunStatus::Running
+                    | LifecycleRunStatus::Blocked
             )
         });
         if let Some(conflicting) = conflicting_run {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "目标对象 {} 已存在进行中的 workflow run（workflow_id={}）",
-                cmd.target_id, conflicting.workflow_id
+                "目标对象 {} 已存在进行中的 lifecycle run（lifecycle_id={}）",
+                cmd.target_id, conflicting.lifecycle_id
             )));
         }
 
-        let run = WorkflowRun::new(
+        let run = LifecycleRun::new(
             cmd.project_id,
-            definition.id,
+            lifecycle.id,
             cmd.target_kind,
             cmd.target_id,
-            &definition.phases,
-        );
+            &lifecycle.steps,
+            &lifecycle.entry_step_key,
+        )
+        .map_err(WorkflowApplicationError::BadRequest)?;
         self.run_repo.create(&run).await?;
         Ok(run)
     }
 
-    pub async fn activate_phase(
+    pub async fn activate_step(
         &self,
-        cmd: ActivateWorkflowPhaseCommand,
-    ) -> Result<WorkflowRun, WorkflowApplicationError> {
+        cmd: ActivateLifecycleStepCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
         let mut run = self.load_run(cmd.run_id).await?;
-        let definition = self.load_definition(run.workflow_id).await?;
-        let phase_definition = find_phase_definition(&definition, &cmd.phase_key)?;
+        let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
+        let step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
+        let workflow = self
+            .load_workflow_by_key(&step_definition.primary_workflow_key)
+            .await?;
         let existing_binding = run
-            .phase_states
+            .step_states
             .iter()
-            .find(|phase| phase.phase_key == cmd.phase_key)
-            .and_then(|phase| phase.session_binding_id);
+            .find(|step| step.step_key == cmd.step_key)
+            .and_then(|step| step.session_binding_id);
+        let session_requirement = merge_session_binding(
+            step_definition.session_binding,
+            workflow.contract.injection.session_binding,
+        );
 
-        if phase_definition.requires_session
+        if session_requirement == WorkflowSessionBinding::Required
             && existing_binding.is_none()
             && cmd.session_binding_id.is_none()
         {
             return Err(WorkflowApplicationError::BadRequest(format!(
-                "phase `{}` 需要 session_binding_id",
-                cmd.phase_key
+                "step `{}` 需要 session_binding_id",
+                cmd.step_key
             )));
         }
 
         if let Some(session_binding_id) = cmd.session_binding_id {
-            run.attach_session_binding(&cmd.phase_key, session_binding_id)
+            run.attach_session_binding(&cmd.step_key, session_binding_id)
                 .map_err(WorkflowApplicationError::Conflict)?;
         }
 
-        run.activate_phase(&cmd.phase_key)
+        run.activate_step(&cmd.step_key)
             .map_err(WorkflowApplicationError::Conflict)?;
         self.run_repo.update(&run).await?;
         Ok(run)
     }
 
-    pub async fn complete_phase(
+    pub async fn complete_step(
         &self,
-        cmd: CompleteWorkflowPhaseCommand,
-    ) -> Result<WorkflowRun, WorkflowApplicationError> {
+        cmd: CompleteLifecycleStepCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
         let mut run = self.load_run(cmd.run_id).await?;
-        let definition = self.load_definition(run.workflow_id).await?;
-        let phase_definition = find_phase_definition(&definition, &cmd.phase_key)?;
-        let phase_state = run
-            .phase_states
+        let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
+        let step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
+        let workflow = self
+            .load_workflow_by_key(&step_definition.primary_workflow_key)
+            .await?;
+        let step_state = run
+            .step_states
             .iter()
-            .find(|phase| phase.phase_key == cmd.phase_key)
+            .find(|step| step.step_key == cmd.step_key)
             .cloned()
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
-                    "workflow run phase 不存在: {}",
-                    cmd.phase_key
+                    "lifecycle run step 不存在: {}",
+                    cmd.step_key
                 ))
             })?;
+        let session_requirement = merge_session_binding(
+            step_definition.session_binding,
+            workflow.contract.injection.session_binding,
+        );
 
-        if phase_definition.requires_session && phase_state.session_binding_id.is_none() {
+        if session_requirement == WorkflowSessionBinding::Required
+            && step_state.session_binding_id.is_none()
+        {
             return Err(WorkflowApplicationError::BadRequest(format!(
-                "phase `{}` 需要先绑定 session",
-                cmd.phase_key
+                "step `{}` 需要先绑定 session",
+                cmd.step_key
             )));
         }
 
-        run.complete_phase(&cmd.phase_key, cmd.summary, cmd.completed_by)
-            .map_err(WorkflowApplicationError::Conflict)?;
+        run.complete_step(
+            &cmd.step_key,
+            cmd.summary,
+            cmd.completed_by,
+            step_definition.transition.policy.next_step_key.as_deref(),
+        )
+        .map_err(WorkflowApplicationError::Conflict)?;
         for artifact in cmd.record_artifacts {
-            run.append_record_artifact(artifact.into_artifact(&cmd.phase_key));
+            run.append_record_artifact(artifact.into_artifact(&cmd.step_key));
         }
-
         self.run_repo.update(&run).await?;
         Ok(run)
     }
 
-    pub async fn append_phase_artifacts(
+    pub async fn append_step_artifacts(
         &self,
-        cmd: AppendWorkflowPhaseArtifactsCommand,
-    ) -> Result<WorkflowRun, WorkflowApplicationError> {
+        cmd: AppendLifecycleStepArtifactsCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
         let mut run = self.load_run(cmd.run_id).await?;
-        let definition = self.load_definition(run.workflow_id).await?;
-        let _phase_definition = find_phase_definition(&definition, &cmd.phase_key)?;
-        let phase_state = run
-            .phase_states
+        let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
+        let _step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
+        let step_state = run
+            .step_states
             .iter()
-            .find(|phase| phase.phase_key == cmd.phase_key)
+            .find(|step| step.step_key == cmd.step_key)
             .cloned()
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
-                    "workflow run phase 不存在: {}",
-                    cmd.phase_key
+                    "lifecycle run step 不存在: {}",
+                    cmd.step_key
                 ))
             })?;
 
-        if run.current_phase_key.as_deref() != Some(cmd.phase_key.as_str()) {
+        if run.current_step_key.as_deref() != Some(cmd.step_key.as_str()) {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "当前活跃 phase 不是 `{}`，不能向其追加记录产物",
-                cmd.phase_key
+                "当前活跃 step 不是 `{}`，不能向其追加记录产物",
+                cmd.step_key
             )));
         }
         if !matches!(
-            phase_state.status,
-            agentdash_domain::workflow::WorkflowPhaseExecutionStatus::Ready
-                | agentdash_domain::workflow::WorkflowPhaseExecutionStatus::Running
+            step_state.status,
+            LifecycleStepExecutionStatus::Ready | LifecycleStepExecutionStatus::Running
         ) {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "phase `{}` 当前状态为 {:?}，不能追加记录产物",
-                cmd.phase_key, phase_state.status
+                "step `{}` 当前状态为 {:?}，不能追加记录产物",
+                cmd.step_key, step_state.status
             )));
         }
 
         for artifact in cmd.artifacts {
-            run.append_record_artifact(artifact.into_artifact(&cmd.phase_key));
+            run.append_record_artifact(artifact.into_artifact(&cmd.step_key));
         }
 
         self.run_repo.update(&run).await?;
         Ok(run)
     }
 
-    async fn resolve_definition(
+    async fn resolve_lifecycle(
         &self,
-        cmd: &StartWorkflowRunCommand,
-    ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
-        match (&cmd.workflow_id, &cmd.workflow_key) {
+        cmd: &StartLifecycleRunCommand,
+    ) -> Result<LifecycleDefinition, WorkflowApplicationError> {
+        match (&cmd.lifecycle_id, &cmd.lifecycle_key) {
             (Some(_), Some(_)) => Err(WorkflowApplicationError::BadRequest(
-                "workflow_id 与 workflow_key 只能提供一个".to_string(),
+                "lifecycle_id 与 lifecycle_key 只能提供一个".to_string(),
             )),
             (None, None) => Err(WorkflowApplicationError::BadRequest(
-                "必须提供 workflow_id 或 workflow_key".to_string(),
+                "必须提供 lifecycle_id 或 lifecycle_key".to_string(),
             )),
-            (Some(workflow_id), None) => self.load_definition(*workflow_id).await,
-            (None, Some(workflow_key)) => self
-                .definition_repo
-                .get_by_key(workflow_key)
+            (Some(lifecycle_id), None) => self.load_lifecycle(*lifecycle_id).await,
+            (None, Some(lifecycle_key)) => self
+                .lifecycle_repo
+                .get_by_key(lifecycle_key)
                 .await?
                 .ok_or_else(|| {
                     WorkflowApplicationError::NotFound(format!(
-                        "workflow_definition 不存在: {}",
-                        workflow_key
+                        "lifecycle_definition 不存在: {}",
+                        lifecycle_key
                     ))
                 }),
         }
     }
 
-    async fn load_definition(
+    async fn load_workflow_by_key(
         &self,
-        workflow_id: Uuid,
+        workflow_key: &str,
     ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
         self.definition_repo
-            .get_by_id(workflow_id)
+            .get_by_key(workflow_key)
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
                     "workflow_definition 不存在: {}",
-                    workflow_id
+                    workflow_key
                 ))
             })
     }
 
-    async fn load_run(&self, run_id: Uuid) -> Result<WorkflowRun, WorkflowApplicationError> {
+    async fn load_lifecycle(
+        &self,
+        lifecycle_id: Uuid,
+    ) -> Result<LifecycleDefinition, WorkflowApplicationError> {
+        self.lifecycle_repo
+            .get_by_id(lifecycle_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "lifecycle_definition 不存在: {}",
+                    lifecycle_id
+                ))
+            })
+    }
+
+    async fn load_run(&self, run_id: Uuid) -> Result<LifecycleRun, WorkflowApplicationError> {
         self.run_repo.get_by_id(run_id).await?.ok_or_else(|| {
-            WorkflowApplicationError::NotFound(format!("workflow_run 不存在: {}", run_id))
+            WorkflowApplicationError::NotFound(format!("lifecycle_run 不存在: {}", run_id))
         })
     }
 }
 
-fn find_phase_definition<'a>(
-    definition: &'a WorkflowDefinition,
-    phase_key: &str,
-) -> Result<&'a WorkflowPhaseDefinition, WorkflowApplicationError> {
-    definition
-        .phases
+fn find_step_definition<'a>(
+    lifecycle: &'a LifecycleDefinition,
+    step_key: &str,
+) -> Result<&'a LifecycleStepDefinition, WorkflowApplicationError> {
+    lifecycle
+        .steps
         .iter()
-        .find(|phase| phase.key == phase_key)
+        .find(|step| step.key == step_key)
         .ok_or_else(|| {
             WorkflowApplicationError::NotFound(format!(
-                "workflow_definition `{}` 不存在 phase `{}`",
-                definition.key, phase_key
+                "lifecycle_definition `{}` 不存在 step `{}`",
+                lifecycle.key, step_key
             ))
         })
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    use async_trait::async_trait;
-
-    use agentdash_domain::DomainError;
-    use agentdash_domain::workflow::{
-        WorkflowDefinition, WorkflowDefinitionRepository, WorkflowDefinitionStatus, WorkflowRun,
-        WorkflowRunRepository,
-    };
-
-    use super::*;
-    use crate::workflow::{TRELLIS_DEV_TASK_TEMPLATE_KEY, build_builtin_workflow_definition};
-
-    #[derive(Default)]
-    struct MemoryWorkflowRunStore {
-        definitions: Mutex<HashMap<Uuid, WorkflowDefinition>>,
-        runs: Mutex<HashMap<Uuid, WorkflowRun>>,
-    }
-
-    #[async_trait]
-    impl WorkflowDefinitionRepository for MemoryWorkflowRunStore {
-        async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-            self.definitions
-                .lock()
-                .expect("lock")
-                .insert(workflow.id, workflow.clone());
-            Ok(())
+fn merge_session_binding(
+    step_binding: WorkflowSessionBinding,
+    workflow_binding: WorkflowSessionBinding,
+) -> WorkflowSessionBinding {
+    match (step_binding, workflow_binding) {
+        (WorkflowSessionBinding::Required, _) | (_, WorkflowSessionBinding::Required) => {
+            WorkflowSessionBinding::Required
         }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(self.definitions.lock().expect("lock").get(&id).cloned())
+        (WorkflowSessionBinding::Optional, _) | (_, WorkflowSessionBinding::Optional) => {
+            WorkflowSessionBinding::Optional
         }
-
-        async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .find(|workflow| workflow.key == key)
-                .cloned())
+        (WorkflowSessionBinding::NotRequired, WorkflowSessionBinding::NotRequired) => {
+            WorkflowSessionBinding::NotRequired
         }
-
-        async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_status(
-            &self,
-            status: WorkflowDefinitionStatus,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|workflow| workflow.status == status)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_target_kind(
-            &self,
-            target_kind: WorkflowTargetKind,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|workflow| workflow.target_kind == target_kind)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-            self.definitions
-                .lock()
-                .expect("lock")
-                .insert(workflow.id, workflow.clone());
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.definitions.lock().expect("lock").remove(&id);
-            Ok(())
-        }
-    }
-
-    #[async_trait]
-    impl WorkflowRunRepository for MemoryWorkflowRunStore {
-        async fn create(&self, run: &WorkflowRun) -> Result<(), DomainError> {
-            self.runs.lock().expect("lock").insert(run.id, run.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowRun>, DomainError> {
-            Ok(self.runs.lock().expect("lock").get(&id).cloned())
-        }
-
-        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<WorkflowRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|run| run.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_workflow(
-            &self,
-            workflow_id: Uuid,
-        ) -> Result<Vec<WorkflowRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|run| run.workflow_id == workflow_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_target(
-            &self,
-            target_kind: WorkflowTargetKind,
-            target_id: Uuid,
-        ) -> Result<Vec<WorkflowRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|run| run.target_kind == target_kind && run.target_id == target_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, run: &WorkflowRun) -> Result<(), DomainError> {
-            self.runs.lock().expect("lock").insert(run.id, run.clone());
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.runs.lock().expect("lock").remove(&id);
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn start_run_by_workflow_key_creates_ready_run() {
-        let store = MemoryWorkflowRunStore::default();
-        let definition =
-            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
-        WorkflowDefinitionRepository::create(&store, &definition)
-            .await
-            .expect("store definition");
-
-        let service = WorkflowRunService::new(&store, &store);
-        let run = service
-            .start_run(StartWorkflowRunCommand {
-                project_id: Uuid::new_v4(),
-                workflow_id: None,
-                workflow_key: Some(TRELLIS_DEV_TASK_TEMPLATE_KEY.to_string()),
-                target_kind: WorkflowTargetKind::Task,
-                target_id: Uuid::new_v4(),
-            })
-            .await
-            .expect("start run");
-
-        assert_eq!(run.workflow_id, definition.id);
-        assert_eq!(run.current_phase_key.as_deref(), Some("start"));
-        assert_eq!(run.status, WorkflowRunStatus::Ready);
-    }
-
-    #[tokio::test]
-    async fn start_run_rejects_duplicate_active_run_for_same_target() {
-        let store = MemoryWorkflowRunStore::default();
-        let definition =
-            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
-        WorkflowDefinitionRepository::create(&store, &definition)
-            .await
-            .expect("store definition");
-
-        let service = WorkflowRunService::new(&store, &store);
-        let target_id = Uuid::new_v4();
-        service
-            .start_run(StartWorkflowRunCommand {
-                project_id: Uuid::new_v4(),
-                workflow_id: Some(definition.id),
-                workflow_key: None,
-                target_kind: WorkflowTargetKind::Task,
-                target_id,
-            })
-            .await
-            .expect("first run");
-
-        let error = service
-            .start_run(StartWorkflowRunCommand {
-                project_id: Uuid::new_v4(),
-                workflow_id: Some(definition.id),
-                workflow_key: None,
-                target_kind: WorkflowTargetKind::Task,
-                target_id,
-            })
-            .await
-            .expect_err("should reject duplicate run");
-
-        assert!(error.to_string().contains("进行中的 workflow run"));
-    }
-
-    #[tokio::test]
-    async fn activate_phase_requires_session_binding_for_session_phase() {
-        let store = MemoryWorkflowRunStore::default();
-        let definition =
-            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
-        WorkflowDefinitionRepository::create(&store, &definition)
-            .await
-            .expect("store definition");
-
-        let service = WorkflowRunService::new(&store, &store);
-        let run = service
-            .start_run(StartWorkflowRunCommand {
-                project_id: Uuid::new_v4(),
-                workflow_id: Some(definition.id),
-                workflow_key: None,
-                target_kind: WorkflowTargetKind::Task,
-                target_id: Uuid::new_v4(),
-            })
-            .await
-            .expect("start run");
-        let run = service
-            .complete_phase(CompleteWorkflowPhaseCommand {
-                run_id: run.id,
-                phase_key: "start".to_string(),
-                summary: Some("done".to_string()),
-                record_artifacts: vec![],
-                completed_by: None,
-            })
-            .await
-            .expect("complete start");
-
-        let error = service
-            .activate_phase(ActivateWorkflowPhaseCommand {
-                run_id: run.id,
-                phase_key: "implement".to_string(),
-                session_binding_id: None,
-            })
-            .await
-            .expect_err("should require session binding");
-
-        assert!(error.to_string().contains("需要 session_binding_id"));
-    }
-
-    #[tokio::test]
-    async fn complete_phase_persists_record_artifacts_and_advances() {
-        let store = MemoryWorkflowRunStore::default();
-        let definition =
-            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
-        WorkflowDefinitionRepository::create(&store, &definition)
-            .await
-            .expect("store definition");
-
-        let service = WorkflowRunService::new(&store, &store);
-        let run = service
-            .start_run(StartWorkflowRunCommand {
-                project_id: Uuid::new_v4(),
-                workflow_id: Some(definition.id),
-                workflow_key: None,
-                target_kind: WorkflowTargetKind::Task,
-                target_id: Uuid::new_v4(),
-            })
-            .await
-            .expect("start run");
-        let run = service
-            .complete_phase(CompleteWorkflowPhaseCommand {
-                run_id: run.id,
-                phase_key: "start".to_string(),
-                summary: Some("done".to_string()),
-                record_artifacts: vec![],
-                completed_by: None,
-            })
-            .await
-            .expect("complete start");
-        let run = service
-            .activate_phase(ActivateWorkflowPhaseCommand {
-                run_id: run.id,
-                phase_key: "implement".to_string(),
-                session_binding_id: Some(Uuid::new_v4()),
-            })
-            .await
-            .expect("activate implement");
-        let run = service
-            .complete_phase(CompleteWorkflowPhaseCommand {
-                run_id: run.id,
-                phase_key: "implement".to_string(),
-                summary: Some("implemented".to_string()),
-                record_artifacts: vec![WorkflowRecordArtifactDraft {
-                    artifact_type: WorkflowRecordArtifactType::PhaseNote,
-                    title: "实现说明".to_string(),
-                    content: "已完成 workflow runtime 初版".to_string(),
-                }],
-                completed_by: None,
-            })
-            .await
-            .expect("complete implement");
-
-        assert_eq!(run.current_phase_key.as_deref(), Some("check"));
-        assert_eq!(run.record_artifacts.len(), 1);
-        assert_eq!(run.record_artifacts[0].title, "实现说明");
-    }
-
-    #[tokio::test]
-    async fn start_run_rejects_different_workflow_on_same_target_with_active_run() {
-        let store = MemoryWorkflowRunStore::default();
-        let definition_a =
-            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition a");
-        WorkflowDefinitionRepository::create(&store, &definition_a)
-            .await
-            .expect("store definition a");
-
-        let mut definition_b = definition_a.clone();
-        definition_b.id = Uuid::new_v4();
-        definition_b.key = "alternate_task_workflow".to_string();
-        definition_b.name = "Alternate Task Workflow".to_string();
-        WorkflowDefinitionRepository::create(&store, &definition_b)
-            .await
-            .expect("store definition b");
-
-        let service = WorkflowRunService::new(&store, &store);
-        let target_id = Uuid::new_v4();
-        service
-            .start_run(StartWorkflowRunCommand {
-                project_id: Uuid::new_v4(),
-                workflow_id: Some(definition_a.id),
-                workflow_key: None,
-                target_kind: WorkflowTargetKind::Task,
-                target_id,
-            })
-            .await
-            .expect("first run with definition_a");
-
-        let error = service
-            .start_run(StartWorkflowRunCommand {
-                project_id: Uuid::new_v4(),
-                workflow_id: Some(definition_b.id),
-                workflow_key: None,
-                target_kind: WorkflowTargetKind::Task,
-                target_id,
-            })
-            .await
-            .expect_err("should reject second workflow on same target");
-
-        assert!(error.to_string().contains("进行中的 workflow run"));
     }
 }

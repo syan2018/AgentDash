@@ -1,7 +1,7 @@
 {
   "key": "trellis_dev_project",
-  "name": "Trellis Dev Workflow / Project",
-  "description": "把 Trellis 研发流程投射到 Project 级协作，覆盖 Start / Implement / Check / Record 四阶段。",
+  "name": "Trellis Dev Lifecycle / Project",
+  "description": "Project 层面的上下文整理与记录沉淀生命周期。",
   "target_kind": "project",
   "recommended_role": "project_context_maintainer",
   "record_policy": {
@@ -9,101 +9,92 @@
     "emit_journal_update": true,
     "emit_archive_suggestion": false
   },
-  "phases": [
+  "workflows": [
     {
-      "key": "start",
-      "title": "Start",
-      "description": "识别 Project 目标、读取 workflow / spec，并生成初始上下文集。",
-      "agent_instructions": [
-        "当前处于 Start phase，先吸收项目级规则、背景与目标，再推进后续协作。",
-        "如果缺少关键流程文档或约束，应先补充上下文而不是直接假设。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "document_path",
-          "locator": ".trellis/workflow.md",
-          "reason": "workflow 总规则",
-          "required": true,
-          "title": "Workflow 总规则"
+      "key": "trellis_dev_project_start",
+      "name": "Trellis Project / Start",
+      "description": "整理项目级上下文、Agent 配置和共享容器。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Project Start workflow，优先建立项目级基线上下文。",
+            "关注默认 Agent、共享上下文和挂载策略是否可被后续 Story/Task 消费。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "runtime_context",
+              "locator": "project_session_context",
+              "reason": "项目级会话上下文",
+              "required": true,
+              "title": "Project Session Context"
+            }
+          ]
         },
-        {
-          "kind": "document_path",
-          "locator": ".trellis/spec/guides/index.md",
-          "reason": "跨层思考入口",
-          "required": true,
-          "title": "Thinking Guides"
+        "completion": {
+          "default_artifact_type": "phase_note",
+          "default_artifact_title": "项目上下文记录"
         }
-      ],
-      "requires_session": false,
-      "completion_mode": "manual",
-      "default_artifact_type": "phase_note",
-      "default_artifact_title": "阶段记录"
+      }
     },
     {
-      "key": "implement",
-      "title": "Implement",
-      "description": "在 Project 级上下文内推进方案整理、约束确认与任务拆分。",
-      "agent_instructions": [
-        "当前处于 Implement phase，重点是整理共享资料、沉淀决策并为 Story/Task 提供稳定输入。",
-        "优先让项目级上下文更清晰，而不是只回答局部问题。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "runtime_context",
-          "locator": "project_session_context",
-          "reason": "Project 级共享上下文",
-          "required": true,
-          "title": "Project Session Context"
+      "key": "trellis_dev_project_record",
+      "name": "Trellis Project / Record",
+      "description": "输出项目级总结与共享规范沉淀。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Project Record workflow，重点沉淀可被多个 Story/Task 复用的项目级规则。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "journal_target",
+              "locator": "workspace_journal",
+              "reason": "共享记录沉淀位置",
+              "required": false,
+              "title": "Workspace Journal"
+            }
+          ]
+        },
+        "completion": {
+          "default_artifact_type": "session_summary",
+          "default_artifact_title": "项目总结"
         }
-      ],
-      "requires_session": true,
-      "completion_mode": "session_ended",
-      "default_artifact_type": "phase_note",
-      "default_artifact_title": "阶段记录"
-    },
-    {
-      "key": "check",
-      "title": "Check",
-      "description": "复核 Project 级约束、默认流程与上下文编排配置。",
-      "agent_instructions": [
-        "当前处于 Check phase，确认项目级规则、默认流程和上下文编排是否一致且可执行。",
-        "发现不一致时应直接指出具体缺口和影响面。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "checklist",
-          "locator": "project_review_checklist",
-          "reason": "Project 级检查清单",
-          "required": true,
-          "title": "Project Review Checklist"
-        }
-      ],
-      "requires_session": true,
-      "completion_mode": "checklist_passed",
-      "default_artifact_type": "checklist_evidence",
-      "default_artifact_title": "检查证据"
-    },
-    {
-      "key": "record",
-      "title": "Record",
-      "description": "沉淀 Project 级总结与后续建议。",
-      "agent_instructions": [
-        "当前处于 Record phase，沉淀项目级总结、决策记录与下一步建议。",
-        "记录内容应服务于团队共享和下次会话恢复。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "journal_target",
-          "locator": "workspace_journal",
-          "reason": "历史记录沉淀位置",
-          "required": false,
-          "title": "Workspace Journal"
-        }
-      ],
-      "requires_session": false,
-      "completion_mode": "manual",
-      "default_artifact_type": "session_summary",
-      "default_artifact_title": "阶段总结"
+      }
     }
-  ]
+  ],
+  "lifecycle": {
+    "key": "trellis_dev_project",
+    "name": "Trellis Dev Lifecycle / Project",
+    "description": "Project 生命周期编排：Start -> Record。",
+    "entry_step_key": "start",
+    "steps": [
+      {
+        "key": "start",
+        "title": "Start",
+        "description": "建立项目级上下文。",
+        "primary_workflow_key": "trellis_dev_project_start",
+        "session_binding": "not_required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "manual",
+            "next_step_key": "record"
+          }
+        }
+      },
+      {
+        "key": "record",
+        "title": "Record",
+        "description": "输出项目总结。",
+        "primary_workflow_key": "trellis_dev_project_record",
+        "session_binding": "not_required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "manual"
+          }
+        }
+      }
+    ]
+  }
 }

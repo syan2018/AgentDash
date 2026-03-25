@@ -1,7 +1,7 @@
 {
   "key": "trellis_dev_story",
-  "name": "Trellis Dev Workflow / Story",
-  "description": "把 Trellis 研发流程投射到 Story 级协作，覆盖 Start / Implement / Check / Record 四阶段。",
+  "name": "Trellis Dev Lifecycle / Story",
+  "description": "Story 层面的上下文整理、执行对齐与记录沉淀生命周期。",
   "target_kind": "story",
   "recommended_role": "story_lifecycle_companion",
   "record_policy": {
@@ -9,101 +9,148 @@
     "emit_journal_update": true,
     "emit_archive_suggestion": false
   },
-  "phases": [
+  "workflows": [
     {
-      "key": "start",
-      "title": "Start",
-      "description": "识别 Story 目标、读取 PRD / workflow / spec，并生成初始上下文集。",
-      "agent_instructions": [
-        "当前处于 Start phase，先澄清需求、边界和验收标准，再推进拆解或实现。",
-        "如果 PRD 或关键引用不完整，应先补全上下文再继续。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "document_path",
-          "locator": ".trellis/workflow.md",
-          "reason": "workflow 总规则",
-          "required": true,
-          "title": "Workflow 总规则"
+      "key": "trellis_dev_story_start",
+      "name": "Trellis Story / Start",
+      "description": "整理 Story PRD、约束与上下文。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Story Start workflow，优先整理 PRD、背景和执行边界。",
+            "如果 Story 缺少关键规范，应先补全上下文再继续拆解。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "runtime_context",
+              "locator": "story_context_snapshot",
+              "reason": "Story 上下文快照",
+              "required": true,
+              "title": "Story Context Snapshot"
+            },
+            {
+              "kind": "runtime_context",
+              "locator": "story_prd",
+              "reason": "Story PRD",
+              "required": false,
+              "title": "Story PRD"
+            }
+          ]
         },
-        {
-          "kind": "runtime_context",
-          "locator": "story_prd",
-          "reason": "需求目标与验收条件",
-          "required": true,
-          "title": "Story PRD"
+        "completion": {
+          "default_artifact_type": "phase_note",
+          "default_artifact_title": "Story 开始记录"
         }
-      ],
-      "requires_session": false,
-      "completion_mode": "manual",
-      "default_artifact_type": "phase_note",
-      "default_artifact_title": "阶段记录"
+      }
     },
     {
-      "key": "implement",
-      "title": "Implement",
-      "description": "在 Story 级上下文内推进方案梳理、拆解与执行准备。",
-      "agent_instructions": [
-        "当前处于 Implement phase，重点是完善 Story 上下文、拆解任务和准备执行面。",
-        "保持 Story 与后续 Task 的上下文衔接，避免只给出抽象建议。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "runtime_context",
-          "locator": "story_context_snapshot",
-          "reason": "Story 级共享上下文",
-          "required": true,
-          "title": "Story Context Snapshot"
+      "key": "trellis_dev_story_align",
+      "name": "Trellis Story / Align",
+      "description": "对齐 Story 的执行状态与拆解结果。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Story Align workflow，重点检查 Story 的目标、任务拆解和资源准备是否一致。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "checklist",
+              "locator": "story_review_checklist",
+              "reason": "Story 对齐检查清单",
+              "required": true,
+              "title": "Story Review Checklist"
+            }
+          ]
+        },
+        "completion": {
+          "checks": [
+            {
+              "key": "story_alignment_evidence",
+              "kind": "artifact_exists",
+              "description": "需要至少一份 Story 对齐记录",
+              "payload": {
+                "artifact_type": "phase_note"
+              }
+            }
+          ],
+          "default_artifact_type": "phase_note",
+          "default_artifact_title": "Story 对齐记录"
         }
-      ],
-      "requires_session": true,
-      "completion_mode": "session_ended",
-      "default_artifact_type": "phase_note",
-      "default_artifact_title": "阶段记录"
+      }
     },
     {
-      "key": "check",
-      "title": "Check",
-      "description": "复核 Story 级需求、约束与待执行项是否清晰。",
-      "agent_instructions": [
-        "当前处于 Check phase，先确认需求、约束和任务拆解是否足够清晰再推进。",
-        "发现缺口时优先补齐 Story 上下文，而不是直接跳过。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "checklist",
-          "locator": "story_review_checklist",
-          "reason": "Story 级检查清单",
-          "required": true,
-          "title": "Story Review Checklist"
+      "key": "trellis_dev_story_record",
+      "name": "Trellis Story / Record",
+      "description": "沉淀 Story 级记录与交接说明。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Story Record workflow，重点沉淀结构化总结和后续建议。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "journal_target",
+              "locator": "workspace_journal",
+              "reason": "工作区日志",
+              "required": false,
+              "title": "Workspace Journal"
+            }
+          ]
+        },
+        "completion": {
+          "default_artifact_type": "session_summary",
+          "default_artifact_title": "Story 总结"
         }
-      ],
-      "requires_session": true,
-      "completion_mode": "checklist_passed",
-      "default_artifact_type": "checklist_evidence",
-      "default_artifact_title": "检查证据"
-    },
-    {
-      "key": "record",
-      "title": "Record",
-      "description": "沉淀 Story 级总结与后续建议。",
-      "agent_instructions": [
-        "当前处于 Record phase，沉淀 Story 的结论、后续动作和交接说明。",
-        "记录要能帮助后续 Task 或下一次会话快速恢复上下文。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "journal_target",
-          "locator": "workspace_journal",
-          "reason": "历史记录沉淀位置",
-          "required": false,
-          "title": "Workspace Journal"
-        }
-      ],
-      "requires_session": false,
-      "completion_mode": "manual",
-      "default_artifact_type": "session_summary",
-      "default_artifact_title": "阶段总结"
+      }
     }
-  ]
+  ],
+  "lifecycle": {
+    "key": "trellis_dev_story",
+    "name": "Trellis Dev Lifecycle / Story",
+    "description": "Story 生命周期编排：Start -> Align -> Record。",
+    "entry_step_key": "start",
+    "steps": [
+      {
+        "key": "start",
+        "title": "Start",
+        "description": "准备 Story 执行上下文。",
+        "primary_workflow_key": "trellis_dev_story_start",
+        "session_binding": "not_required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "manual",
+            "next_step_key": "align"
+          }
+        }
+      },
+      {
+        "key": "align",
+        "title": "Align",
+        "description": "验证 Story 对齐状态。",
+        "primary_workflow_key": "trellis_dev_story_align",
+        "session_binding": "optional",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "all_checks_pass",
+            "next_step_key": "record"
+          }
+        }
+      },
+      {
+        "key": "record",
+        "title": "Record",
+        "description": "输出 Story 记录。",
+        "primary_workflow_key": "trellis_dev_story_record",
+        "session_binding": "not_required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "manual"
+          }
+        }
+      }
+    ]
+  }
 }

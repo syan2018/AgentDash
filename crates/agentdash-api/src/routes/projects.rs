@@ -656,7 +656,7 @@ async fn clone_workflow_assignments(
 
     for assignment in assignments {
         let mut cloned_assignment =
-            WorkflowAssignment::new(target_project_id, assignment.workflow_id, assignment.role);
+            WorkflowAssignment::new(target_project_id, assignment.lifecycle_id, assignment.role);
         cloned_assignment.enabled = assignment.enabled;
         cloned_assignment.is_default = assignment.is_default;
         state

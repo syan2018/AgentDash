@@ -1,12 +1,12 @@
 import type {
+  LifecycleTransitionPolicyKind,
   WorkflowAgentRole,
   WorkflowContextBindingKind,
   WorkflowDefinitionSource,
   WorkflowDefinitionStatus,
-  WorkflowPhaseCompletionMode,
-  WorkflowPhaseExecutionStatus,
   WorkflowRecordArtifactType,
   WorkflowRunStatus,
+  WorkflowStepExecutionStatus,
   WorkflowTargetKind,
 } from "../../types";
 
@@ -38,10 +38,12 @@ export const DEFAULT_ROLE_BY_TARGET: Record<WorkflowTargetKind, WorkflowAgentRol
   task: "task_execution_worker",
 };
 
-export const COMPLETION_MODE_LABEL: Record<WorkflowPhaseCompletionMode, string> = {
-  manual: "手动完成",
-  session_ended: "会话结束后完成",
-  checklist_passed: "检查通过后完成",
+export const TRANSITION_POLICY_LABEL: Record<LifecycleTransitionPolicyKind, string> = {
+  manual: "手动推进",
+  all_checks_pass: "全部检查通过后推进",
+  any_checks_pass: "任一检查通过后推进",
+  session_terminal_matches: "会话进入终态后推进",
+  explicit_action: "收到显式动作后推进",
 };
 
 export const BINDING_KIND_LABEL: Record<WorkflowContextBindingKind, string> = {
@@ -50,6 +52,7 @@ export const BINDING_KIND_LABEL: Record<WorkflowContextBindingKind, string> = {
   checklist: "检查清单",
   journal_target: "记录目标",
   action_ref: "动作引用",
+  artifact_ref: "产物引用",
 };
 
 export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
@@ -62,7 +65,7 @@ export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
   cancelled: "已取消",
 };
 
-export const PHASE_STATUS_LABEL: Record<WorkflowPhaseExecutionStatus, string> = {
+export const STEP_STATUS_LABEL: Record<WorkflowStepExecutionStatus, string> = {
   pending: "待执行",
   ready: "就绪",
   running: "运行中",

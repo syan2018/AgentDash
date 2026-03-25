@@ -83,7 +83,7 @@ fn hook_event_severity(entry: &HookTraceEntry) -> &'static str {
     ) {
         return "warning";
     }
-    if matches!(entry.decision.as_str(), "phase_advanced") {
+    if matches!(entry.decision.as_str(), "step_advanced") {
         return "success";
     }
     "info"
@@ -120,6 +120,12 @@ fn hook_trigger_key(trigger: &HookTrigger) -> &'static str {
 
 fn describe_hook_trace(entry: &HookTraceEntry) -> String {
     match (&entry.trigger, entry.decision.as_str()) {
+        (HookTrigger::SessionStart, "baseline_initialized") => {
+            "Hook 已完成当前会话的 baseline 初始化".to_string()
+        }
+        (HookTrigger::SessionStart, "baseline_refreshed") => {
+            "Hook 在会话启动阶段请求并完成了 baseline 刷新".to_string()
+        }
         (HookTrigger::UserPromptSubmit, "context_injected") => {
             "Hook 已为当前输入注入动态上下文".to_string()
         }
@@ -144,8 +150,8 @@ fn describe_hook_trace(entry: &HookTraceEntry) -> String {
             }
         }
         (HookTrigger::BeforeStop, "stop") => "Hook 允许当前会话自然结束".to_string(),
-        (HookTrigger::SessionTerminal, "phase_advanced") => {
-            "Hook 在会话结束后推进了 workflow phase".to_string()
+        (HookTrigger::SessionTerminal, "step_advanced") => {
+            "Hook 在会话结束后推进了 workflow step".to_string()
         }
         (HookTrigger::SessionTerminal, "terminal_observed") => {
             "Hook 已记录当前会话终态".to_string()

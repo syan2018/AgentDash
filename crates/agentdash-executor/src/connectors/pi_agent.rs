@@ -311,62 +311,15 @@ fn describe_mount(mount: &ExecutionMount) -> String {
 }
 
 fn build_hook_runtime_sections(hook_session: &crate::hooks::HookSessionRuntime) -> Vec<String> {
-    let snapshot = hook_session.snapshot();
-    let mut sections = Vec::new();
+    let mut sections = vec![
+        "当前会话启用了 Hook Runtime。active workflow、流程约束、stop gate 与 pending action 等动态治理信息，会在每次 LLM 调用边界由 runtime 注入；这里不再重复展开它们的静态副本。".to_string(),
+    ];
 
-    if !snapshot.owners.is_empty() {
-        let owner_lines = snapshot
-            .owners
-            .iter()
-            .map(|owner| {
-                let label = owner.label.as_deref().unwrap_or(owner.owner_id.as_str());
-                format!("- {}: {}", owner.owner_type, label)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("当前会话 Hook 归属如下：\n{}", owner_lines));
-    }
-
-    if !snapshot.tags.is_empty() {
-        sections.push(format!("当前 Hook tags：{}", snapshot.tags.join("、")));
-    }
-
-    if !snapshot.constraints.is_empty() {
+    let pending_actions = hook_session.pending_actions();
+    if !pending_actions.is_empty() {
         sections.push(format!(
-            "当前存在 {} 条运行时流程约束，详细内容会由 Hook Runtime 在每次 LLM 调用前动态注入。",
-            snapshot.constraints.len()
-        ));
-    }
-
-    let diagnostics = hook_session.diagnostics();
-    if !diagnostics.is_empty() {
-        sections.push(format!(
-            "当前已记录 {} 条 Hook 诊断信息，前端可进一步查看细节。",
-            diagnostics.len()
-        ));
-    }
-
-    if !snapshot.context_fragments.is_empty() {
-        sections.push(format!(
-            "当前存在 {} 个可动态注入的 Hook context fragment。",
-            snapshot.context_fragments.len()
-        ));
-    }
-
-    sections.push(format!(
-        "Hook runtime revision: {}",
-        hook_session.revision()
-    ));
-
-    if !snapshot.constraints.is_empty() {
-        sections.push(format!(
-            "## Hook Constraint Summary\n{}",
-            snapshot
-                .constraints
-                .iter()
-                .map(|constraint| format!("- {}", constraint.description))
-                .collect::<Vec<_>>()
-                .join("\n")
+            "当前已有 {} 条待处理 hook action；请在后续动态注入消息中优先处理它们。",
+            pending_actions.len()
         ));
     }
 

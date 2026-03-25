@@ -1,36 +1,41 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  LifecycleDefinition,
+  LifecycleStepDefinition,
   SessionBindingOwner,
   Task,
   WorkflowAssignment,
   WorkflowDefinition,
-  WorkflowPhaseDefinition,
-  WorkflowPhaseState,
   WorkflowRecordArtifactType,
   WorkflowRun,
+  WorkflowStepState,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { fetchSessionBindings } from "../../services/session";
 import {
   BINDING_KIND_LABEL,
-  COMPLETION_MODE_LABEL,
-  PHASE_STATUS_LABEL,
   RUN_STATUS_LABEL,
+  STEP_STATUS_LABEL,
+  TRANSITION_POLICY_LABEL,
 } from "./shared-labels";
 
 const EMPTY_ASSIGNMENTS: WorkflowAssignment[] = [];
 const EMPTY_RUNS: WorkflowRun[] = [];
 
-function findDefinition(definitions: WorkflowDefinition[], workflowId: string): WorkflowDefinition | null {
-  return definitions.find((item) => item.id === workflowId) ?? null;
+function findLifecycle(lifecycles: LifecycleDefinition[], lifecycleId: string): LifecycleDefinition | null {
+  return lifecycles.find((item) => item.id === lifecycleId) ?? null;
 }
 
-function phaseTitle(definition: WorkflowDefinition | null, phaseKey: string): string {
-  return definition?.phases.find((item) => item.key === phaseKey)?.title ?? phaseKey;
+function findWorkflowByKey(definitions: WorkflowDefinition[], workflowKey: string): WorkflowDefinition | null {
+  return definitions.find((item) => item.key === workflowKey) ?? null;
 }
 
-function phaseBadgeClass(status: WorkflowPhaseState["status"]) {
+function stepTitle(lifecycle: LifecycleDefinition | null, stepKey: string): string {
+  return lifecycle?.steps.find((item) => item.key === stepKey)?.title ?? stepKey;
+}
+
+function stepBadgeClass(status: WorkflowStepState["status"]) {
   switch (status) {
     case "completed":
       return "border-emerald-300/40 bg-emerald-500/10 text-emerald-700";
@@ -46,8 +51,8 @@ function phaseBadgeClass(status: WorkflowPhaseState["status"]) {
 }
 
 function buildCompletionArtifacts(
-  phase: WorkflowPhaseDefinition | null,
-  phaseKey: string,
+  workflow: WorkflowDefinition | null,
+  stepKey: string,
   summary: string,
 ): Array<{
   artifact_type: WorkflowRecordArtifactType;
@@ -56,8 +61,9 @@ function buildCompletionArtifacts(
 }> {
   const trimmed = summary.trim();
   if (!trimmed) return [];
-  const artifactType = phase?.default_artifact_type ?? "phase_note";
-  const artifactTitle = phase?.default_artifact_title?.trim() || `${phaseKey} 阶段记录`;
+  const artifactType = workflow?.contract.completion.default_artifact_type ?? "phase_note";
+  const artifactTitle =
+    workflow?.contract.completion.default_artifact_title?.trim() || `${stepKey} 阶段记录`;
 
   return [
     {
@@ -69,19 +75,17 @@ function buildCompletionArtifacts(
 }
 
 function selectPreferredRun(runs: WorkflowRun[]): WorkflowRun | null {
-  return (
-    runs.find((run) => run.status === "running")
+  return runs.find((run) => run.status === "running")
     ?? runs.find((run) => run.status === "ready")
     ?? runs[0]
-    ?? null
-  );
+    ?? null;
 }
 
 function AgentInstructionsCollapsible({
-  phaseKey,
+  stepKey,
   instructions,
 }: {
-  phaseKey: string;
+  stepKey: string;
   instructions: string[];
 }) {
   const [open, setOpen] = useState(false);
@@ -89,16 +93,16 @@ function AgentInstructionsCollapsible({
     <div className="mt-3">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((value) => !value)}
         className="text-xs text-muted-foreground/60 transition-colors hover:text-muted-foreground"
       >
-        {open ? "▲ 收起 Agent 约束" : `▶ ${instructions.length} 条 Agent 约束`}
+        {open ? "▲ 收起 Workflow 注入指令" : `▶ ${instructions.length} 条 Workflow 注入指令`}
       </button>
       {open && (
         <div className="mt-1.5 rounded-[10px] border border-border bg-secondary/20 p-3">
           <div className="space-y-1 text-xs leading-5 text-foreground/60">
             {instructions.map((instruction, index) => (
-              <p key={`${phaseKey}-instruction-${index}`}>- {instruction}</p>
+              <p key={`${stepKey}-instruction-${index}`}>- {instruction}</p>
             ))}
           </div>
         </div>
@@ -114,6 +118,16 @@ function selectExecutionAssignment(assignments: WorkflowAssignment[]): WorkflowA
   return executionAssignments.find((item) => item.is_default) ?? executionAssignments[0] ?? null;
 }
 
+function stepRequiresSession(
+  step: LifecycleStepDefinition | null,
+  workflow: WorkflowDefinition | null,
+): boolean {
+  return (
+    step?.session_binding === "required"
+    || workflow?.contract.injection.session_binding === "required"
+  );
+}
+
 export function TaskWorkflowPanel({
   task,
   projectId,
@@ -122,6 +136,7 @@ export function TaskWorkflowPanel({
   projectId: string;
 }) {
   const definitions = useWorkflowStore((state) => state.definitions);
+  const lifecycleDefinitions = useWorkflowStore((state) => state.lifecycleDefinitions);
   const assignments = useWorkflowStore(
     (state) => state.assignmentsByProjectId[projectId] ?? EMPTY_ASSIGNMENTS,
   );
@@ -131,22 +146,24 @@ export function TaskWorkflowPanel({
   const isLoading = useWorkflowStore((state) => state.isLoading);
   const error = useWorkflowStore((state) => state.error);
   const fetchDefinitions = useWorkflowStore((state) => state.fetchDefinitions);
+  const fetchLifecycles = useWorkflowStore((state) => state.fetchLifecycles);
   const fetchProjectAssignments = useWorkflowStore((state) => state.fetchProjectAssignments);
   const fetchRunsByTarget = useWorkflowStore((state) => state.fetchRunsByTarget);
   const startRun = useWorkflowStore((state) => state.startRun);
-  const activatePhase = useWorkflowStore((state) => state.activatePhase);
-  const completePhase = useWorkflowStore((state) => state.completePhase);
+  const activateStep = useWorkflowStore((state) => state.activateStep);
+  const completeStep = useWorkflowStore((state) => state.completeStep);
 
   const [message, setMessage] = useState<string | null>(null);
-  const [phaseSummary, setPhaseSummary] = useState("");
+  const [stepSummary, setStepSummary] = useState("");
   const [taskSessionBinding, setTaskSessionBinding] = useState<SessionBindingOwner | null>(null);
   const [isResolvingBinding, setIsResolvingBinding] = useState(false);
 
   useEffect(() => {
     void fetchDefinitions("task");
+    void fetchLifecycles("task");
     void fetchProjectAssignments(projectId);
     void fetchRunsByTarget("task", task.id);
-  }, [fetchDefinitions, fetchProjectAssignments, fetchRunsByTarget, projectId, task.id, task.status, task.session_id]);
+  }, [fetchDefinitions, fetchLifecycles, fetchProjectAssignments, fetchRunsByTarget, projectId, task.id, task.status, task.session_id]);
 
   useEffect(() => {
     if (!task.session_id) {
@@ -182,76 +199,84 @@ export function TaskWorkflowPanel({
 
   const activeAssignment = useMemo(() => selectExecutionAssignment(assignments), [assignments]);
   const activeRun = useMemo(() => selectPreferredRun(runs), [runs]);
-  const activeDefinition = useMemo(
-    () => (activeRun ? findDefinition(definitions, activeRun.workflow_id) : null),
-    [activeRun, definitions],
+  const activeLifecycle = useMemo(
+    () => (activeRun ? findLifecycle(lifecycleDefinitions, activeRun.lifecycle_id) : null),
+    [activeRun, lifecycleDefinitions],
   );
-  const currentPhaseState = useMemo(
+  const currentStepState = useMemo(
     () =>
-      activeRun?.current_phase_key
-        ? activeRun.phase_states.find((item) => item.phase_key === activeRun.current_phase_key) ?? null
+      activeRun?.current_step_key
+        ? activeRun.step_states.find((item) => item.step_key === activeRun.current_step_key) ?? null
         : null,
     [activeRun],
   );
-  const currentPhaseDefinition = useMemo(
+  const currentStepDefinition = useMemo(
     () =>
-      activeDefinition?.phases.find((item) => item.key === activeRun?.current_phase_key) ?? null,
-    [activeDefinition, activeRun?.current_phase_key],
+      activeLifecycle?.steps.find((item) => item.key === activeRun?.current_step_key) ?? null,
+    [activeLifecycle, activeRun?.current_step_key],
   );
+  const currentWorkflowDefinition = useMemo(
+    () =>
+      currentStepDefinition
+        ? findWorkflowByKey(definitions, currentStepDefinition.primary_workflow_key)
+        : null,
+    [currentStepDefinition, definitions],
+  );
+  const requiresSession = stepRequiresSession(currentStepDefinition, currentWorkflowDefinition);
 
   const handleStartRun = async () => {
     if (!activeAssignment) {
-      setMessage("当前 Project 尚未配置默认 Task workflow，请先在项目详情里绑定。");
+      setMessage("当前 Project 尚未配置默认 Task lifecycle，请先在项目详情里绑定。");
       return;
     }
 
     setMessage(null);
     const run = await startRun({
-      workflow_id: activeAssignment.workflow_id,
+      lifecycle_id: activeAssignment.lifecycle_id,
       target_kind: "task",
       target_id: task.id,
     });
     if (run) {
-      setPhaseSummary("");
-      setMessage("已启动 Task workflow run");
+      setStepSummary("");
+      setMessage("已启动 Task lifecycle run");
     }
   };
 
-  const handleActivatePhase = async () => {
-    if (!activeRun?.current_phase_key) return;
-    if (currentPhaseDefinition?.requires_session && !taskSessionBinding?.id) {
-      setMessage("当前阶段需要 Task Session 绑定，请先启动 Task 会话。");
+  const handleActivateStep = async () => {
+    if (!activeRun?.current_step_key) return;
+    if (requiresSession && !taskSessionBinding?.id) {
+      setMessage("当前步骤需要 Task Session 绑定，请先启动 Task 会话。");
       return;
     }
 
     setMessage(null);
-    const run = await activatePhase({
+    const run = await activateStep({
       run_id: activeRun.id,
-      phase_key: activeRun.current_phase_key,
-      session_binding_id: currentPhaseDefinition?.requires_session ? taskSessionBinding?.id ?? undefined : undefined,
+      step_key: activeRun.current_step_key,
+      session_binding_id: requiresSession ? taskSessionBinding?.id ?? undefined : undefined,
     });
     if (run) {
-      setMessage(`已激活 ${phaseTitle(activeDefinition, activeRun.current_phase_key)}`);
+      setMessage(`已激活 ${stepTitle(activeLifecycle, activeRun.current_step_key)}`);
     }
   };
 
-  const handleCompletePhase = async () => {
-    if (!activeRun?.current_phase_key) return;
-    const summary = phaseSummary.trim() || `完成 ${phaseTitle(activeDefinition, activeRun.current_phase_key)}`;
+  const handleCompleteStep = async () => {
+    if (!activeRun?.current_step_key) return;
+    const summary = stepSummary.trim() || `完成 ${stepTitle(activeLifecycle, activeRun.current_step_key)}`;
     setMessage(null);
-    const run = await completePhase({
+    const run = await completeStep({
       run_id: activeRun.id,
-      phase_key: activeRun.current_phase_key,
+      step_key: activeRun.current_step_key,
       summary,
       record_artifacts: buildCompletionArtifacts(
-        currentPhaseDefinition,
-        activeRun.current_phase_key,
+        currentWorkflowDefinition,
+        activeRun.current_step_key,
         summary,
       ),
     });
     if (run) {
-      setPhaseSummary("");
-      setMessage("当前阶段已完成");
+      setStepSummary("");
+      setMessage("当前步骤已完成");
     }
   };
 
@@ -260,9 +285,9 @@ export function TaskWorkflowPanel({
       <div className="rounded-[12px] border border-border bg-secondary/20 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-foreground">Workflow Run</p>
+            <p className="text-sm font-medium text-foreground">Lifecycle Run</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              按步骤推进任务执行流程，追踪各阶段进展。
+              按 lifecycle step 推进任务执行流程，并在每个 step 内挂接对应的 workflow 定义。
             </p>
           </div>
           <button
@@ -271,18 +296,18 @@ export function TaskWorkflowPanel({
             disabled={isLoading || Boolean(activeRun)}
             className="agentdash-button-primary"
           >
-            {activeRun ? "已有运行中的 Workflow" : "启动 Task Workflow"}
+            {activeRun ? "已有运行中的 Lifecycle" : "启动 Task Lifecycle"}
           </button>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
           {activeAssignment ? (
             <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary">
-              默认流程已绑定
+              默认生命周期已绑定
             </span>
           ) : (
             <span className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-700">
-              Project 尚未配置默认 Task workflow
+              Project 尚未配置默认 Task lifecycle
             </span>
           )}
           {task.session_id ? (
@@ -311,47 +336,47 @@ export function TaskWorkflowPanel({
 
       {!activeRun ? (
         <div className="rounded-[12px] border border-dashed border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
-          当前 Task 还没有 workflow run。
+          当前 Task 还没有 lifecycle run。
         </div>
       ) : (
         <>
           <div className="rounded-[12px] border border-border bg-background p-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                {activeDefinition?.name ?? activeRun.workflow_id}
+                {activeLifecycle?.name ?? activeRun.lifecycle_id}
               </span>
               <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
                 {RUN_STATUS_LABEL[activeRun.status] ?? activeRun.status}
               </span>
-              {activeRun.current_phase_key && (
+              {activeRun.current_step_key && (
                 <span className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700">
-                  当前阶段: {phaseTitle(activeDefinition, activeRun.current_phase_key)}
+                  当前步骤: {stepTitle(activeLifecycle, activeRun.current_step_key)}
                 </span>
               )}
             </div>
 
             <div className="mt-4 grid gap-2">
-              {activeRun.phase_states.map((phase) => (
+              {activeRun.step_states.map((step) => (
                 <div
-                  key={phase.phase_key}
+                  key={step.step_key}
                   className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border bg-secondary/15 px-3 py-2"
                 >
                   <div>
                     <p className="text-sm font-medium text-foreground">
-                      {phaseTitle(activeDefinition, phase.phase_key)}
+                      {stepTitle(activeLifecycle, step.step_key)}
                     </p>
-                    {phase.summary && (
-                      <p className="mt-1 text-xs text-muted-foreground">{phase.summary}</p>
+                    {step.summary && (
+                      <p className="mt-1 text-xs text-muted-foreground">{step.summary}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    {phase.session_binding_id && (
+                    {step.session_binding_id && (
                       <span className="rounded-full border border-cyan-300/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-700">
                         session 已挂接
                       </span>
                     )}
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${phaseBadgeClass(phase.status)}`}>
-                      {PHASE_STATUS_LABEL[phase.status] ?? phase.status}
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${stepBadgeClass(step.status)}`}>
+                      {STEP_STATUS_LABEL[step.status] ?? step.status}
                     </span>
                   </div>
                 </div>
@@ -359,20 +384,23 @@ export function TaskWorkflowPanel({
             </div>
           </div>
 
-          {currentPhaseState && activeRun.current_phase_key && (
+          {currentStepState && activeRun.current_step_key && (
             <div className="rounded-[12px] border border-border bg-background p-4">
               <p className="text-sm font-medium text-foreground">
-                推进当前阶段: {phaseTitle(activeDefinition, activeRun.current_phase_key)}
+                推进当前步骤: {stepTitle(activeLifecycle, activeRun.current_step_key)}
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {currentPhaseDefinition?.description ?? "当前阶段暂无说明"}
+                {currentStepDefinition?.description ?? "当前步骤暂无说明"}
               </p>
-              {currentPhaseDefinition && (
+              {currentStepDefinition && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                    完成方式: {COMPLETION_MODE_LABEL[currentPhaseDefinition.completion_mode]}
+                    推进策略: {TRANSITION_POLICY_LABEL[currentStepDefinition.transition_policy]}
                   </span>
-                  {currentPhaseDefinition.context_bindings.map((binding, index) => (
+                  <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                    主 Workflow: {currentStepDefinition.primary_workflow_key}
+                  </span>
+                  {currentWorkflowDefinition?.contract.injection.context_bindings.map((binding, index) => (
                     <span
                       key={`${binding.locator}-${index}`}
                       className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground"
@@ -383,55 +411,55 @@ export function TaskWorkflowPanel({
                   ))}
                 </div>
               )}
-              {currentPhaseDefinition?.agent_instructions.length ? (
+              {currentWorkflowDefinition?.contract.injection.instructions.length ? (
                 <AgentInstructionsCollapsible
-                  phaseKey={currentPhaseDefinition.key}
-                  instructions={currentPhaseDefinition.agent_instructions}
+                  stepKey={currentStepDefinition?.key ?? activeRun.current_step_key}
+                  instructions={currentWorkflowDefinition.contract.injection.instructions}
                 />
               ) : null}
-              {currentPhaseDefinition?.requires_session && !task.session_id && (
+              {requiresSession && !task.session_id && (
                 <p className="mt-2 text-xs text-amber-700">
-                  该阶段要求先有 Task Session。请先在上方“Agent 执行会话”里启动任务执行。
+                  该步骤要求先有 Task Session。请先在上方“Agent 执行会话”里启动任务执行。
                 </p>
               )}
-              {currentPhaseDefinition?.requires_session && task.session_id && !taskSessionBinding && !isResolvingBinding && (
+              {requiresSession && task.session_id && !taskSessionBinding && !isResolvingBinding && (
                 <p className="mt-2 text-xs text-amber-700">
                   已检测到 Task Session，但还没有解析到对应的 SessionBinding。
                 </p>
               )}
 
               <textarea
-                value={phaseSummary}
-                onChange={(event) => setPhaseSummary(event.target.value)}
+                value={stepSummary}
+                onChange={(event) => setStepSummary(event.target.value)}
                 rows={3}
-                placeholder="填写当前阶段总结；留空时会自动生成默认总结。"
+                placeholder="填写当前步骤总结；留空时会自动生成默认总结。"
                 className="agentdash-form-textarea mt-3"
               />
 
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void handleActivatePhase()}
+                  onClick={() => void handleActivateStep()}
                   disabled={
                     isLoading
-                    || currentPhaseState.status !== "ready"
-                    || Boolean(currentPhaseDefinition?.requires_session && !taskSessionBinding)
+                    || currentStepState.status !== "ready"
+                    || Boolean(requiresSession && !taskSessionBinding)
                   }
                   className="agentdash-button-secondary"
                 >
-                  激活当前阶段
+                  激活当前步骤
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleCompletePhase()}
+                  onClick={() => void handleCompleteStep()}
                   disabled={
                     isLoading
-                    || !["ready", "running"].includes(currentPhaseState.status)
-                    || Boolean(currentPhaseDefinition?.requires_session && !taskSessionBinding)
+                    || !["ready", "running"].includes(currentStepState.status)
+                    || Boolean(requiresSession && !taskSessionBinding)
                   }
                   className="agentdash-button-primary"
                 >
-                  完成当前阶段
+                  完成当前步骤
                 </button>
               </div>
             </div>
@@ -448,7 +476,7 @@ export function TaskWorkflowPanel({
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
-                        {artifact.phase_key || "unknown_phase"}
+                        {artifact.step_key || "unknown_step"}
                       </span>
                       <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
                         {artifact.artifact_type}

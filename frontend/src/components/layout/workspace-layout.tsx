@@ -52,6 +52,7 @@ export function WorkspaceLayout() {
   const storyRouteMatch = useMatch("/story/:storyId");
   const workflowDashboardMatch = useMatch("/dashboard/workflow");
   const workflowEditorMatch = useMatch("/workflow-editor/:definitionId");
+  const lifecycleEditorMatch = useMatch("/lifecycle-editor/:definitionId");
 
   const isAgentActive =
     !!agentDashboardMatch ||
@@ -61,7 +62,8 @@ export function WorkspaceLayout() {
     !!storyRouteMatch;       // Story 详情页从 Story Tab 进入，高亮 Story
   const isWorkflowActive =
     !!workflowDashboardMatch ||
-    !!workflowEditorMatch;   // Workflow 编辑器页也高亮 Workflow Tab
+    !!workflowEditorMatch ||
+    !!lifecycleEditorMatch;  // Workflow / Lifecycle 编辑器页也高亮 Workflow Tab
 
   const agentNavTarget = useMemo(() => {
     if (!isSettingsRoute) return "/dashboard/agent";
@@ -90,6 +92,7 @@ export function WorkspaceLayout() {
     if (
       rememberedPath.startsWith("/dashboard/workflow")
       || rememberedPath.startsWith("/workflow-editor/")
+      || rememberedPath.startsWith("/lifecycle-editor/")
     ) {
       return rememberedPath;
     }
@@ -158,7 +161,7 @@ export function WorkspaceLayout() {
                   }`
                 }
               >
-                Workflow
+                工作流系统
               </NavLink>
             </div>
           </div>

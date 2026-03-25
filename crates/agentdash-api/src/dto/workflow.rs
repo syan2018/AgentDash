@@ -1,15 +1,20 @@
-use agentdash_application::workflow::BuiltinWorkflowTemplate;
+use agentdash_application::workflow::{
+    BuiltinLifecycleTemplate, BuiltinWorkflowTemplate, BuiltinWorkflowTemplateBundle,
+};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ValidationIssue, WorkflowAgentRole, WorkflowAssignment, WorkflowContextBinding,
-    WorkflowContextBindingKind, WorkflowDefinition, WorkflowDefinitionSource,
-    WorkflowDefinitionStatus, WorkflowPhaseCompletionMode, WorkflowPhaseDefinition,
-    WorkflowPhaseExecutionStatus, WorkflowPhaseState, WorkflowRecordArtifact,
-    WorkflowRecordArtifactType, WorkflowRecordPolicy, WorkflowRun, WorkflowRunStatus,
-    WorkflowTargetKind,
+    LifecycleDefinition, LifecycleRun, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowAgentRole,
+    WorkflowAssignment, WorkflowAttachmentLifetime, WorkflowAttachmentMode, WorkflowAttachmentSpec,
+    WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
+    WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind, WorkflowContract,
+    WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookPolicySpec,
+    WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType,
+    WorkflowRecordPolicy, WorkflowRuntimeAttachment, WorkflowSessionBinding,
+    WorkflowSessionTerminalState, WorkflowTargetKind,
 };
 
 #[derive(Debug, Serialize)]
@@ -23,13 +28,29 @@ pub struct WorkflowDefinitionResponse {
     pub source: WorkflowDefinitionSource,
     pub status: WorkflowDefinitionStatus,
     pub version: i32,
-    pub phases: Vec<WorkflowPhaseDefinitionResponse>,
+    pub contract: WorkflowContractResponse,
     pub record_policy: WorkflowRecordPolicy,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-/// 校验结果 DTO。
+#[derive(Debug, Serialize)]
+pub struct LifecycleDefinitionResponse {
+    pub id: Uuid,
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub target_kind: WorkflowTargetKind,
+    pub recommended_role: Option<WorkflowAgentRole>,
+    pub source: WorkflowDefinitionSource,
+    pub status: WorkflowDefinitionStatus,
+    pub version: i32,
+    pub entry_step_key: String,
+    pub steps: Vec<LifecycleStepDefinitionResponse>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WorkflowValidationResponse {
     pub valid: bool,
@@ -43,21 +64,41 @@ pub struct WorkflowTemplateResponse {
     pub description: String,
     pub target_kind: WorkflowTargetKind,
     pub recommended_role: WorkflowAgentRole,
-    pub phases: Vec<WorkflowPhaseDefinitionResponse>,
+    pub workflows: Vec<BuiltinWorkflowTemplateResponse>,
+    pub lifecycle: BuiltinLifecycleTemplateResponse,
     pub record_policy: WorkflowRecordPolicy,
 }
 
 #[derive(Debug, Serialize)]
-pub struct WorkflowPhaseDefinitionResponse {
+pub struct BuiltinWorkflowTemplateResponse {
     pub key: String,
-    pub title: String,
+    pub name: String,
     pub description: String,
-    pub agent_instructions: Vec<String>,
+    pub contract: WorkflowContractResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BuiltinLifecycleTemplateResponse {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub entry_step_key: String,
+    pub steps: Vec<LifecycleStepDefinitionResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowContractResponse {
+    pub injection: WorkflowInjectionResponse,
+    pub hook_policy: WorkflowHookPolicyResponse,
+    pub completion: WorkflowCompletionResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowInjectionResponse {
+    pub goal: Option<String>,
+    pub instructions: Vec<String>,
     pub context_bindings: Vec<WorkflowContextBindingResponse>,
-    pub requires_session: bool,
-    pub completion_mode: WorkflowPhaseCompletionMode,
-    pub default_artifact_type: Option<WorkflowRecordArtifactType>,
-    pub default_artifact_title: Option<String>,
+    pub session_binding: WorkflowSessionBinding,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,10 +111,61 @@ pub struct WorkflowContextBindingResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkflowConstraintResponse {
+    pub key: String,
+    pub kind: WorkflowConstraintKind,
+    pub description: String,
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowCheckResponse {
+    pub key: String,
+    pub kind: WorkflowCheckKind,
+    pub description: String,
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowHookPolicyResponse {
+    pub constraints: Vec<WorkflowConstraintResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowCompletionResponse {
+    pub checks: Vec<WorkflowCheckResponse>,
+    pub default_artifact_type: Option<WorkflowRecordArtifactType>,
+    pub default_artifact_title: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LifecycleStepDefinitionResponse {
+    pub key: String,
+    pub title: String,
+    pub description: String,
+    pub primary_workflow_key: String,
+    pub session_binding: WorkflowSessionBinding,
+    pub attached_workflows: Vec<WorkflowAttachmentResponse>,
+    pub transition_policy: String,
+    pub next_step_key: Option<String>,
+    pub session_terminal_states: Vec<WorkflowSessionTerminalState>,
+    pub action_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowAttachmentResponse {
+    pub workflow_key: String,
+    pub mode: WorkflowAttachmentMode,
+    pub lifetime: WorkflowAttachmentLifetime,
+    pub priority: i32,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkflowAssignmentResponse {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub workflow_id: Uuid,
+    pub lifecycle_id: Uuid,
     pub role: WorkflowAgentRole,
     pub enabled: bool,
     pub is_default: bool,
@@ -85,12 +177,13 @@ pub struct WorkflowAssignmentResponse {
 pub struct WorkflowRunResponse {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub workflow_id: Uuid,
+    pub lifecycle_id: Uuid,
     pub target_kind: WorkflowTargetKind,
     pub target_id: Uuid,
-    pub status: WorkflowRunStatus,
-    pub current_phase_key: Option<String>,
-    pub phase_states: Vec<WorkflowPhaseStateResponse>,
+    pub status: LifecycleRunStatus,
+    pub current_step_key: Option<String>,
+    pub step_states: Vec<LifecycleStepStateResponse>,
+    pub runtime_attachments: Vec<WorkflowRuntimeAttachmentResponse>,
     pub record_artifacts: Vec<WorkflowRecordArtifactResponse>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -98,9 +191,9 @@ pub struct WorkflowRunResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct WorkflowPhaseStateResponse {
-    pub phase_key: String,
-    pub status: WorkflowPhaseExecutionStatus,
+pub struct LifecycleStepStateResponse {
+    pub step_key: String,
+    pub status: LifecycleStepExecutionStatus,
     pub session_binding_id: Option<Uuid>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -108,9 +201,20 @@ pub struct WorkflowPhaseStateResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkflowRuntimeAttachmentResponse {
+    pub id: Uuid,
+    pub workflow_key: String,
+    pub mode: WorkflowAttachmentMode,
+    pub lifetime: WorkflowAttachmentLifetime,
+    pub priority: i32,
+    pub reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkflowRecordArtifactResponse {
     pub id: Uuid,
-    pub phase_key: String,
+    pub step_key: String,
     pub artifact_type: WorkflowRecordArtifactType,
     pub title: String,
     pub content: String,
@@ -129,7 +233,7 @@ impl From<WorkflowDefinition> for WorkflowDefinitionResponse {
             source: value.source,
             status: value.status,
             version: value.version,
-            phases: value.phases.into_iter().map(Into::into).collect(),
+            contract: value.contract.into(),
             record_policy: value.record_policy,
             created_at: value.created_at,
             updated_at: value.updated_at,
@@ -137,32 +241,81 @@ impl From<WorkflowDefinition> for WorkflowDefinitionResponse {
     }
 }
 
-impl From<BuiltinWorkflowTemplate> for WorkflowTemplateResponse {
-    fn from(value: BuiltinWorkflowTemplate) -> Self {
+impl From<LifecycleDefinition> for LifecycleDefinitionResponse {
+    fn from(value: LifecycleDefinition) -> Self {
+        Self {
+            id: value.id,
+            key: value.key,
+            name: value.name,
+            description: value.description,
+            target_kind: value.target_kind,
+            recommended_role: value.recommended_role,
+            source: value.source,
+            status: value.status,
+            version: value.version,
+            entry_step_key: value.entry_step_key,
+            steps: value.steps.into_iter().map(Into::into).collect(),
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<BuiltinWorkflowTemplateBundle> for WorkflowTemplateResponse {
+    fn from(value: BuiltinWorkflowTemplateBundle) -> Self {
         Self {
             key: value.key,
             name: value.name,
             description: value.description,
             target_kind: value.target_kind,
             recommended_role: value.recommended_role,
-            phases: value.phases.into_iter().map(Into::into).collect(),
+            workflows: value.workflows.into_iter().map(Into::into).collect(),
+            lifecycle: value.lifecycle.into(),
             record_policy: value.record_policy,
         }
     }
 }
 
-impl From<WorkflowPhaseDefinition> for WorkflowPhaseDefinitionResponse {
-    fn from(value: WorkflowPhaseDefinition) -> Self {
+impl From<BuiltinWorkflowTemplate> for BuiltinWorkflowTemplateResponse {
+    fn from(value: BuiltinWorkflowTemplate) -> Self {
         Self {
             key: value.key,
-            title: value.title,
+            name: value.name,
             description: value.description,
-            agent_instructions: value.agent_instructions,
+            contract: value.contract.into(),
+        }
+    }
+}
+
+impl From<BuiltinLifecycleTemplate> for BuiltinLifecycleTemplateResponse {
+    fn from(value: BuiltinLifecycleTemplate) -> Self {
+        Self {
+            key: value.key,
+            name: value.name,
+            description: value.description,
+            entry_step_key: value.entry_step_key,
+            steps: value.steps.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<WorkflowContract> for WorkflowContractResponse {
+    fn from(value: WorkflowContract) -> Self {
+        Self {
+            injection: value.injection.into(),
+            hook_policy: value.hook_policy.into(),
+            completion: value.completion.into(),
+        }
+    }
+}
+
+impl From<WorkflowInjectionSpec> for WorkflowInjectionResponse {
+    fn from(value: WorkflowInjectionSpec) -> Self {
+        Self {
+            goal: value.goal,
+            instructions: value.instructions,
             context_bindings: value.context_bindings.into_iter().map(Into::into).collect(),
-            requires_session: value.requires_session,
-            completion_mode: value.completion_mode,
-            default_artifact_type: value.default_artifact_type,
-            default_artifact_title: value.default_artifact_title,
+            session_binding: value.session_binding,
         }
     }
 }
@@ -179,12 +332,100 @@ impl From<WorkflowContextBinding> for WorkflowContextBindingResponse {
     }
 }
 
+impl From<WorkflowConstraintSpec> for WorkflowConstraintResponse {
+    fn from(value: WorkflowConstraintSpec) -> Self {
+        Self {
+            key: value.key,
+            kind: value.kind,
+            description: value.description,
+            payload: value.payload,
+        }
+    }
+}
+
+impl From<WorkflowCheckSpec> for WorkflowCheckResponse {
+    fn from(value: WorkflowCheckSpec) -> Self {
+        Self {
+            key: value.key,
+            kind: value.kind,
+            description: value.description,
+            payload: value.payload,
+        }
+    }
+}
+
+impl From<WorkflowHookPolicySpec> for WorkflowHookPolicyResponse {
+    fn from(value: WorkflowHookPolicySpec) -> Self {
+        Self {
+            constraints: value.constraints.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<WorkflowCompletionSpec> for WorkflowCompletionResponse {
+    fn from(value: WorkflowCompletionSpec) -> Self {
+        Self {
+            checks: value.checks.into_iter().map(Into::into).collect(),
+            default_artifact_type: value.default_artifact_type,
+            default_artifact_title: value.default_artifact_title,
+        }
+    }
+}
+
+impl From<LifecycleStepDefinition> for LifecycleStepDefinitionResponse {
+    fn from(value: LifecycleStepDefinition) -> Self {
+        Self {
+            key: value.key,
+            title: value.title,
+            description: value.description,
+            primary_workflow_key: value.primary_workflow_key,
+            session_binding: value.session_binding,
+            attached_workflows: value
+                .attached_workflows
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            transition_policy: lifecycle_transition_policy_tag(&value.transition.policy.kind)
+                .to_string(),
+            next_step_key: value.transition.policy.next_step_key,
+            session_terminal_states: value.transition.policy.session_terminal_states,
+            action_key: value.transition.policy.action_key,
+        }
+    }
+}
+
+fn lifecycle_transition_policy_tag(
+    kind: &agentdash_domain::workflow::LifecycleTransitionPolicyKind,
+) -> &'static str {
+    use agentdash_domain::workflow::LifecycleTransitionPolicyKind;
+
+    match kind {
+        LifecycleTransitionPolicyKind::Manual => "manual",
+        LifecycleTransitionPolicyKind::AllChecksPass => "all_checks_pass",
+        LifecycleTransitionPolicyKind::AnyChecksPass => "any_checks_pass",
+        LifecycleTransitionPolicyKind::SessionTerminalMatches => "session_terminal_matches",
+        LifecycleTransitionPolicyKind::ExplicitAction => "explicit_action",
+    }
+}
+
+impl From<WorkflowAttachmentSpec> for WorkflowAttachmentResponse {
+    fn from(value: WorkflowAttachmentSpec) -> Self {
+        Self {
+            workflow_key: value.workflow_key,
+            mode: value.mode,
+            lifetime: value.lifetime,
+            priority: value.priority,
+            reason: value.reason,
+        }
+    }
+}
+
 impl From<WorkflowAssignment> for WorkflowAssignmentResponse {
     fn from(value: WorkflowAssignment) -> Self {
         Self {
             id: value.id,
             project_id: value.project_id,
-            workflow_id: value.workflow_id,
+            lifecycle_id: value.lifecycle_id,
             role: value.role,
             enabled: value.enabled,
             is_default: value.is_default,
@@ -194,17 +435,22 @@ impl From<WorkflowAssignment> for WorkflowAssignmentResponse {
     }
 }
 
-impl From<WorkflowRun> for WorkflowRunResponse {
-    fn from(value: WorkflowRun) -> Self {
+impl From<LifecycleRun> for WorkflowRunResponse {
+    fn from(value: LifecycleRun) -> Self {
         Self {
             id: value.id,
             project_id: value.project_id,
-            workflow_id: value.workflow_id,
+            lifecycle_id: value.lifecycle_id,
             target_kind: value.target_kind,
             target_id: value.target_id,
             status: value.status,
-            current_phase_key: value.current_phase_key,
-            phase_states: value.phase_states.into_iter().map(Into::into).collect(),
+            current_step_key: value.current_step_key,
+            step_states: value.step_states.into_iter().map(Into::into).collect(),
+            runtime_attachments: value
+                .runtime_attachments
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             record_artifacts: value.record_artifacts.into_iter().map(Into::into).collect(),
             created_at: value.created_at,
             updated_at: value.updated_at,
@@ -213,10 +459,10 @@ impl From<WorkflowRun> for WorkflowRunResponse {
     }
 }
 
-impl From<WorkflowPhaseState> for WorkflowPhaseStateResponse {
-    fn from(value: WorkflowPhaseState) -> Self {
+impl From<LifecycleStepState> for LifecycleStepStateResponse {
+    fn from(value: LifecycleStepState) -> Self {
         Self {
-            phase_key: value.phase_key,
+            step_key: value.step_key,
             status: value.status,
             session_binding_id: value.session_binding_id,
             started_at: value.started_at,
@@ -226,11 +472,25 @@ impl From<WorkflowPhaseState> for WorkflowPhaseStateResponse {
     }
 }
 
+impl From<WorkflowRuntimeAttachment> for WorkflowRuntimeAttachmentResponse {
+    fn from(value: WorkflowRuntimeAttachment) -> Self {
+        Self {
+            id: value.id,
+            workflow_key: value.workflow_key,
+            mode: value.mode,
+            lifetime: value.lifetime,
+            priority: value.priority,
+            reason: value.reason,
+            created_at: value.created_at,
+        }
+    }
+}
+
 impl From<WorkflowRecordArtifact> for WorkflowRecordArtifactResponse {
     fn from(value: WorkflowRecordArtifact) -> Self {
         Self {
             id: value.id,
-            phase_key: value.phase_key,
+            step_key: value.step_key,
             artifact_type: value.artifact_type,
             title: value.title,
             content: value.content,

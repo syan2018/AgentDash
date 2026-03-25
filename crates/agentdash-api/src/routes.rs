@@ -150,14 +150,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/tasks/{id}/continue", post(task_execution::continue_task))
         .route("/tasks/{id}/cancel", post(task_execution::cancel_task))
         .route("/tasks/{id}/session", get(task_execution::get_task_session))
-        // Workflow Definition CRUD
+        // Workflow contract / lifecycle
         .route(
-            "/workflows",
+            "/workflow-definitions",
             get(workflows::list_workflows).post(workflows::create_workflow_definition),
+        )
+        .route(
+            "/lifecycle-definitions",
+            get(workflows::list_lifecycles).post(workflows::create_lifecycle_definition),
         )
         .route(
             "/workflow-definitions/validate",
             post(workflows::validate_workflow_definition),
+        )
+        .route(
+            "/lifecycle-definitions/validate",
+            post(workflows::validate_lifecycle_definition),
         )
         .route(
             "/workflow-definitions/binding-metadata",
@@ -178,6 +186,20 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(workflows::disable_workflow_definition),
         )
         .route(
+            "/lifecycle-definitions/{id}",
+            get(workflows::get_lifecycle_definition)
+                .put(workflows::update_lifecycle_definition)
+                .delete(workflows::delete_lifecycle_definition),
+        )
+        .route(
+            "/lifecycle-definitions/{id}/enable",
+            post(workflows::enable_lifecycle_definition),
+        )
+        .route(
+            "/lifecycle-definitions/{id}/disable",
+            post(workflows::disable_lifecycle_definition),
+        )
+        .route(
             "/workflow-templates",
             get(workflows::list_workflow_templates),
         )
@@ -185,23 +207,23 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/workflow-templates/{builtin_key}/bootstrap",
             post(workflows::bootstrap_workflow_template),
         )
-        .route("/workflows/runs", post(workflows::start_workflow_run))
-        .route("/workflow-runs/{id}", get(workflows::get_workflow_run))
+        .route("/lifecycle-runs", post(workflows::start_workflow_run))
+        .route("/lifecycle-runs/{id}", get(workflows::get_workflow_run))
         .route(
-            "/workflow-runs/targets/{target_kind}/{target_id}",
+            "/lifecycle-runs/targets/{target_kind}/{target_id}",
             get(workflows::list_workflow_runs_by_target),
         )
         .route(
-            "/workflow-runs/{id}/phases/{phase_key}/activate",
-            post(workflows::activate_workflow_phase),
+            "/lifecycle-runs/{id}/steps/{step_key}/activate",
+            post(workflows::activate_workflow_step),
         )
         .route(
-            "/workflow-runs/{id}/phases/{phase_key}/complete",
-            post(workflows::complete_workflow_phase),
+            "/lifecycle-runs/{id}/steps/{step_key}/complete",
+            post(workflows::complete_workflow_step),
         )
         .route(
-            "/workflow-runs/{id}/phases/{phase_key}/artifacts",
-            post(workflows::append_workflow_phase_artifacts),
+            "/lifecycle-runs/{id}/steps/{step_key}/artifacts",
+            post(workflows::append_workflow_step_artifacts),
         )
         // Backend
         .route(

@@ -2,8 +2,8 @@ pub use agentdash_connector_contract::hooks::{
     ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,
     HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
     HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookPhaseAdvanceRequest, HookPolicy, HookResolution, HookSessionRuntime,
-    HookSessionRuntimeSnapshot, HookSourceLayer, HookSourceRef, HookTraceEntry, HookTrigger,
+    HookPolicyView, HookResolution, HookSessionRuntime, HookSessionRuntimeSnapshot,
+    HookSourceLayer, HookSourceRef, HookStepAdvanceRequest, HookTraceEntry, HookTrigger,
     NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };

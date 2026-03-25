@@ -23,7 +23,7 @@ use crate::connector::ExecutionAddressSpace;
 use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
 use crate::hook_events::build_hook_trace_notification;
 use crate::hooks::{
-    ExecutionHookProvider, HookSessionRuntime, HookTraceEntry, HookTrigger,
+    ExecutionHookProvider, HookResolution, HookSessionRuntime, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 
@@ -365,6 +365,36 @@ impl TurnTerminalKind {
     }
 }
 
+fn session_hook_trace_decision(trigger: &HookTrigger, resolution: &HookResolution) -> &'static str {
+    match trigger {
+        HookTrigger::SessionStart => {
+            if resolution.refresh_snapshot {
+                "baseline_refreshed"
+            } else if !resolution.context_fragments.is_empty()
+                || !resolution.constraints.is_empty()
+                || !resolution.policies.is_empty()
+                || !resolution.diagnostics.is_empty()
+            {
+                "baseline_initialized"
+            } else {
+                "noop"
+            }
+        }
+        HookTrigger::SessionTerminal => {
+            if resolution
+                .completion
+                .as_ref()
+                .is_some_and(|completion| completion.advanced)
+            {
+                "step_advanced"
+            } else {
+                "terminal_observed"
+            }
+        }
+        _ => "noop",
+    }
+}
+
 impl ExecutorHub {
     pub fn new(workspace_root: PathBuf, connector: Arc<dyn AgentConnector>) -> Self {
         Self::new_with_hooks(workspace_root, connector, None)
@@ -407,6 +437,74 @@ impl ExecutorHub {
 
     pub fn workspace_root(&self) -> &Path {
         &self.workspace_root
+    }
+
+    async fn emit_session_hook_trigger(
+        &self,
+        hook_session: &HookSessionRuntime,
+        session_id: &str,
+        turn_id: Option<&str>,
+        trigger: HookTrigger,
+        payload: Option<serde_json::Value>,
+        refresh_reason: &'static str,
+        source: &AgentDashSourceV1,
+        tx: &broadcast::Sender<SessionNotification>,
+    ) {
+        match hook_session
+            .evaluate(crate::hooks::HookEvaluationQuery {
+                session_id: session_id.to_string(),
+                trigger: trigger.clone(),
+                turn_id: turn_id.map(ToString::to_string),
+                tool_name: None,
+                tool_call_id: None,
+                subagent_type: None,
+                snapshot: Some(hook_session.snapshot()),
+                payload,
+            })
+            .await
+        {
+            Ok(resolution) => {
+                if resolution.refresh_snapshot {
+                    let _ = hook_session
+                        .refresh(SessionHookRefreshQuery {
+                            session_id: session_id.to_string(),
+                            turn_id: turn_id.map(ToString::to_string),
+                            reason: Some(refresh_reason.to_string()),
+                        })
+                        .await;
+                }
+                let trace = HookTraceEntry {
+                    sequence: hook_session.next_trace_sequence(),
+                    timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                    revision: hook_session.revision(),
+                    trigger: trigger.clone(),
+                    decision: session_hook_trace_decision(&trigger, &resolution).to_string(),
+                    tool_name: None,
+                    tool_call_id: None,
+                    subagent_type: None,
+                    matched_rule_keys: resolution.matched_rule_keys,
+                    refresh_snapshot: resolution.refresh_snapshot,
+                    block_reason: resolution.block_reason,
+                    completion: resolution.completion,
+                    diagnostics: resolution.diagnostics,
+                };
+                hook_session.append_trace(trace.clone());
+                if let Some(notification) =
+                    build_hook_trace_notification(session_id, turn_id, source.clone(), &trace)
+                {
+                    let _ = self.store.append(session_id, &notification).await;
+                    let _ = tx.send(notification);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    trigger = ?trigger,
+                    error = %error,
+                    "session hook 评估失败"
+                );
+            }
+        }
     }
 
     pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
@@ -869,6 +967,23 @@ impl ExecutorHub {
         let _ = store.append(&sid, &started).await;
         let _ = tx.send(started);
 
+        if let Some(hook_session) = hook_session.as_ref() {
+            self.emit_session_hook_trigger(
+                hook_session.as_ref(),
+                &sid,
+                Some(&turn_id),
+                HookTrigger::SessionStart,
+                Some(serde_json::json!({
+                    "text_prompt": resolved_payload.text_prompt,
+                    "user_block_count": resolved_payload.user_blocks.len(),
+                })),
+                "trigger:session_start",
+                &source,
+                &tx,
+            )
+            .await;
+        }
+
         let mut stream = match self
             .connector
             .prompt(
@@ -909,6 +1024,7 @@ impl ExecutorHub {
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
         let hook_session_for_spawn = hook_session;
+        let hub = self.clone();
 
         let turn_id_for_spawn = turn_id.clone();
         tokio::spawn(async move {
@@ -1016,74 +1132,20 @@ impl ExecutorHub {
             }
 
             if let Some(hook_session) = hook_session_for_spawn {
-                match hook_session
-                    .evaluate(crate::hooks::HookEvaluationQuery {
-                        session_id: session_id.clone(),
-                        trigger: HookTrigger::SessionTerminal,
-                        turn_id: Some(turn_id_for_spawn.clone()),
-                        tool_name: None,
-                        tool_call_id: None,
-                        subagent_type: None,
-                        snapshot: Some(hook_session.snapshot()),
-                        payload: Some(serde_json::json!({
-                            "terminal_state": terminal_kind.state_tag(),
-                            "message": terminal_message,
-                        })),
-                    })
-                    .await
-                {
-                    Ok(resolution) => {
-                        if resolution.refresh_snapshot {
-                            let _ = hook_session
-                                .refresh(SessionHookRefreshQuery {
-                                    session_id: session_id.clone(),
-                                    turn_id: Some(turn_id_for_spawn.clone()),
-                                    reason: Some("trigger:session_terminal".to_string()),
-                                })
-                                .await;
-                        }
-                        let trace = HookTraceEntry {
-                            sequence: hook_session.next_trace_sequence(),
-                            timestamp_ms: chrono::Utc::now().timestamp_millis(),
-                            revision: hook_session.revision(),
-                            trigger: HookTrigger::SessionTerminal,
-                            decision: if resolution
-                                .completion
-                                .as_ref()
-                                .is_some_and(|completion| completion.advanced)
-                            {
-                                "phase_advanced".to_string()
-                            } else {
-                                "terminal_observed".to_string()
-                            },
-                            tool_name: None,
-                            tool_call_id: None,
-                            subagent_type: None,
-                            matched_rule_keys: resolution.matched_rule_keys,
-                            refresh_snapshot: resolution.refresh_snapshot,
-                            block_reason: resolution.block_reason,
-                            completion: resolution.completion,
-                            diagnostics: resolution.diagnostics,
-                        };
-                        hook_session.append_trace(trace.clone());
-                        if let Some(notification) = build_hook_trace_notification(
-                            &session_id,
-                            Some(&turn_id_for_spawn),
-                            source.clone(),
-                            &trace,
-                        ) {
-                            let _ = store.append(&session_id, &notification).await;
-                            let _ = tx.send(notification);
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            error = %error,
-                            "session terminal hook 评估失败"
-                        );
-                    }
-                }
+                hub.emit_session_hook_trigger(
+                    hook_session.as_ref(),
+                    &session_id,
+                    Some(&turn_id_for_spawn),
+                    HookTrigger::SessionTerminal,
+                    Some(serde_json::json!({
+                        "terminal_state": terminal_kind.state_tag(),
+                        "message": terminal_message,
+                    })),
+                    "trigger:session_terminal",
+                    &source,
+                    &tx,
+                )
+                .await;
             }
 
             // 执行完成后标记 running = false，允许下一轮
@@ -1382,6 +1444,7 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use futures::stream;
     use serde_json::json;
     use std::path::PathBuf;
@@ -1506,6 +1569,157 @@ mod tests {
                 .and_then(|t| t.get("entryIndex"))
                 .and_then(|v| v.as_u64()),
             Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn start_prompt_triggers_session_start_before_connector_prompt() {
+        #[derive(Default)]
+        struct SessionStartAwareConnector {
+            session_start_seen: Arc<TokioMutex<Vec<bool>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentConnector for SessionStartAwareConnector {
+            fn connector_id(&self) -> &'static str {
+                "session-start-aware"
+            }
+
+            fn connector_type(&self) -> crate::connector::ConnectorType {
+                crate::connector::ConnectorType::LocalExecutor
+            }
+
+            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
+                crate::connector::ConnectorCapabilities::default()
+            }
+
+            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+                Vec::new()
+            }
+
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                context: ExecutionContext,
+            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+                let seen = context.hook_session.as_ref().is_some_and(|runtime| {
+                    runtime
+                        .trace()
+                        .iter()
+                        .any(|trace| matches!(&trace.trigger, HookTrigger::SessionStart))
+                });
+                self.session_start_seen.lock().await.push(seen);
+                Ok(Box::pin(stream::empty()))
+            }
+
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+        }
+
+        struct RecordingHookProvider {
+            queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl ExecutionHookProvider for RecordingHookProvider {
+            async fn load_session_snapshot(
+                &self,
+                query: SessionHookSnapshotQuery,
+            ) -> Result<SessionHookSnapshot, crate::hooks::HookError> {
+                Ok(SessionHookSnapshot {
+                    session_id: query.session_id,
+                    ..SessionHookSnapshot::default()
+                })
+            }
+
+            async fn refresh_session_snapshot(
+                &self,
+                query: SessionHookRefreshQuery,
+            ) -> Result<SessionHookSnapshot, crate::hooks::HookError> {
+                Ok(SessionHookSnapshot {
+                    session_id: query.session_id,
+                    ..SessionHookSnapshot::default()
+                })
+            }
+
+            async fn evaluate_hook(
+                &self,
+                query: HookEvaluationQuery,
+            ) -> Result<HookResolution, crate::hooks::HookError> {
+                self.queries.lock().await.push(query);
+                Ok(HookResolution::default())
+            }
+        }
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let connector = Arc::new(SessionStartAwareConnector::default());
+        let queries = Arc::new(TokioMutex::new(Vec::new()));
+        let hook_provider = Arc::new(RecordingHookProvider {
+            queries: queries.clone(),
+        });
+        let hub = ExecutorHub::new_with_hooks(
+            base.path().to_path_buf(),
+            connector.clone(),
+            Some(hook_provider),
+        );
+        let session = hub.create_session("test").await.expect("create session");
+
+        hub.start_prompt(
+            &session.id,
+            PromptSessionRequest {
+                prompt: Some("hello".to_string()),
+                prompt_blocks: None,
+                working_dir: None,
+                env: HashMap::new(),
+                executor_config: None,
+                mcp_servers: vec![],
+                workspace_root: None,
+                address_space: None,
+                flow_capabilities: None,
+                system_context: None,
+            },
+        )
+        .await
+        .expect("prompt should start");
+
+        let seen = connector.session_start_seen.lock().await;
+        assert_eq!(seen.as_slice(), &[true]);
+
+        let queries = queries.lock().await;
+        assert!(
+            queries
+                .iter()
+                .any(|query| matches!(query.trigger, HookTrigger::SessionStart))
         );
     }
 

@@ -1,7 +1,7 @@
 {
   "key": "trellis_dev_task",
-  "name": "Trellis Dev Workflow / Task",
-  "description": "把 Trellis 研发流程提炼为平台内可复用的 Task 执行 workflow，覆盖 Start / Implement / Check / Record 四阶段。",
+  "name": "Trellis Dev Lifecycle / Task",
+  "description": "把 Trellis 研发流程拆成多个原子 workflow，并由 task lifecycle 负责顺序编排与检查推进。",
   "target_kind": "task",
   "recommended_role": "task_execution_worker",
   "record_policy": {
@@ -9,115 +9,244 @@
     "emit_journal_update": true,
     "emit_archive_suggestion": true
   },
-  "phases": [
+  "workflows": [
     {
-      "key": "start",
-      "title": "Start",
-      "description": "识别目标对象、读取 workflow / PRD / spec，并生成初始上下文集。",
-      "agent_instructions": [
-        "当前处于 Start phase，先吸收需求、规则与上下文，再进入编码或验证。",
-        "如果关键输入缺失，应先明确缺口与风险，不要假设未给出的约束。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "document_path",
-          "locator": ".trellis/workflow.md",
-          "reason": "workflow 总规则",
-          "required": true,
-          "title": "Workflow 总规则"
+      "key": "trellis_dev_task_start",
+      "name": "Trellis Task / Start",
+      "description": "吸收需求、规范和上下文，完成开始阶段的基线建立。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Task Start workflow，先吸收需求、规则与上下文，再进入编码或验证。",
+            "如果关键输入缺失，应先明确缺口与风险，不要假设未给出的约束。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "document_path",
+              "locator": ".trellis/workflow.md",
+              "reason": "workflow 总规则",
+              "required": true,
+              "title": "Workflow 总规则"
+            },
+            {
+              "kind": "document_path",
+              "locator": ".trellis/spec/backend/index.md",
+              "reason": "后端开发规范入口",
+              "required": true,
+              "title": "Backend Spec Index"
+            }
+          ],
+          "session_binding": "not_required"
         },
-        {
-          "kind": "document_path",
-          "locator": ".trellis/spec/backend/index.md",
-          "reason": "后端开发规范入口",
-          "required": true,
-          "title": "Backend Spec Index"
+        "completion": {
+          "default_artifact_type": "phase_note",
+          "default_artifact_title": "阶段记录"
         }
-      ],
-      "requires_session": false,
-      "completion_mode": "manual",
-      "default_artifact_type": "phase_note",
-      "default_artifact_title": "阶段记录"
+      }
     },
     {
-      "key": "implement",
-      "title": "Implement",
-      "description": "进入执行会话并推进开发，按当前任务上下文完成实现。",
-      "agent_instructions": [
-        "当前处于 Implement phase，优先完成实现，不要提前切换到复盘或归档。",
-        "输出应包含关键改动、验证结果以及剩余待确认点。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "runtime_context",
-          "locator": "task_execution_context",
-          "reason": "当前 Task 的执行上下文",
-          "required": true,
-          "title": "Task Execution Context"
+      "key": "trellis_dev_task_implement",
+      "name": "Trellis Task / Implement",
+      "description": "进入执行会话并推进开发实现。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Implement workflow，优先完成实现，不要提前切换到复盘或归档。",
+            "输出应包含关键改动、验证结果以及剩余待确认点。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "runtime_context",
+              "locator": "task_execution_context",
+              "reason": "当前 Task 的执行上下文",
+              "required": true,
+              "title": "Task Execution Context"
+            }
+          ],
+          "session_binding": "required"
+        },
+        "hook_policy": {
+          "constraints": [
+            {
+              "key": "deny_complete_status_during_implement",
+              "kind": "deny_task_status_transition",
+              "description": "Implement 阶段不允许把 Task 直接标记为 completed",
+              "payload": {
+                "to": ["completed"]
+              }
+            },
+            {
+              "key": "deny_record_artifacts_during_implement",
+              "kind": "custom",
+              "description": "Implement 阶段不应提前产出归档型记录产物",
+              "payload": {
+                "policy": "deny_record_artifact_types",
+                "artifact_types": ["session_summary", "archive_suggestion"]
+              }
+            }
+          ]
+        },
+        "completion": {
+          "default_artifact_type": "phase_note",
+          "default_artifact_title": "阶段记录"
         }
-      ],
-      "requires_session": true,
-      "completion_mode": "session_ended",
-      "default_artifact_type": "phase_note",
-      "default_artifact_title": "阶段记录"
+      }
     },
     {
-      "key": "check",
-      "title": "Check",
-      "description": "绑定 check context，执行 review、checklist 与质量确认。",
-      "agent_instructions": [
-        "当前处于 Check phase，默认先审查和验证，再决定是否需要补充修改。",
-        "发现问题时优先直接修复，并说明剩余风险与未覆盖项。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "checklist",
-          "locator": "task_review_checklist",
-          "reason": "Task 级检查清单",
-          "required": true,
-          "title": "Task Review Checklist"
+      "key": "trellis_dev_task_check",
+      "name": "Trellis Task / Check",
+      "description": "执行 review、质量检查与收口判断。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Check workflow，默认先审查和验证，再决定是否需要补充修改。",
+            "发现问题时优先直接修复，并说明剩余风险与未覆盖项。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "checklist",
+              "locator": "task_review_checklist",
+              "reason": "Task 级检查清单",
+              "required": true,
+              "title": "Task Review Checklist"
+            },
+            {
+              "kind": "runtime_context",
+              "locator": "task_execution_context",
+              "reason": "当前 Task 的执行上下文",
+              "required": true,
+              "title": "Task Execution Context"
+            }
+          ],
+          "session_binding": "required"
         },
-        {
-          "kind": "runtime_context",
-          "locator": "task_execution_context",
-          "reason": "当前 Task 的执行上下文",
-          "required": true,
-          "title": "Task Execution Context"
+        "hook_policy": {
+          "constraints": [
+            {
+              "key": "block_stop_until_checks_pass",
+              "kind": "block_stop_until_checks_pass",
+              "description": "在 Check workflow 里，未满足检查条件前不要结束 session"
+            }
+          ]
+        },
+        "completion": {
+          "checks": [
+            {
+              "key": "task_ready_for_verification",
+              "kind": "task_status_in",
+              "description": "Task 状态必须进入 awaiting_verification 或 completed",
+              "payload": {
+                "statuses": ["awaiting_verification", "completed"]
+              }
+            },
+            {
+              "key": "checklist_evidence_present",
+              "kind": "checklist_evidence_present",
+              "description": "必须产出 checklist evidence"
+            }
+          ],
+          "default_artifact_type": "checklist_evidence",
+          "default_artifact_title": "检查证据"
         }
-      ],
-      "requires_session": true,
-      "completion_mode": "checklist_passed",
-      "default_artifact_type": "checklist_evidence",
-      "default_artifact_title": "检查证据"
+      }
     },
     {
-      "key": "record",
-      "title": "Record",
-      "description": "生成 session summary、journal suggestion 与 archive suggestion。",
-      "agent_instructions": [
-        "当前处于 Record phase，不再扩展实现，重点沉淀总结、后续建议与归档动作。",
-        "记录内容要面向下一位协作者，便于继续接手。"
-      ],
-      "context_bindings": [
-        {
-          "kind": "journal_target",
-          "locator": "workspace_journal",
-          "reason": "历史记录沉淀位置",
-          "required": false,
-          "title": "Workspace Journal"
+      "key": "trellis_dev_task_record",
+      "name": "Trellis Task / Record",
+      "description": "沉淀总结、日志更新与归档建议。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Record workflow，不再扩展实现，重点沉淀总结、后续建议与归档动作。",
+            "记录内容要面向下一位协作者，便于继续接手。"
+          ],
+          "context_bindings": [
+            {
+              "kind": "journal_target",
+              "locator": "workspace_journal",
+              "reason": "历史记录沉淀位置",
+              "required": false,
+              "title": "Workspace Journal"
+            },
+            {
+              "kind": "action_ref",
+              "locator": "workflow_archive_action",
+              "reason": "归档建议与归档动作",
+              "required": false,
+              "title": "Archive Action"
+            }
+          ],
+          "session_binding": "not_required"
         },
-        {
-          "kind": "action_ref",
-          "locator": "workflow_archive_action",
-          "reason": "归档建议与归档动作",
-          "required": false,
-          "title": "Archive Action"
+        "completion": {
+          "default_artifact_type": "session_summary",
+          "default_artifact_title": "阶段总结"
         }
-      ],
-      "requires_session": false,
-      "completion_mode": "manual",
-      "default_artifact_type": "session_summary",
-      "default_artifact_title": "阶段总结"
+      }
     }
-  ]
+  ],
+  "lifecycle": {
+    "key": "trellis_dev_task",
+    "name": "Trellis Dev Lifecycle / Task",
+    "description": "Task 生命周期编排：Start -> Implement -> Check -> Record。",
+    "entry_step_key": "start",
+    "steps": [
+      {
+        "key": "start",
+        "title": "Start",
+        "description": "吸收需求与约束，建立开始阶段上下文。",
+        "primary_workflow_key": "trellis_dev_task_start",
+        "session_binding": "not_required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "manual",
+            "next_step_key": "implement"
+          }
+        }
+      },
+      {
+        "key": "implement",
+        "title": "Implement",
+        "description": "执行实现工作。",
+        "primary_workflow_key": "trellis_dev_task_implement",
+        "session_binding": "required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "session_terminal_matches",
+            "next_step_key": "check",
+            "session_terminal_states": ["completed", "failed", "interrupted"]
+          }
+        }
+      },
+      {
+        "key": "check",
+        "title": "Check",
+        "description": "收口验证并基于 checks 自动推进。",
+        "primary_workflow_key": "trellis_dev_task_check",
+        "session_binding": "required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "all_checks_pass",
+            "next_step_key": "record"
+          }
+        }
+      },
+      {
+        "key": "record",
+        "title": "Record",
+        "description": "沉淀最终记录与归档建议。",
+        "primary_workflow_key": "trellis_dev_task_record",
+        "session_binding": "not_required",
+        "attached_workflows": [],
+        "transition": {
+          "policy": {
+            "kind": "manual"
+          }
+        }
+      }
+    ]
+  }
 }

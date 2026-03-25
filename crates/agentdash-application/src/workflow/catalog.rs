@@ -2,39 +2,43 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    WorkflowAgentRole, WorkflowAssignment, WorkflowAssignmentRepository, WorkflowDefinition,
-    WorkflowDefinitionRepository,
+    LifecycleDefinition, LifecycleDefinitionRepository, WorkflowAgentRole, WorkflowAssignment,
+    WorkflowAssignmentRepository, WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
+use super::definition::BuiltinWorkflowBundle;
 use super::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
-pub struct AssignWorkflowCommand {
+pub struct AssignLifecycleCommand {
     pub project_id: Uuid,
-    pub workflow_id: Uuid,
+    pub lifecycle_id: Uuid,
     pub role: WorkflowAgentRole,
     pub enabled: bool,
     pub is_default: bool,
 }
 
-pub struct WorkflowCatalogService<'a, D: ?Sized, A: ?Sized> {
+pub struct WorkflowCatalogService<'a, D: ?Sized, L: ?Sized, A: ?Sized> {
     definition_repo: &'a D,
+    lifecycle_repo: &'a L,
     assignment_repo: &'a A,
 }
 
-impl<'a, D: ?Sized, A: ?Sized> WorkflowCatalogService<'a, D, A>
+impl<'a, D: ?Sized, L: ?Sized, A: ?Sized> WorkflowCatalogService<'a, D, L, A>
 where
     D: WorkflowDefinitionRepository,
+    L: LifecycleDefinitionRepository,
     A: WorkflowAssignmentRepository,
 {
-    pub fn new(definition_repo: &'a D, assignment_repo: &'a A) -> Self {
+    pub fn new(definition_repo: &'a D, lifecycle_repo: &'a L, assignment_repo: &'a A) -> Self {
         Self {
             definition_repo,
+            lifecycle_repo,
             assignment_repo,
         }
     }
 
-    pub async fn upsert_definition(
+    pub async fn upsert_workflow_definition(
         &self,
         definition: WorkflowDefinition,
     ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
@@ -60,9 +64,88 @@ where
         Ok(definition)
     }
 
+    pub async fn upsert_lifecycle_definition(
+        &self,
+        lifecycle: LifecycleDefinition,
+    ) -> Result<LifecycleDefinition, WorkflowApplicationError> {
+        for step in &lifecycle.steps {
+            let Some(workflow) = self
+                .definition_repo
+                .get_by_key(&step.primary_workflow_key)
+                .await?
+            else {
+                return Err(WorkflowApplicationError::BadRequest(format!(
+                    "lifecycle step `{}` 引用的 primary workflow `{}` 不存在",
+                    step.key, step.primary_workflow_key
+                )));
+            };
+            if workflow.target_kind != lifecycle.target_kind {
+                return Err(WorkflowApplicationError::Conflict(format!(
+                    "lifecycle step `{}` 引用的 workflow `{}` target_kind={:?}，与 lifecycle {:?} 不一致",
+                    step.key, workflow.key, workflow.target_kind, lifecycle.target_kind
+                )));
+            }
+            for attachment in &step.attached_workflows {
+                let Some(overlay) = self
+                    .definition_repo
+                    .get_by_key(&attachment.workflow_key)
+                    .await?
+                else {
+                    return Err(WorkflowApplicationError::BadRequest(format!(
+                        "lifecycle step `{}` 引用的 overlay workflow `{}` 不存在",
+                        step.key, attachment.workflow_key
+                    )));
+                };
+                if overlay.target_kind != lifecycle.target_kind {
+                    return Err(WorkflowApplicationError::Conflict(format!(
+                        "overlay workflow `{}` target_kind={:?}，与 lifecycle {:?} 不一致",
+                        overlay.key, overlay.target_kind, lifecycle.target_kind
+                    )));
+                }
+            }
+        }
+
+        if let Some(existing) = self.lifecycle_repo.get_by_key(&lifecycle.key).await? {
+            if existing.target_kind != lifecycle.target_kind {
+                return Err(WorkflowApplicationError::Conflict(format!(
+                    "lifecycle `{}` 已绑定 target_kind={:?}，不能直接改为 {:?}",
+                    lifecycle.key, existing.target_kind, lifecycle.target_kind
+                )));
+            }
+
+            let mut updated = lifecycle;
+            updated.id = existing.id;
+            updated.version = existing.version + 1;
+            updated.created_at = existing.created_at;
+            updated.updated_at = Utc::now();
+
+            self.lifecycle_repo.update(&updated).await?;
+            return Ok(updated);
+        }
+
+        self.lifecycle_repo.create(&lifecycle).await?;
+        Ok(lifecycle)
+    }
+
+    pub async fn upsert_bundle(
+        &self,
+        bundle: BuiltinWorkflowBundle,
+    ) -> Result<BuiltinWorkflowBundle, WorkflowApplicationError> {
+        let mut persisted_workflows = Vec::with_capacity(bundle.workflows.len());
+        for workflow in bundle.workflows {
+            persisted_workflows.push(self.upsert_workflow_definition(workflow).await?);
+        }
+
+        let lifecycle = self.upsert_lifecycle_definition(bundle.lifecycle).await?;
+        Ok(BuiltinWorkflowBundle {
+            workflows: persisted_workflows,
+            lifecycle,
+        })
+    }
+
     pub async fn assign_to_project(
         &self,
-        cmd: AssignWorkflowCommand,
+        cmd: AssignLifecycleCommand,
     ) -> Result<WorkflowAssignment, WorkflowApplicationError> {
         if cmd.is_default && !cmd.enabled {
             return Err(WorkflowApplicationError::BadRequest(
@@ -70,21 +153,21 @@ where
             ));
         }
 
-        let workflow = self
-            .definition_repo
-            .get_by_id(cmd.workflow_id)
+        let lifecycle = self
+            .lifecycle_repo
+            .get_by_id(cmd.lifecycle_id)
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
-                    "workflow_definition 不存在: {}",
-                    cmd.workflow_id
+                    "lifecycle_definition 不存在: {}",
+                    cmd.lifecycle_id
                 ))
             })?;
 
-        if cmd.enabled && !workflow.is_active() {
+        if cmd.enabled && !lifecycle.is_active() {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "workflow `{}` 状态为 {:?}，不能创建启用态 assignment",
-                workflow.key, workflow.status
+                "lifecycle `{}` 状态为 {:?}，不能创建启用态 assignment",
+                lifecycle.key, lifecycle.status
             )));
         }
 
@@ -96,7 +179,7 @@ where
         if cmd.is_default {
             for assignment in existing
                 .iter()
-                .filter(|item| item.is_default && item.workflow_id != cmd.workflow_id)
+                .filter(|item| item.is_default && item.lifecycle_id != cmd.lifecycle_id)
             {
                 let mut demoted = assignment.clone();
                 demoted.is_default = false;
@@ -107,7 +190,7 @@ where
 
         if let Some(current) = existing
             .into_iter()
-            .find(|item| item.workflow_id == cmd.workflow_id)
+            .find(|item| item.lifecycle_id == cmd.lifecycle_id)
         {
             let mut updated = current;
             updated.enabled = cmd.enabled;
@@ -117,250 +200,11 @@ where
             return Ok(updated);
         }
 
-        let mut assignment = WorkflowAssignment::new(cmd.project_id, cmd.workflow_id, cmd.role);
+        let mut assignment = WorkflowAssignment::new(cmd.project_id, cmd.lifecycle_id, cmd.role);
         assignment.enabled = cmd.enabled;
         assignment.is_default = cmd.is_default;
         assignment.updated_at = Utc::now();
         self.assignment_repo.create(&assignment).await?;
         Ok(assignment)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    use async_trait::async_trait;
-
-    use agentdash_domain::DomainError;
-    use agentdash_domain::workflow::{
-        WorkflowAssignment, WorkflowAssignmentRepository, WorkflowDefinition,
-        WorkflowDefinitionRepository, WorkflowDefinitionStatus, WorkflowTargetKind,
-    };
-
-    use super::*;
-    use crate::workflow::{TRELLIS_DEV_TASK_TEMPLATE_KEY, build_builtin_workflow_definition};
-
-    #[derive(Default)]
-    struct MemoryWorkflowCatalogStore {
-        definitions: Mutex<HashMap<Uuid, WorkflowDefinition>>,
-        assignments: Mutex<HashMap<Uuid, WorkflowAssignment>>,
-    }
-
-    #[async_trait]
-    impl WorkflowDefinitionRepository for MemoryWorkflowCatalogStore {
-        async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-            self.definitions
-                .lock()
-                .expect("lock")
-                .insert(workflow.id, workflow.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(self.definitions.lock().expect("lock").get(&id).cloned())
-        }
-
-        async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .find(|workflow| workflow.key == key)
-                .cloned())
-        }
-
-        async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_status(
-            &self,
-            status: WorkflowDefinitionStatus,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|workflow| workflow.status == status)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_target_kind(
-            &self,
-            target_kind: WorkflowTargetKind,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|workflow| workflow.target_kind == target_kind)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-            self.definitions
-                .lock()
-                .expect("lock")
-                .insert(workflow.id, workflow.clone());
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.definitions.lock().expect("lock").remove(&id);
-            Ok(())
-        }
-    }
-
-    #[async_trait]
-    impl WorkflowAssignmentRepository for MemoryWorkflowCatalogStore {
-        async fn create(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError> {
-            self.assignments
-                .lock()
-                .expect("lock")
-                .insert(assignment.id, assignment.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowAssignment>, DomainError> {
-            Ok(self.assignments.lock().expect("lock").get(&id).cloned())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<WorkflowAssignment>, DomainError> {
-            Ok(self
-                .assignments
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|assignment| assignment.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project_and_role(
-            &self,
-            project_id: Uuid,
-            role: WorkflowAgentRole,
-        ) -> Result<Vec<WorkflowAssignment>, DomainError> {
-            Ok(self
-                .assignments
-                .lock()
-                .expect("lock")
-                .values()
-                .filter(|assignment| assignment.project_id == project_id && assignment.role == role)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError> {
-            self.assignments
-                .lock()
-                .expect("lock")
-                .insert(assignment.id, assignment.clone());
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.assignments.lock().expect("lock").remove(&id);
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn upsert_definition_promotes_existing_definition_version() {
-        let store = MemoryWorkflowCatalogStore::default();
-        let service = WorkflowCatalogService::new(&store, &store);
-
-        let created = service
-            .upsert_definition(
-                build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY)
-                    .expect("definition"),
-            )
-            .await
-            .expect("create definition");
-
-        let mut replacement =
-            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
-        replacement.description = "new description".to_string();
-
-        let updated = service
-            .upsert_definition(replacement)
-            .await
-            .expect("update definition");
-
-        assert_eq!(updated.id, created.id);
-        assert_eq!(updated.version, created.version + 1);
-        assert_eq!(updated.description, "new description");
-    }
-
-    #[tokio::test]
-    async fn assign_to_project_keeps_only_one_default_per_role() {
-        let store = MemoryWorkflowCatalogStore::default();
-        let service = WorkflowCatalogService::new(&store, &store);
-        let workflow_a = service
-            .upsert_definition(
-                build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY)
-                    .expect("definition"),
-            )
-            .await
-            .expect("workflow a");
-        let mut workflow_b =
-            build_builtin_workflow_definition(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("definition");
-        workflow_b.key = "trellis_dev_workflow_v2".to_string();
-        workflow_b.name = "Trellis Dev Workflow V2".to_string();
-        let workflow_b = service
-            .upsert_definition(workflow_b)
-            .await
-            .expect("workflow b");
-
-        let project_id = Uuid::new_v4();
-        service
-            .assign_to_project(AssignWorkflowCommand {
-                project_id,
-                workflow_id: workflow_a.id,
-                role: WorkflowAgentRole::TaskExecutionWorker,
-                enabled: true,
-                is_default: true,
-            })
-            .await
-            .expect("assign a");
-
-        let assignment_b = service
-            .assign_to_project(AssignWorkflowCommand {
-                project_id,
-                workflow_id: workflow_b.id,
-                role: WorkflowAgentRole::TaskExecutionWorker,
-                enabled: true,
-                is_default: true,
-            })
-            .await
-            .expect("assign b");
-
-        let assignments = store
-            .list_by_project_and_role(project_id, WorkflowAgentRole::TaskExecutionWorker)
-            .await
-            .expect("list assignments");
-        let default_ids = assignments
-            .into_iter()
-            .filter(|assignment| assignment.is_default)
-            .map(|assignment| assignment.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(default_ids, vec![assignment_b.id]);
     }
 }

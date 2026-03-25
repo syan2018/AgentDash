@@ -1,16 +1,16 @@
 import { useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
+import { LifecycleEditor } from "../features/workflow/lifecycle-editor";
 import { useWorkflowStore } from "../stores/workflowStore";
-import { WorkflowEditor } from "../features/workflow/workflow-editor";
 
-export function WorkflowEditorPage() {
+export function LifecycleEditorPage() {
   const { definitionId } = useParams<{ definitionId: string }>();
   const navigate = useNavigate();
-  const editorDraft = useWorkflowStore((s) => s.editorDraft);
-  const openNewDraft = useWorkflowStore((s) => s.openNewDraft);
-  const openEditDraft = useWorkflowStore((s) => s.openEditDraft);
-  const isLoading = useWorkflowStore((s) => s.isLoading);
+  const editorDraft = useWorkflowStore((state) => state.lifecycleEditorDraft);
+  const openNewDraft = useWorkflowStore((state) => state.openNewLifecycleDraft);
+  const openEditDraft = useWorkflowStore((state) => state.openEditLifecycleDraft);
+  const isLoading = useWorkflowStore((state) => state.isLoading);
 
   const isNew = definitionId === "new";
 
@@ -27,7 +27,7 @@ export function WorkflowEditorPage() {
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
           <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="mt-3 text-sm text-muted-foreground">正在加载 Workflow 定义...</p>
+          <p className="mt-3 text-sm text-muted-foreground">正在加载 Lifecycle Definition...</p>
         </div>
       </div>
     );
@@ -37,7 +37,7 @@ export function WorkflowEditorPage() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="max-w-sm text-center">
-          <p className="text-sm text-muted-foreground">未找到 Workflow 定义</p>
+          <p className="text-sm text-muted-foreground">未找到 Lifecycle Definition</p>
           <button
             type="button"
             onClick={() => navigate("/dashboard/workflow")}
@@ -52,7 +52,6 @@ export function WorkflowEditorPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Top bar with back navigation */}
       <div className="shrink-0 border-b border-border px-6 py-3">
         <button
           type="button"
@@ -64,16 +63,11 @@ export function WorkflowEditorPage() {
         </button>
       </div>
 
-      {/* Scrollable editor area */}
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-6">
-          <WorkflowEditorPageContent />
+        <div className="mx-auto max-w-5xl px-6 py-6">
+          <LifecycleEditor />
         </div>
       </div>
     </div>
   );
-}
-
-function WorkflowEditorPageContent() {
-  return <WorkflowEditor />;
 }

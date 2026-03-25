@@ -14,12 +14,14 @@ use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
 };
 use agentdash_application::workflow::{
-    AppendWorkflowPhaseArtifactsCommand, WorkflowRecordArtifactDraft, WorkflowRunService,
+    AppendLifecycleStepArtifactsCommand, LifecycleRunService, WorkflowRecordArtifactDraft,
 };
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
-use agentdash_domain::workflow::{WorkflowDefinitionRepository, WorkflowRunRepository};
+use agentdash_domain::workflow::{
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+};
 use agentdash_executor::{
     AgentDashExecutorConfig, CompanionSessionContext, ConnectorError, ExecutionAddressSpace,
     ExecutionContext, ExecutionMountCapability, ExecutorHub, HookEvaluationQuery,
@@ -609,7 +611,15 @@ impl RelayAddressSpaceService {
 
         if mount.provider == PROVIDER_INLINE_FS {
             return self
-                .search_inline(mount, &base_path, query, is_regex, max_results, context_lines, overlay)
+                .search_inline(
+                    mount,
+                    &base_path,
+                    query,
+                    is_regex,
+                    max_results,
+                    context_lines,
+                    overlay,
+                )
                 .await;
         }
 
@@ -765,7 +775,8 @@ pub struct RelayRuntimeToolProvider {
     service: Arc<RelayAddressSpaceService>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    workflow_run_repo: Arc<dyn LifecycleRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
 }
@@ -775,7 +786,8 @@ impl RelayRuntimeToolProvider {
         service: Arc<RelayAddressSpaceService>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        workflow_run_repo: Arc<dyn LifecycleRunRepository>,
         executor_hub_handle: SharedExecutorHubHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
     ) -> Self {
@@ -783,6 +795,7 @@ impl RelayRuntimeToolProvider {
             service,
             session_binding_repo,
             workflow_definition_repo,
+            lifecycle_definition_repo,
             workflow_run_repo,
             executor_hub_handle,
             inline_persister,
@@ -853,6 +866,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if caps.workflow_artifact {
             tools.push(Arc::new(WorkflowArtifactReportTool::new(
                 self.workflow_definition_repo.clone(),
+                self.lifecycle_definition_repo.clone(),
                 self.workflow_run_repo.clone(),
                 context,
             )));
@@ -894,7 +908,8 @@ fn ok_text(text: String) -> AgentToolResult {
 #[derive(Clone)]
 struct WorkflowArtifactReportTool {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    workflow_run_repo: Arc<dyn LifecycleRunRepository>,
     current_session_id: Option<String>,
     current_turn_id: String,
     hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
@@ -909,7 +924,7 @@ struct WorkflowArtifactReportParams {
 
 struct ActiveWorkflowLocator {
     run_id: Uuid,
-    phase_key: String,
+    step_key: String,
 }
 
 #[derive(Clone)]
@@ -929,11 +944,13 @@ struct CompanionDispatchTool {
 impl WorkflowArtifactReportTool {
     fn new(
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        workflow_run_repo: Arc<dyn WorkflowRunRepository>,
+        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        workflow_run_repo: Arc<dyn LifecycleRunRepository>,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             workflow_definition_repo,
+            lifecycle_definition_repo,
             workflow_run_repo,
             current_session_id: context
                 .hook_session
@@ -1154,16 +1171,17 @@ impl AgentTool for WorkflowArtifactReportTool {
             .or_else(|| {
                 active_workflow_default_artifact_title_from_snapshot(&hook_session.snapshot())
             })
-            .unwrap_or_else(|| format!("{} 阶段记录", locator.phase_key));
+            .unwrap_or_else(|| format!("{} 阶段记录", locator.step_key));
 
-        let service = WorkflowRunService::new(
+        let service = LifecycleRunService::new(
             self.workflow_definition_repo.as_ref(),
+            self.lifecycle_definition_repo.as_ref(),
             self.workflow_run_repo.as_ref(),
         );
         let run = service
-            .append_phase_artifacts(AppendWorkflowPhaseArtifactsCommand {
+            .append_step_artifacts(AppendLifecycleStepArtifactsCommand {
                 run_id: locator.run_id,
-                phase_key: locator.phase_key.clone(),
+                step_key: locator.step_key.clone(),
                 artifacts: vec![WorkflowRecordArtifactDraft {
                     artifact_type,
                     title: title.clone(),
@@ -1184,9 +1202,9 @@ impl AgentTool for WorkflowArtifactReportTool {
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "已写入 workflow 记录产物。\n- run_id: {}\n- phase_key: {}\n- artifact_type: {}\n- title: {}",
+                "已写入 workflow 记录产物。\n- run_id: {}\n- step_key: {}\n- artifact_type: {}\n- title: {}",
                 run.id,
-                locator.phase_key,
+                locator.step_key,
                 workflow_record_artifact_type_key(artifact_type),
                 title
             ))],
@@ -1195,7 +1213,7 @@ impl AgentTool for WorkflowArtifactReportTool {
                 "session_id": self.current_session_id.clone(),
                 "turn_id": self.current_turn_id.clone(),
                 "run_id": run.id,
-                "phase_key": locator.phase_key,
+                "step_key": locator.step_key,
                 "artifact_type": workflow_record_artifact_type_key(artifact_type),
                 "title": title,
             })),
@@ -1905,11 +1923,11 @@ fn active_workflow_locator_from_snapshot(
         .get("run_id")
         .and_then(serde_json::Value::as_str)
         .and_then(|value| Uuid::parse_str(value).ok())?;
-    let phase_key = active_workflow
-        .get("phase_key")
+    let step_key = active_workflow
+        .get("step_key")
         .and_then(serde_json::Value::as_str)?
         .to_string();
-    Some(ActiveWorkflowLocator { run_id, phase_key })
+    Some(ActiveWorkflowLocator { run_id, step_key })
 }
 
 fn active_workflow_default_artifact_title_from_snapshot(
@@ -3305,14 +3323,14 @@ mod tests {
             context_fragments: vec![
                 agentdash_executor::HookContextFragment {
                     slot: "workflow".to_string(),
-                    label: "active_workflow_phase".to_string(),
-                    content: "phase info".to_string(),
+                    label: "active_workflow_step".to_string(),
+                    content: "step info".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
                 },
                 agentdash_executor::HookContextFragment {
                     slot: "instruction_append".to_string(),
-                    label: "workflow_phase_constraints".to_string(),
+                    label: "workflow_step_constraints".to_string(),
                     content: "follow rules".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
@@ -3454,8 +3472,8 @@ mod tests {
                 mode: CompanionSliceMode::Compact,
                 fragments: vec![agentdash_executor::HookContextFragment {
                     slot: "workflow".to_string(),
-                    label: "active_workflow_phase".to_string(),
-                    content: "phase info".to_string(),
+                    label: "active_workflow_step".to_string(),
+                    content: "step info".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
                 }],
@@ -3465,7 +3483,7 @@ mod tests {
                     source_summary: vec![],
                     source_refs: vec![],
                 }],
-                inherited_fragment_labels: vec!["active_workflow_phase".to_string()],
+                inherited_fragment_labels: vec!["active_workflow_step".to_string()],
                 inherited_constraint_keys: vec!["constraint:1".to_string()],
                 omitted_fragment_count: 0,
                 omitted_constraint_count: 0,

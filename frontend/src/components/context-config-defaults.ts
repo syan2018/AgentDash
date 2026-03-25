@@ -18,7 +18,7 @@ export const CONTEXT_CAPABILITY_OPTIONS: Array<{
 export function createDefaultMountPolicy(): MountDerivationPolicy {
   return {
     include_local_workspace: true,
-    local_workspace_capabilities: [],
+    local_workspace_capabilities: ["read", "write", "list", "search", "exec"],
   };
 }
 

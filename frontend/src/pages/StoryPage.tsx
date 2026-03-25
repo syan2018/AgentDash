@@ -732,6 +732,7 @@ function ContextPanel({
         </div>
         <ContextContainersEditor
           value={ctx.context_containers}
+          domain="story"
           isSaving={isSaving}
           addLabel="添加 Story 容器"
           emptyText="暂无 Story 级容器"

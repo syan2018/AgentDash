@@ -622,6 +622,7 @@ export function ProjectSettingsPage() {
                     <ContentGroup title="上下文容器">
                       <ContextContainersEditor
                         value={contextContainers}
+                        domain="project"
                         emptyText="暂无项目级容器"
                         isSaving={false}
                         onSave={async (next) => {

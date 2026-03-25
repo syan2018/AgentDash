@@ -61,26 +61,35 @@ function cloneSessionComposition(
   };
 }
 
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[\s_]+/g, "-")
-    .replace(/[^a-z0-9\u4e00-\u9fff-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    || "container";
+function generateNextId(
+  domain: string,
+  existing: ContextContainerDefinition[],
+): string {
+  const prefix = `${domain}-ctx-`;
+  let max = 0;
+  for (const c of existing) {
+    if (c.id.startsWith(prefix)) {
+      const num = parseInt(c.id.slice(prefix.length), 10);
+      if (!isNaN(num) && num > max) max = num;
+    }
+  }
+  return `${prefix}${max + 1}`;
 }
 
-function createDefaultContainer(): ContextContainerDefinition {
+function createDefaultContainer(
+  domain: string,
+  existing: ContextContainerDefinition[],
+): ContextContainerDefinition {
+  const id = generateNextId(domain, existing);
   return {
-    id: "",
-    mount_id: "",
+    id,
+    mount_id: id,
     display_name: "",
     provider: {
       kind: "inline_files",
       files: [{ path: "context.md", content: "" }],
     },
-    capabilities: ["read", "list"],
+    capabilities: ["read", "write", "list", "search"],
     default_write: false,
     exposure: {
       include_in_project_sessions: true,
@@ -144,6 +153,7 @@ function saveLabel(isSaving: boolean, label: string): string {
 
 export interface ContextContainersEditorProps {
   value: ContextContainerDefinition[];
+  domain: string;
   isSaving?: boolean;
   addLabel?: string;
   emptyText?: string;
@@ -152,6 +162,7 @@ export interface ContextContainersEditorProps {
 
 export function ContextContainersEditor({
   value,
+  domain,
   isSaving = false,
   addLabel = "添加容器",
   emptyText = "暂无容器",
@@ -161,6 +172,7 @@ export function ContextContainersEditor({
     <ContextContainersEditorForm
       key={JSON.stringify(value)}
       value={value}
+      domain={domain}
       isSaving={isSaving}
       addLabel={addLabel}
       emptyText={emptyText}
@@ -171,6 +183,7 @@ export function ContextContainersEditor({
 
 function ContextContainersEditorForm({
   value,
+  domain,
   isSaving = false,
   addLabel = "添加容器",
   emptyText = "暂无容器",
@@ -214,7 +227,7 @@ function ContextContainersEditorForm({
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => setDraft((current) => [...current, createDefaultContainer()])}
+          onClick={() => setDraft((current) => [...current, createDefaultContainer(domain, current)])}
           disabled={isSaving}
           className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:opacity-40"
         >
@@ -261,29 +274,14 @@ function ContainerEditorItem({
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const handleDisplayNameChange = (value: string) => {
-    onUpdate((current) => {
-      const slug = slugify(value);
-      const shouldSync = current.id === "" || current.id === slugify(current.display_name);
-      return {
-        ...current,
-        display_name: value,
-        id: shouldSync ? slug : current.id,
-        mount_id: shouldSync ? slug : current.mount_id,
-      };
-    });
-  };
-
   return (
     <div className="space-y-3 rounded-[12px] border border-border bg-background/70 p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium text-foreground">
           {container.display_name.trim() || `容器 ${index + 1}`}
-          {container.id && (
-            <span className="ml-2 rounded-[4px] bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-              {container.id}
-            </span>
-          )}
+          <span className="ml-2 rounded-[4px] bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {container.id}
+          </span>
         </p>
         <button
           type="button"
@@ -295,134 +293,12 @@ function ContainerEditorItem({
         </button>
       </div>
 
-      {/* 核心字段：显示名称（自动同步 id / mount_id） */}
       <input
         value={container.display_name}
-        onChange={(e) => handleDisplayNameChange(e.target.value)}
-        placeholder="容器名称（自动生成 ID 和挂载点）"
+        onChange={(e) => onUpdate((c) => ({ ...c, display_name: e.target.value }))}
+        placeholder="备注名称（仅作展示标记，不影响容器 ID）"
         className="agentdash-form-input"
       />
-
-      {/* Provider 内容区 */}
-      {container.provider.kind === "inline_files" ? (
-        <div className="space-y-2">
-          {container.provider.files.map((file, fileIndex) => (
-            <div
-              key={`inline-file-${fileIndex}`}
-              className="space-y-1.5 rounded-[10px] border border-border bg-background/80 p-2.5"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <input
-                  value={file.path}
-                  onChange={(e) =>
-                    onUpdate((current) => ({
-                      ...current,
-                      provider: {
-                        kind: "inline_files",
-                        files: current.provider.kind === "inline_files"
-                          ? current.provider.files.map((entry, i) =>
-                              i === fileIndex ? { ...entry, path: e.target.value } : entry,
-                            )
-                          : [{ path: e.target.value, content: "" }],
-                      },
-                    }))
-                  }
-                  placeholder="文件路径，例如 docs/spec.md"
-                  className="agentdash-form-input"
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdate((current) => ({
-                      ...current,
-                      provider: {
-                        kind: "inline_files",
-                        files:
-                          current.provider.kind === "inline_files"
-                            ? current.provider.files.filter((_, i) => i !== fileIndex)
-                            : [],
-                      },
-                    }))
-                  }
-                  disabled={isSaving || (container.provider.kind === "inline_files" && container.provider.files.length <= 1)}
-                  className="shrink-0 rounded-[6px] border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-                >
-                  ×
-                </button>
-              </div>
-              <textarea
-                value={file.content}
-                onChange={(e) =>
-                  onUpdate((current) => ({
-                    ...current,
-                    provider: {
-                      kind: "inline_files",
-                      files: current.provider.kind === "inline_files"
-                        ? current.provider.files.map((entry, i) =>
-                            i === fileIndex ? { ...entry, content: e.target.value } : entry,
-                          )
-                        : [{ path: file.path, content: e.target.value }],
-                    },
-                  }))
-                }
-                rows={3}
-                placeholder="文件内容"
-                className="agentdash-form-textarea font-mono text-xs"
-              />
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={() =>
-              onUpdate((current) => ({
-                ...current,
-                provider: {
-                  kind: "inline_files",
-                  files:
-                    current.provider.kind === "inline_files"
-                      ? [...current.provider.files, { path: "", content: "" }]
-                      : [{ path: "", content: "" }],
-                },
-              }))
-            }
-            disabled={isSaving}
-            className="rounded-[8px] border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:opacity-40"
-          >
-            + 添加文件
-          </button>
-        </div>
-      ) : (
-        <div className="grid gap-2 md:grid-cols-2">
-          <input
-            value={container.provider.service_id}
-            onChange={(e) =>
-              onUpdate((current) => ({
-                ...current,
-                provider:
-                  current.provider.kind === "external_service"
-                    ? { ...current.provider, service_id: e.target.value }
-                    : { kind: "external_service", service_id: e.target.value, root_ref: "" },
-              }))
-            }
-            placeholder="service_id"
-            className="agentdash-form-input"
-          />
-          <input
-            value={container.provider.root_ref}
-            onChange={(e) =>
-              onUpdate((current) => ({
-                ...current,
-                provider:
-                  current.provider.kind === "external_service"
-                    ? { ...current.provider, root_ref: e.target.value }
-                    : { kind: "external_service", service_id: "", root_ref: e.target.value },
-              }))
-            }
-            placeholder="root_ref"
-            className="agentdash-form-input"
-          />
-        </div>
-      )}
 
       {/* 高级选项折叠区 */}
       <details
@@ -433,7 +309,7 @@ function ContainerEditorItem({
           高级选项（ID / 能力 / 可见性 / Agent 过滤）
         </summary>
         <div className="mt-2 space-y-3">
-          {/* 手动 ID 编辑 */}
+          {/* ID / mount_id */}
           <div className="grid gap-2 md:grid-cols-2">
             <div>
               <label className="text-[10px] text-muted-foreground">容器 ID</label>
@@ -455,33 +331,15 @@ function ContainerEditorItem({
             </div>
           </div>
 
-          {/* Provider 类型切换 */}
-          <select
-            value={container.provider.kind}
-            onChange={(e) =>
-              onUpdate((current) => ({
-                ...current,
-                provider:
-                  e.target.value === "external_service"
-                    ? { kind: "external_service", service_id: "", root_ref: "" }
-                    : {
-                        kind: "inline_files",
-                        files:
-                          current.provider.kind === "inline_files"
-                            ? current.provider.files.map((f) => ({ ...f }))
-                            : [{ path: "context.md", content: "" }],
-                      },
-                capabilities: current.capabilities.filter((cap) =>
-                  containerSupportsCapability(current, cap),
-                ),
-                default_write: false,
-              }))
-            }
-            className="agentdash-form-select"
-          >
-            <option value="inline_files">inline_files（内联文件）</option>
-            <option value="external_service">external_service（外部服务）</option>
-          </select>
+          {/* Provider 类型（只读展示） */}
+          <div>
+            <label className="text-[10px] text-muted-foreground">Provider</label>
+            <p className="mt-0.5 rounded-[6px] bg-muted/40 px-2 py-1 font-mono text-[11px] text-foreground">
+              {container.provider.kind === "inline_files"
+                ? `inline_files（${container.provider.files.length} 个文件）`
+                : `external_service — ${container.provider.service_id}`}
+            </p>
+          </div>
 
           {/* 能力 */}
           <div className="flex flex-wrap gap-2">

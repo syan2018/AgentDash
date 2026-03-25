@@ -161,7 +161,7 @@ export function WorkspaceLayout() {
                   }`
                 }
               >
-                工作流系统
+                Workflow
               </NavLink>
             </div>
           </div>

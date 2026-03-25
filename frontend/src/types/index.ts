@@ -452,6 +452,20 @@ export interface WorkflowAttachmentSpec {
   reason?: string | null;
 }
 
+export type LifecycleFailureAction = "stay" | "block" | "retry" | "fail_lifecycle";
+
+export interface LifecycleTransitionPolicy {
+  kind: LifecycleTransitionPolicyKind;
+  next_step_key?: string | null;
+  session_terminal_states: WorkflowSessionTerminalState[];
+  action_key?: string | null;
+}
+
+export interface LifecycleTransitionSpec {
+  policy: LifecycleTransitionPolicy;
+  on_failure?: LifecycleFailureAction | null;
+}
+
 export interface LifecycleStepDefinition {
   key: string;
   title: string;
@@ -459,10 +473,7 @@ export interface LifecycleStepDefinition {
   primary_workflow_key: string;
   session_binding: WorkflowSessionBinding;
   attached_workflows: WorkflowAttachmentSpec[];
-  transition_policy: LifecycleTransitionPolicyKind;
-  next_step_key?: string | null;
-  session_terminal_states: WorkflowSessionTerminalState[];
-  action_key?: string | null;
+  transition: LifecycleTransitionSpec;
 }
 
 export interface WorkflowTemplate {

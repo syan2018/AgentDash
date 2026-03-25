@@ -121,10 +121,15 @@ function createEmptyLifecycleStep(): LifecycleStepDefinition {
     primary_workflow_key: "",
     session_binding: "not_required",
     attached_workflows: [],
-    transition_policy: "manual",
-    next_step_key: null,
-    session_terminal_states: [],
-    action_key: null,
+    transition: {
+      policy: {
+        kind: "manual",
+        next_step_key: null,
+        session_terminal_states: [],
+        action_key: null,
+      },
+      on_failure: null,
+    },
   };
 }
 
@@ -169,6 +174,8 @@ interface WorkflowState {
   editorIsSaving: boolean;
   editorIsValidating: boolean;
   editorDirty: boolean;
+  editorIsLoading: boolean;
+  editorError: string | null;
 
   lifecycleEditorDraft: LifecycleEditorDraft | null;
   lifecycleEditorOriginalId: string | null;
@@ -176,6 +183,8 @@ interface WorkflowState {
   lifecycleEditorIsSaving: boolean;
   lifecycleEditorIsValidating: boolean;
   lifecycleEditorDirty: boolean;
+  lifecycleEditorIsLoading: boolean;
+  lifecycleEditorError: string | null;
 
   bindingMetadata: BindingKindMetadata[];
   bindingMetadataLoaded: boolean;
@@ -309,6 +318,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   editorIsSaving: false,
   editorIsValidating: false,
   editorDirty: false,
+  editorIsLoading: false,
+  editorError: null,
 
   lifecycleEditorDraft: null,
   lifecycleEditorOriginalId: null,
@@ -316,24 +327,24 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   lifecycleEditorIsSaving: false,
   lifecycleEditorIsValidating: false,
   lifecycleEditorDirty: false,
+  lifecycleEditorIsLoading: false,
+  lifecycleEditorError: null,
 
   bindingMetadata: [],
   bindingMetadataLoaded: false,
 
   fetchTemplates: async () => {
-    set({ isLoading: true, error: null });
     try {
       const templates = await fetchWorkflowTemplates();
-      set({ templates, isLoading: false });
+      set({ templates });
       return templates;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return [];
     }
   },
 
   fetchDefinitions: async (targetKind) => {
-    set({ isLoading: true, error: null });
     try {
       const definitions = await fetchWorkflowDefinitions(targetKind);
       set((state) => {
@@ -343,17 +354,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
               ...definitions,
             ]
           : definitions;
-        return { definitions: nextDefinitions, isLoading: false };
+        return { definitions: nextDefinitions };
       });
       return definitions;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return [];
     }
   },
 
   fetchLifecycles: async (targetKind) => {
-    set({ isLoading: true, error: null });
     try {
       const lifecycleDefinitions = await fetchLifecycleDefinitions(targetKind);
       set((state) => {
@@ -363,37 +373,32 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
               ...lifecycleDefinitions,
             ]
           : lifecycleDefinitions;
-        return { lifecycleDefinitions: nextDefinitions, isLoading: false };
+        return { lifecycleDefinitions: nextDefinitions };
       });
       return lifecycleDefinitions;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return [];
     }
   },
 
   bootstrapTemplate: async (builtinKey) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const lifecycle = await bootstrapWorkflowTemplate(builtinKey);
       const [definitions, lifecycleDefinitions] = await Promise.all([
         fetchWorkflowDefinitions(),
         fetchLifecycleDefinitions(),
       ]);
-      set({
-        definitions,
-        lifecycleDefinitions,
-        isLoading: false,
-      });
+      set({ definitions, lifecycleDefinitions });
       return lifecycle;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   fetchProjectAssignments: async (projectId) => {
-    set({ isLoading: true, error: null });
     try {
       const assignments = await fetchProjectWorkflowAssignments(projectId);
       set((state) => ({
@@ -401,17 +406,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ...state.assignmentsByProjectId,
           [projectId]: assignments,
         },
-        isLoading: false,
       }));
       return assignments;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return [];
     }
   },
 
   assignLifecycleToProject: async (input) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const assignment = await assignProjectLifecycle(input);
       const refreshedAssignments = await fetchProjectWorkflowAssignments(input.project_id);
@@ -420,17 +424,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ...state.assignmentsByProjectId,
           [input.project_id]: refreshedAssignments,
         },
-        isLoading: false,
       }));
       return assignment;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   fetchRunsByTarget: async (targetKind, targetId) => {
-    set({ isLoading: true, error: null });
     try {
       const runs = await fetchWorkflowRunsByTarget(targetKind, targetId);
       set((state) => ({
@@ -438,56 +440,52 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ...state.runsByTargetKey,
           [targetKey(targetKind, targetId)]: runs,
         },
-        isLoading: false,
       }));
       return runs;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return [];
     }
   },
 
   startRun: async (input) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const run = await startWorkflowRun(input);
       set((state) => ({
         runsByTargetKey: upsertRun(state.runsByTargetKey, run),
-        isLoading: false,
       }));
       return run;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   activateStep: async (input) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const run = await activateWorkflowStep(input);
       set((state) => ({
         runsByTargetKey: upsertRun(state.runsByTargetKey, run),
-        isLoading: false,
       }));
       return run;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   completeStep: async (input) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const run = await completeWorkflowStep(input);
       set((state) => ({
         runsByTargetKey: upsertRun(state.runsByTargetKey, run),
-        isLoading: false,
       }));
       return run;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
@@ -500,11 +498,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       editorIsSaving: false,
       editorIsValidating: false,
       editorDirty: false,
+      editorIsLoading: false,
+      editorError: null,
     });
   },
 
   openEditDraft: async (definitionId) => {
-    set({ isLoading: true, error: null });
+    set({ editorIsLoading: true, editorError: null });
     try {
       const definition = await getWorkflowDefinition(definitionId);
       set((state) => ({
@@ -515,10 +515,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         editorIsSaving: false,
         editorIsValidating: false,
         editorDirty: false,
-        isLoading: false,
+        editorIsLoading: false,
       }));
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ editorError: (error as Error).message, editorIsLoading: false });
     }
   },
 
@@ -530,6 +530,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       editorIsSaving: false,
       editorIsValidating: false,
       editorDirty: false,
+      editorIsLoading: false,
+      editorError: null,
     });
   },
 
@@ -618,7 +620,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   validateDraft: async () => {
     const draft = get().editorDraft;
     if (!draft) return null;
-    set({ editorIsValidating: true, error: null });
+    set({ editorIsValidating: true, editorError: null });
     try {
       const result = await validateWorkflowDefinition({
         key: draft.key,
@@ -632,7 +634,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set({ editorValidation: result, editorIsValidating: false });
       return result;
     } catch (error) {
-      set({ error: (error as Error).message, editorIsValidating: false });
+      set({ editorError: (error as Error).message, editorIsValidating: false });
       return null;
     }
   },
@@ -641,7 +643,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const draft = get().editorDraft;
     const originalId = get().editorOriginalId;
     if (!draft) return null;
-    set({ editorIsSaving: true, error: null });
+    set({ editorIsSaving: true, editorError: null });
     try {
       let definition: WorkflowDefinition;
       if (originalId) {
@@ -673,52 +675,49 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       }));
       return definition;
     } catch (error) {
-      set({ error: (error as Error).message, editorIsSaving: false });
+      set({ editorError: (error as Error).message, editorIsSaving: false });
       return null;
     }
   },
 
   enableDefinition: async (id) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const definition = await enableWorkflowDefinition(id);
       set((state) => ({
         definitions: upsertDefinition(state.definitions, definition),
-        isLoading: false,
       }));
       return definition;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   disableDefinition: async (id) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const definition = await disableWorkflowDefinition(id);
       set((state) => ({
         definitions: upsertDefinition(state.definitions, definition),
-        isLoading: false,
       }));
       return definition;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   removeDefinition: async (id) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       await deleteWorkflowDefinition(id);
       set((state) => ({
         definitions: state.definitions.filter((item) => item.id !== id),
-        isLoading: false,
       }));
       return true;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return false;
     }
   },
@@ -731,11 +730,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       lifecycleEditorIsSaving: false,
       lifecycleEditorIsValidating: false,
       lifecycleEditorDirty: false,
+      lifecycleEditorIsLoading: false,
+      lifecycleEditorError: null,
     });
   },
 
   openEditLifecycleDraft: async (definitionId) => {
-    set({ isLoading: true, error: null });
+    set({ lifecycleEditorIsLoading: true, lifecycleEditorError: null });
     try {
       const definition = await getLifecycleDefinition(definitionId);
       set((state) => ({
@@ -746,10 +747,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         lifecycleEditorIsSaving: false,
         lifecycleEditorIsValidating: false,
         lifecycleEditorDirty: false,
-        isLoading: false,
+        lifecycleEditorIsLoading: false,
       }));
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ lifecycleEditorError: (error as Error).message, lifecycleEditorIsLoading: false });
     }
   },
 
@@ -761,6 +762,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       lifecycleEditorIsSaving: false,
       lifecycleEditorIsValidating: false,
       lifecycleEditorDirty: false,
+      lifecycleEditorIsLoading: false,
+      lifecycleEditorError: null,
     });
   },
 
@@ -848,7 +851,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   validateLifecycleDraft: async () => {
     const draft = get().lifecycleEditorDraft;
     if (!draft) return null;
-    set({ lifecycleEditorIsValidating: true, error: null });
+    set({ lifecycleEditorIsValidating: true, lifecycleEditorError: null });
     try {
       const result = await validateLifecycleDefinition({
         key: draft.key,
@@ -862,7 +865,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set({ lifecycleEditorValidation: result, lifecycleEditorIsValidating: false });
       return result;
     } catch (error) {
-      set({ error: (error as Error).message, lifecycleEditorIsValidating: false });
+      set({ lifecycleEditorError: (error as Error).message, lifecycleEditorIsValidating: false });
       return null;
     }
   },
@@ -871,7 +874,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const draft = get().lifecycleEditorDraft;
     const originalId = get().lifecycleEditorOriginalId;
     if (!draft) return null;
-    set({ lifecycleEditorIsSaving: true, error: null });
+    set({ lifecycleEditorIsSaving: true, lifecycleEditorError: null });
     try {
       let definition: LifecycleDefinition;
       if (originalId) {
@@ -903,52 +906,49 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       }));
       return definition;
     } catch (error) {
-      set({ error: (error as Error).message, lifecycleEditorIsSaving: false });
+      set({ lifecycleEditorError: (error as Error).message, lifecycleEditorIsSaving: false });
       return null;
     }
   },
 
   enableLifecycle: async (id) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const definition = await enableLifecycleDefinition(id);
       set((state) => ({
         lifecycleDefinitions: upsertLifecycle(state.lifecycleDefinitions, definition),
-        isLoading: false,
       }));
       return definition;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   disableLifecycle: async (id) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       const definition = await disableLifecycleDefinition(id);
       set((state) => ({
         lifecycleDefinitions: upsertLifecycle(state.lifecycleDefinitions, definition),
-        isLoading: false,
       }));
       return definition;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return null;
     }
   },
 
   removeLifecycle: async (id) => {
-    set({ isLoading: true, error: null });
+    set({ error: null });
     try {
       await deleteLifecycleDefinition(id);
       set((state) => ({
         lifecycleDefinitions: state.lifecycleDefinitions.filter((item) => item.id !== id),
-        isLoading: false,
       }));
       return true;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return false;
     }
   },
@@ -957,17 +957,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (get().bindingMetadataLoaded) {
       return get().bindingMetadata;
     }
-    set({ isLoading: true, error: null });
     try {
       const metadata = await fetchBindingMetadata();
       set({
         bindingMetadata: metadata,
         bindingMetadataLoaded: true,
-        isLoading: false,
       });
       return metadata;
     } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
+      set({ error: (error as Error).message });
       return [];
     }
   },

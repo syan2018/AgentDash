@@ -2,6 +2,7 @@ import { api } from "../api/client";
 import type {
   BindingKindMetadata,
   LifecycleDefinition,
+  LifecycleFailureAction,
   LifecycleStepDefinition,
   LifecycleTransitionPolicyKind,
   WorkflowAgentRole,
@@ -367,6 +368,9 @@ function mapWorkflowAttachmentSpec(raw: Record<string, unknown>): WorkflowAttach
 }
 
 function mapLifecycleStepDefinition(raw: Record<string, unknown>): LifecycleStepDefinition {
+  const transitionRaw = (raw.transition ?? {}) as Record<string, unknown>;
+  const policyRaw = (transitionRaw.policy ?? {}) as Record<string, unknown>;
+
   return {
     key: String(raw.key ?? ""),
     title: String(raw.title ?? ""),
@@ -378,14 +382,19 @@ function mapLifecycleStepDefinition(raw: Record<string, unknown>): LifecycleStep
           .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
           .map(mapWorkflowAttachmentSpec)
       : [],
-    transition_policy: normalizeLifecycleTransitionPolicyKind(String(raw.transition_policy ?? "manual")),
-    next_step_key: raw.next_step_key != null ? String(raw.next_step_key) : null,
-    session_terminal_states: Array.isArray(raw.session_terminal_states)
-      ? raw.session_terminal_states.map((item) =>
-          normalizeWorkflowSessionTerminalState(String(item)),
-        )
-      : [],
-    action_key: raw.action_key != null ? String(raw.action_key) : null,
+    transition: {
+      policy: {
+        kind: normalizeLifecycleTransitionPolicyKind(String(policyRaw.kind ?? "manual")),
+        next_step_key: policyRaw.next_step_key != null ? String(policyRaw.next_step_key) : null,
+        session_terminal_states: Array.isArray(policyRaw.session_terminal_states)
+          ? policyRaw.session_terminal_states.map((item: unknown) =>
+              normalizeWorkflowSessionTerminalState(String(item)),
+            )
+          : [],
+        action_key: policyRaw.action_key != null ? String(policyRaw.action_key) : null,
+      },
+      on_failure: transitionRaw.on_failure != null ? String(transitionRaw.on_failure) as LifecycleFailureAction : null,
+    },
   };
 }
 

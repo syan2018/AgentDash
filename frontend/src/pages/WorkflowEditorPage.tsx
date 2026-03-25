@@ -10,7 +10,7 @@ export function WorkflowEditorPage() {
   const editorDraft = useWorkflowStore((s) => s.editorDraft);
   const openNewDraft = useWorkflowStore((s) => s.openNewDraft);
   const openEditDraft = useWorkflowStore((s) => s.openEditDraft);
-  const isLoading = useWorkflowStore((s) => s.isLoading);
+  const isLoading = useWorkflowStore((s) => s.editorIsLoading);
 
   const isNew = definitionId === "new";
 

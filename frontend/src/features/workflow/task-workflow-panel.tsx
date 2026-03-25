@@ -395,7 +395,7 @@ export function TaskWorkflowPanel({
               {currentStepDefinition && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                    推进策略: {TRANSITION_POLICY_LABEL[currentStepDefinition.transition_policy]}
+                    推进策略: {TRANSITION_POLICY_LABEL[currentStepDefinition.transition.policy.kind]}
                   </span>
                   <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
                     主 Workflow: {currentStepDefinition.primary_workflow_key}

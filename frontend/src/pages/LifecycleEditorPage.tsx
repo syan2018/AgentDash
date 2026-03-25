@@ -10,7 +10,7 @@ export function LifecycleEditorPage() {
   const editorDraft = useWorkflowStore((state) => state.lifecycleEditorDraft);
   const openNewDraft = useWorkflowStore((state) => state.openNewLifecycleDraft);
   const openEditDraft = useWorkflowStore((state) => state.openEditLifecycleDraft);
-  const isLoading = useWorkflowStore((state) => state.isLoading);
+  const isLoading = useWorkflowStore((state) => state.lifecycleEditorIsLoading);
 
   const isNew = definitionId === "new";
 

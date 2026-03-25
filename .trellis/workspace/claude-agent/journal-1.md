@@ -1059,3 +1059,52 @@ Agent Tab 主视图：
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: Workflow/Lifecycle 运行时重构收口
+
+**Date**: 2026-03-25
+**Task**: Workflow/Lifecycle 运行时重构收口
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+| ?? | ?? |
+|------|------|
+| Workflow Contract | ??? `injection / hook_policy / completion` ??????? `outputs` ?????? |
+| Lifecycle Runtime | ?? workflow / lifecycle ????????? authority ??? `EffectiveSessionContract` |
+| Hook Runtime | ???hook ????????????`instructions` ???? fragment?constraints ????? |
+| Frontend | Workflow ????Lifecycle ????????????????? |
+| Builtins / Docs | ?? workflow JSON??? spec?????????? |
+
+**??**:
+- `cargo check -p agentdash-api -p agentdash-executor -p agentdash-local`
+- `cargo test -p agentdash-api execution_hooks`
+- `cargo test -p agentdash-executor hub`
+- `pnpm --filter frontend exec tsc --noEmit`
+- `pnpm --filter frontend exec vitest run src/pages/SessionPage.hook-runtime.test.tsx`
+- `pnpm --filter frontend lint`
+- `pnpm --filter frontend build`
+- `pnpm --filter frontend test`
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `06e6163371cb029e0251cf8437aa5dd0e7fc1d78` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -107,16 +107,47 @@ impl ToolExecutor {
         Ok(())
     }
 
+    pub fn resolve_shell_cwd(
+        &self,
+        workspace_root: &str,
+        cwd: Option<&str>,
+    ) -> Result<PathBuf, ToolError> {
+        let ws = self.validate_workspace_root(workspace_root)?;
+        let requested = cwd.unwrap_or_default().trim();
+        if requested.is_empty() || requested == "." {
+            return Ok(ws);
+        }
+
+        if is_absolute_like(requested) {
+            let absolute = PathBuf::from(requested);
+            let canonical = std::fs::canonicalize(&absolute)
+                .map_err(|_| ToolError::InvalidPath(requested.to_string()))?;
+            if !canonical.starts_with(&ws) {
+                return Err(ToolError::PathNotAccessible(requested.to_string()));
+            }
+            return Ok(canonical);
+        }
+
+        resolve_existing_path_with_root(&ws, requested)
+    }
+
     pub async fn shell_exec(
         &self,
         command: &str,
         workspace_root: &str,
+        cwd: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<ShellResult, ToolError> {
-        let ws = self.validate_workspace_root(workspace_root)?;
+        let ws = self.resolve_shell_cwd(workspace_root, cwd)?;
         let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
 
-        tracing::debug!(command = %command, cwd = %ws.display(), "shell_exec");
+        tracing::debug!(
+            command = %command,
+            workspace_root = workspace_root,
+            requested_cwd = ?cwd,
+            cwd = %ws.display(),
+            "shell_exec"
+        );
 
         let shell = if cfg!(windows) { "cmd" } else { "sh" };
         let flag = if cfg!(windows) { "/C" } else { "-c" };
@@ -657,5 +688,35 @@ mod tests {
             .resolve_existing_path(file.to_string_lossy().as_ref(), &root)
             .expect_err("absolute path should be rejected");
         assert!(matches!(error, ToolError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn resolve_shell_cwd_allows_relative_directory_inside_workspace_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let child = temp.path().join("nested");
+        std::fs::create_dir_all(&child).expect("mkdir");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let cwd = executor
+            .resolve_shell_cwd(&root, Some("nested"))
+            .expect("relative cwd should resolve");
+
+        assert_eq!(cwd, std::fs::canonicalize(child).expect("canonical child"));
+    }
+
+    #[test]
+    fn resolve_shell_cwd_rejects_absolute_directory_outside_workspace_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+        let outside_path = outside.path().to_string_lossy().to_string();
+
+        let error = executor
+            .resolve_shell_cwd(&root, Some(&outside_path))
+            .expect_err("outside absolute cwd should be rejected");
+
+        assert!(matches!(error, ToolError::PathNotAccessible(_)));
     }
 }

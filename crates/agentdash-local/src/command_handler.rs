@@ -76,6 +76,10 @@ impl CommandHandler {
                 vec![self.handle_discover(id).await]
             }
 
+            RelayMessage::CommandDiscoverOptions { id, payload } => {
+                vec![self.handle_discover_options(id, payload).await]
+            }
+
             RelayMessage::CommandToolFileRead { id, payload } => {
                 vec![self.handle_tool_file_read(id, payload).await]
             }
@@ -259,6 +263,24 @@ impl CommandHandler {
         }
     }
 
+    async fn handle_discover_options(
+        &self,
+        id: String,
+        payload: CommandDiscoverOptionsPayload,
+    ) -> RelayMessage {
+        tracing::debug!(
+            executor = %payload.executor,
+            variant = ?payload.variant,
+            "收到 command.discover_options，但本机 relay 尚未实现该流式能力"
+        );
+        RelayMessage::Error {
+            id,
+            error: RelayError::runtime_error(
+                "本机 relay 尚未实现 command.discover_options，请改走云端直连 discovery 管线",
+            ),
+        }
+    }
+
     // ─── PiAgent Tool Call 处理 ─────────────────────────────
 
     async fn handle_tool_file_read(
@@ -324,6 +346,7 @@ impl CommandHandler {
             .shell_exec(
                 &payload.command,
                 &payload.workspace_root,
+                payload.cwd.as_deref(),
                 payload.timeout_ms,
             )
             .await
@@ -572,11 +595,24 @@ impl CommandHandler {
         id: String,
         payload: CommandWorkspaceDetectGitPayload,
     ) -> RelayMessage {
-        tracing::debug!(path = %payload.path, "workspace_detect_git");
+        let workspace_root = match self.tool_executor.validate_workspace_root(&payload.path) {
+            Ok(path) => path,
+            Err(error) => {
+                return RelayMessage::ResponseWorkspaceDetectGit {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!(
+                        "workspace_detect_git 路径校验失败: {error}"
+                    ))),
+                };
+            }
+        };
+
+        tracing::debug!(path = %workspace_root.display(), "workspace_detect_git");
         RelayMessage::ResponseWorkspaceDetectGit {
             id,
             payload: Some(ResponseWorkspaceDetectGitPayload {
-                is_git: std::path::Path::new(&payload.path).join(".git").exists(),
+                is_git: workspace_root.join(".git").exists(),
                 default_branch: None,
                 current_branch: None,
                 remote_url: None,

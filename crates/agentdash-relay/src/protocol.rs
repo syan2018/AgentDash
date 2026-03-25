@@ -457,6 +457,8 @@ pub struct CommandWorkspaceFilesReadPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceDetectGitPayload {
+    /// 待检测的 workspace 根目录。
+    /// 本机必须先校验它位于 accessible_roots 内，不能把它当任意文件系统路径使用。
     pub path: String,
 }
 
@@ -481,7 +483,16 @@ pub struct ToolFileWritePayload {
 pub struct ToolShellExecPayload {
     pub call_id: String,
     pub command: String,
+    /// shell 允许访问的工作区根目录边界。
+    /// 若未提供 `cwd`，执行器默认在该目录下启动命令。
     pub workspace_root: String,
+    /// 可选执行目录。
+    /// 当前约定：
+    /// - 允许为空，此时回退到 `workspace_root`
+    /// - 相对路径相对于 `workspace_root` 解析
+    /// - 绝对路径必须仍位于 `workspace_root` / accessible_roots 边界内
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }

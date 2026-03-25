@@ -172,7 +172,22 @@ fn build_capabilities(handler: &CommandHandler) -> CapabilitiesPayload {
         executors,
         supports_cancel: true,
         supports_workspace_files: true,
-        supports_discover_options: true,
+        supports_discover_options: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_capabilities_disables_unimplemented_discover_options() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let handler = CommandHandler::new(ToolExecutor::new(Vec::new()), None, None, event_tx);
+
+        let capabilities = build_capabilities(&handler);
+
+        assert!(!capabilities.supports_discover_options);
     }
 }
 

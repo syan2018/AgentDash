@@ -5,7 +5,7 @@
  * 暴露 displayItems（聚合后）、rawEntries、tokenUsage 等供 UI 使用。
  */
 
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { useAcpStream } from "./useAcpStream";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type {
@@ -200,10 +200,6 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
 export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {
   const { sessionId, endpoint, enableAggregation = true, enabled } = options;
 
-  const handleEntry = useCallback(() => {
-    // 条目更新时触发重新渲染
-  }, []);
-
   const {
     entries,
     isConnected,
@@ -218,7 +214,6 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     sessionId,
     endpoint,
     enabled,
-    onEntry: handleEntry,
   });
 
   const displayItems = useMemo(() => {

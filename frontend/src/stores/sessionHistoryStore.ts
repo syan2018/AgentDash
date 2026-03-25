@@ -17,6 +17,7 @@ interface SessionHistoryState {
   sessions: SessionMeta[];
   isLoading: boolean;
   activeSessionId: string | null;
+  error: string | null;
 
   setActiveSessionId: (id: string | null) => void;
   reload: () => Promise<void>;
@@ -30,16 +31,20 @@ export const useSessionHistoryStore = create<SessionHistoryState>()((set, get) =
   sessions: [],
   isLoading: false,
   activeSessionId: null,
+  error: null,
 
   setActiveSessionId: (id) => set({ activeSessionId: id }),
 
   reload: async () => {
-    set({ isLoading: true });
+    set({ isLoading: true, error: null });
     try {
       const sessions = await fetchSessions({ excludeBound: true });
-      set({ sessions, isLoading: false });
-    } catch {
-      set({ isLoading: false });
+      set({ sessions, isLoading: false, error: null });
+    } catch (e) {
+      set({
+        isLoading: false,
+        error: e instanceof Error ? e.message : "加载会话历史失败",
+      });
     }
   },
 
@@ -50,10 +55,18 @@ export const useSessionHistoryStore = create<SessionHistoryState>()((set, get) =
   },
 
   removeSession: async (id: string) => {
-    await apiDeleteSession(id);
-    set((state) => ({
-      sessions: state.sessions.filter((s) => s.id !== id),
-      activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
-    }));
+    try {
+      await apiDeleteSession(id);
+      set((state) => ({
+        sessions: state.sessions.filter((s) => s.id !== id),
+        activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
+        error: null,
+      }));
+    } catch (e) {
+      set({
+        error: e instanceof Error ? e.message : "删除会话失败",
+      });
+      throw e;
+    }
   },
 }));

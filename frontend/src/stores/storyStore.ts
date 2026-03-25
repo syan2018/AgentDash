@@ -45,6 +45,7 @@ export interface CreateStorySessionInput {
 
 interface StoryState {
   stories: Story[];
+  storiesByProjectId: Record<string, Story[]>;
   tasksByStoryId: Record<string, Task[]>;
   sessionsByStoryId: Record<string, SessionBinding[]>;
   selectedStoryId: string | null;
@@ -380,6 +381,48 @@ const upsertStoryInList = (stories: Story[], story: Story): Story[] => {
   return [story, ...stories];
 };
 
+const upsertStoryInProjectMap = (
+  storiesByProjectId: Record<string, Story[]>,
+  story: Story,
+): Record<string, Story[]> => {
+  const next = { ...storiesByProjectId };
+  const projectStories = next[story.project_id] ?? [];
+  next[story.project_id] = upsertStoryInList(projectStories, story);
+  return next;
+};
+
+const removeStoryFromProjectMap = (
+  storiesByProjectId: Record<string, Story[]>,
+  storyId: string,
+  projectIdHint?: string | null,
+): Record<string, Story[]> => {
+  const next = { ...storiesByProjectId };
+  if (projectIdHint) {
+    const existing = next[projectIdHint] ?? [];
+    next[projectIdHint] = existing.filter((story) => story.id !== storyId);
+    return next;
+  }
+
+  for (const [projectId, list] of Object.entries(next)) {
+    const filtered = list.filter((story) => story.id !== storyId);
+    if (filtered.length !== list.length) {
+      next[projectId] = filtered;
+    }
+  }
+  return next;
+};
+
+const flattenStoriesMap = (storiesByProjectId: Record<string, Story[]>): Story[] => {
+  const merged = Object.values(storiesByProjectId).flat();
+  const dedup = new Map<string, Story>();
+  for (const story of merged) {
+    if (!dedup.has(story.id)) {
+      dedup.set(story.id, story);
+    }
+  }
+  return Array.from(dedup.values());
+};
+
 const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
   id: String(raw.id ?? ''),
   project_id: String(raw.project_id ?? ''),
@@ -446,6 +489,7 @@ const canMapTaskFromPayload = (payload: Record<string, unknown>): boolean => {
 
 export const useStoryStore = create<StoryState>((set) => ({
   stories: [],
+  storiesByProjectId: {},
   tasksByStoryId: {},
   sessionsByStoryId: {},
   selectedStoryId: null,
@@ -458,7 +502,17 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       const response = await api.get<Record<string, unknown>[]>(`/stories?project_id=${projectId}`);
       const stories = response.map(mapStory);
-      set({ stories, isLoading: false });
+      set((s) => {
+        const storiesByProjectId = {
+          ...s.storiesByProjectId,
+          [projectId]: stories,
+        };
+        return {
+          storiesByProjectId,
+          stories: flattenStoriesMap(storiesByProjectId),
+          isLoading: false,
+        };
+      });
     } catch (e) {
       set({ error: (e as Error).message, isLoading: false });
     }
@@ -468,7 +522,13 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}`);
       const story = mapStory(raw);
-      set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
+      set((s) => {
+        const storiesByProjectId = upsertStoryInProjectMap(s.storiesByProjectId, story);
+        return {
+          storiesByProjectId,
+          stories: flattenStoriesMap(storiesByProjectId),
+        };
+      });
       return story;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -487,7 +547,13 @@ export const useStoryStore = create<StoryState>((set) => ({
         tags: options?.tags,
       });
       const story = mapStory(raw);
-      set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
+      set((s) => {
+        const storiesByProjectId = upsertStoryInProjectMap(s.storiesByProjectId, story);
+        return {
+          storiesByProjectId,
+          stories: flattenStoriesMap(storiesByProjectId),
+        };
+      });
       return story;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -505,7 +571,14 @@ export const useStoryStore = create<StoryState>((set) => ({
       }
       const raw = await api.put<Record<string, unknown>>(`/stories/${storyId}`, requestPayload);
       const story = mapStory(raw);
-      set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
+      set((s) => {
+        const withoutOld = removeStoryFromProjectMap(s.storiesByProjectId, storyId);
+        const storiesByProjectId = upsertStoryInProjectMap(withoutOld, story);
+        return {
+          storiesByProjectId,
+          stories: flattenStoriesMap(storiesByProjectId),
+        };
+      });
       return story;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -517,12 +590,19 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       await api.delete(`/stories/${storyId}`);
       set((s) => {
+        const deletedStory = s.stories.find((story) => story.id === storyId) ?? null;
+        const storiesByProjectId = removeStoryFromProjectMap(
+          s.storiesByProjectId,
+          storyId,
+          deletedStory?.project_id ?? null,
+        );
         const nextTasks = { ...s.tasksByStoryId };
         delete nextTasks[storyId];
         const nextSessions = { ...s.sessionsByStoryId };
         delete nextSessions[storyId];
         return {
-          stories: s.stories.filter((story) => story.id !== storyId),
+          storiesByProjectId,
+          stories: flattenStoriesMap(storiesByProjectId),
           tasksByStoryId: nextTasks,
           sessionsByStoryId: nextSessions,
           selectedStoryId: s.selectedStoryId === storyId ? null : s.selectedStoryId,
@@ -755,7 +835,13 @@ export const useStoryStore = create<StoryState>((set) => ({
         .get<Record<string, unknown>>(`/stories/${storyId}`)
         .then((raw) => {
           const story = mapStory(raw);
-          set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
+          set((s) => {
+            const storiesByProjectId = upsertStoryInProjectMap(s.storiesByProjectId, story);
+            return {
+              storiesByProjectId,
+              stories: flattenStoriesMap(storiesByProjectId),
+            };
+          });
         })
         .catch(() => {})
         .finally(() => {
@@ -784,7 +870,14 @@ export const useStoryStore = create<StoryState>((set) => ({
       case 'story_status_changed': {
         if (canMapStoryFromPayload(payload)) {
           const story = mapStory(payload);
-          set((s) => ({ stories: upsertStoryInList(s.stories, story) }));
+          set((s) => {
+            const withoutOld = removeStoryFromProjectMap(s.storiesByProjectId, story.id);
+            const storiesByProjectId = upsertStoryInProjectMap(withoutOld, story);
+            return {
+              storiesByProjectId,
+              stories: flattenStoriesMap(storiesByProjectId),
+            };
+          });
           break;
         }
         refreshStoryById(entityId);
@@ -792,12 +885,21 @@ export const useStoryStore = create<StoryState>((set) => ({
       }
       case 'story_deleted': {
         set((s) => {
+          const payloadProjectId =
+            typeof payload.project_id === 'string' ? payload.project_id : null;
+          const deletedStory = s.stories.find((story) => story.id === entityId) ?? null;
+          const storiesByProjectId = removeStoryFromProjectMap(
+            s.storiesByProjectId,
+            entityId,
+            payloadProjectId ?? deletedStory?.project_id ?? null,
+          );
           const nextTasks = { ...s.tasksByStoryId };
           delete nextTasks[entityId];
           const nextSessions = { ...s.sessionsByStoryId };
           delete nextSessions[entityId];
           return {
-            stories: s.stories.filter((item) => item.id !== entityId),
+            storiesByProjectId,
+            stories: flattenStoriesMap(storiesByProjectId),
             tasksByStoryId: nextTasks,
             sessionsByStoryId: nextSessions,
             selectedStoryId:

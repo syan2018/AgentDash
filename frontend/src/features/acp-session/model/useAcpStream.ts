@@ -53,6 +53,27 @@ export interface UseAcpStreamResult {
 const FLUSH_INTERVAL_MS = 50;
 const RECEIVING_IDLE_TIMEOUT_MS = 600;
 
+interface CachedSessionState {
+  entries: AcpDisplayEntry[];
+  tokenUsage: TokenUsageInfo | null;
+}
+
+const sessionStateCache = new Map<string, CachedSessionState>();
+
+function getCachedSessionState(
+  sessionId: string,
+  initialEntries: AcpDisplayEntry[],
+): CachedSessionState {
+  const cached = sessionStateCache.get(sessionId);
+  if (cached) {
+    return cached;
+  }
+  return {
+    entries: initialEntries,
+    tokenUsage: null,
+  };
+}
+
 /**
  * Merge incoming text chunk into accumulated text.
  * Matches ABCCraft's mergeStreamChunk — standard ACP handling only.
@@ -190,14 +211,15 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     onConnectionChange,
     onError,
   } = options;
+  const initialSessionState = getCachedSessionState(sessionId, initialEntries);
 
-  const [entries, setEntries] = useState<AcpDisplayEntry[]>(initialEntries);
+  const [entries, setEntries] = useState<AcpDisplayEntry[]>(initialSessionState.entries);
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isReceiving, setIsReceiving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [connectKey, setConnectKey] = useState(0);
-  const [tokenUsage, setTokenUsage] = useState<TokenUsageInfo | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsageInfo | null>(initialSessionState.tokenUsage);
 
   const transportRef = useRef<AcpStreamTransport | null>(null);
   const mountedRef = useRef(true);
@@ -209,6 +231,10 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   useEffect(() => {
     callbackRefs.current = { onEntry, onConnectionChange, onError };
   }, [onEntry, onConnectionChange, onError]);
+
+  useEffect(() => {
+    sessionStateCache.set(sessionId, { entries, tokenUsage });
+  }, [entries, sessionId, tokenUsage]);
 
   const applyNotification = useCallback((prev: AcpDisplayEntry[], notification: SessionNotification) => {
     const { update } = notification;
@@ -449,21 +475,20 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     mountedRef.current = true;
 
     if (!enabled) {
-      setEntries([]);
       setIsLoading(false);
       setError(null);
       setIsConnected(false);
-      setTokenUsage(null);
       return () => {
         mountedRef.current = false;
       };
     }
 
-    setEntries(initialEntries);
+    const cachedState = getCachedSessionState(sessionId, initialEntries);
+    setEntries(cachedState.entries);
     setIsLoading(true);
     setError(null);
     setIsConnected(false);
-    setTokenUsage(null);
+    setTokenUsage(cachedState.tokenUsage);
 
     if (transportRef.current) {
       transportRef.current.close();
@@ -542,12 +567,10 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
       transportRef.current.close();
       transportRef.current = null;
     }
-    setEntries([]);
     setError(null);
     setIsLoading(true);
     setIsConnected(false);
     setIsReceiving(false);
-    setTokenUsage(null);
     setConnectKey((k) => k + 1);
   }, []);
 

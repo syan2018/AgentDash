@@ -12,10 +12,17 @@ import { useProjectStore } from "../../stores/projectStore";
 import { useStoryStore } from "../../stores/storyStore";
 import { StoryListView } from "./story-list-view";
 
+const EMPTY_STORIES: Story[] = [];
+
 export function StoryTabView() {
   const navigate = useNavigate();
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
-  const { stories, isLoading, fetchStoriesByProject } = useStoryStore();
+  const isLoading = useStoryStore((s) => s.isLoading);
+  const fetchStoriesByProject = useStoryStore((s) => s.fetchStoriesByProject);
+  const stories = useStoryStore((s) => {
+    if (!currentProjectId) return EMPTY_STORIES;
+    return s.storiesByProjectId[currentProjectId] ?? EMPTY_STORIES;
+  });
 
   // 切换项目或首次渲染时加载 Story 列表
   useEffect(() => {

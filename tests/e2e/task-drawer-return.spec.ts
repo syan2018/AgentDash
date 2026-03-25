@@ -1,19 +1,40 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
-const API_ORIGIN = "http://127.0.0.1:3011/api";
+const SERVER_PORT = process.env.PLAYWRIGHT_SERVER_PORT ?? "3011";
+const API_ORIGIN = `http://127.0.0.1:${SERVER_PORT}/api`;
+const REPO_ROOT = (process.env.PLAYWRIGHT_E2E_ROOT ?? process.cwd()).replace(/\\/g, "/");
+const PLAYWRIGHT_BACKEND_ID = process.env.PLAYWRIGHT_BACKEND_ID ?? "e2e-local";
 
 interface BackendConfig {
   id: string;
   name: string;
-  endpoint: string;
+  endpoint?: string;
+  backend_id?: string;
+  accessible_roots?: string[];
 }
 
 interface ProjectEntity {
   id: string;
+  name?: string;
+  description?: string;
+  config?: {
+    default_agent_type?: string | null;
+    default_workspace_id?: string | null;
+    agent_presets?: Array<unknown>;
+  };
 }
 
 interface StoryEntity {
   id: string;
+}
+
+interface WorkspaceEntity {
+  id: string;
+  bindings: Array<{
+    id: string;
+    backend_id: string;
+    root_ref: string;
+  }>;
 }
 
 interface TaskEntity {
@@ -22,26 +43,17 @@ interface TaskEntity {
 }
 
 async function ensureBackend(request: APIRequestContext, suffix: string): Promise<BackendConfig> {
-  const listResp = await request.get(`${API_ORIGIN}/backends`);
-  expect(listResp.ok()).toBeTruthy();
-  const backends = (await listResp.json()) as BackendConfig[];
-  if (backends.length > 0) {
-    return backends[0];
-  }
-
-  const backend: BackendConfig = {
-    id: `e2e-backend-${suffix}`,
-    name: `E2E Backend ${suffix}`,
-    endpoint: "http://127.0.0.1:3011",
+  void suffix;
+  const onlineResp = await request.get(`${API_ORIGIN}/backends/online`);
+  expect(onlineResp.ok()).toBeTruthy();
+  const onlineBackends = (await onlineResp.json()) as BackendConfig[];
+  const backend = onlineBackends.find((item) => item.backend_id === PLAYWRIGHT_BACKEND_ID);
+  expect(backend, `未找到在线 E2E backend: ${PLAYWRIGHT_BACKEND_ID}`).toBeTruthy();
+  return {
+    id: PLAYWRIGHT_BACKEND_ID,
+    name: backend?.name ?? PLAYWRIGHT_BACKEND_ID,
+    accessible_roots: backend?.accessible_roots ?? [],
   };
-  const createResp = await request.post(`${API_ORIGIN}/backends`, {
-    data: {
-      ...backend,
-      backend_type: "local",
-    },
-  });
-  expect(createResp.ok()).toBeTruthy();
-  return backend;
 }
 
 async function createProject(request: APIRequestContext, suffix: string): Promise<ProjectEntity> {
@@ -56,6 +68,47 @@ async function createProject(request: APIRequestContext, suffix: string): Promis
   });
   expect(resp.ok()).toBeTruthy();
   return (await resp.json()) as ProjectEntity;
+}
+
+async function createWorkspace(
+  request: APIRequestContext,
+  projectId: string,
+  backendId: string,
+  suffix: string,
+): Promise<WorkspaceEntity> {
+  const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/workspaces`, {
+    data: {
+      name: `E2E Drawer Workspace ${suffix}`,
+      shortcut_binding: {
+        backend_id: backendId,
+        root_ref: REPO_ROOT,
+      },
+    },
+  });
+  expect(resp.ok()).toBeTruthy();
+  const workspace = (await resp.json()) as WorkspaceEntity;
+  expect(workspace.bindings[0]?.backend_id).toBe(backendId);
+  expect(workspace.bindings[0]?.root_ref).toBe(REPO_ROOT);
+  return workspace;
+}
+
+async function updateProjectDefaultWorkspace(
+  request: APIRequestContext,
+  project: ProjectEntity,
+  workspaceId: string,
+): Promise<void> {
+  const resp = await request.put(`${API_ORIGIN}/projects/${project.id}`, {
+    data: {
+      name: project.name ?? `E2E Drawer Project ${project.id}`,
+      description: project.description ?? "用于回归测试 Task 抽屉返回链路",
+      config: {
+        default_agent_type: project.config?.default_agent_type ?? "codex",
+        default_workspace_id: workspaceId,
+        agent_presets: project.config?.agent_presets ?? [],
+      },
+    },
+  });
+  expect(resp.ok()).toBeTruthy();
 }
 
 async function createStory(
@@ -117,6 +170,8 @@ test("Task 抽屉返回链路稳定：关闭不反弹、会话返回后可正常
   const suffix = Date.now().toString();
   const backend = await ensureBackend(request, suffix);
   const project = await createProject(request, suffix);
+  const workspace = await createWorkspace(request, project.id, backend.id, suffix);
+  await updateProjectDefaultWorkspace(request, project, workspace.id);
   const story = await createStory(request, project.id, suffix);
   const task = await createTask(request, story.id, suffix);
   const sessionId = await bindTaskSession(request, task.id);

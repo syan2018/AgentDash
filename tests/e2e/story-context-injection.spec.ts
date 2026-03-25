@@ -1,12 +1,17 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
-const API_ORIGIN = "http://127.0.0.1:3011/api";
-const REPO_ROOT = "F:/Projects/AgentDash";
+const SERVER_PORT = process.env.PLAYWRIGHT_SERVER_PORT ?? "3011";
+const API_ORIGIN = `http://127.0.0.1:${SERVER_PORT}/api`;
+const REPO_ROOT = (process.env.PLAYWRIGHT_E2E_ROOT ?? process.cwd()).replace(/\\/g, "/");
+const PLAYWRIGHT_BACKEND_ID = process.env.PLAYWRIGHT_BACKEND_ID ?? "e2e-local";
 
 interface BackendConfig {
   id: string;
   name: string;
-  endpoint: string;
+  endpoint?: string;
+  online?: boolean;
+  backend_id?: string;
+  accessible_roots?: string[];
 }
 
 interface ProjectEntity {
@@ -72,26 +77,25 @@ interface PromptResult {
 }
 
 async function ensureBackend(request: APIRequestContext, suffix: string): Promise<BackendConfig> {
-  const listResp = await request.get(`${API_ORIGIN}/backends`);
-  expect(listResp.ok()).toBeTruthy();
-  const backends = (await listResp.json()) as BackendConfig[];
-  if (backends.length > 0) {
-    return backends[0]!;
-  }
+  void suffix;
+  const onlineResp = await request.get(`${API_ORIGIN}/backends/online`);
+  expect(onlineResp.ok()).toBeTruthy();
+  const onlineBackends = (await onlineResp.json()) as BackendConfig[];
+  const backend = onlineBackends.find((item) => item.backend_id === PLAYWRIGHT_BACKEND_ID);
+  expect(backend, `未找到在线 E2E backend: ${PLAYWRIGHT_BACKEND_ID}`).toBeTruthy();
 
-  const backend: BackendConfig = {
-    id: `e2e-backend-${suffix}`,
-    name: `E2E Backend ${suffix}`,
-    endpoint: "http://127.0.0.1:3011",
+  const accessibleRoots = backend?.accessible_roots ?? [];
+  expect(
+    accessibleRoots.some((root) => REPO_ROOT.startsWith(root.replace(/\\/g, "/"))),
+    `E2E backend 未暴露当前仓库根目录: ${REPO_ROOT}`,
+  ).toBeTruthy();
+
+  return {
+    id: PLAYWRIGHT_BACKEND_ID,
+    name: backend?.name ?? PLAYWRIGHT_BACKEND_ID,
+    online: true,
+    accessible_roots: accessibleRoots,
   };
-  const createResp = await request.post(`${API_ORIGIN}/backends`, {
-    data: {
-      ...backend,
-      backend_type: "local",
-    },
-  });
-  expect(createResp.ok()).toBeTruthy();
-  return backend;
 }
 
 async function createProject(request: APIRequestContext, suffix: string): Promise<ProjectEntity> {
@@ -370,7 +374,7 @@ test("Story 伴随会话在 prompt 前会自动注入 Story 上下文资源", as
   const sessionId = getBindingSessionId(binding);
   const prompt = await promptSession(request, sessionId);
 
-  expect([200, 400, 500]).toContain(prompt.status);
+  expect(prompt.status, prompt.body).toBe(200);
 
   await expect
     .poll(async () => {

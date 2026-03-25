@@ -72,7 +72,14 @@ async function main() {
   const serverBinary = resolveBinary('agentdash-server');
   if (!config.skipServer) {
     console.log(`[2/4] 启动 agentdash-server (:${config.serverPort})...`);
-    startManagedProcess(serverBinary, [], 'agentdash-server');
+    startManagedProcess(serverBinary, [], 'agentdash-server', {
+      env: {
+        ...process.env,
+        HOST: config.serverHost,
+        PORT: String(config.serverPort),
+        DATABASE_URL: config.databaseUrl
+      }
+    });
   } else {
     console.log(`[2/4] 跳过 agentdash-server，等待现有服务 (:${config.serverPort})...`);
   }
@@ -104,7 +111,7 @@ async function main() {
   }
 
   if (!config.skipFrontend) {
-    console.log('[4/4] 启动前端 (:5380)...');
+    console.log(`[4/4] 启动前端 (${config.frontendMode}, :${config.frontendPort})...`);
     startFrontendProcess();
   } else {
     console.log('[4/4] 跳过前端（--skip-frontend）');
@@ -114,9 +121,9 @@ async function main() {
   console.log('  ╔══════════════════════════════════════╗');
   console.log('  ║       所有服务已就绪                 ║');
   console.log('  ╚══════════════════════════════════════╝');
-  console.log(`  API:      http://localhost:${config.serverPort}`);
-  console.log('  Frontend: http://localhost:5380');
-  console.log(`  WS:       ws://localhost:${config.serverPort}/ws/backend`);
+  console.log(`  API:      http://${config.serverHost}:${config.serverPort}`);
+  console.log(`  Frontend: http://${config.frontendHost}:${config.frontendPort}`);
+  console.log(`  WS:       ws://${config.serverHost}:${config.serverPort}/ws/backend`);
   console.log('');
   console.log('  按 Ctrl+C 停止全部服务');
   console.log('');
@@ -130,8 +137,13 @@ function parseArgs(args) {
     accessibleRoots: root,
     backendId: 'local-dev-1',
     backendName: 'dev-local',
+    databaseUrl: process.env.DATABASE_URL || 'sqlite:agentdash.db?mode=rwc',
+    frontendMode: 'dev',
+    frontendHost: '127.0.0.1',
+    frontendPort: 5380,
     help: false,
     noExecutor: false,
+    serverHost: '127.0.0.1',
     serverPort: 3001,
     skipBuild: false,
     skipFrontend: false,
@@ -197,6 +209,46 @@ function parseArgs(args) {
       result.serverPort = parsePort(readNextValue(args, ++index, arg), arg);
       continue;
     }
+    if (arg.startsWith('--server-host=')) {
+      result.serverHost = arg.slice('--server-host='.length);
+      continue;
+    }
+    if (arg === '--server-host') {
+      result.serverHost = readNextValue(args, ++index, arg);
+      continue;
+    }
+    if (arg.startsWith('--frontend-port=')) {
+      result.frontendPort = parsePort(arg.slice('--frontend-port='.length), arg);
+      continue;
+    }
+    if (arg === '--frontend-port') {
+      result.frontendPort = parsePort(readNextValue(args, ++index, arg), arg);
+      continue;
+    }
+    if (arg.startsWith('--frontend-host=')) {
+      result.frontendHost = arg.slice('--frontend-host='.length);
+      continue;
+    }
+    if (arg === '--frontend-host') {
+      result.frontendHost = readNextValue(args, ++index, arg);
+      continue;
+    }
+    if (arg.startsWith('--frontend-mode=')) {
+      result.frontendMode = parseFrontendMode(arg.slice('--frontend-mode='.length), arg);
+      continue;
+    }
+    if (arg === '--frontend-mode') {
+      result.frontendMode = parseFrontendMode(readNextValue(args, ++index, arg), arg);
+      continue;
+    }
+    if (arg.startsWith('--database-url=')) {
+      result.databaseUrl = arg.slice('--database-url='.length);
+      continue;
+    }
+    if (arg === '--database-url') {
+      result.databaseUrl = readNextValue(args, ++index, arg);
+      continue;
+    }
     throw new Error(`不支持的参数: ${arg}`);
   }
 
@@ -219,6 +271,13 @@ function parsePort(value, flagName) {
   return port;
 }
 
+function parseFrontendMode(value, flagName) {
+  if (value === 'dev' || value === 'preview') {
+    return value;
+  }
+  throw new Error(`${flagName} 不是合法前端模式: ${value}`);
+}
+
 function printHelp() {
   console.log('AgentDash 联合启动脚本（Node 版）');
   console.log('');
@@ -234,7 +293,12 @@ function printHelp() {
   console.log('  --accessible-roots <val>  指定 accessible roots');
   console.log('  --backend-id <val>        指定 backend id');
   console.log('  --backend-name <val>      指定 backend name');
+  console.log('  --database-url <val>      指定 DATABASE_URL');
+  console.log('  --server-host <val>       指定后端绑定 host');
   console.log('  --server-port <port>      指定 server 端口');
+  console.log('  --frontend-host <val>     指定前端 host');
+  console.log('  --frontend-mode <mode>    指定前端模式（dev | preview）');
+  console.log('  --frontend-port <port>    指定前端端口');
 }
 
 function printBanner() {
@@ -245,6 +309,8 @@ function printBanner() {
   console.log(`  root:       ${root}`);
   console.log(`  roots:      ${config.accessibleRoots}`);
   console.log(`  backend_id: ${config.backendId}`);
+  console.log(`  frontend:   ${config.frontendMode}`);
+  console.log(`  db:         ${config.databaseUrl}`);
   console.log('');
 }
 
@@ -254,16 +320,18 @@ async function runStep0KillPorts() {
     ports.push(config.serverPort);
   }
   if (!config.skipFrontend) {
-    ports.push(5380, 5381, 5382);
+    ports.push(5380, 5381, 5382, config.frontendPort, config.frontendPort + 1, config.frontendPort + 2);
   }
 
-  if (ports.length === 0) {
+  const uniquePorts = [...new Set(ports)];
+
+  if (uniquePorts.length === 0) {
     console.log('[0/4] 跳过端口预清理（当前模式无需清理）');
     return;
   }
 
   console.log('[0/4] 端口预清理...');
-  await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js'), ...ports.map(String)], {
+  await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js'), ...uniquePorts.map(String)], {
     cwd: root,
     label: 'kill-ports'
   });
@@ -276,6 +344,7 @@ function resolveBinary(name) {
 function startManagedProcess(command, args, label, options = {}) {
   const child = spawn(command, args, {
     cwd: root,
+    env: options.env ?? process.env,
     stdio: 'inherit',
     windowsHide: false,
     detached: !isWindows
@@ -325,11 +394,26 @@ function runCommand(command, args, options = {}) {
 }
 
 function startFrontendProcess() {
+  const frontendEnv = {
+    ...process.env,
+    VITE_API_ORIGIN: `http://${config.serverHost}:${config.serverPort}`
+  };
+  const frontendCommand = config.frontendMode === 'preview'
+    ? `pnpm --filter frontend preview -- --host ${config.frontendHost} --port ${config.frontendPort} --strictPort`
+    : `pnpm --filter frontend dev -- --host ${config.frontendHost} --port ${config.frontendPort} --strictPort`;
   if (isWindows) {
-    startManagedProcess('cmd.exe', ['/d', '/s', '/c', 'pnpm --filter frontend dev'], 'frontend');
+    startManagedProcess(
+      'cmd.exe',
+      ['/d', '/s', '/c', frontendCommand],
+      'frontend',
+      { env: frontendEnv }
+    );
     return;
   }
-  startManagedProcess('pnpm', ['--filter', 'frontend', 'dev'], 'frontend');
+  const args = config.frontendMode === 'preview'
+    ? ['--filter', 'frontend', 'preview', '--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort']
+    : ['--filter', 'frontend', 'dev', '--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort'];
+  startManagedProcess('pnpm', args, 'frontend', { env: frontendEnv });
 }
 
 async function waitForHttpReady(port, requestPath, timeoutSec) {

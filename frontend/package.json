@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test": "vitest run",
     "lint": "eslint .",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "preview": "vite preview"
   },
   "dependencies": {

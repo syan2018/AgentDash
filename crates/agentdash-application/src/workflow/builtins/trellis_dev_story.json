@@ -107,41 +107,18 @@
     "steps": [
       {
         "key": "start",
-        "title": "Start",
         "description": "准备 Story 执行上下文。",
-        "primary_workflow_key": "trellis_dev_story_start",
-        "session_binding": "not_required",
-        "transition": {
-          "policy": {
-            "kind": "manual",
-            "next_step_key": "align"
-          }
-        }
+        "workflow_key": "trellis_dev_story_start"
       },
       {
         "key": "align",
-        "title": "Align",
         "description": "验证 Story 对齐状态。",
-        "primary_workflow_key": "trellis_dev_story_align",
-        "session_binding": "optional",
-        "transition": {
-          "policy": {
-            "kind": "all_checks_pass",
-            "next_step_key": "record"
-          }
-        }
+        "workflow_key": "trellis_dev_story_align"
       },
       {
         "key": "record",
-        "title": "Record",
         "description": "输出 Story 记录。",
-        "primary_workflow_key": "trellis_dev_story_record",
-        "session_binding": "not_required",
-        "transition": {
-          "policy": {
-            "kind": "manual"
-          }
-        }
+        "workflow_key": "trellis_dev_story_record"
       }
     ]
   }

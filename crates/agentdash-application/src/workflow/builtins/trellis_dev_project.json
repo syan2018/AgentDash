@@ -65,28 +65,13 @@
     "steps": [
       {
         "key": "start",
-        "title": "Start",
         "description": "建立项目级上下文。",
-        "primary_workflow_key": "trellis_dev_project_start",
-        "session_binding": "not_required",
-        "transition": {
-          "policy": {
-            "kind": "manual",
-            "next_step_key": "record"
-          }
-        }
+        "workflow_key": "trellis_dev_project_start"
       },
       {
         "key": "record",
-        "title": "Record",
         "description": "输出项目总结。",
-        "primary_workflow_key": "trellis_dev_project_record",
-        "session_binding": "not_required",
-        "transition": {
-          "policy": {
-            "kind": "manual"
-          }
-        }
+        "workflow_key": "trellis_dev_project_record"
       }
     ]
   }

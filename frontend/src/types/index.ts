@@ -219,16 +219,6 @@ export interface SessionEffectiveContext {
   runtime_policy: TaskSessionRuntimePolicySummary;
 }
 
-export interface WorkflowResolvedBindingSnapshot {
-  kind: WorkflowContextBindingKind;
-  locator: string;
-  reason: string;
-  required: boolean;
-  title?: string | null;
-  resolved: boolean;
-  summary: string;
-}
-
 export type SessionOwnerContext =
   | { owner_level: "task"; story_overrides: SessionStoryOverrides }
   | { owner_level: "story"; story_overrides: SessionStoryOverrides }
@@ -263,12 +253,7 @@ export interface ProjectSessionInfo {
 
 export type WorkflowTargetKind = "project" | "story" | "task";
 
-export type WorkflowAgentRole =
-  | "project_context_maintainer"
-  | "story_lifecycle_companion"
-  | "task_execution_worker"
-  | "review_agent"
-  | "record_agent";
+export type WorkflowAgentRole = "project" | "story" | "task";
 
 export type WorkflowContextBindingKind =
   | "document_path"
@@ -301,15 +286,8 @@ export type WorkflowSessionBinding =
   | "required";
 
 export type WorkflowConstraintKind =
-  | "deny_tool"
-  | "rewrite_tool_arg"
-  | "require_approval"
   | "deny_task_status_transition"
-  | "require_artifact_before_exit"
   | "block_stop_until_checks_pass"
-  | "require_output_section"
-  | "require_output_artifact"
-  | "enforce_response_style"
   | "custom";
 
 export type WorkflowCheckKind =
@@ -320,14 +298,6 @@ export type WorkflowCheckKind =
   | "checklist_evidence_present"
   | "explicit_action_received"
   | "custom";
-
-export type WorkflowAttachmentMode = "primary" | "overlay";
-
-export type WorkflowAttachmentLifetime =
-  | "turn"
-  | "session"
-  | "until_resolved"
-  | "until_step_exit";
 
 export type LifecycleTransitionPolicyKind =
   | "manual"
@@ -356,12 +326,6 @@ export interface WorkflowContextBinding {
   title?: string | null;
 }
 
-export interface WorkflowRecordPolicy {
-  emit_summary: boolean;
-  emit_journal_update: boolean;
-  emit_archive_suggestion: boolean;
-}
-
 export interface WorkflowConstraintSpec {
   key: string;
   kind: WorkflowConstraintKind;
@@ -383,10 +347,6 @@ export interface WorkflowInjectionSpec {
   session_binding: WorkflowSessionBinding;
 }
 
-export interface WorkflowHookPolicySpec {
-  constraints: WorkflowConstraintSpec[];
-}
-
 export interface WorkflowCompletionSpec {
   checks: WorkflowCheckSpec[];
   default_artifact_type?: WorkflowRecordArtifactType | null;
@@ -395,7 +355,7 @@ export interface WorkflowCompletionSpec {
 
 export interface WorkflowContract {
   injection: WorkflowInjectionSpec;
-  hook_policy: WorkflowHookPolicySpec;
+  constraints: WorkflowConstraintSpec[];
   completion: WorkflowCompletionSpec;
 }
 
@@ -444,14 +404,6 @@ export interface WorkflowTemplateWorkflow {
   contract: WorkflowContract;
 }
 
-export interface WorkflowAttachmentSpec {
-  workflow_key: string;
-  mode: WorkflowAttachmentMode;
-  lifetime: WorkflowAttachmentLifetime;
-  priority: number;
-  reason?: string | null;
-}
-
 export type LifecycleFailureAction = "stay" | "block" | "retry" | "fail_lifecycle";
 
 export interface LifecycleTransitionPolicy {
@@ -472,7 +424,6 @@ export interface LifecycleStepDefinition {
   description: string;
   primary_workflow_key: string;
   session_binding: WorkflowSessionBinding;
-  attached_workflows: WorkflowAttachmentSpec[];
   transition: LifecycleTransitionSpec;
 }
 
@@ -481,7 +432,7 @@ export interface WorkflowTemplate {
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
-  recommended_role: WorkflowAgentRole;
+  recommended_roles: WorkflowAgentRole[];
   workflows: WorkflowTemplateWorkflow[];
   lifecycle: {
     key: string;
@@ -490,7 +441,6 @@ export interface WorkflowTemplate {
     entry_step_key: string;
     steps: LifecycleStepDefinition[];
   };
-  record_policy: WorkflowRecordPolicy;
 }
 
 export interface WorkflowDefinition {
@@ -499,12 +449,11 @@ export interface WorkflowDefinition {
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
-  recommended_role?: WorkflowAgentRole | null;
+  recommended_roles: WorkflowAgentRole[];
   source: WorkflowDefinitionSource;
   status: WorkflowDefinitionStatus;
   version: number;
   contract: WorkflowContract;
-  record_policy: WorkflowRecordPolicy;
   created_at: string;
   updated_at: string;
 }
@@ -515,7 +464,7 @@ export interface LifecycleDefinition {
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
-  recommended_role?: WorkflowAgentRole | null;
+  recommended_roles: WorkflowAgentRole[];
   source: WorkflowDefinitionSource;
   status: WorkflowDefinitionStatus;
   version: number;
@@ -548,16 +497,6 @@ export interface WorkflowStepState {
   completed_by?: WorkflowProgressionSource | null;
 }
 
-export interface WorkflowRuntimeAttachment {
-  id: string;
-  workflow_key: string;
-  mode: WorkflowAttachmentMode;
-  lifetime: WorkflowAttachmentLifetime;
-  priority: number;
-  reason?: string | null;
-  created_at: string;
-}
-
 export interface WorkflowRecordArtifact {
   id: string;
   step_key: string;
@@ -576,7 +515,6 @@ export interface WorkflowRun {
   status: WorkflowRunStatus;
   current_step_key?: string | null;
   step_states: WorkflowStepState[];
-  runtime_attachments: WorkflowRuntimeAttachment[];
   record_artifacts: WorkflowRecordArtifact[];
   created_at: string;
   updated_at: string;

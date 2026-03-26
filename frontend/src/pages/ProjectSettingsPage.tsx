@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import type {
@@ -204,9 +204,12 @@ export function ProjectSettingsPage() {
   );
   const workspaces: Workspace[] = projectId ? (workspacesByProjectId[projectId] ?? []) : [];
   const grants = project ? (grantsByProjectId[project.id] ?? []) : [];
+  const loadedProjectIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!project) return;
+    if (loadedProjectIdRef.current === project.id) return;
+    loadedProjectIdRef.current = project.id;
     setName(project.name);
     setDescription(project.description);
     setDefaultAgentType(project.config.default_agent_type ?? "");
@@ -242,11 +245,11 @@ export function ProjectSettingsPage() {
         setDirectoryGroups(groups);
 
         const firstUser = users.find((item) => item.user_id !== currentUser?.user_id) ?? users[0];
-        if (!selectedUserId && firstUser) {
-          setSelectedUserId(firstUser.user_id);
+        if (firstUser) {
+          setSelectedUserId((prev) => prev || firstUser.user_id);
         }
-        if (!selectedGroupId && groups[0]) {
-          setSelectedGroupId(groups[0].group_id);
+        if (groups[0]) {
+          setSelectedGroupId((prev) => prev || groups[0].group_id);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -268,8 +271,6 @@ export function ProjectSettingsPage() {
     fetchProjectGrants,
     project?.access.can_manage_sharing,
     project?.id,
-    selectedGroupId,
-    selectedUserId,
   ]);
 
   if (!project) {

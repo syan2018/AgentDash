@@ -1,10 +1,10 @@
-use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
+use crate::runtime::{MountCapabilitySet, RuntimeAddressSpace, RuntimeMount};
 
 pub fn resolve_mount<'a>(
-    address_space: &'a ExecutionAddressSpace,
+    address_space: &'a RuntimeAddressSpace,
     mount_id: &str,
-    capability: ExecutionMountCapability,
-) -> Result<&'a ExecutionMount, String> {
+    capability: MountCapabilitySet,
+) -> Result<&'a RuntimeMount, String> {
     let mount = address_space
         .mounts
         .iter()
@@ -17,7 +17,7 @@ pub fn resolve_mount<'a>(
 }
 
 pub fn resolve_mount_id(
-    address_space: &ExecutionAddressSpace,
+    address_space: &RuntimeAddressSpace,
     mount: Option<&str>,
 ) -> Result<String, String> {
     if let Some(mount_id) = mount.map(str::trim).filter(|value| !value.is_empty()) {
@@ -30,13 +30,13 @@ pub fn resolve_mount_id(
         .ok_or_else(|| "当前会话没有可用 mount".to_string())
 }
 
-pub fn capability_name(capability: &ExecutionMountCapability) -> &'static str {
+pub fn capability_name(capability: &MountCapabilitySet) -> &'static str {
     match capability {
-        ExecutionMountCapability::Read => "read",
-        ExecutionMountCapability::Write => "write",
-        ExecutionMountCapability::List => "list",
-        ExecutionMountCapability::Search => "search",
-        ExecutionMountCapability::Exec => "exec",
+        MountCapabilitySet::Read => "read",
+        MountCapabilitySet::Write => "write",
+        MountCapabilitySet::List => "list",
+        MountCapabilitySet::Search => "search",
+        MountCapabilitySet::Exec => "exec",
     }
 }
 

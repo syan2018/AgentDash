@@ -15,6 +15,9 @@ async function request<T>(
     throw new Error(body.error || `HTTP ${res.status}`);
   }
 
+  if (res.status === 204) {
+    return undefined as unknown as T;
+  }
   return res.json();
 }
 

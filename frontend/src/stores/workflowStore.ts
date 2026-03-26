@@ -839,9 +839,19 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       return {
         lifecycleEditorDraft: {
           ...state.lifecycleEditorDraft,
-          steps: state.lifecycleEditorDraft.steps.map((step, index) =>
-            index === stepIndex ? { ...step, session_terminal_states: states } : step,
-          ),
+          steps: state.lifecycleEditorDraft.steps.map((step, index) => {
+            if (index !== stepIndex) return step;
+            return {
+              ...step,
+              transition: {
+                ...step.transition,
+                policy: {
+                  ...step.transition.policy,
+                  session_terminal_states: states,
+                },
+              },
+            };
+          }),
         },
         lifecycleEditorDirty: true,
       };

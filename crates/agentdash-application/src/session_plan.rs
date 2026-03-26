@@ -1,9 +1,11 @@
-use agent_client_protocol::McpServer;
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
-use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
 use agentdash_injection::{ContextFragment, MergeStrategy};
 use serde::Serialize;
+
+use crate::runtime::{
+    MountCapabilitySet, RuntimeAddressSpace, RuntimeMcpServer, RuntimeMount,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanOwnerKind {
@@ -58,8 +60,8 @@ pub struct SessionRuntimePolicySummary {
 pub struct SessionPlanInput<'a> {
     pub owner_kind: SessionPlanOwnerKind,
     pub phase: SessionPlanPhase,
-    pub address_space: Option<&'a ExecutionAddressSpace>,
-    pub mcp_servers: &'a [McpServer],
+    pub address_space: Option<&'a RuntimeAddressSpace>,
+    pub mcp_servers: &'a [RuntimeMcpServer],
     pub session_composition: Option<&'a SessionComposition>,
     pub agent_type: Option<&'a str>,
     pub preset_name: Option<&'a str>,
@@ -154,7 +156,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
 }
 
 pub fn summarize_address_space(
-    address_space: &ExecutionAddressSpace,
+    address_space: &RuntimeAddressSpace,
 ) -> SessionAddressSpaceSummary {
     let default_mount_id = address_space.default_mount_id.clone();
     let mount_ids = address_space
@@ -189,15 +191,15 @@ pub fn summarize_address_space(
 }
 
 pub fn summarize_tool_visibility(
-    address_space: Option<&ExecutionAddressSpace>,
-    mcp_servers: &[McpServer],
+    address_space: Option<&RuntimeAddressSpace>,
+    mcp_servers: &[RuntimeMcpServer],
 ) -> SessionToolVisibilitySummary {
     summarize_tool_visibility_with_context(address_space, mcp_servers, None)
 }
 
 pub fn summarize_tool_visibility_with_context(
-    address_space: Option<&ExecutionAddressSpace>,
-    mcp_servers: &[McpServer],
+    address_space: Option<&RuntimeAddressSpace>,
+    mcp_servers: &[RuntimeMcpServer],
     owner_kind: Option<SessionPlanOwnerKind>,
 ) -> SessionToolVisibilitySummary {
     let resolved = address_space.is_some();
@@ -408,8 +410,8 @@ fn build_required_context_block_markdown(block: &SessionRequiredContextBlock) ->
 
 pub fn summarize_runtime_policy(
     workspace_attached: bool,
-    address_space: Option<&ExecutionAddressSpace>,
-    mcp_servers: &[McpServer],
+    address_space: Option<&RuntimeAddressSpace>,
+    mcp_servers: &[RuntimeMcpServer],
     tool_names: &[String],
 ) -> SessionRuntimePolicySummary {
     let mount_ids = address_space
@@ -425,7 +427,7 @@ pub fn summarize_runtime_policy(
             address_space
                 .mounts
                 .iter()
-                .filter(|mount| mount.supports(ExecutionMountCapability::Write))
+                .filter(|mount| mount.supports(MountCapabilitySet::Write))
                 .map(|mount| format!("`{}`", mount.id))
                 .collect::<Vec<_>>()
         })
@@ -435,7 +437,7 @@ pub fn summarize_runtime_policy(
             address_space
                 .mounts
                 .iter()
-                .filter(|mount| mount.supports(ExecutionMountCapability::Exec))
+                .filter(|mount| mount.supports(MountCapabilitySet::Exec))
                 .map(|mount| format!("`{}`", mount.id))
                 .collect::<Vec<_>>()
         })
@@ -473,7 +475,7 @@ pub fn summarize_runtime_policy(
     }
 }
 
-fn render_mount_summary(mount: &ExecutionMount) -> String {
+fn render_mount_summary(mount: &RuntimeMount) -> String {
     let capabilities = mount
         .capabilities
         .iter()
@@ -510,7 +512,7 @@ fn render_mount_summary(mount: &ExecutionMount) -> String {
     lines.join("\n")
 }
 
-fn fallback_display_name(mount: &ExecutionMount) -> &str {
+fn fallback_display_name(mount: &RuntimeMount) -> &str {
     let trimmed = mount.display_name.trim();
     if trimmed.is_empty() {
         mount.id.as_str()
@@ -519,17 +521,17 @@ fn fallback_display_name(mount: &ExecutionMount) -> &str {
     }
 }
 
-fn render_capability(capability: &ExecutionMountCapability) -> &'static str {
+fn render_capability(capability: &MountCapabilitySet) -> &'static str {
     match capability {
-        ExecutionMountCapability::Read => "read",
-        ExecutionMountCapability::Write => "write",
-        ExecutionMountCapability::List => "list",
-        ExecutionMountCapability::Search => "search",
-        ExecutionMountCapability::Exec => "exec",
+        MountCapabilitySet::Read => "read",
+        MountCapabilitySet::Write => "write",
+        MountCapabilitySet::List => "list",
+        MountCapabilitySet::Search => "search",
+        MountCapabilitySet::Exec => "exec",
     }
 }
 
-fn runtime_address_space_tools(address_space: &ExecutionAddressSpace) -> Vec<String> {
+fn runtime_address_space_tools(address_space: &RuntimeAddressSpace) -> Vec<String> {
     let mut tools = vec![
         "mounts_list".to_string(),
         "fs_read".to_string(),
@@ -539,44 +541,27 @@ fn runtime_address_space_tools(address_space: &ExecutionAddressSpace) -> Vec<Str
     if address_space
         .mounts
         .iter()
-        .any(|mount| mount.supports(ExecutionMountCapability::Write))
+        .any(|mount| mount.supports(MountCapabilitySet::Write))
     {
         tools.push("fs_write".to_string());
     }
     if address_space
         .mounts
         .iter()
-        .any(|mount| mount.supports(ExecutionMountCapability::Exec))
+        .any(|mount| mount.supports(MountCapabilitySet::Exec))
     {
         tools.push("shell_exec".to_string());
     }
     tools
 }
 
-fn summarize_mcp_servers(mcp_servers: &[McpServer]) -> Vec<SessionMcpServerSummary> {
+fn summarize_mcp_servers(mcp_servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServerSummary> {
     mcp_servers
         .iter()
-        .map(|server| match server {
-            McpServer::Http(item) => SessionMcpServerSummary {
-                name: item.name.clone(),
-                transport: "http".to_string(),
-                target: item.url.to_string(),
-            },
-            McpServer::Sse(item) => SessionMcpServerSummary {
-                name: item.name.clone(),
-                transport: "sse".to_string(),
-                target: item.url.to_string(),
-            },
-            McpServer::Stdio(item) => SessionMcpServerSummary {
-                name: item.name.clone(),
-                transport: "stdio".to_string(),
-                target: item.command.display().to_string(),
-            },
-            _ => SessionMcpServerSummary {
-                name: "unknown-mcp".to_string(),
-                transport: "unsupported".to_string(),
-                target: "-".to_string(),
-            },
+        .map(|server| SessionMcpServerSummary {
+            name: server.name().to_string(),
+            transport: server.transport_label().to_string(),
+            target: server.target(),
         })
         .collect()
 }
@@ -614,30 +599,30 @@ mod tests {
 
     #[test]
     fn summarize_address_space_includes_mount_details() {
-        let address_space = ExecutionAddressSpace {
+        let address_space = RuntimeAddressSpace {
             mounts: vec![
-                ExecutionMount {
+                RuntimeMount {
                     id: "main".to_string(),
                     provider: "relay_fs".to_string(),
                     backend_id: "backend-a".to_string(),
                     root_ref: "/workspace/repo".to_string(),
                     capabilities: vec![
-                        ExecutionMountCapability::Read,
-                        ExecutionMountCapability::List,
-                        ExecutionMountCapability::Exec,
+                        MountCapabilitySet::Read,
+                        MountCapabilitySet::List,
+                        MountCapabilitySet::Exec,
                     ],
                     default_write: false,
                     display_name: "主工作空间".to_string(),
                     metadata: serde_json::Value::Null,
                 },
-                ExecutionMount {
+                RuntimeMount {
                     id: "km".to_string(),
                     provider: "external_service".to_string(),
                     backend_id: String::new(),
                     root_ref: "tenant://project/km".to_string(),
                     capabilities: vec![
-                        ExecutionMountCapability::Read,
-                        ExecutionMountCapability::Search,
+                        MountCapabilitySet::Read,
+                        MountCapabilitySet::Search,
                     ],
                     default_write: false,
                     display_name: "知识库".to_string(),
@@ -662,18 +647,18 @@ mod tests {
 
     #[test]
     fn summarize_tool_visibility_includes_runtime_and_mcp_tools() {
-        let address_space = ExecutionAddressSpace {
-            mounts: vec![ExecutionMount {
+        let address_space = RuntimeAddressSpace {
+            mounts: vec![RuntimeMount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-a".to_string(),
                 root_ref: "/workspace/repo".to_string(),
                 capabilities: vec![
-                    ExecutionMountCapability::Read,
-                    ExecutionMountCapability::List,
-                    ExecutionMountCapability::Search,
-                    ExecutionMountCapability::Write,
-                    ExecutionMountCapability::Exec,
+                    MountCapabilitySet::Read,
+                    MountCapabilitySet::List,
+                    MountCapabilitySet::Search,
+                    MountCapabilitySet::Write,
+                    MountCapabilitySet::Exec,
                 ],
                 default_write: true,
                 display_name: "主工作空间".to_string(),
@@ -682,15 +667,10 @@ mod tests {
             default_mount_id: Some("main".to_string()),
             ..Default::default()
         };
-        let mcp_servers = vec![
-            serde_json::from_value::<McpServer>(json!({
-                "type": "http",
-                "name": "agentdash-story-tools",
-                "url": "http://127.0.0.1:3001/mcp/story/123",
-                "headers": []
-            }))
-            .expect("valid mcp server"),
-        ];
+        let mcp_servers = vec![RuntimeMcpServer::Http {
+            name: "agentdash-story-tools".to_string(),
+            url: "http://127.0.0.1:3001/mcp/story/123".to_string(),
+        }];
 
         let summary = summarize_tool_visibility(Some(&address_space), &mcp_servers);
 
@@ -709,16 +689,16 @@ mod tests {
 
     #[test]
     fn build_session_plan_fragments_includes_persona_workflow_and_runtime_policy() {
-        let address_space = ExecutionAddressSpace {
-            mounts: vec![ExecutionMount {
+        let address_space = RuntimeAddressSpace {
+            mounts: vec![RuntimeMount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-a".to_string(),
                 root_ref: "/workspace/repo".to_string(),
                 capabilities: vec![
-                    ExecutionMountCapability::Read,
-                    ExecutionMountCapability::List,
-                    ExecutionMountCapability::Search,
+                    MountCapabilitySet::Read,
+                    MountCapabilitySet::List,
+                    MountCapabilitySet::Search,
                 ],
                 default_write: false,
                 display_name: "主工作空间".to_string(),
@@ -782,15 +762,10 @@ mod tests {
 
     #[test]
     fn summarize_tool_visibility_with_only_mcp_keeps_runtime_unresolved() {
-        let mcp_servers = vec![
-            serde_json::from_value::<McpServer>(json!({
-                "type": "http",
-                "name": "agentdash-project-tools",
-                "url": "http://127.0.0.1:3001/mcp/project/123",
-                "headers": []
-            }))
-            .expect("valid mcp server"),
-        ];
+        let mcp_servers = vec![RuntimeMcpServer::Http {
+            name: "agentdash-project-tools".to_string(),
+            url: "http://127.0.0.1:3001/mcp/project/123".to_string(),
+        }];
 
         let summary = summarize_tool_visibility(None, &mcp_servers);
 

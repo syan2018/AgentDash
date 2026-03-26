@@ -39,10 +39,17 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use agentdash_application::runtime::{RuntimeAddressSpace, RuntimeMount};
 
 pub use agentdash_application::address_space::*;
 
-use crate::relay::registry::BackendRegistry;
+use crate::{
+    relay::registry::BackendRegistry,
+    runtime_bridge::{
+        execution_address_space_to_runtime, relay_file_entries_to_runtime,
+        runtime_address_space_to_execution,
+    },
+};
 
 // ─── Inline Content Persistence ─────────────────────────────
 
@@ -115,8 +122,8 @@ impl InlineContentOverlay {
 
     pub async fn write(
         &self,
-        address_space: &ExecutionAddressSpace,
-        mount: &agentdash_executor::ExecutionMount,
+        address_space: &RuntimeAddressSpace,
+        mount: &RuntimeMount,
         path: &str,
         content: &str,
     ) -> Result<(), String> {
@@ -286,7 +293,7 @@ impl RelayAddressSpaceService {
         &self,
         workspace: &agentdash_domain::workspace::Workspace,
     ) -> Result<ExecutionAddressSpace, String> {
-        build_workspace_address_space(workspace)
+        build_workspace_address_space(workspace).map(|space| runtime_address_space_to_execution(&space))
     }
 
     pub fn build_task_address_space(
@@ -296,13 +303,8 @@ impl RelayAddressSpaceService {
         workspace: Option<&agentdash_domain::workspace::Workspace>,
         agent_type: Option<&str>,
     ) -> Result<ExecutionAddressSpace, String> {
-        build_derived_address_space(
-            project,
-            Some(story),
-            workspace,
-            agent_type,
-            SessionMountTarget::Task,
-        )
+        build_derived_address_space(project, Some(story), workspace, agent_type, SessionMountTarget::Task)
+            .map(|space| runtime_address_space_to_execution(&space))
     }
 
     pub fn build_project_address_space(
@@ -311,13 +313,8 @@ impl RelayAddressSpaceService {
         workspace: Option<&agentdash_domain::workspace::Workspace>,
         agent_type: Option<&str>,
     ) -> Result<ExecutionAddressSpace, String> {
-        build_derived_address_space(
-            project,
-            None,
-            workspace,
-            agent_type,
-            SessionMountTarget::Project,
-        )
+        build_derived_address_space(project, None, workspace, agent_type, SessionMountTarget::Project)
+            .map(|space| runtime_address_space_to_execution(&space))
     }
 
     pub fn build_story_address_space(
@@ -327,13 +324,8 @@ impl RelayAddressSpaceService {
         workspace: Option<&agentdash_domain::workspace::Workspace>,
         agent_type: Option<&str>,
     ) -> Result<ExecutionAddressSpace, String> {
-        build_derived_address_space(
-            project,
-            Some(story),
-            workspace,
-            agent_type,
-            SessionMountTarget::Story,
-        )
+        build_derived_address_space(project, Some(story), workspace, agent_type, SessionMountTarget::Story)
+            .map(|space| runtime_address_space_to_execution(&space))
     }
 
     /// 预览模式：不指定 agent_type，生成最大可见范围的 address space
@@ -345,6 +337,7 @@ impl RelayAddressSpaceService {
         target: SessionMountTarget,
     ) -> Result<ExecutionAddressSpace, String> {
         build_derived_address_space(project, story, workspace, None, target)
+            .map(|space| runtime_address_space_to_execution(&space))
     }
 
     pub fn list_mounts(
@@ -360,11 +353,9 @@ impl RelayAddressSpaceService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ReadResult, String> {
-        let mount = resolve_mount(
-            address_space,
-            &target.mount_id,
-            ExecutionMountCapability::Read,
-        )?;
+        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let mount =
+            resolve_mount(&runtime_address_space, &target.mount_id, ExecutionMountCapability::Read)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
         if mount.provider == PROVIDER_INLINE_FS {
             // overlay 优先（session 内写入立即可读）
@@ -419,8 +410,9 @@ impl RelayAddressSpaceService {
         content: &str,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<(), String> {
+        let runtime_address_space = execution_address_space_to_runtime(address_space);
         let mount = resolve_mount(
-            address_space,
+            &runtime_address_space,
             &target.mount_id,
             ExecutionMountCapability::Write,
         )?;
@@ -432,7 +424,7 @@ impl RelayAddressSpaceService {
                     mount.id
                 )
             })?;
-            return ov.write(address_space, mount, &path, content).await;
+            return ov.write(&runtime_address_space, mount, &path, content).await;
         }
         let response = self
             .backend_registry
@@ -467,7 +459,9 @@ impl RelayAddressSpaceService {
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ListResult, String> {
-        let mount = resolve_mount(address_space, mount_id, ExecutionMountCapability::List)?;
+        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let mount =
+            resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
         if mount.provider == PROVIDER_INLINE_FS {
             let mut files = inline_files_from_mount(mount)?;
@@ -510,7 +504,7 @@ impl RelayAddressSpaceService {
                 error: None,
                 ..
             } => Ok(ListResult {
-                entries: payload.entries,
+                entries: relay_file_entries_to_runtime(&payload.entries),
             }),
             RelayMessage::ResponseToolFileList {
                 error: Some(error), ..
@@ -524,8 +518,9 @@ impl RelayAddressSpaceService {
         address_space: &ExecutionAddressSpace,
         request: &ExecRequest,
     ) -> Result<ExecResult, String> {
+        let runtime_address_space = execution_address_space_to_runtime(address_space);
         let mount = resolve_mount(
-            address_space,
+            &runtime_address_space,
             &request.mount_id,
             ExecutionMountCapability::Exec,
         )?;
@@ -605,7 +600,9 @@ impl RelayAddressSpaceService {
         context_lines: usize,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<(Vec<String>, bool), String> {
-        let mount = resolve_mount(address_space, mount_id, ExecutionMountCapability::Search)?;
+        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let mount =
+            resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::Search)?;
         let base_path = normalize_mount_relative_path(path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
@@ -699,7 +696,7 @@ impl RelayAddressSpaceService {
 
     async fn search_inline(
         &self,
-        mount: &agentdash_executor::ExecutionMount,
+        mount: &RuntimeMount,
         base_path: &str,
         query: &str,
         is_regex: bool,
@@ -2239,6 +2236,14 @@ fn filter_address_space_capabilities(
     }
 }
 
+fn resolve_execution_mount_id(
+    address_space: &ExecutionAddressSpace,
+    mount: Option<&str>,
+) -> Result<String, String> {
+    let runtime_address_space = execution_address_space_to_runtime(address_space);
+    resolve_mount_id(&runtime_address_space, mount)
+}
+
 fn build_companion_owner_summary(
     snapshot: &agentdash_executor::SessionHookSnapshot,
 ) -> Option<String> {
@@ -2571,7 +2576,7 @@ impl AgentTool for FsReadTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsReadParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
+        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
@@ -2657,7 +2662,7 @@ impl AgentTool for FsWriteTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsWriteParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
+        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?;
         let target = ResourceRef {
             mount_id,
@@ -2732,7 +2737,7 @@ impl AgentTool for FsListTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsListParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
+        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
@@ -2817,7 +2822,7 @@ impl AgentTool for FsSearchTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsSearchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
+        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?;
         let (hits, truncated) = self
             .service
@@ -2888,7 +2893,7 @@ impl AgentTool for ShellExecTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
+        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?;
         let cwd = params.cwd.unwrap_or_else(|| ".".to_string());
         let result = self
@@ -3078,7 +3083,9 @@ mod tests {
         assert_eq!(address_space.mounts.len(), 1);
         let mount = &address_space.mounts[0];
         assert_eq!(mount.id, "shared");
-        let files = inline_files_from_mount(mount).expect("inline files");
+        let files =
+            inline_files_from_mount(&crate::runtime_bridge::execution_mount_to_runtime(mount))
+                .expect("inline files");
         assert_eq!(
             files.get("spec.md").map(String::as_str),
             Some("story override")
@@ -3089,7 +3096,7 @@ mod tests {
     async fn inline_mount_supports_read_list_and_search() {
         let registry = crate::relay::registry::BackendRegistry::new();
         let service = RelayAddressSpaceService::new(registry);
-        let address_space = ExecutionAddressSpace {
+        let runtime_address_space = RuntimeAddressSpace {
             mounts: vec![
                 build_context_container_mount(&ContextContainerDefinition {
                     id: "story-brief".to_string(),
@@ -3120,6 +3127,7 @@ mod tests {
             default_mount_id: Some("brief".to_string()),
             ..Default::default()
         };
+        let address_space = runtime_address_space_to_execution(&runtime_address_space);
 
         let read = service
             .read_text(

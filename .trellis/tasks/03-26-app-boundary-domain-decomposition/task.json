@@ -1,0 +1,41 @@
+{
+  "id": "app-boundary-domain-decomposition",
+  "name": "app-boundary-domain-decomposition",
+  "title": "应用层边界收口与领域模型拆解重构",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "cross-layer-refactor",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-26",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 2,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": "application runtime 模型、API runtime bridge 与 storyStore 单一事实源已完成，编译与测试证据已回写 prd.md。"
+}

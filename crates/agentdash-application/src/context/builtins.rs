@@ -5,7 +5,8 @@ use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_injection::{
     ContextFragment, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
 };
-use agentdash_mcp::injection::McpInjectionConfig;
+
+use crate::runtime::{RuntimeMcpBinding, RuntimeToolScope};
 
 use super::contributor::{ContextContributor, Contribution, ContributorInput, TaskExecutionPhase};
 
@@ -376,11 +377,11 @@ impl ContextContributor for InstructionContributor {
 
 /// MCP 能力注入 Contributor — 通过 ACP 协议类型声明 MCP Server，并在上下文中附加简要说明
 pub struct McpContextContributor {
-    pub config: McpInjectionConfig,
+    pub config: RuntimeMcpBinding,
 }
 
 impl McpContextContributor {
-    pub fn new(config: McpInjectionConfig) -> Self {
+    pub fn new(config: RuntimeMcpBinding) -> Self {
         Self { config }
     }
 }
@@ -388,9 +389,9 @@ impl McpContextContributor {
 impl ContextContributor for McpContextContributor {
     fn contribute(&self, _input: &ContributorInput<'_>) -> Contribution {
         let label: &'static str = match self.config.scope {
-            agentdash_mcp::scope::ToolScope::Relay => "mcp_relay_tools",
-            agentdash_mcp::scope::ToolScope::Story => "mcp_story_tools",
-            agentdash_mcp::scope::ToolScope::Task => "mcp_task_tools",
+            RuntimeToolScope::Relay => "mcp_relay_tools",
+            RuntimeToolScope::Story => "mcp_story_tools",
+            RuntimeToolScope::Task => "mcp_task_tools",
         };
 
         Contribution {
@@ -401,7 +402,7 @@ impl ContextContributor for McpContextContributor {
                 strategy: MergeStrategy::Append,
                 content: self.config.to_context_content(),
             }],
-            mcp_servers: vec![self.config.to_acp_mcp_server()],
+            mcp_servers: vec![self.config.to_runtime_server()],
         }
     }
 }

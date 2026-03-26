@@ -8,6 +8,7 @@ pub mod plugins;
 pub mod relay;
 pub mod routes;
 pub mod rpc;
+pub mod runtime_bridge;
 pub mod session_context;
 pub mod session_plan;
 pub mod stream;

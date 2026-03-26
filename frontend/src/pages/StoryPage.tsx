@@ -26,7 +26,7 @@ import {
   normalizeAgentBinding,
   resolveDefaultWorkspaceId,
 } from "../features/task/agent-binding";
-import { useStoryStore } from "../stores/storyStore";
+import { useStoryStore, findStoryById } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { AddressEntry } from "../services/addressSpaces";
@@ -1007,7 +1007,7 @@ export function StoryPage() {
   const navigate = useNavigate();
   const { projects } = useProjectStore();
   const {
-    stories,
+    storiesByProjectId,
     tasksByStoryId,
     fetchStoryById,
     fetchTasks,
@@ -1032,7 +1032,7 @@ export function StoryPage() {
   const openTaskIdFromRoute = routeState?.open_task_id?.trim() ?? "";
 
   // 获取当前 Story
-  const story = useMemo(() => stories.find((s) => s.id === storyId) || null, [stories, storyId]);
+  const story = useMemo(() => (storyId ? findStoryById(storiesByProjectId, storyId) : null), [storiesByProjectId, storyId]);
 
   // 编辑表单状态 - 使用 key 模式在 storyId 变化时重置
   const [editTitle, setEditTitle] = useState(story?.title ?? "");
@@ -1044,16 +1044,14 @@ export function StoryPage() {
 
   // 当 storyId 变化时重置表单（通过 key 属性实现，这里作为备份）
   useEffect(() => {
-    if (story) {
-      setEditTitle(story.title);
-      setEditDescription(story.description || "");
-      setEditStatus(story.status);
-      setEditPriority(story.priority);
-      setEditStoryType(story.story_type);
-      setEditTags(story.tags.join(", "));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storyId]);
+    if (!story || isEditingBasicInfo) return;
+    setEditTitle(story.title);
+    setEditDescription(story.description || "");
+    setEditStatus(story.status);
+    setEditPriority(story.priority);
+    setEditStoryType(story.story_type);
+    setEditTags(story.tags.join(", "));
+  }, [story, isEditingBasicInfo]);
 
   // 获取 Story 相关数据
   const tasks = useMemo(() => (storyId ? tasksByStoryId[storyId] ?? [] : []), [tasksByStoryId, storyId]);

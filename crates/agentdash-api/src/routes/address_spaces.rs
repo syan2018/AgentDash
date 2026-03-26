@@ -18,6 +18,7 @@ use crate::auth::{
     load_story_and_project_with_permission, load_workspace_and_project_with_permission,
 };
 use crate::rpc::ApiError;
+use crate::runtime_bridge::{execution_address_space_to_runtime, execution_mount_to_runtime};
 use agentdash_application::address_space::selected_workspace_binding;
 
 const MAX_ENTRIES: usize = 200;
@@ -373,8 +374,10 @@ pub async fn write_mount_file(
         );
         let overlay =
             crate::address_space_access::InlineContentOverlay::new(std::sync::Arc::new(persister));
+        let runtime_address_space = execution_address_space_to_runtime(&address_space);
+        let runtime_mount = execution_mount_to_runtime(mount);
         overlay
-            .write(&address_space, mount, &normalized_path, &req.content)
+            .write(&runtime_address_space, &runtime_mount, &normalized_path, &req.content)
             .await
             .map_err(ApiError::Internal)?;
 
@@ -494,7 +497,9 @@ pub async fn preview_address_space(
         };
 
         let file_count = if mount.provider == PROVIDER_INLINE_FS {
-            inline_files_from_mount(mount).ok().map(|files| files.len())
+            inline_files_from_mount(&execution_mount_to_runtime(mount))
+                .ok()
+                .map(|files| files.len())
         } else {
             None
         };

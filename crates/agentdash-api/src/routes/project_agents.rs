@@ -25,6 +25,7 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     rpc::ApiError,
+    runtime_bridge::runtime_executor_config_to_connector,
     session_context::normalize_optional_string,
 };
 
@@ -524,6 +525,7 @@ pub async fn list_project_agent_sessions(
 
 fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
     let executor_config = executor_config_from_preset(preset)
+        .map(|config| runtime_executor_config_to_connector(&config))
         .unwrap_or_else(|| AgentDashExecutorConfig::new(preset.agent_type.clone()));
 
     let display_name = preset

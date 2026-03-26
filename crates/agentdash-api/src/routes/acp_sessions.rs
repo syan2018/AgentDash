@@ -37,6 +37,7 @@ use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
+use crate::runtime_bridge::{acp_mcp_servers_to_runtime, execution_address_space_to_runtime};
 use crate::session_context::apply_workspace_defaults;
 use crate::task_agent_context::resolve_workspace_declared_sources;
 
@@ -543,6 +544,10 @@ async fn build_story_owner_prompt_request(
         .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
     effective_mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
+    let runtime_address_space = address_space
+        .as_ref()
+        .map(execution_address_space_to_runtime);
+    let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let resolved_workspace_sources =
         resolve_workspace_declared_sources(state, &story.context.source_refs, workspace, 60)
@@ -553,8 +558,8 @@ async fn build_story_owner_prompt_request(
         story,
         project,
         workspace,
-        address_space: address_space.as_ref(),
-        mcp_servers: &effective_mcp_servers,
+        address_space: runtime_address_space.as_ref(),
+        mcp_servers: &runtime_mcp_servers,
         effective_agent_type,
         workspace_source_fragments: resolved_workspace_sources.fragments,
         workspace_source_warnings: resolved_workspace_sources.warnings,
@@ -632,12 +637,16 @@ async fn build_project_owner_prompt_request(
             effective_mcp_servers.push(server);
         }
     }
+    let runtime_address_space = address_space
+        .as_ref()
+        .map(execution_address_space_to_runtime);
+    let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {
         project,
         workspace: workspace.as_ref(),
-        address_space: address_space.as_ref(),
-        mcp_servers: &effective_mcp_servers,
+        address_space: runtime_address_space.as_ref(),
+        mcp_servers: &runtime_mcp_servers,
         effective_agent_type,
         preset_name: project_agent.preset_name.as_deref(),
         agent_display_name: project_agent.display_name.as_str(),

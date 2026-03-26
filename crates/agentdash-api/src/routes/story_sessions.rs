@@ -20,6 +20,10 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
     routes::project_agents::resolve_project_workspace,
     rpc::ApiError,
+    runtime_bridge::{
+        acp_mcp_servers_to_runtime, connector_executor_config_to_runtime,
+        execution_address_space_to_runtime, runtime_address_space_to_execution,
+    },
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
@@ -361,13 +365,16 @@ async fn build_story_session_context_response(
         .await
         .ok()??;
 
-    let resolved_config = session_meta.executor_config.clone();
+    let connector_config = session_meta.executor_config.clone();
+    let resolved_config = connector_config
+        .as_ref()
+        .map(connector_executor_config_to_runtime);
     let default_agent_type = normalize_optional_string(project.config.default_agent_type.clone());
     let effective_agent_type = resolved_config
         .as_ref()
         .and_then(|c| normalize_optional_string(Some(c.executor.clone())))
         .or(default_agent_type.clone());
-    let use_address_space = resolved_config
+    let use_address_space = connector_config
         .as_ref()
         .is_some_and(|c| c.is_native_agent())
         || (resolved_config.is_none() && default_agent_type.is_some());
@@ -385,7 +392,7 @@ async fn build_story_session_context_response(
     } else {
         None
     };
-    let mcp_servers = state
+    let effective_mcp_servers = state
         .config
         .mcp_base_url
         .as_ref()
@@ -407,13 +414,15 @@ async fn build_story_session_context_response(
 
     let story_overrides = extract_story_overrides(story);
 
+    let runtime_address_space = address_space.as_ref().map(execution_address_space_to_runtime);
+
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
         story: Some(story.clone()),
         workspace,
         resolved_config,
-        address_space,
-        mcp_servers,
+        address_space: runtime_address_space,
+        mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         workspace_root: None,
         executor_preset_name: None,
@@ -426,7 +435,7 @@ async fn build_story_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltStorySessionContextResponse {
-        address_space: plan.address_space,
+        address_space: plan.address_space.as_ref().map(runtime_address_space_to_execution),
         context_snapshot: Some(snapshot),
     })
 }

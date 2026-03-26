@@ -1,7 +1,5 @@
-use agent_client_protocol::McpServer;
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
-use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{
     ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesRequest,
     resolve_declared_sources,
@@ -9,6 +7,7 @@ use agentdash_injection::{
 use serde_json::json;
 
 use crate::address_space::selected_workspace_binding;
+use crate::runtime::{RuntimeAddressSpace, RuntimeMcpServer};
 use crate::session_plan::{
     SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
@@ -19,8 +18,8 @@ pub struct StoryContextBuildInput<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub address_space: Option<&'a ExecutionAddressSpace>,
-    pub mcp_servers: &'a [McpServer],
+    pub address_space: Option<&'a RuntimeAddressSpace>,
+    pub mcp_servers: &'a [RuntimeMcpServer],
     pub effective_agent_type: Option<&'a str>,
     /// 由调用方预解析的工作空间来源片段（File/ProjectSnapshot 类型）
     pub workspace_source_fragments: Vec<ContextFragment>,

@@ -1,4 +1,4 @@
-use agentdash_relay::FileEntryRelay;
+use crate::runtime::RuntimeFileEntry;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceRef {
@@ -29,7 +29,7 @@ pub struct ReadResult {
 
 #[derive(Debug, Clone)]
 pub struct ListResult {
-    pub entries: Vec<FileEntryRelay>,
+    pub entries: Vec<RuntimeFileEntry>,
 }
 
 #[derive(Debug, Clone)]

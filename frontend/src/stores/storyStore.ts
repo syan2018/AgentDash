@@ -44,7 +44,6 @@ export interface CreateStorySessionInput {
 }
 
 interface StoryState {
-  stories: Story[];
   storiesByProjectId: Record<string, Story[]>;
   tasksByStoryId: Record<string, Task[]>;
   sessionsByStoryId: Record<string, SessionBinding[]>;
@@ -412,7 +411,7 @@ const removeStoryFromProjectMap = (
   return next;
 };
 
-const flattenStoriesMap = (storiesByProjectId: Record<string, Story[]>): Story[] => {
+export const flattenStoriesMap = (storiesByProjectId: Record<string, Story[]>): Story[] => {
   const merged = Object.values(storiesByProjectId).flat();
   const dedup = new Map<string, Story>();
   for (const story of merged) {
@@ -421,6 +420,17 @@ const flattenStoriesMap = (storiesByProjectId: Record<string, Story[]>): Story[]
     }
   }
   return Array.from(dedup.values());
+};
+
+export const findStoryById = (
+  storiesByProjectId: Record<string, Story[]>,
+  storyId: string,
+): Story | null => {
+  for (const stories of Object.values(storiesByProjectId)) {
+    const hit = stories.find((story) => story.id === storyId);
+    if (hit) return hit;
+  }
+  return null;
 };
 
 const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
@@ -488,7 +498,6 @@ const canMapTaskFromPayload = (payload: Record<string, unknown>): boolean => {
 };
 
 export const useStoryStore = create<StoryState>((set) => ({
-  stories: [],
   storiesByProjectId: {},
   tasksByStoryId: {},
   sessionsByStoryId: {},
@@ -509,7 +518,6 @@ export const useStoryStore = create<StoryState>((set) => ({
         };
         return {
           storiesByProjectId,
-          stories: flattenStoriesMap(storiesByProjectId),
           isLoading: false,
         };
       });
@@ -526,7 +534,6 @@ export const useStoryStore = create<StoryState>((set) => ({
         const storiesByProjectId = upsertStoryInProjectMap(s.storiesByProjectId, story);
         return {
           storiesByProjectId,
-          stories: flattenStoriesMap(storiesByProjectId),
         };
       });
       return story;
@@ -551,7 +558,6 @@ export const useStoryStore = create<StoryState>((set) => ({
         const storiesByProjectId = upsertStoryInProjectMap(s.storiesByProjectId, story);
         return {
           storiesByProjectId,
-          stories: flattenStoriesMap(storiesByProjectId),
         };
       });
       return story;
@@ -576,7 +582,6 @@ export const useStoryStore = create<StoryState>((set) => ({
         const storiesByProjectId = upsertStoryInProjectMap(withoutOld, story);
         return {
           storiesByProjectId,
-          stories: flattenStoriesMap(storiesByProjectId),
         };
       });
       return story;
@@ -590,7 +595,7 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       await api.delete(`/stories/${storyId}`);
       set((s) => {
-        const deletedStory = s.stories.find((story) => story.id === storyId) ?? null;
+        const deletedStory = findStoryById(s.storiesByProjectId, storyId);
         const storiesByProjectId = removeStoryFromProjectMap(
           s.storiesByProjectId,
           storyId,
@@ -602,7 +607,6 @@ export const useStoryStore = create<StoryState>((set) => ({
         delete nextSessions[storyId];
         return {
           storiesByProjectId,
-          stories: flattenStoriesMap(storiesByProjectId),
           tasksByStoryId: nextTasks,
           sessionsByStoryId: nextSessions,
           selectedStoryId: s.selectedStoryId === storyId ? null : s.selectedStoryId,
@@ -839,7 +843,6 @@ export const useStoryStore = create<StoryState>((set) => ({
             const storiesByProjectId = upsertStoryInProjectMap(s.storiesByProjectId, story);
             return {
               storiesByProjectId,
-              stories: flattenStoriesMap(storiesByProjectId),
             };
           });
         })
@@ -875,7 +878,6 @@ export const useStoryStore = create<StoryState>((set) => ({
             const storiesByProjectId = upsertStoryInProjectMap(withoutOld, story);
             return {
               storiesByProjectId,
-              stories: flattenStoriesMap(storiesByProjectId),
             };
           });
           break;
@@ -887,7 +889,7 @@ export const useStoryStore = create<StoryState>((set) => ({
         set((s) => {
           const payloadProjectId =
             typeof payload.project_id === 'string' ? payload.project_id : null;
-          const deletedStory = s.stories.find((story) => story.id === entityId) ?? null;
+          const deletedStory = findStoryById(s.storiesByProjectId, entityId);
           const storiesByProjectId = removeStoryFromProjectMap(
             s.storiesByProjectId,
             entityId,
@@ -899,7 +901,6 @@ export const useStoryStore = create<StoryState>((set) => ({
           delete nextSessions[entityId];
           return {
             storiesByProjectId,
-            stories: flattenStoriesMap(storiesByProjectId),
             tasksByStoryId: nextTasks,
             sessionsByStoryId: nextSessions,
             selectedStoryId:

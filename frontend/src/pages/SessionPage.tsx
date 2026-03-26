@@ -4,7 +4,7 @@ import { SessionChatView } from "../features/acp-session";
 import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
-import { useStoryStore } from "../stores/storyStore";
+import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddressSpaceBrowser } from "../features/address-space";
 import type {
@@ -1485,14 +1485,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   // 按需加载关联 Story 的上下文信息
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
-  const stories = useStoryStore((s) => s.stories);
+  const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
   const ownerStoryId = sessionOwnerBinding?.story_id ?? null;
   const ownerProjectName = sessionOwnerBinding?.owner_type === "project"
     ? sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id
     : "";
 
   useEffect(() => {
-    const cached = ownerStoryId ? stories.find((story) => story.id === ownerStoryId) : null;
+    const cached = ownerStoryId ? findStoryById(storiesByProjectId, ownerStoryId) : null;
     if (!ownerStoryId || cached) return;
     let cancelled = false;
     void (async () => {
@@ -1505,17 +1505,17 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, [ownerStoryId, stories, fetchStoryById]);
+  }, [ownerStoryId, storiesByProjectId, fetchStoryById]);
 
   const ownerStory = useMemo(() => {
     if (!ownerStoryId) return null;
-    const cached = stories.find((story) => story.id === ownerStoryId);
+    const cached = findStoryById(storiesByProjectId, ownerStoryId);
     if (cached) return cached;
     if (loadedOwnerStory?.story_id === ownerStoryId) {
       return loadedOwnerStory.story;
     }
     return null;
-  }, [loadedOwnerStory, ownerStoryId, stories]);
+  }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
   const ownerProjectId = sessionOwnerBinding?.project_id ?? ownerStory?.project_id ?? null;
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null

@@ -2,7 +2,8 @@ use agentdash_domain::{
     project::{AgentPreset, Project},
     task::Task,
 };
-use agentdash_executor::{AgentDashExecutorConfig, ThinkingLevel};
+
+use crate::runtime::{ExecutorConfig, ThinkingLevel};
 
 use super::execution::TaskExecutionError;
 
@@ -10,10 +11,10 @@ use super::execution::TaskExecutionError;
 ///
 /// 优先级：显式传入 > Task.agent_binding > Preset → Project default
 pub fn resolve_task_executor_config(
-    explicit: Option<AgentDashExecutorConfig>,
+    explicit: Option<ExecutorConfig>,
     task: &Task,
     project: &Project,
-) -> Result<Option<AgentDashExecutorConfig>, TaskExecutionError> {
+) -> Result<Option<ExecutorConfig>, TaskExecutionError> {
     if explicit.is_some() {
         return Ok(explicit);
     }
@@ -23,9 +24,9 @@ pub fn resolve_task_executor_config(
 pub fn resolve_task_agent_config(
     task: &Task,
     project: &Project,
-) -> Result<Option<AgentDashExecutorConfig>, TaskExecutionError> {
+) -> Result<Option<ExecutorConfig>, TaskExecutionError> {
     if let Some(agent_type) = normalize_option_string(task.agent_binding.agent_type.clone()) {
-        return Ok(Some(AgentDashExecutorConfig::new(agent_type)));
+        return Ok(Some(ExecutorConfig::new(agent_type)));
     }
 
     if let Some(preset_name) = normalize_option_string(task.agent_binding.preset_name.clone()) {
@@ -42,15 +43,15 @@ pub fn resolve_task_agent_config(
 
     Ok(
         normalize_option_string(project.config.default_agent_type.clone())
-            .map(AgentDashExecutorConfig::new),
+            .map(ExecutorConfig::new),
     )
 }
 
-pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<AgentDashExecutorConfig> {
+pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<ExecutorConfig> {
     let agent_type = normalize_option_string(Some(preset.agent_type.clone()));
     let agent_type = agent_type?;
 
-    let mut config = AgentDashExecutorConfig::new(agent_type);
+    let mut config = ExecutorConfig::new(agent_type);
     if let Some(obj) = preset.config.as_object() {
         if let Some(v) = obj.get("variant").and_then(|v| v.as_str()) {
             config.variant = normalize_option_string(Some(v.to_string()));

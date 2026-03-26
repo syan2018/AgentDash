@@ -1,12 +1,11 @@
 use std::path::PathBuf;
 
-use agent_client_protocol::McpServer;
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workspace::Workspace;
-use agentdash_executor::{AgentDashExecutorConfig, ExecutionAddressSpace};
 
 use crate::address_space::selected_workspace_binding;
+use crate::runtime::{ExecutorConfig, RuntimeAddressSpace, RuntimeMcpServer};
 use crate::session_context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
     SessionProjectDefaults, SessionStoryOverrides, SharedContextMount,
@@ -27,9 +26,9 @@ use crate::workflow::ActiveWorkflowProjection;
 pub struct SessionBootstrapPlan {
     pub owner: BootstrapOwnerSummary,
     pub executor: SessionExecutorSummary,
-    pub resolved_config: Option<AgentDashExecutorConfig>,
-    pub address_space: Option<ExecutionAddressSpace>,
-    pub mcp_servers: Vec<McpServer>,
+    pub resolved_config: Option<ExecutorConfig>,
+    pub address_space: Option<RuntimeAddressSpace>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
     pub workspace_root: Option<PathBuf>,
     pub tool_visibility: SessionToolVisibilitySummary,
@@ -68,9 +67,9 @@ pub struct BootstrapPlanInput {
     pub project: Project,
     pub story: Option<Story>,
     pub workspace: Option<Workspace>,
-    pub resolved_config: Option<AgentDashExecutorConfig>,
-    pub address_space: Option<ExecutionAddressSpace>,
-    pub mcp_servers: Vec<McpServer>,
+    pub resolved_config: Option<ExecutorConfig>,
+    pub address_space: Option<RuntimeAddressSpace>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
     pub workspace_root: Option<PathBuf>,
     pub executor_preset_name: Option<String>,

@@ -1,14 +1,14 @@
-use agent_client_protocol::McpServer;
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
-use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::ContextFragment;
 use serde_json::Value;
+
+use crate::runtime::{RuntimeAddressSpace, RuntimeMcpServer};
 
 /// Contributor 的结构化产出 — 同时包含上下文片段和 ACP MCP Server 声明
 pub struct Contribution {
     pub context_fragments: Vec<ContextFragment>,
-    /// ACP 协议 McpServer 列表，将作为 per-session 工具注入
-    pub mcp_servers: Vec<McpServer>,
+    /// application 层 MCP server 抽象，边界层再转换为具体协议类型
+    pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
 impl Contribution {
@@ -49,8 +49,8 @@ pub struct BuiltTaskAgentContext {
     pub prompt_blocks: Vec<Value>,
     pub working_dir: Option<String>,
     pub source_summary: Vec<String>,
-    /// ACP 协议 McpServer 列表 — 由 Connector 通过 `session/new` 传递给 Agent
-    pub mcp_servers: Vec<McpServer>,
+    /// application 层 MCP server 抽象 — 由边界层转换后传递给 Agent
+    pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
 /// 上下文贡献者注册表 — 持有"常驻"贡献者，避免在构建函数中硬编码
@@ -94,7 +94,7 @@ pub struct TaskAgentBuildInput<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub address_space: Option<&'a ExecutionAddressSpace>,
+    pub address_space: Option<&'a RuntimeAddressSpace>,
     pub effective_agent_type: Option<&'a str>,
     pub phase: TaskExecutionPhase,
     pub override_prompt: Option<&'a str>,

@@ -1,9 +1,9 @@
 use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
 use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
-use agentdash_executor::{AgentDashExecutorConfig, ThinkingLevel};
 use serde::Serialize;
 
+use crate::runtime::{ExecutorConfig, ThinkingLevel};
 use crate::session_plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
 
 // ─── Unified DTO ─────────────────────────────────────
@@ -85,7 +85,7 @@ pub struct SharedContextMount {
 // ─── Shared utility functions ────────────────────────
 
 pub fn build_session_executor_summary(
-    resolved_config: Option<&AgentDashExecutorConfig>,
+    resolved_config: Option<&ExecutorConfig>,
     preset_name: Option<String>,
     source: impl Into<String>,
     resolution_error: Option<String>,

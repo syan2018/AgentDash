@@ -1,4 +1,3 @@
-use agent_client_protocol::McpServer;
 use agentdash_injection::{ContextComposer, ContextFragment, MergeStrategy};
 use serde_json::{Value, json};
 
@@ -28,7 +27,7 @@ pub fn build_task_agent_context(
     let working_dir = input.workspace.map(|_| ".".to_string());
 
     let mut context_composer = ContextComposer::default();
-    let mut mcp_servers: Vec<McpServer> = Vec::new();
+    let mut mcp_servers = Vec::new();
 
     let all_contributors = registry
         .contributors

@@ -28,6 +28,11 @@ use crate::{
         resolve_task_agent_config,
     },
     rpc::ApiError,
+    runtime_bridge::{
+        acp_mcp_servers_to_runtime, execution_address_space_to_runtime,
+        mcp_injection_config_to_runtime_binding, runtime_address_space_to_execution,
+        runtime_executor_config_to_connector, runtime_mcp_servers_to_acp,
+    },
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -232,7 +237,7 @@ async fn build_task_session_context_response(
     let effective_agent_type = resolved_config.as_ref().map(|c| c.executor.as_str());
     let use_address_space = resolved_config
         .as_ref()
-        .is_some_and(|c| c.is_native_agent());
+        .is_some_and(|c| runtime_executor_config_to_connector(c).is_native_agent());
     let address_space = if use_address_space {
         state
             .services
@@ -247,27 +252,28 @@ async fn build_task_session_context_response(
         .mcp_base_url
         .as_ref()
         .map(|base_url| {
-            vec![
-                McpInjectionConfig::for_task(
+            runtime_mcp_servers_to_acp(&[
+                mcp_injection_config_to_runtime_binding(&McpInjectionConfig::for_task(
                     base_url.clone(),
                     task.project_id,
                     task.story_id,
                     task.id,
-                )
-                .to_acp_mcp_server(),
-            ]
+                ))
+                .to_runtime_server(),
+            ])
         })
         .unwrap_or_default();
 
     let story_overrides = extract_story_overrides(&story);
+    let runtime_address_space = address_space.as_ref().map(execution_address_space_to_runtime);
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
         story: Some(story),
         workspace,
         resolved_config,
-        address_space,
-        mcp_servers,
+        address_space: runtime_address_space,
+        mcp_servers: acp_mcp_servers_to_runtime(&mcp_servers),
         working_dir: None,
         workspace_root: None,
         executor_preset_name: preset_name,
@@ -280,7 +286,7 @@ async fn build_task_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltTaskSessionContextResponse {
-        address_space: plan.address_space,
+        address_space: plan.address_space.as_ref().map(runtime_address_space_to_execution),
         context_snapshot: Some(snapshot),
     })
 }

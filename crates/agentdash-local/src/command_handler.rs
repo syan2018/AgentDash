@@ -438,7 +438,7 @@ impl CommandHandler {
         id: String,
         payload: CommandWorkspaceFilesListPayload,
     ) -> RelayMessage {
-        let root = match self.resolve_workspace_root(&payload.root_path) {
+        let root = match self.resolve_workspace_root(&payload.workspace_id, &payload.root_path) {
             Ok(r) => r,
             Err(e) => {
                 return RelayMessage::ResponseWorkspaceFilesList {
@@ -488,7 +488,7 @@ impl CommandHandler {
         id: String,
         payload: CommandWorkspaceFilesReadPayload,
     ) -> RelayMessage {
-        let root = match self.resolve_workspace_root(&payload.root_path) {
+        let root = match self.resolve_workspace_root(&payload.workspace_id, &payload.root_path) {
             Ok(r) => r,
             Err(e) => {
                 return RelayMessage::ResponseWorkspaceFilesRead {
@@ -571,6 +571,7 @@ impl CommandHandler {
 
     fn resolve_workspace_root(
         &self,
+        workspace_id: &str,
         root_path: &Option<String>,
     ) -> Result<std::path::PathBuf, String> {
         if let Some(rp) = root_path {
@@ -578,15 +579,10 @@ impl CommandHandler {
                 .validate_workspace_root(rp)
                 .map_err(|e| format!("路径校验失败: {e}"))
         } else {
-            let roots = self.tool_executor.accessible_roots();
-            roots
-                .first()
-                .cloned()
-                .ok_or_else(|| "无可用的 accessible_roots".to_string())
-                .and_then(|path| {
-                    std::fs::canonicalize(&path)
-                        .map_err(|e| format!("默认 accessible_root 解析失败: {e}"))
-                })
+            Err(format!(
+                "workspace_files 缺少 workspace {} 对应的 root_path，拒绝回退到默认 accessible_root",
+                workspace_id
+            ))
         }
     }
 

@@ -8,10 +8,10 @@ use std::path::{Component, Path};
 use std::sync::Arc;
 
 use agentdash_application::address_space::selected_workspace_binding;
+use agentdash_application::runtime::RuntimeFileEntry;
 use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
 use agentdash_domain::workspace::Workspace;
 use agentdash_injection::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
-use agentdash_relay::FileEntryRelay;
 
 use crate::address_space_access::{ListOptions, ResourceRef};
 use crate::app_state::AppState;
@@ -251,7 +251,7 @@ fn normalize_snapshot_locator(locator: &str) -> Result<Option<String>, String> {
 fn build_workspace_snapshot_from_entries(
     workspace_root: &str,
     sub_path: Option<&str>,
-    files: &[FileEntryRelay],
+    files: &[RuntimeFileEntry],
     max_chars: Option<usize>,
 ) -> String {
     let mut summary_entries = BTreeSet::new();
@@ -298,7 +298,7 @@ fn build_workspace_snapshot_from_entries(
     )
 }
 
-fn detect_tech_stack_from_entries(files: &[FileEntryRelay]) -> Vec<&'static str> {
+fn detect_tech_stack_from_entries(files: &[RuntimeFileEntry]) -> Vec<&'static str> {
     let paths = files
         .iter()
         .map(|entry| entry.path.as_str())
@@ -384,7 +384,6 @@ fn fragment_slot(slot: &ContextSlot) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_relay::FileEntryRelay;
 
     #[test]
     fn snapshot_builder_keeps_directory_shape() {
@@ -392,25 +391,25 @@ mod tests {
             "/workspace/demo",
             None,
             &[
-                FileEntryRelay {
+                RuntimeFileEntry {
                     path: "Cargo.toml".to_string(),
                     size: None,
                     modified_at: None,
                     is_dir: false,
                 },
-                FileEntryRelay {
+                RuntimeFileEntry {
                     path: "src/main.rs".to_string(),
                     size: None,
                     modified_at: None,
                     is_dir: false,
                 },
-                FileEntryRelay {
+                RuntimeFileEntry {
                     path: "src/lib.rs".to_string(),
                     size: None,
                     modified_at: None,
                     is_dir: false,
                 },
-                FileEntryRelay {
+                RuntimeFileEntry {
                     path: "tests/e2e/story.rs".to_string(),
                     size: None,
                     modified_at: None,

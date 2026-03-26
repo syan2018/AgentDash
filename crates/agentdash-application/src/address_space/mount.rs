@@ -9,10 +9,11 @@ use agentdash_domain::{
     story::Story,
     workspace::{Workspace, WorkspaceBinding},
 };
-use agentdash_executor::{ExecutionAddressSpace, ExecutionMount, ExecutionMountCapability};
-use agentdash_relay::FileEntryRelay;
 
 use super::path::normalize_mount_relative_path;
+use crate::runtime::{
+    MountCapabilitySet, RuntimeAddressSpace, RuntimeFileEntry, RuntimeMount,
+};
 
 pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
@@ -31,7 +32,7 @@ pub fn build_derived_address_space(
     workspace: Option<&Workspace>,
     agent_type: Option<&str>,
     target: SessionMountTarget,
-) -> Result<ExecutionAddressSpace, String> {
+) -> Result<RuntimeAddressSpace, String> {
     let mut mounts = Vec::new();
     let mount_policy = story
         .and_then(|item| item.context.mount_policy_override.clone())
@@ -56,7 +57,7 @@ pub fn build_derived_address_space(
         mounts.first().map(|mount| mount.id.clone())
     };
 
-    Ok(ExecutionAddressSpace {
+    Ok(RuntimeAddressSpace {
         mounts,
         default_mount_id,
         source_project_id: Some(project.id.to_string()),
@@ -67,8 +68,8 @@ pub fn build_derived_address_space(
 /// 为 Workspace 创建简易单 mount Address Space
 pub fn build_workspace_address_space(
     workspace: &Workspace,
-) -> Result<ExecutionAddressSpace, String> {
-    Ok(ExecutionAddressSpace {
+) -> Result<RuntimeAddressSpace, String> {
+    Ok(RuntimeAddressSpace {
         mounts: vec![workspace_mount_from_policy(
             workspace,
             &MountDerivationPolicy::default(),
@@ -82,7 +83,7 @@ pub fn build_workspace_address_space(
 pub fn workspace_mount_from_policy(
     workspace: &Workspace,
     policy: &MountDerivationPolicy,
-) -> Result<ExecutionMount, String> {
+) -> Result<RuntimeMount, String> {
     let binding = selected_workspace_binding(workspace)
         .ok_or_else(|| "Workspace 当前没有可用 binding".to_string())?;
     let backend_id = binding.backend_id.trim();
@@ -95,17 +96,17 @@ pub fn workspace_mount_from_policy(
 
     let capabilities = if policy.local_workspace_capabilities.is_empty() {
         vec![
-            ExecutionMountCapability::Read,
-            ExecutionMountCapability::Write,
-            ExecutionMountCapability::List,
-            ExecutionMountCapability::Search,
-            ExecutionMountCapability::Exec,
+            MountCapabilitySet::Read,
+            MountCapabilitySet::Write,
+            MountCapabilitySet::List,
+            MountCapabilitySet::Search,
+            MountCapabilitySet::Exec,
         ]
     } else {
         map_container_capabilities(&policy.local_workspace_capabilities)
     };
 
-    Ok(ExecutionMount {
+    Ok(RuntimeMount {
         id: "main".to_string(),
         provider: PROVIDER_RELAY_FS.to_string(),
         backend_id: backend_id.to_string(),
@@ -193,7 +194,7 @@ pub fn container_visible_for_target(
 
 pub fn build_context_container_mount(
     container: &ContextContainerDefinition,
-) -> Result<ExecutionMount, String> {
+) -> Result<RuntimeMount, String> {
     let id = non_empty_trimmed(&container.mount_id, "mount_id")?.to_string();
     let display_name = if container.display_name.trim().is_empty() {
         container.id.trim().to_string()
@@ -202,9 +203,9 @@ pub fn build_context_container_mount(
     };
     let capabilities = if container.capabilities.is_empty() {
         vec![
-            ExecutionMountCapability::Read,
-            ExecutionMountCapability::List,
-            ExecutionMountCapability::Search,
+            MountCapabilitySet::Read,
+            MountCapabilitySet::List,
+            MountCapabilitySet::Search,
         ]
     } else {
         map_container_capabilities(&container.capabilities)
@@ -229,7 +230,7 @@ pub fn build_context_container_mount(
         ),
     };
 
-    Ok(ExecutionMount {
+    Ok(RuntimeMount {
         id,
         provider,
         backend_id: String::new(),
@@ -243,15 +244,15 @@ pub fn build_context_container_mount(
 
 pub fn map_container_capabilities(
     capabilities: &[ContextContainerCapability],
-) -> Vec<ExecutionMountCapability> {
+) -> Vec<MountCapabilitySet> {
     let mut mapped = Vec::new();
     for capability in capabilities {
         let next = match capability {
-            ContextContainerCapability::Read => ExecutionMountCapability::Read,
-            ContextContainerCapability::Write => ExecutionMountCapability::Write,
-            ContextContainerCapability::List => ExecutionMountCapability::List,
-            ContextContainerCapability::Search => ExecutionMountCapability::Search,
-            ContextContainerCapability::Exec => ExecutionMountCapability::Exec,
+            ContextContainerCapability::Read => MountCapabilitySet::Read,
+            ContextContainerCapability::Write => MountCapabilitySet::Write,
+            ContextContainerCapability::List => MountCapabilitySet::List,
+            ContextContainerCapability::Search => MountCapabilitySet::Search,
+            ContextContainerCapability::Exec => MountCapabilitySet::Exec,
         };
         if !mapped.contains(&next) {
             mapped.push(next);
@@ -280,7 +281,7 @@ pub fn normalize_inline_files(
     Ok(normalized)
 }
 
-pub fn inline_files_from_mount(mount: &ExecutionMount) -> Result<BTreeMap<String, String>, String> {
+pub fn inline_files_from_mount(mount: &RuntimeMount) -> Result<BTreeMap<String, String>, String> {
     let raw_files = mount
         .metadata
         .get("files")
@@ -295,7 +296,7 @@ pub fn list_inline_entries(
     base_path: &str,
     pattern: Option<&str>,
     recursive: bool,
-) -> Vec<FileEntryRelay> {
+) -> Vec<RuntimeFileEntry> {
     let normalized_base = base_path.trim_matches('/');
     let mut dirs = BTreeSet::new();
     let mut file_entries = BTreeMap::new();
@@ -351,7 +352,7 @@ pub fn list_inline_entries(
     let mut entries = Vec::new();
     for dir in dirs {
         if path_matches_pattern(&dir, normalized_pattern) {
-            entries.push(FileEntryRelay {
+            entries.push(RuntimeFileEntry {
                 path: dir,
                 size: None,
                 modified_at: None,
@@ -361,7 +362,7 @@ pub fn list_inline_entries(
     }
     for (path, size) in file_entries {
         if path_matches_pattern(&path, normalized_pattern) {
-            entries.push(FileEntryRelay {
+            entries.push(RuntimeFileEntry {
                 path,
                 size: Some(size),
                 modified_at: None,

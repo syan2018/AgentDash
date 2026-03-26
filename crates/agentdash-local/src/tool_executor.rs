@@ -41,10 +41,6 @@ impl ToolExecutor {
         Self { accessible_roots }
     }
 
-    pub fn accessible_roots(&self) -> &[PathBuf] {
-        &self.accessible_roots
-    }
-
     /// 验证 workspace_root 在 accessible_roots 内
     pub fn validate_workspace_root(&self, workspace_root: &str) -> Result<PathBuf, ToolError> {
         let ws_path = PathBuf::from(workspace_root);

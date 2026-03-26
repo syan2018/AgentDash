@@ -21,6 +21,11 @@ use crate::{
         build_project_agent_visible_mounts, resolve_project_agent_bridge, resolve_project_workspace,
     },
     rpc::ApiError,
+    runtime_bridge::{
+        acp_mcp_servers_to_runtime, connector_executor_config_to_runtime,
+        execution_address_space_to_runtime, runtime_address_space_to_execution,
+        runtime_executor_config_to_connector,
+    },
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
@@ -123,11 +128,14 @@ async fn build_project_session_context_response(
         .await
         .ok()??;
 
-    let resolved_config = session_meta
+    let connector_config = session_meta
         .executor_config
         .clone()
         .or_else(|| Some(project_agent.executor_config.clone()));
-    let use_address_space = resolved_config
+    let resolved_config = connector_config
+        .as_ref()
+        .map(connector_executor_config_to_runtime);
+    let use_address_space = connector_config
         .as_ref()
         .is_some_and(|c| c.is_native_agent());
     let address_space = if use_address_space {
@@ -143,7 +151,7 @@ async fn build_project_session_context_response(
     } else {
         None
     };
-    let mut mcp_servers = state
+    let mut effective_mcp_servers = state
         .config
         .mcp_base_url
         .as_ref()
@@ -151,7 +159,7 @@ async fn build_project_session_context_response(
             vec![McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server()]
         })
         .unwrap_or_default();
-    mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
+    effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
 
     let executor_source = if session_meta.executor_config.is_some() {
         "session.meta.executor_config".to_string()
@@ -162,7 +170,7 @@ async fn build_project_session_context_response(
     let shared_mounts: Vec<SharedContextMount> = resolved_config
         .as_ref()
         .map(|config| {
-            build_project_agent_visible_mounts(project, config)
+            build_project_agent_visible_mounts(project, &runtime_executor_config_to_connector(config))
                 .into_iter()
                 .map(|m| SharedContextMount {
                     container_id: m.container_id,
@@ -173,14 +181,15 @@ async fn build_project_session_context_response(
                 .collect()
         })
         .unwrap_or_default();
+    let runtime_address_space = address_space.as_ref().map(execution_address_space_to_runtime);
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project: project.clone(),
         story: None,
         workspace,
         resolved_config,
-        address_space,
-        mcp_servers,
+        address_space: runtime_address_space,
+        mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         workspace_root: None,
         executor_preset_name: project_agent.preset_name,
@@ -197,7 +206,7 @@ async fn build_project_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltProjectSessionContextResponse {
-        address_space: plan.address_space,
+        address_space: plan.address_space.as_ref().map(runtime_address_space_to_execution),
         context_snapshot: Some(snapshot),
     })
 }

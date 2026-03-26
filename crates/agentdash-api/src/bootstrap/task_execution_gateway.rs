@@ -34,6 +34,11 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use crate::task_agent_context::BuiltTaskAgentContext;
 use crate::{
     app_state::AppState,
+    runtime_bridge::{
+        connector_executor_config_to_runtime, execution_address_space_to_runtime,
+        mcp_injection_config_to_runtime_binding, runtime_address_space_to_execution,
+        runtime_executor_config_to_connector, runtime_mcp_servers_to_acp,
+    },
     task_agent_context::{
         ContextContributor, McpContextContributor, StaticFragmentsContributor, TaskAgentBuildInput,
         TaskExecutionPhase, build_declared_source_warning_fragment, build_task_agent_context,
@@ -138,7 +143,9 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 task.story_id,
                 task.id,
             );
-            extra_contributors.push(Box::new(McpContextContributor::new(config)));
+            extra_contributors.push(Box::new(McpContextContributor::new(
+                mcp_injection_config_to_runtime_binding(&config),
+            )));
         }
 
         let session_id = task
@@ -146,23 +153,30 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             .as_deref()
             .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
 
-        let resolved_config = resolve_task_executor_config(executor_config, task, &project)
-            .map_err(map_internal_error)?;
+        let resolved_config = resolve_task_executor_config(
+            executor_config
+                .as_ref()
+                .map(connector_executor_config_to_runtime),
+            task,
+            &project,
+        )
+        .map_err(map_internal_error)?;
         let use_cloud_native_agent = resolved_config
             .as_ref()
-            .is_some_and(|config| config.is_native_agent());
+            .is_some_and(|config| runtime_executor_config_to_connector(config).is_native_agent());
 
         let address_space = if use_cloud_native_agent {
             let agent_type = resolved_config
                 .as_ref()
                 .map(|config| config.executor.as_str());
-            Some(
-                self.state
+            Some(execution_address_space_to_runtime(
+                &self
+                    .state
                     .services
                     .address_space_service
                     .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
                     .map_err(map_internal_error)?,
-            )
+            ))
         } else {
             None
         };
@@ -207,10 +221,14 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 prompt_blocks: Some(built.prompt_blocks),
                 working_dir: built.working_dir,
                 env: Default::default(),
-                executor_config: resolved_config,
-                mcp_servers: built.mcp_servers,
+                executor_config: resolved_config
+                    .as_ref()
+                    .map(runtime_executor_config_to_connector),
+                mcp_servers: runtime_mcp_servers_to_acp(&built.mcp_servers),
                 workspace_root,
-                address_space,
+                address_space: address_space
+                    .as_ref()
+                    .map(runtime_address_space_to_execution),
                 flow_capabilities: Some(agentdash_executor::FlowCapabilities {
                     workflow_artifact: true,
                     companion_dispatch: false,
@@ -260,7 +278,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 backend_id,
                 session_id,
                 &built,
-                resolved_config,
+                resolved_config.clone(),
                 &resolved_binding,
             )
             .await?;
@@ -1390,10 +1408,13 @@ async fn relay_start_prompt(
     backend_id: &str,
     session_id: &str,
     built: &BuiltTaskAgentContext,
-    executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
+    executor_config: Option<agentdash_application::runtime::ExecutorConfig>,
     binding: &ResolvedWorkspaceBinding,
 ) -> Result<String, TaskExecutionError> {
-    let relay_config = executor_config.map(|c| ExecutorConfigRelay {
+    let relay_config = executor_config
+        .as_ref()
+        .map(runtime_executor_config_to_connector)
+        .map(|c| ExecutorConfigRelay {
         executor: c.executor,
         variant: c.variant,
         provider_id: c.provider_id,
@@ -1424,8 +1445,7 @@ async fn relay_start_prompt(
             working_dir: built.working_dir.clone(),
             env: Default::default(),
             executor_config: relay_config,
-            mcp_servers: built
-                .mcp_servers
+            mcp_servers: runtime_mcp_servers_to_acp(&built.mcp_servers)
                 .iter()
                 .filter_map(|s| serde_json::to_value(s).ok())
                 .collect(),

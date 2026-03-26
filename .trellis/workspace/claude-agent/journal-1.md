@@ -1108,3 +1108,36 @@ Agent Tab 主视图：
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Agent Entity + Lifecycle Binding: Full Migration
+
+**Date**: 2026-03-26
+**Task**: Agent Entity + Lifecycle Binding: Full Migration
+
+### Summary
+
+Promoted Agent to independent entity with Agent+ProjectAgentLink model. Full backend CRUD, rewrote frontend Agent Hub, auto-start lifecycle run, removed legacy code, fixed Zustand bug and layout. E2E verified.
+
+### Main Changes
+
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0a3c401` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

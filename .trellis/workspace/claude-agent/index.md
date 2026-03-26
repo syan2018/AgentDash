@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
-- **Last Active**: 2026-03-25
+- **Total Sessions**: 25
+- **Last Active**: 2026-03-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1111 | Active |
+| `journal-1.md` | ~1144 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 25 | 2026-03-26 | Agent Entity + Lifecycle Binding: Full Migration | `0a3c401` |
 | 24 | 2026-03-25 | Workflow/Lifecycle 运行时重构收口 | `06e6163371cb029e0251cf8437aa5dd0e7fc1d78` |
 | 23 | 2026-03-25 | Workflow Editor 全栈实现 + 独立视图/编辑器页面 | `851055b`, `300107f` |
 | 22 | 2026-03-25 | 上下文容器创建优化 + Address Space 搜索能力增强 | `475dfc8`, `fae1b6f`, `65a0a92` |

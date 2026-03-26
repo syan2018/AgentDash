@@ -15,11 +15,9 @@ pub enum WorkflowTargetKind {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowAgentRole {
-    ProjectContextMaintainer,
-    StoryLifecycleCompanion,
-    TaskExecutionWorker,
-    ReviewAgent,
-    RecordAgent,
+    Project,
+    Story,
+    Task,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -127,15 +125,8 @@ pub struct WorkflowInjectionSpec {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowConstraintKind {
-    DenyTool,
-    RewriteToolArg,
-    RequireApproval,
     DenyTaskStatusTransition,
-    RequireArtifactBeforeExit,
     BlockStopUntilChecksPass,
-    RequireOutputSection,
-    RequireOutputArtifact,
-    EnforceResponseStyle,
     Custom,
 }
 
@@ -169,12 +160,6 @@ pub struct WorkflowCheckSpec {
     pub payload: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
-pub struct WorkflowHookPolicySpec {
-    #[serde(default)]
-    pub constraints: Vec<WorkflowConstraintSpec>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowRecordArtifactType {
@@ -200,84 +185,9 @@ pub struct WorkflowContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
-    pub hook_policy: WorkflowHookPolicySpec,
+    pub constraints: Vec<WorkflowConstraintSpec>,
     #[serde(default)]
     pub completion: WorkflowCompletionSpec,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct WorkflowRecordPolicy {
-    #[serde(default = "bool_true")]
-    pub emit_summary: bool,
-    #[serde(default = "bool_true")]
-    pub emit_journal_update: bool,
-    #[serde(default = "bool_true")]
-    pub emit_archive_suggestion: bool,
-}
-
-impl Default for WorkflowRecordPolicy {
-    fn default() -> Self {
-        Self {
-            emit_summary: true,
-            emit_journal_update: true,
-            emit_archive_suggestion: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowAttachmentMode {
-    Primary,
-    Overlay,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowAttachmentLifetime {
-    Turn,
-    Session,
-    UntilResolved,
-    UntilStepExit,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct WorkflowAttachmentSpec {
-    pub workflow_key: String,
-    #[serde(default = "default_attachment_mode")]
-    pub mode: WorkflowAttachmentMode,
-    #[serde(default = "default_attachment_lifetime")]
-    pub lifetime: WorkflowAttachmentLifetime,
-    #[serde(default)]
-    pub priority: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkflowRuntimeAttachment {
-    pub id: Uuid,
-    pub workflow_key: String,
-    pub mode: WorkflowAttachmentMode,
-    pub lifetime: WorkflowAttachmentLifetime,
-    pub priority: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
-
-impl WorkflowRuntimeAttachment {
-    pub fn new(spec: WorkflowAttachmentSpec) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            workflow_key: spec.workflow_key,
-            mode: spec.mode,
-            lifetime: spec.lifetime,
-            priority: spec.priority,
-            reason: spec.reason,
-            created_at: Utc::now(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -334,8 +244,6 @@ pub struct LifecycleStepDefinition {
     pub primary_workflow_key: String,
     #[serde(default)]
     pub session_binding: WorkflowSessionBinding,
-    #[serde(default)]
-    pub attached_workflows: Vec<WorkflowAttachmentSpec>,
     pub transition: LifecycleTransitionSpec,
 }
 
@@ -414,18 +322,6 @@ impl WorkflowRecordArtifact {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EffectiveSessionAttachment {
-    pub workflow_id: Uuid,
-    pub workflow_key: String,
-    pub workflow_name: String,
-    pub mode: WorkflowAttachmentMode,
-    pub lifetime: WorkflowAttachmentLifetime,
-    pub priority: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EffectiveSessionContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,11 +329,9 @@ pub struct EffectiveSessionContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_step_key: Option<String>,
     #[serde(default)]
-    pub attachments: Vec<EffectiveSessionAttachment>,
-    #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
-    pub hook_policy: WorkflowHookPolicySpec,
+    pub constraints: Vec<WorkflowConstraintSpec>,
     #[serde(default)]
     pub completion: WorkflowCompletionSpec,
 }
@@ -473,14 +367,6 @@ pub fn validate_lifecycle_definition(
             &format!("lifecycle.steps[{index}].primary_workflow_key"),
             &step.primary_workflow_key,
         )?;
-        for (attachment_index, attachment) in step.attached_workflows.iter().enumerate() {
-            validate_identity(
-                &format!(
-                    "lifecycle.steps[{index}].attached_workflows[{attachment_index}].workflow_key"
-                ),
-                &attachment.workflow_key,
-            )?;
-        }
         if !seen_step_keys.insert(step.key.clone()) {
             return Err(format!("lifecycle.steps[{index}].key 重复: {}", step.key));
         }
@@ -538,18 +424,18 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
             &binding.reason,
         )?;
     }
-    for (index, constraint) in contract.hook_policy.constraints.iter().enumerate() {
+    for (index, constraint) in contract.constraints.iter().enumerate() {
         validate_identity(
-            &format!("{field_path}.hook_policy.constraints[{index}].key"),
+            &format!("{field_path}.constraints[{index}].key"),
             &constraint.key,
         )?;
         validate_non_empty(
-            &format!("{field_path}.hook_policy.constraints[{index}].description"),
+            &format!("{field_path}.constraints[{index}].description"),
             &constraint.description,
         )?;
         if !seen_constraint_keys.insert(constraint.key.clone()) {
             return Err(format!(
-                "{field_path}.hook_policy.constraints[{index}].key 重复: {}",
+                "{field_path}.constraints[{index}].key 重复: {}",
                 constraint.key
             ));
         }
@@ -595,14 +481,6 @@ fn bool_true() -> bool {
     true
 }
 
-fn default_attachment_mode() -> WorkflowAttachmentMode {
-    WorkflowAttachmentMode::Overlay
-}
-
-fn default_attachment_lifetime() -> WorkflowAttachmentLifetime {
-    WorkflowAttachmentLifetime::UntilStepExit
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,7 +505,7 @@ mod tests {
     #[test]
     fn validate_workflow_definition_rejects_duplicate_constraint_keys() {
         let mut contract = sample_contract();
-        contract.hook_policy.constraints = vec![
+        contract.constraints = vec![
             WorkflowConstraintSpec {
                 key: "a".to_string(),
                 kind: WorkflowConstraintKind::Custom,
@@ -654,7 +532,6 @@ mod tests {
             description: String::new(),
             primary_workflow_key: "wf_start".to_string(),
             session_binding: WorkflowSessionBinding::NotRequired,
-            attached_workflows: vec![],
             transition: LifecycleTransitionSpec {
                 policy: LifecycleTransitionPolicy {
                     kind: LifecycleTransitionPolicyKind::Manual,

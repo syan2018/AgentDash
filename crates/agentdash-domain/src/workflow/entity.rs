@@ -3,12 +3,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{
-    EffectiveSessionAttachment, EffectiveSessionContract, LifecycleProgressionSource,
-    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
-    ValidationIssue, WorkflowAgentRole, WorkflowAttachmentMode, WorkflowContract,
-    WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowRecordArtifact,
-    WorkflowRecordPolicy, WorkflowRuntimeAttachment, WorkflowSessionBinding, WorkflowTargetKind,
-    validate_lifecycle_definition, validate_workflow_definition,
+    EffectiveSessionContract, LifecycleProgressionSource, LifecycleRunStatus,
+    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
+    WorkflowAgentRole, WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowRecordArtifact, WorkflowTargetKind, validate_lifecycle_definition,
+    validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,13 +17,12 @@ pub struct WorkflowDefinition {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_role: Option<WorkflowAgentRole>,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     pub source: WorkflowDefinitionSource,
     pub status: WorkflowDefinitionStatus,
     pub version: i32,
     pub contract: WorkflowContract,
-    pub record_policy: WorkflowRecordPolicy,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -49,7 +47,7 @@ impl WorkflowDefinition {
             name,
             description: description.into(),
             target_kind,
-            recommended_role: None,
+            recommended_roles: Vec::new(),
             source,
             status: match source {
                 WorkflowDefinitionSource::BuiltinSeed => WorkflowDefinitionStatus::Active,
@@ -57,7 +55,6 @@ impl WorkflowDefinition {
             },
             version: 1,
             contract,
-            record_policy: WorkflowRecordPolicy::default(),
             created_at: now,
             updated_at: now,
         })
@@ -86,8 +83,8 @@ pub struct LifecycleDefinition {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_role: Option<WorkflowAgentRole>,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     pub source: WorkflowDefinitionSource,
     pub status: WorkflowDefinitionStatus,
     pub version: i32,
@@ -119,7 +116,7 @@ impl LifecycleDefinition {
             name,
             description: description.into(),
             target_kind,
-            recommended_role: None,
+            recommended_roles: Vec::new(),
             source,
             status: match source {
                 WorkflowDefinitionSource::BuiltinSeed => WorkflowDefinitionStatus::Active,
@@ -194,8 +191,6 @@ pub struct LifecycleRun {
     #[serde(default)]
     pub step_states: Vec<LifecycleStepState>,
     #[serde(default)]
-    pub runtime_attachments: Vec<WorkflowRuntimeAttachment>,
-    #[serde(default)]
     pub record_artifacts: Vec<WorkflowRecordArtifact>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -245,7 +240,6 @@ impl LifecycleRun {
             status: LifecycleRunStatus::Ready,
             current_step_key: Some(entry_step_key.to_string()),
             step_states,
-            runtime_attachments: Vec::new(),
             record_artifacts: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -379,93 +373,31 @@ impl LifecycleRun {
         self.updated_at = Utc::now();
         self.last_activity_at = self.updated_at;
     }
-
-    pub fn attach_runtime_workflow(&mut self, attachment: WorkflowRuntimeAttachment) {
-        self.runtime_attachments.push(attachment);
-        self.updated_at = Utc::now();
-        self.last_activity_at = self.updated_at;
-    }
 }
 
 pub fn build_effective_contract(
     lifecycle_key: &str,
     active_step_key: &str,
     primary_workflow: &WorkflowDefinition,
-    overlays: &[WorkflowDefinition],
-    runtime_attachments: &[WorkflowDefinition],
 ) -> EffectiveSessionContract {
-    let mut contract = EffectiveSessionContract {
+    EffectiveSessionContract {
         lifecycle_key: Some(lifecycle_key.to_string()),
         active_step_key: Some(active_step_key.to_string()),
         injection: primary_workflow.contract.injection.clone(),
-        hook_policy: primary_workflow.contract.hook_policy.clone(),
+        constraints: primary_workflow.contract.constraints.clone(),
         completion: primary_workflow.contract.completion.clone(),
-        attachments: vec![EffectiveSessionAttachment {
-            workflow_id: primary_workflow.id,
-            workflow_key: primary_workflow.key.clone(),
-            workflow_name: primary_workflow.name.clone(),
-            mode: WorkflowAttachmentMode::Primary,
-            lifetime: super::value_objects::WorkflowAttachmentLifetime::UntilStepExit,
-            priority: 0,
-            reason: Some("lifecycle_step_primary_workflow".to_string()),
-        }],
-    };
-
-    for overlay in overlays.iter().chain(runtime_attachments.iter()) {
-        contract
-            .injection
-            .instructions
-            .extend(overlay.contract.injection.instructions.clone());
-        contract
-            .injection
-            .context_bindings
-            .extend(overlay.contract.injection.context_bindings.clone());
-        contract
-            .hook_policy
-            .constraints
-            .extend(overlay.contract.hook_policy.constraints.clone());
-        contract
-            .completion
-            .checks
-            .extend(overlay.contract.completion.checks.clone());
-        if contract.injection.goal.is_none() {
-            contract.injection.goal = overlay.contract.injection.goal.clone();
-        }
-        if contract.completion.default_artifact_type.is_none() {
-            contract.completion.default_artifact_type =
-                overlay.contract.completion.default_artifact_type;
-        }
-        if contract.completion.default_artifact_title.is_none() {
-            contract.completion.default_artifact_title =
-                overlay.contract.completion.default_artifact_title.clone();
-        }
-        if contract.injection.session_binding == WorkflowSessionBinding::NotRequired
-            && overlay.contract.injection.session_binding != WorkflowSessionBinding::NotRequired
-        {
-            contract.injection.session_binding = overlay.contract.injection.session_binding;
-        }
-        contract.attachments.push(EffectiveSessionAttachment {
-            workflow_id: overlay.id,
-            workflow_key: overlay.key.clone(),
-            workflow_name: overlay.name.clone(),
-            mode: WorkflowAttachmentMode::Overlay,
-            lifetime: super::value_objects::WorkflowAttachmentLifetime::UntilStepExit,
-            priority: 0,
-            reason: Some("workflow_overlay".to_string()),
-        });
     }
-
-    contract
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::workflow::value_objects::{
+        WorkflowSessionBinding,
         LifecycleFailureAction, LifecycleTransitionPolicy, LifecycleTransitionPolicyKind,
-        LifecycleTransitionSpec, WorkflowAttachmentLifetime, WorkflowCompletionSpec,
-        WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding,
-        WorkflowContextBindingKind, WorkflowHookPolicySpec, WorkflowInjectionSpec,
+        LifecycleTransitionSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
+        WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind,
+        WorkflowInjectionSpec,
     };
 
     fn contract(session_binding: WorkflowSessionBinding) -> WorkflowContract {
@@ -482,14 +414,12 @@ mod tests {
                 session_binding,
                 ..WorkflowInjectionSpec::default()
             },
-            hook_policy: WorkflowHookPolicySpec {
-                constraints: vec![WorkflowConstraintSpec {
-                    key: "c1".to_string(),
-                    kind: WorkflowConstraintKind::Custom,
-                    description: "constraint".to_string(),
-                    payload: None,
-                }],
-            },
+            constraints: vec![WorkflowConstraintSpec {
+                key: "c1".to_string(),
+                kind: WorkflowConstraintKind::Custom,
+                description: "constraint".to_string(),
+                payload: None,
+            }],
             completion: WorkflowCompletionSpec {
                 default_artifact_type: Some(crate::workflow::WorkflowRecordArtifactType::PhaseNote),
                 default_artifact_title: Some("artifact".to_string()),
@@ -506,7 +436,6 @@ mod tests {
             description: String::new(),
             primary_workflow_key: workflow_key.to_string(),
             session_binding: WorkflowSessionBinding::NotRequired,
-            attached_workflows: vec![],
             transition: LifecycleTransitionSpec {
                 policy: LifecycleTransitionPolicy {
                     kind: LifecycleTransitionPolicyKind::Manual,
@@ -539,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_contract_merges_overlay_constraints() {
+    fn effective_contract_matches_primary_workflow() {
         let primary = WorkflowDefinition::new(
             "wf_primary",
             "Primary",
@@ -549,24 +478,13 @@ mod tests {
             contract(WorkflowSessionBinding::NotRequired),
         )
         .expect("primary");
-        let overlay = WorkflowDefinition::new(
-            "wf_overlay",
-            "Overlay",
-            "desc",
-            WorkflowTargetKind::Task,
-            WorkflowDefinitionSource::BuiltinSeed,
-            contract(WorkflowSessionBinding::Required),
-        )
-        .expect("overlay");
 
-        let merged =
-            build_effective_contract("lc", "step", &primary, std::slice::from_ref(&overlay), &[]);
-        assert_eq!(merged.attachments.len(), 2);
+        let effective = build_effective_contract("lc", "step", &primary);
+        assert_eq!(effective.constraints.len(), 1);
         assert_eq!(
-            merged.injection.session_binding,
-            WorkflowSessionBinding::Required
+            effective.injection.session_binding,
+            WorkflowSessionBinding::NotRequired
         );
-        assert_eq!(merged.hook_policy.constraints.len(), 2);
     }
 
     #[test]
@@ -591,7 +509,7 @@ mod tests {
         let assignment = WorkflowAssignment::new(
             Uuid::new_v4(),
             lifecycle_id,
-            WorkflowAgentRole::TaskExecutionWorker,
+            WorkflowAgentRole::Task,
         );
 
         assert_eq!(assignment.lifecycle_id, lifecycle_id);

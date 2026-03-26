@@ -211,7 +211,9 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         | RelayMessage::ResponseToolFileRead { .. }
         | RelayMessage::ResponseToolFileWrite { .. }
         | RelayMessage::ResponseToolShellExec { .. }
-        | RelayMessage::ResponseToolFileList { .. } => {
+        | RelayMessage::ResponseToolFileList { .. }
+        | RelayMessage::ResponseToolSearch { .. }
+        | RelayMessage::ResponseBrowseDirectory { .. } => {
             if !state.services.backend_registry.resolve_response(&msg).await {
                 tracing::warn!(
                     backend_id = %backend_id,

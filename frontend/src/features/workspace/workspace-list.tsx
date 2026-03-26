@@ -20,6 +20,7 @@ import {
   DetailPanel,
   DetailSection,
 } from "../../components/ui/detail-panel";
+import { DirectoryBrowserDialog } from "./directory-browser-dialog";
 
 const statusConfig: Record<WorkspaceStatus, { label: string; cls: string }> = {
   pending: { label: "待完善", cls: "border-border bg-secondary text-muted-foreground" },
@@ -107,6 +108,7 @@ function WorkspaceBindingEditor({
   onDefaultBindingChange,
 }: WorkspaceBindingEditorProps) {
   const { backends } = useCoordinatorStore();
+  const [browseIndex, setBrowseIndex] = useState<number | null>(null);
 
   const updateBinding = (index: number, patch: Partial<WorkspaceBindingInput>) => {
     onChange(bindings.map((binding, itemIndex) => (
@@ -122,6 +124,8 @@ function WorkspaceBindingEditor({
       onDefaultBindingChange(next[0]?.id ?? null);
     }
   };
+
+  const browseBinding = browseIndex !== null ? bindings[browseIndex] : null;
 
   return (
     <div className="space-y-3">
@@ -144,12 +148,23 @@ function WorkspaceBindingEditor({
               ))}
             </select>
 
-            <input
-              value={binding.root_ref}
-              onChange={(event) => updateBinding(index, { root_ref: event.target.value })}
-              placeholder="backend 上的目录根路径"
-              className="agentdash-form-input"
-            />
+            <div className="flex gap-1.5">
+              <input
+                value={binding.root_ref}
+                onChange={(event) => updateBinding(index, { root_ref: event.target.value })}
+                placeholder="backend 上的目录根路径"
+                className="agentdash-form-input min-w-0 flex-1"
+              />
+              <button
+                type="button"
+                onClick={() => setBrowseIndex(index)}
+                disabled={!binding.backend_id}
+                title={binding.backend_id ? "浏览目录" : "请先选择 backend"}
+                className="shrink-0 rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                📂
+              </button>
+            </div>
 
             <select
               value={binding.status ?? "pending"}
@@ -201,6 +216,20 @@ function WorkspaceBindingEditor({
       >
         + 添加 binding
       </button>
+
+      {browseBinding && (
+        <DirectoryBrowserDialog
+          open={browseIndex !== null}
+          backendId={browseBinding.backend_id}
+          initialPath={browseBinding.root_ref || undefined}
+          onSelect={(path) => {
+            if (browseIndex !== null) {
+              updateBinding(browseIndex, { root_ref: path });
+            }
+          }}
+          onClose={() => setBrowseIndex(null)}
+        />
+      )}
     </div>
   );
 }
@@ -263,6 +292,7 @@ function WorkspaceEditorDrawer({
   const [message, setMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
+  const [isShortcutBrowseOpen, setIsShortcutBrowseOpen] = useState(false);
 
   const handleDetectShortcut = async () => {
     const backendId = shortcutBackendId.trim();
@@ -386,12 +416,23 @@ function WorkspaceEditorDrawer({
                 ))}
               </select>
 
-              <input
-                value={shortcutRootRef}
-                onChange={(event) => setShortcutRootRef(event.target.value)}
-                placeholder="backend 上的目录根路径"
-                className="agentdash-form-input"
-              />
+              <div className="flex gap-1.5">
+                <input
+                  value={shortcutRootRef}
+                  onChange={(event) => setShortcutRootRef(event.target.value)}
+                  placeholder="backend 上的目录根路径"
+                  className="agentdash-form-input min-w-0 flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsShortcutBrowseOpen(true)}
+                  disabled={!shortcutBackendId}
+                  title={shortcutBackendId ? "浏览目录" : "请先选择 backend"}
+                  className="shrink-0 rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  📂 浏览
+                </button>
+              </div>
 
               <button
                 type="button"
@@ -401,6 +442,14 @@ function WorkspaceEditorDrawer({
                 自动识别
               </button>
             </div>
+
+            <DirectoryBrowserDialog
+              open={isShortcutBrowseOpen}
+              backendId={shortcutBackendId}
+              initialPath={shortcutRootRef || undefined}
+              onSelect={(path) => setShortcutRootRef(path)}
+              onClose={() => setIsShortcutBrowseOpen(false)}
+            />
 
             {detectionResult && (
               <div className="rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">

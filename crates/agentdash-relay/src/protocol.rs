@@ -89,6 +89,13 @@ pub enum RelayMessage {
         payload: CommandWorkspaceDetectGitPayload,
     },
 
+    /// 浏览本地目录（盘符列表 / 子目录列表）
+    #[serde(rename = "command.browse_directory")]
+    CommandBrowseDirectory {
+        id: String,
+        payload: CommandBrowseDirectoryPayload,
+    },
+
     // ── PiAgent Tool Call 命令（云端 → 本机）──
     /// 读取文件
     #[serde(rename = "command.tool.file_read")]
@@ -176,6 +183,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ResponseWorkspaceDetectGitPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.browse_directory")]
+    ResponseBrowseDirectory {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseBrowseDirectoryPayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -275,6 +291,7 @@ impl RelayMessage {
             | Self::CommandWorkspaceFilesList { id, .. }
             | Self::CommandWorkspaceFilesRead { id, .. }
             | Self::CommandWorkspaceDetectGit { id, .. }
+            | Self::CommandBrowseDirectory { id, .. }
             | Self::CommandToolFileRead { id, .. }
             | Self::CommandToolFileWrite { id, .. }
             | Self::CommandToolShellExec { id, .. }
@@ -286,6 +303,7 @@ impl RelayMessage {
             | Self::ResponseWorkspaceFilesList { id, .. }
             | Self::ResponseWorkspaceFilesRead { id, .. }
             | Self::ResponseWorkspaceDetectGit { id, .. }
+            | Self::ResponseBrowseDirectory { id, .. }
             | Self::ResponseToolFileRead { id, .. }
             | Self::ResponseToolFileWrite { id, .. }
             | Self::ResponseToolShellExec { id, .. }
@@ -462,6 +480,15 @@ pub struct CommandWorkspaceDetectGitPayload {
     pub path: String,
 }
 
+// ── command.browse_directory ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandBrowseDirectoryPayload {
+    /// 要浏览的路径。为空或 None 时返回盘符列表（Windows）或根目录。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 // ── PiAgent tool call payloads ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -584,6 +611,23 @@ pub struct ResponseWorkspaceDetectGitPayload {
     pub current_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_url: Option<String>,
+}
+
+// ── browse_directory 响应 ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseBrowseDirectoryPayload {
+    /// 当前浏览的绝对路径（若为根则为空字符串）
+    pub current_path: String,
+    pub entries: Vec<BrowseDirectoryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseDirectoryEntry {
+    pub name: String,
+    /// 完整绝对路径
+    pub path: String,
+    pub is_dir: bool,
 }
 
 // ── PiAgent tool call 响应 ──

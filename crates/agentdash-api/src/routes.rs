@@ -235,6 +235,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(backends::get_backend).delete(backends::remove_backend),
         )
         .route("/backends/online", get(backends::list_online_backends))
+        .route(
+            "/backends/{backend_id}/browse",
+            post(backends::browse_directory),
+        )
         // Settings
         .route(
             "/settings",

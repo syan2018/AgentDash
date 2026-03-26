@@ -288,3 +288,80 @@ pub async fn remove_backend(
     state.repos.backend_repo.remove_backend(&id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
+
+// ─── 目录浏览 ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct BrowseDirectoryRequest {
+    pub path: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct BrowseDirectoryResponse {
+    pub current_path: String,
+    pub entries: Vec<BrowseDirectoryEntryResponse>,
+}
+
+#[derive(Serialize)]
+pub struct BrowseDirectoryEntryResponse {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+pub async fn browse_directory(
+    State(state): State<Arc<AppState>>,
+    Path(backend_id): Path<String>,
+    Json(req): Json<BrowseDirectoryRequest>,
+) -> Result<Json<BrowseDirectoryResponse>, ApiError> {
+    let backend_id = backend_id.trim();
+    if backend_id.is_empty() {
+        return Err(ApiError::BadRequest("backend_id 不能为空".into()));
+    }
+    if !state.services.backend_registry.is_online(backend_id).await {
+        return Err(ApiError::Conflict(format!(
+            "目标 Backend 当前不在线: {backend_id}"
+        )));
+    }
+
+    let cmd = agentdash_relay::RelayMessage::CommandBrowseDirectory {
+        id: agentdash_relay::RelayMessage::new_id("browse-dir"),
+        payload: agentdash_relay::CommandBrowseDirectoryPayload {
+            path: req.path,
+        },
+    };
+    let resp = state
+        .services
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
+        .map_err(|e| ApiError::Internal(format!("relay browse_directory 失败: {e}")))?;
+
+    match resp {
+        agentdash_relay::RelayMessage::ResponseBrowseDirectory {
+            payload: Some(payload),
+            error: None,
+            ..
+        } => Ok(Json(BrowseDirectoryResponse {
+            current_path: payload.current_path,
+            entries: payload
+                .entries
+                .into_iter()
+                .map(|e| BrowseDirectoryEntryResponse {
+                    name: e.name,
+                    path: e.path,
+                    is_dir: e.is_dir,
+                })
+                .collect(),
+        })),
+        agentdash_relay::RelayMessage::ResponseBrowseDirectory {
+            error: Some(err), ..
+        } => Err(ApiError::Internal(format!(
+            "远程 browse_directory 错误: {}",
+            err.message
+        ))),
+        _ => Err(ApiError::Internal(
+            "远程 browse_directory 返回了意外响应".into(),
+        )),
+    }
+}

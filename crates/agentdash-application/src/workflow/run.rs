@@ -416,7 +416,7 @@ fn find_step_definition<'a>(
         })
 }
 
-fn merge_session_binding(
+pub(super) fn merge_session_binding(
     step_binding: WorkflowSessionBinding,
     workflow_binding: WorkflowSessionBinding,
 ) -> WorkflowSessionBinding {

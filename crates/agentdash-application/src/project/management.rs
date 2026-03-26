@@ -188,7 +188,7 @@ mod tests {
     fn clone_workflow_assignment_preserves_flags_but_switches_project() {
         let lifecycle_id = Uuid::new_v4();
         let mut assignment =
-            WorkflowAssignment::new(Uuid::new_v4(), lifecycle_id, WorkflowAgentRole::ReviewAgent);
+            WorkflowAssignment::new(Uuid::new_v4(), lifecycle_id, WorkflowAgentRole::Task);
         assignment.enabled = false;
         assignment.is_default = true;
 

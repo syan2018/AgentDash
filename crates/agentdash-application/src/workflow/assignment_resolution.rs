@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
 };
 
 use super::error::WorkflowApplicationError;
-use super::run::select_active_run;
+use super::run::{merge_session_binding, select_active_run};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAssignment {
@@ -124,21 +124,4 @@ where
         run,
         newly_created: true,
     }))
-}
-
-fn merge_session_binding(
-    step_binding: WorkflowSessionBinding,
-    workflow_binding: WorkflowSessionBinding,
-) -> WorkflowSessionBinding {
-    match (step_binding, workflow_binding) {
-        (WorkflowSessionBinding::Required, _) | (_, WorkflowSessionBinding::Required) => {
-            WorkflowSessionBinding::Required
-        }
-        (WorkflowSessionBinding::Optional, _) | (_, WorkflowSessionBinding::Optional) => {
-            WorkflowSessionBinding::Optional
-        }
-        (WorkflowSessionBinding::NotRequired, WorkflowSessionBinding::NotRequired) => {
-            WorkflowSessionBinding::NotRequired
-        }
-    }
 }

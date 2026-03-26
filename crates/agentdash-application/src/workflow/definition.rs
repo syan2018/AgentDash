@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleStepDefinition, WorkflowAgentRole, WorkflowContract,
-    WorkflowDefinition, WorkflowDefinitionSource, WorkflowRecordPolicy, WorkflowTargetKind,
+    WorkflowDefinition, WorkflowDefinitionSource, WorkflowTargetKind,
 };
 
 pub const TRELLIS_DEV_PROJECT_TEMPLATE_KEY: &str = "trellis_dev_project";
@@ -15,12 +15,11 @@ pub struct BuiltinWorkflowTemplateBundle {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: WorkflowAgentRole,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     #[serde(default)]
     pub workflows: Vec<BuiltinWorkflowTemplate>,
     pub lifecycle: BuiltinLifecycleTemplate,
-    #[serde(default)]
-    pub record_policy: WorkflowRecordPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -61,8 +60,7 @@ impl BuiltinWorkflowTemplateBundle {
                     WorkflowDefinitionSource::BuiltinSeed,
                     template.contract.clone(),
                 )?;
-                definition.record_policy = self.record_policy.clone();
-                definition.recommended_role = Some(self.recommended_role);
+                definition.recommended_roles = self.recommended_roles.clone();
                 Ok(definition)
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -76,7 +74,7 @@ impl BuiltinWorkflowTemplateBundle {
             self.lifecycle.entry_step_key.clone(),
             self.lifecycle.steps.clone(),
         )?;
-        lifecycle.recommended_role = Some(self.recommended_role);
+        lifecycle.recommended_roles = self.recommended_roles.clone();
 
         Ok(BuiltinWorkflowBundle {
             workflows,

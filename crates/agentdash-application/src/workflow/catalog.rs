@@ -85,24 +85,6 @@ where
                     step.key, workflow.key, workflow.target_kind, lifecycle.target_kind
                 )));
             }
-            for attachment in &step.attached_workflows {
-                let Some(overlay) = self
-                    .definition_repo
-                    .get_by_key(&attachment.workflow_key)
-                    .await?
-                else {
-                    return Err(WorkflowApplicationError::BadRequest(format!(
-                        "lifecycle step `{}` 引用的 overlay workflow `{}` 不存在",
-                        step.key, attachment.workflow_key
-                    )));
-                };
-                if overlay.target_kind != lifecycle.target_kind {
-                    return Err(WorkflowApplicationError::Conflict(format!(
-                        "overlay workflow `{}` target_kind={:?}，与 lifecycle {:?} 不一致",
-                        overlay.key, overlay.target_kind, lifecycle.target_kind
-                    )));
-                }
-            }
         }
 
         if let Some(existing) = self.lifecycle_repo.get_by_key(&lifecycle.key).await? {

@@ -92,11 +92,9 @@ const hookRuntime: HookSessionRuntimeInfo = {
         run_status: "running",
         step_key: "check",
         step_title: "Check",
-        transition_policy: "all_checks_pass",
         primary_workflow_id: "wf-1",
-        primary_workflow_key: "trellis_dev_task_check",
+        workflow_key: "trellis_dev_task_check",
         primary_workflow_name: "Trellis Task / Check",
-        requires_session: true,
       },
     },
   },
@@ -204,7 +202,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
 };
 
 describe("SessionPage hook runtime cards", () => {
-  it("渲染 runtime surface 中的 policy 和 workflow metadata", () => {
+  it("渲染 runtime surface 中的 workflow / step metadata", () => {
     const html = renderToStaticMarkup(<HookRuntimeSurfaceCard hookRuntime={hookRuntime} />);
 
     expect(html).toContain("运行中 Hook Runtime");
@@ -216,7 +214,8 @@ describe("SessionPage hook runtime cards", () => {
     expect(html).toContain("workflow:*:*:task_status_gate");
     expect(html).toContain("Trellis Dev Lifecycle / Task / Check");
     expect(html).toContain("Workflow / Trellis Dev Workflow / Check");
-    expect(html).toContain("all_checks_pass");
+    expect(html).toContain("step: check");
+    expect(html).toContain("workflow: trellis_dev_task_check");
   });
 
   it("渲染 diagnostics 与 trace 细节", () => {

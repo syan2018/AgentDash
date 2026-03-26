@@ -17,7 +17,6 @@ import {
   BINDING_KIND_LABEL,
   RUN_STATUS_LABEL,
   STEP_STATUS_LABEL,
-  TRANSITION_POLICY_LABEL,
 } from "./shared-labels";
 
 const EMPTY_ASSIGNMENTS: WorkflowAssignment[] = [];
@@ -31,8 +30,22 @@ function findWorkflowByKey(definitions: WorkflowDefinition[], workflowKey: strin
   return definitions.find((item) => item.key === workflowKey) ?? null;
 }
 
-function stepTitle(lifecycle: LifecycleDefinition | null, stepKey: string): string {
-  return lifecycle?.steps.find((item) => item.key === stepKey)?.title ?? stepKey;
+function stepDefinition(
+  lifecycle: LifecycleDefinition | null,
+  stepKey: string,
+): LifecycleStepDefinition | null {
+  return lifecycle?.steps.find((item) => item.key === stepKey) ?? null;
+}
+
+function stepHeading(lifecycle: LifecycleDefinition | null, stepKey: string): string {
+  const step = stepDefinition(lifecycle, stepKey);
+  if (!step) return stepKey;
+  return step.description?.trim() ? `${step.key} · ${step.description}` : step.key;
+}
+
+function stepWorkflowModeLabel(step: LifecycleStepDefinition | null): string {
+  if (!step) return "";
+  return step.workflow_key?.trim() ? `Workflow: ${step.workflow_key}` : "Manual Step";
 }
 
 function stepBadgeClass(status: WorkflowStepState["status"]) {
@@ -116,16 +129,6 @@ function selectExecutionAssignment(assignments: WorkflowAssignment[]): WorkflowA
     (item) => item.role === "task" && item.enabled,
   );
   return executionAssignments.find((item) => item.is_default) ?? executionAssignments[0] ?? null;
-}
-
-function stepRequiresSession(
-  step: LifecycleStepDefinition | null,
-  workflow: WorkflowDefinition | null,
-): boolean {
-  return (
-    step?.session_binding === "required"
-    || workflow?.contract.injection.session_binding === "required"
-  );
 }
 
 export function TaskWorkflowPanel({
@@ -217,12 +220,11 @@ export function TaskWorkflowPanel({
   );
   const currentWorkflowDefinition = useMemo(
     () =>
-      currentStepDefinition
-        ? findWorkflowByKey(definitions, currentStepDefinition.primary_workflow_key)
+      currentStepDefinition?.workflow_key?.trim()
+        ? findWorkflowByKey(definitions, currentStepDefinition.workflow_key.trim())
         : null,
     [currentStepDefinition, definitions],
   );
-  const requiresSession = stepRequiresSession(currentStepDefinition, currentWorkflowDefinition);
 
   const handleStartRun = async () => {
     if (!activeAssignment) {
@@ -244,25 +246,20 @@ export function TaskWorkflowPanel({
 
   const handleActivateStep = async () => {
     if (!activeRun?.current_step_key) return;
-    if (requiresSession && !taskSessionBinding?.id) {
-      setMessage("当前步骤需要 Task Session 绑定，请先启动 Task 会话。");
-      return;
-    }
 
     setMessage(null);
     const run = await activateStep({
       run_id: activeRun.id,
       step_key: activeRun.current_step_key,
-      session_binding_id: requiresSession ? taskSessionBinding?.id ?? undefined : undefined,
     });
     if (run) {
-      setMessage(`已激活 ${stepTitle(activeLifecycle, activeRun.current_step_key)}`);
+      setMessage(`已激活 ${stepHeading(activeLifecycle, activeRun.current_step_key)}`);
     }
   };
 
   const handleCompleteStep = async () => {
     if (!activeRun?.current_step_key) return;
-    const summary = stepSummary.trim() || `完成 ${stepTitle(activeLifecycle, activeRun.current_step_key)}`;
+    const summary = stepSummary.trim() || `完成 ${stepHeading(activeLifecycle, activeRun.current_step_key)}`;
     setMessage(null);
     const run = await completeStep({
       run_id: activeRun.id,
@@ -350,44 +347,50 @@ export function TaskWorkflowPanel({
               </span>
               {activeRun.current_step_key && (
                 <span className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700">
-                  当前步骤: {stepTitle(activeLifecycle, activeRun.current_step_key)}
+                  当前步骤: {stepHeading(activeLifecycle, activeRun.current_step_key)}
                 </span>
               )}
             </div>
 
             <div className="mt-4 grid gap-2">
-              {activeRun.step_states.map((step) => (
-                <div
-                  key={step.step_key}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border bg-secondary/15 px-3 py-2"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {stepTitle(activeLifecycle, step.step_key)}
-                    </p>
-                    {step.summary && (
-                      <p className="mt-1 text-xs text-muted-foreground">{step.summary}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {step.session_binding_id && (
-                      <span className="rounded-full border border-cyan-300/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-700">
-                        session 已挂接
+              {activeRun.step_states.map((runStep) => {
+                const def = stepDefinition(activeLifecycle, runStep.step_key);
+                return (
+                  <div
+                    key={runStep.step_key}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border bg-secondary/15 px-3 py-2"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        {def?.key ?? runStep.step_key}
+                      </p>
+                      {def?.description && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">{def.description}</p>
+                      )}
+                      {def && (
+                        <p className="mt-1 text-[11px] text-muted-foreground/80">
+                          {stepWorkflowModeLabel(def)}
+                        </p>
+                      )}
+                      {runStep.summary && (
+                        <p className="mt-1 text-xs text-muted-foreground">{runStep.summary}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full border px-2 py-0.5 text-[11px] ${stepBadgeClass(runStep.status)}`}>
+                        {STEP_STATUS_LABEL[runStep.status] ?? runStep.status}
                       </span>
-                    )}
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${stepBadgeClass(step.status)}`}>
-                      {STEP_STATUS_LABEL[step.status] ?? step.status}
-                    </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
           {currentStepState && activeRun.current_step_key && (
             <div className="rounded-[12px] border border-border bg-background p-4">
               <p className="text-sm font-medium text-foreground">
-                推进当前步骤: {stepTitle(activeLifecycle, activeRun.current_step_key)}
+                推进当前步骤: {stepHeading(activeLifecycle, activeRun.current_step_key)}
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {currentStepDefinition?.description ?? "当前步骤暂无说明"}
@@ -395,10 +398,7 @@ export function TaskWorkflowPanel({
               {currentStepDefinition && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                    推进策略: {TRANSITION_POLICY_LABEL[currentStepDefinition.transition.policy.kind]}
-                  </span>
-                  <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                    主 Workflow: {currentStepDefinition.primary_workflow_key}
+                    {stepWorkflowModeLabel(currentStepDefinition)}
                   </span>
                   {currentWorkflowDefinition?.contract.injection.context_bindings.map((binding, index) => (
                     <span
@@ -417,17 +417,6 @@ export function TaskWorkflowPanel({
                   instructions={currentWorkflowDefinition.contract.injection.instructions}
                 />
               ) : null}
-              {requiresSession && !task.session_id && (
-                <p className="mt-2 text-xs text-amber-700">
-                  该步骤要求先有 Task Session。请先在上方“Agent 执行会话”里启动任务执行。
-                </p>
-              )}
-              {requiresSession && task.session_id && !taskSessionBinding && !isResolvingBinding && (
-                <p className="mt-2 text-xs text-amber-700">
-                  已检测到 Task Session，但还没有解析到对应的 SessionBinding。
-                </p>
-              )}
-
               <textarea
                 value={stepSummary}
                 onChange={(event) => setStepSummary(event.target.value)}
@@ -440,11 +429,7 @@ export function TaskWorkflowPanel({
                 <button
                   type="button"
                   onClick={() => void handleActivateStep()}
-                  disabled={
-                    isLoading
-                    || currentStepState.status !== "ready"
-                    || Boolean(requiresSession && !taskSessionBinding)
-                  }
+                  disabled={isLoading || currentStepState.status !== "ready"}
                   className="agentdash-button-secondary"
                 >
                   激活当前步骤
@@ -455,7 +440,6 @@ export function TaskWorkflowPanel({
                   disabled={
                     isLoading
                     || !["ready", "running"].includes(currentStepState.status)
-                    || Boolean(requiresSession && !taskSessionBinding)
                   }
                   className="agentdash-button-primary"
                 >

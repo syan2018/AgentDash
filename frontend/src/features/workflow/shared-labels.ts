@@ -1,5 +1,4 @@
 import type {
-  LifecycleTransitionPolicyKind,
   WorkflowAgentRole,
   WorkflowContextBindingKind,
   WorkflowDefinitionSource,
@@ -28,14 +27,6 @@ export const DEFAULT_ROLE_BY_TARGET: Record<WorkflowTargetKind, WorkflowAgentRol
   project: "project",
   story: "story",
   task: "task",
-};
-
-export const TRANSITION_POLICY_LABEL: Record<LifecycleTransitionPolicyKind, string> = {
-  manual: "Manual",
-  all_checks_pass: "All Checks Pass",
-  any_checks_pass: "Any Check Passes",
-  session_terminal_matches: "Session Terminal Matches",
-  explicit_action: "Explicit Action",
 };
 
 export const BINDING_KIND_LABEL: Record<WorkflowContextBindingKind, string> = {

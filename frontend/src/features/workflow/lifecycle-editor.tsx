@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo } from "react";
 
-import type {
-  LifecycleStepDefinition,
-  LifecycleTransitionPolicyKind,
-  WorkflowDefinition,
-  WorkflowSessionTerminalState,
-  WorkflowTargetKind,
-} from "../../types";
+import type { LifecycleStepDefinition, WorkflowDefinition, WorkflowTargetKind } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { DetailSection } from "../../components/ui/detail-panel";
 import {
@@ -14,7 +8,6 @@ import {
   ROLE_LABEL,
   ROLE_ORDER,
   TARGET_KIND_LABEL,
-  TRANSITION_POLICY_LABEL,
 } from "./shared-labels";
 import { ValidationPanel } from "./ui/validation-panel";
 
@@ -22,34 +15,22 @@ function LifecycleStepCard({
   step,
   index,
   availableWorkflows,
-  availableStepKeys,
   onChange,
   onRemove,
 }: {
   step: LifecycleStepDefinition;
   index: number;
   availableWorkflows: WorkflowDefinition[];
-  availableStepKeys: string[];
   onChange: (patch: Partial<LifecycleStepDefinition>) => void;
   onRemove: () => void;
 }) {
-  const workflowDatalistId = `wf-opts-${index}`;
-  const nextStepDatalistId = `ns-opts-${index}`;
-
-  const updateTransitionPolicy = (patch: Partial<LifecycleStepDefinition["transition"]["policy"]>) => {
-    onChange({
-      transition: {
-        ...step.transition,
-        policy: { ...step.transition.policy, ...patch },
-      },
-    });
-  };
+  const selectValue = step.workflow_key ?? "";
 
   return (
     <div className="space-y-3 rounded-[12px] border border-border bg-secondary/35 p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-foreground">
-          Step {index + 1}: {step.title || "(未命名)"}
+          Step {index + 1}: {step.key || "(no key)"}
         </p>
         <button
           type="button"
@@ -60,25 +41,14 @@ function LifecycleStepCard({
         </button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="agentdash-form-label">Step Key</label>
-          <input
-            value={step.key}
-            onChange={(e) => onChange({ key: e.target.value })}
-            className="agentdash-form-input"
-            placeholder="implement"
-          />
-        </div>
-        <div>
-          <label className="agentdash-form-label">Title</label>
-          <input
-            value={step.title}
-            onChange={(e) => onChange({ title: e.target.value })}
-            className="agentdash-form-input"
-            placeholder="实现"
-          />
-        </div>
+      <div>
+        <label className="agentdash-form-label">Step Key</label>
+        <input
+          value={step.key}
+          onChange={(e) => onChange({ key: e.target.value })}
+          className="agentdash-form-input"
+          placeholder="implement"
+        />
       </div>
 
       <div>
@@ -92,95 +62,26 @@ function LifecycleStepCard({
         />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="agentdash-form-label">Primary Workflow Key</label>
-          <input
-            value={step.primary_workflow_key}
-            onChange={(e) => onChange({ primary_workflow_key: e.target.value })}
-            list={workflowDatalistId}
-            className="agentdash-form-input"
-            placeholder="task_implement"
-          />
-          <datalist id={workflowDatalistId}>
-            {availableWorkflows.map((wf) => (
-              <option key={wf.id} value={wf.key}>{wf.name}</option>
-            ))}
-          </datalist>
-        </div>
-        <div>
-          <label className="agentdash-form-label">Session Binding</label>
-          <select
-            value={step.session_binding}
-            onChange={(e) => onChange({ session_binding: e.target.value as LifecycleStepDefinition["session_binding"] })}
-            className="agentdash-form-select"
-          >
-            <option value="not_required">Not required</option>
-            <option value="optional">Optional</option>
-            <option value="required">Required</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div>
-          <label className="agentdash-form-label">Transition policy</label>
-          <select
-            value={step.transition.policy.kind}
-            onChange={(e) => updateTransitionPolicy({ kind: e.target.value as LifecycleTransitionPolicyKind })}
-            className="agentdash-form-select"
-          >
-            {Object.entries(TRANSITION_POLICY_LABEL).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="agentdash-form-label">Next Step Key</label>
-          <input
-            value={step.transition.policy.next_step_key ?? ""}
-            onChange={(e) => updateTransitionPolicy({ next_step_key: e.target.value || null })}
-            list={nextStepDatalistId}
-            className="agentdash-form-input"
-            placeholder="check"
-          />
-          <datalist id={nextStepDatalistId}>
-            {availableStepKeys.filter((k) => k && k !== step.key).map((k) => (
-              <option key={k} value={k} />
-            ))}
-          </datalist>
-        </div>
-        <div>
-          <label className="agentdash-form-label">Action Key</label>
-          <input
-            value={step.transition.policy.action_key ?? ""}
-            onChange={(e) => updateTransitionPolicy({ action_key: e.target.value || null })}
-            className="agentdash-form-input"
-            placeholder="record_complete"
-          />
-        </div>
-      </div>
-
-      {/* Terminal States */}
       <div>
-        <label className="agentdash-form-label">Session Terminal States</label>
-        <div className="mt-1 flex flex-wrap gap-3">
-          {(["completed", "failed", "interrupted"] as WorkflowSessionTerminalState[]).map((opt) => (
-            <label key={opt} className="flex items-center gap-1.5 text-xs text-foreground">
-              <input
-                type="checkbox"
-                checked={step.transition.policy.session_terminal_states.includes(opt)}
-                onChange={(e) => {
-                  const next = e.target.checked
-                    ? [...step.transition.policy.session_terminal_states, opt]
-                    : step.transition.policy.session_terminal_states.filter((s) => s !== opt);
-                  updateTransitionPolicy({ session_terminal_states: next });
-                }}
-              />
-              {opt}
-            </label>
+        <label className="agentdash-form-label">Workflow</label>
+        <select
+          value={selectValue}
+          onChange={(e) => {
+            const v = e.target.value;
+            onChange({ workflow_key: v ? v : null });
+          }}
+          className="agentdash-form-select"
+        >
+          <option value="">— Manual Step —</option>
+          {availableWorkflows.map((wf) => (
+            <option key={wf.id} value={wf.key}>
+              {wf.name} ({wf.key})
+            </option>
           ))}
-        </div>
+        </select>
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          选择已发布的 Workflow 定义以自动驱动该步；留空为纯手动步骤。
+        </p>
       </div>
     </div>
   );
@@ -330,7 +231,7 @@ export function LifecycleEditor() {
       {/* Steps */}
       <DetailSection
         title={`Lifecycle Steps (${draft.steps.length})`}
-        description="每个 step 把一个 primary workflow 挂载为当前 agent 行为定义，并决定何时进入下一步。"
+        description="步骤按数组顺序依次执行；绑定 workflow 的步骤由该 workflow 驱动，未绑定的为手动步骤。"
         extra={
           <button type="button" onClick={addLifecycleStep} className="agentdash-button-secondary text-sm">
             + 添加
@@ -344,7 +245,6 @@ export function LifecycleEditor() {
               step={step}
               index={idx}
               availableWorkflows={availableWorkflows}
-              availableStepKeys={availableStepKeys}
               onChange={(patch) => updateLifecycleStep(idx, patch)}
               onRemove={() => removeLifecycleStep(idx)}
             />

@@ -11,7 +11,6 @@ import type {
   WorkflowDefinition,
   WorkflowRecordArtifactType,
   WorkflowRun,
-  WorkflowSessionTerminalState,
   WorkflowTargetKind,
   WorkflowTemplate,
   WorkflowValidationResult,
@@ -78,7 +77,6 @@ export function createEmptyDraft(): WorkflowEditorDraft {
         goal: null,
         instructions: [],
         context_bindings: [],
-        session_binding: "not_required",
       },
       constraints: [],
       completion: {
@@ -105,19 +103,8 @@ export function definitionToDraft(definition: WorkflowDefinition): WorkflowEdito
 function createEmptyLifecycleStep(): LifecycleStepDefinition {
   return {
     key: "",
-    title: "",
     description: "",
-    primary_workflow_key: "",
-    session_binding: "not_required",
-    transition: {
-      policy: {
-        kind: "manual",
-        next_step_key: null,
-        session_terminal_states: [],
-        action_key: null,
-      },
-      on_failure: null,
-    },
+    workflow_key: null,
   };
 }
 
@@ -199,7 +186,6 @@ interface WorkflowState {
   activateStep: (input: {
     run_id: string;
     step_key: string;
-    session_binding_id?: string;
   }) => Promise<WorkflowRun | null>;
   completeStep: (input: {
     run_id: string;
@@ -232,10 +218,6 @@ interface WorkflowState {
   updateLifecycleStep: (stepIndex: number, patch: Partial<LifecycleStepDefinition>) => void;
   addLifecycleStep: () => void;
   removeLifecycleStep: (stepIndex: number) => void;
-  updateLifecycleStepTerminalStates: (
-    stepIndex: number,
-    states: WorkflowSessionTerminalState[],
-  ) => void;
   validateLifecycleDraft: () => Promise<WorkflowValidationResult | null>;
   saveLifecycleDraft: () => Promise<LifecycleDefinition | null>;
   enableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
@@ -793,31 +775,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         lifecycleEditorDraft: {
           ...state.lifecycleEditorDraft,
           steps: state.lifecycleEditorDraft.steps.filter((_, index) => index !== stepIndex),
-        },
-        lifecycleEditorDirty: true,
-      };
-    });
-  },
-
-  updateLifecycleStepTerminalStates: (stepIndex, states) => {
-    set((state) => {
-      if (!state.lifecycleEditorDraft) return state;
-      return {
-        lifecycleEditorDraft: {
-          ...state.lifecycleEditorDraft,
-          steps: state.lifecycleEditorDraft.steps.map((step, index) => {
-            if (index !== stepIndex) return step;
-            return {
-              ...step,
-              transition: {
-                ...step.transition,
-                policy: {
-                  ...step.transition.policy,
-                  session_terminal_states: states,
-                },
-              },
-            };
-          }),
         },
         lifecycleEditorDirty: true,
       };

@@ -373,14 +373,6 @@ export function WorkflowEditor() {
           <label className="agentdash-form-label">Goal</label>
           <textarea value={draft.contract.injection.goal ?? ""} onChange={(e) => updateInjection({ goal: e.target.value || null })} rows={2} className="agentdash-form-textarea" placeholder="当前 workflow 的目标" />
         </div>
-        <div>
-          <label className="agentdash-form-label">Session Binding</label>
-          <select value={draft.contract.injection.session_binding} onChange={(e) => updateInjection({ session_binding: e.target.value as WorkflowInjectionSpec["session_binding"] })} className="agentdash-form-select">
-            <option value="not_required">不要求</option>
-            <option value="optional">可选</option>
-            <option value="required">必须</option>
-          </select>
-        </div>
         <StringListEditor label="注入指令" values={draft.contract.injection.instructions} placeholder="新增一条 workflow 注入指令…" onChange={(instructions) => updateInjection({ instructions })} />
       </DetailSection>
 

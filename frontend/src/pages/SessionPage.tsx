@@ -573,10 +573,7 @@ function HookRuntimeWorkflowMetaCard({
           run: {metadata.run_status}
         </span>
         <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
-          transition: {metadata.transition_policy}
-        </span>
-        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
-          {metadata.requires_session ? "需要 session" : "不依赖 session"}
+          step: {metadata.step_key}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
@@ -587,7 +584,7 @@ function HookRuntimeWorkflowMetaCard({
           run_id: {metadata.run_id}
         </span>
         <span className="rounded-full border border-border bg-background px-2 py-1">
-          primary_workflow: {metadata.primary_workflow_key}
+          workflow: {metadata.workflow_key ?? metadata.primary_workflow_key ?? "—"}
         </span>
       </div>
     </div>

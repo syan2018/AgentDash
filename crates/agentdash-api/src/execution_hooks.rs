@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use agentdash_application::workflow::binding::{self, BindingResolutionContext};
 use agentdash_application::workflow::{
     ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
     WorkflowCompletionDecision, WorkflowCompletionSignalSet, WorkflowRecordArtifactDraft,
@@ -20,7 +19,7 @@ use agentdash_domain::workflow::{
     WorkflowConstraintKind, WorkflowDefinitionRepository, WorkflowRecordArtifactType,
     WorkflowSessionBinding, WorkflowTargetKind,
 };
-use agentdash_domain::workspace::WorkspaceRepository;
+
 use agentdash_executor::{
     ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,
     HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
@@ -35,7 +34,6 @@ pub struct AppExecutionHookProvider {
     project_repo: Arc<dyn ProjectRepository>,
     story_repo: Arc<dyn StoryRepository>,
     task_repo: Arc<dyn TaskRepository>,
-    workspace_repo: Arc<dyn WorkspaceRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
@@ -47,7 +45,6 @@ impl AppExecutionHookProvider {
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
         task_repo: Arc<dyn TaskRepository>,
-        workspace_repo: Arc<dyn WorkspaceRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
@@ -57,7 +54,6 @@ impl AppExecutionHookProvider {
             project_repo,
             story_repo,
             task_repo,
-            workspace_repo,
             session_binding_repo,
             workflow_definition_repo,
             lifecycle_definition_repo,
@@ -208,108 +204,9 @@ impl AppExecutionHookProvider {
             self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
             self.workflow_run_repo.as_ref(),
-            None,
         )
         .await
         .map_err(|e| HookError::Runtime(e))
-    }
-
-    /// Resolve binding context_fragments for the active workflow contract.
-    /// Returns `HookContextFragment`s for each resolved binding.
-    async fn resolve_workflow_bindings(
-        &self,
-        owner: &HookOwnerSummary,
-        workflow: &ActiveWorkflowProjection,
-        source_summary: &[String],
-        source_refs: &[HookSourceRef],
-    ) -> Result<Vec<HookContextFragment>, HookError> {
-        let _owner_id = Uuid::parse_str(owner.owner_id.as_str())
-            .map_err(|e| HookError::Runtime(format!("owner_id parse: {e}")))?;
-
-        let project = if let Some(pid) = owner.project_id.as_deref() {
-            let pid = Uuid::parse_str(pid)
-                .map_err(|e| HookError::Runtime(format!("project_id parse: {e}")))?;
-            self.project_repo
-                .get_by_id(pid)
-                .await
-                .map_err(map_hook_error)?
-        } else {
-            None
-        };
-        let Some(project) = project else {
-            return Ok(Vec::new());
-        };
-
-        let story = if let Some(sid) = owner.story_id.as_deref() {
-            let sid = Uuid::parse_str(sid)
-                .map_err(|e| HookError::Runtime(format!("story_id parse: {e}")))?;
-            self.story_repo
-                .get_by_id(sid)
-                .await
-                .map_err(map_hook_error)?
-        } else {
-            None
-        };
-
-        let task = if let Some(tid) = owner.task_id.as_deref() {
-            let tid = Uuid::parse_str(tid)
-                .map_err(|e| HookError::Runtime(format!("task_id parse: {e}")))?;
-            self.task_repo
-                .get_by_id(tid)
-                .await
-                .map_err(map_hook_error)?
-        } else {
-            None
-        };
-
-        let workspace = if let Some(ws_id) = task.as_ref().and_then(|t| t.workspace_id) {
-            self.workspace_repo
-                .get_by_id(ws_id)
-                .await
-                .map_err(map_hook_error)?
-        } else {
-            let target_kind = match owner.owner_type.as_str() {
-                "project" => Some(WorkflowTargetKind::Project),
-                "story" => Some(WorkflowTargetKind::Story),
-                _ => None,
-            };
-            // For project/story-level owners without task, we don't have workspace_id
-            let _ = target_kind;
-            None
-        };
-
-        let binding_ctx = BindingResolutionContext {
-            target_kind: match owner.owner_type.as_str() {
-                "project" => WorkflowTargetKind::Project,
-                "story" => WorkflowTargetKind::Story,
-                _ => WorkflowTargetKind::Task,
-            },
-            project: &project,
-            story: story.as_ref(),
-            task: task.as_ref(),
-            workspace: workspace.as_ref(),
-        };
-
-        let resolved: Vec<_> = workflow
-            .effective_contract
-            .injection
-            .context_bindings
-            .iter()
-            .map(|b| binding::resolve_binding(b, &binding_ctx))
-            .collect();
-
-        let mut fragments = Vec::new();
-        if let Some(bindings_md) = binding::build_bindings_markdown(&resolved) {
-            fragments.push(HookContextFragment {
-                slot: "workflow".to_string(),
-                label: "active_workflow_bindings".to_string(),
-                content: bindings_md,
-                source_summary: source_summary.to_vec(),
-                source_refs: source_refs.to_vec(),
-            });
-        }
-
-        Ok(fragments)
     }
 
     async fn apply_completion_decision(
@@ -749,28 +646,13 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                                 workflow_run_status_tag(workflow.run.status)
                             ),
                         ],
-                        context_fragments: {
-                            let mut fragments = build_workflow_step_fragments(
-                                &workflow,
-                                &source_summary,
-                                &source_refs,
-                            );
-                            if let Ok(binding_frags) = self
-                                .resolve_workflow_bindings(
-                                    &owner,
-                                    &workflow,
-                                    &source_summary,
-                                    &source_refs,
-                                )
-                                .await
-                            {
-                                fragments.extend(binding_frags);
-                            }
-                            fragments
-                        },
+                        context_fragments: build_workflow_step_fragments(
+                            &workflow,
+                            &source_summary,
+                            &source_refs,
+                        ),
                         constraints: workflow
                             .effective_contract
-                            .hook_policy
                             .constraints
                             .iter()
                             .map(|constraint| HookConstraint {
@@ -1156,7 +1038,7 @@ fn active_workflow_constraints(
     snapshot: &SessionHookSnapshot,
 ) -> Vec<agentdash_domain::workflow::WorkflowConstraintSpec> {
     active_workflow_contract(snapshot)
-        .map(|contract| contract.hook_policy.constraints)
+        .map(|contract| contract.constraints)
         .unwrap_or_default()
 }
 
@@ -1273,7 +1155,7 @@ fn build_workflow_policies(
         })),
     }];
 
-    for constraint in &workflow.effective_contract.hook_policy.constraints {
+    for constraint in &workflow.effective_contract.constraints {
         policies.push(HookPolicyView {
             key: format!(
                 "workflow:{}:{}:constraint:{}",
@@ -2211,8 +2093,8 @@ mod tests {
         LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, LifecycleTransitionPolicy,
         LifecycleTransitionPolicyKind, LifecycleTransitionSpec, WorkflowCheckKind,
         WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowContract, WorkflowDefinition,
-        WorkflowDefinitionSource, WorkflowHookPolicySpec, WorkflowInjectionSpec,
-        WorkflowSessionBinding, build_effective_contract,
+        WorkflowDefinitionSource, WorkflowInjectionSpec, WorkflowSessionBinding,
+        build_effective_contract,
     };
     use agentdash_executor::{
         ExecutionHookProvider, HookError, HookRuntimeDelegate, HookSessionRuntime,
@@ -2239,14 +2121,12 @@ mod tests {
             "checklist_passed" => (
                 "all_checks_pass",
                 WorkflowContract {
-                    hook_policy: WorkflowHookPolicySpec {
-                        constraints: vec![agentdash_domain::workflow::WorkflowConstraintSpec {
-                            key: "block_stop_until_checks_pass".to_string(),
-                            kind: WorkflowConstraintKind::BlockStopUntilChecksPass,
-                            description: "block stop".to_string(),
-                            payload: None,
-                        }],
-                    },
+                    constraints: vec![agentdash_domain::workflow::WorkflowConstraintSpec {
+                        key: "block_stop_until_checks_pass".to_string(),
+                        kind: WorkflowConstraintKind::BlockStopUntilChecksPass,
+                        description: "block stop".to_string(),
+                        payload: None,
+                    }],
                     completion: WorkflowCompletionSpec {
                         checks: vec![
                             WorkflowCheckSpec {
@@ -2273,17 +2153,15 @@ mod tests {
             _ => ("manual", WorkflowContract::default()),
         };
         if step_key == "implement" {
-            contract.hook_policy.constraints.push(
-                agentdash_domain::workflow::WorkflowConstraintSpec {
-                    key: "deny_complete_status".to_string(),
-                    kind: WorkflowConstraintKind::DenyTaskStatusTransition,
-                    description: "deny completed".to_string(),
-                    payload: Some(serde_json::json!({
-                        "to": ["completed"]
-                    })),
-                },
-            );
-        };
+            contract.constraints.push(agentdash_domain::workflow::WorkflowConstraintSpec {
+                key: "deny_complete_status".to_string(),
+                kind: WorkflowConstraintKind::DenyTaskStatusTransition,
+                description: "deny completed".to_string(),
+                payload: Some(serde_json::json!({
+                    "to": ["completed"]
+                })),
+            });
+        }
         let effective_contract = serde_json::json!(contract);
         let workflow_source = HookSourceRef {
             layer: HookSourceLayer::Workflow,
@@ -2370,7 +2248,6 @@ mod tests {
             description: "实现并记录结果".to_string(),
             primary_workflow_key: definition.key.clone(),
             session_binding: WorkflowSessionBinding::Required,
-            attached_workflows: Vec::new(),
             transition: LifecycleTransitionSpec {
                 policy: LifecycleTransitionPolicy {
                     kind: LifecycleTransitionPolicyKind::SessionTerminalMatches,
@@ -2409,20 +2286,18 @@ mod tests {
         run.activate_step("implement")
             .expect("implement step should activate");
         let effective_contract =
-            build_effective_contract(&lifecycle.key, &active_step.key, &definition, &[], &[]);
+            build_effective_contract(&lifecycle.key, &active_step.key, &definition);
         ActiveWorkflowProjection {
             run,
             lifecycle,
             active_step,
             primary_workflow: definition,
-            attached_workflows: Vec::new(),
             effective_contract,
             target: WorkflowTargetSummary {
                 target_kind: WorkflowTargetKind::Task,
                 target_id,
                 target_label: Some("Task A".to_string()),
             },
-            resolved_bindings: Vec::new(),
         }
     }
 

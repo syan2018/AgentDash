@@ -18,7 +18,7 @@ use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
     WorkflowAgentRole, WorkflowContextBindingKind, WorkflowContract, WorkflowDefinition,
     WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowRecordArtifactType,
-    WorkflowRecordPolicy, WorkflowTargetKind,
+    WorkflowTargetKind,
 };
 
 use crate::app_state::AppState;
@@ -82,19 +82,17 @@ pub struct CreateWorkflowDefinitionRequest {
     #[serde(default)]
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: Option<WorkflowAgentRole>,
-    pub contract: WorkflowContract,
     #[serde(default)]
-    pub record_policy: Option<WorkflowRecordPolicy>,
+    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub contract: WorkflowContract,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateWorkflowDefinitionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub recommended_role: Option<WorkflowAgentRole>,
+    pub recommended_roles: Option<Vec<WorkflowAgentRole>>,
     pub contract: Option<WorkflowContract>,
-    pub record_policy: Option<WorkflowRecordPolicy>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,10 +102,9 @@ pub struct ValidateWorkflowDefinitionRequest {
     #[serde(default)]
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: Option<WorkflowAgentRole>,
-    pub contract: WorkflowContract,
     #[serde(default)]
-    pub record_policy: Option<WorkflowRecordPolicy>,
+    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub contract: WorkflowContract,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,7 +114,8 @@ pub struct CreateLifecycleDefinitionRequest {
     #[serde(default)]
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: Option<WorkflowAgentRole>,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
 }
@@ -126,7 +124,7 @@ pub struct CreateLifecycleDefinitionRequest {
 pub struct UpdateLifecycleDefinitionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub recommended_role: Option<WorkflowAgentRole>,
+    pub recommended_roles: Option<Vec<WorkflowAgentRole>>,
     pub entry_step_key: Option<String>,
     pub steps: Option<Vec<LifecycleStepDefinition>>,
 }
@@ -138,7 +136,8 @@ pub struct ValidateLifecycleDefinitionRequest {
     #[serde(default)]
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: Option<WorkflowAgentRole>,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
 }
@@ -205,7 +204,7 @@ pub async fn create_lifecycle_definition(
         req.steps,
     )
     .map_err(ApiError::BadRequest)?;
-    definition.recommended_role = req.recommended_role;
+    definition.recommended_roles = req.recommended_roles;
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -513,10 +512,7 @@ pub async fn create_workflow_definition(
         req.contract,
     )
     .map_err(ApiError::BadRequest)?;
-    definition.recommended_role = req.recommended_role;
-    if let Some(policy) = req.record_policy {
-        definition.record_policy = policy;
-    }
+    definition.recommended_roles = req.recommended_roles;
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -572,14 +568,11 @@ pub async fn update_workflow_definition(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(role) = req.recommended_role {
-        definition.recommended_role = Some(role);
+    if let Some(roles) = req.recommended_roles {
+        definition.recommended_roles = roles;
     }
     if let Some(contract) = req.contract {
         definition.contract = contract;
-    }
-    if let Some(policy) = req.record_policy {
-        definition.record_policy = policy;
     }
     let issues = definition.validate_full();
     if issues
@@ -624,8 +617,8 @@ pub async fn update_lifecycle_definition(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(role) = req.recommended_role {
-        definition.recommended_role = Some(role);
+    if let Some(roles) = req.recommended_roles {
+        definition.recommended_roles = roles;
     }
     if let Some(entry_step_key) = req.entry_step_key {
         definition.entry_step_key = entry_step_key;
@@ -670,10 +663,7 @@ pub async fn validate_workflow_definition(
         req.contract,
     ) {
         Ok(mut definition) => {
-            definition.recommended_role = req.recommended_role;
-            if let Some(policy) = req.record_policy {
-                definition.record_policy = policy;
-            }
+            definition.recommended_roles = req.recommended_roles;
             let issues = definition.validate_full();
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
@@ -706,7 +696,7 @@ pub async fn validate_lifecycle_definition(
         req.steps,
     ) {
         Ok(mut definition) => {
-            definition.recommended_role = req.recommended_role;
+            definition.recommended_roles = req.recommended_roles;
             let issues = definition.validate_full();
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues

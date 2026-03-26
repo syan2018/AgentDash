@@ -8,12 +8,10 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleRun, LifecycleRunStatus, LifecycleStepDefinition,
     LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowAgentRole,
-    WorkflowAssignment, WorkflowAttachmentLifetime, WorkflowAttachmentMode, WorkflowAttachmentSpec,
-    WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
-    WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind, WorkflowContract,
-    WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookPolicySpec,
-    WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType,
-    WorkflowRecordPolicy, WorkflowRuntimeAttachment, WorkflowSessionBinding,
+    WorkflowAssignment, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
+    WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind,
+    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowSessionBinding,
     WorkflowSessionTerminalState, WorkflowTargetKind,
 };
 
@@ -24,12 +22,12 @@ pub struct WorkflowDefinitionResponse {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: Option<WorkflowAgentRole>,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     pub source: WorkflowDefinitionSource,
     pub status: WorkflowDefinitionStatus,
     pub version: i32,
     pub contract: WorkflowContractResponse,
-    pub record_policy: WorkflowRecordPolicy,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -41,7 +39,8 @@ pub struct LifecycleDefinitionResponse {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: Option<WorkflowAgentRole>,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     pub source: WorkflowDefinitionSource,
     pub status: WorkflowDefinitionStatus,
     pub version: i32,
@@ -63,10 +62,10 @@ pub struct WorkflowTemplateResponse {
     pub name: String,
     pub description: String,
     pub target_kind: WorkflowTargetKind,
-    pub recommended_role: WorkflowAgentRole,
+    #[serde(default)]
+    pub recommended_roles: Vec<WorkflowAgentRole>,
     pub workflows: Vec<BuiltinWorkflowTemplateResponse>,
     pub lifecycle: BuiltinLifecycleTemplateResponse,
-    pub record_policy: WorkflowRecordPolicy,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,7 +88,7 @@ pub struct BuiltinLifecycleTemplateResponse {
 #[derive(Debug, Serialize)]
 pub struct WorkflowContractResponse {
     pub injection: WorkflowInjectionResponse,
-    pub hook_policy: WorkflowHookPolicyResponse,
+    pub constraints: Vec<WorkflowConstraintResponse>,
     pub completion: WorkflowCompletionResponse,
 }
 
@@ -127,11 +126,6 @@ pub struct WorkflowCheckResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct WorkflowHookPolicyResponse {
-    pub constraints: Vec<WorkflowConstraintResponse>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct WorkflowCompletionResponse {
     pub checks: Vec<WorkflowCheckResponse>,
     pub default_artifact_type: Option<WorkflowRecordArtifactType>,
@@ -145,20 +139,10 @@ pub struct LifecycleStepDefinitionResponse {
     pub description: String,
     pub primary_workflow_key: String,
     pub session_binding: WorkflowSessionBinding,
-    pub attached_workflows: Vec<WorkflowAttachmentResponse>,
     pub transition_policy: String,
     pub next_step_key: Option<String>,
     pub session_terminal_states: Vec<WorkflowSessionTerminalState>,
     pub action_key: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WorkflowAttachmentResponse {
-    pub workflow_key: String,
-    pub mode: WorkflowAttachmentMode,
-    pub lifetime: WorkflowAttachmentLifetime,
-    pub priority: i32,
-    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -183,7 +167,6 @@ pub struct WorkflowRunResponse {
     pub status: LifecycleRunStatus,
     pub current_step_key: Option<String>,
     pub step_states: Vec<LifecycleStepStateResponse>,
-    pub runtime_attachments: Vec<WorkflowRuntimeAttachmentResponse>,
     pub record_artifacts: Vec<WorkflowRecordArtifactResponse>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -198,17 +181,6 @@ pub struct LifecycleStepStateResponse {
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub summary: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WorkflowRuntimeAttachmentResponse {
-    pub id: Uuid,
-    pub workflow_key: String,
-    pub mode: WorkflowAttachmentMode,
-    pub lifetime: WorkflowAttachmentLifetime,
-    pub priority: i32,
-    pub reason: Option<String>,
-    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -229,12 +201,11 @@ impl From<WorkflowDefinition> for WorkflowDefinitionResponse {
             name: value.name,
             description: value.description,
             target_kind: value.target_kind,
-            recommended_role: value.recommended_role,
+            recommended_roles: value.recommended_roles,
             source: value.source,
             status: value.status,
             version: value.version,
             contract: value.contract.into(),
-            record_policy: value.record_policy,
             created_at: value.created_at,
             updated_at: value.updated_at,
         }
@@ -249,7 +220,7 @@ impl From<LifecycleDefinition> for LifecycleDefinitionResponse {
             name: value.name,
             description: value.description,
             target_kind: value.target_kind,
-            recommended_role: value.recommended_role,
+            recommended_roles: value.recommended_roles,
             source: value.source,
             status: value.status,
             version: value.version,
@@ -268,10 +239,9 @@ impl From<BuiltinWorkflowTemplateBundle> for WorkflowTemplateResponse {
             name: value.name,
             description: value.description,
             target_kind: value.target_kind,
-            recommended_role: value.recommended_role,
+            recommended_roles: value.recommended_roles,
             workflows: value.workflows.into_iter().map(Into::into).collect(),
             lifecycle: value.lifecycle.into(),
-            record_policy: value.record_policy,
         }
     }
 }
@@ -303,7 +273,7 @@ impl From<WorkflowContract> for WorkflowContractResponse {
     fn from(value: WorkflowContract) -> Self {
         Self {
             injection: value.injection.into(),
-            hook_policy: value.hook_policy.into(),
+            constraints: value.constraints.into_iter().map(Into::into).collect(),
             completion: value.completion.into(),
         }
     }
@@ -354,14 +324,6 @@ impl From<WorkflowCheckSpec> for WorkflowCheckResponse {
     }
 }
 
-impl From<WorkflowHookPolicySpec> for WorkflowHookPolicyResponse {
-    fn from(value: WorkflowHookPolicySpec) -> Self {
-        Self {
-            constraints: value.constraints.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
 impl From<WorkflowCompletionSpec> for WorkflowCompletionResponse {
     fn from(value: WorkflowCompletionSpec) -> Self {
         Self {
@@ -380,11 +342,6 @@ impl From<LifecycleStepDefinition> for LifecycleStepDefinitionResponse {
             description: value.description,
             primary_workflow_key: value.primary_workflow_key,
             session_binding: value.session_binding,
-            attached_workflows: value
-                .attached_workflows
-                .into_iter()
-                .map(Into::into)
-                .collect(),
             transition_policy: lifecycle_transition_policy_tag(&value.transition.policy.kind)
                 .to_string(),
             next_step_key: value.transition.policy.next_step_key,
@@ -405,18 +362,6 @@ fn lifecycle_transition_policy_tag(
         LifecycleTransitionPolicyKind::AnyChecksPass => "any_checks_pass",
         LifecycleTransitionPolicyKind::SessionTerminalMatches => "session_terminal_matches",
         LifecycleTransitionPolicyKind::ExplicitAction => "explicit_action",
-    }
-}
-
-impl From<WorkflowAttachmentSpec> for WorkflowAttachmentResponse {
-    fn from(value: WorkflowAttachmentSpec) -> Self {
-        Self {
-            workflow_key: value.workflow_key,
-            mode: value.mode,
-            lifetime: value.lifetime,
-            priority: value.priority,
-            reason: value.reason,
-        }
     }
 }
 
@@ -446,11 +391,6 @@ impl From<LifecycleRun> for WorkflowRunResponse {
             status: value.status,
             current_step_key: value.current_step_key,
             step_states: value.step_states.into_iter().map(Into::into).collect(),
-            runtime_attachments: value
-                .runtime_attachments
-                .into_iter()
-                .map(Into::into)
-                .collect(),
             record_artifacts: value.record_artifacts.into_iter().map(Into::into).collect(),
             created_at: value.created_at,
             updated_at: value.updated_at,
@@ -468,20 +408,6 @@ impl From<LifecycleStepState> for LifecycleStepStateResponse {
             started_at: value.started_at,
             completed_at: value.completed_at,
             summary: value.summary,
-        }
-    }
-}
-
-impl From<WorkflowRuntimeAttachment> for WorkflowRuntimeAttachmentResponse {
-    fn from(value: WorkflowRuntimeAttachment) -> Self {
-        Self {
-            id: value.id,
-            workflow_key: value.workflow_key,
-            mode: value.mode,
-            lifetime: value.lifetime,
-            priority: value.priority,
-            reason: value.reason,
-            created_at: value.created_at,
         }
     }
 }

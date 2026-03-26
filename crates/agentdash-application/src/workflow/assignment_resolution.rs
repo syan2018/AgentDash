@@ -2,12 +2,11 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    WorkflowAgentRole, WorkflowAssignmentRepository, WorkflowDefinitionRepository,
-    WorkflowSessionBinding, WorkflowTargetKind,
+    WorkflowAgentRole, WorkflowAssignmentRepository, WorkflowDefinitionRepository, WorkflowTargetKind,
 };
 
 use super::error::WorkflowApplicationError;
-use super::run::{merge_session_binding, select_active_run};
+use super::run::select_active_run;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAssignment {
@@ -16,12 +15,12 @@ pub struct ResolvedAssignment {
     pub newly_created: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct ResolveAssignmentInput {
     pub project_id: Uuid,
     pub role: WorkflowAgentRole,
     pub target_kind: WorkflowTargetKind,
     pub target_id: Uuid,
-    pub session_binding_id: Option<Uuid>,
 }
 
 pub async fn resolve_assignment_and_ensure_run<D, L, A, R>(
@@ -89,32 +88,23 @@ where
     .map_err(WorkflowApplicationError::BadRequest)?;
 
     if let Some(first_step) = lifecycle.steps.first() {
-        let workflow = definition_repo
-            .get_by_key(&first_step.primary_workflow_key)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle 首步引用的 workflow_definition 不存在: {}",
-                    first_step.primary_workflow_key
-                ))
-            })?;
-        let session_requirement = merge_session_binding(
-            first_step.session_binding,
-            workflow.contract.injection.session_binding,
-        );
-        if matches!(
-            session_requirement,
-            WorkflowSessionBinding::Required | WorkflowSessionBinding::Optional
-        ) {
-            if let Some(binding_id) = input.session_binding_id {
-                let _ = run.attach_session_binding(&first_step.key, binding_id);
-            }
-        }
-        if session_requirement != WorkflowSessionBinding::Required
-            || input.session_binding_id.is_some()
+        if let Some(wk) = first_step
+            .workflow_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
-            let _ = run.activate_step(&first_step.key);
+            definition_repo
+                .get_by_key(wk)
+                .await?
+                .ok_or_else(|| {
+                    WorkflowApplicationError::NotFound(format!(
+                        "lifecycle 首步引用的 workflow_definition 不存在: {}",
+                        wk
+                    ))
+                })?;
         }
+        let _ = run.activate_step(&first_step.key);
     }
 
     run_repo.create(&run).await?;

@@ -1,10 +1,10 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleProgressionSource, LifecycleRun,
-    LifecycleRunRepository, LifecycleRunStatus, LifecycleStepDefinition,
-    LifecycleStepExecutionStatus, WorkflowDefinition, WorkflowDefinitionRepository,
-    WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowSessionBinding, WorkflowTargetKind,
+    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowDefinition,
+    WorkflowDefinitionRepository, WorkflowRecordArtifact, WorkflowRecordArtifactType,
+    WorkflowTargetKind,
 };
 
 use super::completion::WorkflowCompletionDecision;
@@ -23,7 +23,6 @@ pub struct StartLifecycleRunCommand {
 pub struct ActivateLifecycleStepCommand {
     pub run_id: Uuid,
     pub step_key: String,
-    pub session_binding_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +31,6 @@ pub struct CompleteLifecycleStepCommand {
     pub step_key: String,
     pub summary: Option<String>,
     pub record_artifacts: Vec<WorkflowRecordArtifactDraft>,
-    pub completed_by: Option<LifecycleProgressionSource>,
 }
 
 #[derive(Debug, Clone)]
@@ -212,32 +210,13 @@ where
         let mut run = self.load_run(cmd.run_id).await?;
         let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
         let step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
-        let workflow = self
-            .load_workflow_by_key(&step_definition.primary_workflow_key)
-            .await?;
-        let existing_binding = run
-            .step_states
-            .iter()
-            .find(|step| step.step_key == cmd.step_key)
-            .and_then(|step| step.session_binding_id);
-        let session_requirement = merge_session_binding(
-            step_definition.session_binding,
-            workflow.contract.injection.session_binding,
-        );
-
-        if session_requirement == WorkflowSessionBinding::Required
-            && existing_binding.is_none()
-            && cmd.session_binding_id.is_none()
+        if let Some(wk) = step_definition
+            .workflow_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
-            return Err(WorkflowApplicationError::BadRequest(format!(
-                "step `{}` 需要 session_binding_id",
-                cmd.step_key
-            )));
-        }
-
-        if let Some(session_binding_id) = cmd.session_binding_id {
-            run.attach_session_binding(&cmd.step_key, session_binding_id)
-                .map_err(WorkflowApplicationError::Conflict)?;
+            let _ = self.load_workflow_by_key(wk).await?;
         }
 
         run.activate_step(&cmd.step_key)
@@ -253,41 +232,27 @@ where
         let mut run = self.load_run(cmd.run_id).await?;
         let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
         let step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
-        let workflow = self
-            .load_workflow_by_key(&step_definition.primary_workflow_key)
-            .await?;
-        let step_state = run
+        if let Some(wk) = step_definition
+            .workflow_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let _ = self.load_workflow_by_key(wk).await?;
+        }
+        let _step_state = run
             .step_states
             .iter()
             .find(|step| step.step_key == cmd.step_key)
-            .cloned()
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
                     "lifecycle run step 不存在: {}",
                     cmd.step_key
                 ))
             })?;
-        let session_requirement = merge_session_binding(
-            step_definition.session_binding,
-            workflow.contract.injection.session_binding,
-        );
 
-        if session_requirement == WorkflowSessionBinding::Required
-            && step_state.session_binding_id.is_none()
-        {
-            return Err(WorkflowApplicationError::BadRequest(format!(
-                "step `{}` 需要先绑定 session",
-                cmd.step_key
-            )));
-        }
-
-        run.complete_step(
-            &cmd.step_key,
-            cmd.summary,
-            cmd.completed_by,
-            step_definition.transition.policy.next_step_key.as_deref(),
-        )
-        .map_err(WorkflowApplicationError::Conflict)?;
+        run.complete_step(&cmd.step_key, cmd.summary)
+            .map_err(WorkflowApplicationError::Conflict)?;
         for artifact in cmd.record_artifacts {
             run.append_record_artifact(artifact.into_artifact(&cmd.step_key));
         }
@@ -306,7 +271,6 @@ where
             .step_states
             .iter()
             .find(|step| step.step_key == cmd.step_key)
-            .cloned()
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
                     "lifecycle run step 不存在: {}",
@@ -414,21 +378,4 @@ fn find_step_definition<'a>(
                 lifecycle.key, step_key
             ))
         })
-}
-
-pub(super) fn merge_session_binding(
-    step_binding: WorkflowSessionBinding,
-    workflow_binding: WorkflowSessionBinding,
-) -> WorkflowSessionBinding {
-    match (step_binding, workflow_binding) {
-        (WorkflowSessionBinding::Required, _) | (_, WorkflowSessionBinding::Required) => {
-            WorkflowSessionBinding::Required
-        }
-        (WorkflowSessionBinding::Optional, _) | (_, WorkflowSessionBinding::Optional) => {
-            WorkflowSessionBinding::Optional
-        }
-        (WorkflowSessionBinding::NotRequired, WorkflowSessionBinding::NotRequired) => {
-            WorkflowSessionBinding::NotRequired
-        }
-    }
 }

@@ -14,7 +14,7 @@ pub use assignment_resolution::{
 pub use catalog::{AssignLifecycleCommand, WorkflowCatalogService};
 pub use completion::{
     WorkflowCompletionDecision, WorkflowCompletionEvidence, WorkflowCompletionSignalSet,
-    evaluate_step_transition, session_terminal_state_tag, transition_policy_tag,
+    evaluate_step_completion, session_terminal_state_tag, session_terminal_summary,
     workflow_artifact_type_tag,
 };
 pub use definition::{

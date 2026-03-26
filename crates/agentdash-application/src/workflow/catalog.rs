@@ -69,21 +69,24 @@ where
         lifecycle: LifecycleDefinition,
     ) -> Result<LifecycleDefinition, WorkflowApplicationError> {
         for step in &lifecycle.steps {
-            let Some(workflow) = self
-                .definition_repo
-                .get_by_key(&step.primary_workflow_key)
-                .await?
-            else {
-                return Err(WorkflowApplicationError::BadRequest(format!(
-                    "lifecycle step `{}` 引用的 primary workflow `{}` 不存在",
-                    step.key, step.primary_workflow_key
-                )));
-            };
-            if workflow.target_kind != lifecycle.target_kind {
-                return Err(WorkflowApplicationError::Conflict(format!(
-                    "lifecycle step `{}` 引用的 workflow `{}` target_kind={:?}，与 lifecycle {:?} 不一致",
-                    step.key, workflow.key, workflow.target_kind, lifecycle.target_kind
-                )));
+            if let Some(wk) = step
+                .workflow_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let Some(workflow) = self.definition_repo.get_by_key(wk).await? else {
+                    return Err(WorkflowApplicationError::BadRequest(format!(
+                        "lifecycle step `{}` 引用的 workflow `{}` 不存在",
+                        step.key, wk
+                    )));
+                };
+                if workflow.target_kind != lifecycle.target_kind {
+                    return Err(WorkflowApplicationError::Conflict(format!(
+                        "lifecycle step `{}` 引用的 workflow `{}` target_kind={:?}，与 lifecycle {:?} 不一致",
+                        step.key, workflow.key, workflow.target_kind, lifecycle.target_kind
+                    )));
+                }
             }
         }
 

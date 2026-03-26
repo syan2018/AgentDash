@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleTransitionPolicyKind, LifecycleTransitionSpec,
-    WorkflowCheckKind, WorkflowRecordArtifactType, WorkflowSessionTerminalState,
+    WorkflowCheckKind, WorkflowCompletionSpec, WorkflowRecordArtifactType, WorkflowSessionTerminalState,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,6 +35,7 @@ pub struct WorkflowCompletionEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkflowCompletionDecision {
+    /// `"manual"` when the step has no attached workflow; `"auto"` when checks drive completion.
     pub transition_policy: String,
     pub satisfied: bool,
     pub should_complete_step: bool,
@@ -47,90 +47,105 @@ pub struct WorkflowCompletionDecision {
     pub evidence: Vec<WorkflowCompletionEvidence>,
 }
 
-pub fn evaluate_step_transition(
-    transition: &LifecycleTransitionSpec,
-    contract: &EffectiveSessionContract,
+/// `auto_completion` is [`Some`] when the lifecycle step has a `workflow_key` (auto-driven step);
+/// pass that workflow's `contract.completion`.
+pub fn evaluate_step_completion(
+    auto_completion: Option<&WorkflowCompletionSpec>,
     signals: &WorkflowCompletionSignalSet,
 ) -> WorkflowCompletionDecision {
-    match transition.policy.kind {
-        LifecycleTransitionPolicyKind::Manual => WorkflowCompletionDecision {
-            transition_policy: transition_policy_tag(transition).to_string(),
+    let Some(completion) = auto_completion else {
+        return WorkflowCompletionDecision {
+            transition_policy: "manual".to_string(),
             satisfied: false,
             should_complete_step: false,
             summary: None,
-            blocking_reason: Some("manual step 需要显式推进，不会由 runtime 自动完成".to_string()),
+            blocking_reason: Some("Manual step — requires explicit advancement".to_string()),
+            evidence: vec![],
+        };
+    };
+
+    if let Some(terminal_state) = signals.session_terminal_state {
+        return WorkflowCompletionDecision {
+            transition_policy: "auto".to_string(),
+            satisfied: true,
+            should_complete_step: true,
+            summary: Some(session_terminal_summary(
+                terminal_state,
+                signals.session_terminal_message.as_deref(),
+            )),
+            blocking_reason: None,
             evidence: vec![WorkflowCompletionEvidence {
-                code: "manual_step_requires_explicit_completion".to_string(),
-                summary: "当前 step 使用 manual transition".to_string(),
-                detail: None,
+                code: "session_terminal_detected".to_string(),
+                summary: "Session reached terminal state".to_string(),
+                detail: Some(format!(
+                    "terminal_state={}",
+                    session_terminal_state_tag(terminal_state)
+                )),
             }],
-        },
-        LifecycleTransitionPolicyKind::SessionTerminalMatches => {
-            evaluate_session_terminal_transition(transition, signals)
+        };
+    }
+
+    let checks = &completion.checks;
+    if checks.is_empty() {
+        return WorkflowCompletionDecision {
+            transition_policy: "auto".to_string(),
+            satisfied: false,
+            should_complete_step: false,
+            summary: None,
+            blocking_reason: Some("Waiting for session to complete".to_string()),
+            evidence: vec![],
+        };
+    }
+
+    let results: Vec<_> = checks.iter().map(|check| evaluate_check(check, signals)).collect();
+    let all_satisfied = results.iter().all(|r| r.satisfied);
+    let evidence: Vec<_> = results
+        .iter()
+        .map(|r| WorkflowCompletionEvidence {
+            code: r.code.clone(),
+            summary: r.summary.clone(),
+            detail: r.detail.clone(),
+        })
+        .collect();
+
+    if all_satisfied {
+        WorkflowCompletionDecision {
+            transition_policy: "auto".to_string(),
+            satisfied: true,
+            should_complete_step: true,
+            summary: Some("All completion checks passed".to_string()),
+            blocking_reason: None,
+            evidence,
         }
-        LifecycleTransitionPolicyKind::AllChecksPass => {
-            evaluate_contract_checks(transition, contract, signals, true)
-        }
-        LifecycleTransitionPolicyKind::AnyChecksPass => {
-            evaluate_contract_checks(transition, contract, signals, false)
-        }
-        LifecycleTransitionPolicyKind::ExplicitAction => {
-            let action_key = transition
-                .policy
-                .action_key
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let satisfied = !action_key.is_empty()
-                && signals
-                    .explicit_actions
-                    .iter()
-                    .any(|action| action == &action_key);
-            if satisfied {
-                WorkflowCompletionDecision {
-                    transition_policy: transition_policy_tag(transition).to_string(),
-                    satisfied: true,
-                    should_complete_step: true,
-                    summary: Some(format!("收到显式动作 `{action_key}`，允许推进 step")),
-                    blocking_reason: None,
-                    evidence: vec![WorkflowCompletionEvidence {
-                        code: "explicit_action_received".to_string(),
-                        summary: "收到生命周期显式推进动作".to_string(),
-                        detail: Some(action_key),
-                    }],
-                }
-            } else {
-                WorkflowCompletionDecision {
-                    transition_policy: transition_policy_tag(transition).to_string(),
-                    satisfied: false,
-                    should_complete_step: false,
-                    summary: None,
-                    blocking_reason: Some(format!(
-                        "当前 step 依赖显式动作 `{action_key}` 才能推进"
-                    )),
-                    evidence: vec![WorkflowCompletionEvidence {
-                        code: "explicit_action_missing".to_string(),
-                        summary: "尚未收到生命周期显式推进动作".to_string(),
-                        detail: if action_key.is_empty() {
-                            None
-                        } else {
-                            Some(action_key)
-                        },
-                    }],
-                }
-            }
+    } else {
+        WorkflowCompletionDecision {
+            transition_policy: "auto".to_string(),
+            satisfied: false,
+            should_complete_step: false,
+            summary: None,
+            blocking_reason: Some("Completion checks not yet satisfied".to_string()),
+            evidence,
         }
     }
 }
 
-pub fn transition_policy_tag(transition: &LifecycleTransitionSpec) -> &'static str {
-    match transition.policy.kind {
-        LifecycleTransitionPolicyKind::Manual => "manual",
-        LifecycleTransitionPolicyKind::AllChecksPass => "all_checks_pass",
-        LifecycleTransitionPolicyKind::AnyChecksPass => "any_checks_pass",
-        LifecycleTransitionPolicyKind::SessionTerminalMatches => "session_terminal_matches",
-        LifecycleTransitionPolicyKind::ExplicitAction => "explicit_action",
+pub fn session_terminal_summary(
+    state: WorkflowSessionTerminalState,
+    message: Option<&str>,
+) -> String {
+    match (
+        state,
+        message.map(str::trim).filter(|value| !value.is_empty()),
+    ) {
+        (WorkflowSessionTerminalState::Completed, _) => "关联 session 已自然结束".to_string(),
+        (WorkflowSessionTerminalState::Failed, Some(message)) => {
+            format!("关联 session 以失败终态结束：{message}")
+        }
+        (WorkflowSessionTerminalState::Failed, None) => "关联 session 以失败终态结束".to_string(),
+        (WorkflowSessionTerminalState::Interrupted, Some(message)) => {
+            format!("关联 session 已中断：{message}")
+        }
+        (WorkflowSessionTerminalState::Interrupted, None) => "关联 session 已中断".to_string(),
     }
 }
 
@@ -139,147 +154,6 @@ pub fn session_terminal_state_tag(state: WorkflowSessionTerminalState) -> &'stat
         WorkflowSessionTerminalState::Completed => "completed",
         WorkflowSessionTerminalState::Failed => "failed",
         WorkflowSessionTerminalState::Interrupted => "interrupted",
-    }
-}
-
-fn evaluate_session_terminal_transition(
-    transition: &LifecycleTransitionSpec,
-    signals: &WorkflowCompletionSignalSet,
-) -> WorkflowCompletionDecision {
-    match signals.session_terminal_state {
-        Some(state)
-            if transition
-                .policy
-                .session_terminal_states
-                .iter()
-                .any(|candidate| candidate == &state) =>
-        {
-            WorkflowCompletionDecision {
-                transition_policy: transition_policy_tag(transition).to_string(),
-                satisfied: true,
-                should_complete_step: true,
-                summary: Some(session_terminal_summary(
-                    state,
-                    signals.session_terminal_message.as_deref(),
-                )),
-                blocking_reason: None,
-                evidence: vec![WorkflowCompletionEvidence {
-                    code: "session_terminal_detected".to_string(),
-                    summary: "关联 session 已进入允许的终态，满足 step transition".to_string(),
-                    detail: Some(format!(
-                        "terminal_state={}",
-                        session_terminal_state_tag(state)
-                    )),
-                }],
-            }
-        }
-        Some(state) => WorkflowCompletionDecision {
-            transition_policy: transition_policy_tag(transition).to_string(),
-            satisfied: false,
-            should_complete_step: false,
-            summary: None,
-            blocking_reason: Some(format!(
-                "关联 session 已结束，但终态 `{}` 不在允许列表内",
-                session_terminal_state_tag(state)
-            )),
-            evidence: vec![WorkflowCompletionEvidence {
-                code: "session_terminal_state_rejected".to_string(),
-                summary: "关联 session 终态不符合当前 step transition".to_string(),
-                detail: Some(format!(
-                    "terminal_state={}",
-                    session_terminal_state_tag(state)
-                )),
-            }],
-        },
-        None => WorkflowCompletionDecision {
-            transition_policy: transition_policy_tag(transition).to_string(),
-            satisfied: false,
-            should_complete_step: false,
-            summary: None,
-            blocking_reason: Some(
-                "当前 step 依赖 session_terminal_matches，必须等待关联 session 进入终态"
-                    .to_string(),
-            ),
-            evidence: vec![WorkflowCompletionEvidence {
-                code: "session_terminal_missing".to_string(),
-                summary: "关联 session 仍未结束".to_string(),
-                detail: None,
-            }],
-        },
-    }
-}
-
-fn evaluate_contract_checks(
-    transition: &LifecycleTransitionSpec,
-    contract: &EffectiveSessionContract,
-    signals: &WorkflowCompletionSignalSet,
-    require_all: bool,
-) -> WorkflowCompletionDecision {
-    if contract.completion.checks.is_empty() {
-        return WorkflowCompletionDecision {
-            transition_policy: transition_policy_tag(transition).to_string(),
-            satisfied: false,
-            should_complete_step: false,
-            summary: None,
-            blocking_reason: Some(
-                "当前 step 需要基于 checks 推进，但 effective contract 未定义 checks".to_string(),
-            ),
-            evidence: vec![WorkflowCompletionEvidence {
-                code: "workflow_checks_missing".to_string(),
-                summary: "effective contract 未定义 checks，无法自动推进".to_string(),
-                detail: None,
-            }],
-        };
-    }
-
-    let results = contract
-        .completion
-        .checks
-        .iter()
-        .map(|check| evaluate_check(check, signals))
-        .collect::<Vec<_>>();
-
-    let satisfied = if require_all {
-        results.iter().all(|result| result.satisfied)
-    } else {
-        results.iter().any(|result| result.satisfied)
-    };
-
-    let evidence = results
-        .iter()
-        .map(|result| WorkflowCompletionEvidence {
-            code: result.code.clone(),
-            summary: result.summary.clone(),
-            detail: result.detail.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    if satisfied {
-        WorkflowCompletionDecision {
-            transition_policy: transition_policy_tag(transition).to_string(),
-            satisfied: true,
-            should_complete_step: true,
-            summary: Some(if require_all {
-                "当前 step 的所有 checks 均已满足，可推进生命周期".to_string()
-            } else {
-                "当前 step 已满足至少一个 check，可推进生命周期".to_string()
-            }),
-            blocking_reason: None,
-            evidence,
-        }
-    } else {
-        WorkflowCompletionDecision {
-            transition_policy: transition_policy_tag(transition).to_string(),
-            satisfied: false,
-            should_complete_step: false,
-            summary: None,
-            blocking_reason: Some(if require_all {
-                "当前 step 仍有 checks 未满足，不能推进生命周期".to_string()
-            } else {
-                "当前 step 还没有任何 check 满足，不能推进生命周期".to_string()
-            }),
-            evidence,
-        }
     }
 }
 
@@ -482,74 +356,39 @@ fn read_u64(payload: Option<&serde_json::Value>, key: &str) -> Option<u64> {
         .and_then(serde_json::Value::as_u64)
 }
 
-fn session_terminal_summary(state: WorkflowSessionTerminalState, message: Option<&str>) -> String {
-    match (
-        state,
-        message.map(str::trim).filter(|value| !value.is_empty()),
-    ) {
-        (WorkflowSessionTerminalState::Completed, _) => "关联 session 已自然结束".to_string(),
-        (WorkflowSessionTerminalState::Failed, Some(message)) => {
-            format!("关联 session 以失败终态结束：{message}")
-        }
-        (WorkflowSessionTerminalState::Failed, None) => "关联 session 以失败终态结束".to_string(),
-        (WorkflowSessionTerminalState::Interrupted, Some(message)) => {
-            format!("关联 session 已中断：{message}")
-        }
-        (WorkflowSessionTerminalState::Interrupted, None) => "关联 session 已中断".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use agentdash_domain::workflow::{
-        LifecycleTransitionPolicy, WorkflowCheckSpec, WorkflowCompletionSpec,
-    };
+    use agentdash_domain::workflow::WorkflowCheckSpec;
 
     use super::*;
 
-    fn contract_with_checks() -> EffectiveSessionContract {
-        EffectiveSessionContract {
-            completion: WorkflowCompletionSpec {
-                checks: vec![
-                    WorkflowCheckSpec {
-                        key: "task_ready".to_string(),
-                        kind: WorkflowCheckKind::TaskStatusIn,
-                        description: "task ready".to_string(),
-                        payload: Some(serde_json::json!({
-                            "statuses": ["awaiting_verification", "completed"]
-                        })),
-                    },
-                    WorkflowCheckSpec {
-                        key: "evidence".to_string(),
-                        kind: WorkflowCheckKind::ChecklistEvidencePresent,
-                        description: "evidence".to_string(),
-                        payload: None,
-                    },
-                ],
-                default_artifact_type: Some(WorkflowRecordArtifactType::ChecklistEvidence),
-                default_artifact_title: Some("summary".to_string()),
-            },
-            ..EffectiveSessionContract::default()
-        }
-    }
-
-    fn checks_transition() -> LifecycleTransitionSpec {
-        LifecycleTransitionSpec {
-            policy: LifecycleTransitionPolicy {
-                kind: LifecycleTransitionPolicyKind::AllChecksPass,
-                next_step_key: Some("record".to_string()),
-                session_terminal_states: vec![],
-                action_key: None,
-            },
-            on_failure: None,
+    fn contract_with_checks() -> WorkflowCompletionSpec {
+        WorkflowCompletionSpec {
+            checks: vec![
+                WorkflowCheckSpec {
+                    key: "task_ready".to_string(),
+                    kind: WorkflowCheckKind::TaskStatusIn,
+                    description: "task ready".to_string(),
+                    payload: Some(serde_json::json!({
+                        "statuses": ["awaiting_verification", "completed"]
+                    })),
+                },
+                WorkflowCheckSpec {
+                    key: "evidence".to_string(),
+                    kind: WorkflowCheckKind::ChecklistEvidencePresent,
+                    description: "evidence".to_string(),
+                    payload: None,
+                },
+            ],
+            default_artifact_type: Some(WorkflowRecordArtifactType::ChecklistEvidence),
+            default_artifact_title: Some("summary".to_string()),
         }
     }
 
     #[test]
-    fn all_checks_pass_requires_all_checks() {
-        let decision = evaluate_step_transition(
-            &checks_transition(),
-            &contract_with_checks(),
+    fn auto_checks_require_all_checks() {
+        let decision = evaluate_step_completion(
+            Some(&contract_with_checks()),
             &WorkflowCompletionSignalSet {
                 task_status: Some("awaiting_verification".to_string()),
                 checklist_evidence_present: false,
@@ -559,14 +398,13 @@ mod tests {
 
         assert!(!decision.satisfied);
         assert!(!decision.should_complete_step);
-        assert_eq!(decision.transition_policy, "all_checks_pass");
+        assert_eq!(decision.transition_policy, "auto");
     }
 
     #[test]
-    fn all_checks_pass_succeeds_when_contract_checks_are_met() {
-        let decision = evaluate_step_transition(
-            &checks_transition(),
-            &contract_with_checks(),
+    fn auto_checks_succeeds_when_contract_checks_are_met() {
+        let decision = evaluate_step_completion(
+            Some(&contract_with_checks()),
             &WorkflowCompletionSignalSet {
                 task_status: Some("completed".to_string()),
                 checklist_evidence_present: true,
@@ -579,26 +417,44 @@ mod tests {
     }
 
     #[test]
-    fn session_terminal_transition_requires_matching_state() {
-        let decision = evaluate_step_transition(
-            &LifecycleTransitionSpec {
-                policy: LifecycleTransitionPolicy {
-                    kind: LifecycleTransitionPolicyKind::SessionTerminalMatches,
-                    next_step_key: Some("check".to_string()),
-                    session_terminal_states: vec![WorkflowSessionTerminalState::Completed],
-                    action_key: None,
-                },
-                on_failure: None,
-            },
-            &EffectiveSessionContract::default(),
+    fn global_session_terminal_short_circuits_before_contract_checks() {
+        let spec = WorkflowCompletionSpec {
+            checks: vec![WorkflowCheckSpec {
+                key: "term".to_string(),
+                kind: WorkflowCheckKind::SessionTerminalIn,
+                description: "terminal".to_string(),
+                payload: Some(serde_json::json!({ "states": ["completed"] })),
+            }],
+            ..WorkflowCompletionSpec::default()
+        };
+        let decision = evaluate_step_completion(
+            Some(&spec),
             &WorkflowCompletionSignalSet {
                 session_terminal_state: Some(WorkflowSessionTerminalState::Failed),
                 ..WorkflowCompletionSignalSet::default()
             },
         );
 
+        assert!(decision.should_complete_step);
+    }
+
+    #[test]
+    fn session_terminal_in_check_without_runtime_terminal_is_pending() {
+        let spec = WorkflowCompletionSpec {
+            checks: vec![WorkflowCheckSpec {
+                key: "term".to_string(),
+                kind: WorkflowCheckKind::SessionTerminalIn,
+                description: "terminal".to_string(),
+                payload: Some(serde_json::json!({ "states": ["completed"] })),
+            }],
+            ..WorkflowCompletionSpec::default()
+        };
+        let decision = evaluate_step_completion(
+            Some(&spec),
+            &WorkflowCompletionSignalSet::default(),
+        );
+
         assert!(!decision.satisfied);
-        assert!(!decision.should_complete_step);
     }
 
     #[test]

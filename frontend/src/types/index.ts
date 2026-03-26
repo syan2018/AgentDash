@@ -280,11 +280,6 @@ export type WorkflowStepExecutionStatus =
   | "failed"
   | "skipped";
 
-export type WorkflowSessionBinding =
-  | "not_required"
-  | "optional"
-  | "required";
-
 export type WorkflowConstraintKind =
   | "deny_task_status_transition"
   | "block_stop_until_checks_pass"
@@ -298,13 +293,6 @@ export type WorkflowCheckKind =
   | "checklist_evidence_present"
   | "explicit_action_received"
   | "custom";
-
-export type LifecycleTransitionPolicyKind =
-  | "manual"
-  | "all_checks_pass"
-  | "any_checks_pass"
-  | "session_terminal_matches"
-  | "explicit_action";
 
 export type WorkflowSessionTerminalState =
   | "completed"
@@ -344,7 +332,6 @@ export interface WorkflowInjectionSpec {
   goal?: string | null;
   instructions: string[];
   context_bindings: WorkflowContextBinding[];
-  session_binding: WorkflowSessionBinding;
 }
 
 export interface WorkflowCompletionSpec {
@@ -404,27 +391,10 @@ export interface WorkflowTemplateWorkflow {
   contract: WorkflowContract;
 }
 
-export type LifecycleFailureAction = "stay" | "block" | "retry" | "fail_lifecycle";
-
-export interface LifecycleTransitionPolicy {
-  kind: LifecycleTransitionPolicyKind;
-  next_step_key?: string | null;
-  session_terminal_states: WorkflowSessionTerminalState[];
-  action_key?: string | null;
-}
-
-export interface LifecycleTransitionSpec {
-  policy: LifecycleTransitionPolicy;
-  on_failure?: LifecycleFailureAction | null;
-}
-
 export interface LifecycleStepDefinition {
   key: string;
-  title: string;
   description: string;
-  primary_workflow_key: string;
-  session_binding: WorkflowSessionBinding;
-  transition: LifecycleTransitionSpec;
+  workflow_key?: string | null;
 }
 
 export interface WorkflowTemplate {
@@ -490,7 +460,6 @@ export type WorkflowProgressionSource = "hook_runtime" | "manual_override";
 export interface WorkflowStepState {
   step_key: string;
   status: WorkflowStepExecutionStatus;
-  session_binding_id?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   summary?: string | null;
@@ -947,11 +916,12 @@ export interface ActiveWorkflowHookMetadata {
   run_status: string;
   step_key: string;
   step_title: string;
-  transition_policy: string;
   primary_workflow_id: string;
-  primary_workflow_key: string;
+  /** Bound workflow key when step is workflow-driven; omit or null for manual steps. */
+  workflow_key?: string | null;
+  /** @deprecated Prefer workflow_key; may still appear from older API payloads. */
+  primary_workflow_key?: string | null;
   primary_workflow_name: string;
-  requires_session: boolean;
 }
 
 export interface HookRuntimeMetadata {

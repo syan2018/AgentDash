@@ -2,9 +2,7 @@ import { api } from "../api/client";
 import type {
   BindingKindMetadata,
   LifecycleDefinition,
-  LifecycleFailureAction,
   LifecycleStepDefinition,
-  LifecycleTransitionPolicyKind,
   WorkflowAgentRole,
   WorkflowAssignment,
   WorkflowCheckKind,
@@ -23,8 +21,6 @@ import type {
   WorkflowRecordArtifactType,
   WorkflowRun,
   WorkflowRunStatus,
-  WorkflowSessionBinding,
-  WorkflowSessionTerminalState,
   WorkflowStepExecutionStatus,
   WorkflowStepState,
   WorkflowTargetKind,
@@ -62,17 +58,6 @@ function normalizeWorkflowContextBindingKind(value: string): WorkflowContextBind
   }
 }
 
-function normalizeWorkflowSessionBinding(value: string): WorkflowSessionBinding {
-  switch (value) {
-    case "not_required":
-    case "optional":
-    case "required":
-      return value;
-    default:
-      return "not_required";
-  }
-}
-
 function normalizeWorkflowConstraintKind(value: string): WorkflowConstraintKind {
   switch (value) {
     case "deny_task_status_transition":
@@ -96,19 +81,6 @@ function normalizeWorkflowCheckKind(value: string): WorkflowCheckKind {
       return value;
     default:
       return "custom";
-  }
-}
-
-function normalizeLifecycleTransitionPolicyKind(value: string): LifecycleTransitionPolicyKind {
-  switch (value) {
-    case "manual":
-    case "all_checks_pass":
-    case "any_checks_pass":
-    case "session_terminal_matches":
-    case "explicit_action":
-      return value;
-    default:
-      return "manual";
   }
 }
 
@@ -151,17 +123,6 @@ function normalizeWorkflowRecordArtifactType(value: string): WorkflowRecordArtif
       return value;
     default:
       return "phase_note";
-  }
-}
-
-function normalizeWorkflowSessionTerminalState(value: string): WorkflowSessionTerminalState {
-  switch (value) {
-    case "completed":
-    case "failed":
-    case "interrupted":
-      return value;
-    default:
-      return "completed";
   }
 }
 
@@ -227,7 +188,6 @@ function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
       goal: null,
       instructions: [],
       context_bindings: [],
-      session_binding: "not_required",
     };
   }
   const value = raw as Record<string, unknown>;
@@ -241,7 +201,6 @@ function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
           .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
           .map(mapWorkflowContextBinding)
       : [],
-    session_binding: normalizeWorkflowSessionBinding(String(value.session_binding ?? "not_required")),
   };
 }
 
@@ -298,29 +257,17 @@ function mapWorkflowTemplateWorkflow(raw: Record<string, unknown>): WorkflowTemp
   };
 }
 
-function mapLifecycleStepDefinition(raw: Record<string, unknown>): LifecycleStepDefinition {
-  const transitionRaw = (raw.transition ?? {}) as Record<string, unknown>;
-  const policyRaw = (transitionRaw.policy ?? {}) as Record<string, unknown>;
-
+function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
+  if (!raw || typeof raw !== "object") {
+    return { key: "", description: "", workflow_key: null };
+  }
+  const value = raw as Record<string, unknown>;
+  const workflowKeyRaw = value.workflow_key ?? value.primary_workflow_key;
   return {
-    key: String(raw.key ?? ""),
-    title: String(raw.title ?? ""),
-    description: String(raw.description ?? ""),
-    primary_workflow_key: String(raw.primary_workflow_key ?? ""),
-    session_binding: normalizeWorkflowSessionBinding(String(raw.session_binding ?? "not_required")),
-    transition: {
-      policy: {
-        kind: normalizeLifecycleTransitionPolicyKind(String(policyRaw.kind ?? "manual")),
-        next_step_key: policyRaw.next_step_key != null ? String(policyRaw.next_step_key) : null,
-        session_terminal_states: Array.isArray(policyRaw.session_terminal_states)
-          ? policyRaw.session_terminal_states.map((item: unknown) =>
-              normalizeWorkflowSessionTerminalState(String(item)),
-            )
-          : [],
-        action_key: policyRaw.action_key != null ? String(policyRaw.action_key) : null,
-      },
-      on_failure: transitionRaw.on_failure != null ? String(transitionRaw.on_failure) as LifecycleFailureAction : null,
-    },
+    key: typeof value.key === "string" ? value.key : "",
+    description: typeof value.description === "string" ? value.description : "",
+    workflow_key:
+      typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
   };
 }
 
@@ -328,7 +275,6 @@ function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
   return {
     step_key: String(raw.step_key ?? ""),
     status: normalizeWorkflowStepExecutionStatus(String(raw.status ?? "pending")),
-    session_binding_id: raw.session_binding_id != null ? String(raw.session_binding_id) : null,
     started_at: raw.started_at != null ? String(raw.started_at) : null,
     completed_at: raw.completed_at != null ? String(raw.completed_at) : null,
     summary: raw.summary != null ? String(raw.summary) : null,
@@ -385,9 +331,7 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     entry_step_key: String(raw.entry_step_key ?? ""),
     steps: Array.isArray(raw.steps)
-      ? raw.steps
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .map(mapLifecycleStepDefinition)
+      ? raw.steps.map((item) => mapLifecycleStepDefinition(item))
       : [],
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
@@ -420,9 +364,7 @@ export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTempl
       description: String(lifecycleRaw.description ?? ""),
       entry_step_key: String(lifecycleRaw.entry_step_key ?? ""),
       steps: Array.isArray(lifecycleRaw.steps)
-        ? lifecycleRaw.steps
-            .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-            .map(mapLifecycleStepDefinition)
+        ? lifecycleRaw.steps.map((item) => mapLifecycleStepDefinition(item))
         : [],
     },
   };
@@ -607,13 +549,10 @@ export async function startWorkflowRun(input: {
 export async function activateWorkflowStep(input: {
   run_id: string;
   step_key: string;
-  session_binding_id?: string;
 }): Promise<WorkflowRun> {
   const raw = await api.post<Record<string, unknown>>(
     `/lifecycle-runs/${input.run_id}/steps/${encodeURIComponent(input.step_key)}/activate`,
-    {
-      session_binding_id: input.session_binding_id,
-    },
+    {},
   );
   return mapWorkflowRun(raw);
 }

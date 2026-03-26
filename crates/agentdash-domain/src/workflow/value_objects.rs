@@ -101,15 +101,6 @@ pub struct WorkflowContextBinding {
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowSessionBinding {
-    #[default]
-    NotRequired,
-    Optional,
-    Required,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub struct WorkflowInjectionSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,8 +109,6 @@ pub struct WorkflowInjectionSpec {
     pub instructions: Vec<String>,
     #[serde(default)]
     pub context_bindings: Vec<WorkflowContextBinding>,
-    #[serde(default)]
-    pub session_binding: WorkflowSessionBinding,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -198,53 +187,13 @@ pub enum WorkflowSessionTerminalState {
     Interrupted,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleTransitionPolicyKind {
-    Manual,
-    AllChecksPass,
-    AnyChecksPass,
-    SessionTerminalMatches,
-    ExplicitAction,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct LifecycleTransitionPolicy {
-    pub kind: LifecycleTransitionPolicyKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_step_key: Option<String>,
-    #[serde(default)]
-    pub session_terminal_states: Vec<WorkflowSessionTerminalState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleFailureAction {
-    Stay,
-    Block,
-    Retry,
-    FailLifecycle,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct LifecycleTransitionSpec {
-    pub policy: LifecycleTransitionPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on_failure: Option<LifecycleFailureAction>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct LifecycleStepDefinition {
     pub key: String,
-    pub title: String,
     #[serde(default)]
     pub description: String,
-    pub primary_workflow_key: String,
-    #[serde(default)]
-    pub session_binding: WorkflowSessionBinding,
-    pub transition: LifecycleTransitionSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -270,27 +219,16 @@ pub enum LifecycleStepExecutionStatus {
     Skipped,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleProgressionSource {
-    HookRuntime,
-    ManualOverride,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleStepState {
     pub step_key: String,
     pub status: LifecycleStepExecutionStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_binding_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_by: Option<LifecycleProgressionSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -362,11 +300,17 @@ pub fn validate_lifecycle_definition(
     let mut seen_step_keys = std::collections::BTreeSet::new();
     for (index, step) in steps.iter().enumerate() {
         validate_identity(&format!("lifecycle.steps[{index}].key"), &step.key)?;
-        validate_non_empty(&format!("lifecycle.steps[{index}].title"), &step.title)?;
-        validate_identity(
-            &format!("lifecycle.steps[{index}].primary_workflow_key"),
-            &step.primary_workflow_key,
-        )?;
+        if let Some(workflow_key) = step
+            .workflow_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            validate_identity(
+                &format!("lifecycle.steps[{index}].workflow_key"),
+                workflow_key,
+            )?;
+        }
         if !seen_step_keys.insert(step.key.clone()) {
             return Err(format!("lifecycle.steps[{index}].key 重复: {}", step.key));
         }
@@ -376,37 +320,6 @@ pub fn validate_lifecycle_definition(
         return Err(format!(
             "lifecycle.entry_step_key `{entry_step_key}` 未出现在 lifecycle.steps 中"
         ));
-    }
-
-    for (index, step) in steps.iter().enumerate() {
-        if let Some(next_step_key) = step.transition.policy.next_step_key.as_deref() {
-            if !steps.iter().any(|candidate| candidate.key == next_step_key) {
-                return Err(format!(
-                    "lifecycle.steps[{index}].transition.policy.next_step_key `{next_step_key}` 不存在"
-                ));
-            }
-        }
-        if step.transition.policy.kind == LifecycleTransitionPolicyKind::SessionTerminalMatches
-            && step.transition.policy.session_terminal_states.is_empty()
-        {
-            return Err(format!(
-                "lifecycle.steps[{index}] 使用 session_terminal_matches，但未配置 session_terminal_states"
-            ));
-        }
-        if step.transition.policy.kind == LifecycleTransitionPolicyKind::ExplicitAction
-            && step
-                .transition
-                .policy
-                .action_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .is_none()
-        {
-            return Err(format!(
-                "lifecycle.steps[{index}] 使用 explicit_action，但未配置 action_key"
-            ));
-        }
     }
 
     Ok(())
@@ -528,19 +441,8 @@ mod tests {
     fn validate_lifecycle_definition_requires_entry_step() {
         let steps = vec![LifecycleStepDefinition {
             key: "start".to_string(),
-            title: "Start".to_string(),
             description: String::new(),
-            primary_workflow_key: "wf_start".to_string(),
-            session_binding: WorkflowSessionBinding::NotRequired,
-            transition: LifecycleTransitionSpec {
-                policy: LifecycleTransitionPolicy {
-                    kind: LifecycleTransitionPolicyKind::Manual,
-                    next_step_key: None,
-                    session_terminal_states: vec![],
-                    action_key: None,
-                },
-                on_failure: None,
-            },
+            workflow_key: Some("wf_start".to_string()),
         }];
 
         let error =

@@ -3,11 +3,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{
-    EffectiveSessionContract, LifecycleProgressionSource, LifecycleRunStatus,
-    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowAgentRole, WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus,
-    WorkflowRecordArtifact, WorkflowTargetKind, validate_lifecycle_definition,
-    validate_workflow_definition,
+    EffectiveSessionContract, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowAgentRole,
+    WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowRecordArtifact,
+    WorkflowTargetKind, validate_lifecycle_definition, validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,11 +222,9 @@ impl LifecycleRun {
                 } else {
                     LifecycleStepExecutionStatus::Pending
                 },
-                session_binding_id: None,
                 started_at: None,
                 completed_at: None,
                 summary: None,
-                completed_by: None,
             })
             .collect::<Vec<_>>();
 
@@ -287,33 +284,8 @@ impl LifecycleRun {
         Ok(())
     }
 
-    pub fn attach_session_binding(
-        &mut self,
-        step_key: &str,
-        session_binding_id: Uuid,
-    ) -> Result<(), String> {
-        let Some(index) = self
-            .step_states
-            .iter()
-            .position(|step| step.step_key == step_key)
-        else {
-            return Err(format!("lifecycle run 不存在 step: {step_key}"));
-        };
-
-        self.step_states[index].session_binding_id = Some(session_binding_id);
-        self.updated_at = Utc::now();
-        self.last_activity_at = self.updated_at;
-        Ok(())
-    }
-
-    pub fn complete_step(
-        &mut self,
-        step_key: &str,
-        summary: Option<String>,
-        completed_by: Option<LifecycleProgressionSource>,
-        next_step_key: Option<&str>,
-    ) -> Result<(), String> {
-        let Some(index) = self
+    pub fn complete_step(&mut self, step_key: &str, summary: Option<String>) -> Result<(), String> {
+        let Some(current_idx) = self
             .step_states
             .iter()
             .position(|step| step.step_key == step_key)
@@ -324,7 +296,7 @@ impl LifecycleRun {
             return Err(format!("当前可完成的 step 不是 {step_key}"));
         }
 
-        match self.step_states[index].status {
+        match self.step_states[current_idx].status {
             LifecycleStepExecutionStatus::Ready | LifecycleStepExecutionStatus::Running => {}
             LifecycleStepExecutionStatus::Pending => {
                 return Err(format!("step 尚未 ready: {step_key}"));
@@ -341,22 +313,16 @@ impl LifecycleRun {
         }
 
         let now = Utc::now();
-        self.step_states[index].started_at.get_or_insert(now);
-        self.step_states[index].status = LifecycleStepExecutionStatus::Completed;
-        self.step_states[index].completed_at = Some(now);
-        self.step_states[index].summary = summary;
-        self.step_states[index].completed_by = completed_by;
+        self.step_states[current_idx].started_at.get_or_insert(now);
+        self.step_states[current_idx].status = LifecycleStepExecutionStatus::Completed;
+        self.step_states[current_idx].completed_at = Some(now);
+        self.step_states[current_idx].summary = summary;
 
-        if let Some(next_step_key) = next_step_key {
-            let Some(next_index) = self
-                .step_states
-                .iter()
-                .position(|step| step.step_key == next_step_key)
-            else {
-                return Err(format!("下一个 step 不存在: {next_step_key}"));
-            };
-            self.step_states[next_index].status = LifecycleStepExecutionStatus::Ready;
-            self.current_step_key = Some(next_step_key.to_string());
+        if current_idx + 1 < self.step_states.len() {
+            let next_idx = current_idx + 1;
+            let next_key = self.step_states[next_idx].step_key.clone();
+            self.step_states[next_idx].status = LifecycleStepExecutionStatus::Ready;
+            self.current_step_key = Some(next_key);
             self.status = LifecycleRunStatus::Ready;
         } else {
             self.current_step_key = None;
@@ -378,14 +344,21 @@ impl LifecycleRun {
 pub fn build_effective_contract(
     lifecycle_key: &str,
     active_step_key: &str,
-    primary_workflow: &WorkflowDefinition,
+    primary_workflow: Option<&WorkflowDefinition>,
 ) -> EffectiveSessionContract {
-    EffectiveSessionContract {
-        lifecycle_key: Some(lifecycle_key.to_string()),
-        active_step_key: Some(active_step_key.to_string()),
-        injection: primary_workflow.contract.injection.clone(),
-        constraints: primary_workflow.contract.constraints.clone(),
-        completion: primary_workflow.contract.completion.clone(),
+    match primary_workflow {
+        Some(w) => EffectiveSessionContract {
+            lifecycle_key: Some(lifecycle_key.to_string()),
+            active_step_key: Some(active_step_key.to_string()),
+            injection: w.contract.injection.clone(),
+            constraints: w.contract.constraints.clone(),
+            completion: w.contract.completion.clone(),
+        },
+        None => EffectiveSessionContract {
+            lifecycle_key: Some(lifecycle_key.to_string()),
+            active_step_key: Some(active_step_key.to_string()),
+            ..Default::default()
+        },
     }
 }
 
@@ -393,14 +366,11 @@ pub fn build_effective_contract(
 mod tests {
     use super::*;
     use crate::workflow::value_objects::{
-        WorkflowSessionBinding,
-        LifecycleFailureAction, LifecycleTransitionPolicy, LifecycleTransitionPolicyKind,
-        LifecycleTransitionSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
-        WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind,
-        WorkflowInjectionSpec,
+        WorkflowCompletionSpec, WorkflowConstraintKind, WorkflowConstraintSpec,
+        WorkflowContextBinding, WorkflowContextBindingKind, WorkflowInjectionSpec,
     };
 
-    fn contract(session_binding: WorkflowSessionBinding) -> WorkflowContract {
+    fn contract() -> WorkflowContract {
         WorkflowContract {
             injection: WorkflowInjectionSpec {
                 instructions: vec!["follow the workflow".to_string()],
@@ -411,7 +381,6 @@ mod tests {
                     required: true,
                     title: None,
                 }],
-                session_binding,
                 ..WorkflowInjectionSpec::default()
             },
             constraints: vec![WorkflowConstraintSpec {
@@ -432,19 +401,8 @@ mod tests {
     fn step(key: &str, workflow_key: &str) -> LifecycleStepDefinition {
         LifecycleStepDefinition {
             key: key.to_string(),
-            title: key.to_string(),
             description: String::new(),
-            primary_workflow_key: workflow_key.to_string(),
-            session_binding: WorkflowSessionBinding::NotRequired,
-            transition: LifecycleTransitionSpec {
-                policy: LifecycleTransitionPolicy {
-                    kind: LifecycleTransitionPolicyKind::Manual,
-                    next_step_key: None,
-                    session_terminal_states: vec![],
-                    action_key: None,
-                },
-                on_failure: Some(LifecycleFailureAction::Stay),
-            },
+            workflow_key: Some(workflow_key.to_string()),
         }
     }
 
@@ -460,7 +418,7 @@ mod tests {
         )
         .expect("run");
 
-        run.complete_step("start", Some("done".to_string()), None, Some("check"))
+        run.complete_step("start", Some("done".to_string()))
             .expect("complete");
 
         assert_eq!(run.current_step_key.as_deref(), Some("check"));
@@ -475,16 +433,12 @@ mod tests {
             "desc",
             WorkflowTargetKind::Task,
             WorkflowDefinitionSource::BuiltinSeed,
-            contract(WorkflowSessionBinding::NotRequired),
+            contract(),
         )
         .expect("primary");
 
-        let effective = build_effective_contract("lc", "step", &primary);
+        let effective = build_effective_contract("lc", "step", Some(&primary));
         assert_eq!(effective.constraints.len(), 1);
-        assert_eq!(
-            effective.injection.session_binding,
-            WorkflowSessionBinding::NotRequired
-        );
     }
 
     #[test]

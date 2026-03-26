@@ -4,8 +4,8 @@ use std::sync::Arc;
 use agentdash_application::workflow::{
     ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
     WorkflowCompletionDecision, WorkflowCompletionSignalSet, WorkflowRecordArtifactDraft,
-    WorkflowSessionTerminalState, build_step_completion_artifact_drafts, evaluate_step_transition,
-    resolve_active_workflow_projection, transition_policy_tag,
+    WorkflowSessionTerminalState, build_step_completion_artifact_drafts, evaluate_step_completion,
+    resolve_active_workflow_projection,
 };
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::{
@@ -14,10 +14,9 @@ use agentdash_domain::session_binding::{
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::{TaskRepository, TaskStatus};
 use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleDefinitionRepository, LifecycleProgressionSource,
-    LifecycleRunRepository, LifecycleRunStatus, LifecycleTransitionSpec, WorkflowCheckKind,
-    WorkflowConstraintKind, WorkflowDefinitionRepository, WorkflowRecordArtifactType,
-    WorkflowSessionBinding, WorkflowTargetKind,
+    EffectiveSessionContract, LifecycleDefinitionRepository, LifecycleRunRepository,
+    LifecycleRunStatus, WorkflowCheckKind, WorkflowConstraintKind, WorkflowDefinitionRepository,
+    WorkflowRecordArtifactType, WorkflowTargetKind,
 };
 
 use agentdash_executor::{
@@ -29,6 +28,28 @@ use agentdash_executor::{
 };
 use async_trait::async_trait;
 use uuid::Uuid;
+
+fn workflow_scope_key(workflow: &ActiveWorkflowProjection) -> String {
+    workflow
+        .primary_workflow
+        .as_ref()
+        .map(|w| w.key.clone())
+        .unwrap_or_else(|| workflow.lifecycle.key.clone())
+}
+
+fn lifecycle_step_advance_label(
+    step: &agentdash_domain::workflow::LifecycleStepDefinition,
+) -> &'static str {
+    match step
+        .workflow_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(_) => "auto",
+        None => "manual",
+    }
+}
 
 pub struct AppExecutionHookProvider {
     project_repo: Arc<dyn ProjectRepository>,
@@ -392,16 +413,16 @@ fn task_source_ref(task_id: Uuid) -> HookSourceRef {
 }
 
 fn workflow_source_refs(workflow: &ActiveWorkflowProjection) -> Vec<HookSourceRef> {
+    let scope = workflow_scope_key(workflow);
+    let label_name = workflow
+        .primary_workflow
+        .as_ref()
+        .map(|w| w.name.as_str())
+        .unwrap_or(workflow.lifecycle.name.as_str());
     vec![HookSourceRef {
         layer: HookSourceLayer::Workflow,
-        key: format!(
-            "{}:{}",
-            workflow.primary_workflow.key, workflow.active_step.key
-        ),
-        label: format!(
-            "Workflow / {} / {}",
-            workflow.primary_workflow.name, workflow.active_step.title
-        ),
+        key: format!("{}:{}", scope, workflow.active_step.key),
+        label: format!("Workflow / {} / {}", label_name, workflow.active_step.key),
         priority: 300,
     }]
 }
@@ -588,9 +609,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         workflow.lifecycle.key, workflow.active_step.key
                     ),
                     detail: Some(format!(
-                        "primary_workflow={}, step_title={}, status={}",
-                        workflow.primary_workflow.name,
-                        workflow.active_step.title,
+                        "workflow_key={:?}, step={}, status={}",
+                        workflow.active_step.workflow_key,
+                        workflow.active_step.key,
                         workflow_run_status_tag(workflow.run.status)
                     )),
                     source_summary: source_summary.clone(),
@@ -602,6 +623,12 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     .as_mut()
                     .and_then(|value| value.as_object_mut())
                 {
+                    let step_advance = lifecycle_step_advance_label(&workflow.active_step);
+                    let step_title = if workflow.active_step.description.trim().is_empty() {
+                        workflow.active_step.key.clone()
+                    } else {
+                        workflow.active_step.description.clone()
+                    };
                     metadata.insert(
                         "active_workflow".to_string(),
                         serde_json::json!({
@@ -611,12 +638,13 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             "run_id": workflow.run.id,
                             "run_status": workflow_run_status_tag(workflow.run.status),
                             "step_key": workflow.active_step.key,
-                            "step_title": workflow.active_step.title,
-                            "transition_policy": transition_policy_tag(&workflow.active_step.transition),
-                            "primary_workflow_id": workflow.primary_workflow.id,
-                            "primary_workflow_key": workflow.primary_workflow.key,
-                            "primary_workflow_name": workflow.primary_workflow.name,
-                            "requires_session": workflow.effective_contract.injection.session_binding == WorkflowSessionBinding::Required,
+                            "step_title": step_title,
+                            "workflow_key": workflow.active_step.workflow_key,
+                            "step_advance": step_advance,
+                            "transition_policy": step_advance,
+                            "primary_workflow_id": workflow.primary_workflow.as_ref().map(|w| w.id),
+                            "primary_workflow_key": workflow.primary_workflow.as_ref().map(|w| &w.key),
+                            "primary_workflow_name": workflow.primary_workflow.as_ref().map(|w| &w.name),
                             "default_artifact_type": workflow
                                 .effective_contract
                                 .completion
@@ -624,7 +652,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                                 .map(workflow_record_artifact_type_tag),
                             "default_artifact_title": workflow.effective_contract.completion.default_artifact_title.clone(),
                             "effective_contract": workflow.effective_contract,
-                            "step_transition": workflow.active_step.transition,
                             "checklist_evidence_artifact_type": workflow_record_artifact_type_tag(checklist_evidence.artifact_type),
                             "checklist_evidence_present": checklist_evidence.count > 0,
                             "checklist_evidence_count": checklist_evidence.count,
@@ -639,7 +666,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     HookContributionSet {
                         sources: source_refs.clone(),
                         tags: vec![
-                            format!("workflow:{}", workflow.primary_workflow.key),
+                            format!("workflow:{}", workflow_scope_key(&workflow)),
                             format!("workflow_step:{}", workflow.active_step.key),
                             format!(
                                 "workflow_status:{}",
@@ -658,7 +685,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             .map(|constraint| HookConstraint {
                                 key: format!(
                                     "workflow:{}:{}:constraint:{}",
-                                    workflow.primary_workflow.key,
+                                    workflow_scope_key(&workflow),
                                     workflow.active_step.key,
                                     constraint.key
                                 ),
@@ -744,19 +771,14 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     },
                     &mut resolution,
                 );
-                if let (Some(transition), Some(contract)) = (
-                    active_workflow_transition(&snapshot),
-                    active_workflow_contract(&snapshot),
+                if let Some(decision) = completion_decision_for_active_workflow_snapshot(
+                    &snapshot,
+                    &WorkflowCompletionSignalSet {
+                        task_status: active_task_status(&snapshot).map(ToString::to_string),
+                        checklist_evidence_present: checklist_evidence_present(&snapshot),
+                        ..WorkflowCompletionSignalSet::default()
+                    },
                 ) {
-                    let decision = evaluate_step_transition(
-                        &transition,
-                        &contract,
-                        &WorkflowCompletionSignalSet {
-                            task_status: active_task_status(&snapshot).map(ToString::to_string),
-                            checklist_evidence_present: checklist_evidence_present(&snapshot),
-                            ..WorkflowCompletionSignalSet::default()
-                        },
-                    );
                     resolution.matched_rule_keys.push(format!(
                         "completion:{}:{}",
                         workflow_step_key(&snapshot).unwrap_or("unknown"),
@@ -767,26 +789,21 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 }
             }
             HookTrigger::SessionTerminal => {
-                if let (Some(transition), Some(contract)) = (
-                    active_workflow_transition(&snapshot),
-                    active_workflow_contract(&snapshot),
+                if let Some(decision) = completion_decision_for_active_workflow_snapshot(
+                    &snapshot,
+                    &WorkflowCompletionSignalSet {
+                        session_terminal_state: parse_session_terminal_state(
+                            query.payload.as_ref(),
+                        ),
+                        session_terminal_message: query
+                            .payload
+                            .as_ref()
+                            .and_then(|value| value.get("message"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToString::to_string),
+                        ..WorkflowCompletionSignalSet::default()
+                    },
                 ) {
-                    let decision = evaluate_step_transition(
-                        &transition,
-                        &contract,
-                        &WorkflowCompletionSignalSet {
-                            session_terminal_state: parse_session_terminal_state(
-                                query.payload.as_ref(),
-                            ),
-                            session_terminal_message: query
-                                .payload
-                                .as_ref()
-                                .and_then(|value| value.get("message"))
-                                .and_then(serde_json::Value::as_str)
-                                .map(ToString::to_string),
-                            ..WorkflowCompletionSignalSet::default()
-                        },
-                    );
                     resolution.matched_rule_keys.push(format!(
                         "completion:{}:{}",
                         workflow_step_key(&snapshot).unwrap_or("unknown"),
@@ -847,7 +864,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 step_key: request.step_key,
                 summary: request.summary,
                 record_artifacts,
-                completed_by: Some(LifecycleProgressionSource::HookRuntime),
             })
             .await
             .map_err(|e| HookError::Runtime(format!("advance_workflow_step: {e}")))?;
@@ -886,12 +902,20 @@ fn task_status_tag(status: TaskStatus) -> &'static str {
 }
 
 fn workflow_transition_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_workflow"))
-        .and_then(|value| value.get("transition_policy"))
+    let aw = snapshot.metadata.as_ref()?.get("active_workflow")?;
+    aw.get("step_advance")
+        .or_else(|| aw.get("step_completion_mode"))
+        .or_else(|| aw.get("transition_policy"))
         .and_then(serde_json::Value::as_str)
+}
+
+fn workflow_auto_completion_snapshot(snapshot: &SessionHookSnapshot) -> bool {
+    matches!(
+        workflow_transition_policy(snapshot),
+        Some(
+            "auto" | "all_checks_pass" | "any_checks_pass" | "session_terminal_matches",
+        )
+    )
 }
 
 fn active_workflow_checklist_evidence(snapshot: &SessionHookSnapshot) -> bool {
@@ -1022,16 +1046,15 @@ fn active_workflow_contract(snapshot: &SessionHookSnapshot) -> Option<EffectiveS
     .ok()
 }
 
-fn active_workflow_transition(snapshot: &SessionHookSnapshot) -> Option<LifecycleTransitionSpec> {
-    serde_json::from_value(
-        snapshot
-            .metadata
-            .as_ref()?
-            .get("active_workflow")?
-            .get("step_transition")?
-            .clone(),
-    )
-    .ok()
+fn completion_decision_for_active_workflow_snapshot(
+    snapshot: &SessionHookSnapshot,
+    signals: &WorkflowCompletionSignalSet,
+) -> Option<WorkflowCompletionDecision> {
+    let contract = active_workflow_contract(snapshot)?;
+    Some(evaluate_step_completion(
+        workflow_auto_completion_snapshot(snapshot).then_some(&contract.completion),
+        signals,
+    ))
 }
 
 fn active_workflow_constraints(
@@ -1136,22 +1159,23 @@ fn build_workflow_policies(
     source_summary: &[String],
     source_refs: &[HookSourceRef],
 ) -> Vec<HookPolicyView> {
+    let scope = workflow_scope_key(workflow);
+    let step_advance = lifecycle_step_advance_label(&workflow.active_step);
     let mut policies = vec![HookPolicyView {
         key: format!(
-            "workflow:{}:{}:transition_policy",
-            workflow.primary_workflow.key, workflow.active_step.key
+            "workflow:{}:{}:step_advance",
+            scope, workflow.active_step.key
         ),
         description: format!(
-            "当前 step 使用 `{}` 作为推进语义。",
-            transition_policy_tag(&workflow.active_step.transition)
+            "当前 step 推进模式为 `{step_advance}`（有 workflow_key 时为 auto，否则为 manual）。",
         ),
         source_summary: source_summary.to_vec(),
         source_refs: source_refs.to_vec(),
         payload: Some(serde_json::json!({
             "lifecycle_key": workflow.lifecycle.key,
             "step_key": workflow.active_step.key,
-            "transition_policy": transition_policy_tag(&workflow.active_step.transition),
-            "requires_session": workflow.effective_contract.injection.session_binding == WorkflowSessionBinding::Required,
+            "step_advance": step_advance,
+            "workflow_key": workflow.active_step.workflow_key,
         })),
     }];
 
@@ -1159,7 +1183,7 @@ fn build_workflow_policies(
         policies.push(HookPolicyView {
             key: format!(
                 "workflow:{}:{}:constraint:{}",
-                workflow.primary_workflow.key, workflow.active_step.key, constraint.key
+                scope, workflow.active_step.key, constraint.key
             ),
             description: constraint.description.clone(),
             source_summary: source_summary.to_vec(),
@@ -1171,13 +1195,11 @@ fn build_workflow_policies(
         });
     }
 
-    if workflow.active_step.transition.policy.kind
-        == agentdash_domain::workflow::LifecycleTransitionPolicyKind::AllChecksPass
-    {
+    if step_advance == "auto" && !workflow.effective_contract.completion.checks.is_empty() {
         policies.push(HookPolicyView {
             key: format!(
                 "workflow:{}:{}:check_gate",
-                workflow.primary_workflow.key, workflow.active_step.key
+                scope, workflow.active_step.key
             ),
             description:
                 "当前 step 会基于 contract checks 自动推进；在满足所有检查前，不应提前结束当前 loop。"
@@ -1486,6 +1508,10 @@ fn rule_apply_after_tool_refresh(ctx: &HookEvaluationContext<'_>, resolution: &m
 
 fn rule_matches_session_ended_notice(ctx: &HookEvaluationContext<'_>) -> bool {
     workflow_transition_policy(ctx.snapshot) == Some("session_terminal_matches")
+        || (workflow_auto_completion_snapshot(ctx.snapshot)
+            && active_workflow_checks(ctx.snapshot)
+                .iter()
+                .any(|check| check.kind == WorkflowCheckKind::SessionTerminalIn))
 }
 
 fn rule_apply_session_ended_notice(
@@ -1508,17 +1534,14 @@ fn rule_apply_session_ended_notice(
 }
 
 fn rule_matches_checklist_pending_gate(ctx: &HookEvaluationContext<'_>) -> bool {
-    workflow_transition_policy(ctx.snapshot)
-        .is_some_and(|policy| matches!(policy, "all_checks_pass" | "any_checks_pass"))
+    workflow_auto_completion_snapshot(ctx.snapshot)
         && active_workflow_constraints(ctx.snapshot)
             .iter()
             .any(|constraint| constraint.kind == WorkflowConstraintKind::BlockStopUntilChecksPass)
-        && active_workflow_transition(ctx.snapshot)
-            .zip(active_workflow_contract(ctx.snapshot))
-            .map(|(transition, contract)| {
-                !evaluate_step_transition(
-                    &transition,
-                    &contract,
+        && active_workflow_contract(ctx.snapshot)
+            .map(|contract| {
+                !evaluate_step_completion(
+                    Some(&contract.completion),
                     &WorkflowCompletionSignalSet {
                         task_status: active_task_status(ctx.snapshot).map(ToString::to_string),
                         checklist_evidence_present: checklist_evidence_present(ctx.snapshot),
@@ -1571,10 +1594,7 @@ fn rule_apply_checklist_pending_gate(
 
 fn rule_matches_task_running_stop_gate(ctx: &HookEvaluationContext<'_>) -> bool {
     active_task_status(ctx.snapshot) == Some("running")
-        && !matches!(
-            workflow_transition_policy(ctx.snapshot),
-            Some("all_checks_pass" | "any_checks_pass")
-        )
+        && !workflow_auto_completion_snapshot(ctx.snapshot)
 }
 
 fn rule_apply_task_running_stop_gate(
@@ -2008,21 +2028,18 @@ fn build_completion_record_artifacts_from_snapshot(
 }
 
 fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -> String {
+    let wf_line = match workflow.primary_workflow.as_ref() {
+        Some(w) => format!("- workflow: {} (`{}`)", w.name, w.key),
+        None => "- workflow: (none)".to_string(),
+    };
     format!(
-        "## Active Workflow Step\n- lifecycle: {} (`{}`)\n- step: {} (`{}`)\n- primary_workflow: {} (`{}`)\n- status: `{}`\n- requires_session: {}\n\n{}",
+        "## Active Workflow Step\n- lifecycle: {} (`{}`)\n- step: `{}`\n{}\n- advance: `{}`\n- status: `{}`\n\n{}",
         workflow.lifecycle.name,
         workflow.lifecycle.key,
-        workflow.active_step.title,
         workflow.active_step.key,
-        workflow.primary_workflow.name,
-        workflow.primary_workflow.key,
+        wf_line,
+        lifecycle_step_advance_label(&workflow.active_step),
         workflow_run_status_tag(workflow.run.status),
-        if workflow.effective_contract.injection.session_binding == WorkflowSessionBinding::Required
-        {
-            "yes"
-        } else {
-            "no"
-        },
         workflow.active_step.description
     )
 }
@@ -2090,11 +2107,9 @@ mod tests {
     };
     use agentdash_application::workflow::WorkflowTargetSummary;
     use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, LifecycleTransitionPolicy,
-        LifecycleTransitionPolicyKind, LifecycleTransitionSpec, WorkflowCheckKind,
+        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowCheckKind,
         WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowContract, WorkflowDefinition,
-        WorkflowDefinitionSource, WorkflowInjectionSpec, WorkflowSessionBinding,
-        build_effective_contract,
+        WorkflowDefinitionSource, WorkflowInjectionSpec, build_effective_contract,
     };
     use agentdash_executor::{
         ExecutionHookProvider, HookError, HookRuntimeDelegate, HookSessionRuntime,
@@ -2117,9 +2132,10 @@ mod tests {
         task_status: Option<&str>,
         checklist_evidence_present: bool,
     ) -> SessionHookSnapshot {
-        let (transition_policy, mut contract) = match completion_mode {
+        let (step_advance, workflow_key, mut contract) = match completion_mode {
             "checklist_passed" => (
-                "all_checks_pass",
+                "auto",
+                Some("trellis_dev_task_check"),
                 WorkflowContract {
                     constraints: vec![agentdash_domain::workflow::WorkflowConstraintSpec {
                         key: "block_stop_until_checks_pass".to_string(),
@@ -2149,8 +2165,12 @@ mod tests {
                     ..WorkflowContract::default()
                 },
             ),
-            "session_ended" => ("session_terminal_matches", WorkflowContract::default()),
-            _ => ("manual", WorkflowContract::default()),
+            "session_ended" => (
+                "auto",
+                Some("trellis_dev_task_implement"),
+                WorkflowContract::default(),
+            ),
+            _ => ("manual", None, WorkflowContract::default()),
         };
         if step_key == "implement" {
             contract.constraints.push(agentdash_domain::workflow::WorkflowConstraintSpec {
@@ -2177,17 +2197,11 @@ mod tests {
                 "active_workflow": {
                     "lifecycle_key": "trellis_dev_task",
                     "step_key": step_key,
-                    "transition_policy": transition_policy,
+                    "step_advance": step_advance,
+                    "step_completion_mode": step_advance,
+                    "workflow_key": workflow_key,
+                    "run_id": "00000000-0000-0000-0000-0000000000aa",
                     "effective_contract": effective_contract,
-                    "step_transition": {
-                        "policy": {
-                            "kind": transition_policy,
-                            "next_step_key": null,
-                            "session_terminal_states": ["completed", "failed", "interrupted"],
-                            "action_key": null
-                        },
-                        "on_failure": null
-                    },
                     "checklist_evidence_present": checklist_evidence_present,
                 }
             })),
@@ -2228,7 +2242,6 @@ mod tests {
         let contract = WorkflowContract {
             injection: WorkflowInjectionSpec {
                 instructions,
-                session_binding: WorkflowSessionBinding::Required,
                 ..WorkflowInjectionSpec::default()
             },
             ..WorkflowContract::default()
@@ -2244,23 +2257,8 @@ mod tests {
         .expect("workflow definition should build");
         let active_step = LifecycleStepDefinition {
             key: "implement".to_string(),
-            title: "实现".to_string(),
             description: "实现并记录结果".to_string(),
-            primary_workflow_key: definition.key.clone(),
-            session_binding: WorkflowSessionBinding::Required,
-            transition: LifecycleTransitionSpec {
-                policy: LifecycleTransitionPolicy {
-                    kind: LifecycleTransitionPolicyKind::SessionTerminalMatches,
-                    next_step_key: None,
-                    session_terminal_states: vec![
-                        WorkflowSessionTerminalState::Completed,
-                        WorkflowSessionTerminalState::Failed,
-                        WorkflowSessionTerminalState::Interrupted,
-                    ],
-                    action_key: None,
-                },
-                on_failure: None,
-            },
+            workflow_key: Some(definition.key.clone()),
         };
         let lifecycle = LifecycleDefinition::new(
             "trellis_dev_task",
@@ -2286,12 +2284,12 @@ mod tests {
         run.activate_step("implement")
             .expect("implement step should activate");
         let effective_contract =
-            build_effective_contract(&lifecycle.key, &active_step.key, &definition);
+            build_effective_contract(&lifecycle.key, &active_step.key, Some(&definition));
         ActiveWorkflowProjection {
             run,
             lifecycle,
             active_step,
-            primary_workflow: definition,
+            primary_workflow: Some(definition),
             effective_contract,
             target: WorkflowTargetSummary {
                 target_kind: WorkflowTargetKind::Task,
@@ -2557,9 +2555,9 @@ mod tests {
     #[test]
     fn before_stop_allows_checklist_completion_when_task_ready() {
         let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("completed"));
-        let decision = evaluate_step_transition(
-            &active_workflow_transition(&snapshot).expect("transition"),
-            &active_workflow_contract(&snapshot).expect("contract"),
+        let contract = active_workflow_contract(&snapshot).expect("contract");
+        let decision = evaluate_step_completion(
+            Some(&contract.completion),
             &WorkflowCompletionSignalSet {
                 task_status: active_task_status(&snapshot).map(ToString::to_string),
                 checklist_evidence_present: true,
@@ -2571,7 +2569,7 @@ mod tests {
         assert!(decision.should_complete_step);
         assert_eq!(
             decision.summary.as_deref(),
-            Some("当前 step 的所有 checks 均已满足，可推进生命周期")
+            Some("All completion checks passed")
         );
     }
 

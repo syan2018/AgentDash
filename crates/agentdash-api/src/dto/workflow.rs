@@ -11,8 +11,7 @@ use agentdash_domain::workflow::{
     WorkflowAssignment, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
     WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind,
     WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
-    WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowSessionBinding,
-    WorkflowSessionTerminalState, WorkflowTargetKind,
+    WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowTargetKind,
 };
 
 #[derive(Debug, Serialize)]
@@ -97,7 +96,6 @@ pub struct WorkflowInjectionResponse {
     pub goal: Option<String>,
     pub instructions: Vec<String>,
     pub context_bindings: Vec<WorkflowContextBindingResponse>,
-    pub session_binding: WorkflowSessionBinding,
 }
 
 #[derive(Debug, Serialize)]
@@ -135,14 +133,8 @@ pub struct WorkflowCompletionResponse {
 #[derive(Debug, Serialize)]
 pub struct LifecycleStepDefinitionResponse {
     pub key: String,
-    pub title: String,
     pub description: String,
-    pub primary_workflow_key: String,
-    pub session_binding: WorkflowSessionBinding,
-    pub transition_policy: String,
-    pub next_step_key: Option<String>,
-    pub session_terminal_states: Vec<WorkflowSessionTerminalState>,
-    pub action_key: Option<String>,
+    pub workflow_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,7 +169,6 @@ pub struct WorkflowRunResponse {
 pub struct LifecycleStepStateResponse {
     pub step_key: String,
     pub status: LifecycleStepExecutionStatus,
-    pub session_binding_id: Option<Uuid>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub summary: Option<String>,
@@ -285,7 +276,6 @@ impl From<WorkflowInjectionSpec> for WorkflowInjectionResponse {
             goal: value.goal,
             instructions: value.instructions,
             context_bindings: value.context_bindings.into_iter().map(Into::into).collect(),
-            session_binding: value.session_binding,
         }
     }
 }
@@ -338,30 +328,9 @@ impl From<LifecycleStepDefinition> for LifecycleStepDefinitionResponse {
     fn from(value: LifecycleStepDefinition) -> Self {
         Self {
             key: value.key,
-            title: value.title,
             description: value.description,
-            primary_workflow_key: value.primary_workflow_key,
-            session_binding: value.session_binding,
-            transition_policy: lifecycle_transition_policy_tag(&value.transition.policy.kind)
-                .to_string(),
-            next_step_key: value.transition.policy.next_step_key,
-            session_terminal_states: value.transition.policy.session_terminal_states,
-            action_key: value.transition.policy.action_key,
+            workflow_key: value.workflow_key,
         }
-    }
-}
-
-fn lifecycle_transition_policy_tag(
-    kind: &agentdash_domain::workflow::LifecycleTransitionPolicyKind,
-) -> &'static str {
-    use agentdash_domain::workflow::LifecycleTransitionPolicyKind;
-
-    match kind {
-        LifecycleTransitionPolicyKind::Manual => "manual",
-        LifecycleTransitionPolicyKind::AllChecksPass => "all_checks_pass",
-        LifecycleTransitionPolicyKind::AnyChecksPass => "any_checks_pass",
-        LifecycleTransitionPolicyKind::SessionTerminalMatches => "session_terminal_matches",
-        LifecycleTransitionPolicyKind::ExplicitAction => "explicit_action",
     }
 }
 
@@ -404,7 +373,6 @@ impl From<LifecycleStepState> for LifecycleStepStateResponse {
         Self {
             step_key: value.step_key,
             status: value.status,
-            session_binding_id: value.session_binding_id,
             started_at: value.started_at,
             completed_at: value.completed_at,
             summary: value.summary,

@@ -10,10 +10,9 @@ use uuid::Uuid;
 use agentdash_application::workflow::{
     ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand, AssignLifecycleCommand,
     CompleteLifecycleStepCommand, LifecycleRunService, StartLifecycleRunCommand,
-    WorkflowCatalogService, WorkflowRecordArtifactDraft, build_builtin_workflow_bundle,
-    list_builtin_workflow_templates,
+    WorkflowCatalogService, WorkflowRecordArtifactDraft,
+    build_builtin_workflow_bundle, list_builtin_workflow_templates,
 };
-use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
     WorkflowAgentRole, WorkflowContextBindingKind, WorkflowContract, WorkflowDefinition,
@@ -50,11 +49,6 @@ pub struct StartWorkflowRunRequest {
     pub lifecycle_key: Option<String>,
     pub target_kind: WorkflowTargetKind,
     pub target_id: String,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct ActivateWorkflowStepRequest {
-    pub session_binding_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -367,7 +361,6 @@ pub async fn activate_workflow_step(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, step_key)): Path<(String, String)>,
-    Json(req): Json<ActivateWorkflowStepRequest>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
     let existing_run = load_workflow_run(&state, run_id).await?;
@@ -378,11 +371,6 @@ pub async fn activate_workflow_step(
         ProjectPermission::Edit,
     )
     .await?;
-    if let Some(binding_id) =
-        parse_optional_uuid(req.session_binding_id.as_deref(), "session_binding_id")?
-    {
-        ensure_session_binding_matches_run(&state, binding_id, &existing_run).await?;
-    }
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -392,10 +380,6 @@ pub async fn activate_workflow_step(
         .activate_step(ActivateLifecycleStepCommand {
             run_id,
             step_key,
-            session_binding_id: parse_optional_uuid(
-                req.session_binding_id.as_deref(),
-                "session_binding_id",
-            )?,
         })
         .await?;
     Ok(Json(run.into()))
@@ -416,15 +400,6 @@ pub async fn complete_workflow_step(
         ProjectPermission::Edit,
     )
     .await?;
-    if let Some(step_state) = existing_run
-        .step_states
-        .iter()
-        .find(|item| item.step_key == step_key)
-    {
-        if let Some(binding_id) = step_state.session_binding_id {
-            ensure_session_binding_matches_run(&state, binding_id, &existing_run).await?;
-        }
-    }
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -441,9 +416,6 @@ pub async fn complete_workflow_step(
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            completed_by: Some(
-                agentdash_domain::workflow::LifecycleProgressionSource::ManualOverride,
-            ),
         })
         .await?;
     Ok(Json(run.into()))
@@ -464,15 +436,6 @@ pub async fn append_workflow_step_artifacts(
         ProjectPermission::Edit,
     )
     .await?;
-    if let Some(step_state) = existing_run
-        .step_states
-        .iter()
-        .find(|item| item.step_key == step_key)
-    {
-        if let Some(binding_id) = step_state.session_binding_id {
-            ensure_session_binding_matches_run(&state, binding_id, &existing_run).await?;
-        }
-    }
     let artifacts = req
         .record_artifacts
         .unwrap_or_default()
@@ -1030,40 +993,6 @@ async fn load_workflow_run(state: &Arc<AppState>, run_id: Uuid) -> Result<Lifecy
         .get_by_id(run_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("workflow_run 不存在: {run_id}")))
-}
-
-async fn ensure_session_binding_matches_run(
-    state: &Arc<AppState>,
-    binding_id: Uuid,
-    run: &LifecycleRun,
-) -> Result<(), ApiError> {
-    let binding = state
-        .repos
-        .session_binding_repo
-        .list_by_owner(target_owner_type(run.target_kind), run.target_id)
-        .await?
-        .into_iter()
-        .find(|item| item.id == binding_id)
-        .ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "session_binding `{binding_id}` 不属于当前 workflow target"
-            ))
-        })?;
-    if binding.owner_id != run.target_id || binding.owner_type != target_owner_type(run.target_kind)
-    {
-        return Err(ApiError::BadRequest(format!(
-            "session_binding `{binding_id}` 与 workflow target 不匹配"
-        )));
-    }
-    Ok(())
-}
-
-fn target_owner_type(target_kind: WorkflowTargetKind) -> SessionOwnerType {
-    match target_kind {
-        WorkflowTargetKind::Project => SessionOwnerType::Project,
-        WorkflowTargetKind::Story => SessionOwnerType::Story,
-        WorkflowTargetKind::Task => SessionOwnerType::Task,
-    }
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {

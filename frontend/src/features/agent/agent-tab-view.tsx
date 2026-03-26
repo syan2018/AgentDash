@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import type { ProjectAgentSummary, SessionNavigationState } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useActiveSessionsStore } from "../../stores/activeSessionsStore";
+import { useWorkflowStore } from "../../stores/workflowStore";
 import { SessionChatView } from "../acp-session";
 import { ActiveSessionList } from "./active-session-list";
 import { ProjectAgentView } from "../project/project-agent-view";
@@ -41,11 +42,27 @@ export function AgentTabView() {
     sessionId: null,
   });
 
+  const runsByTargetKey = useWorkflowStore((s) => s.runsByTargetKey);
+  const fetchRunsByTarget = useWorkflowStore((s) => s.fetchRunsByTarget);
+  const lifecycleDefinitions = useWorkflowStore((s) => s.lifecycleDefinitions);
+  const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
+  const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
+
   const currentProject = projects.find((p) => p.id === currentProjectId);
   const workspaceId = currentProject?.config.default_workspace_id ?? null;
   const agents: ProjectAgentSummary[] = currentProjectId
     ? (agentsByProjectId[currentProjectId] ?? [])
     : [];
+
+  const projectRuns = currentProjectId
+    ? (runsByTargetKey[`project:${currentProjectId}`] ?? [])
+    : [];
+  const activeRun = projectRuns.find(
+    (r) => r.status === "ready" || r.status === "running" || r.status === "blocked",
+  );
+  const activeLifecycleName = activeRun
+    ? (lifecycleDefinitions.find((l) => l.id === activeRun.lifecycle_id)?.name ?? activeRun.lifecycle_id)
+    : null;
 
   const selectedSessionId = selectedSession.projectId === currentProjectId
     ? selectedSession.sessionId
@@ -60,10 +77,13 @@ export function AgentTabView() {
     if (prevProjectIdRef.current === currentProjectId) return;
     prevProjectIdRef.current = currentProjectId;
 
-    clearForProject(currentProjectId);           // 立即清空 + 标记目标项目
+    clearForProject(currentProjectId);
     void fetchProjectAgents(currentProjectId);
-    void loadForProject(currentProjectId);       // 异步加载，竞态保护在 store 内
-  }, [currentProjectId, fetchProjectAgents, loadForProject, clearForProject]);
+    void loadForProject(currentProjectId);
+    void fetchRunsByTarget("project", currentProjectId);
+    void fetchLifecycles();
+    void fetchDefinitions();
+  }, [currentProjectId, fetchProjectAgents, loadForProject, clearForProject, fetchRunsByTarget, fetchLifecycles, fetchDefinitions]);
 
   // TODO: 等待后端补充 session_status_changed SSE 事件后，此处接入实时状态更新
 
@@ -158,6 +178,13 @@ export function AgentTabView() {
               <span className="truncate text-sm font-medium text-foreground">
                 {currentSession?.session_title ?? "会话"}
               </span>
+              {activeRun && (
+                <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+                  {activeLifecycleName}
+                  {activeRun.current_step_key ? ` · ${activeRun.current_step_key}` : ""}
+                  {activeRun.status === "running" ? " ▶" : activeRun.status === "blocked" ? " ⏸" : ""}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => {

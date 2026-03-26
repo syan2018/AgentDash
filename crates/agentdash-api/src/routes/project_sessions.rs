@@ -18,7 +18,8 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::project_agents::{
-        build_project_agent_visible_mounts, resolve_project_agent_bridge, resolve_project_workspace,
+        build_project_agent_visible_mounts, resolve_project_agent_bridge_async,
+        resolve_project_workspace,
     },
     rpc::ApiError,
     runtime_bridge::{
@@ -116,7 +117,8 @@ async fn build_project_session_context_response(
         .trim()
         .strip_prefix("project_agent:")
         .unwrap_or_default();
-    let project_agent = resolve_project_agent_bridge(project, agent_key)?;
+    let project_agent =
+        resolve_project_agent_bridge_async(state, project.id, agent_key).await?;
     let workspace = resolve_project_workspace(state, project)
         .await
         .ok()
@@ -387,19 +389,17 @@ fn execution_state_to_str(state: Option<&SessionExecutionState>) -> &'static str
 /// 从 binding label 或 session meta 推断 agent_key 和 display_name
 fn resolve_agent_info(
     binding: &SessionBinding,
-    project: &agentdash_domain::project::Project,
+    _project: &agentdash_domain::project::Project,
     meta: &agentdash_executor::SessionMeta,
 ) -> (Option<String>, Option<String>) {
-    // project 级：从 label "project_agent:<key>" 提取
     if binding.owner_type == agentdash_domain::session_binding::SessionOwnerType::Project {
         let agent_key = binding
             .label
             .trim()
             .strip_prefix("project_agent:")
             .map(|k| k.to_string());
-        let agent_display_name = agent_key
-            .as_deref()
-            .and_then(|key| resolve_project_agent_bridge(project, key).map(|b| b.display_name));
+        // display_name 从 session title 提取更实时（session title 已包含 agent 名称）
+        let agent_display_name = agent_key.as_ref().map(|_| meta.title.clone());
         return (agent_key, agent_display_name);
     }
 

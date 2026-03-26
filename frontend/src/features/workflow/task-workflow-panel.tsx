@@ -5,7 +5,6 @@ import type {
   LifecycleStepDefinition,
   SessionBindingOwner,
   Task,
-  WorkflowAssignment,
   WorkflowDefinition,
   WorkflowRecordArtifactType,
   WorkflowRun,
@@ -19,7 +18,6 @@ import {
   STEP_STATUS_LABEL,
 } from "./shared-labels";
 
-const EMPTY_ASSIGNMENTS: WorkflowAssignment[] = [];
 const EMPTY_RUNS: WorkflowRun[] = [];
 
 function findLifecycle(lifecycles: LifecycleDefinition[], lifecycleId: string): LifecycleDefinition | null {
@@ -124,13 +122,6 @@ function AgentInstructionsCollapsible({
   );
 }
 
-function selectExecutionAssignment(assignments: WorkflowAssignment[]): WorkflowAssignment | null {
-  const executionAssignments = assignments.filter(
-    (item) => item.role === "task" && item.enabled,
-  );
-  return executionAssignments.find((item) => item.is_default) ?? executionAssignments[0] ?? null;
-}
-
 export function TaskWorkflowPanel({
   task,
   projectId,
@@ -140,9 +131,6 @@ export function TaskWorkflowPanel({
 }) {
   const definitions = useWorkflowStore((state) => state.definitions);
   const lifecycleDefinitions = useWorkflowStore((state) => state.lifecycleDefinitions);
-  const assignments = useWorkflowStore(
-    (state) => state.assignmentsByProjectId[projectId] ?? EMPTY_ASSIGNMENTS,
-  );
   const runs = useWorkflowStore(
     (state) => state.runsByTargetKey[`task:${task.id}`] ?? EMPTY_RUNS,
   );
@@ -150,7 +138,6 @@ export function TaskWorkflowPanel({
   const error = useWorkflowStore((state) => state.error);
   const fetchDefinitions = useWorkflowStore((state) => state.fetchDefinitions);
   const fetchLifecycles = useWorkflowStore((state) => state.fetchLifecycles);
-  const fetchProjectAssignments = useWorkflowStore((state) => state.fetchProjectAssignments);
   const fetchRunsByTarget = useWorkflowStore((state) => state.fetchRunsByTarget);
   const startRun = useWorkflowStore((state) => state.startRun);
   const activateStep = useWorkflowStore((state) => state.activateStep);
@@ -164,9 +151,8 @@ export function TaskWorkflowPanel({
   useEffect(() => {
     void fetchDefinitions("task");
     void fetchLifecycles("task");
-    void fetchProjectAssignments(projectId);
     void fetchRunsByTarget("task", task.id);
-  }, [fetchDefinitions, fetchLifecycles, fetchProjectAssignments, fetchRunsByTarget, projectId, task.id, task.status, task.session_id]);
+  }, [fetchDefinitions, fetchLifecycles, fetchRunsByTarget, projectId, task.id, task.status, task.session_id]);
 
   useEffect(() => {
     if (!task.session_id) {
@@ -200,7 +186,6 @@ export function TaskWorkflowPanel({
     };
   }, [task.id, task.session_id]);
 
-  const activeAssignment = useMemo(() => selectExecutionAssignment(assignments), [assignments]);
   const activeRun = useMemo(() => selectPreferredRun(runs), [runs]);
   const activeLifecycle = useMemo(
     () => (activeRun ? findLifecycle(lifecycleDefinitions, activeRun.lifecycle_id) : null),
@@ -227,14 +212,17 @@ export function TaskWorkflowPanel({
   );
 
   const handleStartRun = async () => {
-    if (!activeAssignment) {
-      setMessage("当前 Project 尚未配置默认 Task lifecycle，请先在项目详情里绑定。");
+    const taskLifecycle = lifecycleDefinitions.find(
+      (l) => l.status === "active" && l.recommended_roles?.includes("task"),
+    );
+    if (!taskLifecycle) {
+      setMessage("暂无可用的 Task Lifecycle 定义，请先在 Workflow 页面创建并激活。");
       return;
     }
 
     setMessage(null);
     const run = await startRun({
-      lifecycle_id: activeAssignment.lifecycle_id,
+      lifecycle_id: taskLifecycle.id,
       target_kind: "task",
       target_id: task.id,
     });
@@ -298,13 +286,13 @@ export function TaskWorkflowPanel({
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
-          {activeAssignment ? (
+          {activeRun ? (
             <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary">
-              默认生命周期已绑定
+              Lifecycle 运行中
             </span>
           ) : (
-            <span className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-700">
-              Project 尚未配置默认 Task lifecycle
+            <span className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-xs text-muted-foreground">
+              无活跃 Lifecycle
             </span>
           )}
           {task.session_id ? (

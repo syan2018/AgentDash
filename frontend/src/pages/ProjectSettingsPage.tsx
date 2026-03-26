@@ -15,7 +15,7 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { AddressSpaceBrowser } from "../features/address-space";
 import { ProjectWorkflowPanel } from "../features/workflow/project-workflow-panel";
-import { AgentPresetEditor } from "../features/project/agent-preset-editor";
+// AgentPresetEditor 已移除，Agent 管理统一在 Agent Hub 中进行
 import {
   ContextContainersEditor,
   MountPolicyEditor,
@@ -598,14 +598,10 @@ export function ProjectSettingsPage() {
                     </div>
                   </ContentGroup>
 
-                  <ContentGroup title="Agent 预设">
-                    <AgentPresetEditor
-                      presets={project.config.agent_presets ?? []}
-                      onSave={async (nextPresets) => {
-                        await saveExecutionDefaults({ agent_presets: nextPresets });
-                      }}
-                      isSaving={false}
-                    />
+                  <ContentGroup title="Agent 管理">
+                    <p className="text-sm text-muted-foreground">
+                      Agent 管理已迁移至 Agent Hub 标签页，请在左侧 Agent 面板中创建和管理 Agent。
+                    </p>
                   </ContentGroup>
 
                   <ContentGroup title="Workflow Assignment">

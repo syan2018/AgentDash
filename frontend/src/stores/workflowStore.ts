@@ -5,7 +5,6 @@ import type {
   LifecycleDefinition,
   LifecycleStepDefinition,
   WorkflowAgentRole,
-  WorkflowAssignment,
   WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
@@ -17,7 +16,6 @@ import type {
 } from "../types";
 import {
   activateWorkflowStep,
-  assignProjectLifecycle,
   bootstrapWorkflowTemplate,
   completeWorkflowStep,
   createLifecycleDefinition,
@@ -30,7 +28,6 @@ import {
   enableWorkflowDefinition,
   fetchBindingMetadata,
   fetchLifecycleDefinitions,
-  fetchProjectWorkflowAssignments,
   fetchWorkflowDefinitions,
   fetchWorkflowRunsByTarget,
   fetchWorkflowTemplates,
@@ -138,7 +135,6 @@ interface WorkflowState {
   templates: WorkflowTemplate[];
   definitions: WorkflowDefinition[];
   lifecycleDefinitions: LifecycleDefinition[];
-  assignmentsByProjectId: Record<string, WorkflowAssignment[]>;
   runsByTargetKey: Record<string, WorkflowRun[]>;
   isLoading: boolean;
   error: string | null;
@@ -168,14 +164,6 @@ interface WorkflowState {
   fetchDefinitions: (targetKind?: WorkflowTargetKind) => Promise<WorkflowDefinition[]>;
   fetchLifecycles: (targetKind?: WorkflowTargetKind) => Promise<LifecycleDefinition[]>;
   bootstrapTemplate: (builtinKey: string) => Promise<LifecycleDefinition | null>;
-  fetchProjectAssignments: (projectId: string) => Promise<WorkflowAssignment[]>;
-  assignLifecycleToProject: (input: {
-    project_id: string;
-    lifecycle_id: string;
-    role: WorkflowAgentRole;
-    enabled?: boolean;
-    is_default?: boolean;
-  }) => Promise<WorkflowAssignment | null>;
   fetchRunsByTarget: (targetKind: WorkflowTargetKind, targetId: string) => Promise<WorkflowRun[]>;
   startRun: (input: {
     lifecycle_id?: string;
@@ -273,7 +261,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   templates: [],
   definitions: [],
   lifecycleDefinitions: [],
-  assignmentsByProjectId: {},
   runsByTargetKey: {},
   isLoading: false,
   error: null,
@@ -358,40 +345,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       ]);
       set({ definitions, lifecycleDefinitions });
       return lifecycle;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return null;
-    }
-  },
-
-  fetchProjectAssignments: async (projectId) => {
-    try {
-      const assignments = await fetchProjectWorkflowAssignments(projectId);
-      set((state) => ({
-        assignmentsByProjectId: {
-          ...state.assignmentsByProjectId,
-          [projectId]: assignments,
-        },
-      }));
-      return assignments;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return [];
-    }
-  },
-
-  assignLifecycleToProject: async (input) => {
-    set({ error: null });
-    try {
-      const assignment = await assignProjectLifecycle(input);
-      const refreshedAssignments = await fetchProjectWorkflowAssignments(input.project_id);
-      set((state) => ({
-        assignmentsByProjectId: {
-          ...state.assignmentsByProjectId,
-          [input.project_id]: refreshedAssignments,
-        },
-      }));
-      return assignment;
     } catch (error) {
       set({ error: (error as Error).message });
       return null;

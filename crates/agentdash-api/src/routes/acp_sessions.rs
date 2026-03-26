@@ -32,7 +32,7 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_plugin_api::AuthIdentity;
 use serde::Serialize;
 
-use super::project_agents::{resolve_project_agent_bridge, resolve_project_workspace};
+use super::project_agents::{resolve_project_agent_bridge_async, resolve_project_workspace};
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
@@ -600,7 +600,8 @@ async fn build_project_owner_prompt_request(
         .trim()
         .strip_prefix("project_agent:")
         .unwrap_or_default();
-    let project_agent = resolve_project_agent_bridge(project, agent_key)
+    let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
+        .await
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let workspace = resolve_project_workspace(state, project).await?;
 

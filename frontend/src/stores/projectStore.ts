@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import type {
+  AgentEntity,
   ContextContainerDefinition,
   MountDerivationPolicy,
   OpenProjectAgentSessionResult,
+  ProjectAgentLink,
   ProjectAgentSession,
   ProjectSessionInfo,
   ProjectRole,
@@ -23,6 +25,32 @@ interface ProjectState {
   isLoading: boolean;
   error: string | null;
 
+  // Agent 实体 CRUD（新模型）
+  agents: AgentEntity[];
+  agentLinksByProjectId: Record<string, ProjectAgentLink[]>;
+  fetchAgents: () => Promise<AgentEntity[]>;
+  createAgent: (payload: { name: string; agent_type: string; base_config?: Record<string, unknown> }) => Promise<AgentEntity | null>;
+  updateAgent: (id: string, payload: { name?: string; agent_type?: string; base_config?: Record<string, unknown> }) => Promise<AgentEntity | null>;
+  deleteAgent: (id: string) => Promise<boolean>;
+  fetchProjectAgentLinks: (projectId: string) => Promise<ProjectAgentLink[]>;
+  createProjectAgentLink: (projectId: string, payload: {
+    agent_id: string;
+    config_override?: Record<string, unknown>;
+    default_lifecycle_key?: string;
+    default_workflow_key?: string;
+    is_default_for_story?: boolean;
+    is_default_for_task?: boolean;
+  }) => Promise<ProjectAgentLink | null>;
+  updateProjectAgentLink: (projectId: string, agentId: string, payload: {
+    config_override?: Record<string, unknown>;
+    default_lifecycle_key?: string;
+    default_workflow_key?: string;
+    is_default_for_story?: boolean;
+    is_default_for_task?: boolean;
+  }) => Promise<ProjectAgentLink | null>;
+  deleteProjectAgentLink: (projectId: string, agentId: string) => Promise<boolean>;
+
+  // 既有接口
   fetchProjects: () => Promise<void>;
   createProject: (name: string, description: string, config?: Partial<ProjectConfig>) => Promise<Project | null>;
   updateProject: (id: string, payload: {
@@ -139,6 +167,127 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   currentProjectId: null,
   isLoading: false,
   error: null,
+
+  // ─── Agent 实体 CRUD（新模型）───
+  agents: [],
+  agentLinksByProjectId: {},
+
+  fetchAgents: async () => {
+    try {
+      const agents = await api.get<AgentEntity[]>('/agents');
+      set({ agents, error: null });
+      return agents;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return [];
+    }
+  },
+
+  createAgent: async (payload) => {
+    try {
+      const agent = await api.post<AgentEntity>('/agents', payload);
+      set((s) => ({ agents: [...s.agents, agent], error: null }));
+      return agent;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  updateAgent: async (id, payload) => {
+    try {
+      const agent = await api.put<AgentEntity>(`/agents/${id}`, payload);
+      set((s) => ({ agents: s.agents.map((a) => (a.id === id ? agent : a)), error: null }));
+      return agent;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  deleteAgent: async (id) => {
+    try {
+      await api.delete(`/agents/${id}`);
+      set((s) => ({ agents: s.agents.filter((a) => a.id !== id), error: null }));
+      return true;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return false;
+    }
+  },
+
+  fetchProjectAgentLinks: async (projectId) => {
+    try {
+      const links = await api.get<ProjectAgentLink[]>(`/projects/${projectId}/agent-links`);
+      set((s) => ({
+        agentLinksByProjectId: { ...s.agentLinksByProjectId, [projectId]: links },
+        error: null,
+      }));
+      return links;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return [];
+    }
+  },
+
+  createProjectAgentLink: async (projectId, payload) => {
+    try {
+      const link = await api.post<ProjectAgentLink>(`/projects/${projectId}/agent-links`, payload);
+      set((s) => {
+        const existing = s.agentLinksByProjectId[projectId] ?? [];
+        return {
+          agentLinksByProjectId: { ...s.agentLinksByProjectId, [projectId]: [...existing, link] },
+          error: null,
+        };
+      });
+      return link;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  updateProjectAgentLink: async (projectId, agentId, payload) => {
+    try {
+      const link = await api.put<ProjectAgentLink>(`/projects/${projectId}/agent-links/${agentId}`, payload);
+      set((s) => {
+        const existing = s.agentLinksByProjectId[projectId] ?? [];
+        return {
+          agentLinksByProjectId: {
+            ...s.agentLinksByProjectId,
+            [projectId]: existing.map((l) => (l.agent_id === agentId ? link : l)),
+          },
+          error: null,
+        };
+      });
+      return link;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  deleteProjectAgentLink: async (projectId, agentId) => {
+    try {
+      await api.delete(`/projects/${projectId}/agent-links/${agentId}`);
+      set((s) => {
+        const existing = s.agentLinksByProjectId[projectId] ?? [];
+        return {
+          agentLinksByProjectId: {
+            ...s.agentLinksByProjectId,
+            [projectId]: existing.filter((l) => l.agent_id !== agentId),
+          },
+          error: null,
+        };
+      });
+      return true;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return false;
+    }
+  },
+
+  // ─── 既有接口 ───
 
   fetchProjects: async () => {
     set({ isLoading: true, error: null });

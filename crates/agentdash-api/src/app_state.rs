@@ -17,6 +17,7 @@ use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
+use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::backend::BackendRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::project::ProjectRepository;
@@ -32,9 +33,10 @@ use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::{AgentConnector, ExecutorHub};
 use agentdash_infrastructure::{
-    SqliteBackendRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
-    SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
-    SqliteUserDirectoryRepository, SqliteWorkflowRepository, SqliteWorkspaceRepository,
+    SqliteAgentRepository, SqliteBackendRepository, SqliteProjectRepository,
+    SqliteSessionBindingRepository, SqliteSettingsRepository, SqliteStoryRepository,
+    SqliteTaskRepository, SqliteUserDirectoryRepository, SqliteWorkflowRepository,
+    SqliteWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
@@ -50,6 +52,8 @@ pub struct RepositorySet {
     pub backend_repo: Arc<dyn BackendRepository>,
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
+    pub agent_repo: Arc<dyn AgentRepository>,
+    pub agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
@@ -165,6 +169,12 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+        let agent_repo = Arc::new(SqliteAgentRepository::new(pool.clone()));
+        agent_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let workflow_repo = Arc::new(SqliteWorkflowRepository::new(pool));
         workflow_repo
             .initialize()
@@ -264,6 +274,8 @@ impl AppState {
                 backend_repo,
                 user_directory_repo,
                 settings_repo,
+                agent_repo: agent_repo.clone(),
+                agent_link_repo: agent_repo,
                 workflow_definition_repo: workflow_repo.clone(),
                 lifecycle_definition_repo: workflow_repo.clone(),
                 workflow_assignment_repo: workflow_repo.clone(),

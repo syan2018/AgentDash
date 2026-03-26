@@ -1,5 +1,3 @@
-mod assignment_resolution;
-pub mod binding;
 mod catalog;
 mod completion;
 mod definition;
@@ -8,9 +6,6 @@ pub mod projection;
 mod run;
 
 pub use agentdash_domain::workflow::WorkflowSessionTerminalState;
-pub use assignment_resolution::{
-    ResolveAssignmentInput, ResolvedAssignment, resolve_assignment_and_ensure_run,
-};
 pub use catalog::{AssignLifecycleCommand, WorkflowCatalogService};
 pub use completion::{
     WorkflowCompletionDecision, WorkflowCompletionEvidence, WorkflowCompletionSignalSet,

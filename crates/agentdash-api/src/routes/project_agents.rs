@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
 use agent_client_protocol::{HttpHeader, McpServer, McpServerHttp, McpServerSse};
-use agentdash_application::{
-    address_space::{
-        SessionMountTarget, container_visible_for_target, effective_context_containers,
-    },
-    task::config::executor_config_from_preset,
+use agentdash_application::address_space::{
+    SessionMountTarget, container_visible_for_target, effective_context_containers,
 };
 use agentdash_domain::{
+    agent::{Agent, ProjectAgentLink},
     context_container::ContextContainerCapability,
-    project::{AgentPreset, Project},
+    project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
     workspace::Workspace,
 };
@@ -25,8 +23,6 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     rpc::ApiError,
-    runtime_bridge::runtime_executor_config_to_connector,
-    session_context::normalize_optional_string,
 };
 
 #[derive(Debug, Clone)]
@@ -163,15 +159,30 @@ pub async fn list_project_agents(
     )
     .await?;
 
-    let mut agents = list_project_agent_bridges(&project);
-    agents.sort_by(|left, right| left.display_name.cmp(&right.display_name));
+    let links = state
+        .repos
+        .agent_link_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let mut response = Vec::with_capacity(agents.len());
-    for agent in agents {
-        let session = find_project_agent_session(&state, project.id, &agent.key).await?;
-        response.push(build_project_agent_summary(&project, &agent, session));
+    let mut response = Vec::with_capacity(links.len());
+    for link in &links {
+        let Some(agent) = state
+            .repos
+            .agent_repo
+            .get_by_id(link.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+        else {
+            continue;
+        };
+        let bridge = build_agent_bridge(&agent, link);
+        let session = find_project_agent_session(&state, project.id, &bridge.key).await?;
+        response.push(build_project_agent_summary(&project, &bridge, session));
     }
 
+    response.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     Ok(Json(response))
 }
 
@@ -195,8 +206,23 @@ pub async fn open_project_agent_session(
         ProjectPermission::Edit,
     )
     .await?;
-    let agent = resolve_project_agent_bridge(&project, &agent_key)
-        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
+
+    let agent_id = parse_agent_id(&agent_key)?;
+    let agent_entity = state
+        .repos
+        .agent_repo
+        .get_by_id(agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Agent `{agent_key}` 不存在")))?;
+    let link = state
+        .repos
+        .agent_link_repo
+        .find_by_project_and_agent(project_id, agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("该 Agent 未关联到此项目".into()))?;
+    let agent = build_agent_bridge(&agent_entity, &link);
 
     let label = project_agent_session_label(&agent.key);
 
@@ -287,6 +313,19 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
+    // 自动启动 Lifecycle Run（如果 Agent Link 配置了 default_lifecycle_key）
+    if let Some(lifecycle_key) = resolve_agent_default_lifecycle(&state, project.id, &agent_key).await {
+        if let Err(err) = auto_start_lifecycle_run(&state, project.id, &lifecycle_key).await {
+            tracing::warn!(
+                project_id = %project.id,
+                agent_key = %agent_key,
+                lifecycle_key = %lifecycle_key,
+                error = %err,
+                "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
+            );
+        }
+    }
+
     let session = Some(ProjectAgentSessionResponse {
         binding_id: binding.id.to_string(),
         session_id: meta.id.clone(),
@@ -303,47 +342,21 @@ pub async fn open_project_agent_session(
     }))
 }
 
-pub(crate) fn resolve_project_agent_bridge(
-    project: &Project,
+/// 从 agent_key（UUID 字符串）异步解析 ProjectAgentBridge
+pub(crate) async fn resolve_project_agent_bridge_async(
+    state: &Arc<AppState>,
+    project_id: Uuid,
     agent_key: &str,
 ) -> Option<ProjectAgentBridge> {
-    let normalized_key = agent_key.trim();
-    if normalized_key.eq_ignore_ascii_case("default") {
-        let agent_type = normalize_optional_string(project.config.default_agent_type.clone())?;
-        return Some(ProjectAgentBridge {
-            key: "default".to_string(),
-            display_name: "项目默认 Agent".to_string(),
-            description: "用于维护 Project 共享上下文，也可作为 Story 会话启动时的默认后备 Agent。"
-                .to_string(),
-            executor_config: AgentDashExecutorConfig::new(agent_type),
-            preset_name: None,
-            source: "project.config.default_agent_type".to_string(),
-            preset_mcp_servers: vec![],
-            preset_stdio_mcp_decls: vec![],
-        });
-    }
-
-    let preset_name = normalized_key
-        .strip_prefix("preset:")
-        .unwrap_or(normalized_key);
-    let preset = project
-        .config
-        .agent_presets
-        .iter()
-        .find(|item| item.name == preset_name)?;
-
-    Some(build_preset_bridge(preset))
-}
-
-pub(crate) fn list_project_agent_bridges(project: &Project) -> Vec<ProjectAgentBridge> {
-    let mut agents = Vec::new();
-    if let Some(default_agent) = resolve_project_agent_bridge(project, "default") {
-        agents.push(default_agent);
-    }
-    for preset in &project.config.agent_presets {
-        agents.push(build_preset_bridge(preset));
-    }
-    agents
+    let agent_id = Uuid::parse_str(agent_key).ok()?;
+    let agent = state.repos.agent_repo.get_by_id(agent_id).await.ok()??;
+    let link = state
+        .repos
+        .agent_link_repo
+        .find_by_project_and_agent(project_id, agent_id)
+        .await
+        .ok()??;
+    Some(build_agent_bridge(&agent, &link))
 }
 
 pub(crate) async fn resolve_project_workspace(
@@ -484,8 +497,6 @@ pub async fn list_project_agent_sessions(
         ProjectPermission::View,
     )
     .await?;
-    let _agent = resolve_project_agent_bridge(&project, &agent_key)
-        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
 
     let label = project_agent_session_label(&agent_key);
     let bindings = state
@@ -523,49 +534,7 @@ pub async fn list_project_agent_sessions(
     Ok(Json(sessions))
 }
 
-fn build_preset_bridge(preset: &AgentPreset) -> ProjectAgentBridge {
-    let executor_config = executor_config_from_preset(preset)
-        .map(|config| runtime_executor_config_to_connector(&config))
-        .unwrap_or_else(|| AgentDashExecutorConfig::new(preset.agent_type.clone()));
-
-    let display_name = preset
-        .config
-        .get("display_name")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or(&preset.name)
-        .to_string();
-
-    let description = preset
-        .config
-        .get("description")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(String::from)
-        .unwrap_or_else(|| {
-            format!(
-                "来自 Project Agent 预设，底层执行器为 {}。",
-                preset.agent_type.trim()
-            )
-        });
-
-    let (preset_mcp_servers, preset_stdio_mcp_decls) = parse_preset_mcp_servers(&preset.config);
-
-    ProjectAgentBridge {
-        key: format!("preset:{}", preset.name),
-        display_name,
-        description,
-        executor_config,
-        preset_name: Some(preset.name.clone()),
-        source: format!("project.config.agent_presets[{}]", preset.name),
-        preset_mcp_servers,
-        preset_stdio_mcp_decls,
-    }
-}
-
-/// Parse `mcp_servers` from an AgentPreset config JSON value.
+/// Parse `mcp_servers` from agent config JSON value.
 ///
 /// Returns (http_sse_servers, stdio_json_decls).
 /// - Http/SSE → constructed as `McpServer::Http` / `McpServer::Sse`
@@ -695,4 +664,455 @@ fn parse_preset_mcp_servers(
 fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(project_id)
         .map_err(|_| ApiError::BadRequest(format!("无效的 project_id: {project_id}")))
+}
+
+fn parse_agent_id(agent_id: &str) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(agent_id)
+        .map_err(|_| ApiError::BadRequest(format!("无效的 agent_id: {agent_id}")))
+}
+
+// ─── Project-Agent Link API ───
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectAgentLinkResponse {
+    pub id: String,
+    pub project_id: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub agent_type: String,
+    pub merged_config: serde_json::Value,
+    pub config_override: Option<serde_json::Value>,
+    pub default_lifecycle_key: Option<String>,
+    pub is_default_for_story: bool,
+    pub is_default_for_task: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+fn build_link_response(agent: &Agent, link: &ProjectAgentLink) -> ProjectAgentLinkResponse {
+    ProjectAgentLinkResponse {
+        id: link.id.to_string(),
+        project_id: link.project_id.to_string(),
+        agent_id: link.agent_id.to_string(),
+        agent_name: agent.name.clone(),
+        agent_type: agent.agent_type.clone(),
+        merged_config: link.merged_config(&agent.base_config),
+        config_override: link.config_override.clone(),
+        default_lifecycle_key: link.default_lifecycle_key.clone(),
+        is_default_for_story: link.is_default_for_story,
+        is_default_for_task: link.is_default_for_task,
+        created_at: link.created_at.to_rfc3339(),
+        updated_at: link.updated_at.to_rfc3339(),
+    }
+}
+
+/// GET /projects/{id}/agent-links — 列出项目关联的所有 Agent（新模型）
+pub async fn list_project_agent_links(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<Vec<ProjectAgentLinkResponse>>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let links = state
+        .repos
+        .agent_link_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut response = Vec::with_capacity(links.len());
+    for link in &links {
+        if let Some(agent) = state
+            .repos
+            .agent_repo
+            .get_by_id(link.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+        {
+            response.push(build_link_response(&agent, link));
+        }
+    }
+    Ok(Json(response))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateProjectAgentLinkRequest {
+    pub agent_id: String,
+    #[serde(default)]
+    pub config_override: Option<serde_json::Value>,
+    #[serde(default)]
+    pub default_lifecycle_key: Option<String>,
+    #[serde(default)]
+    pub default_workflow_key: Option<String>,
+    #[serde(default)]
+    pub is_default_for_story: bool,
+    #[serde(default)]
+    pub is_default_for_task: bool,
+}
+
+/// POST /projects/{id}/agent-links — 将 Agent 关联到项目
+pub async fn create_project_agent_link(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+    Json(req): Json<CreateProjectAgentLinkRequest>,
+) -> Result<Json<ProjectAgentLinkResponse>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let agent_id = parse_agent_id(&req.agent_id)?;
+    let agent = state
+        .repos
+        .agent_repo
+        .get_by_id(agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Agent {agent_id} 不存在")))?;
+
+    let existing = state
+        .repos
+        .agent_link_repo
+        .find_by_project_and_agent(project_id, agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if existing.is_some() {
+        return Err(ApiError::Conflict("该 Agent 已关联到此项目".into()));
+    }
+
+    let lifecycle_key = resolve_lifecycle_key_for_link(
+        &state,
+        req.default_lifecycle_key,
+        req.default_workflow_key,
+    )
+    .await?;
+
+    let mut link = ProjectAgentLink::new(project_id, agent_id);
+    link.config_override = req.config_override;
+    link.default_lifecycle_key = lifecycle_key;
+    link.is_default_for_story = req.is_default_for_story;
+    link.is_default_for_task = req.is_default_for_task;
+
+    state
+        .repos
+        .agent_link_repo
+        .create(&link)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(build_link_response(&agent, &link)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProjectAgentLinkRequest {
+    #[serde(default)]
+    pub config_override: Option<serde_json::Value>,
+    #[serde(default)]
+    pub default_lifecycle_key: Option<String>,
+    #[serde(default)]
+    pub default_workflow_key: Option<String>,
+    #[serde(default)]
+    pub is_default_for_story: Option<bool>,
+    #[serde(default)]
+    pub is_default_for_task: Option<bool>,
+}
+
+/// PUT /projects/{id}/agent-links/{agent_id} — 更新项目-Agent 关联
+pub async fn update_project_agent_link(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, agent_id)): Path<(String, String)>,
+    Json(req): Json<UpdateProjectAgentLinkRequest>,
+) -> Result<Json<ProjectAgentLinkResponse>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let agent_id = parse_agent_id(&agent_id)?;
+
+    let agent = state
+        .repos
+        .agent_repo
+        .get_by_id(agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Agent {agent_id} 不存在")))?;
+
+    let mut link = state
+        .repos
+        .agent_link_repo
+        .find_by_project_and_agent(project_id, agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("该 Agent 未关联到此项目".into()))?;
+
+    if req.config_override.is_some() {
+        link.config_override = req.config_override;
+    }
+    if req.default_lifecycle_key.is_some() || req.default_workflow_key.is_some() {
+        link.default_lifecycle_key = resolve_lifecycle_key_for_link(
+            &state,
+            req.default_lifecycle_key,
+            req.default_workflow_key,
+        )
+        .await?;
+    }
+    if let Some(v) = req.is_default_for_story {
+        link.is_default_for_story = v;
+    }
+    if let Some(v) = req.is_default_for_task {
+        link.is_default_for_task = v;
+    }
+    link.updated_at = chrono::Utc::now();
+
+    state
+        .repos
+        .agent_link_repo
+        .update(&link)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(build_link_response(&agent, &link)))
+}
+
+/// DELETE /projects/{id}/agent-links/{agent_id} — 解除项目-Agent 关联
+pub async fn delete_project_agent_link(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let agent_id = parse_agent_id(&agent_id)?;
+
+    state
+        .repos
+        .agent_link_repo
+        .delete_by_project_and_agent(project_id, agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// 统一处理 lifecycle_key / workflow_key 的解析
+///
+/// 如果用户指定了 `default_workflow_key`（单个 workflow），
+/// 自动创建一个单步 lifecycle 包装它。
+async fn resolve_lifecycle_key_for_link(
+    state: &Arc<AppState>,
+    lifecycle_key: Option<String>,
+    workflow_key: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    if let Some(lk) = lifecycle_key {
+        let trimmed = lk.trim().to_string();
+        return Ok(if trimmed.is_empty() { None } else { Some(trimmed) });
+    }
+
+    if let Some(wk) = workflow_key {
+        let wk = wk.trim().to_string();
+        if wk.is_empty() {
+            return Ok(None);
+        }
+
+        let _wf = state
+            .repos
+            .workflow_definition_repo
+            .get_by_key(&wk)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("Workflow `{wk}` 不存在")))?;
+
+        let auto_key = format!("auto:{wk}");
+
+        let existing = state
+            .repos
+            .lifecycle_definition_repo
+            .get_by_key(&auto_key)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        if existing.is_none() {
+            use agentdash_domain::workflow::{
+                LifecycleDefinition, LifecycleStepDefinition, WorkflowDefinitionSource,
+                WorkflowDefinitionStatus, WorkflowTargetKind,
+            };
+            let lifecycle = LifecycleDefinition {
+                id: Uuid::new_v4(),
+                key: auto_key.clone(),
+                name: format!("Auto: {wk}"),
+                description: format!("自动创建：包装单个 workflow `{wk}`"),
+                target_kind: WorkflowTargetKind::Project,
+                recommended_roles: vec![],
+                source: WorkflowDefinitionSource::UserAuthored,
+                status: WorkflowDefinitionStatus::Active,
+                version: 1,
+                steps: vec![LifecycleStepDefinition {
+                    key: "main".to_string(),
+                    description: String::new(),
+                    workflow_key: Some(wk),
+                }],
+                entry_step_key: "main".to_string(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            state
+                .repos
+                .lifecycle_definition_repo
+                .create(&lifecycle)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+        }
+
+        return Ok(Some(auto_key));
+    }
+
+    Ok(None)
+}
+
+/// 从 Agent + Link 构建 ProjectAgentBridge（新模型）
+pub(crate) fn build_agent_bridge(agent: &Agent, link: &ProjectAgentLink) -> ProjectAgentBridge {
+    let merged_config = link.merged_config(&agent.base_config);
+    let executor_config = executor_config_from_agent_config(&agent.agent_type, &merged_config);
+
+    let display_name = merged_config
+        .get("display_name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(&agent.name)
+        .to_string();
+
+    let description = merged_config
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
+
+    let (preset_mcp_servers, preset_stdio_mcp_decls) = parse_preset_mcp_servers(&merged_config);
+
+    ProjectAgentBridge {
+        key: agent.id.to_string(),
+        display_name,
+        description,
+        executor_config,
+        preset_name: Some(agent.name.clone()),
+        source: format!("agents[{}]", agent.id),
+        preset_mcp_servers,
+        preset_stdio_mcp_decls,
+    }
+}
+
+fn executor_config_from_agent_config(
+    agent_type: &str,
+    config: &serde_json::Value,
+) -> AgentDashExecutorConfig {
+    let mut ec = AgentDashExecutorConfig::new(agent_type.to_string());
+    if let Some(v) = config.get("variant").and_then(|v| v.as_str()) {
+        ec.variant = Some(v.to_string());
+    }
+    if let Some(v) = config.get("provider_id").and_then(|v| v.as_str()) {
+        ec.provider_id = Some(v.to_string());
+    }
+    if let Some(v) = config.get("model_id").and_then(|v| v.as_str()) {
+        ec.model_id = Some(v.to_string());
+    }
+    if let Some(v) = config.get("agent_id").and_then(|v| v.as_str()) {
+        ec.agent_id = Some(v.to_string());
+    }
+    if let Some(v) = config.get("permission_policy").and_then(|v| v.as_str()) {
+        ec.permission_policy = Some(v.to_string());
+    }
+    ec
+}
+
+/// 从新模型的 agent link 或旧模型的 AgentPreset 查找默认 lifecycle key
+async fn resolve_agent_default_lifecycle(
+    state: &Arc<AppState>,
+    project_id: Uuid,
+    agent_key: &str,
+) -> Option<String> {
+    // 尝试按 UUID 解析 — 如果 agent_key 是 UUID 则查 agent_link
+    if let Ok(agent_id) = Uuid::parse_str(agent_key) {
+        if let Ok(Some(link)) = state
+            .repos
+            .agent_link_repo
+            .find_by_project_and_agent(project_id, agent_id)
+            .await
+        {
+            return link.default_lifecycle_key;
+        }
+    }
+
+    // 旧模型 preset 不支持 lifecycle 绑定
+    None
+}
+
+/// 自动启动 lifecycle run（首步含 workflow_key 时同时激活首步）
+async fn auto_start_lifecycle_run(
+    state: &Arc<AppState>,
+    project_id: Uuid,
+    lifecycle_key: &str,
+) -> Result<(), String> {
+    use agentdash_application::workflow::{LifecycleRunService, StartLifecycleRunCommand};
+    use agentdash_domain::workflow::WorkflowTargetKind;
+
+    let service = LifecycleRunService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+        state.repos.workflow_run_repo.as_ref(),
+    );
+
+    let cmd = StartLifecycleRunCommand {
+        project_id,
+        lifecycle_id: None,
+        lifecycle_key: Some(lifecycle_key.to_string()),
+        target_kind: WorkflowTargetKind::Project,
+        target_id: project_id,
+    };
+
+    let run = service
+        .start_run(cmd)
+        .await
+        .map_err(|e| format!("start_run 失败: {e}"))?;
+
+    // 自动激活首步
+    if let Some(step_key) = run.current_step_key.as_deref() {
+        use agentdash_application::workflow::ActivateLifecycleStepCommand;
+        let activate_cmd = ActivateLifecycleStepCommand {
+            run_id: run.id,
+            step_key: step_key.to_string(),
+        };
+        if let Err(e) = service.activate_step(activate_cmd).await {
+            tracing::warn!(run_id = %run.id, step_key = %step_key, error = %e, "自动激活首步失败");
+        }
+    }
+
+    Ok(())
 }

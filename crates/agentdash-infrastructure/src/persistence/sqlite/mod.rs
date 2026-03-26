@@ -1,3 +1,4 @@
+mod agent_repository;
 mod backend_repository;
 mod project_repository;
 mod session_binding_repository;
@@ -8,6 +9,7 @@ mod user_directory_repository;
 mod workflow_repository;
 mod workspace_repository;
 
+pub use agent_repository::SqliteAgentRepository;
 pub use backend_repository::SqliteBackendRepository;
 pub use project_repository::SqliteProjectRepository;
 pub use session_binding_repository::SqliteSessionBindingRepository;

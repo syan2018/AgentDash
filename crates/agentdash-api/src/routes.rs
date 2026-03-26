@@ -1,5 +1,6 @@
 pub mod acp_sessions;
 pub mod address_spaces;
+pub mod agents;
 pub mod backends;
 pub mod discovered_options;
 pub mod discovery;
@@ -72,6 +73,29 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{id}/grants/groups/{group_id}",
             put(projects::grant_project_group).delete(projects::revoke_project_group),
         )
+        // Agent CRUD（顶层实体）
+        .route(
+            "/agents",
+            get(agents::list_agents).post(agents::create_agent),
+        )
+        .route(
+            "/agents/{id}",
+            get(agents::get_agent)
+                .put(agents::update_agent)
+                .delete(agents::delete_agent),
+        )
+        // Project-Agent 关联（新模型）
+        .route(
+            "/projects/{id}/agent-links",
+            get(project_agents::list_project_agent_links)
+                .post(project_agents::create_project_agent_link),
+        )
+        .route(
+            "/projects/{id}/agent-links/{agent_id}",
+            put(project_agents::update_project_agent_link)
+                .delete(project_agents::delete_project_agent_link),
+        )
+        // 兼容旧路径（project agents / sessions）
         .route(
             "/projects/{id}/agents",
             get(project_agents::list_project_agents),

@@ -540,10 +540,36 @@ export interface AgentPreset {
   config: Record<string, unknown>;
 }
 
+// ─── Agent 独立实体（新模型）───
+
+export interface AgentEntity {
+  id: string;
+  name: string;
+  agent_type: string;
+  base_config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectAgentLink {
+  id: string;
+  project_id: string;
+  agent_id: string;
+  agent_name: string;
+  agent_type: string;
+  merged_config: Record<string, unknown>;
+  config_override: Record<string, unknown> | null;
+  default_lifecycle_key: string | null;
+  is_default_for_story: boolean;
+  is_default_for_task: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProjectConfig {
   default_agent_type?: string | null;
   default_workspace_id?: string | null;
-  agent_presets: AgentPreset[];
+  agent_presets?: AgentPreset[];
   context_containers: ContextContainerDefinition[];
   mount_policy: MountDerivationPolicy;
 }

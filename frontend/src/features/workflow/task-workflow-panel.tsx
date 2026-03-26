@@ -113,7 +113,7 @@ function AgentInstructionsCollapsible({
 
 function selectExecutionAssignment(assignments: WorkflowAssignment[]): WorkflowAssignment | null {
   const executionAssignments = assignments.filter(
-    (item) => item.role === "task_execution_worker" && item.enabled,
+    (item) => item.role === "task" && item.enabled,
   );
   return executionAssignments.find((item) => item.is_default) ?? executionAssignments[0] ?? null;
 }

@@ -5,13 +5,11 @@ import type {
   LifecycleDefinition,
   LifecycleStepDefinition,
   WorkflowAgentRole,
-  WorkflowAttachmentSpec,
   WorkflowAssignment,
   WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
   WorkflowRecordArtifactType,
-  WorkflowRecordPolicy,
   WorkflowRun,
   WorkflowSessionTerminalState,
   WorkflowTargetKind,
@@ -52,9 +50,8 @@ export interface WorkflowEditorDraft {
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
-  recommended_role: WorkflowAgentRole | null;
+  recommended_roles: WorkflowAgentRole[];
   contract: WorkflowContract;
-  record_policy: WorkflowRecordPolicy;
 }
 
 export interface LifecycleEditorDraft {
@@ -63,7 +60,7 @@ export interface LifecycleEditorDraft {
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
-  recommended_role: WorkflowAgentRole | null;
+  recommended_roles: WorkflowAgentRole[];
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
 }
@@ -75,7 +72,7 @@ export function createEmptyDraft(): WorkflowEditorDraft {
     name: "",
     description: "",
     target_kind: "task",
-    recommended_role: "task_execution_worker",
+    recommended_roles: ["task"],
     contract: {
       injection: {
         goal: null,
@@ -83,19 +80,12 @@ export function createEmptyDraft(): WorkflowEditorDraft {
         context_bindings: [],
         session_binding: "not_required",
       },
-      hook_policy: {
-        constraints: [],
-      },
+      constraints: [],
       completion: {
         checks: [],
         default_artifact_type: null,
         default_artifact_title: null,
       },
-    },
-    record_policy: {
-      emit_summary: true,
-      emit_journal_update: true,
-      emit_archive_suggestion: true,
     },
   };
 }
@@ -107,9 +97,8 @@ export function definitionToDraft(definition: WorkflowDefinition): WorkflowEdito
     name: definition.name,
     description: definition.description,
     target_kind: definition.target_kind,
-    recommended_role: definition.recommended_role ?? null,
+    recommended_roles: [...definition.recommended_roles],
     contract: structuredClone(definition.contract),
-    record_policy: { ...definition.record_policy },
   };
 }
 
@@ -120,7 +109,6 @@ function createEmptyLifecycleStep(): LifecycleStepDefinition {
     description: "",
     primary_workflow_key: "",
     session_binding: "not_required",
-    attached_workflows: [],
     transition: {
       policy: {
         kind: "manual",
@@ -140,7 +128,7 @@ export function createEmptyLifecycleDraft(): LifecycleEditorDraft {
     name: "",
     description: "",
     target_kind: "task",
-    recommended_role: "task_execution_worker",
+    recommended_roles: ["task"],
     entry_step_key: "",
     steps: [createEmptyLifecycleStep()],
   };
@@ -153,7 +141,7 @@ export function lifecycleToDraft(definition: LifecycleDefinition): LifecycleEdit
     name: definition.name,
     description: definition.description,
     target_kind: definition.target_kind,
-    recommended_role: definition.recommended_role ?? null,
+    recommended_roles: [...definition.recommended_roles],
     entry_step_key: definition.entry_step_key,
     steps: structuredClone(definition.steps),
   };
@@ -244,10 +232,6 @@ interface WorkflowState {
   updateLifecycleStep: (stepIndex: number, patch: Partial<LifecycleStepDefinition>) => void;
   addLifecycleStep: () => void;
   removeLifecycleStep: (stepIndex: number) => void;
-  updateLifecycleStepAttachments: (
-    stepIndex: number,
-    attachments: WorkflowAttachmentSpec[],
-  ) => void;
   updateLifecycleStepTerminalStates: (
     stepIndex: number,
     states: WorkflowSessionTerminalState[],
@@ -627,9 +611,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         name: draft.name,
         description: draft.description,
         target_kind: draft.target_kind,
-        recommended_role: draft.recommended_role,
+        recommended_roles: draft.recommended_roles,
         contract: draft.contract,
-        record_policy: draft.record_policy,
       });
       set({ editorValidation: result, editorIsValidating: false });
       return result;
@@ -650,9 +633,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         definition = await updateWorkflowDefinition(originalId, {
           name: draft.name,
           description: draft.description,
-          recommended_role: draft.recommended_role,
+          recommended_roles: draft.recommended_roles,
           contract: draft.contract,
-          record_policy: draft.record_policy,
         });
       } else {
         definition = await createWorkflowDefinition({
@@ -660,9 +642,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           name: draft.name,
           description: draft.description,
           target_kind: draft.target_kind,
-          recommended_role: draft.recommended_role,
+          recommended_roles: draft.recommended_roles,
           contract: draft.contract,
-          record_policy: draft.record_policy,
         });
       }
       set((state) => ({
@@ -818,21 +799,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     });
   },
 
-  updateLifecycleStepAttachments: (stepIndex, attachments) => {
-    set((state) => {
-      if (!state.lifecycleEditorDraft) return state;
-      return {
-        lifecycleEditorDraft: {
-          ...state.lifecycleEditorDraft,
-          steps: state.lifecycleEditorDraft.steps.map((step, index) =>
-            index === stepIndex ? { ...step, attached_workflows: attachments } : step,
-          ),
-        },
-        lifecycleEditorDirty: true,
-      };
-    });
-  },
-
   updateLifecycleStepTerminalStates: (stepIndex, states) => {
     set((state) => {
       if (!state.lifecycleEditorDraft) return state;
@@ -868,7 +834,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         name: draft.name,
         description: draft.description,
         target_kind: draft.target_kind,
-        recommended_role: draft.recommended_role,
+        recommended_roles: draft.recommended_roles,
         entry_step_key: draft.entry_step_key,
         steps: draft.steps,
       });
@@ -891,7 +857,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         definition = await updateLifecycleDefinition(originalId, {
           name: draft.name,
           description: draft.description,
-          recommended_role: draft.recommended_role,
+          recommended_roles: draft.recommended_roles,
           entry_step_key: draft.entry_step_key,
           steps: draft.steps,
         });
@@ -901,7 +867,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           name: draft.name,
           description: draft.description,
           target_kind: draft.target_kind,
-          recommended_role: draft.recommended_role,
+          recommended_roles: draft.recommended_roles,
           entry_step_key: draft.entry_step_key,
           steps: draft.steps,
         });

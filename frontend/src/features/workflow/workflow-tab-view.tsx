@@ -16,9 +16,13 @@ import type {
 const EMPTY_ASSIGNMENTS: WorkflowAssignment[] = [];
 
 function resolveRole(
-  item: { recommended_role?: WorkflowAgentRole | null; target_kind: string },
+  item: { recommended_roles?: WorkflowAgentRole[]; target_kind: string },
 ): WorkflowAgentRole {
-  return item.recommended_role ?? DEFAULT_ROLE_BY_TARGET[item.target_kind as keyof typeof DEFAULT_ROLE_BY_TARGET] ?? "task_execution_worker";
+  return (
+    item.recommended_roles?.[0]
+    ?? DEFAULT_ROLE_BY_TARGET[item.target_kind as keyof typeof DEFAULT_ROLE_BY_TARGET]
+    ?? "task"
+  );
 }
 
 function statusStyle(status: string): { bg: string; text: string } {
@@ -254,7 +258,7 @@ export function WorkflowTabView() {
         onClose={closeDraft}
         widthClassName="max-w-3xl"
       >
-        <WorkflowEditor embedded />
+        <WorkflowEditor />
       </DetailPanel>
 
       <DetailPanel
@@ -263,7 +267,7 @@ export function WorkflowTabView() {
         onClose={closeLifecycleDraft}
         widthClassName="max-w-4xl"
       >
-        <LifecycleEditor embedded />
+        <LifecycleEditor />
       </DetailPanel>
     </>
   );
@@ -388,7 +392,7 @@ function WorkflowCardGrid({
       {sorted.map((wf) => {
         const role = resolveRole(wf);
         const bindCount = wf.contract.injection.context_bindings.length;
-        const ruleCount = wf.contract.hook_policy.constraints.length;
+        const ruleCount = wf.contract.constraints.length;
         const checkCount = wf.contract.completion.checks.length;
         return (
           <button

@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  WorkflowAgentRole,
   WorkflowCheckKind,
   WorkflowCheckSpec,
   WorkflowCompletionSpec,
   WorkflowConstraintKind,
   WorkflowConstraintSpec,
-  WorkflowHookPolicySpec,
   WorkflowInjectionSpec,
   WorkflowRecordArtifactType,
   WorkflowTargetKind,
@@ -25,25 +23,19 @@ import { ValidationPanel } from "./ui/validation-panel";
 import { DetailSection } from "../../components/ui/detail-panel";
 
 const CONSTRAINT_KIND_LABEL: Record<WorkflowConstraintKind, string> = {
-  deny_tool: "禁止工具",
-  rewrite_tool_arg: "改写工具参数",
-  require_approval: "需要审批",
-  deny_task_status_transition: "禁止状态转换",
-  require_artifact_before_exit: "退出前要求产物",
-  block_stop_until_checks_pass: "检查通过前阻止停止",
-  require_output_section: "要求输出段",
-  require_output_artifact: "要求输出产物",
-  enforce_response_style: "强制回复风格",
-  custom: "自定义",
+  deny_task_status_transition: "Deny Task Status Transition",
+  block_stop_until_checks_pass: "Block Stop Until Checks Pass",
+  custom: "Custom",
 };
 
 const CHECK_KIND_LABEL: Record<WorkflowCheckKind, string> = {
-  task_status_in: "Task 状态匹配",
-  artifact_exists: "产物存在",
-  artifact_count_gte: "产物数量 >=",
-  session_terminal_in: "Session 终态匹配",
-  checklist_evidence_present: "检查清单证据",
-  custom: "自定义",
+  task_status_in: "Task Status In",
+  artifact_exists: "Artifact Exists",
+  artifact_count_gte: "Artifact Count >=",
+  session_terminal_in: "Session Terminal In",
+  checklist_evidence_present: "Checklist Evidence Present",
+  explicit_action_received: "Explicit Action Received",
+  custom: "Custom",
 };
 
 function StringListEditor({
@@ -203,7 +195,7 @@ function CheckItemEditor({
   );
 }
 
-export function WorkflowEditor({ embedded }: { embedded?: boolean } = {}) {
+export function WorkflowEditor() {
   const draft = useWorkflowStore((s) => s.editorDraft);
   const originalId = useWorkflowStore((s) => s.editorOriginalId);
   const validation = useWorkflowStore((s) => s.editorValidation);
@@ -213,7 +205,6 @@ export function WorkflowEditor({ embedded }: { embedded?: boolean } = {}) {
   const error = useWorkflowStore((s) => s.editorError);
   const bindingMetadata = useWorkflowStore((s) => s.bindingMetadata);
 
-  const closeDraft = useWorkflowStore((s) => s.closeDraft);
   const updateDraft = useWorkflowStore((s) => s.updateDraft);
   const updateDraftBinding = useWorkflowStore((s) => s.updateDraftBinding);
   const addDraftBinding = useWorkflowStore((s) => s.addDraftBinding);
@@ -265,25 +256,27 @@ export function WorkflowEditor({ embedded }: { embedded?: boolean } = {}) {
   const updateInjection = (patch: Partial<WorkflowInjectionSpec>) => {
     updateContract({ injection: { ...draft.contract.injection, ...patch } });
   };
-  const updateHookPolicy = (patch: Partial<WorkflowHookPolicySpec>) => {
-    updateContract({ hook_policy: { ...draft.contract.hook_policy, ...patch } });
-  };
   const updateCompletion = (patch: Partial<WorkflowCompletionSpec>) => {
     updateContract({ completion: { ...draft.contract.completion, ...patch } });
   };
 
   const updateConstraint = (idx: number, patch: Partial<WorkflowConstraintSpec>) => {
-    const next = [...draft.contract.hook_policy.constraints];
+    const next = [...draft.contract.constraints];
     next[idx] = { ...next[idx], ...patch };
-    updateHookPolicy({ constraints: next });
+    updateDraft({ contract: { ...draft.contract, constraints: next } });
   };
   const addConstraint = () => {
-    updateHookPolicy({
-      constraints: [...draft.contract.hook_policy.constraints, { key: "", kind: "deny_tool", description: "", payload: null }],
+    updateDraft({
+      contract: {
+        ...draft.contract,
+        constraints: [...draft.contract.constraints, { key: "", kind: "custom", description: "", payload: null }],
+      },
     });
   };
   const removeConstraint = (idx: number) => {
-    updateHookPolicy({ constraints: draft.contract.hook_policy.constraints.filter((_, i) => i !== idx) });
+    updateDraft({
+      contract: { ...draft.contract, constraints: draft.contract.constraints.filter((_, i) => i !== idx) },
+    });
   };
 
   const updateCheck = (idx: number, patch: Partial<WorkflowCheckSpec>) => {
@@ -352,11 +345,24 @@ export function WorkflowEditor({ embedded }: { embedded?: boolean } = {}) {
             </select>
           </div>
           <div>
-            <label className="agentdash-form-label">推荐角色</label>
-            <select value={draft.recommended_role ?? ""} onChange={(e) => updateDraft({ recommended_role: (e.target.value || null) as WorkflowAgentRole | null })} className="agentdash-form-select">
-              <option value="">(无)</option>
-              {ROLE_ORDER.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-            </select>
+            <label className="agentdash-form-label">Recommended Roles</label>
+            <div className="mt-1 flex flex-wrap gap-3">
+              {ROLE_ORDER.map((r) => (
+                <label key={r} className="flex items-center gap-1.5 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={draft.recommended_roles.includes(r)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...draft.recommended_roles, r]
+                        : draft.recommended_roles.filter((v) => v !== r);
+                      updateDraft({ recommended_roles: next });
+                    }}
+                  />
+                  {ROLE_LABEL[r]}
+                </label>
+              ))}
+            </div>
           </div>
         </div>
       </DetailSection>
@@ -401,18 +407,18 @@ export function WorkflowEditor({ embedded }: { embedded?: boolean } = {}) {
         </div>
       </DetailSection>
 
-      {/* Hook 策略 Constraints */}
+      {/* Constraints */}
       <DetailSection
-        title={`Hook Constraints (${draft.contract.hook_policy.constraints.length})`}
-        description="约束 agent 在此 workflow 下的行为边界。"
+        title={`Constraints (${draft.contract.constraints.length})`}
+        description="Behavior constraints for this workflow."
         extra={<button type="button" onClick={addConstraint} className="agentdash-button-secondary text-sm">+ 添加</button>}
       >
         <div className="space-y-2">
-          {draft.contract.hook_policy.constraints.map((c, idx) => (
+          {draft.contract.constraints.map((c, idx) => (
             <ConstraintItemEditor key={`c-${idx}`} spec={c} index={idx} onChange={(p) => updateConstraint(idx, p)} onRemove={() => removeConstraint(idx)} />
           ))}
-          {draft.contract.hook_policy.constraints.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">暂无约束规则</p>
+          {draft.contract.constraints.length === 0 && (
+            <p className="py-4 text-center text-sm text-muted-foreground">No constraints yet</p>
           )}
         </div>
       </DetailSection>
@@ -443,24 +449,6 @@ export function WorkflowEditor({ embedded }: { embedded?: boolean } = {}) {
             <label className="agentdash-form-label">默认 Artifact 标题</label>
             <input value={draft.contract.completion.default_artifact_title ?? ""} onChange={(e) => updateCompletion({ default_artifact_title: e.target.value || null })} className="agentdash-form-input" placeholder="可选标题" />
           </div>
-        </div>
-      </DetailSection>
-
-      {/* Record Policy */}
-      <DetailSection title="Record Policy">
-        <div className="flex flex-wrap gap-x-6 gap-y-2">
-          <label className="flex items-center gap-2 text-xs text-foreground">
-            <input type="checkbox" checked={draft.record_policy.emit_summary} onChange={(e) => updateDraft({ record_policy: { ...draft.record_policy, emit_summary: e.target.checked } })} />
-            产出摘要
-          </label>
-          <label className="flex items-center gap-2 text-xs text-foreground">
-            <input type="checkbox" checked={draft.record_policy.emit_journal_update} onChange={(e) => updateDraft({ record_policy: { ...draft.record_policy, emit_journal_update: e.target.checked } })} />
-            更新日志
-          </label>
-          <label className="flex items-center gap-2 text-xs text-foreground">
-            <input type="checkbox" checked={draft.record_policy.emit_archive_suggestion} onChange={(e) => updateDraft({ record_policy: { ...draft.record_policy, emit_archive_suggestion: e.target.checked } })} />
-            归档建议
-          </label>
         </div>
       </DetailSection>
     </div>

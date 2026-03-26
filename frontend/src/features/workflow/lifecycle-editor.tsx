@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import type {
   LifecycleStepDefinition,
   LifecycleTransitionPolicyKind,
-  WorkflowAgentRole,
-  WorkflowAttachmentSpec,
   WorkflowDefinition,
   WorkflowSessionTerminalState,
   WorkflowTargetKind,
@@ -58,7 +56,7 @@ function LifecycleStepCard({
           onClick={onRemove}
           className="rounded-[8px] px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
         >
-          删除
+          Remove
         </button>
       </div>
 
@@ -73,7 +71,7 @@ function LifecycleStepCard({
           />
         </div>
         <div>
-          <label className="agentdash-form-label">标题</label>
+          <label className="agentdash-form-label">Title</label>
           <input
             value={step.title}
             onChange={(e) => onChange({ title: e.target.value })}
@@ -117,16 +115,16 @@ function LifecycleStepCard({
             onChange={(e) => onChange({ session_binding: e.target.value as LifecycleStepDefinition["session_binding"] })}
             className="agentdash-form-select"
           >
-            <option value="not_required">不要求</option>
-            <option value="optional">可选</option>
-            <option value="required">必须</option>
+            <option value="not_required">Not required</option>
+            <option value="optional">Optional</option>
+            <option value="required">Required</option>
           </select>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div>
-          <label className="agentdash-form-label">推进策略</label>
+          <label className="agentdash-form-label">Transition policy</label>
           <select
             value={step.transition.policy.kind}
             onChange={(e) => updateTransitionPolicy({ kind: e.target.value as LifecycleTransitionPolicyKind })}
@@ -188,7 +186,7 @@ function LifecycleStepCard({
   );
 }
 
-export function LifecycleEditor({ embedded }: { embedded?: boolean } = {}) {
+export function LifecycleEditor() {
   const draft = useWorkflowStore((s) => s.lifecycleEditorDraft);
   const originalId = useWorkflowStore((s) => s.lifecycleEditorOriginalId);
   const validation = useWorkflowStore((s) => s.lifecycleEditorValidation);
@@ -300,11 +298,24 @@ export function LifecycleEditor({ embedded }: { embedded?: boolean } = {}) {
             </select>
           </div>
           <div>
-            <label className="agentdash-form-label">推荐角色</label>
-            <select value={draft.recommended_role ?? ""} onChange={(e) => updateLifecycleDraft({ recommended_role: (e.target.value || null) as WorkflowAgentRole | null })} className="agentdash-form-select">
-              <option value="">(无)</option>
-              {ROLE_ORDER.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-            </select>
+            <label className="agentdash-form-label">Recommended Roles</label>
+            <div className="mt-1 flex flex-wrap gap-3">
+              {ROLE_ORDER.map((r) => (
+                <label key={r} className="flex items-center gap-1.5 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={draft.recommended_roles.includes(r)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...draft.recommended_roles, r]
+                        : draft.recommended_roles.filter((v) => v !== r);
+                      updateLifecycleDraft({ recommended_roles: next });
+                    }}
+                  />
+                  {ROLE_LABEL[r]}
+                </label>
+              ))}
+            </div>
           </div>
           <div>
             <label className="agentdash-form-label">Entry Step Key</label>

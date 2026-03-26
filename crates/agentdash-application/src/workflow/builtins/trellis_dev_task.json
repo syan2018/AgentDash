@@ -3,12 +3,7 @@
   "name": "Trellis Dev Lifecycle / Task",
   "description": "把 Trellis 研发流程拆成多个原子 workflow，并由 task lifecycle 负责顺序编排与检查推进。",
   "target_kind": "task",
-  "recommended_role": "task_execution_worker",
-  "record_policy": {
-    "emit_summary": true,
-    "emit_journal_update": true,
-    "emit_archive_suggestion": true
-  },
+  "recommended_roles": ["task"],
   "workflows": [
     {
       "key": "trellis_dev_task_start",
@@ -65,27 +60,25 @@
           ],
           "session_binding": "required"
         },
-        "hook_policy": {
-          "constraints": [
-            {
-              "key": "deny_complete_status_during_implement",
-              "kind": "deny_task_status_transition",
-              "description": "Implement 阶段不允许把 Task 直接标记为 completed",
-              "payload": {
-                "to": ["completed"]
-              }
-            },
-            {
-              "key": "deny_record_artifacts_during_implement",
-              "kind": "custom",
-              "description": "Implement 阶段不应提前产出归档型记录产物",
-              "payload": {
-                "policy": "deny_record_artifact_types",
-                "artifact_types": ["session_summary", "archive_suggestion"]
-              }
+        "constraints": [
+          {
+            "key": "deny_complete_status_during_implement",
+            "kind": "deny_task_status_transition",
+            "description": "Implement 阶段不允许把 Task 直接标记为 completed",
+            "payload": {
+              "to": ["completed"]
             }
-          ]
-        },
+          },
+          {
+            "key": "deny_record_artifacts_during_implement",
+            "kind": "custom",
+            "description": "Implement 阶段不应提前产出归档型记录产物",
+            "payload": {
+              "policy": "deny_record_artifact_types",
+              "artifact_types": ["session_summary", "archive_suggestion"]
+            }
+          }
+        ],
         "completion": {
           "default_artifact_type": "phase_note",
           "default_artifact_title": "阶段记录"
@@ -120,15 +113,13 @@
           ],
           "session_binding": "required"
         },
-        "hook_policy": {
-          "constraints": [
-            {
-              "key": "block_stop_until_checks_pass",
-              "kind": "block_stop_until_checks_pass",
-              "description": "在 Check workflow 里，未满足检查条件前不要结束 session"
-            }
-          ]
-        },
+        "constraints": [
+          {
+            "key": "block_stop_until_checks_pass",
+            "kind": "block_stop_until_checks_pass",
+            "description": "在 Check workflow 里，未满足检查条件前不要结束 session"
+          }
+        ],
         "completion": {
           "checks": [
             {
@@ -197,7 +188,6 @@
         "description": "吸收需求与约束，建立开始阶段上下文。",
         "primary_workflow_key": "trellis_dev_task_start",
         "session_binding": "not_required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "manual",
@@ -211,7 +201,6 @@
         "description": "执行实现工作。",
         "primary_workflow_key": "trellis_dev_task_implement",
         "session_binding": "required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "session_terminal_matches",
@@ -226,7 +215,6 @@
         "description": "收口验证并基于 checks 自动推进。",
         "primary_workflow_key": "trellis_dev_task_check",
         "session_binding": "required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "all_checks_pass",
@@ -240,7 +228,6 @@
         "description": "沉淀最终记录与归档建议。",
         "primary_workflow_key": "trellis_dev_task_record",
         "session_binding": "not_required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "manual"

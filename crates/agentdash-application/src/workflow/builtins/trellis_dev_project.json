@@ -3,12 +3,7 @@
   "name": "Trellis Dev Lifecycle / Project",
   "description": "Project 层面的上下文整理与记录沉淀生命周期。",
   "target_kind": "project",
-  "recommended_role": "project_context_maintainer",
-  "record_policy": {
-    "emit_summary": true,
-    "emit_journal_update": true,
-    "emit_archive_suggestion": false
-  },
+  "recommended_roles": ["project"],
   "workflows": [
     {
       "key": "trellis_dev_project_start",
@@ -74,7 +69,6 @@
         "description": "建立项目级上下文。",
         "primary_workflow_key": "trellis_dev_project_start",
         "session_binding": "not_required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "manual",
@@ -88,7 +82,6 @@
         "description": "输出项目总结。",
         "primary_workflow_key": "trellis_dev_project_record",
         "session_binding": "not_required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "manual"

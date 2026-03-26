@@ -3,12 +3,7 @@
   "name": "Trellis Dev Lifecycle / Story",
   "description": "Story 层面的上下文整理、执行对齐与记录沉淀生命周期。",
   "target_kind": "story",
-  "recommended_role": "story_lifecycle_companion",
-  "record_policy": {
-    "emit_summary": true,
-    "emit_journal_update": true,
-    "emit_archive_suggestion": false
-  },
+  "recommended_roles": ["story"],
   "workflows": [
     {
       "key": "trellis_dev_story_start",
@@ -116,7 +111,6 @@
         "description": "准备 Story 执行上下文。",
         "primary_workflow_key": "trellis_dev_story_start",
         "session_binding": "not_required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "manual",
@@ -130,7 +124,6 @@
         "description": "验证 Story 对齐状态。",
         "primary_workflow_key": "trellis_dev_story_align",
         "session_binding": "optional",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "all_checks_pass",
@@ -144,7 +137,6 @@
         "description": "输出 Story 记录。",
         "primary_workflow_key": "trellis_dev_story_record",
         "session_binding": "not_required",
-        "attached_workflows": [],
         "transition": {
           "policy": {
             "kind": "manual"

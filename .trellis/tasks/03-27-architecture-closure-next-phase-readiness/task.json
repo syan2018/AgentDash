@@ -1,0 +1,117 @@
+{
+  "id": "architecture-closure-next-phase-readiness",
+  "name": "architecture-closure-next-phase-readiness",
+  "title": "架构收口与稳定化准入",
+  "description": "统一收口任务：合并质量门禁、session 状态、system_context 注入、前端拆分、DTO/UI 收敛、Address Space 遗留协议、领域类型化标准等多个零碎专项，形成稳定化阶段准入的单一追踪点。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "architecture-quality",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    { "phase": 1, "action": "implement" },
+    { "phase": 2, "action": "check" },
+    { "phase": 3, "action": "finish" },
+    { "phase": 4, "action": "create-pr" }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "M1-quality-gate",
+      "title": "质量门禁可信化：clippy + lint + 真实 relay E2E + worktree verify",
+      "status": "in_progress",
+      "priority": "must",
+      "absorbed_from": "03-25-quality-gate-e2e-reality-check"
+    },
+    {
+      "key": "M2-session-state-sot",
+      "title": "Session 执行状态单一化：inspect 改走 meta，不再扫 JSONL",
+      "status": "pending",
+      "priority": "must"
+    },
+    {
+      "key": "M3-system-context-injection",
+      "title": "system_context 注入链落地：task/story/project 三类 session 真实填充",
+      "status": "pending",
+      "priority": "must"
+    },
+    {
+      "key": "M4-frontend-page-decomposition",
+      "title": "前端大组件拆分：SessionPage + StoryPage 按 feature 拆解",
+      "status": "pending",
+      "priority": "must",
+      "absorbed_from": "03-25-frontend-project-isolation-resume-hardening"
+    },
+    {
+      "key": "M5-dto-ui-convergence",
+      "title": "DTO 命名与 UI 入口收敛：snake_case 统一 + 硬编码消除",
+      "status": "pending",
+      "priority": "must"
+    },
+    {
+      "key": "S1-address-space-legacy-closure",
+      "title": "Address Space 遗留协议与路径语义收口：workspace_files 处置 + MCP tool identity",
+      "status": "pending",
+      "priority": "should",
+      "absorbed_from": "03-23-agent-tooling-redundancy-closure"
+    },
+    {
+      "key": "S2-domain-typing-criteria",
+      "title": "领域负载类型化标准定义：盘点 + 错误边界标准 + 一组改造样板",
+      "status": "pending",
+      "priority": "should",
+      "absorbed_from": "03-25-domain-payload-typing-error-model"
+    }
+  ],
+  "absorbed_tasks": [
+    "03-25-quality-gate-e2e-reality-check",
+    "03-25-frontend-project-isolation-resume-hardening",
+    "03-25-domain-payload-typing-error-model",
+    "03-23-agent-tooling-redundancy-closure"
+  ],
+  "deferred_tasks": [
+    "03-23-companion-collaboration-upgrade",
+    "03-10-extend-address-space-entries",
+    "03-10-extend-source-resolvers"
+  ],
+  "relatedFiles": [
+    "package.json",
+    "frontend/package.json",
+    "playwright.config.ts",
+    "crates/agentdash-executor/src/hub.rs",
+    "crates/agentdash-api/src/bootstrap/task_execution_gateway.rs",
+    "crates/agentdash-api/src/bootstrap/task_state_reconcile.rs",
+    "crates/agentdash-application/src/task/state_reconciler.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-api/src/routes/project_sessions.rs",
+    "crates/agentdash-api/src/routes/story_sessions.rs",
+    "crates/agentdash-api/src/routes/workspace_files.rs",
+    "crates/agentdash-connector-contract/src/connector.rs",
+    "crates/agentdash-application/src/task/tools/companion.rs",
+    "crates/agentdash-application/src/bootstrap_plan.rs",
+    "crates/agentdash-application/src/session_context.rs",
+    "crates/agentdash-local/src/command_handler.rs",
+    "crates/agentdash-relay/src/protocol.rs",
+    "frontend/src/types/index.ts",
+    "frontend/src/pages/SessionPage.tsx",
+    "frontend/src/pages/StoryPage.tsx",
+    "frontend/src/features/project/project-agent-view.tsx",
+    "frontend/src/features/agent/agent-tab-view.tsx",
+    "frontend/src/services/executor.ts",
+    "tests/e2e/story-context-injection.spec.ts",
+    "tests/e2e/task-drawer-return.spec.ts",
+    "scripts/dev-joint.js",
+    ".trellis/spec/backend/quality-guidelines.md",
+    ".trellis/spec/backend/address-space-access.md",
+    ".trellis/spec/frontend/type-safety.md"
+  ],
+  "notes": "2026-03-27 创建的统一收口任务。吸收了 03-25 的三个零碎任务和 03-23 的 agent-tooling 剩余项。目标：判断项目是否准备进入稳定化/发布准备阶段。Must 项 5 个、Should 项 2 个。03-10 的两个 planning 任务建议归档（功能扩展，不属于收口），companion 升级确认延期。"
+}

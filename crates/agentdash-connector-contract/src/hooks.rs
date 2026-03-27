@@ -370,6 +370,19 @@ impl HookSessionRuntime {
             }
         }
 
+        let pending_log = std::mem::take(&mut resolution.pending_execution_log);
+        if !pending_log.is_empty() {
+            if let Err(error) = self.provider.append_execution_log(pending_log).await {
+                resolution.diagnostics.push(HookDiagnosticEntry {
+                    code: "execution_log_flush_failed".to_string(),
+                    summary: "failed to flush execution log entries".to_string(),
+                    detail: Some(error.to_string()),
+                    source_summary: Vec::new(),
+                    source_refs: Vec::new(),
+                });
+            }
+        }
+
         self.append_diagnostics(resolution.diagnostics.clone());
         Ok(resolution)
     }
@@ -617,6 +630,11 @@ pub struct HookResolution {
     /// step and updates `completion.advanced` accordingly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_advance: Option<HookStepAdvanceRequest>,
+    /// Execution log entries collected during this evaluation cycle.
+    /// Flushed to `LifecycleRun.execution_log` by `HookSessionRuntime`
+    /// post-evaluate, via `provider.append_execution_log()`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_execution_log: Vec<PendingExecutionLogEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -676,6 +694,20 @@ pub struct HookTraceEntry {
     pub diagnostics: Vec<HookDiagnosticEntry>,
 }
 
+/// A lifecycle execution log entry collected during hook evaluation.
+/// Carries the same shape as `LifecycleExecutionEntry` from the domain
+/// layer, but without requiring a domain dependency in the connector crate.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct PendingExecutionLogEntry {
+    pub run_id: String,
+    pub step_key: String,
+    pub event_kind: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Error)]
 pub enum HookError {
     #[error("{0}")]
@@ -703,6 +735,17 @@ pub trait ExecutionHookProvider: Send + Sync {
         request: HookStepAdvanceRequest,
     ) -> Result<(), HookError> {
         let _ = request;
+        Ok(())
+    }
+
+    /// Batch-flush execution log entries to `LifecycleRun.execution_log`.
+    /// Called by `HookSessionRuntime` post-evaluate when the resolution
+    /// carries non-empty `pending_execution_log`.
+    async fn append_execution_log(
+        &self,
+        entries: Vec<PendingExecutionLogEntry>,
+    ) -> Result<(), HookError> {
+        let _ = entries;
         Ok(())
     }
 }

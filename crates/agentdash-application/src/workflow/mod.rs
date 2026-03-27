@@ -2,6 +2,7 @@ mod catalog;
 mod completion;
 mod definition;
 mod error;
+pub mod execution_log;
 pub mod projection;
 mod run;
 

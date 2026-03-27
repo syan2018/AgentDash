@@ -21,8 +21,8 @@ pub use hooks::{
     HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
     HookPolicyView, HookResolution, HookSessionRuntime, HookSessionRuntimeSnapshot,
     HookSourceLayer, HookSourceRef, HookStepAdvanceRequest, HookTraceEntry, HookTrigger,
-    NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    NoopExecutionHookProvider, PendingExecutionLogEntry, SessionHookRefreshQuery,
+    SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 pub use hub::{
     CompanionSessionContext, ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta,

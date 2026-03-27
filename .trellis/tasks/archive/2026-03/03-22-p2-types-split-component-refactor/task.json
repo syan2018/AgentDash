@@ -1,20 +1,20 @@
 {
-  "id": "app-boundary-domain-decomposition",
-  "name": "app-boundary-domain-decomposition",
-  "title": "应用层边界收口与领域模型拆解重构",
+  "id": "p2-types-split-component-refactor",
+  "name": "p2-types-split-component-refactor",
+  "title": "类型系统拆分与组件结构重构(P2)",
   "description": "",
-  "status": "in_progress",
-  "dev_type": "fullstack",
-  "scope": "cross-layer-refactor",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
-  "createdAt": "2026-03-26",
-  "completedAt": null,
+  "createdAt": "2026-03-22",
+  "completedAt": "2026-03-27",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 2,
+  "current_phase": 0,
   "next_action": [
     {
       "phase": 1,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": "application runtime 模型、API runtime bridge 与 storyStore 单一事实源已完成，编译与测试证据已回写 prd.md。"
+  "notes": ""
 }

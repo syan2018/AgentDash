@@ -1,8 +1,8 @@
 {
   "id": "extend-address-space-entries",
   "name": "extend-address-space-entries",
-  "title": "扩展寻址空间条目检索（workspace_snapshot / mcp_resource entries + resolve）",
-  "description": "原 unified-context-addressing 任务的 Phase 2/3 遗留。Phase 1 已完成：AddressSpaceProvider trait + Registry、GET /address-spaces 能力发现、workspace_file entries 搜索、前端选择器组件。但 list_address_entries（address_spaces.rs L84-107）仅对 workspace_file 有实际逻辑，其他 space_id 返回 404。需要：\n1. workspace_snapshot entries — 返回快照预览摘要（只需单一条目即可，无需搜索）\n2. mcp_resource entries — 遍历已注册 MCP Server 暴露的资源列表\n3. POST /address-spaces/resolve 端点 — 统一解析 address 为 ContextSourceRef\n4. 前端适配 — 不同 space 展示不同候选项样式，Session 输入框复用统一选择器",
+  "title": "Address Space 条目检索与地址解析补全",
+  "description": "当前 Address Space 的能力发现、mount browser 和 picker 骨架已具备，但按 `space_id` 检索候选条目与统一解析地址的链路仍未闭环。需要补齐 `workspace_snapshot` / `mcp_resource` entries 支持、统一 resolve API，以及前端 picker 对多 space 的稳定回填模型。",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -43,5 +43,5 @@
     "frontend/src/features/context-source/model/useAddressSpacePicker.ts",
     "frontend/src/features/context-source/ui/AddressEntryPickerPopup.tsx"
   ],
-  "notes": "从已归档任务 unified-context-addressing 提取的 Phase 2/3 遗留。前置：Phase 1 已完成（能力发现 + workspace_file 选择器 + Story 集成）。"
+  "notes": "该任务保留为 Address Space picker 闭环补全项。mount browser 与 workspace_snapshot 注入能力已完成，但 `GET /address-spaces/{space_id}/entries` 仍主要停留在 `workspace_file`，需要按当前 API 形态重做收口，而不是继续沿用旧 unified-context-addressing 的阶段描述。"
 }

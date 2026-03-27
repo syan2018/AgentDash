@@ -1,8 +1,8 @@
 {
   "id": "agent-tooling-redundancy-closure",
   "name": "agent-tooling-redundancy-closure",
-  "title": "Agent 工具体系冗余收口",
-  "description": "追踪 Agent 可用工具体系中的命名分叉、流程工具暴露过宽、MCP 暴露工具面不透明以及遗留 workspace_files 协议链等冗余问题，并形成统一收口方案。",
+  "title": "Agent 工具体系剩余收口项",
+  "description": "保留为工具体系的剩余收口任务。`tool_visibility` 展开 MCP server、统一 runtime tool 主路径等早期目标已基本落地；当前主要剩余 `workspace_files` 遗留协议链、MCP tool 名称与 policy 识别错位，以及流程工具 authority 继续收口。",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": ""
+  "notes": "该任务已从总论式 review 改写为剩余缺口清单，避免重复追踪已经完成的部分。后续若启动实现，优先拆成 `workspace_files` 退场、MCP tool identity 收口、流程工具 authority 对齐等子任务。"
 }

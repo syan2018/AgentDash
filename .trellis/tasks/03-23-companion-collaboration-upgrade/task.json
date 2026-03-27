@@ -1,8 +1,8 @@
 {
   "id": "companion-collaboration-upgrade",
   "name": "companion-collaboration-upgrade",
-  "title": "Companion 协作模型升级：灵活调度 + 上下文记忆继承 + 跨层开放",
-  "description": "",
+  "title": "Companion 协作模型剩余升级项",
+  "description": "Project Agent 开放 companion 能力已落地，这条任务改为追踪 companion 的剩余升级项：同步等待、显式 await、以及独立的会话记忆继承模型。",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": ""
+  "notes": "已从原始大任务中剔除“Project Agent 开放 companion”这一已完成部分，保留 wait_for_completion、await_companion 与记忆继承等尚未落地的能力。"
 }

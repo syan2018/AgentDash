@@ -1,4 +1,50 @@
 use crate::runtime::{MountCapabilitySet, RuntimeAddressSpace, RuntimeMount};
+use super::types::ResourceRef;
+
+const URI_SEPARATOR: &str = "://";
+
+/// 解析统一 URI 路径为 `ResourceRef`。
+///
+/// 支持两种格式：
+/// - `mount_id://relative/path` — 显式指定 mount
+/// - `relative/path` — 使用 address space 的默认 mount
+pub fn parse_mount_uri(
+    input: &str,
+    address_space: &RuntimeAddressSpace,
+) -> Result<ResourceRef, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+
+    if let Some(sep_pos) = trimmed.find(URI_SEPARATOR) {
+        let mount_id = &trimmed[..sep_pos];
+        if mount_id.is_empty() {
+            return Err("URI 格式错误: mount ID 不能为空".to_string());
+        }
+        let path = &trimmed[sep_pos + URI_SEPARATOR.len()..];
+        let path = path.trim_start_matches('/');
+        return Ok(ResourceRef {
+            mount_id: mount_id.to_string(),
+            path: path.to_string(),
+        });
+    }
+
+    let mount_id = resolve_mount_id(address_space, None)?;
+    Ok(ResourceRef {
+        mount_id,
+        path: trimmed.to_string(),
+    })
+}
+
+/// 将 mount_id + path 格式化为 URI 字符串（如 `lifecycle://active/steps/start`）。
+pub fn format_mount_uri(mount_id: &str, path: &str) -> String {
+    if path.is_empty() {
+        format!("{mount_id}://")
+    } else {
+        format!("{mount_id}://{path}")
+    }
+}
 
 pub fn resolve_mount<'a>(
     address_space: &'a RuntimeAddressSpace,

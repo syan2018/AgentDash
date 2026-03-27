@@ -13,7 +13,8 @@ pub use mount::{
     normalize_inline_files, selected_workspace_binding, workspace_mount_from_policy,
 };
 pub use path::{
-    capability_name, join_root_ref, normalize_mount_relative_path, resolve_mount, resolve_mount_id,
+    capability_name, format_mount_uri, join_root_ref, normalize_mount_relative_path,
+    parse_mount_uri, resolve_mount, resolve_mount_id,
 };
 pub use provider::{
     MountError, MountOperationContext, MountProvider, MountProviderRegistry, SearchMatch,

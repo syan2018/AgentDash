@@ -43,9 +43,9 @@ pub struct StorySessionDetailResponse {
 }
 
 #[derive(Debug)]
-struct BuiltStorySessionContextResponse {
-    address_space: Option<agentdash_executor::ExecutionAddressSpace>,
-    context_snapshot: Option<SessionContextSnapshot>,
+pub(crate) struct BuiltStorySessionContextResponse {
+    pub(crate) address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 
 /// 返回给前端的 Session 绑定信息（含 Session 元数据）
@@ -344,7 +344,7 @@ pub async fn unbind_story_session(
     })))
 }
 
-async fn build_story_session_context_response(
+pub(crate) async fn build_story_session_context_response(
     state: &Arc<AppState>,
     story: &agentdash_domain::story::Story,
     session_id: &str,

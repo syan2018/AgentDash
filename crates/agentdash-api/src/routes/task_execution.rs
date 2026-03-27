@@ -89,9 +89,9 @@ pub struct TaskSessionResponse {
 }
 
 #[derive(Debug)]
-struct BuiltTaskSessionContextResponse {
-    address_space: Option<agentdash_executor::ExecutionAddressSpace>,
-    context_snapshot: Option<SessionContextSnapshot>,
+pub(crate) struct BuiltTaskSessionContextResponse {
+    pub(crate) address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 
 pub async fn start_task(
@@ -207,7 +207,7 @@ pub async fn get_task_session(
 
 /// 为 task session 响应按需构建结构化上下文快照。
 /// 非关键路径：任何失败都静默降级为 None。
-async fn build_task_session_context_response(
+pub(crate) async fn build_task_session_context_response(
     state: &Arc<AppState>,
     task_id: Uuid,
 ) -> Option<BuiltTaskSessionContextResponse> {
@@ -333,7 +333,7 @@ fn parse_task_id(id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))
 }
 
-fn map_task_execution_error(err: TaskExecutionError) -> ApiError {
+pub(crate) fn map_task_execution_error(err: TaskExecutionError) -> ApiError {
     match err {
         TaskExecutionError::BadRequest(message) => ApiError::BadRequest(message),
         TaskExecutionError::NotFound(message) => ApiError::NotFound(message),

@@ -23,6 +23,7 @@ use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::story::context_builder::{
     StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
 };
+use agentdash_application::session_context::SessionContextSnapshot;
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
@@ -38,6 +39,8 @@ use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
+use crate::bootstrap::task_execution_gateway::execute_get_task_session;
+use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::runtime_bridge::acp_mcp_servers_to_runtime;
 use crate::session_context::apply_workspace_defaults;
 use crate::task_agent_context::resolve_workspace_declared_sources;
@@ -314,6 +317,130 @@ mod tests {
         assert!(value.get("ownerTitle").is_none());
         assert!(value.get("projectId").is_none());
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionContextResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_binding: Option<agentdash_domain::task::AgentBinding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_snapshot: Option<SessionContextSnapshot>,
+}
+
+/// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / address_space / snapshot
+pub async fn get_session_context(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionContextResponse>, ApiError> {
+    let bindings = ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let Some(primary) = pick_primary_session_binding(&bindings) else {
+        return Ok(Json(SessionContextResponse {
+            workspace_id: None,
+            agent_binding: None,
+            address_space: None,
+            context_snapshot: None,
+        }));
+    };
+
+    match primary.owner_type {
+        SessionOwnerType::Task => {
+            let task_id = primary.owner_id;
+            let (task, _, _) = load_task_story_project_with_permission(
+                state.as_ref(),
+                &current_user,
+                task_id,
+                ProjectPermission::View,
+            )
+            .await?;
+            let result = execute_get_task_session(state.clone(), task_id)
+                .await
+                .map_err(task_execution::map_task_execution_error)?;
+            let built_context =
+                task_execution::build_task_session_context_response(&state, task_id).await;
+            Ok(Json(SessionContextResponse {
+                workspace_id: task.workspace_id.map(|id| id.to_string()),
+                agent_binding: Some(result.agent_binding),
+                address_space: built_context
+                    .as_ref()
+                    .and_then(|context| context.address_space.clone()),
+                context_snapshot: built_context.and_then(|context| context.context_snapshot),
+            }))
+        }
+        SessionOwnerType::Story => {
+            let story_id = primary.owner_id;
+            let (story, _) = load_story_and_project_with_permission(
+                state.as_ref(),
+                &current_user,
+                story_id,
+                ProjectPermission::View,
+            )
+            .await?;
+            let built_context = story_sessions::build_story_session_context_response(
+                &state,
+                &story,
+                &session_id,
+            )
+            .await;
+            Ok(Json(SessionContextResponse {
+                workspace_id: None,
+                agent_binding: None,
+                address_space: built_context
+                    .as_ref()
+                    .and_then(|context| context.address_space.clone()),
+                context_snapshot: built_context.and_then(|context| context.context_snapshot),
+            }))
+        }
+        SessionOwnerType::Project => {
+            let project_id = primary.owner_id;
+            let project = load_project_with_permission(
+                state.as_ref(),
+                &current_user,
+                project_id,
+                ProjectPermission::View,
+            )
+            .await?;
+            let built_context = project_sessions::build_project_session_context_response(
+                &state,
+                &project,
+                &session_id,
+                &primary.label,
+            )
+            .await;
+            Ok(Json(SessionContextResponse {
+                workspace_id: None,
+                agent_binding: None,
+                address_space: built_context
+                    .as_ref()
+                    .and_then(|context| context.address_space.clone()),
+                context_snapshot: built_context.and_then(|context| context.context_snapshot),
+            }))
+        }
+    }
+}
+
+fn pick_primary_session_binding(
+    bindings: &[agentdash_domain::session_binding::SessionBinding],
+) -> Option<&agentdash_domain::session_binding::SessionBinding> {
+    // 与 `SessionPage.tsx` 中 `sessionOwnerBinding` 一致：project → story → task → 首个
+    bindings
+        .iter()
+        .find(|b| b.owner_type == SessionOwnerType::Project)
+        .or_else(|| bindings.iter().find(|b| b.owner_type == SessionOwnerType::Story))
+        .or_else(|| bindings.iter().find(|b| b.owner_type == SessionOwnerType::Task))
+        .or_else(|| bindings.first())
 }
 
 pub async fn get_session_bindings(

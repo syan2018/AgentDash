@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { SessionChatView } from "../features/acp-session";
-import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/session";
+import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
@@ -1263,10 +1263,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const location = useLocation();
   const selectProject = useProjectStore((state) => state.selectProject);
   const projects = useProjectStore((state) => state.projects);
-  const fetchProjectSessionInfo = useProjectStore((state) => state.fetchProjectSessionInfo);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
-  const fetchTaskSession = useStoryStore((state) => state.fetchTaskSession);
-  const fetchStorySessionInfo = useStoryStore((state) => state.fetchStorySessionInfo);
   const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
   const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
 
@@ -1409,74 +1406,23 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [sessionOwnerBinding]);
 
   useEffect(() => {
+    if (!sessionOwnerBinding || !sessionContextSourceKey || !currentSessionId) return;
     let cancelled = false;
-
-    if (
-      sessionOwnerBinding?.owner_type === "task"
-      && sessionOwnerBinding.task_id
-    ) {
-      const taskId = sessionOwnerBinding.task_id;
-      void (async () => {
-        const taskSession = await fetchTaskSession(taskId);
-        if (cancelled) return;
-        setLoadedSessionContext({
-          source_key: `task:${taskId}`,
-          workspace_id: taskSession?.workspace_id ?? null,
-          task_agent_binding: taskSession?.agent_binding ?? null,
-          address_space: taskSession?.address_space ?? null,
-          context_snapshot: taskSession?.context_snapshot ?? null,
-        });
-      })();
-      return () => { cancelled = true; };
-    }
-
-    if (
-      sessionOwnerBinding?.owner_type === "story"
-      && sessionOwnerBinding.story_id
-      && sessionOwnerBinding.id
-    ) {
-      const storyId = sessionOwnerBinding.story_id;
-      const bindingId = sessionOwnerBinding.id;
-      void (async () => {
-        const storySession = await fetchStorySessionInfo(
-          storyId,
-          bindingId,
-        );
-        if (cancelled) return;
-        setLoadedSessionContext({
-          source_key: `story:${storyId}:${bindingId}`,
-          workspace_id: null,
-          task_agent_binding: null,
-          address_space: storySession?.address_space ?? null,
-          context_snapshot: storySession?.context_snapshot ?? null,
-        });
-      })();
-      return () => { cancelled = true; };
-    }
-
-    if (
-      sessionOwnerBinding?.owner_type === "project"
-      && sessionOwnerBinding.project_id
-      && sessionOwnerBinding.id
-    ) {
-      const projectId = sessionOwnerBinding.project_id;
-      const bindingId = sessionOwnerBinding.id;
-      void (async () => {
-        const info = await fetchProjectSessionInfo(projectId, bindingId);
-        if (cancelled) return;
-        setLoadedSessionContext({
-          source_key: `project:${projectId}:${bindingId}`,
-          workspace_id: null,
-          task_agent_binding: null,
-          address_space: info?.address_space ?? null,
-          context_snapshot: info?.context_snapshot ?? null,
-        });
-      })();
-      return () => { cancelled = true; };
-    }
-
-    return () => { cancelled = true; };
-  }, [fetchProjectSessionInfo, fetchStorySessionInfo, fetchTaskSession, sessionOwnerBinding]);
+    void (async () => {
+      const ctx = await fetchSessionContext(currentSessionId);
+      if (cancelled) return;
+      setLoadedSessionContext({
+        source_key: sessionContextSourceKey,
+        workspace_id: ctx?.workspace_id ?? null,
+        task_agent_binding: ctx?.agent_binding ?? null,
+        address_space: ctx?.address_space ?? null,
+        context_snapshot: ctx?.context_snapshot ?? null,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionOwnerBinding, sessionContextSourceKey, currentSessionId]);
 
   const activeSessionContext = loadedSessionContext?.source_key === sessionContextSourceKey
     ? loadedSessionContext

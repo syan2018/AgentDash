@@ -45,9 +45,9 @@ pub struct ProjectSessionDetailResponse {
 }
 
 #[derive(Debug)]
-struct BuiltProjectSessionContextResponse {
-    address_space: Option<agentdash_executor::ExecutionAddressSpace>,
-    context_snapshot: Option<SessionContextSnapshot>,
+pub(crate) struct BuiltProjectSessionContextResponse {
+    pub(crate) address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 
 pub async fn get_project_session(
@@ -108,7 +108,7 @@ pub async fn get_project_session(
     }))
 }
 
-async fn build_project_session_context_response(
+pub(crate) async fn build_project_session_context_response(
     state: &Arc<AppState>,
     project: &agentdash_domain::project::Project,
     session_id: &str,

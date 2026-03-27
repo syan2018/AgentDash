@@ -287,6 +287,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/sessions/{id}/bindings",
             get(acp_sessions::get_session_bindings),
         )
+        .route(
+            "/sessions/{id}/context",
+            get(acp_sessions::get_session_context),
+        )
         // ACP Sessions — Execution
         .route("/sessions/{id}/prompt", post(acp_sessions::prompt_session))
         .route("/sessions/{id}/cancel", post(acp_sessions::cancel_session))

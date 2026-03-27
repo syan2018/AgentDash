@@ -29,10 +29,6 @@ use agentdash_executor::{
     PromptSessionRequest, RuntimeToolProvider, SessionHookRefreshQuery,
     build_hook_trace_notification,
 };
-use agentdash_relay::{
-    RelayMessage, ToolFileListPayload, ToolFileReadPayload, ToolFileWritePayload,
-    ToolSearchPayload, ToolShellExecPayload,
-};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,7 +42,7 @@ pub use agentdash_application::address_space::*;
 use crate::{
     relay::registry::BackendRegistry,
     runtime_bridge::{
-        execution_address_space_to_runtime, relay_file_entries_to_runtime,
+        execution_address_space_to_runtime,
         runtime_address_space_to_execution,
     },
 };
@@ -281,12 +277,17 @@ impl InlineContentPersister for DbInlineContentPersister {
 
 #[derive(Clone)]
 pub struct RelayAddressSpaceService {
-    backend_registry: Arc<BackendRegistry>,
+    mount_provider_registry: Arc<MountProviderRegistry>,
 }
 
 impl RelayAddressSpaceService {
-    pub fn new(backend_registry: Arc<BackendRegistry>) -> Self {
-        Self { backend_registry }
+    pub fn new(
+        _backend_registry: Arc<BackendRegistry>,
+        mount_provider_registry: Arc<MountProviderRegistry>,
+    ) -> Self {
+        Self {
+            mount_provider_registry,
+        }
     }
 
     pub fn session_for_workspace(
@@ -357,50 +358,22 @@ impl RelayAddressSpaceService {
         let mount =
             resolve_mount(&runtime_address_space, &target.mount_id, ExecutionMountCapability::Read)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
-        if mount.provider == PROVIDER_INLINE_FS {
-            // overlay 优先（session 内写入立即可读）
-            if let Some(ov) = overlay {
-                if let Some(content) = ov.read(&mount.id, &path).await {
-                    return Ok(ReadResult { path, content });
-                }
-            }
-            let files = inline_files_from_mount(mount)?;
-            let content = files
-                .get(&path)
-                .cloned()
-                .ok_or_else(|| format!("文件不存在: {}", path))?;
-            return Ok(ReadResult { path, content });
-        }
-        let response = self
-            .backend_registry
-            .send_command(
-                &mount.backend_id,
-                RelayMessage::CommandToolFileRead {
-                    id: RelayMessage::new_id("addr-read"),
-                    payload: ToolFileReadPayload {
-                        call_id: RelayMessage::new_id("call"),
-                        path: path.clone(),
-                        workspace_root: mount.root_ref.clone(),
-                    },
-                },
-            )
-            .await
-            .map_err(|error| format!("relay file_read 失败: {error}"))?;
 
-        match response {
-            RelayMessage::ResponseToolFileRead {
-                payload: Some(payload),
-                error: None,
-                ..
-            } => Ok(ReadResult {
-                path,
-                content: payload.content,
-            }),
-            RelayMessage::ResponseToolFileRead {
-                error: Some(error), ..
-            } => Err(error.message),
-            other => Err(format!("file_read 返回意外响应: {}", other.id())),
+        if let Some(ov) = overlay {
+            if let Some(content) = ov.read(&mount.id, &path).await {
+                return Ok(ReadResult { path, content });
+            }
         }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext::default();
+            return provider
+                .read_text(mount, &path, &ctx)
+                .await
+                .map_err(|e| e.to_string());
+        }
+
+        Err(format!("未注册的 mount provider: {}", mount.provider))
     }
 
     pub async fn write_text(
@@ -417,6 +390,7 @@ impl RelayAddressSpaceService {
             ExecutionMountCapability::Write,
         )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
+
         if mount.provider == PROVIDER_INLINE_FS {
             let ov = overlay.ok_or_else(|| {
                 format!(
@@ -426,30 +400,16 @@ impl RelayAddressSpaceService {
             })?;
             return ov.write(&runtime_address_space, mount, &path, content).await;
         }
-        let response = self
-            .backend_registry
-            .send_command(
-                &mount.backend_id,
-                RelayMessage::CommandToolFileWrite {
-                    id: RelayMessage::new_id("addr-write"),
-                    payload: ToolFileWritePayload {
-                        call_id: RelayMessage::new_id("call"),
-                        path,
-                        content: content.to_string(),
-                        workspace_root: mount.root_ref.clone(),
-                    },
-                },
-            )
-            .await
-            .map_err(|error| format!("relay file_write 失败: {error}"))?;
 
-        match response {
-            RelayMessage::ResponseToolFileWrite { error: None, .. } => Ok(()),
-            RelayMessage::ResponseToolFileWrite {
-                error: Some(error), ..
-            } => Err(error.message),
-            other => Err(format!("file_write 返回意外响应: {}", other.id())),
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext::default();
+            return provider
+                .write_text(mount, &path, content, &ctx)
+                .await
+                .map_err(|e| e.to_string());
         }
+
+        Err(format!("未注册的 mount provider: {}", mount.provider))
     }
 
     pub async fn list(
@@ -463,9 +423,9 @@ impl RelayAddressSpaceService {
         let mount =
             resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
+
         if mount.provider == PROVIDER_INLINE_FS {
             let mut files = inline_files_from_mount(mount)?;
-            // 合并 overlay 中的新增/修改文件
             if let Some(ov) = overlay {
                 for (p, c) in ov.overridden_files(&mount.id).await {
                     files.insert(p, c);
@@ -480,37 +440,21 @@ impl RelayAddressSpaceService {
                 ),
             });
         }
-        let response = self
-            .backend_registry
-            .send_command(
-                &mount.backend_id,
-                RelayMessage::CommandToolFileList {
-                    id: RelayMessage::new_id("addr-list"),
-                    payload: ToolFileListPayload {
-                        call_id: RelayMessage::new_id("call"),
-                        path,
-                        workspace_root: mount.root_ref.clone(),
-                        pattern: options.pattern,
-                        recursive: options.recursive,
-                    },
-                },
-            )
-            .await
-            .map_err(|error| format!("relay file_list 失败: {error}"))?;
 
-        match response {
-            RelayMessage::ResponseToolFileList {
-                payload: Some(payload),
-                error: None,
-                ..
-            } => Ok(ListResult {
-                entries: relay_file_entries_to_runtime(&payload.entries),
-            }),
-            RelayMessage::ResponseToolFileList {
-                error: Some(error), ..
-            } => Err(error.message),
-            other => Err(format!("file_list 返回意外响应: {}", other.id())),
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext::default();
+            let opts = ListOptions {
+                path,
+                pattern: options.pattern,
+                recursive: options.recursive,
+            };
+            return provider
+                .list(mount, &opts, &ctx)
+                .await
+                .map_err(|e| e.to_string());
         }
+
+        Err(format!("未注册的 mount provider: {}", mount.provider))
     }
 
     pub async fn exec(
@@ -525,42 +469,22 @@ impl RelayAddressSpaceService {
             ExecutionMountCapability::Exec,
         )?;
         let cwd = normalize_mount_relative_path(&request.cwd, true)?;
-        if mount.provider == PROVIDER_INLINE_FS {
-            return Err(format!("mount `{}` 不支持 exec", mount.id));
-        }
-        let response = self
-            .backend_registry
-            .send_command(
-                &mount.backend_id,
-                RelayMessage::CommandToolShellExec {
-                    id: RelayMessage::new_id("addr-exec"),
-                    payload: ToolShellExecPayload {
-                        call_id: RelayMessage::new_id("call"),
-                        command: request.command.clone(),
-                        workspace_root: mount.root_ref.clone(),
-                        cwd: if cwd.is_empty() { None } else { Some(cwd) },
-                        timeout_ms: request.timeout_ms,
-                    },
-                },
-            )
-            .await
-            .map_err(|error| format!("relay shell_exec 失败: {error}"))?;
 
-        match response {
-            RelayMessage::ResponseToolShellExec {
-                payload: Some(payload),
-                error: None,
-                ..
-            } => Ok(ExecResult {
-                exit_code: payload.exit_code,
-                stdout: payload.stdout,
-                stderr: payload.stderr,
-            }),
-            RelayMessage::ResponseToolShellExec {
-                error: Some(error), ..
-            } => Err(error.message),
-            other => Err(format!("shell_exec 返回意外响应: {}", other.id())),
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext::default();
+            let req = ExecRequest {
+                mount_id: request.mount_id.clone(),
+                cwd,
+                command: request.command.clone(),
+                timeout_ms: request.timeout_ms,
+            };
+            return provider
+                .exec(mount, &req, &ctx)
+                .await
+                .map_err(|e| e.to_string());
         }
+
+        Err(format!("未注册的 mount provider: {}", mount.provider))
     }
 
     pub async fn search_text(
@@ -595,7 +519,7 @@ impl RelayAddressSpaceService {
         path: &str,
         query: &str,
         is_regex: bool,
-        include_glob: Option<&str>,
+        _include_glob: Option<&str>,
         max_results: usize,
         context_lines: usize,
         overlay: Option<&InlineContentOverlay>,
@@ -619,79 +543,33 @@ impl RelayAddressSpaceService {
                 .await;
         }
 
-        let response = self
-            .backend_registry
-            .send_command(
-                &mount.backend_id,
-                RelayMessage::CommandToolSearch {
-                    id: RelayMessage::new_id("addr-search"),
-                    payload: ToolSearchPayload {
-                        call_id: RelayMessage::new_id("call"),
-                        workspace_root: join_root_ref(&mount.root_ref, &base_path),
-                        query: query.to_string(),
-                        path: None,
-                        is_regex,
-                        include_glob: include_glob.map(String::from),
-                        max_results,
-                        context_lines,
-                    },
-                },
-            )
-            .await
-            .map_err(|error| format!("relay search 失败: {error}"))?;
-
-        match response {
-            RelayMessage::ResponseToolSearch {
-                payload: Some(payload),
-                error: None,
-                ..
-            } => {
-                let hits: Vec<String> = payload
-                    .hits
-                    .iter()
-                    .map(|hit| {
-                        let mut line = format!("{}:{}: {}", hit.path, hit.line_number, hit.content);
-                        if context_lines > 0 {
-                            if !hit.context_before.is_empty() {
-                                let before = hit
-                                    .context_before
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, c)| {
-                                        format!(
-                                            "{}:{}- {}",
-                                            hit.path,
-                                            hit.line_number - hit.context_before.len() + i,
-                                            c
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                line = format!("{}\n{}", before, line);
-                            }
-                            if !hit.context_after.is_empty() {
-                                let after = hit
-                                    .context_after
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, c)| {
-                                        format!("{}:{}- {}", hit.path, hit.line_number + 1 + i, c)
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                line = format!("{}\n{}", line, after);
-                            }
-                        }
-                        line
-                    })
-                    .collect();
-                Ok((hits, payload.truncated))
-            }
-            RelayMessage::ResponseToolSearch {
-                error: Some(error), ..
-            } => Err(error.message),
-            other => Err(format!("search 返回意外响应: {}", other.id())),
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext::default();
+            let sq = SearchQuery {
+                path: if base_path.is_empty() { None } else { Some(base_path) },
+                pattern: query.to_string(),
+                case_sensitive: true,
+                max_results: Some(max_results),
+            };
+            let result = provider
+                .search_text(mount, &sq, &ctx)
+                .await
+                .map_err(|e| e.to_string())?;
+            let hits: Vec<String> = result
+                .matches
+                .iter()
+                .map(|m| {
+                    if let Some(line) = m.line {
+                        format!("{}:{}: {}", m.path, line, m.content)
+                    } else {
+                        format!("{}: {}", m.path, m.content)
+                    }
+                })
+                .collect();
+            return Ok((hits, false));
         }
+
+        Err(format!("未注册的 mount provider: {}", mount.provider))
     }
 
     async fn search_inline(
@@ -2245,12 +2123,12 @@ fn filter_address_space_capabilities(
     }
 }
 
-fn resolve_execution_mount_id(
+fn resolve_uri_path(
     address_space: &ExecutionAddressSpace,
-    mount: Option<&str>,
-) -> Result<String, String> {
+    path: &str,
+) -> Result<ResourceRef, String> {
     let runtime_address_space = execution_address_space_to_runtime(address_space);
-    resolve_mount_id(&runtime_address_space, mount)
+    parse_mount_uri(path, &runtime_address_space)
 }
 
 fn build_companion_owner_summary(
@@ -2523,8 +2401,8 @@ impl AgentTool for MountsListTool {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(
-                    "- {}: {} (provider={}, root_ref={}, capabilities=[{}])",
-                    mount.id, mount.display_name, mount.provider, mount.root_ref, capabilities
+                    "- {}:// — {} (capabilities=[{}])",
+                    mount.id, mount.display_name, capabilities
                 )
             })
             .collect::<Vec<_>>()
@@ -2532,7 +2410,10 @@ impl AgentTool for MountsListTool {
         Ok(ok_text(if body.is_empty() {
             "当前会话没有可用 mount".to_string()
         } else {
-            body
+            format!(
+                "路径格式: mount_id://relative/path（省略前缀使用默认 mount）\n\n{}",
+                body
+            )
         }))
     }
 }
@@ -2559,7 +2440,7 @@ impl FsReadTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct FsReadParams {
-    pub mount: Option<String>,
+    /// 统一路径，支持 `mount_id://relative/path` 格式（如 `lifecycle://active/steps/start`）；省略 mount 前缀时使用默认 mount
     pub path: String,
     pub start_line: Option<usize>,
     pub end_line: Option<usize>,
@@ -2585,16 +2466,13 @@ impl AgentTool for FsReadTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsReadParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
+        let target = resolve_uri_path(&self.address_space, &params.path)
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .read_text(
                 &self.address_space,
-                &ResourceRef {
-                    mount_id,
-                    path: params.path,
-                },
+                &target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
             )
             .await
@@ -2645,7 +2523,7 @@ impl FsWriteTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct FsWriteParams {
-    pub mount: Option<String>,
+    /// 统一路径，支持 `mount_id://relative/path` 格式；省略 mount 前缀时使用默认 mount
     pub path: String,
     pub content: String,
     pub append: Option<bool>,
@@ -2671,12 +2549,8 @@ impl AgentTool for FsWriteTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsWriteParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
+        let target = resolve_uri_path(&self.address_space, &params.path)
             .map_err(AgentToolError::ExecutionFailed)?;
-        let target = ResourceRef {
-            mount_id,
-            path: params.path,
-        };
         let overlay_ref = self.overlay.as_ref().map(|arc| arc.as_ref());
         let final_content = if params.append.unwrap_or(false) {
             match self
@@ -2720,7 +2594,7 @@ impl FsListTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct FsListParams {
-    pub mount: Option<String>,
+    /// 统一路径，支持 `mount_id://relative/path` 格式；省略 mount 前缀时使用默认 mount
     pub path: Option<String>,
     pub recursive: Option<bool>,
     pub pattern: Option<String>,
@@ -2746,15 +2620,18 @@ impl AgentTool for FsListTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsListParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
-            .map_err(AgentToolError::ExecutionFailed)?;
+        let target = resolve_uri_path(
+            &self.address_space,
+            params.path.as_deref().unwrap_or("."),
+        )
+        .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .list(
                 &self.address_space,
-                &mount_id,
+                &target.mount_id,
                 ListOptions {
-                    path: params.path.unwrap_or_else(|| ".".to_string()),
+                    path: if target.path.is_empty() { ".".to_string() } else { target.path },
                     pattern: params.pattern,
                     recursive: params.recursive.unwrap_or(false),
                 },
@@ -2801,8 +2678,8 @@ impl FsSearchTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct FsSearchParams {
-    pub mount: Option<String>,
     pub query: String,
+    /// 搜索根路径，支持 `mount_id://relative/path` 格式；省略 mount 前缀时使用默认 mount
     pub path: Option<String>,
     #[serde(default)]
     pub regex: bool,
@@ -2831,14 +2708,18 @@ impl AgentTool for FsSearchTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsSearchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
-            .map_err(AgentToolError::ExecutionFailed)?;
+        let target = resolve_uri_path(
+            &self.address_space,
+            params.path.as_deref().unwrap_or("."),
+        )
+        .map_err(AgentToolError::ExecutionFailed)?;
+        let search_path = if target.path.is_empty() { ".".to_string() } else { target.path };
         let (hits, truncated) = self
             .service
             .search_text_extended(
                 &self.address_space,
-                &mount_id,
-                params.path.as_deref().unwrap_or("."),
+                &target.mount_id,
+                &search_path,
                 &params.query,
                 params.regex,
                 params.include.as_deref(),
@@ -2876,7 +2757,7 @@ impl ShellExecTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ShellExecParams {
-    pub mount: Option<String>,
+    /// 工作目录，支持 `mount_id://relative/path` 格式；省略时使用默认 mount 根目录
     pub cwd: Option<String>,
     pub command: String,
     pub timeout_secs: Option<u64>,
@@ -2902,15 +2783,18 @@ impl AgentTool for ShellExecTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_execution_mount_id(&self.address_space, params.mount.as_deref())
-            .map_err(AgentToolError::ExecutionFailed)?;
-        let cwd = params.cwd.unwrap_or_else(|| ".".to_string());
+        let target = resolve_uri_path(
+            &self.address_space,
+            params.cwd.as_deref().unwrap_or("."),
+        )
+        .map_err(AgentToolError::ExecutionFailed)?;
+        let cwd = if target.path.is_empty() { ".".to_string() } else { target.path };
         let result = self
             .service
             .exec(
                 &self.address_space,
                 &ExecRequest {
-                    mount_id: mount_id.clone(),
+                    mount_id: target.mount_id.clone(),
                     cwd: cwd.clone(),
                     command: params.command.clone(),
                     timeout_ms: params.timeout_secs.map(|s| s.saturating_mul(1000)),
@@ -2927,8 +2811,8 @@ impl AgentTool for ShellExecTool {
         };
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "命令: {}\nmount: {}\ncwd: {}\n退出码: {}\n{}",
-                params.command, mount_id, cwd, result.exit_code, merged
+                "命令: {}\ncwd: {}://{}\n退出码: {}\n{}",
+                params.command, target.mount_id, cwd, result.exit_code, merged
             ))],
             is_error: result.exit_code != 0,
             details: None,

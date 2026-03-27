@@ -200,8 +200,10 @@ impl AppState {
         )));
         let mount_provider_registry = Arc::new(mount_provider_registry);
 
-        let address_space_service =
-            Arc::new(RelayAddressSpaceService::new(backend_registry.clone()));
+        let address_space_service = Arc::new(RelayAddressSpaceService::new(
+            backend_registry.clone(),
+            mount_provider_registry.clone(),
+        ));
         let executor_hub_handle = SharedExecutorHubHandle::default();
 
         let inline_persister: Arc<dyn crate::address_space_access::InlineContentPersister> =

@@ -5,6 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_domain::workflow::WorkflowTargetKind;
 use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
@@ -173,6 +174,10 @@ pub struct ListMountEntriesQuery {
     #[serde(default)]
     pub story_id: Option<String>,
     #[serde(default)]
+    pub owner_type: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
     pub pattern: Option<String>,
@@ -209,6 +214,8 @@ pub async fn list_mount_entries(
         &current_user,
         &query.project_id,
         &query.story_id,
+        &query.owner_type,
+        &query.owner_id,
         ProjectPermission::View,
     )
     .await?;
@@ -260,6 +267,10 @@ pub struct ReadMountFileRequest {
     pub project_id: Option<String>,
     #[serde(default)]
     pub story_id: Option<String>,
+    #[serde(default)]
+    pub owner_type: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
     pub mount_id: String,
     pub path: String,
 }
@@ -285,6 +296,8 @@ pub async fn read_mount_file(
         &current_user,
         &req.project_id,
         &req.story_id,
+        &req.owner_type,
+        &req.owner_id,
         ProjectPermission::View,
     )
     .await?;
@@ -321,6 +334,10 @@ pub struct WriteMountFileRequest {
     pub project_id: Option<String>,
     #[serde(default)]
     pub story_id: Option<String>,
+    #[serde(default)]
+    pub owner_type: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
     pub mount_id: String,
     pub path: String,
     pub content: String,
@@ -347,6 +364,8 @@ pub async fn write_mount_file(
         &current_user,
         &req.project_id,
         &req.story_id,
+        &req.owner_type,
+        &req.owner_id,
         ProjectPermission::Edit,
     )
     .await?;
@@ -423,6 +442,10 @@ pub struct PreviewAddressSpaceRequest {
     pub project_id: String,
     #[serde(default)]
     pub story_id: Option<String>,
+    #[serde(default)]
+    pub owner_type: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
     #[serde(default = "default_preview_target")]
     pub target: String,
 }
@@ -468,19 +491,28 @@ pub async fn preview_address_space(
         ProjectPermission::View,
     )
     .await?;
-    let workspace = resolve_project_workspace(&state, &project).await;
 
-    let target = match req.target.as_str() {
-        "story" => SessionMountTarget::Story,
-        "task" => SessionMountTarget::Task,
-        _ => SessionMountTarget::Project,
+    let parsed_owner = parse_lifecycle_owner(&req.owner_type, &req.owner_id);
+    let workspace = resolve_workspace_for_owner(&state, &project, parsed_owner).await;
+
+    let target = match parsed_owner {
+        Some((WorkflowTargetKind::Task, _)) => SessionMountTarget::Task,
+        _ => match req.target.as_str() {
+            "story" => SessionMountTarget::Story,
+            "task" => SessionMountTarget::Task,
+            _ => SessionMountTarget::Project,
+        },
     };
 
-    let address_space = state
+    let mut address_space = state
         .services
         .address_space_service
         .build_preview_address_space(&project, story.as_ref(), workspace.as_ref(), target)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
+
+    if let Some((target_kind, target_id)) = parsed_owner {
+        inject_lifecycle_mount(&state, target_kind, target_id, &mut address_space).await;
+    }
 
     let mut mounts = Vec::new();
     for mount in &address_space.mounts {
@@ -553,13 +585,15 @@ async fn check_mount_backend_online(
     Ok(())
 }
 
-/// 统一构建 address space：从 project_id + story_id 推导完整的 mount 列表。
-/// 这确保 inline_fs / relay_fs 等所有 mount 都能被正确解析。
+/// 统一构建 address space：从 project_id + story_id + 可选 owner 信息推导完整的 mount 列表。
+/// 当提供 owner_type + owner_id 时，自动注入活跃 lifecycle run 的 mount，并在 owner 为 task 时从 task 解析 workspace。
 async fn resolve_address_space(
     state: &Arc<AppState>,
     current_user: &agentdash_plugin_api::AuthIdentity,
     project_id: &Option<String>,
     story_id: &Option<String>,
+    owner_type: &Option<String>,
+    owner_id: &Option<String>,
     permission: ProjectPermission,
 ) -> Result<ExecutionAddressSpace, ApiError> {
     let pid_str = project_id
@@ -569,19 +603,134 @@ async fn resolve_address_space(
         Uuid::parse_str(pid_str).map_err(|_| ApiError::BadRequest("无效的 project_id".into()))?;
     let (project, story) =
         load_project_and_optional_story(state, current_user, pid, story_id, permission).await?;
-    let workspace = resolve_project_workspace(state, &project).await;
 
-    let target = if story.is_some() {
-        SessionMountTarget::Story
-    } else {
-        SessionMountTarget::Project
+    let parsed_owner = parse_lifecycle_owner(owner_type, owner_id);
+    let workspace = resolve_workspace_for_owner(state, &project, parsed_owner).await;
+
+    let target = match parsed_owner {
+        Some((WorkflowTargetKind::Task, _)) => SessionMountTarget::Task,
+        _ if story.is_some() => SessionMountTarget::Story,
+        _ => SessionMountTarget::Project,
     };
 
-    state
+    let mut address_space = state
         .services
         .address_space_service
         .build_preview_address_space(&project, story.as_ref(), workspace.as_ref(), target)
-        .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))
+        .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
+
+    if let Some((target_kind, target_id)) = parsed_owner {
+        inject_lifecycle_mount(state, target_kind, target_id, &mut address_space).await;
+    }
+
+    Ok(address_space)
+}
+
+fn parse_lifecycle_owner(
+    owner_type: &Option<String>,
+    owner_id: &Option<String>,
+) -> Option<(WorkflowTargetKind, Uuid)> {
+    let otype = owner_type.as_deref()?.trim();
+    let oid = owner_id.as_deref()?.trim();
+    let kind = match otype {
+        "project" => WorkflowTargetKind::Project,
+        "story" => WorkflowTargetKind::Story,
+        "task" => WorkflowTargetKind::Task,
+        _ => return None,
+    };
+    Uuid::parse_str(oid).ok().map(|id| (kind, id))
+}
+
+/// 按 owner 类型逐级解析 workspace：
+/// - Task owner → task.workspace_id
+/// - Story owner → story.default_workspace_id
+/// - 最终兜底 → project.config.default_workspace_id → project 下第一个 workspace
+async fn resolve_workspace_for_owner(
+    state: &Arc<AppState>,
+    project: &agentdash_domain::project::Project,
+    owner: Option<(WorkflowTargetKind, Uuid)>,
+) -> Option<agentdash_domain::workspace::Workspace> {
+    if let Some((kind, id)) = owner {
+        match kind {
+            WorkflowTargetKind::Task => {
+                if let Some(ws) = resolve_task_workspace(state, id).await {
+                    return Some(ws);
+                }
+            }
+            WorkflowTargetKind::Story => {
+                if let Some(story) = state.repos.story_repo.get_by_id(id).await.ok().flatten() {
+                    if let Some(ws_id) = story.default_workspace_id {
+                        if let Some(ws) = state.repos.workspace_repo.get_by_id(ws_id).await.ok().flatten() {
+                            return Some(ws);
+                        }
+                    }
+                }
+            }
+            WorkflowTargetKind::Project => {}
+        }
+    }
+
+    if let Some(ws) = resolve_project_workspace(state, project).await {
+        return Some(ws);
+    }
+
+    let workspaces = state
+        .repos
+        .workspace_repo
+        .list_by_project(project.id)
+        .await
+        .ok()
+        .unwrap_or_default();
+    workspaces.into_iter().next()
+}
+
+async fn resolve_task_workspace(
+    state: &Arc<AppState>,
+    task_id: Uuid,
+) -> Option<agentdash_domain::workspace::Workspace> {
+    let task = state.repos.task_repo.get_by_id(task_id).await.ok()??;
+    let ws_id = task.workspace_id?;
+    state.repos.workspace_repo.get_by_id(ws_id).await.ok()?
+}
+
+async fn inject_lifecycle_mount(
+    state: &Arc<AppState>,
+    target_kind: WorkflowTargetKind,
+    target_id: Uuid,
+    address_space: &mut ExecutionAddressSpace,
+) {
+    use agentdash_application::address_space::build_lifecycle_mount;
+    use agentdash_application::workflow::select_active_run;
+
+    let runs = match state
+        .repos
+        .workflow_run_repo
+        .list_by_target(target_kind, target_id)
+        .await
+    {
+        Ok(runs) => runs,
+        Err(e) => {
+            tracing::warn!(%target_id, "inject_lifecycle_mount: 查询失败 {e}");
+            return;
+        }
+    };
+
+    let Some(active_run) = select_active_run(runs) else {
+        return;
+    };
+
+    let lifecycle_key = match state
+        .repos
+        .lifecycle_definition_repo
+        .get_by_id(active_run.lifecycle_id)
+        .await
+    {
+        Ok(Some(def)) => def.key,
+        _ => "unknown".to_string(),
+    };
+
+    let runtime_mount = build_lifecycle_mount(active_run.id, &lifecycle_key);
+    address_space.mounts.push(crate::runtime_bridge::runtime_mount_to_execution(&runtime_mount));
 }
 
 async fn load_workspace(

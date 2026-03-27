@@ -55,6 +55,36 @@ impl AppStateTaskExecutionGateway {
     pub fn new(state: Arc<AppState>) -> Self {
         Self { state }
     }
+
+    async fn find_active_lifecycle_run(
+        &self,
+        task: &Task,
+    ) -> Result<Option<agentdash_domain::workflow::LifecycleRun>, TaskExecutionError> {
+        let runs = self
+            .state
+            .repos
+            .workflow_run_repo
+            .list_by_target(
+                agentdash_domain::workflow::WorkflowTargetKind::Task,
+                task.id,
+            )
+            .await
+            .map_err(|e| TaskExecutionError::Internal(format!("查询 lifecycle runs 失败: {e}")))?;
+        Ok(agentdash_application::workflow::select_active_run(runs))
+    }
+
+    async fn resolve_lifecycle_key(&self, lifecycle_id: Uuid) -> String {
+        match self
+            .state
+            .repos
+            .lifecycle_definition_repo
+            .get_by_id(lifecycle_id)
+            .await
+        {
+            Ok(Some(def)) => def.key,
+            _ => "unknown".to_string(),
+        }
+    }
 }
 
 #[async_trait]
@@ -169,14 +199,26 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             let agent_type = resolved_config
                 .as_ref()
                 .map(|config| config.executor.as_str());
-            Some(execution_address_space_to_runtime(
+            let mut space = execution_address_space_to_runtime(
                 &self
                     .state
                     .services
                     .address_space_service
                     .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
                     .map_err(map_internal_error)?,
-            ))
+            );
+
+            if let Ok(Some(active_run)) = self.find_active_lifecycle_run(task).await {
+                let lifecycle_key = self.resolve_lifecycle_key(active_run.lifecycle_id).await;
+                space.mounts.push(
+                    agentdash_application::address_space::build_lifecycle_mount(
+                        active_run.id,
+                        &lifecycle_key,
+                    ),
+                );
+            }
+
+            Some(space)
         } else {
             None
         };

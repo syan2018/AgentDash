@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use agent_client_protocol::{EnvVariable, McpServer, McpServerHttp, McpServerSse, McpServerStdio};
 use agentdash_application::runtime::{
-    ExecutorConfig, RuntimeAddressSpace, RuntimeFileEntry, RuntimeMcpBinding, RuntimeMcpServer,
-    RuntimeMount, RuntimeToolScope, ThinkingLevel,
+    ExecutorConfig, RuntimeFileEntry, RuntimeMcpBinding, RuntimeMcpServer, RuntimeToolScope,
+    ThinkingLevel,
 };
-use agentdash_executor::{AgentDashExecutorConfig, ExecutionAddressSpace, ExecutionMount};
+use agentdash_executor::AgentDashExecutorConfig;
 use agentdash_mcp::{injection::McpInjectionConfig, scope::ToolScope};
 use agentdash_relay::FileEntryRelay;
 
@@ -52,62 +52,6 @@ pub fn runtime_thinking_level_to_connector(level: ThinkingLevel) -> agentdash_ex
         ThinkingLevel::Medium => agentdash_executor::ThinkingLevel::Medium,
         ThinkingLevel::High => agentdash_executor::ThinkingLevel::High,
         ThinkingLevel::Xhigh => agentdash_executor::ThinkingLevel::Xhigh,
-    }
-}
-
-pub fn execution_mount_to_runtime(mount: &ExecutionMount) -> RuntimeMount {
-    RuntimeMount {
-        id: mount.id.clone(),
-        provider: mount.provider.clone(),
-        backend_id: mount.backend_id.clone(),
-        root_ref: mount.root_ref.clone(),
-        capabilities: mount.capabilities.clone(),
-        default_write: mount.default_write,
-        display_name: mount.display_name.clone(),
-        metadata: mount.metadata.clone(),
-    }
-}
-
-pub fn runtime_mount_to_execution(mount: &RuntimeMount) -> ExecutionMount {
-    ExecutionMount {
-        id: mount.id.clone(),
-        provider: mount.provider.clone(),
-        backend_id: mount.backend_id.clone(),
-        root_ref: mount.root_ref.clone(),
-        capabilities: mount.capabilities.clone(),
-        default_write: mount.default_write,
-        display_name: mount.display_name.clone(),
-        metadata: mount.metadata.clone(),
-    }
-}
-
-pub fn execution_address_space_to_runtime(
-    address_space: &ExecutionAddressSpace,
-) -> RuntimeAddressSpace {
-    RuntimeAddressSpace {
-        mounts: address_space
-            .mounts
-            .iter()
-            .map(execution_mount_to_runtime)
-            .collect(),
-        default_mount_id: address_space.default_mount_id.clone(),
-        source_project_id: address_space.source_project_id.clone(),
-        source_story_id: address_space.source_story_id.clone(),
-    }
-}
-
-pub fn runtime_address_space_to_execution(
-    address_space: &RuntimeAddressSpace,
-) -> ExecutionAddressSpace {
-    ExecutionAddressSpace {
-        mounts: address_space
-            .mounts
-            .iter()
-            .map(runtime_mount_to_execution)
-            .collect(),
-        default_mount_id: address_space.default_mount_id.clone(),
-        source_project_id: address_space.source_project_id.clone(),
-        source_story_id: address_space.source_story_id.clone(),
     }
 }
 
@@ -226,6 +170,9 @@ pub fn mcp_injection_config_to_runtime_binding(
 mod tests {
     use super::*;
 
+    use agentdash_application::runtime::RuntimeAddressSpace;
+    use agentdash_executor::{ExecutionAddressSpace, ExecutionMount};
+
     #[test]
     fn executor_config_roundtrip_preserves_fields() {
         let connector = AgentDashExecutorConfig {
@@ -271,8 +218,8 @@ mod tests {
             source_story_id: Some("story-1".to_string()),
         };
 
-        let runtime = execution_address_space_to_runtime(&address_space);
-        let next = runtime_address_space_to_execution(&runtime);
+        let runtime = RuntimeAddressSpace::from(&address_space);
+        let next = runtime.to_execution_address_space();
 
         assert_eq!(next, address_space);
     }

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use agentdash_domain::common::MountCapability;
+use agentdash_executor::{ExecutionAddressSpace, ExecutionMount};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -72,6 +73,35 @@ impl RuntimeMount {
     pub fn supports(&self, capability: MountCapabilitySet) -> bool {
         self.capabilities.contains(&capability)
     }
+
+    /// 转为执行层挂载（孤儿规则下不能 `impl From<&RuntimeMount> for ExecutionMount`）。
+    pub fn to_execution_mount(&self) -> ExecutionMount {
+        ExecutionMount {
+            id: self.id.clone(),
+            provider: self.provider.clone(),
+            backend_id: self.backend_id.clone(),
+            root_ref: self.root_ref.clone(),
+            capabilities: self.capabilities.clone(),
+            default_write: self.default_write,
+            display_name: self.display_name.clone(),
+            metadata: self.metadata.clone(),
+        }
+    }
+}
+
+impl From<&ExecutionMount> for RuntimeMount {
+    fn from(mount: &ExecutionMount) -> Self {
+        RuntimeMount {
+            id: mount.id.clone(),
+            provider: mount.provider.clone(),
+            backend_id: mount.backend_id.clone(),
+            root_ref: mount.root_ref.clone(),
+            capabilities: mount.capabilities.clone(),
+            default_write: mount.default_write,
+            display_name: mount.display_name.clone(),
+            metadata: mount.metadata.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,6 +120,31 @@ impl RuntimeAddressSpace {
     pub fn default_mount(&self) -> Option<&RuntimeMount> {
         let default_id = self.default_mount_id.as_deref()?;
         self.mounts.iter().find(|mount| mount.id == default_id)
+    }
+
+    /// 转为执行层 address space（与 `From<&ExecutionAddressSpace>` 方向相反）。
+    pub fn to_execution_address_space(&self) -> ExecutionAddressSpace {
+        ExecutionAddressSpace {
+            mounts: self.mounts.iter().map(RuntimeMount::to_execution_mount).collect(),
+            default_mount_id: self.default_mount_id.clone(),
+            source_project_id: self.source_project_id.clone(),
+            source_story_id: self.source_story_id.clone(),
+        }
+    }
+}
+
+impl From<&ExecutionAddressSpace> for RuntimeAddressSpace {
+    fn from(address_space: &ExecutionAddressSpace) -> Self {
+        RuntimeAddressSpace {
+            mounts: address_space
+                .mounts
+                .iter()
+                .map(RuntimeMount::from)
+                .collect(),
+            default_mount_id: address_space.default_mount_id.clone(),
+            source_project_id: address_space.source_project_id.clone(),
+            source_story_id: address_space.source_story_id.clone(),
+        }
     }
 }
 

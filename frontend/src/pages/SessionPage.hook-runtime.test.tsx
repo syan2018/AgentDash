@@ -6,7 +6,7 @@ import {
   HookRuntimeDiagnosticsCard,
   HookRuntimeSurfaceCard,
   HookRuntimeTraceCard,
-} from "./SessionPage";
+} from "../features/session-context";
 import type { HookSessionRuntimeInfo } from "../types";
 
 const hookRuntime: HookSessionRuntimeInfo = {

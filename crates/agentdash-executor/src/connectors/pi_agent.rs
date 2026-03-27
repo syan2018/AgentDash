@@ -489,11 +489,8 @@ impl AgentConnector for PiAgentConnector {
             HookRuntimeDelegate::new_with_trace_events(hook_session, hook_trace_tx)
         }));
 
-        // 注入 thinking_level（若 executor_config 有指定）
         if let Some(thinking_level) = context.executor_config.thinking_level {
-            agent.set_thinking_level(crate::connector::to_agent_runtime_thinking_level(
-                thinking_level,
-            ));
+            agent.set_thinking_level(thinking_level);
         }
 
         let (event_rx, join_handle) = agent

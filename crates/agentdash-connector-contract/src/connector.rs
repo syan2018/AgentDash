@@ -177,48 +177,9 @@ pub struct FlowCapabilities {
     pub resolve_hook_action: bool,
 }
 
-/// 向后兼容别名，规范定义在 `agentdash_domain::common::MountCapability`
 pub type ExecutionMountCapability = agentdash_domain::common::MountCapability;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExecutionMount {
-    pub id: String,
-    pub provider: String,
-    pub backend_id: String,
-    pub root_ref: String,
-    pub capabilities: Vec<ExecutionMountCapability>,
-    pub default_write: bool,
-    pub display_name: String,
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    pub metadata: serde_json::Value,
-}
-
-impl ExecutionMount {
-    pub fn supports(&self, capability: ExecutionMountCapability) -> bool {
-        self.capabilities.contains(&capability)
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExecutionAddressSpace {
-    #[serde(default)]
-    pub mounts: Vec<ExecutionMount>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_mount_id: Option<String>,
-    /// 来源 Project ID（用于 inline_fs 写入持久化追溯）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_project_id: Option<String>,
-    /// 来源 Story ID（用于 inline_fs 写入持久化追溯）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_story_id: Option<String>,
-}
-
-impl ExecutionAddressSpace {
-    pub fn default_mount(&self) -> Option<&ExecutionMount> {
-        let default_id = self.default_mount_id.as_deref()?;
-        self.mounts.iter().find(|mount| mount.id == default_id)
-    }
-}
+pub type ExecutionMount = agentdash_domain::common::Mount;
+pub type ExecutionAddressSpace = agentdash_domain::common::AddressSpace;
 
 #[derive(Debug, Clone)]
 pub enum PromptPayload {

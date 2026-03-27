@@ -19,7 +19,6 @@ use crate::{address_space_access::SessionMountTarget, app_state::AppState, rpc::
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
 };
-use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::story::context_builder::{
     StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
 };
@@ -672,7 +671,7 @@ async fn build_story_owner_prompt_request(
         .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
     effective_mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
-    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
+    let runtime_address_space = address_space.clone();
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let resolved_workspace_sources =
@@ -764,7 +763,7 @@ async fn build_project_owner_prompt_request(
             effective_mcp_servers.push(server);
         }
     }
-    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
+    let runtime_address_space = address_space.clone();
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {

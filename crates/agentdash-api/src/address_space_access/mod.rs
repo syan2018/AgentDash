@@ -24,7 +24,7 @@ mod tests {
 
     use super::*;
     use agentdash_agent::AgentTool;
-    use agentdash_application::runtime::{RuntimeAddressSpace, RuntimeMount};
+    use agentdash_application::runtime::RuntimeAddressSpace;
     use agentdash_relay::RelayMessage;
     use chrono::Utc;
     use tokio::sync::mpsc;
@@ -192,7 +192,7 @@ mod tests {
         let mount = &address_space.mounts[0];
         assert_eq!(mount.id, "shared");
         let files =
-            inline_files_from_mount(&RuntimeMount::from(mount))
+            inline_files_from_mount(mount)
                 .expect("inline files");
         assert_eq!(
             files.get("spec.md").map(String::as_str),
@@ -234,7 +234,7 @@ mod tests {
             default_mount_id: Some("brief".to_string()),
             ..Default::default()
         };
-        let address_space = runtime_address_space.to_execution_address_space();
+        let address_space = runtime_address_space;
 
         let read = service
             .read_text(

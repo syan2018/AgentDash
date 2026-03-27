@@ -47,6 +47,33 @@ application/src/
 
 ## Requirements
 
+### Phase 0: Mount/AddressSpace 类型统一到 domain（前置基建）
+
+**问题**：`application::RuntimeMount` 和 `connector-contract::ExecutionMount` 字段完全一致，
+存在双向转换 boilerplate（`to_execution_mount()` / `From<&ExecutionMount>`）。
+`RuntimeAddressSpace` ↔ `ExecutionAddressSpace` 同理。`MountCapability` 已在 domain 中。
+
+**方案**：将 Mount/AddressSpace 核心结构定义移入 `agentdash-domain`，消除重复。
+
+1. 在 `domain/src/common/` 新增 `mount.rs`（或扩展现有 `mount_capability.rs`）：
+   - 定义 `Mount`（即当前 `ExecutionMount` / `RuntimeMount` 的统一体）
+   - 定义 `AddressSpace`（即当前 `ExecutionAddressSpace` / `RuntimeAddressSpace` 的统一体）
+   - `MountCapability` 已在此，保持不动
+
+2. `connector-contract`：
+   - 删除 `ExecutionMount` / `ExecutionAddressSpace` 的独立定义
+   - 改为 `pub use agentdash_domain::common::{Mount as ExecutionMount, AddressSpace as ExecutionAddressSpace}`
+     （或直接使用新名称，视迁移友好度决定）
+
+3. `application`：
+   - 删除 `RuntimeMount` / `RuntimeAddressSpace` 的独立定义
+   - 改为 re-export（`pub use agentdash_domain::common::{Mount as RuntimeMount, AddressSpace as RuntimeAddressSpace}`）
+   - 删除所有 `to_execution_mount()` / `From<&ExecutionMount>` 转换代码
+
+4. `executor`：通过 connector-contract re-export 自动获得新类型，无额外变更
+
+**验证**：`cargo check` 全 crate 通过，零转换 boilerplate
+
 ### Phase 1: Service 迁移（可与 SPI 下沉并行）
 
 1. 迁移 `inline_persistence.rs` → `application/src/address_space/inline_persistence.rs`
@@ -65,6 +92,8 @@ application/src/
 
 ## Acceptance Criteria
 
+- [ ] Mount/AddressSpace 核心结构在 `domain/src/common/` 中定义，其他 crate 为 re-export
+- [ ] `application` 和 `connector-contract` 中零 mount 转换 boilerplate
 - [ ] `cargo check -p agentdash-application` 通过
 - [ ] `cargo check -p agentdash-api` 通过
 - [ ] `RelayAddressSpaceService` 在 application crate 中可独立测试
@@ -74,6 +103,11 @@ application/src/
 
 ## Technical Notes
 
+- **Phase 0 命名策略**：统一后的权威类型建议命名为 `Mount` / `AddressSpace`（中性名称），
+  各 crate 按需使用 type alias（`ExecutionMount = Mount`、`RuntimeMount = Mount`）保持
+  迁移期间的兼容性，后续逐步统一为直接使用 `Mount`
+- **domain 新增依赖**：domain 当前是零运行时依赖的纯类型 crate，Mount/AddressSpace
+  只用到 serde + serde_json + schemars，与 domain 现有依赖一致，不引入新外部依赖
 - `RelayAddressSpaceService` 使用 `regex::Regex` 做 inline 搜索，
   需确认 application 的 Cargo.toml 加上 `regex` 依赖
 - `tools_companion.rs` 依赖 `SharedExecutorHubHandle`（来自 runtime_provider），

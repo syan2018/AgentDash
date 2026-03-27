@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::WorkflowTargetKind;
-use agentdash_application::runtime::{RuntimeAddressSpace, RuntimeMount};
 use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
@@ -393,10 +392,8 @@ pub async fn write_mount_file(
         );
         let overlay =
             crate::address_space_access::InlineContentOverlay::new(std::sync::Arc::new(persister));
-        let runtime_address_space = RuntimeAddressSpace::from(&address_space);
-        let runtime_mount = RuntimeMount::from(mount);
         overlay
-            .write(&runtime_address_space, &runtime_mount, &normalized_path, &req.content)
+            .write(&address_space, mount, &normalized_path, &req.content)
             .await
             .map_err(ApiError::Internal)?;
 
@@ -529,7 +526,7 @@ pub async fn preview_address_space(
         };
 
         let file_count = if mount.provider == PROVIDER_INLINE_FS {
-            inline_files_from_mount(&RuntimeMount::from(mount))
+            inline_files_from_mount(mount)
                 .ok()
                 .map(|files| files.len())
         } else {
@@ -568,13 +565,12 @@ async fn check_mount_available(
     mount_id: &str,
 ) -> Result<(), ApiError> {
     if let Some(mount) = address_space.mounts.iter().find(|m| m.id == mount_id) {
-        let runtime_mount = RuntimeMount::from(mount);
         if let Some(provider) = state
             .services
             .mount_provider_registry
             .get(&mount.provider)
         {
-            if !provider.is_available(&runtime_mount).await {
+            if !provider.is_available(mount).await {
                 return Err(ApiError::ServiceUnavailable(format!(
                     "挂载点 \"{}\" 的 Backend 当前不在线（{}），无法浏览文件。请确认 Backend 已连接。",
                     mount.display_name, mount.backend_id,
@@ -730,7 +726,7 @@ async fn inject_lifecycle_mount(
     };
 
     let runtime_mount = build_lifecycle_mount(active_run.id, &lifecycle_key);
-    address_space.mounts.push(runtime_mount.to_execution_mount());
+    address_space.mounts.push(runtime_mount);
 }
 
 async fn load_workspace(

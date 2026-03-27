@@ -1,9 +1,13 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+
+// ─── re-exports from connector-contract (tool SPI) ─────────
+pub use agentdash_connector_contract::tool::{
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
+};
+pub use agentdash_connector_contract::connector::ThinkingLevel;
 
 /// 当前时间戳（毫秒），对齐 Pi 的 `Date.now()`
 pub fn now_millis() -> u64 {
@@ -199,60 +203,6 @@ pub trait AgentRuntimeDelegate: Send + Sync {
 }
 
 pub type DynAgentRuntimeDelegate = std::sync::Arc<dyn AgentRuntimeDelegate>;
-
-// ─── ContentPart ────────────────────────────────────────────
-
-/// 内容片段。相比旧实现，增加 reasoning 支持，用于更完整地贴近 Pi assistant 内容模型。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ContentPart {
-    Text {
-        text: String,
-    },
-    Image {
-        mime_type: String,
-        data: String,
-    },
-    Reasoning {
-        text: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        signature: Option<String>,
-    },
-}
-
-impl ContentPart {
-    pub fn text(text: impl Into<String>) -> Self {
-        Self::Text { text: text.into() }
-    }
-
-    pub fn reasoning(
-        text: impl Into<String>,
-        id: Option<String>,
-        signature: Option<String>,
-    ) -> Self {
-        Self::Reasoning {
-            text: text.into(),
-            id,
-            signature,
-        }
-    }
-
-    pub fn extract_text(&self) -> Option<&str> {
-        match self {
-            Self::Text { text } => Some(text),
-            _ => None,
-        }
-    }
-
-    pub fn extract_reasoning(&self) -> Option<&str> {
-        match self {
-            Self::Reasoning { text, .. } => Some(text),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallInfo {
@@ -475,49 +425,6 @@ pub enum AgentEvent {
     },
 }
 
-// ─── AgentTool ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentToolResult {
-    pub content: Vec<ContentPart>,
-    pub is_error: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub details: Option<serde_json::Value>,
-}
-
-pub type ToolUpdateCallback = Arc<dyn Fn(AgentToolResult) + Send + Sync>;
-
-#[derive(Debug, Error)]
-pub enum AgentToolError {
-    #[error("工具执行失败: {0}")]
-    ExecutionFailed(String),
-    #[error("参数无效: {0}")]
-    InvalidArguments(String),
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-}
-
-#[async_trait]
-pub trait AgentTool: Send + Sync {
-    fn name(&self) -> &str;
-    fn description(&self) -> &str;
-    fn parameters_schema(&self) -> serde_json::Value;
-
-    fn label(&self) -> &str {
-        self.name()
-    }
-
-    async fn execute(
-        &self,
-        tool_call_id: &str,
-        args: serde_json::Value,
-        cancel: CancellationToken,
-        on_update: Option<ToolUpdateCallback>,
-    ) -> Result<AgentToolResult, AgentToolError>;
-}
-
-pub type DynAgentTool = Arc<dyn AgentTool>;
-
 // ─── AgentContext ───────────────────────────────────────────
 
 #[derive(Clone)]
@@ -631,20 +538,6 @@ pub enum AssistantStreamEvent {
         content_index: usize,
         tool_call: ToolCallInfo,
     },
-}
-
-// ─── ThinkingLevel ──────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ThinkingLevel {
-    #[default]
-    Off,
-    Minimal,
-    Low,
-    Medium,
-    High,
-    Xhigh,
 }
 
 // ─── AgentError ─────────────────────────────────────────────

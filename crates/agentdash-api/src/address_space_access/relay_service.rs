@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application::address_space::*;
-use agentdash_application::runtime::{RuntimeAddressSpace, RuntimeMount};
+use agentdash_application::runtime::RuntimeMount;
 use agentdash_executor::{ExecutionAddressSpace, ExecutionMountCapability};
 
 use super::inline_persistence::InlineContentOverlay;
@@ -24,7 +24,7 @@ impl RelayAddressSpaceService {
         &self,
         workspace: &agentdash_domain::workspace::Workspace,
     ) -> Result<ExecutionAddressSpace, String> {
-        build_workspace_address_space(workspace).map(|space| space.to_execution_address_space())
+        build_workspace_address_space(workspace)
     }
 
     pub fn build_address_space(
@@ -36,7 +36,6 @@ impl RelayAddressSpaceService {
         agent_type: Option<&str>,
     ) -> Result<ExecutionAddressSpace, String> {
         build_derived_address_space(project, story, workspace, agent_type, target)
-            .map(|space| space.to_execution_address_space())
     }
 
     pub fn list_mounts(
@@ -52,7 +51,7 @@ impl RelayAddressSpaceService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ReadResult, String> {
-        let runtime_address_space = RuntimeAddressSpace::from(address_space);
+        let runtime_address_space = address_space.clone();
         let mount =
             resolve_mount(&runtime_address_space, &target.mount_id, ExecutionMountCapability::Read)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
@@ -81,7 +80,7 @@ impl RelayAddressSpaceService {
         content: &str,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<(), String> {
-        let runtime_address_space = RuntimeAddressSpace::from(address_space);
+        let runtime_address_space = address_space.clone();
         let mount = resolve_mount(
             &runtime_address_space,
             &target.mount_id,
@@ -117,7 +116,7 @@ impl RelayAddressSpaceService {
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ListResult, String> {
-        let runtime_address_space = RuntimeAddressSpace::from(address_space);
+        let runtime_address_space = address_space.clone();
         let mount =
             resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
@@ -160,7 +159,7 @@ impl RelayAddressSpaceService {
         address_space: &ExecutionAddressSpace,
         request: &ExecRequest,
     ) -> Result<ExecResult, String> {
-        let runtime_address_space = RuntimeAddressSpace::from(address_space);
+        let runtime_address_space = address_space.clone();
         let mount = resolve_mount(
             &runtime_address_space,
             &request.mount_id,
@@ -222,7 +221,7 @@ impl RelayAddressSpaceService {
         context_lines: usize,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<(Vec<String>, bool), String> {
-        let runtime_address_space = RuntimeAddressSpace::from(address_space);
+        let runtime_address_space = address_space.clone();
         let mount =
             resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::Search)?;
         let base_path = normalize_mount_relative_path(path, true)?;

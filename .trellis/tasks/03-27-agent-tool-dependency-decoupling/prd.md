@@ -93,11 +93,20 @@ api (仅做组合：构建 tool 实例，注入 executor)
 | `application` | 已依赖 `connector-contract` → 自动获得 AgentTool SPI → 可实现 tool |
 | `api` | tool 实现可迁出到 application（后续任务） |
 
-### ThinkingLevel 统一
+### ThinkingLevel 三重定义统一
 
-connector-contract 已有 `ThinkingLevel`，agent 也有一份。
-下沉后 agent 改为 `pub use agentdash_connector_contract::connector::ThinkingLevel`，
-消除 `to_agent_runtime_thinking_level()` 转换函数。
+`ThinkingLevel` 当前在**三个 crate** 中各有一份完全相同的定义：
+
+| 位置 | 当前状态 |
+|------|---------|
+| `connector-contract/src/connector.rs` | 合同层定义（权威来源） |
+| `agent/src/types.rs` | 独立定义（与合同层重复） |
+| `application/src/runtime.rs` | 独立定义（与合同层重复） |
+
+下沉后统一为 connector-contract 中的单一定义：
+- `agent` → `pub use agentdash_connector_contract::connector::ThinkingLevel`
+- `application` → `pub use agentdash_connector_contract::connector::ThinkingLevel`（或通过 executor re-export）
+- 消除 `to_agent_runtime_thinking_level()` 等所有转换函数
 
 ## Execution Plan
 
@@ -119,13 +128,20 @@ pub type ToolUpdateCallback = Arc<dyn Fn(AgentToolResult) + Send + Sync>;
 - types.rs 中 tool 相关类型改为 re-export（保持 agent 对外 API 不变）
 - ThinkingLevel 改为 re-export
 
-### Step 3: executor 清理 feature gate
+### Step 3: application 清理 ThinkingLevel 重复定义
+
+- `application/src/runtime.rs` 中删除本地 `ThinkingLevel` 定义
+- 改为 `pub use agentdash_connector_contract::connector::ThinkingLevel`
+  （或通过 executor re-export 路径：`pub use agentdash_executor::ThinkingLevel`）
+- 确认 `ExecutorConfig` 中引用的 ThinkingLevel 指向统一定义
+
+### Step 4: executor 清理 feature gate
 
 - `RuntimeToolProvider` 去掉 `#[cfg(feature = "pi-agent")]`
 - `connector.rs` 中 `to_agent_runtime_thinking_level()` 删除
 - `pi_agent.rs` 改用统一 ThinkingLevel
 
-### Step 4: 验证
+### Step 5: 验证
 
 - `cargo check` 全 crate 通过（含 `--no-default-features`）
 - `cargo test` 全 crate 通过
@@ -136,7 +152,7 @@ pub type ToolUpdateCallback = Arc<dyn Fn(AgentToolResult) + Send + Sync>;
 - [ ] `AgentTool` trait 族定义在 `connector-contract/src/tool.rs`
 - [ ] `agentdash-agent` 依赖 `connector-contract`，re-export tool 类型
 - [ ] `RuntimeToolProvider` 无 feature gate
-- [ ] `ThinkingLevel` 只有一份定义（在 connector-contract）
+- [ ] `ThinkingLevel` 只有一份定义（在 connector-contract），agent 和 application 均为 re-export
 - [ ] `cargo check` 全 crate 通过
 - [ ] `cargo test` 全 crate 通过
 - [ ] agent 对外 API 零 breaking change

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agentdash-domain = { workspace = true }
+agentdash-connector-contract = { workspace = true }
 agentdash-injection = { workspace = true }
 agentdash-executor = { workspace = true }
 agentdash-mcp = { workspace = true }
@@ -20,3 +21,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 async-trait = "0.1"
+
+[dev-dependencies]
+agentdash-agent = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }

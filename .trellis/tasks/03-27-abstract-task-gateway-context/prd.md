@@ -54,13 +54,18 @@ pub struct RepositorySet {
 
 api 层的 `AppState` 改为持有 `application::RepositorySet`。
 
-### Phase 2：runtime_bridge 迁入 executor
+### Phase 2：runtime_bridge 评估与简化
 
 `runtime_bridge.rs` 是纯转换函数层（connector-contract 类型 ↔ application runtime 类型）。
-**决策：迁入 executor 层**，executor 已依赖 connector-contract + domain。
 
-需要确认 executor 是否已依赖 application（可能需要新增依赖，
-或将转换函数放在 connector-contract 层）。
+**前置影响**：如果 Task 3 Phase 0 已将 Mount/AddressSpace 统一到 domain，
+则 `RuntimeMount ↔ ExecutionMount` 和 `RuntimeAddressSpace ↔ ExecutionAddressSpace`
+的转换代码已消除。runtime_bridge 剩余内容可能仅为少量 enum/config 映射。
+
+评估策略：
+1. 先完成 Task 3 Phase 0（mount 统一），再审计 runtime_bridge 剩余内容
+2. 若剩余转换极少，直接内联到使用处即可，不需要独立模块
+3. 若仍有显著转换逻辑，迁入 executor 或 connector-contract
 
 ### Phase 3：workspace_resolution 迁入 application
 
@@ -91,25 +96,58 @@ api 层的 `BackendRegistry` 实现 `BackendAvailability` trait。
 - `resolve_workspace_declared_sources()` 随 workspace_resolution 一起迁移
 - api 层仅保留 re-export
 
+### Phase 6（延伸目标）：application → executor 解耦
+
+当前 application 直接依赖 executor crate（主要用 `ExecutorHub` 相关类型和 `ExecutionAddressSpace`）。
+在 Task 3 Phase 0 统一 mount 类型后，application 对 executor 的类型依赖已大幅减少。
+
+**目标**：让 application 通过 trait 抽象获取会话执行能力，而非直接依赖 executor crate。
+
+```rust
+// application/src/session_executor.rs（或 connector-contract 中）
+#[async_trait]
+pub trait SessionExecutor: Send + Sync {
+    async fn create_session(&self, title: &str) -> Result<SessionMeta, ...>;
+    async fn start_prompt(&self, session_id: &str, req: PromptSessionRequest) -> Result<String, ...>;
+    async fn cancel(&self, session_id: &str) -> Result<(), ...>;
+    async fn subscribe_with_history(&self, session_id: &str) -> ...;
+    // ... 其他 application 实际使用的 ExecutorHub 方法
+}
+```
+
+api 层组装时注入 `ExecutorHub as dyn SessionExecutor`。
+
+**前提**：Phase 1-5 完成后，评估 application 对 executor 的实际残余依赖面再决定
+trait 的最终形态。此为延伸目标，非本 Task 的硬性交付物。
+
 ## Acceptance Criteria
 
+### 硬性交付
 - [ ] `RepositorySet` 定义在 application（或 domain）层
-- [ ] `runtime_bridge` 转换函数在 executor 层
-- [ ] `workspace_resolution` 核心逻辑在 application 层
+- [ ] `runtime_bridge` 剩余转换逻辑已评估并处置（内联、迁移或删除）
+- [ ] `workspace_resolution` 核心逻辑在 application 层（BackendAvailability trait）
 - [ ] `task_execution_gateway.rs` 在 api 层缩减到 < 300 行（适配+胶水）
 - [ ] `task_agent_context.rs` 在 api 层缩减到 < 10 行（纯 re-export）
 - [ ] gateway 核心逻辑可在 application 层独立测试
 - [ ] `cargo check` 全 crate 通过
 - [ ] `cargo test` 全 crate 通过
 
+### 延伸目标（Phase 6）
+- [ ] application 对 executor 的直接 crate 依赖已消除或降级为 dev-dependency
+- [ ] `SessionExecutor` trait（或等价抽象）定义在 application 或 connector-contract 层
+
 ## Risk & Complexity
 
 **高复杂度**——这是所有迁移任务中最难的一个：
 - `AppState` 是 api 层的组合根，gateway 通过它访问十几个服务
 - `runtime_bridge` 的转换逻辑涉及 executor、relay、ACP 三种协议
+  （但 Task 3 Phase 0 mount 统一后预计大幅减少）
 - RepositorySet 下沉影响 AppState 的构造方式
 
 建议在 SPI 下沉、hooks 迁移和 tool 迁移**全部完成后**再启动本任务。
+
+**Phase 6 额外风险**：`SessionExecutor` trait 的 API 面设计需要在 Phase 1-5 完成后
+根据 application 对 executor 的实际调用审计来决定，过早设计可能导致返工。
 
 ## Dependency Chain
 

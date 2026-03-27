@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# 跨层工具合同（AgentTool SPI）
+agentdash-connector-contract = { workspace = true }
+
 # Rig 核心（LLM 能力层）
 rig-core = { workspace = true }
 

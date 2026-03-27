@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use agentdash_application::workflow::{
+use crate::workflow::{
     evaluate_step_completion, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
 };
 use agentdash_domain::task::TaskStatus;

@@ -17,7 +17,6 @@ use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
-use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
@@ -266,7 +265,7 @@ pub(crate) async fn build_task_session_context_response(
         .unwrap_or_default();
 
     let story_overrides = extract_story_overrides(&story);
-    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
+    let runtime_address_space = address_space.clone();
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
@@ -287,10 +286,7 @@ pub(crate) async fn build_task_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltTaskSessionContextResponse {
-        address_space: plan
-            .address_space
-            .as_ref()
-            .map(|space| space.to_execution_address_space()),
+        address_space: plan.address_space.clone(),
         context_snapshot: Some(snapshot),
     })
 }

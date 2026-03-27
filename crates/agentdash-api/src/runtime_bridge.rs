@@ -170,7 +170,7 @@ pub fn mcp_injection_config_to_runtime_binding(
 mod tests {
     use super::*;
 
-    use agentdash_application::runtime::RuntimeAddressSpace;
+    
     use agentdash_executor::{ExecutionAddressSpace, ExecutionMount};
 
     #[test]
@@ -218,9 +218,7 @@ mod tests {
             source_story_id: Some("story-1".to_string()),
         };
 
-        let runtime = RuntimeAddressSpace::from(&address_space);
-        let next = runtime.to_execution_address_space();
-
-        assert_eq!(next, address_space);
+        let cloned = address_space.clone();
+        assert_eq!(cloned, address_space);
     }
 }

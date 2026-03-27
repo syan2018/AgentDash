@@ -3,7 +3,6 @@ use std::sync::Arc;
 use agentdash_agent::tools::schema_value;
 use agentdash_agent::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use agentdash_application::address_space::*;
-use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_executor::ExecutionAddressSpace;
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -17,8 +16,7 @@ pub(super) fn resolve_uri_path(
     address_space: &ExecutionAddressSpace,
     path: &str,
 ) -> Result<ResourceRef, String> {
-    let runtime_address_space = RuntimeAddressSpace::from(address_space);
-    parse_mount_uri(path, &runtime_address_space)
+    parse_mount_uri(path, address_space)
 }
 
 pub(super) fn ok_text(text: String) -> AgentToolResult {

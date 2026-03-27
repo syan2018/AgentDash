@@ -7,8 +7,7 @@ pub mod hub;
 #[cfg(feature = "pi-agent")]
 mod runtime_delegate;
 
-#[cfg(feature = "pi-agent")]
-pub use connector::RuntimeToolProvider;
+pub use connector::{DynAgentTool, RuntimeToolProvider};
 pub use connector::{
     AgentConnector, AgentDashExecutorConfig, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,

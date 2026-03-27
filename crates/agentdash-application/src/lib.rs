@@ -1,6 +1,7 @@
 pub mod address_space;
 pub mod bootstrap_plan;
 pub mod context;
+pub mod hooks;
 pub mod project;
 pub mod runtime;
 pub mod session_context;

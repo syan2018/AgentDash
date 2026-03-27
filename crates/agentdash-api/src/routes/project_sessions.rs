@@ -12,7 +12,6 @@ use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
-use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
 use agentdash_executor::SessionExecutionState;
 
@@ -186,7 +185,7 @@ pub(crate) async fn build_project_session_context_response(
                 .collect()
         })
         .unwrap_or_default();
-    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
+    let runtime_address_space = address_space.clone();
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project: project.clone(),
@@ -211,10 +210,7 @@ pub(crate) async fn build_project_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltProjectSessionContextResponse {
-        address_space: plan
-            .address_space
-            .as_ref()
-            .map(|space| space.to_execution_address_space()),
+        address_space: plan.address_space.clone(),
         context_snapshot: Some(snapshot),
     })
 }

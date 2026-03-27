@@ -13,7 +13,6 @@ use agentdash_application::task_execution::{
     ContinueTaskCommand, ContinueTaskResult, ExecutionPhase, SessionOverview, StartTaskCommand,
     StartTaskResult, StartedTurn, TaskExecutionError, TaskExecutionGateway, TaskSessionResult,
 };
-use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::task_restart_tracker::RestartDecision;
 use agentdash_domain::{
     project::Project,
@@ -200,14 +199,12 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             let agent_type = resolved_config
                 .as_ref()
                 .map(|config| config.executor.as_str());
-            let mut space = RuntimeAddressSpace::from(
-                &self
+            let mut space = self
                     .state
                     .services
                     .address_space_service
                     .build_address_space(&project, Some(&story), workspace.as_ref(), SessionMountTarget::Task, agent_type)
-                    .map_err(map_internal_error)?,
-            );
+                    .map_err(map_internal_error)?;
 
             if let Ok(Some(active_run)) = self.find_active_lifecycle_run(task).await {
                 let lifecycle_key = self.resolve_lifecycle_key(active_run.lifecycle_id).await;
@@ -269,9 +266,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                     .map(runtime_executor_config_to_connector),
                 mcp_servers: runtime_mcp_servers_to_acp(&built.mcp_servers),
                 workspace_root,
-                address_space: address_space
-                    .as_ref()
-                    .map(|space| space.to_execution_address_space()),
+                address_space: address_space.clone(),
                 flow_capabilities: Some(agentdash_executor::FlowCapabilities {
                     workflow_artifact: true,
                     companion_dispatch: false,

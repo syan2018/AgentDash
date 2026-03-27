@@ -15,10 +15,11 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
-use crate::{app_state::AppState, rpc::ApiError};
+use crate::{address_space_access::SessionMountTarget, app_state::AppState, rpc::ApiError};
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
 };
+use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::story::context_builder::{
     StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
 };
@@ -37,7 +38,7 @@ use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
-use crate::runtime_bridge::{acp_mcp_servers_to_runtime, execution_address_space_to_runtime};
+use crate::runtime_bridge::acp_mcp_servers_to_runtime;
 use crate::session_context::apply_workspace_defaults;
 use crate::task_agent_context::resolve_workspace_declared_sources;
 
@@ -526,7 +527,7 @@ async fn build_story_owner_prompt_request(
                 state
                     .services
                     .address_space_service
-                    .build_story_address_space(project, story, workspace, agent_type)
+                    .build_address_space(project, Some(story), workspace, SessionMountTarget::Story, agent_type)
                     .map_err(ApiError::BadRequest)?,
             )
         }
@@ -544,9 +545,7 @@ async fn build_story_owner_prompt_request(
         .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
     effective_mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
-    let runtime_address_space = address_space
-        .as_ref()
-        .map(execution_address_space_to_runtime);
+    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let resolved_workspace_sources =
@@ -616,7 +615,7 @@ async fn build_project_owner_prompt_request(
             state
                 .services
                 .address_space_service
-                .build_project_address_space(project, workspace.as_ref(), effective_agent_type)
+                .build_address_space(project, None, workspace.as_ref(), SessionMountTarget::Project, effective_agent_type)
                 .map_err(ApiError::BadRequest)?,
         ),
     };
@@ -638,9 +637,7 @@ async fn build_project_owner_prompt_request(
             effective_mcp_servers.push(server);
         }
     }
-    let runtime_address_space = address_space
-        .as_ref()
-        .map(execution_address_space_to_runtime);
+    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::address_space_access::SessionMountTarget;
 use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
 use agentdash_application::task::artifact::{
     build_tool_call_patch, build_tool_call_update_patch, upsert_tool_execution_artifact,
@@ -12,6 +13,7 @@ use agentdash_application::task_execution::{
     ContinueTaskCommand, ContinueTaskResult, ExecutionPhase, SessionOverview, StartTaskCommand,
     StartTaskResult, StartedTurn, TaskExecutionError, TaskExecutionGateway, TaskSessionResult,
 };
+use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::task_restart_tracker::RestartDecision;
 use agentdash_domain::{
     project::Project,
@@ -35,8 +37,7 @@ use crate::task_agent_context::BuiltTaskAgentContext;
 use crate::{
     app_state::AppState,
     runtime_bridge::{
-        connector_executor_config_to_runtime, execution_address_space_to_runtime,
-        mcp_injection_config_to_runtime_binding, runtime_address_space_to_execution,
+        connector_executor_config_to_runtime, mcp_injection_config_to_runtime_binding,
         runtime_executor_config_to_connector, runtime_mcp_servers_to_acp,
     },
     task_agent_context::{
@@ -63,7 +64,7 @@ impl AppStateTaskExecutionGateway {
         let runs = self
             .state
             .repos
-            .workflow_run_repo
+            .lifecycle_run_repo
             .list_by_target(
                 agentdash_domain::workflow::WorkflowTargetKind::Task,
                 task.id,
@@ -199,12 +200,12 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
             let agent_type = resolved_config
                 .as_ref()
                 .map(|config| config.executor.as_str());
-            let mut space = execution_address_space_to_runtime(
+            let mut space = RuntimeAddressSpace::from(
                 &self
                     .state
                     .services
                     .address_space_service
-                    .build_task_address_space(&project, &story, workspace.as_ref(), agent_type)
+                    .build_address_space(&project, Some(&story), workspace.as_ref(), SessionMountTarget::Task, agent_type)
                     .map_err(map_internal_error)?,
             );
 
@@ -270,7 +271,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
                 workspace_root,
                 address_space: address_space
                     .as_ref()
-                    .map(runtime_address_space_to_execution),
+                    .map(|space| space.to_execution_address_space()),
                 flow_capabilities: Some(agentdash_executor::FlowCapabilities {
                     workflow_artifact: true,
                     companion_dispatch: false,

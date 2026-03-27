@@ -4,6 +4,7 @@ use agentdash_application::task_execution::TaskExecutionError;
 use agentdash_domain::task::{Task, TaskStatus};
 use agentdash_mcp::injection::McpInjectionConfig;
 
+use crate::address_space_access::SessionMountTarget;
 use crate::dto::TaskResponse;
 use axum::{
     Json,
@@ -16,6 +17,7 @@ use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
+use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
@@ -29,8 +31,7 @@ use crate::{
     },
     rpc::ApiError,
     runtime_bridge::{
-        acp_mcp_servers_to_runtime, execution_address_space_to_runtime,
-        mcp_injection_config_to_runtime_binding, runtime_address_space_to_execution,
+        acp_mcp_servers_to_runtime, mcp_injection_config_to_runtime_binding,
         runtime_executor_config_to_connector, runtime_mcp_servers_to_acp,
     },
 };
@@ -242,7 +243,7 @@ async fn build_task_session_context_response(
         state
             .services
             .address_space_service
-            .build_task_address_space(&project, &story, workspace.as_ref(), effective_agent_type)
+            .build_address_space(&project, Some(&story), workspace.as_ref(), SessionMountTarget::Task, effective_agent_type)
             .ok()
     } else {
         None
@@ -265,7 +266,7 @@ async fn build_task_session_context_response(
         .unwrap_or_default();
 
     let story_overrides = extract_story_overrides(&story);
-    let runtime_address_space = address_space.as_ref().map(execution_address_space_to_runtime);
+    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
@@ -286,7 +287,10 @@ async fn build_task_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltTaskSessionContextResponse {
-        address_space: plan.address_space.as_ref().map(runtime_address_space_to_execution),
+        address_space: plan
+            .address_space
+            .as_ref()
+            .map(|space| space.to_execution_address_space()),
         context_snapshot: Some(snapshot),
     })
 }

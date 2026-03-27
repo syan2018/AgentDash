@@ -7,10 +7,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::address_space_access::SessionMountTarget;
 use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
+use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
 use agentdash_executor::SessionExecutionState;
 
@@ -24,7 +26,6 @@ use crate::{
     rpc::ApiError,
     runtime_bridge::{
         acp_mcp_servers_to_runtime, connector_executor_config_to_runtime,
-        execution_address_space_to_runtime, runtime_address_space_to_execution,
         runtime_executor_config_to_connector,
     },
 };
@@ -144,9 +145,11 @@ async fn build_project_session_context_response(
         state
             .services
             .address_space_service
-            .build_project_address_space(
+            .build_address_space(
                 project,
+                None,
                 workspace.as_ref(),
+                SessionMountTarget::Project,
                 resolved_config.as_ref().map(|c| c.executor.as_str()),
             )
             .ok()
@@ -183,7 +186,7 @@ async fn build_project_session_context_response(
                 .collect()
         })
         .unwrap_or_default();
-    let runtime_address_space = address_space.as_ref().map(execution_address_space_to_runtime);
+    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project: project.clone(),
@@ -208,7 +211,10 @@ async fn build_project_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltProjectSessionContextResponse {
-        address_space: plan.address_space.as_ref().map(runtime_address_space_to_execution),
+        address_space: plan
+            .address_space
+            .as_ref()
+            .map(|space| space.to_execution_address_space()),
         context_snapshot: Some(snapshot),
     })
 }

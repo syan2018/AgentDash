@@ -61,7 +61,7 @@ pub struct RepositorySet {
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
-    pub workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
@@ -200,10 +200,8 @@ impl AppState {
         )));
         let mount_provider_registry = Arc::new(mount_provider_registry);
 
-        let address_space_service = Arc::new(RelayAddressSpaceService::new(
-            backend_registry.clone(),
-            mount_provider_registry.clone(),
-        ));
+        let address_space_service =
+            Arc::new(RelayAddressSpaceService::new(mount_provider_registry.clone()));
         let executor_hub_handle = SharedExecutorHubHandle::default();
 
         let inline_persister: Arc<dyn crate::address_space_access::InlineContentPersister> =
@@ -298,7 +296,7 @@ impl AppState {
                 workflow_definition_repo: workflow_repo.clone(),
                 lifecycle_definition_repo: workflow_repo.clone(),
                 workflow_assignment_repo: workflow_repo.clone(),
-                workflow_run_repo: workflow_repo,
+                lifecycle_run_repo: workflow_repo,
             },
             services: ServiceSet {
                 executor_hub,
@@ -341,7 +339,7 @@ async fn build_pi_agent_connector(
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
     inline_persister: Option<Arc<dyn crate::address_space_access::InlineContentPersister>>,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
@@ -356,7 +354,7 @@ async fn build_pi_agent_connector(
         session_binding_repo,
         workflow_definition_repo,
         lifecycle_definition_repo,
-        workflow_run_repo,
+        lifecycle_run_repo,
         executor_hub_handle,
         inline_persister,
     )));

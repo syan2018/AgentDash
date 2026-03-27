@@ -39,14 +39,6 @@ use agentdash_application::runtime::{RuntimeAddressSpace, RuntimeMount};
 
 pub use agentdash_application::address_space::*;
 
-use crate::{
-    relay::registry::BackendRegistry,
-    runtime_bridge::{
-        execution_address_space_to_runtime,
-        runtime_address_space_to_execution,
-    },
-};
-
 // ─── Inline Content Persistence ─────────────────────────────
 
 /// 内联文件写入持久化接口。
@@ -281,10 +273,7 @@ pub struct RelayAddressSpaceService {
 }
 
 impl RelayAddressSpaceService {
-    pub fn new(
-        _backend_registry: Arc<BackendRegistry>,
-        mount_provider_registry: Arc<MountProviderRegistry>,
-    ) -> Self {
+    pub fn new(mount_provider_registry: Arc<MountProviderRegistry>) -> Self {
         Self {
             mount_provider_registry,
         }
@@ -294,51 +283,19 @@ impl RelayAddressSpaceService {
         &self,
         workspace: &agentdash_domain::workspace::Workspace,
     ) -> Result<ExecutionAddressSpace, String> {
-        build_workspace_address_space(workspace).map(|space| runtime_address_space_to_execution(&space))
+        build_workspace_address_space(workspace).map(|space| space.to_execution_address_space())
     }
 
-    pub fn build_task_address_space(
-        &self,
-        project: &agentdash_domain::project::Project,
-        story: &agentdash_domain::story::Story,
-        workspace: Option<&agentdash_domain::workspace::Workspace>,
-        agent_type: Option<&str>,
-    ) -> Result<ExecutionAddressSpace, String> {
-        build_derived_address_space(project, Some(story), workspace, agent_type, SessionMountTarget::Task)
-            .map(|space| runtime_address_space_to_execution(&space))
-    }
-
-    pub fn build_project_address_space(
-        &self,
-        project: &agentdash_domain::project::Project,
-        workspace: Option<&agentdash_domain::workspace::Workspace>,
-        agent_type: Option<&str>,
-    ) -> Result<ExecutionAddressSpace, String> {
-        build_derived_address_space(project, None, workspace, agent_type, SessionMountTarget::Project)
-            .map(|space| runtime_address_space_to_execution(&space))
-    }
-
-    pub fn build_story_address_space(
-        &self,
-        project: &agentdash_domain::project::Project,
-        story: &agentdash_domain::story::Story,
-        workspace: Option<&agentdash_domain::workspace::Workspace>,
-        agent_type: Option<&str>,
-    ) -> Result<ExecutionAddressSpace, String> {
-        build_derived_address_space(project, Some(story), workspace, agent_type, SessionMountTarget::Story)
-            .map(|space| runtime_address_space_to_execution(&space))
-    }
-
-    /// 预览模式：不指定 agent_type，生成最大可见范围的 address space
-    pub fn build_preview_address_space(
+    pub fn build_address_space(
         &self,
         project: &agentdash_domain::project::Project,
         story: Option<&agentdash_domain::story::Story>,
         workspace: Option<&agentdash_domain::workspace::Workspace>,
         target: SessionMountTarget,
+        agent_type: Option<&str>,
     ) -> Result<ExecutionAddressSpace, String> {
-        build_derived_address_space(project, story, workspace, None, target)
-            .map(|space| runtime_address_space_to_execution(&space))
+        build_derived_address_space(project, story, workspace, agent_type, target)
+            .map(|space| space.to_execution_address_space())
     }
 
     pub fn list_mounts(
@@ -354,7 +311,7 @@ impl RelayAddressSpaceService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ReadResult, String> {
-        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let runtime_address_space = RuntimeAddressSpace::from(address_space);
         let mount =
             resolve_mount(&runtime_address_space, &target.mount_id, ExecutionMountCapability::Read)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
@@ -383,7 +340,7 @@ impl RelayAddressSpaceService {
         content: &str,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<(), String> {
-        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let runtime_address_space = RuntimeAddressSpace::from(address_space);
         let mount = resolve_mount(
             &runtime_address_space,
             &target.mount_id,
@@ -419,7 +376,7 @@ impl RelayAddressSpaceService {
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ListResult, String> {
-        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let runtime_address_space = RuntimeAddressSpace::from(address_space);
         let mount =
             resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
@@ -462,7 +419,7 @@ impl RelayAddressSpaceService {
         address_space: &ExecutionAddressSpace,
         request: &ExecRequest,
     ) -> Result<ExecResult, String> {
-        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let runtime_address_space = RuntimeAddressSpace::from(address_space);
         let mount = resolve_mount(
             &runtime_address_space,
             &request.mount_id,
@@ -524,7 +481,7 @@ impl RelayAddressSpaceService {
         context_lines: usize,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<(Vec<String>, bool), String> {
-        let runtime_address_space = execution_address_space_to_runtime(address_space);
+        let runtime_address_space = RuntimeAddressSpace::from(address_space);
         let mount =
             resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::Search)?;
         let base_path = normalize_mount_relative_path(path, true)?;
@@ -650,7 +607,7 @@ pub struct RelayRuntimeToolProvider {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     executor_hub_handle: SharedExecutorHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
 }
@@ -661,7 +618,7 @@ impl RelayRuntimeToolProvider {
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-        workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         executor_hub_handle: SharedExecutorHubHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
     ) -> Self {
@@ -670,7 +627,7 @@ impl RelayRuntimeToolProvider {
             session_binding_repo,
             workflow_definition_repo,
             lifecycle_definition_repo,
-            workflow_run_repo,
+            lifecycle_run_repo,
             executor_hub_handle,
             inline_persister,
         }
@@ -741,7 +698,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             tools.push(Arc::new(WorkflowArtifactReportTool::new(
                 self.workflow_definition_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
-                self.workflow_run_repo.clone(),
+                self.lifecycle_run_repo.clone(),
                 context,
             )));
         }
@@ -783,7 +740,7 @@ fn ok_text(text: String) -> AgentToolResult {
 struct WorkflowArtifactReportTool {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     current_session_id: Option<String>,
     current_turn_id: String,
     hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
@@ -819,13 +776,13 @@ impl WorkflowArtifactReportTool {
     fn new(
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-        workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             workflow_definition_repo,
             lifecycle_definition_repo,
-            workflow_run_repo,
+            lifecycle_run_repo,
             current_session_id: context
                 .hook_session
                 .as_ref()
@@ -1050,7 +1007,7 @@ impl AgentTool for WorkflowArtifactReportTool {
         let service = LifecycleRunService::new(
             self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
-            self.workflow_run_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
         );
         let run = service
             .append_step_artifacts(AppendLifecycleStepArtifactsCommand {
@@ -2127,7 +2084,7 @@ fn resolve_uri_path(
     address_space: &ExecutionAddressSpace,
     path: &str,
 ) -> Result<ResourceRef, String> {
-    let runtime_address_space = execution_address_space_to_runtime(address_space);
+    let runtime_address_space = RuntimeAddressSpace::from(address_space);
     parse_mount_uri(path, &runtime_address_space)
 }
 
@@ -2887,10 +2844,13 @@ mod tests {
         assert!(err.contains("路径越界"));
     }
 
+    fn empty_mount_registry() -> Arc<MountProviderRegistry> {
+        Arc::new(MountProviderRegistry::new())
+    }
+
     #[test]
     fn session_for_workspace_creates_main_mount() {
-        let registry = crate::relay::registry::BackendRegistry::new();
-        let service = RelayAddressSpaceService::new(registry);
+        let service = RelayAddressSpaceService::new(empty_mount_registry());
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session should build");
@@ -2901,8 +2861,7 @@ mod tests {
 
     #[test]
     fn build_task_address_space_merges_project_story_and_workspace_policy() {
-        let registry = crate::relay::registry::BackendRegistry::new();
-        let service = RelayAddressSpaceService::new(registry);
+        let service = RelayAddressSpaceService::new(empty_mount_registry());
         let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![inline_container(
             "project-spec",
@@ -2928,10 +2887,11 @@ mod tests {
         )];
 
         let address_space = service
-            .build_task_address_space(
+            .build_address_space(
                 &project,
-                &story,
+                Some(&story),
                 Some(&sample_workspace()),
+                SessionMountTarget::Task,
                 Some("PI_AGENT"),
             )
             .expect("address space should build");
@@ -2951,8 +2911,7 @@ mod tests {
 
     #[test]
     fn story_containers_can_disable_and_override_project_defaults() {
-        let registry = crate::relay::registry::BackendRegistry::new();
-        let service = RelayAddressSpaceService::new(registry);
+        let service = RelayAddressSpaceService::new(empty_mount_registry());
         let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![
             inline_container("project-spec", "shared", "spec.md", "project spec"),
@@ -2970,14 +2929,14 @@ mod tests {
         )];
 
         let address_space = service
-            .build_task_address_space(&project, &story, None, Some("PI_AGENT"))
+            .build_address_space(&project, Some(&story), None, SessionMountTarget::Task, Some("PI_AGENT"))
             .expect("address space should build");
 
         assert_eq!(address_space.mounts.len(), 1);
         let mount = &address_space.mounts[0];
         assert_eq!(mount.id, "shared");
         let files =
-            inline_files_from_mount(&crate::runtime_bridge::execution_mount_to_runtime(mount))
+            inline_files_from_mount(&RuntimeMount::from(mount))
                 .expect("inline files");
         assert_eq!(
             files.get("spec.md").map(String::as_str),
@@ -2987,8 +2946,7 @@ mod tests {
 
     #[tokio::test]
     async fn inline_mount_supports_read_list_and_search() {
-        let registry = crate::relay::registry::BackendRegistry::new();
-        let service = RelayAddressSpaceService::new(registry);
+        let service = RelayAddressSpaceService::new(empty_mount_registry());
         let runtime_address_space = RuntimeAddressSpace {
             mounts: vec![
                 build_context_container_mount(&ContextContainerDefinition {
@@ -3020,7 +2978,7 @@ mod tests {
             default_mount_id: Some("brief".to_string()),
             ..Default::default()
         };
-        let address_space = runtime_address_space_to_execution(&runtime_address_space);
+        let address_space = runtime_address_space.to_execution_address_space();
 
         let read = service
             .read_text(
@@ -3081,7 +3039,11 @@ mod tests {
             .await
             .expect("backend should register");
 
-        let service = RelayAddressSpaceService::new(registry.clone());
+        let mut mount_registry = MountProviderRegistry::new();
+        mount_registry.register(Arc::new(
+            crate::mount_providers::relay_fs::RelayFsMountProvider::new(registry.clone()),
+        ));
+        let service = RelayAddressSpaceService::new(Arc::new(mount_registry));
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session");
@@ -3132,8 +3094,7 @@ mod tests {
 
     #[test]
     fn runtime_tool_schemas_are_openai_compatible() {
-        let registry = crate::relay::registry::BackendRegistry::new();
-        let service = Arc::new(RelayAddressSpaceService::new(registry));
+        let service = Arc::new(RelayAddressSpaceService::new(empty_mount_registry()));
         let address_space = ExecutionAddressSpace {
             mounts: vec![agentdash_executor::ExecutionMount {
                 id: "brief".to_string(),

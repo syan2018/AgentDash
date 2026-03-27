@@ -11,18 +11,19 @@ use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
+use agentdash_application::runtime::RuntimeAddressSpace;
 use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
 
 use crate::{
+    address_space_access::SessionMountTarget,
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
     routes::project_agents::resolve_project_workspace,
     rpc::ApiError,
     runtime_bridge::{
         acp_mcp_servers_to_runtime, connector_executor_config_to_runtime,
-        execution_address_space_to_runtime, runtime_address_space_to_execution,
     },
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
@@ -382,10 +383,11 @@ async fn build_story_session_context_response(
         state
             .services
             .address_space_service
-            .build_story_address_space(
+            .build_address_space(
                 &project,
-                story,
+                Some(story),
                 workspace.as_ref(),
+                SessionMountTarget::Story,
                 effective_agent_type.as_deref(),
             )
             .ok()
@@ -414,7 +416,7 @@ async fn build_story_session_context_response(
 
     let story_overrides = extract_story_overrides(story);
 
-    let runtime_address_space = address_space.as_ref().map(execution_address_space_to_runtime);
+    let runtime_address_space = address_space.as_ref().map(RuntimeAddressSpace::from);
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
@@ -435,7 +437,10 @@ async fn build_story_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltStorySessionContextResponse {
-        address_space: plan.address_space.as_ref().map(runtime_address_space_to_execution),
+        address_space: plan
+            .address_space
+            .as_ref()
+            .map(|space| space.to_execution_address_space()),
         context_snapshot: Some(snapshot),
     })
 }

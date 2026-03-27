@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::WorkflowTargetKind;
+use agentdash_application::runtime::{RuntimeAddressSpace, RuntimeMount};
 use agentdash_executor::ExecutionAddressSpace;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
@@ -19,7 +20,6 @@ use crate::auth::{
     load_story_and_project_with_permission, load_workspace_and_project_with_permission,
 };
 use crate::rpc::ApiError;
-use crate::runtime_bridge::{execution_address_space_to_runtime, execution_mount_to_runtime};
 use agentdash_application::address_space::selected_workspace_binding;
 
 const MAX_ENTRIES: usize = 200;
@@ -220,7 +220,7 @@ pub async fn list_mount_entries(
     )
     .await?;
 
-    check_mount_backend_online(&state, &address_space, &mount_id).await?;
+    check_mount_available(&state, &address_space, &mount_id).await?;
 
     let base_path = query.path.as_deref().unwrap_or(".");
     let recursive = query.recursive.unwrap_or(false);
@@ -302,7 +302,7 @@ pub async fn read_mount_file(
     )
     .await?;
 
-    check_mount_backend_online(&state, &address_space, &req.mount_id).await?;
+    check_mount_available(&state, &address_space, &req.mount_id).await?;
 
     let result: ReadResult = state
         .services
@@ -393,8 +393,8 @@ pub async fn write_mount_file(
         );
         let overlay =
             crate::address_space_access::InlineContentOverlay::new(std::sync::Arc::new(persister));
-        let runtime_address_space = execution_address_space_to_runtime(&address_space);
-        let runtime_mount = execution_mount_to_runtime(mount);
+        let runtime_address_space = RuntimeAddressSpace::from(&address_space);
+        let runtime_mount = RuntimeMount::from(mount);
         overlay
             .write(&runtime_address_space, &runtime_mount, &normalized_path, &req.content)
             .await
@@ -409,7 +409,7 @@ pub async fn write_mount_file(
         }));
     }
 
-    check_mount_backend_online(&state, &address_space, &req.mount_id).await?;
+    check_mount_available(&state, &address_space, &req.mount_id).await?;
 
     state
         .services
@@ -507,7 +507,7 @@ pub async fn preview_address_space(
     let mut address_space = state
         .services
         .address_space_service
-        .build_preview_address_space(&project, story.as_ref(), workspace.as_ref(), target)
+        .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
 
     if let Some((target_kind, target_id)) = parsed_owner {
@@ -529,7 +529,7 @@ pub async fn preview_address_space(
         };
 
         let file_count = if mount.provider == PROVIDER_INLINE_FS {
-            inline_files_from_mount(&execution_mount_to_runtime(mount))
+            inline_files_from_mount(&RuntimeMount::from(mount))
                 .ok()
                 .map(|files| files.len())
         } else {
@@ -561,21 +561,21 @@ pub async fn preview_address_space(
 
 // ─── 辅助函数 ──────────────────────────────────────────────
 
-/// 检查指定 mount 的 backend 是否在线。inline_fs 等无 backend 的 mount 直接通过。
-async fn check_mount_backend_online(
+/// 通过已注册的 `MountProvider::is_available` 检查 mount 是否可用。
+async fn check_mount_available(
     state: &Arc<AppState>,
     address_space: &ExecutionAddressSpace,
     mount_id: &str,
 ) -> Result<(), ApiError> {
     if let Some(mount) = address_space.mounts.iter().find(|m| m.id == mount_id) {
-        if mount.provider != PROVIDER_INLINE_FS && !mount.backend_id.is_empty() {
-            if !state
-                .services
-                .backend_registry
-                .is_online(&mount.backend_id)
-                .await
-            {
-                return Err(ApiError::Conflict(format!(
+        let runtime_mount = RuntimeMount::from(mount);
+        if let Some(provider) = state
+            .services
+            .mount_provider_registry
+            .get(&mount.provider)
+        {
+            if !provider.is_available(&runtime_mount).await {
+                return Err(ApiError::ServiceUnavailable(format!(
                     "挂载点 \"{}\" 的 Backend 当前不在线（{}），无法浏览文件。请确认 Backend 已连接。",
                     mount.display_name, mount.backend_id,
                 )));
@@ -616,7 +616,7 @@ async fn resolve_address_space(
     let mut address_space = state
         .services
         .address_space_service
-        .build_preview_address_space(&project, story.as_ref(), workspace.as_ref(), target)
+        .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
 
     if let Some((target_kind, target_id)) = parsed_owner {
@@ -670,7 +670,7 @@ async fn resolve_workspace_for_owner(
         }
     }
 
-    if let Some(ws) = resolve_project_workspace(state, project).await {
+    if let Ok(Some(ws)) = super::project_agents::resolve_project_workspace(state, project).await {
         return Some(ws);
     }
 
@@ -704,7 +704,7 @@ async fn inject_lifecycle_mount(
 
     let runs = match state
         .repos
-        .workflow_run_repo
+        .lifecycle_run_repo
         .list_by_target(target_kind, target_id)
         .await
     {
@@ -730,7 +730,7 @@ async fn inject_lifecycle_mount(
     };
 
     let runtime_mount = build_lifecycle_mount(active_run.id, &lifecycle_key);
-    address_space.mounts.push(crate::runtime_bridge::runtime_mount_to_execution(&runtime_mount));
+    address_space.mounts.push(runtime_mount.to_execution_mount());
 }
 
 async fn load_workspace(
@@ -803,18 +803,3 @@ async fn require_backend_online(
     Ok(())
 }
 
-async fn resolve_project_workspace(
-    state: &Arc<AppState>,
-    project: &agentdash_domain::project::Project,
-) -> Option<agentdash_domain::workspace::Workspace> {
-    if let Some(workspace_id) = project.config.default_workspace_id {
-        return state
-            .repos
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .ok()
-            .flatten();
-    }
-    None
-}

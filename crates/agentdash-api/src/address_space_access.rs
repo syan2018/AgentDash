@@ -1976,6 +1976,15 @@ fn workflow_record_artifact_type_key(
         agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence => {
             "checklist_evidence"
         }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::ExecutionTrace => {
+            "execution_trace"
+        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::DecisionRecord => {
+            "decision_record"
+        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::ContextSnapshot => {
+            "context_snapshot"
+        }
     }
 }
 

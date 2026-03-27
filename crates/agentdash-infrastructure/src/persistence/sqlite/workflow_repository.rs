@@ -58,7 +58,8 @@ impl SqliteWorkflowRepository {
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lifecycle_id TEXT NOT NULL,
             target_kind TEXT NOT NULL, target_id TEXT NOT NULL, status TEXT NOT NULL,
             current_step_key TEXT, step_states TEXT NOT NULL,
-            record_artifacts TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            record_artifacts TEXT NOT NULL, execution_log TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             last_activity_at TEXT NOT NULL
         )"#,
         )
@@ -68,6 +69,9 @@ impl SqliteWorkflowRepository {
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_lifecycle_runs_project_id ON lifecycle_runs(project_id)")
             .execute(&self.pool).await.map_err(db_err)?;
+
+        add_column_if_missing(&self.pool, "lifecycle_runs", "execution_log", "TEXT NOT NULL DEFAULT '[]'").await?;
+
         Ok(())
     }
 }
@@ -282,17 +286,18 @@ impl WorkflowAssignmentRepository for SqliteWorkflowRepository {
 #[async_trait::async_trait]
 impl LifecycleRunRepository for SqliteWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,created_at,updated_at,last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(run.id.to_string()).bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
             .bind(serde_json::to_string(&run.target_kind)?).bind(run.target_id.to_string()).bind(serde_json::to_string(&run.status)?)
             .bind(&run.current_step_key).bind(serde_json::to_string(&run.step_states)?)
-            .bind(serde_json::to_string(&run.record_artifacts)?).bind(run.created_at.to_rfc3339()).bind(run.updated_at.to_rfc3339()).bind(run.last_activity_at.to_rfc3339())
+            .bind(serde_json::to_string(&run.record_artifacts)?).bind(serde_json::to_string(&run.execution_log)?)
+            .bind(run.created_at.to_rfc3339()).bind(run.updated_at.to_rfc3339()).bind(run.last_activity_at.to_rfc3339())
             .execute(&self.pool).await.map_err(db_err)?;
         Ok(())
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE id = ?")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE id = ?")
             .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(db_err)?
             .map(TryInto::try_into).transpose()
     }
@@ -301,7 +306,7 @@ impl LifecycleRunRepository for SqliteWorkflowRepository {
         &self,
         project_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE project_id = ? ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE project_id = ? ORDER BY created_at DESC")
             .bind(project_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
@@ -310,7 +315,7 @@ impl LifecycleRunRepository for SqliteWorkflowRepository {
         &self,
         lifecycle_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE lifecycle_id = ? ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE lifecycle_id = ? ORDER BY created_at DESC")
             .bind(lifecycle_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
@@ -320,16 +325,17 @@ impl LifecycleRunRepository for SqliteWorkflowRepository {
         target_kind: WorkflowTargetKind,
         target_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE target_kind = ? AND target_id = ? ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,target_kind,target_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE target_kind = ? AND target_id = ? ORDER BY created_at DESC")
             .bind(serde_json::to_string(&target_kind)?).bind(target_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=?,lifecycle_id=?,target_kind=?,target_id=?,status=?,current_step_key=?,step_states=?,record_artifacts=?,updated_at=?,last_activity_at=? WHERE id=?")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=?,lifecycle_id=?,target_kind=?,target_id=?,status=?,current_step_key=?,step_states=?,record_artifacts=?,execution_log=?,updated_at=?,last_activity_at=? WHERE id=?")
             .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(serde_json::to_string(&run.target_kind)?)
             .bind(run.target_id.to_string()).bind(serde_json::to_string(&run.status)?).bind(&run.current_step_key)
             .bind(serde_json::to_string(&run.step_states)?).bind(serde_json::to_string(&run.record_artifacts)?)
+            .bind(serde_json::to_string(&run.execution_log)?)
             .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
@@ -365,6 +371,29 @@ async fn recreate_if_column_exists(
             .execute(pool)
             .await
             .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn add_column_if_missing(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    column_def: &str,
+) -> Result<(), DomainError> {
+    let has_column = sqlx::query_scalar::<_, i32>(&format!(
+        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if has_column == 0 {
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {column_def}"
+        ))
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
     }
     Ok(())
 }
@@ -497,6 +526,7 @@ struct LifecycleRunRow {
     current_step_key: Option<String>,
     step_states: String,
     record_artifacts: String,
+    execution_log: String,
     created_at: String,
     updated_at: String,
     last_activity_at: String,
@@ -515,6 +545,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             current_step_key: row.current_step_key,
             step_states: serde_json::from_str(&row.step_states)?,
             record_artifacts: serde_json::from_str(&row.record_artifacts)?,
+            execution_log: serde_json::from_str(&row.execution_log).unwrap_or_default(),
             created_at: parse_time(&row.created_at),
             updated_at: parse_time(&row.updated_at),
             last_activity_at: parse_time(&row.last_activity_at),

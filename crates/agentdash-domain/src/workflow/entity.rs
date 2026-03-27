@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{
-    EffectiveSessionContract, LifecycleRunStatus, LifecycleStepDefinition,
-    LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowAgentRole,
-    WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowRecordArtifact,
-    WorkflowTargetKind, validate_lifecycle_definition, validate_workflow_definition,
+    EffectiveSessionContract, LifecycleExecutionEntry, LifecycleRunStatus,
+    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
+    WorkflowAgentRole, WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowRecordArtifact, WorkflowTargetKind, validate_lifecycle_definition,
+    validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +192,8 @@ pub struct LifecycleRun {
     pub step_states: Vec<LifecycleStepState>,
     #[serde(default)]
     pub record_artifacts: Vec<WorkflowRecordArtifact>,
+    #[serde(default)]
+    pub execution_log: Vec<LifecycleExecutionEntry>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
@@ -225,6 +228,7 @@ impl LifecycleRun {
                 started_at: None,
                 completed_at: None,
                 summary: None,
+                context_snapshot: None,
             })
             .collect::<Vec<_>>();
 
@@ -238,6 +242,7 @@ impl LifecycleRun {
             current_step_key: Some(entry_step_key.to_string()),
             step_states,
             record_artifacts: Vec::new(),
+            execution_log: Vec::new(),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
@@ -336,6 +341,15 @@ impl LifecycleRun {
 
     pub fn append_record_artifact(&mut self, artifact: WorkflowRecordArtifact) {
         self.record_artifacts.push(artifact);
+        self.updated_at = Utc::now();
+        self.last_activity_at = self.updated_at;
+    }
+
+    pub fn append_execution_log(&mut self, entries: Vec<LifecycleExecutionEntry>) {
+        if entries.is_empty() {
+            return;
+        }
+        self.execution_log.extend(entries);
         self.updated_at = Utc::now();
         self.last_activity_at = self.updated_at;
     }

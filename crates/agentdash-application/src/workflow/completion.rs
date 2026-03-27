@@ -322,6 +322,9 @@ pub fn workflow_artifact_type_tag(artifact_type: WorkflowRecordArtifactType) -> 
         WorkflowRecordArtifactType::ArchiveSuggestion => "archive_suggestion",
         WorkflowRecordArtifactType::PhaseNote => "phase_note",
         WorkflowRecordArtifactType::ChecklistEvidence => "checklist_evidence",
+        WorkflowRecordArtifactType::ExecutionTrace => "execution_trace",
+        WorkflowRecordArtifactType::DecisionRecord => "decision_record",
+        WorkflowRecordArtifactType::ContextSnapshot => "context_snapshot",
     }
 }
 

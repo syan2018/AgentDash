@@ -157,6 +157,9 @@ pub enum WorkflowRecordArtifactType {
     ArchiveSuggestion,
     PhaseNote,
     ChecklistEvidence,
+    ExecutionTrace,
+    DecisionRecord,
+    ContextSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
@@ -229,6 +232,8 @@ pub struct LifecycleStepState {
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_snapshot: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +263,27 @@ impl WorkflowRecordArtifact {
             created_at: Utc::now(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleExecutionEventKind {
+    StepActivated,
+    StepCompleted,
+    ConstraintBlocked,
+    CompletionEvaluated,
+    ArtifactAppended,
+    ContextInjected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LifecycleExecutionEntry {
+    pub timestamp: DateTime<Utc>,
+    pub step_key: String,
+    pub event_kind: LifecycleExecutionEventKind,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

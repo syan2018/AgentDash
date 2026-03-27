@@ -148,11 +148,28 @@ impl AddressSpaceProvider for McpResourceProvider {
 }
 
 /// 创建包含所有内置 Provider 的注册表
+/// Lifecycle 执行记录虚拟挂载 — 由会话在存在活跃 run 时挂载，`lifecycle_vfs` 提供读写浏览能力描述
+pub struct LifecycleAddressSpaceProvider;
+
+impl AddressSpaceProvider for LifecycleAddressSpaceProvider {
+    fn descriptor(&self, _ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
+        Some(AddressSpaceDescriptor {
+            id: "lifecycle".to_string(),
+            label: "Lifecycle 执行记录".to_string(),
+            kind: ContextSourceKind::EntityRef,
+            provider: "lifecycle_vfs".to_string(),
+            supports: vec!["read".to_string(), "browse".to_string()],
+            selector: None,
+        })
+    }
+}
+
 pub fn builtin_address_space_registry() -> AddressSpaceRegistry {
     let mut registry = AddressSpaceRegistry::new();
     registry.register(Box::new(WorkspaceFileProvider));
     registry.register(Box::new(WorkspaceSnapshotProvider));
     registry.register(Box::new(McpResourceProvider));
+    registry.register(Box::new(LifecycleAddressSpaceProvider));
     registry
 }
 
@@ -187,13 +204,14 @@ mod tests {
     }
 
     #[test]
-    fn no_spaces_without_capabilities() {
+    fn lifecycle_space_always_advertised() {
         let registry = builtin_address_space_registry();
         let ctx = AddressSpaceContext {
             workspace_root: None,
             has_mcp: false,
         };
         let spaces = registry.available_spaces(&ctx);
-        assert!(spaces.is_empty());
+        assert_eq!(spaces.len(), 1);
+        assert!(spaces.iter().any(|s| s.id == "lifecycle"));
     }
 }

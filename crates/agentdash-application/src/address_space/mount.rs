@@ -9,6 +9,7 @@ use agentdash_domain::{
     story::Story,
     workspace::{Workspace, WorkspaceBinding},
 };
+use uuid::Uuid;
 
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{
@@ -17,6 +18,7 @@ use crate::runtime::{
 
 pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
+pub const PROVIDER_LIFECYCLE_VFS: &str = "lifecycle_vfs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMountTarget {
@@ -279,6 +281,26 @@ pub fn normalize_inline_files(
         normalized.insert(path, file.content.clone());
     }
     Ok(normalized)
+}
+
+pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> RuntimeMount {
+    RuntimeMount {
+        id: "lifecycle".to_string(),
+        provider: PROVIDER_LIFECYCLE_VFS.to_string(),
+        backend_id: String::new(),
+        root_ref: format!("lifecycle://run/{run_id}"),
+        capabilities: vec![
+            MountCapabilitySet::Read,
+            MountCapabilitySet::List,
+            MountCapabilitySet::Search,
+        ],
+        default_write: false,
+        display_name: "Lifecycle 执行记录".to_string(),
+        metadata: serde_json::json!({
+            "run_id": run_id.to_string(),
+            "lifecycle_key": lifecycle_key,
+        }),
+    }
 }
 
 pub fn inline_files_from_mount(mount: &RuntimeMount) -> Result<BTreeMap<String, String>, String> {

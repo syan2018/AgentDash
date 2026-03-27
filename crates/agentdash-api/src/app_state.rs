@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use crate::address_space_access::{
     RelayAddressSpaceService, RelayRuntimeToolProvider, SharedExecutorHubHandle,
 };
+use crate::mount_providers::RelayFsMountProvider;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
 use crate::execution_hooks::AppExecutionHookProvider;
 use crate::plugins::{
@@ -15,6 +16,9 @@ use crate::plugins::{
 };
 use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
+use agentdash_application::address_space::{
+    InlineFsMountProvider, LifecycleMountProvider, MountProviderRegistry,
+};
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
@@ -73,6 +77,8 @@ pub struct ServiceSet {
     pub contributor_registry: ContextContributorRegistry,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub address_space_registry: AddressSpaceRegistry,
+    /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
+    pub mount_provider_registry: Arc<MountProviderRegistry>,
 }
 
 /// Task 执行运行时状态 — 并发锁与重试控制
@@ -183,6 +189,17 @@ impl AppState {
 
         let workspace_root = std::env::current_dir()?;
         let backend_registry = BackendRegistry::new();
+
+        let mut mount_provider_registry = MountProviderRegistry::new();
+        mount_provider_registry.register(Arc::new(InlineFsMountProvider));
+        mount_provider_registry.register(Arc::new(RelayFsMountProvider::new(
+            backend_registry.clone(),
+        )));
+        mount_provider_registry.register(Arc::new(LifecycleMountProvider::new(
+            workflow_repo.clone(),
+        )));
+        let mount_provider_registry = Arc::new(mount_provider_registry);
+
         let address_space_service =
             Arc::new(RelayAddressSpaceService::new(backend_registry.clone()));
         let executor_hub_handle = SharedExecutorHubHandle::default();
@@ -288,6 +305,7 @@ impl AppState {
                 backend_registry,
                 contributor_registry: ContextContributorRegistry::with_builtins(),
                 address_space_registry,
+                mount_provider_registry,
             },
             task_runtime: TaskRuntime {
                 lock_map: TaskLockMap::new(),

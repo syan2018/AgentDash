@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { SessionChatView } from "../features/acp-session";
 import { fetchSessionBindings, fetchSessionHookRuntime } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
@@ -1261,7 +1261,6 @@ function MountPolicyCard({
 export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams] = useSearchParams();
   const selectProject = useProjectStore((state) => state.selectProject);
   const projects = useProjectStore((state) => state.projects);
   const fetchProjectSessionInfo = useProjectStore((state) => state.fetchProjectSessionInfo);
@@ -1290,11 +1289,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     () => (location.state as SessionNavigationState | null) ?? null,
     [location.state],
   );
-  const taskIdFromQuery = searchParams.get("task_id")?.trim() || "";
   const taskContextFromRoute = routeState?.task_context ?? null;
   const projectAgentContext = (routeState?.project_agent ?? null) as ProjectSessionAgentContext | null;
   const returnTarget = routeState?.return_to ?? null;
-  const routeTaskIdHint = taskContextFromRoute?.task_id ?? taskIdFromQuery;
   const currentSessionId = propSessionId ?? null;
 
   const refreshHookRuntime = useCallback(async (sessionId: string) => {
@@ -1388,38 +1385,42 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       ?? null
     );
   }, [sessionBindings]);
-  const taskIdHint = routeTaskIdHint || sessionOwnerBinding?.task_id || "";
 
   const sessionContextSourceKey = useMemo(() => {
-    if (taskIdHint) {
-      return `task:${taskIdHint}`;
+    if (!sessionOwnerBinding) return null;
+    if (sessionOwnerBinding.owner_type === "task" && sessionOwnerBinding.task_id) {
+      return `task:${sessionOwnerBinding.task_id}`;
     }
     if (
-      sessionOwnerBinding?.owner_type === "story"
+      sessionOwnerBinding.owner_type === "story"
       && sessionOwnerBinding.story_id
       && sessionOwnerBinding.id
     ) {
       return `story:${sessionOwnerBinding.story_id}:${sessionOwnerBinding.id}`;
     }
     if (
-      sessionOwnerBinding?.owner_type === "project"
+      sessionOwnerBinding.owner_type === "project"
       && sessionOwnerBinding.project_id
       && sessionOwnerBinding.id
     ) {
       return `project:${sessionOwnerBinding.project_id}:${sessionOwnerBinding.id}`;
     }
     return null;
-  }, [sessionOwnerBinding, taskIdHint]);
+  }, [sessionOwnerBinding]);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (taskIdHint) {
+    if (
+      sessionOwnerBinding?.owner_type === "task"
+      && sessionOwnerBinding.task_id
+    ) {
+      const taskId = sessionOwnerBinding.task_id;
       void (async () => {
-        const taskSession = await fetchTaskSession(taskIdHint);
+        const taskSession = await fetchTaskSession(taskId);
         if (cancelled) return;
         setLoadedSessionContext({
-          source_key: `task:${taskIdHint}`,
+          source_key: `task:${taskId}`,
           workspace_id: taskSession?.workspace_id ?? null,
           task_agent_binding: taskSession?.agent_binding ?? null,
           address_space: taskSession?.address_space ?? null,
@@ -1475,7 +1476,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     }
 
     return () => { cancelled = true; };
-  }, [fetchProjectSessionInfo, fetchStorySessionInfo, fetchTaskSession, sessionOwnerBinding, taskIdHint]);
+  }, [fetchProjectSessionInfo, fetchStorySessionInfo, fetchTaskSession, sessionOwnerBinding]);
 
   const activeSessionContext = loadedSessionContext?.source_key === sessionContextSourceKey
     ? loadedSessionContext

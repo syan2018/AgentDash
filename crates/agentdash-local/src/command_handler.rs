@@ -65,7 +65,7 @@ impl CommandHandler {
             }
 
             RelayMessage::CommandPrompt { id, payload } => {
-                vec![self.handle_prompt(id, payload).await]
+                vec![self.handle_prompt(id, *payload).await]
             }
 
             RelayMessage::CommandCancel { id, payload } => {
@@ -869,7 +869,7 @@ fn list_directory_children(dir_path: &str) -> Result<(String, Vec<BrowseDirector
         });
     }
 
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by_key(|e| e.name.to_lowercase());
     Ok((current_path, entries))
 }
 

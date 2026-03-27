@@ -121,10 +121,7 @@ pub async fn update_settings(
             if !is_sensitive_key(&s.key) {
                 return true;
             }
-            match s.value.as_str() {
-                Some(v) if v.contains("...") || v == "****" => false,
-                _ => true,
-            }
+            !matches!(s.value.as_str(), Some(v) if v.contains("...") || v == "****")
         })
         .map(|s| (s.key, s.value))
         .collect();

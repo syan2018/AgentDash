@@ -234,7 +234,7 @@ pub async fn handle_turn_notification(
                             .await?;
                         }
 
-                        return Ok(resolve_failure_outcome(
+                        return resolve_failure_outcome(
                             repos,
                             restart_tracker,
                             task_id,
@@ -245,7 +245,7 @@ pub async fn handle_turn_notification(
                             message.clone(),
                             execution_mode,
                         )
-                        .await?);
+                        .await;
                     }
                     _ => {}
                 }

@@ -141,10 +141,10 @@ fn preserve_session_level_metadata(
         return;
     };
     for &key in SESSION_LEVEL_METADATA_KEYS {
-        if target.get(key).map_or(true, serde_json::Value::is_null) {
-            if let Some(value) = previous.get(key).filter(|v| !v.is_null()) {
-                target.insert(key.to_string(), value.clone());
-            }
+        if target.get(key).is_none_or(serde_json::Value::is_null)
+            && let Some(value) = previous.get(key).filter(|v| !v.is_null())
+        {
+            target.insert(key.to_string(), value.clone());
         }
     }
 }
@@ -371,16 +371,16 @@ impl HookSessionRuntime {
         }
 
         let pending_log = std::mem::take(&mut resolution.pending_execution_log);
-        if !pending_log.is_empty() {
-            if let Err(error) = self.provider.append_execution_log(pending_log).await {
-                resolution.diagnostics.push(HookDiagnosticEntry {
-                    code: "execution_log_flush_failed".to_string(),
-                    summary: "failed to flush execution log entries".to_string(),
-                    detail: Some(error.to_string()),
-                    source_summary: Vec::new(),
-                    source_refs: Vec::new(),
-                });
-            }
+        if !pending_log.is_empty()
+            && let Err(error) = self.provider.append_execution_log(pending_log).await
+        {
+            resolution.diagnostics.push(HookDiagnosticEntry {
+                code: "execution_log_flush_failed".to_string(),
+                summary: "failed to flush execution log entries".to_string(),
+                detail: Some(error.to_string()),
+                source_summary: Vec::new(),
+                source_refs: Vec::new(),
+            });
         }
 
         self.append_diagnostics(resolution.diagnostics.clone());

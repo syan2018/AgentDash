@@ -401,7 +401,7 @@ async fn fallback_search(
         Ok((hits, truncated))
     })
     .await
-    .map_err(|e| ToolError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
+    .map_err(|e| ToolError::Io(std::io::Error::other(e)))?
 }
 
 const FALLBACK_MAX_FILE_BYTES: u64 = 256 * 1024;

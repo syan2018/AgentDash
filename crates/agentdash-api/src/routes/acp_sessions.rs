@@ -691,13 +691,14 @@ async fn build_story_owner_prompt_request(
     });
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
-        context_markdown,
+        context_markdown.clone(),
         req.prompt.take(),
         req.prompt_blocks.take(),
     );
 
     req.prompt = None;
     req.prompt_blocks = Some(prompt_blocks);
+    req.system_context = Some(context_markdown);
 
     apply_workspace_defaults(&mut req.working_dir, &mut req.workspace_root, workspace);
     if req.address_space.is_none() {
@@ -777,13 +778,14 @@ async fn build_project_owner_prompt_request(
     });
     let prompt_blocks = build_project_owner_prompt_blocks(
         project.id,
-        context_markdown,
+        context_markdown.clone(),
         req.prompt.take(),
         req.prompt_blocks.take(),
     );
 
     req.prompt = None;
     req.prompt_blocks = Some(prompt_blocks);
+    req.system_context = Some(context_markdown);
 
     apply_workspace_defaults(
         &mut req.working_dir,

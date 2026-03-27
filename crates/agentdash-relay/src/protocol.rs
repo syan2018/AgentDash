@@ -47,7 +47,7 @@ pub enum RelayMessage {
     #[serde(rename = "command.prompt")]
     CommandPrompt {
         id: String,
-        payload: CommandPromptPayload,
+        payload: Box<CommandPromptPayload>,
     },
 
     /// 取消执行
@@ -68,14 +68,16 @@ pub enum RelayMessage {
         payload: CommandDiscoverOptionsPayload,
     },
 
-    /// 列出工作空间文件
+    /// [FROZEN] 列出工作空间文件 — 遗留 relay transport，新功能请走 Address Space Provider。
+    /// 参见 spec/backend/address-space-legacy-disposition.md
     #[serde(rename = "command.workspace_files.list")]
     CommandWorkspaceFilesList {
         id: String,
         payload: CommandWorkspaceFilesListPayload,
     },
 
-    /// 读取工作空间文件
+    /// [FROZEN] 读取工作空间文件 — 遗留 relay transport，新功能请走 Address Space Provider。
+    /// 参见 spec/backend/address-space-legacy-disposition.md
     #[serde(rename = "command.workspace_files.read")]
     CommandWorkspaceFilesRead {
         id: String,
@@ -160,6 +162,7 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
+    /// [FROZEN] 遗留 relay transport 响应
     #[serde(rename = "response.workspace_files.list")]
     ResponseWorkspaceFilesList {
         id: String,
@@ -169,6 +172,7 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
+    /// [FROZEN] 遗留 relay transport 响应
     #[serde(rename = "response.workspace_files.read")]
     ResponseWorkspaceFilesRead {
         id: String,
@@ -373,6 +377,7 @@ pub struct CapabilitiesPayload {
     pub executors: Vec<ExecutorInfoRelay>,
     #[serde(default)]
     pub supports_cancel: bool,
+    /// [FROZEN] 遗留能力声明 — 由 relay_fs provider 内部使用
     #[serde(default)]
     pub supports_workspace_files: bool,
     #[serde(default)]
@@ -450,7 +455,10 @@ pub struct CommandDiscoverOptionsPayload {
     pub working_dir: Option<String>,
 }
 
-// ── command.workspace_files ──
+// ── command.workspace_files [FROZEN] ──
+// 遗留 relay transport payload — 仅作为 relay_fs provider 内部实现使用。
+// 新功能请走 Address Space Provider / command.tool.* 通道。
+// 参见 spec/backend/address-space-legacy-disposition.md
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceFilesListPayload {

@@ -271,15 +271,15 @@ fn emit_deduped(
     }
 
     // Fast path: per-index delta (same entry updated incrementally).
-    if let Some(prev) = prev_at_index {
-        if !prev.is_empty() && full_content.starts_with(prev) {
-            let suffix = &full_content[prev.len()..];
-            if suffix.is_empty() {
-                return Vec::new();
-            }
-            emitted.push_str(suffix);
-            return emit_chunk(session_id, ctor, suffix, meta.clone());
+    if let Some(prev) = prev_at_index
+        && !prev.is_empty() && full_content.starts_with(prev)
+    {
+        let suffix = &full_content[prev.len()..];
+        if suffix.is_empty() {
+            return Vec::new();
         }
+        emitted.push_str(suffix);
+        return emit_chunk(session_id, ctor, suffix, meta.clone());
     }
 
     // Global dedup: compute delta against total emitted text.
@@ -320,12 +320,11 @@ fn tool_call_id_from_entry(
     entry_index: usize,
     entry: &NormalizedEntry,
 ) -> String {
-    if let Some(meta) = entry.metadata.as_ref() {
-        if let Ok(parsed) = serde_json::from_value::<ToolCallMetadata>(meta.clone()) {
-            if !parsed.tool_call_id.trim().is_empty() {
-                return parsed.tool_call_id;
-            }
-        }
+    if let Some(meta) = entry.metadata.as_ref()
+        && let Ok(parsed) = serde_json::from_value::<ToolCallMetadata>(meta.clone())
+        && !parsed.tool_call_id.trim().is_empty()
+    {
+        return parsed.tool_call_id;
     }
     format!("tool-{}-{}", turn_prefix, entry_index)
 }
@@ -385,12 +384,12 @@ fn map_action_to_tool_call_parts(
         } => {
             let title = format!("执行: {}", command);
             let mut content = Vec::new();
-            if let Some(r) = result {
-                if let Some(out) = &r.output {
-                    content.push(ToolCallContent::from(ContentBlock::Text(TextContent::new(
-                        out.clone(),
-                    ))));
-                }
+            if let Some(r) = result
+                && let Some(out) = &r.output
+            {
+                content.push(ToolCallContent::from(ContentBlock::Text(TextContent::new(
+                    out.clone(),
+                ))));
             }
             let raw_output = result.as_ref().and_then(|r| serde_json::to_value(r).ok());
             (
@@ -548,15 +547,15 @@ fn diff_tool_call_fields(prev: &ToolCall, next: &ToolCall) -> ToolCallUpdateFiel
     if prev.locations != next.locations {
         fields.locations = Some(next.locations.clone());
     }
-    if prev.raw_input != next.raw_input {
-        if let Some(v) = next.raw_input.clone() {
-            fields.raw_input = Some(v);
-        }
+    if prev.raw_input != next.raw_input
+        && let Some(v) = next.raw_input.clone()
+    {
+        fields.raw_input = Some(v);
     }
-    if prev.raw_output != next.raw_output {
-        if let Some(v) = next.raw_output.clone() {
-            fields.raw_output = Some(v);
-        }
+    if prev.raw_output != next.raw_output
+        && let Some(v) = next.raw_output.clone()
+    {
+        fields.raw_output = Some(v);
     }
 
     fields

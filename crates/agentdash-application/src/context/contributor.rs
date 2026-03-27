@@ -51,6 +51,8 @@ pub struct BuiltTaskAgentContext {
     pub source_summary: Vec<String>,
     /// application 层 MCP server 抽象 — 由边界层转换后传递给 Agent
     pub mcp_servers: Vec<RuntimeMcpServer>,
+    /// owner 上下文 markdown — 注入 system prompt，不显示在用户消息流
+    pub system_context: Option<String>,
 }
 
 /// 上下文贡献者注册表 — 持有"常驻"贡献者，避免在构建函数中硬编码

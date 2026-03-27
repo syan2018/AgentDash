@@ -295,13 +295,13 @@ fn detect_tech_stack_from_entries(files: &[RuntimeFileEntry]) -> Vec<&'static st
         .map(|entry| entry.path.as_str())
         .collect::<Vec<_>>();
     let mut stack = Vec::new();
-    if paths.iter().any(|path| *path == "Cargo.toml") {
+    if paths.contains(&"Cargo.toml") {
         stack.push("Rust");
     }
-    if paths.iter().any(|path| *path == "package.json") {
+    if paths.contains(&"package.json") {
         stack.push("Node.js");
     }
-    if paths.iter().any(|path| *path == "pnpm-lock.yaml") {
+    if paths.contains(&"pnpm-lock.yaml") {
         stack.push("pnpm");
     }
     if paths

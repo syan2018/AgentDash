@@ -58,10 +58,10 @@ fn err_text(text: impl Into<String>) -> AgentToolResult {
 
 /// 判断一个 WalkDir entry 是否应该被跳过（通过目录名）
 fn should_skip_dir(entry: &walkdir::DirEntry) -> bool {
-    if entry.file_type().is_dir() {
-        if let Some(name) = entry.file_name().to_str() {
-            return WALK_SKIP_DIRS.contains(&name);
-        }
+    if entry.file_type().is_dir()
+        && let Some(name) = entry.file_name().to_str()
+    {
+        return WALK_SKIP_DIRS.contains(&name);
     }
     false
 }

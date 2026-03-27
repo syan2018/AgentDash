@@ -1,3 +1,9 @@
+//! [FROZEN LEGACY] workspace_files HTTP 桥接路由
+//!
+//! 这组路由为前端 @ 文件选择器提供直连通道，保留为遗留兼容层。
+//! 新功能请走 `/api/address-spaces` 统一入口。
+//! 参见 spec/backend/address-space-legacy-disposition.md
+
 use std::path::{Component, Path};
 use std::sync::Arc;
 
@@ -22,6 +28,7 @@ pub struct ListFilesQuery {
     pub workspace_id: Option<String>,
 }
 
+/// 桥接对象 — workspace_files 遗留协议，保持原有 camelCase，不参与业务 DTO 命名规范
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {

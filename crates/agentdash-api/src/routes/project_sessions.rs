@@ -263,7 +263,7 @@ pub struct ListProjectSessionsQuery {
 ///   1. 一次 SQL UNION 查出项目下所有层级的 bindings + 归属上下文（无 N+1）
 ///   2. 批量并发读取 session meta（并发 IO）
 ///   3. 单次内存 lock 批量读执行状态（无 JSONL 扫描）
-///   复杂度从 O(N×M) 降为 O(1 DB + N parallel IO + 1 lock)
+///   - 复杂度从 O(N×M) 降为 O(1 DB + N parallel IO + 1 lock)
 pub async fn list_project_sessions(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -316,7 +316,7 @@ pub async fn list_project_sessions(
         .await;
 
     // ── Step 4: 组装结果 ─────────────────────────────────────────────────────
-    let limit = query.limit.unwrap_or(50).max(1).min(500) as usize;
+    let limit = query.limit.unwrap_or(50).clamp(1, 500) as usize;
     let status_filter: Option<Vec<String>> = query.status.as_deref().map(|s| {
         s.split(',')
             .map(|part| part.trim().to_ascii_lowercase())

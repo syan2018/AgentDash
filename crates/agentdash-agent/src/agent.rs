@@ -21,9 +21,16 @@ use crate::agent_loop::{
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
 use crate::types::{
-    AgentContext, AgentError, AgentEvent, AgentMessage, AgentState, DynAgentRuntimeDelegate,
-    DynAgentTool, ThinkingLevel, ToolApprovalOutcome, ToolApprovalRequest, ToolExecutionMode,
+    AgentContext, AgentError, AgentEvent, AgentMessage, AgentState,
+    DynAgentRuntimeDelegate, DynAgentTool, ThinkingLevel,
+    ToolApprovalOutcome, ToolApprovalRequest, ToolExecutionMode,
 };
+
+/// prompt / continue_loop / run_loop 的统一返回类型
+type LoopHandle = (
+    EventReceiver<AgentEvent>,
+    tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
+);
 
 // ─── QueueMode ──────────────────────────────────────────────
 
@@ -347,26 +354,14 @@ impl Agent {
     pub fn prompt(
         &mut self,
         input: impl Into<AgentMessage>,
-    ) -> Result<
-        (
-            EventReceiver<AgentEvent>,
-            tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
-        ),
-        AgentError,
-    > {
+    ) -> Result<LoopHandle, AgentError> {
         self.run_loop(Some(vec![input.into()]), RunLoopOptions::default())
     }
 
     /// 从当前消息历史继续运行 agent loop — 对齐 Pi `continue()`
     pub fn continue_loop(
         &mut self,
-    ) -> Result<
-        (
-            EventReceiver<AgentEvent>,
-            tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
-        ),
-        AgentError,
-    > {
+    ) -> Result<LoopHandle, AgentError> {
         self.ensure_not_running(
             "Agent is already processing. Wait for completion before continuing.",
         )?;
@@ -410,13 +405,7 @@ impl Agent {
         &mut self,
         prompts: Option<Vec<AgentMessage>>,
         options: RunLoopOptions,
-    ) -> Result<
-        (
-            EventReceiver<AgentEvent>,
-            tokio::task::JoinHandle<Result<Vec<AgentMessage>, AgentError>>,
-        ),
-        AgentError,
-    > {
+    ) -> Result<LoopHandle, AgentError> {
         self.ensure_not_running(
             "Agent is already processing a prompt. Use steer() or follow_up() to queue messages, or wait for completion.",
         )?;
@@ -636,7 +625,7 @@ fn try_dequeue_messages(
 
 fn dequeue_messages_inner(queue: &mut Vec<AgentMessage>, mode: QueueMode) -> Vec<AgentMessage> {
     match mode {
-        QueueMode::All => queue.drain(..).collect(),
+        QueueMode::All => std::mem::take(queue),
         QueueMode::OneAtATime => {
             if queue.is_empty() {
                 vec![]
@@ -674,24 +663,23 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
         }
         AgentEvent::ToolExecutionApprovalResolved {
             tool_call_id,
-            approved,
+            approved: false,
             ..
         } => {
-            if !approved {
-                s.pending_tool_calls.remove(tool_call_id);
-            }
+            s.pending_tool_calls.remove(tool_call_id);
         }
+        AgentEvent::ToolExecutionApprovalResolved { .. } => {}
         AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
             s.pending_tool_calls.remove(tool_call_id);
         }
-        AgentEvent::TurnEnd { message, .. } => {
-            if let AgentMessage::Assistant {
+        AgentEvent::TurnEnd {
+            message: AgentMessage::Assistant {
                 error_message: Some(err),
                 ..
-            } = message
-            {
-                s.error = Some(err.clone());
-            }
+            },
+            ..
+        } => {
+            s.error = Some(err.clone());
         }
         AgentEvent::AgentEnd { .. } => {
             s.is_streaming = false;

@@ -200,7 +200,7 @@ async fn dispatch_cloud_native(
             companion_complete: true,
             resolve_hook_action: true,
         }),
-        system_context: None,
+        system_context: built.system_context.clone(),
     };
 
     let turn_id = state.services.executor_hub
@@ -360,7 +360,7 @@ async fn relay_start_prompt(
 
     let cmd = RelayMessage::CommandPrompt {
         id: RelayMessage::new_id("prompt"),
-        payload: CommandPromptPayload {
+        payload: Box::new(CommandPromptPayload {
             session_id: session_id.to_string(),
             follow_up_session_id: None,
             prompt: None,
@@ -371,7 +371,7 @@ async fn relay_start_prompt(
             executor_config: relay_config,
             mcp_servers: runtime_mcp_servers_to_acp(&built.mcp_servers)
                 .iter().filter_map(|s| serde_json::to_value(s).ok()).collect(),
-        },
+        }),
     };
 
     tracing::info!(backend_id, session_id, "中继 command.prompt → 远程后端");

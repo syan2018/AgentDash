@@ -132,7 +132,7 @@ impl DbInlineContentPersister {
     }
 
     fn upsert_inline_file(
-        containers: &mut Vec<agentdash_domain::context_container::ContextContainerDefinition>,
+        containers: &mut [agentdash_domain::context_container::ContextContainerDefinition],
         container_id: &str,
         path: &str,
         content: &str,

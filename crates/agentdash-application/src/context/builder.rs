@@ -83,6 +83,7 @@ pub fn build_task_agent_context(
         return Err("构建执行上下文失败：最终 prompt 为空".to_string());
     }
 
+    let system_context = context_prompt.clone();
     let mut prompt_blocks = Vec::new();
     if !context_prompt.trim().is_empty() {
         prompt_blocks.push(build_task_context_resource_block(
@@ -97,6 +98,7 @@ pub fn build_task_agent_context(
         working_dir,
         source_summary,
         mcp_servers,
+        system_context: Some(system_context),
     })
 }
 

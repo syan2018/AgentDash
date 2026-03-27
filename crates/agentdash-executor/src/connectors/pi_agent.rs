@@ -168,15 +168,14 @@ impl PiAgentConnector {
             return Ok(default_bridge);
         }
 
-        if let Some(provider_id) = provider_id {
-            if let Some(provider) = provider_state
+        if let Some(provider_id) = provider_id
+            && let Some(provider) = provider_state
                 .providers
                 .iter()
                 .find(|provider| provider.provider_id == provider_id)
-            {
-                let resolved_model = model_id.unwrap_or(provider.default_model.as_str());
-                return Ok(provider.create_bridge(resolved_model));
-            }
+        {
+            let resolved_model = model_id.unwrap_or(provider.default_model.as_str());
+            return Ok(provider.create_bridge(resolved_model));
         }
 
         if let Some(model_id) = model_id {
@@ -203,10 +202,10 @@ impl PiAgentConnector {
 
         // 会话级 owner 上下文（project/story markdown 摘要）注入到 system prompt 头部
         // 仅在第一个 section 之后立即插入，确保 Agent 能在每轮对话中感知完整上下文
-        if let Some(ref ctx) = context.system_context {
-            if !ctx.trim().is_empty() {
-                sections.push(ctx.clone());
-            }
+        if let Some(ref ctx) = context.system_context
+            && !ctx.trim().is_empty()
+        {
+            sections.push(ctx.clone());
         }
 
         if let Some(address_space) = &context.address_space {
@@ -520,17 +519,16 @@ impl AgentConnector for PiAgentConnector {
                 if let Some(receiver) = hook_trace_rx.as_mut() {
                     tokio::select! {
                         maybe_trace = receiver.recv() => {
-                            if let Some(entry) = maybe_trace {
-                                if let Some(notification) = build_hook_trace_notification(
+                            if let Some(entry) = maybe_trace
+                                && let Some(notification) = build_hook_trace_notification(
                                     acp_session_id.0.as_ref(),
                                     Some(&turn_id),
                                     source.clone(),
                                     &entry,
-                                ) {
-                                    if tx.send(Ok(notification)).await.is_err() {
-                                        return;
-                                    }
-                                }
+                                )
+                                && tx.send(Ok(notification)).await.is_err()
+                            {
+                                return;
                             }
                         }
                         maybe_event = event_rx.next() => {
@@ -657,10 +655,10 @@ async fn emit_pending_hook_trace_notifications(
             Some(turn_id),
             source.clone(),
             &entry,
-        ) {
-            if tx.send(Ok(notification)).await.is_err() {
-                return;
-            }
+        )
+            && tx.send(Ok(notification)).await.is_err()
+        {
+            return;
         }
     }
 }

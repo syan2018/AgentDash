@@ -205,7 +205,7 @@ where
                     Ok(StreamedAssistantContent::ToolCall(tool_call)) => StreamChunk::ToolCall {
                         info: crate::types::ToolCallInfo {
                             id: tool_call.id.clone(),
-                            call_id: tool_call.call_id.clone().or_else(|| Some(tool_call.id)),
+                            call_id: tool_call.call_id.clone().or(Some(tool_call.id)),
                             name: tool_call.function.name.clone(),
                             arguments: tool_call.function.arguments.clone(),
                         },

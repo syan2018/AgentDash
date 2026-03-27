@@ -128,7 +128,7 @@ impl AgentDashEventV1 {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDashTraceV1 {
@@ -145,18 +145,13 @@ pub struct AgentDashTraceV1 {
 impl AgentDashTraceV1 {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            session_event_id: None,
-            parent_id: None,
-            turn_id: None,
-            entry_index: None,
-        }
+        Self::default()
     }
 }
 
 /// Merge an AgentDash meta object into an existing ACP meta map.
 pub fn merge_agentdash_meta(mut base: Option<Meta>, agentdash: &AgentDashMetaV1) -> Option<Meta> {
-    let mut meta = base.take().unwrap_or_else(Meta::new);
+    let mut meta = base.take().unwrap_or_default();
     meta.insert(
         AGENTDASH_META_NAMESPACE.to_string(),
         serde_json::to_value(agentdash).unwrap_or(Value::Null),

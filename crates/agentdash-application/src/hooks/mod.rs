@@ -595,7 +595,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             let task_status = resolved_owner.task_status.clone();
             snapshot
                 .diagnostics
-                .extend(resolved_owner.diagnostics.into_iter());
+                .extend(resolved_owner.diagnostics);
             let owner = resolved_owner.summary;
             snapshot.tags.push(format!("owner:{}", owner.owner_type));
             snapshot.tags.push(format!("owner_id:{}", owner.owner_id));

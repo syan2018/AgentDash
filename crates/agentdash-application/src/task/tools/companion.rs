@@ -40,6 +40,7 @@ pub struct CompanionDispatchTool {
     address_space: Option<ExecutionAddressSpace>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
     hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
+    system_context: Option<String>,
 }
 
 impl CompanionDispatchTool {
@@ -62,6 +63,7 @@ impl CompanionDispatchTool {
             address_space: context.address_space.clone(),
             mcp_servers: context.mcp_servers.clone(),
             hook_session: context.hook_session.clone(),
+            system_context: context.system_context.clone(),
         }
     }
 }
@@ -321,7 +323,7 @@ impl AgentTool for CompanionDispatchTool {
                     workspace_root: Some(self.workspace_root.clone()),
                     address_space: execution_slice.address_space.clone(),
                     flow_capabilities: None,
-                    system_context: None,
+                    system_context: self.system_context.clone(),
                 },
             )
             .await

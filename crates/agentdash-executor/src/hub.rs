@@ -204,15 +204,14 @@ fn parse_executor_session_bound(meta: Option<&Meta>, expected_turn_id: &str) -> 
         return None;
     }
 
-    if let Some(data) = event.data {
-        if let Some(session_id) = data
+    if let Some(data) = event.data
+        && let Some(session_id) = data
             .get("executor_session_id")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-        {
-            return Some(session_id.to_string());
-        }
+    {
+        return Some(session_id.to_string());
     }
 
     event
@@ -282,6 +281,12 @@ pub struct SessionMeta {
     /// 由 ExecutorHub 在 turn 结束时写入，是执行状态的持久化 source of truth。
     #[serde(default = "SessionMeta::default_status")]
     pub last_execution_status: String,
+    /// 最后一次 turn 的 ID（与 last_execution_status 同步写入）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn_id: Option<String>,
+    /// 终态附加消息（failed / interrupted 时的错误描述）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_terminal_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -362,6 +367,37 @@ impl TurnTerminalKind {
             Self::Failed => "failed",
             Self::Interrupted => "interrupted",
         }
+    }
+}
+
+/// 从 SessionMeta 的持久化字段派生 SessionExecutionState。
+/// 供 inspect_session_execution_state 和 inspect_execution_states_bulk 共用。
+fn meta_to_execution_state(meta: &SessionMeta, session_id: &str) -> SessionExecutionState {
+    match meta.last_execution_status.as_str() {
+        "idle" => SessionExecutionState::Idle,
+        "completed" => SessionExecutionState::Completed {
+            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
+        },
+        "failed" => SessionExecutionState::Failed {
+            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
+            message: meta.last_terminal_message.clone(),
+        },
+        "interrupted" => SessionExecutionState::Interrupted {
+            turn_id: meta.last_turn_id.clone(),
+            message: meta.last_terminal_message.clone(),
+        },
+        // "running" 在启动恢复时已被修正为 "interrupted"，
+        // 正常运行时由内存 map 已经处理，不应落到这里
+        "running" => {
+            tracing::warn!(session_id, "meta 显示 running 但内存 map 无记录，视为 interrupted");
+            SessionExecutionState::Interrupted {
+                turn_id: meta.last_turn_id.clone(),
+                message: None,
+            }
+        }
+        other => unreachable!(
+            "last_execution_status 出现了非法值: {other:?}，这是 ExecutorHub 的 bug"
+        ),
     }
 }
 
@@ -520,6 +556,8 @@ impl ExecutorHub {
             created_at: now,
             updated_at: now,
             last_execution_status: "idle".to_string(),
+            last_turn_id: None,
+            last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
@@ -591,34 +629,13 @@ impl ExecutorHub {
             if running_set.contains(id) {
                 result.insert(id.clone(), SessionExecutionState::Running { turn_id: None });
             } else {
-                // 读 meta 中持久化的终态
                 let status = self
                     .store
                     .read_meta(id)
                     .await
                     .ok()
                     .flatten()
-                    .map(|meta| match meta.last_execution_status.as_str() {
-                        "idle" => SessionExecutionState::Idle,
-                        "completed" => SessionExecutionState::Completed {
-                            turn_id: String::new(),
-                        },
-                        "failed" => SessionExecutionState::Failed {
-                            turn_id: String::new(),
-                            message: None,
-                        },
-                        "interrupted" => SessionExecutionState::Interrupted {
-                            turn_id: None,
-                            message: None,
-                        },
-                        // "running" 在启动恢复时已被修正为 "interrupted"，
-                        // 正常运行时由内存 map 已经处理，不应落到这里
-                        "running" => {
-                            tracing::warn!(session_id = %id, "bulk 查询遇到 running 状态但内存 map 无记录，视为 interrupted");
-                            SessionExecutionState::Interrupted { turn_id: None, message: None }
-                        }
-                        other => unreachable!("last_execution_status 出现了非法值: {other:?}，这是 ExecutorHub 的 bug"),
-                    })
+                    .map(|meta| meta_to_execution_state(&meta, id))
                     .unwrap_or(SessionExecutionState::Idle);
                 result.insert(id.clone(), status);
             }
@@ -643,6 +660,11 @@ impl ExecutorHub {
         Ok(Some(meta))
     }
 
+    /// 查询单个 session 的执行状态。
+    ///
+    /// 优先从内存 map 判断是否正在运行（无延迟），
+    /// 否则从 meta 的 last_execution_status 读取持久化终态。
+    /// 不扫 JSONL 历史。
     pub async fn inspect_session_execution_state(
         &self,
         session_id: &str,
@@ -655,59 +677,17 @@ impl ExecutorHub {
         }
         .unwrap_or((false, None));
 
-        let history = self.store.read_all(session_id).await?;
-        let mut latest_turn_id: Option<String> = None;
-        let mut terminal_by_turn: HashMap<String, (TurnTerminalKind, Option<String>)> =
-            HashMap::new();
-
-        for notification in history {
-            match &notification.update {
-                SessionUpdate::UserMessageChunk(chunk) => {
-                    if let Some(turn_id) = parse_turn_id(chunk.meta.as_ref()) {
-                        latest_turn_id = Some(turn_id);
-                    }
-                }
-                SessionUpdate::SessionInfoUpdate(info) => {
-                    if let Some((turn_id, success, message)) =
-                        parse_turn_terminal_event(info.meta.as_ref())
-                    {
-                        terminal_by_turn.insert(turn_id, (success, message));
-                    }
-                }
-                _ => {}
-            }
-        }
-
         if running {
             return Ok(SessionExecutionState::Running {
-                turn_id: live_turn_id.or(latest_turn_id),
+                turn_id: live_turn_id,
             });
         }
 
-        if let Some(turn_id) = latest_turn_id {
-            if let Some((terminal_kind, message)) = terminal_by_turn.remove(&turn_id) {
-                match terminal_kind {
-                    TurnTerminalKind::Completed => {
-                        return Ok(SessionExecutionState::Completed { turn_id });
-                    }
-                    TurnTerminalKind::Failed => {
-                        return Ok(SessionExecutionState::Failed { turn_id, message });
-                    }
-                    TurnTerminalKind::Interrupted => {
-                        return Ok(SessionExecutionState::Interrupted {
-                            turn_id: Some(turn_id),
-                            message,
-                        });
-                    }
-                }
-            }
-            return Ok(SessionExecutionState::Interrupted {
-                turn_id: Some(turn_id),
-                message: None,
-            });
-        }
+        let Some(meta) = self.store.read_meta(session_id).await? else {
+            return Ok(SessionExecutionState::Idle);
+        };
 
-        Ok(SessionExecutionState::Idle)
+        Ok(meta_to_execution_state(&meta, session_id))
     }
 
     pub async fn delete_session(&self, session_id: &str) -> std::io::Result<()> {
@@ -870,7 +850,7 @@ impl ExecutorHub {
             .executor_config
             .clone()
             .or_else(|| session_meta.executor_config.clone())
-            .unwrap_or_else(crate::connector::AgentDashExecutorConfig::default);
+            .unwrap_or_default();
 
         let hook_session = match self
             .load_session_hook_runtime(
@@ -918,6 +898,8 @@ impl ExecutorHub {
 
         session_meta.updated_at = now;
         session_meta.last_execution_status = "running".to_string();
+        session_meta.last_turn_id = Some(turn_id.clone());
+        session_meta.last_terminal_message = None;
         session_meta.executor_config = Some(context.executor_config.clone());
         if session_meta.title.trim().is_empty() {
             session_meta.title = title_hint;
@@ -1014,6 +996,8 @@ impl ExecutorHub {
                 // 持久化终态到 meta
                 if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
                     meta.last_execution_status = "failed".to_string();
+                    meta.last_turn_id = Some(turn_id.clone());
+                    meta.last_terminal_message = Some(error.to_string());
                     meta.updated_at = chrono::Utc::now().timestamp_millis();
                     let _ = store.write_meta(&meta).await;
                 }
@@ -1041,20 +1025,17 @@ impl ExecutorHub {
                         };
                         if let Some(executor_session_id) =
                             parse_executor_session_bound(meta, &turn_id_for_spawn)
-                        {
-                            if last_executor_session_id.as_deref()
+                            && last_executor_session_id.as_deref()
                                 != Some(executor_session_id.as_str())
+                        {
+                            last_executor_session_id = Some(executor_session_id.clone());
+                            if let Ok(Some(mut meta)) = store.read_meta(&session_id).await
+                                && meta.executor_session_id.as_deref()
+                                    != Some(executor_session_id.as_str())
                             {
-                                last_executor_session_id = Some(executor_session_id.clone());
-                                if let Ok(Some(mut meta)) = store.read_meta(&session_id).await {
-                                    if meta.executor_session_id.as_deref()
-                                        != Some(executor_session_id.as_str())
-                                    {
-                                        meta.executor_session_id = Some(executor_session_id);
-                                        meta.updated_at = chrono::Utc::now().timestamp_millis();
-                                        let _ = store.write_meta(&meta).await;
-                                    }
-                                }
+                                meta.executor_session_id = Some(executor_session_id);
+                                meta.updated_at = chrono::Utc::now().timestamp_millis();
+                                let _ = store.write_meta(&meta).await;
                             }
                         }
                         let _ = store.append(&session_id, &notification).await;
@@ -1127,6 +1108,8 @@ impl ExecutorHub {
             let status_str = terminal_kind.state_tag().to_string();
             if let Ok(Some(mut meta)) = store.read_meta(&session_id).await {
                 meta.last_execution_status = status_str;
+                meta.last_turn_id = Some(turn_id_for_spawn.clone());
+                meta.last_terminal_message = terminal_message.clone();
                 meta.updated_at = chrono::Utc::now().timestamp_millis();
                 let _ = store.write_meta(&meta).await;
             }
@@ -1392,7 +1375,7 @@ impl SessionStore {
             }
         }
 
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
         Ok(sessions)
     }
 

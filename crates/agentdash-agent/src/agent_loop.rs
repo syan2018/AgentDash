@@ -5,13 +5,10 @@
 /// 2. 发出 `agent_start`
 /// 3. 循环开始前轮询 steering（用户可能在等待期间输入）
 /// 4. 外循环（follow-up 驱动）
-///    4a. 内循环（tool calls + steering 驱动）
-///        - 注入 pending messages (steering)
-///        - `transform_context` → `convert_to_llm` → Bridge.stream_complete()
-///        - 发出 message 事件
-///        - 若有 tool_calls → 执行（支持 sequential / parallel）
-///        - 轮询 steering
-///    4b. 检查 follow-up → 若有则继续外循环
+///    - 4a. 内循环（tool calls + steering 驱动）：注入 pending messages (steering)，
+///      `transform_context` → `convert_to_llm` → Bridge.stream_complete()，
+///      发出 message 事件，若有 tool_calls → 执行（sequential / parallel），轮询 steering
+///    - 4b. 检查 follow-up → 若有则继续外循环
 /// 5. 发出 `agent_end`
 use std::collections::HashMap;
 use std::future::Future;
@@ -875,10 +872,10 @@ async fn ensure_partial_started(
 }
 
 fn sync_partial(context: &mut AgentContext, partial: &PartialAssistantState) {
-    if partial.added_partial {
-        if let Some(last) = context.messages.last_mut() {
-            *last = partial.message.clone();
-        }
+    if partial.added_partial
+        && let Some(last) = context.messages.last_mut()
+    {
+        *last = partial.message.clone();
     }
 }
 
@@ -994,8 +991,8 @@ fn compute_suffix(existing: &str, incoming: &str) -> String {
     if existing.is_empty() {
         return incoming.to_string();
     }
-    if incoming.starts_with(existing) {
-        incoming[existing.len()..].to_string()
+    if let Some(suffix) = incoming.strip_prefix(existing) {
+        suffix.to_string()
     } else if existing == incoming || existing.ends_with(incoming) {
         String::new()
     } else {
@@ -1217,7 +1214,7 @@ async fn execute_tool_calls_parallel(
     };
 
     // Phase 3: 顺序 finalize + emit
-    for (entry, executed) in runnable.iter().zip(executed_results.into_iter()) {
+    for (entry, executed) in runnable.iter().zip(executed_results) {
         let finalized = finalize_executed_tool_call(
             context,
             assistant_message,
@@ -1375,17 +1372,17 @@ async fn prepare_tool_call(
             args: &args,
             context,
         };
-        if let Some(before_result) = hook(ctx, cancel.clone()).await {
-            if before_result.block {
-                return ToolCallPreparation::Immediate {
-                    result: error_tool_result(
-                        before_result
-                            .reason
-                            .unwrap_or_else(|| "Tool execution was blocked".to_string()),
-                    ),
-                    is_error: true,
-                };
-            }
+        if let Some(before_result) = hook(ctx, cancel.clone()).await
+            && before_result.block
+        {
+            return ToolCallPreparation::Immediate {
+                result: error_tool_result(
+                    before_result
+                        .reason
+                        .unwrap_or_else(|| "Tool execution was blocked".to_string()),
+                ),
+                is_error: true,
+            };
         }
     }
 

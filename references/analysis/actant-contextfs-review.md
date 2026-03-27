@@ -203,20 +203,6 @@ type VfsFilesystemType = "hostfs" | "runtimefs" | (string & Record<never, never>
 
 这样每个关注点独立可测试，`execution_hooks.rs` 也不会继续膨胀。
 
-### 借鉴 3：自动化的架构边界门禁
-
-**Actant 做法：** `stack-boundary-gate.test.ts` 在 CI 中自动扫描所有源码的 import 语句，验证不违反 stack 依赖规则。`contextfs-terminology-gate.test.ts` 用 grep 禁止旧术语回流。
-
-**AgentDashboard 现状：** 14 个 crate 之间的依赖关系通过 `Cargo.toml` 管理，但没有自动化测试来验证依赖方向是否正确。例如，`agentdash-domain` 应该是最底层的纯领域模型，不应该依赖任何基础设施层，但这个约束只靠人工维护。
-
-**建议：** 编写一个 Rust 集成测试（或 build script），扫描所有 crate 的 `Cargo.toml`，验证：
-1. `domain` 不依赖 `application`、`infrastructure`、`api`
-2. `application` 不依赖 `infrastructure`、`api`
-3. `connector-contract` 不依赖具体实现层
-4. `plugin-api` 只依赖 `connector-contract`、`injection`、`domain`
-
-这比靠文档约定可靠得多。Rust 的 `cargo metadata` 命令可以输出完整的依赖图，很容易写成自动化检查。
-
 ### 借鉴 4：Node Type 概念引入 Mount 体系
 
 **Actant 做法：** 4 种 node type（directory/regular/control/stream）让 VFS 能统一表达静态文件和运行时控制面。Agent 的 `control/request.json` 写入 = 发送指令，`streams/stdout` 订阅 = 获取输出流。
@@ -224,14 +210,6 @@ type VfsFilesystemType = "hostfs" | "runtimefs" | (string & Record<never, never>
 **AgentDashboard 现状：** `MountCapability` 只有 5 种（Read/Write/List/Search/Exec），没有区分"读取静态内容"和"订阅实时流"，也没有"写入即触发副作用"的 control 语义。Task 的执行控制和状态读取走的是完全不同的 API 路径（REST endpoint vs WebSocket），没有统一到 mount 体系中。
 
 **建议：** 考虑在 `MountCapability` 中增加 `Stream` 和 `Control` 能力，让 Task 的执行输出（stdout/stderr）和控制指令（start/stop/cancel）也能通过 mount 体系表达。这样前端可以用统一的方式访问"文件内容"和"执行输出"。
-
-### 借鉴 5：Lifecycle 绑定到 Mount 而非全局管理
-
-**Actant 做法：** 每个 mount 自带 lifecycle 声明（daemon/agent/session/process/ttl/manual），`VfsLifecycleManager` 根据 lifecycle 类型自动清理。
-
-**AgentDashboard 现状：** `RuntimeMount` 没有 lifecycle 概念。mount 的生存期由外部逻辑（session 结束时手动清理）管理，没有自动化的 lifecycle tracking。
-
-**建议：** 给 `RuntimeMount` 增加 lifecycle 字段，让 mount 的生存期可以声明式地绑定到 task/story/session。这样当 task 完成或 session 结束时，相关的 mount 可以自动卸载，不需要外部逻辑手动追踪。
 
 ### 借鉴 6：Filesystem Type Registry 模式
 
@@ -249,13 +227,6 @@ type VfsFilesystemType = "hostfs" | "runtimefs" | (string & Record<never, never>
 
 **建议：** 这一点 AgentDashboard 已经在正确的方向上。可以进一步细化，让 `AgentConnector` 的每个 optional 操作都有对应的 capability flag，并在调用前做运行时检查，而不是让不支持的 connector 返回 `Err`。
 
-### 借鉴 8：测试场景库（JSON-driven QA）
-
-**Actant 做法：** 20+ 个 JSON 格式的测试场景定义，覆盖从基础生命周期到随机游走综合测试。场景定义和测试执行分离。
-
-**AgentDashboard 现状：** 测试主要是 Playwright E2E 测试和少量单元测试，没有结构化的场景库。
-
-**建议：** 考虑为核心流程（Project → Story → Task → Session → Execution）建立 JSON-driven 的场景库，每个场景定义输入、预期状态流转和验证点。这样可以系统性地覆盖边界情况，也方便 QA 团队维护。
 
 ---
 
@@ -266,10 +237,8 @@ type VfsFilesystemType = "hostfs" | "runtimefs" | (string & Record<never, never>
 | P0 | 自动化架构边界门禁 | 防止依赖腐化，成本极低 | 低 |
 | P0 | Middleware Chain 拆分 execution_hooks | 解决 2900 行巨型文件，提升可维护性 | 中 |
 | P1 | Address Space 升级为执行内核 | 统一 I/O 分发，消除散落的 if-else | 高 |
-| P1 | Lifecycle 绑定到 Mount | 自动化资源清理 | 中 |
 | P2 | Node Type 引入 | 统一静态/动态内容访问模型 | 高 |
 | P2 | Filesystem Type Registry | 开放式 provider 扩展 | 中 |
-| P2 | JSON-driven QA 场景库 | 系统性测试覆盖 | 低 |
 
 ---
 

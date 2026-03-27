@@ -304,7 +304,10 @@ export type WorkflowRecordArtifactType =
   | "journal_update"
   | "archive_suggestion"
   | "phase_note"
-  | "checklist_evidence";
+  | "checklist_evidence"
+  | "execution_trace"
+  | "decision_record"
+  | "context_snapshot";
 
 export interface WorkflowContextBinding {
   kind: WorkflowContextBindingKind;
@@ -464,6 +467,7 @@ export interface WorkflowStepState {
   completed_at?: string | null;
   summary?: string | null;
   completed_by?: WorkflowProgressionSource | null;
+  context_snapshot?: Record<string, unknown> | null;
 }
 
 export interface WorkflowRecordArtifact {
@@ -473,6 +477,22 @@ export interface WorkflowRecordArtifact {
   title: string;
   content: string;
   created_at: string;
+}
+
+export type LifecycleExecutionEventKind =
+  | "step_activated"
+  | "step_completed"
+  | "constraint_blocked"
+  | "completion_evaluated"
+  | "artifact_appended"
+  | "context_injected";
+
+export interface LifecycleExecutionEntry {
+  timestamp: string;
+  step_key: string;
+  event_kind: LifecycleExecutionEventKind;
+  summary: string;
+  detail?: Record<string, unknown> | null;
 }
 
 export interface WorkflowRun {
@@ -485,6 +505,7 @@ export interface WorkflowRun {
   current_step_key?: string | null;
   step_states: WorkflowStepState[];
   record_artifacts: WorkflowRecordArtifact[];
+  execution_log: LifecycleExecutionEntry[];
   created_at: string;
   updated_at: string;
   last_activity_at: string;

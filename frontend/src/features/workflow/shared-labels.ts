@@ -1,4 +1,5 @@
 import type {
+  LifecycleExecutionEventKind,
   WorkflowAgentRole,
   WorkflowContextBindingKind,
   WorkflowDefinitionSource,
@@ -75,4 +76,16 @@ export const ARTIFACT_TYPE_LABEL: Record<WorkflowRecordArtifactType, string> = {
   archive_suggestion: "Archive Suggestion",
   phase_note: "Phase Note",
   checklist_evidence: "Checklist Evidence",
+  execution_trace: "Execution Trace",
+  decision_record: "Decision Record",
+  context_snapshot: "Context Snapshot",
+};
+
+export const EXECUTION_EVENT_KIND_LABEL: Record<LifecycleExecutionEventKind, string> = {
+  step_activated: "Step Activated",
+  step_completed: "Step Completed",
+  constraint_blocked: "Constraint Blocked",
+  completion_evaluated: "Completion Evaluated",
+  artifact_appended: "Artifact Appended",
+  context_injected: "Context Injected",
 };

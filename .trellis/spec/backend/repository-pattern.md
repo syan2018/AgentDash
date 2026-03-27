@@ -101,32 +101,34 @@ impl StoryRepository for SqliteStoryRepository {
 }
 ```
 
-### 依赖注入配置（API Layer）
+### 依赖注入配置
+
+Repository 的集合通过 `RepositorySet`（定义于 `agentdash-application::repository_set`）统一管理，
+`AppState` 持有 `RepositorySet` 而非散列的 `Arc<dyn XxxRepository>` 字段。
 
 ```rust
-// agentdash-api/src/app_state.rs
-pub struct AppState {
+// agentdash-application/src/repository_set.rs
+pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
-    pub executor_hub: ExecutorHub,
-    pub connector: Arc<dyn AgentConnector>,
+    // ... 其他 repo ...
 }
 
-impl AppState {
-    pub async fn new(pool: SqlitePool) -> Result<Self> {
-        // 按依赖顺序初始化：projects → workspaces → stories → tasks
-        let project_repo = Arc::new(SqliteProjectRepository::new(pool.clone()));
-        project_repo.initialize().await?;
-        let workspace_repo = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
-        workspace_repo.initialize().await?;
-        // ... 其他 repo ...
-        Ok(Self { project_repo, workspace_repo, story_repo, task_repo, backend_repo, executor_hub, connector })
-    }
+// agentdash-api/src/app_state.rs
+pub struct AppState {
+    pub repos: RepositorySet,       // 所有 repo 的集合
+    pub executor_hub: ExecutorHub,
+    pub connector: Arc<dyn AgentConnector>,
+    // ...
 }
 ```
+
+`RepositorySet` 定义在 application 层而非 api 层，使得 application 层的服务
+（hooks、gateway helpers、workspace resolution 等）可以直接接收 `&RepositorySet` 参数，
+而不需要依赖 api 层的 `AppState`。
 
 ---
 

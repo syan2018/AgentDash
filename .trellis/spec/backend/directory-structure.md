@@ -60,10 +60,13 @@ crates/
 │       │   ├── task.rs          # TaskResponse
 │       │   └── workspace.rs     # WorkspaceResponse
 │       ├── session_plan.rs      # re-export → application
-│       ├── task_agent_context.rs # re-export → application（保留 workspace 源解析）
-│       ├── address_space_access.rs # RelayAddressSpaceService + RelayRuntimeToolProvider
+│       ├── task_agent_context.rs # re-export → application
+│       ├── runtime_bridge.rs    # re-export → application
+│       ├── workspace_resolution.rs # 薄适配器（BackendAvailability → AppState）
+│       ├── address_space_access/ # re-export → application（inline_persistence/relay/tools/provider）
+│       ├── execution_hooks/     # re-export → application::hooks
 │       ├── bootstrap/
-│       │   ├── task_execution_gateway.rs  # 薄适配器（调用 application 层纯函数）
+│       │   ├── task_execution_gateway.rs  # 薄适配器（~360行，含 relay dispatch）
 │       │   └── task_state_reconcile.rs
 │       ├── relay/               # WebSocket 后端中继
 │       │   ├── registry.rs
@@ -87,11 +90,15 @@ crates/
 │   └── src/
 │       ├── lib.rs
 │       ├── session_plan.rs      # 会话编排解析与片段构建
+│       ├── repository_set.rs    # RepositorySet（所有 Repository 的集合）
+│       ├── runtime_bridge.rs    # connector ↔ application 类型转换
 │       ├── context/             # Agent 上下文构建框架
 │       │   ├── mod.rs
 │       │   ├── contributor.rs   # ContextContributor trait + Registry
 │       │   ├── builtins.rs      # 5 个内置 Contributor 实现
-│       │   └── builder.rs       # build_task_agent_context 入口
+│       │   ├── builder.rs       # build_task_agent_context 入口
+│       │   └── workspace_sources.rs # 声明式来源解析（File/ProjectSnapshot）
+│       ├── hooks/               # ExecutionHookProvider（从 api 迁入）
 │       ├── task/                # Task 执行相关纯逻辑
 │       │   ├── mod.rs
 │       │   ├── artifact.rs      # Tool call artifact 构建
@@ -100,12 +107,24 @@ crates/
 │       │   ├── execution.rs     # TaskExecutionGateway trait
 │       │   ├── lock.rs          # Per-Task 异步锁
 │       │   ├── restart_tracker.rs # 重启追踪器
-│       │   └── state_reconciler.rs # 启动时状态修复
+│       │   ├── state_reconciler.rs # 启动时状态修复
+│       │   ├── gateway/         # gateway 核心逻辑（从 api 迁入）
+│       │   │   ├── repo_ops.rs  # 纯 repo 操作辅助函数
+│       │   │   ├── turn_context.rs # turn 上下文准备
+│       │   │   └── turn_monitor.rs # turn 监听与事件处理
+│       │   └── tools/           # Task 相关 tool 实现（companion/hook）
 │       ├── address_space/       # 寻址空间组装（mount/path/types）
 │       │   ├── mod.rs
-│       │   ├── mount.rs         # ExecutionMount 派生与 Address Space 组装
+│       │   ├── mount.rs         # Mount 派生与 Address Space 组装
 │       │   ├── path.rs          # Mount 解析与路径归一化
-│       │   └── types.rs         # ResourceRef, ListOptions, ExecRequest 等值类型
+│       │   ├── types.rs         # ResourceRef, ListOptions, ExecRequest 等值类型
+│       │   ├── inline_persistence.rs # 内联内容持久化
+│       │   ├── relay_service.rs # RelayAddressSpaceService
+│       │   └── tools/           # FS/Shell/MountsList 等 tool 实现
+│       ├── workflow/            # Workflow & Lifecycle
+│       │   └── tools/           # WorkflowArtifactReportTool
+│       ├── workspace/           # workspace 解析
+│       │   └── resolution.rs    # resolve_workspace_binding（BackendAvailability trait）
 │       └── story/               # Story Owner Session 编排
 │           ├── mod.rs
 │           └── context_builder.rs # build_story_context_markdown / prompt_blocks
@@ -439,4 +458,24 @@ Workspace (1) ← (*) Task
 | 6 | AppState 瘦身 → RepositorySet / ServiceSet / TaskRuntime / AppConfig | ✅ |
 
 详见 `.trellis/tasks/03-19-decouple-api-domain-business-orchestration/plan.md`。
+
+**2026-03-27: API God Module Decomposition（深度解耦）**
+
+延续 03-20 的解耦目标，将 api 层残留的 God Module 逻辑进一步下沉到 application 层：
+
+| Task | 内容 | API 层行数变化 |
+|------|------|---------------|
+| Task 1 | AgentTool SPI 下沉到 connector-contract + ThinkingLevel 统一 | - |
+| Task 2 | execution_hooks 迁移到 application::hooks | ~2800 → 1 |
+| Task 3 | Mount/AddressSpace 统一到 domain + service/tool 迁移 | ~1500 → ~6 |
+| Task 4 | RepositorySet/runtime_bridge/workspace_resolution/gateway 核心下沉 | gateway 1493 → 360 |
+
+**架构改进**：
+- `RepositorySet` 定义从 api 下沉到 application，使 application 层服务可直接持有
+- `BackendAvailability` trait 解耦了 workspace resolution 对 AppState 的依赖
+- Turn 监听/事件处理/artifact 持久化等核心逻辑已参数化并迁入 application
+- API 层 relay dispatch 因依赖 api 独有的 BackendRegistry 暂时保留
+- Phase 6（SessionExecutor trait 解耦 application → executor）为延伸目标
+
+详见 `.trellis/tasks/03-27-api-god-module-decomposition/prd.md`。
 <!-- PROJECT-SPECIFIC-END -->

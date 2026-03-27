@@ -108,9 +108,11 @@ trait AddressSpaceProvider {
 
 补充说明：
 - 当前已落地的 provider 至少包括：
-  - `relay_fs`：通过 relay 访问本机物理工作空间
-  - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器
+  - `relay_fs`：通过 relay 访问本机物理工作空间（实现位于 `application::address_space::relay_service`）
+  - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器（实现位于 `application::address_space::inline_persistence`）
 - `inline_fs` 的首轮目标是让内置数据结构也能走统一 mount 模型，而不是继续散落在 prompt 拼接逻辑中。
+- 运行时工具实现（`fs.read/write/list/search`、`shell.exec`、`mounts.list`）位于 `application::address_space::tools`，API 层通过 re-export 引用。
+- `RuntimeToolProvider`（为 relay session 提供 tool 注册）位于 `application::address_space::tools::provider`。
 
 #### 3.4 relay 契约
 - relay 是访问本机 provider 的 transport，不是 mount 模型本身。

@@ -10,7 +10,7 @@
 
 - `agentdash-agent` 暴露纯运行时控制边界
 - `agentdash-executor` 承担 session 级 hook runtime 编排、缓存与适配
-- `agentdash-api` 实现 `ExecutionHookProvider`，从 workflow / task / story / project 等业务对象中解析 Hook 信息
+- `agentdash-application` 实现 `ExecutionHookProvider`（位于 `application::hooks`），从 workflow / task / story / project 等业务对象中解析 Hook 信息
 - 前端通过 `/api/sessions/{id}/hook-runtime` 观察当前 session 实际生效的 runtime snapshot
 
 这套机制的目标不是把 workflow 再做成一套特化 prompt 拼接系统，而是把“动态注入、工具前后 gate、turn/stop 控制”收敛为一条正式的跨层契约。
@@ -123,10 +123,14 @@ pub struct HookSessionRuntimeSnapshot {
   - 持有 `HookSessionRuntime`
   - 缓存 snapshot / diagnostics / revision
   - 把 runtime 适配为 `AgentRuntimeDelegate`
-- `agentdash-api` / `agentdash-application` 负责：
+- `agentdash-application` 负责：
   - 从业务对象“向外捞” Hook 信息
   - 生成 `SessionHookSnapshot`
   - 根据 trigger 评估 `HookResolution`
+  - `ExecutionHookProvider` 实现
+- `agentdash-api` 负责：
+  - 通过 re-export（`api::execution_hooks → application::hooks`）保持路由层引用兼容
+  - 提供 HTTP surface（`/api/sessions/{id}/hook-runtime`）
 
 #### 3.2 Snapshot 契约
 

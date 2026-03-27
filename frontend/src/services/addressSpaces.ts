@@ -158,6 +158,8 @@ export async function listAddressEntries(
 export async function listMountEntries(params: {
   projectId: string;
   storyId?: string;
+  ownerType?: string;
+  ownerId?: string;
   mountId: string;
   path?: string;
   pattern?: string;
@@ -166,6 +168,8 @@ export async function listMountEntries(params: {
   const searchParams = new URLSearchParams();
   searchParams.set("project_id", params.projectId);
   if (params.storyId) searchParams.set("story_id", params.storyId);
+  if (params.ownerType) searchParams.set("owner_type", params.ownerType);
+  if (params.ownerId) searchParams.set("owner_id", params.ownerId);
   if (params.path) searchParams.set("path", params.path);
   if (params.pattern) searchParams.set("pattern", params.pattern);
   if (params.recursive !== undefined) searchParams.set("recursive", String(params.recursive));
@@ -180,6 +184,8 @@ export async function listMountEntries(params: {
 export async function readMountFile(params: {
   projectId: string;
   storyId?: string;
+  ownerType?: string;
+  ownerId?: string;
   mountId: string;
   path: string;
 }): Promise<ReadMountFileResponse> {
@@ -190,6 +196,8 @@ export async function readMountFile(params: {
     body: JSON.stringify({
       project_id: params.projectId,
       story_id: params.storyId,
+      owner_type: params.ownerType,
+      owner_id: params.ownerId,
       mount_id: params.mountId,
       path: params.path,
     }),
@@ -199,6 +207,8 @@ export async function readMountFile(params: {
 export async function previewAddressSpace(params: {
   projectId: string;
   storyId?: string;
+  ownerType?: string;
+  ownerId?: string;
   target?: "project" | "story" | "task";
 }): Promise<PreviewAddressSpaceResponse> {
   const url = buildApiPath("/address-spaces/preview");
@@ -208,6 +218,8 @@ export async function previewAddressSpace(params: {
     body: JSON.stringify({
       project_id: params.projectId,
       story_id: params.storyId,
+      owner_type: params.ownerType,
+      owner_id: params.ownerId,
       target: params.target ?? "project",
     }),
   });
@@ -216,6 +228,8 @@ export async function previewAddressSpace(params: {
 export async function writeMountFile(params: {
   projectId: string;
   storyId?: string;
+  ownerType?: string;
+  ownerId?: string;
   mountId: string;
   path: string;
   content: string;
@@ -227,6 +241,8 @@ export async function writeMountFile(params: {
     body: JSON.stringify({
       project_id: params.projectId,
       story_id: params.storyId,
+      owner_type: params.ownerType,
+      owner_id: params.ownerId,
       mount_id: params.mountId,
       path: params.path,
       content: params.content,

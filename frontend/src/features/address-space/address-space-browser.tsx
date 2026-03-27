@@ -25,6 +25,8 @@ export interface AddressSpaceBrowserProps {
   preview?: {
     projectId: string;
     storyId?: string;
+    ownerType?: string;
+    ownerId?: string;
     target?: "project" | "story" | "task";
   };
   /** 初始选中的 mount id */
@@ -48,6 +50,7 @@ interface MountInfo {
 const PROVIDER_LABELS: Record<string, string> = {
   relay_fs: "工作区文件",
   inline_fs: "内联文件",
+  lifecycle_vfs: "Lifecycle 记录",
   external_service: "外部服务",
 };
 
@@ -76,8 +79,40 @@ export function AddressSpaceBrowser({
 
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
 
-  // 加载 mounts（从 addressSpace prop 或 preview API）
+  const previewOwnerType = preview?.ownerType;
+  const previewOwnerId = preview?.ownerId;
+
+  // 加载 mounts：优先用 preview API（可获取最新 lifecycle mount），否则用 addressSpace 快照
   useEffect(() => {
+    if (previewProjectId) {
+      let cancelled = false;
+      setLoading(true);
+      setError(null);
+
+      void (async () => {
+        try {
+          const result: PreviewAddressSpaceResponse = await previewAddressSpace({
+            projectId: previewProjectId,
+            storyId: previewStoryId,
+            ownerType: previewOwnerType,
+            ownerId: previewOwnerId,
+            target: previewTarget,
+          });
+          if (cancelled) return;
+          setMounts(result.mounts);
+          setDefaultMountId(result.default_mount_id ?? null);
+          setSelectedMountId((current) => current ?? result.default_mount_id ?? result.mounts[0]?.id ?? null);
+        } catch (err) {
+          if (cancelled) return;
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      })();
+
+      return () => { cancelled = true; };
+    }
+
     if (addressSpace) {
       setMounts(
         addressSpace.mounts.map((m) => ({
@@ -96,33 +131,7 @@ export function AddressSpaceBrowser({
       setSelectedMountId((current) => current ?? addressSpace.default_mount_id ?? addressSpace.mounts[0]?.id ?? null);
       return;
     }
-
-    if (!previewProjectId) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    void (async () => {
-      try {
-        const result: PreviewAddressSpaceResponse = await previewAddressSpace({
-          projectId: previewProjectId,
-          storyId: previewStoryId,
-          target: previewTarget,
-        });
-        if (cancelled) return;
-        setMounts(result.mounts);
-        setDefaultMountId(result.default_mount_id ?? null);
-        setSelectedMountId((current) => current ?? result.default_mount_id ?? result.mounts[0]?.id ?? null);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "加载 address space 失败");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [addressSpace, previewProjectId, previewStoryId, previewTarget]);
+  }, [addressSpace, previewProjectId, previewStoryId, previewOwnerType, previewOwnerId, previewTarget]);
 
   const selectedMount = useMemo(
     () => mounts.find((m) => m.id === selectedMountId) ?? null,
@@ -169,6 +178,8 @@ export function AddressSpaceBrowser({
           mount={selectedMount}
           projectId={preview.projectId}
           storyId={preview.storyId}
+          ownerType={preview.ownerType}
+          ownerId={preview.ownerId}
         />
       )}
     </div>
@@ -282,10 +293,14 @@ function MountFileBrowser({
   mount,
   projectId,
   storyId,
+  ownerType,
+  ownerId,
 }: {
   mount: MountInfo;
   projectId: string;
   storyId?: string;
+  ownerType?: string;
+  ownerId?: string;
 }) {
   const [currentPath, setCurrentPath] = useState(".");
   const [entries, setEntries] = useState<MountEntry[]>([]);
@@ -312,6 +327,8 @@ function MountFileBrowser({
         const result = await listMountEntries({
           projectId,
           storyId,
+          ownerType,
+          ownerId,
           mountId: mount.id,
           path,
           pattern: pattern || undefined,
@@ -367,6 +384,8 @@ function MountFileBrowser({
         const result = await readMountFile({
           projectId,
           storyId,
+          ownerType,
+          ownerId,
           mountId: mount.id,
           path: entry.path,
         });

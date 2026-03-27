@@ -265,7 +265,7 @@ function SharedFoldersSurfaceCard({
   emptyText: string;
   helperText: string;
   addressSpace?: ExecutionAddressSpace | null;
-  preview?: { projectId: string; storyId?: string; target?: "project" | "story" | "task" };
+  preview?: { projectId: string; storyId?: string; ownerType?: string; ownerId?: string; target?: "project" | "story" | "task" };
 }) {
   const [browserOpen, setBrowserOpen] = useState(false);
 
@@ -290,14 +290,14 @@ function SharedFoldersSurfaceCard({
         <p className="text-xs text-muted-foreground">{emptyText}</p>
       )}
 
-      {addressSpace && addressSpace.mounts.length > 0 && (
+      {(preview?.projectId || (addressSpace && addressSpace.mounts.length > 0)) && (
         <div className="mt-2">
           <button
             type="button"
             onClick={() => setBrowserOpen(!browserOpen)}
             className="rounded-[6px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
-            {browserOpen ? "收起地址空间" : `查看地址空间 (${addressSpace.mounts.length} 个挂载点)`}
+            {browserOpen ? "收起地址空间" : "查看地址空间"}
           </button>
           {browserOpen && (
             <div className="mt-2">
@@ -905,6 +905,8 @@ function StorySessionContextPanel({
   executorSummary,
   addressSpace,
   hookRuntime,
+  ownerType,
+  ownerId,
   isOpen,
   onToggle,
 }: {
@@ -913,6 +915,8 @@ function StorySessionContextPanel({
   executorSummary?: TaskSessionExecutorSummary | null;
   addressSpace?: ExecutionAddressSpace | null;
   hookRuntime?: HookSessionRuntimeInfo | null;
+  ownerType?: string;
+  ownerId?: string;
   isOpen: boolean;
   onToggle: () => void;
 }) {
@@ -947,7 +951,7 @@ function StorySessionContextPanel({
           emptyText="当前 Story 还没有整理出额外共享资料目录。"
           helperText="这些目录才是对用户真正可见的上下文表面，底层 provider / mount 细节默认不直接暴露。"
           addressSpace={addressSpace}
-          preview={{ projectId: story.project_id, storyId: story.id, target: "story" }}
+          preview={{ projectId: story.project_id, storyId: story.id, ownerType, ownerId, target: "story" }}
         />
         <SessionBehaviorSurfaceCard
           composition={effectiveComposition}
@@ -1027,6 +1031,8 @@ function ProjectSessionContextPanel({
   contextSnapshot,
   addressSpace,
   hookRuntime,
+  ownerType,
+  ownerId,
   isOpen,
   onToggle,
 }: {
@@ -1034,6 +1040,8 @@ function ProjectSessionContextPanel({
   projectName: string;
   contextSnapshot: SessionContextSnapshot;
   addressSpace?: ExecutionAddressSpace | null;
+  ownerType?: string;
+  ownerId?: string;
   hookRuntime?: HookSessionRuntimeInfo | null;
   isOpen: boolean;
   onToggle: () => void;
@@ -1065,7 +1073,7 @@ function ProjectSessionContextPanel({
           emptyText="当前 Project Session 还没有对用户暴露可用共享目录。"
           helperText="共享上下文默认表达成近似文件系统的目录，而不是 provider、mount policy 或权限矩阵。"
           addressSpace={addressSpace}
-          preview={{ projectId, target: "project" }}
+          preview={{ projectId, ownerType, ownerId, target: "project" }}
         />
       </div>
 
@@ -1695,6 +1703,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           contextSnapshot={sessionContextSnapshot}
           addressSpace={sessionAddressSpace}
           hookRuntime={activeHookRuntime}
+          ownerType={sessionOwnerBinding?.owner_type}
+          ownerId={sessionOwnerBinding?.owner_id}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />
@@ -1711,6 +1721,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           executorSummary={taskExecutorSummary}
           addressSpace={sessionAddressSpace}
           hookRuntime={activeHookRuntime}
+          ownerType={sessionOwnerBinding?.owner_type}
+          ownerId={sessionOwnerBinding?.owner_id}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />

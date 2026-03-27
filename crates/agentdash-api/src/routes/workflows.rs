@@ -285,7 +285,7 @@ pub async fn create_project_workflow_assignment(
     Ok(Json(assignment.into()))
 }
 
-pub async fn start_workflow_run(
+pub async fn start_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<StartWorkflowRunRequest>,
@@ -303,7 +303,7 @@ pub async fn start_workflow_run(
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.workflow_run_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
     );
     let run = service
         .start_run(StartLifecycleRunCommand {
@@ -317,13 +317,13 @@ pub async fn start_workflow_run(
     Ok(Json(run.into()))
 }
 
-pub async fn get_workflow_run(
+pub async fn get_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(run_id): Path<String>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let run = load_workflow_run(&state, run_id).await?;
+    let run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -334,7 +334,7 @@ pub async fn get_workflow_run(
     Ok(Json(run.into()))
 }
 
-pub async fn list_workflow_runs_by_target(
+pub async fn list_lifecycle_runs_by_target(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((target_kind_raw, target_id_raw)): Path<(String, String)>,
@@ -351,7 +351,7 @@ pub async fn list_workflow_runs_by_target(
     .await?;
     let runs = state
         .repos
-        .workflow_run_repo
+        .lifecycle_run_repo
         .list_by_target(target_kind, target_id)
         .await?;
     Ok(Json(runs.into_iter().map(Into::into).collect()))
@@ -363,7 +363,7 @@ pub async fn activate_workflow_step(
     Path((run_id, step_key)): Path<(String, String)>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let existing_run = load_workflow_run(&state, run_id).await?;
+    let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -374,7 +374,7 @@ pub async fn activate_workflow_step(
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.workflow_run_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
     );
     let run = service
         .activate_step(ActivateLifecycleStepCommand {
@@ -392,7 +392,7 @@ pub async fn complete_workflow_step(
     Json(req): Json<CompleteWorkflowStepRequest>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let existing_run = load_workflow_run(&state, run_id).await?;
+    let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -403,7 +403,7 @@ pub async fn complete_workflow_step(
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.workflow_run_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
     );
     let run = service
         .complete_step(CompleteLifecycleStepCommand {
@@ -428,7 +428,7 @@ pub async fn append_workflow_step_artifacts(
     Json(req): Json<AppendWorkflowStepArtifactsRequest>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let existing_run = load_workflow_run(&state, run_id).await?;
+    let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -450,7 +450,7 @@ pub async fn append_workflow_step_artifacts(
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.workflow_run_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
     );
     let run = service
         .append_step_artifacts(AppendLifecycleStepArtifactsCommand {
@@ -986,13 +986,13 @@ async fn resolve_project_id_for_workflow_target(
     })
 }
 
-async fn load_workflow_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {
+async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {
     state
         .repos
-        .workflow_run_repo
+        .lifecycle_run_repo
         .get_by_id(run_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("workflow_run 不存在: {run_id}")))
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {

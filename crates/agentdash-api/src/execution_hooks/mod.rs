@@ -64,7 +64,7 @@ pub struct AppExecutionHookProvider {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
 impl AppExecutionHookProvider {
@@ -75,7 +75,7 @@ impl AppExecutionHookProvider {
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-        workflow_run_repo: Arc<dyn LifecycleRunRepository>,
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
             project_repo,
@@ -84,7 +84,7 @@ impl AppExecutionHookProvider {
             session_binding_repo,
             workflow_definition_repo,
             lifecycle_definition_repo,
-            workflow_run_repo,
+            lifecycle_run_repo,
         }
     }
 
@@ -230,7 +230,7 @@ impl AppExecutionHookProvider {
             owner.label.clone(),
             self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
-            self.workflow_run_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
         )
         .await
         .map_err(|e| HookError::Runtime(e))
@@ -286,7 +286,7 @@ impl AppExecutionHookProvider {
         }
 
         let run = self
-            .workflow_run_repo
+            .lifecycle_run_repo
             .get_by_id(locator.run_id)
             .await
             .map_err(map_hook_error)?;
@@ -886,7 +886,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         let service = LifecycleRunService::new(
             self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
-            self.workflow_run_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
         );
         service
             .complete_step(CompleteLifecycleStepCommand {
@@ -906,7 +906,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         entries: Vec<PendingExecutionLogEntry>,
     ) -> Result<(), HookError> {
         workflow_recording::flush_execution_log_entries(
-            self.workflow_run_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
             entries,
         )
         .await

@@ -231,11 +231,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/workflow-templates/{builtin_key}/bootstrap",
             post(workflows::bootstrap_workflow_template),
         )
-        .route("/lifecycle-runs", post(workflows::start_workflow_run))
-        .route("/lifecycle-runs/{id}", get(workflows::get_workflow_run))
+        .route("/lifecycle-runs", post(workflows::start_lifecycle_run))
+        .route("/lifecycle-runs/{id}", get(workflows::get_lifecycle_run))
         .route(
             "/lifecycle-runs/targets/{target_kind}/{target_id}",
-            get(workflows::list_workflow_runs_by_target),
+            get(workflows::list_lifecycle_runs_by_target),
         )
         .route(
             "/lifecycle-runs/{id}/steps/{step_key}/activate",

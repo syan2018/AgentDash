@@ -19,21 +19,17 @@ use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_application::address_space::{
     InlineFsMountProvider, LifecycleMountProvider, MountProviderRegistry,
 };
+pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
-use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
-use agentdash_domain::backend::BackendRepository;
-use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowAssignmentRepository,
-    WorkflowDefinitionRepository,
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
-use agentdash_domain::workspace::WorkspaceRepository;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::{AgentConnector, ExecutorHub};
 use agentdash_infrastructure::{
@@ -45,24 +41,6 @@ use agentdash_infrastructure::{
 use agentdash_injection::AddressSpaceRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
-
-/// 持久化层端口 — 所有 Repository trait 对象的集合
-pub struct RepositorySet {
-    pub project_repo: Arc<dyn ProjectRepository>,
-    pub workspace_repo: Arc<dyn WorkspaceRepository>,
-    pub story_repo: Arc<dyn StoryRepository>,
-    pub task_repo: Arc<dyn TaskRepository>,
-    pub session_binding_repo: Arc<dyn SessionBindingRepository>,
-    pub backend_repo: Arc<dyn BackendRepository>,
-    pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
-    pub settings_repo: Arc<dyn SettingsRepository>,
-    pub agent_repo: Arc<dyn AgentRepository>,
-    pub agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
-    pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
-    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-}
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {

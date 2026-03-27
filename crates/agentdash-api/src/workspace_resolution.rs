@@ -5,24 +5,49 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
+use agentdash_application::workspace::{
+    BackendAvailability, WorkspaceResolutionError,
+};
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
-    WorkspaceResolutionPolicy,
 };
+use async_trait::async_trait;
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ResolvedWorkspaceBinding {
-    pub workspace_id: Uuid,
-    pub binding_id: Uuid,
-    pub backend_id: String,
-    pub root_ref: String,
-    pub resolution_reason: String,
-    pub warnings: Vec<String>,
-    pub detected_facts: Value,
+pub use agentdash_application::workspace::resolve_workspace_binding as resolve_workspace_binding_core;
+
+pub(crate) struct AppStateBackendAvailability {
+    state: Arc<AppState>,
+}
+
+impl AppStateBackendAvailability {
+    pub(crate) fn new(state: Arc<AppState>) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait]
+impl BackendAvailability for AppStateBackendAvailability {
+    async fn is_online(&self, backend_id: &str) -> bool {
+        self.state.services.backend_registry.is_online(backend_id).await
+    }
+}
+
+pub async fn resolve_workspace_binding(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+) -> Result<ResolvedWorkspaceBinding, ApiError> {
+    let availability = AppStateBackendAvailability::new(state.clone());
+    resolve_workspace_binding_core(&availability, workspace)
+        .await
+        .map_err(|err| match err {
+            WorkspaceResolutionError::NoBindings(msg) | WorkspaceResolutionError::NoAvailable(msg) => {
+                ApiError::Conflict(msg)
+            }
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,94 +58,6 @@ pub struct WorkspaceDetectionResult {
     pub binding: WorkspaceBinding,
     pub confidence: String,
     pub warnings: Vec<String>,
-}
-
-pub async fn resolve_workspace_binding(
-    state: &Arc<AppState>,
-    workspace: &Workspace,
-) -> Result<ResolvedWorkspaceBinding, ApiError> {
-    if workspace.bindings.is_empty() {
-        return Err(ApiError::Conflict(format!(
-            "Workspace `{}` 当前还没有任何可解析 binding",
-            workspace.name
-        )));
-    }
-
-    let mut warnings = Vec::new();
-    let mut online_candidates = Vec::new();
-    for binding in &workspace.bindings {
-        let backend_id = binding.backend_id.trim();
-        if backend_id.is_empty() {
-            warnings.push(format!("binding `{}` 缺少 backend_id", binding.id));
-            continue;
-        }
-        let is_online = state.services.backend_registry.is_online(backend_id).await;
-        if !is_online {
-            warnings.push(format!("backend `{backend_id}` 当前离线"));
-        }
-        online_candidates.push((binding, is_online));
-    }
-
-    let selected = match workspace.resolution_policy {
-        WorkspaceResolutionPolicy::PreferDefaultBinding => {
-            select_default_binding(workspace, &online_candidates)
-                .or_else(|| select_first_online(&online_candidates))
-                .or_else(|| online_candidates.first().map(|(binding, _)| *binding))
-        }
-        WorkspaceResolutionPolicy::PreferOnline => select_first_online(&online_candidates)
-            .or_else(|| select_default_binding(workspace, &online_candidates))
-            .or_else(|| online_candidates.first().map(|(binding, _)| *binding)),
-    };
-
-    let Some(binding) = selected else {
-        return Err(ApiError::Conflict(format!(
-            "Workspace `{}` 没有可用 binding",
-            workspace.name
-        )));
-    };
-
-    Ok(ResolvedWorkspaceBinding {
-        workspace_id: workspace.id,
-        binding_id: binding.id,
-        backend_id: binding.backend_id.trim().to_string(),
-        root_ref: binding.root_ref.trim().to_string(),
-        resolution_reason: build_resolution_reason(workspace, binding),
-        warnings,
-        detected_facts: binding.detected_facts.clone(),
-    })
-}
-
-fn select_default_binding<'a>(
-    workspace: &Workspace,
-    bindings: &'a [(&'a WorkspaceBinding, bool)],
-) -> Option<&'a WorkspaceBinding> {
-    let default_binding_id = workspace.default_binding_id?;
-    bindings
-        .iter()
-        .find(|(binding, _)| binding.id == default_binding_id)
-        .map(|(binding, _)| *binding)
-}
-
-fn select_first_online<'a>(
-    bindings: &'a [(&'a WorkspaceBinding, bool)],
-) -> Option<&'a WorkspaceBinding> {
-    bindings
-        .iter()
-        .filter(|(_, online)| *online)
-        .map(|(binding, _)| *binding)
-        .max_by_key(|binding| binding.priority)
-}
-
-fn build_resolution_reason(workspace: &Workspace, binding: &WorkspaceBinding) -> String {
-    if workspace.default_binding_id == Some(binding.id) {
-        return "命中默认 binding".to_string();
-    }
-    match workspace.resolution_policy {
-        WorkspaceResolutionPolicy::PreferDefaultBinding => {
-            "默认 binding 不可用，回退到候选 binding".to_string()
-        }
-        WorkspaceResolutionPolicy::PreferOnline => "根据在线 backend 选择候选 binding".to_string(),
-    }
 }
 
 pub async fn detect_workspace_from_backend(

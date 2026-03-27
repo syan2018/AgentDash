@@ -1,16 +1,16 @@
 /// Address Space 访问层 — Relay 传输实现与 Runtime 工具
 ///
-/// 值类型、路径工具和 Mount 推导逻辑已迁移到 `agentdash_application::address_space`。
+/// 值类型、路径工具、Mount 推导逻辑和全部 tool 实现已迁移到 `agentdash_application`。
 pub use agentdash_application::address_space::*;
 pub use agentdash_executor::{ExecutionAddressSpace, ExecutionMountCapability};
 
-mod inline_persistence;
-mod relay_service;
-mod tools_fs;
-mod tools_hook;
-mod tools_workflow;
-mod tools_companion;
-mod runtime_provider;
+pub mod inline_persistence;
+pub mod relay_service;
+pub mod tools_fs;
+pub mod tools_hook;
+pub mod tools_workflow;
+pub mod tools_companion;
+pub mod runtime_provider;
 
 pub use inline_persistence::{
     DbInlineContentPersister, InlineContentOverlay, InlineContentPersister,
@@ -29,7 +29,7 @@ mod tests {
     use chrono::Utc;
     use tokio::sync::mpsc;
 
-    use super::tools_fs::{
+    use agentdash_application::address_space::tools::fs::{
         FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool, ShellExecTool,
     };
 

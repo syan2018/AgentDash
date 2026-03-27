@@ -1,8 +1,11 @@
+pub mod inline_persistence;
 pub mod mount;
 pub mod path;
 pub mod provider;
 pub mod provider_inline;
 pub mod provider_lifecycle;
+pub mod relay_service;
+pub mod tools;
 pub mod types;
 
 pub use mount::{
@@ -22,4 +25,5 @@ pub use provider::{
 };
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
+pub use relay_service::RelayAddressSpaceService;
 pub use types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult, ResourceRef};

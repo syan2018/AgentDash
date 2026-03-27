@@ -1,14 +1,17 @@
 pub mod address_space;
+pub mod repository_set;
 pub mod bootstrap_plan;
 pub mod context;
 pub mod hooks;
 pub mod project;
 pub mod runtime;
+pub mod runtime_bridge;
 pub mod session_context;
 pub mod session_plan;
 pub mod story;
 pub mod task;
 pub mod workflow;
+pub mod workspace;
 
 pub use task::execution as task_execution;
 pub use task::lock as task_lock;

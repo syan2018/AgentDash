@@ -5,6 +5,7 @@ mod error;
 pub mod execution_log;
 pub mod projection;
 mod run;
+pub mod tools;
 
 pub use agentdash_domain::workflow::WorkflowSessionTerminalState;
 pub use catalog::{AssignLifecycleCommand, WorkflowCatalogService};

@@ -342,7 +342,7 @@ function MountFileBrowser({
         setLoading(false);
       }
     },
-    [projectId, storyId, mount.id],
+    [projectId, storyId, ownerType, ownerId, mount.id],
   );
 
   useEffect(() => {
@@ -404,7 +404,7 @@ function MountFileBrowser({
         setPreviewLoading(false);
       }
     },
-    [projectId, storyId, mount.id, handleNavigate],
+    [projectId, storyId, ownerType, ownerId, mount.id, handleNavigate],
   );
 
   const handleSave = useCallback(async () => {

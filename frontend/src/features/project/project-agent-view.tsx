@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type {
-  AgentEntity,
   Project,
   ProjectAgentLink,
   ProjectAgentSession,
@@ -10,6 +9,7 @@ import type {
 } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
+import { useExecutorDiscovery } from "../executor-selector";
 
 const EMPTY_LINKS: ProjectAgentLink[] = [];
 
@@ -140,6 +140,7 @@ function CreateAgentDialog({
   onClose: () => void;
 }) {
   const { createAgent, createProjectAgentLink, fetchProjectAgents, fetchAgents } = useProjectStore();
+  const { executors: discoveredExecutors } = useExecutorDiscovery();
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
   const definitions = useWorkflowStore((s) => s.definitions);
 
@@ -202,9 +203,12 @@ function CreateAgentDialog({
               onChange={(e) => setAgentType(e.target.value)}
               className="mt-1 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
             >
-              <option value="PI_AGENT">PI_AGENT</option>
-              <option value="claude-code">Claude Code</option>
-              <option value="codex-cli">Codex CLI</option>
+              {discoveredExecutors.length > 0
+                ? discoveredExecutors.map((ex) => (
+                    <option key={ex.id} value={ex.id}>{ex.name || ex.id}</option>
+                  ))
+                : <option value="PI_AGENT">PI_AGENT</option>
+              }
             </select>
           </div>
 

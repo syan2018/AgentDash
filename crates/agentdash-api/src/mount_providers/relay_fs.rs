@@ -36,6 +36,13 @@ impl MountProvider for RelayFsMountProvider {
         PROVIDER_RELAY_FS
     }
 
+    async fn is_available(&self, mount: &RuntimeMount) -> bool {
+        if mount.backend_id.is_empty() {
+            return true;
+        }
+        self.backends.is_online(&mount.backend_id).await
+    }
+
     async fn read_text(
         &self,
         mount: &RuntimeMount,

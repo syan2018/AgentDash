@@ -94,6 +94,11 @@ pub trait MountProvider: Send + Sync {
             self.provider_id()
         )))
     }
+
+    /// Whether this mount can be used right now (e.g. relay backend connected).
+    async fn is_available(&self, _mount: &RuntimeMount) -> bool {
+        true
+    }
 }
 
 /// Runtime context passed to every `MountProvider` operation.

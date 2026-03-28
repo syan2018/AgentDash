@@ -25,6 +25,7 @@ pub use hooks::{
 };
 pub use hub::{
     CompanionSessionContext, ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta,
+    UserPromptInput,
 };
 #[cfg(feature = "pi-agent")]
 pub use runtime_delegate::HookRuntimeDelegate;

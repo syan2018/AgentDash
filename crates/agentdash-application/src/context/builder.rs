@@ -6,7 +6,7 @@ use super::contributor::{
     TaskExecutionPhase,
 };
 use crate::session_plan::{
-    SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
+    SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
 };
 
@@ -49,7 +49,7 @@ pub fn build_task_agent_context(
 
     let effective_session_composition = resolve_story_session_composition(Some(input.story));
     let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_kind: SessionPlanOwnerKind::TaskExecution,
+        owner_type: SessionOwnerType::Task,
         phase: match input.phase {
             TaskExecutionPhase::Start => SessionPlanPhase::TaskStart,
             TaskExecutionPhase::Continue => SessionPlanPhase::TaskContinue,

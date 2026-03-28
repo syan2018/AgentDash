@@ -27,6 +27,16 @@ pub enum SessionMountTarget {
     Task,
 }
 
+impl From<agentdash_domain::session_binding::SessionOwnerType> for SessionMountTarget {
+    fn from(owner: agentdash_domain::session_binding::SessionOwnerType) -> Self {
+        match owner {
+            agentdash_domain::session_binding::SessionOwnerType::Project => Self::Project,
+            agentdash_domain::session_binding::SessionOwnerType::Story => Self::Story,
+            agentdash_domain::session_binding::SessionOwnerType::Task => Self::Task,
+        }
+    }
+}
+
 /// 从 Project / Story / Workspace 策略构建最终 Address Space
 pub fn build_derived_address_space(
     project: &Project,

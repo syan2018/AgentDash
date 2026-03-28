@@ -96,21 +96,21 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
             .map(|binding| PathBuf::from(binding.root_ref.clone()));
     }
 
-    let owner_kind = match &input.owner_variant {
+    let owner_type = match &input.owner_variant {
         BootstrapOwnerVariant::Task { .. } => {
-            crate::session_plan::SessionPlanOwnerKind::TaskExecution
+            agentdash_domain::session_binding::SessionOwnerType::Task
         }
         BootstrapOwnerVariant::Story { .. } => {
-            crate::session_plan::SessionPlanOwnerKind::StoryOwner
+            agentdash_domain::session_binding::SessionOwnerType::Story
         }
         BootstrapOwnerVariant::Project { .. } => {
-            crate::session_plan::SessionPlanOwnerKind::ProjectAgent
+            agentdash_domain::session_binding::SessionOwnerType::Project
         }
     };
     let tool_visibility = crate::session_plan::summarize_tool_visibility_with_context(
         input.address_space.as_ref(),
         &input.mcp_servers,
-        Some(owner_kind),
+        Some(owner_type),
     );
     let runtime_policy = summarize_runtime_policy(
         workspace_attached,

@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::address_space::selected_workspace_binding;
 use crate::runtime::{RuntimeAddressSpace, RuntimeMcpServer};
 use crate::session_plan::{
-    SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
+    SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
 };
 
@@ -84,7 +84,7 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
 
     let effective_session_composition = resolve_story_session_composition(Some(input.story));
     let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_kind: SessionPlanOwnerKind::StoryOwner,
+        owner_type: SessionOwnerType::Story,
         phase: SessionPlanPhase::StoryOwner,
         address_space: input.address_space,
         mcp_servers: input.mcp_servers,

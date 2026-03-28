@@ -17,7 +17,7 @@ use agentdash_executor::{
     AgentDashExecutorConfig, CompanionSessionContext, ExecutionAddressSpace,
     ExecutionContext, ExecutionMountCapability, ExecutorHub, HookEvaluationQuery,
     HookPendingAction, HookTraceEntry, HookTrigger,
-    PromptSessionRequest, SessionHookRefreshQuery,
+    PromptSessionRequest, SessionHookRefreshQuery, UserPromptInput,
     build_hook_trace_notification,
 };
 use async_trait::async_trait;
@@ -314,11 +314,13 @@ impl AgentTool for CompanionDispatchTool {
                 &target_binding.session_id,
                 None,
                 PromptSessionRequest {
-                    prompt: Some(final_prompt),
-                    prompt_blocks: None,
-                    working_dir: Some(self.working_dir.clone()),
-                    env: std::collections::HashMap::new(),
-                    executor_config: Some(self.current_executor_config.clone()),
+                    user_input: UserPromptInput {
+                        prompt: Some(final_prompt),
+                        prompt_blocks: None,
+                        working_dir: Some(self.working_dir.clone()),
+                        env: std::collections::HashMap::new(),
+                        executor_config: Some(self.current_executor_config.clone()),
+                    },
                     mcp_servers: execution_slice.mcp_servers.clone(),
                     workspace_root: Some(self.workspace_root.clone()),
                     address_space: execution_slice.address_space.clone(),

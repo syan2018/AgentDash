@@ -27,9 +27,11 @@ use crate::hooks::{
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 
+/// 纯用户输入 — HTTP 反序列化的目标。
+/// 不包含任何后端注入字段。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PromptSessionRequest {
+pub struct UserPromptInput {
     #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
@@ -40,23 +42,33 @@ pub struct PromptSessionRequest {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
-    /// ACP per-session MCP Server 列表（不走 serde — 仅由后端代码填充）
-    #[serde(skip)]
+}
+
+/// 后端完整请求 — 包含用户输入 + 后端注入的运行时上下文。
+///
+/// 由 session bootstrap 代码组合 `UserPromptInput` + 后端注入字段构造。
+#[derive(Debug, Clone)]
+pub struct PromptSessionRequest {
+    pub user_input: UserPromptInput,
     pub mcp_servers: Vec<McpServer>,
-    /// 可选的工作空间根目录覆盖。用于 relay `workspace_root` 或云端原生 Agent 的 Task 绑定 workspace。
-    #[serde(skip)]
     pub workspace_root: Option<PathBuf>,
-    /// 可选的会话级 Address Space 视图。
-    #[serde(skip)]
     pub address_space: Option<ExecutionAddressSpace>,
-    /// 流程工具能力裁剪。由 session plan 层根据 owner type 填充。
-    #[serde(skip)]
     pub flow_capabilities: Option<crate::connector::FlowCapabilities>,
-    /// 会话级 owner 上下文（project/story 的 markdown 摘要）。
-    /// 由 session binding 层在每次 prompt 前填充，注入到 system prompt 头部。
-    /// 不出现在用户消息流中，对用户透明。
-    #[serde(skip)]
     pub system_context: Option<String>,
+}
+
+impl PromptSessionRequest {
+    /// 从 `UserPromptInput` 构造，后端注入字段全部为空。
+    pub fn from_user_input(input: UserPromptInput) -> Self {
+        Self {
+            user_input: input,
+            mcp_servers: Vec::new(),
+            workspace_root: None,
+            address_space: None,
+            flow_capabilities: None,
+            system_context: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +78,7 @@ pub struct ResolvedPromptPayload {
     pub user_blocks: Vec<ContentBlock>,
 }
 
-impl PromptSessionRequest {
+impl UserPromptInput {
     /// 解析出有效的 prompt payload。
     /// - `text_prompt`：当前本地执行器仍使用的文本 prompt（由 block 降级拼接）
     /// - `user_blocks`：注入会话流时保留的原始 ACP ContentBlock
@@ -796,6 +808,7 @@ impl ExecutorHub {
         req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
         let resolved_payload = req
+            .user_input
             .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -821,7 +834,7 @@ impl ExecutorHub {
             .workspace_root
             .clone()
             .unwrap_or_else(|| self.workspace_root.clone());
-        let working_directory = resolve_working_dir(&workspace_root, req.working_dir.as_deref());
+        let working_directory = resolve_working_dir(&workspace_root, req.user_input.working_dir.as_deref());
 
         let title_hint = resolved_payload
             .text_prompt
@@ -847,6 +860,7 @@ impl ExecutorHub {
             }
         };
         let executor_config = req
+            .user_input
             .executor_config
             .clone()
             .or_else(|| session_meta.executor_config.clone())
@@ -887,7 +901,7 @@ impl ExecutorHub {
             turn_id: turn_id.clone(),
             workspace_root,
             working_directory,
-            environment_variables: req.env,
+            environment_variables: req.user_input.env,
             executor_config,
             mcp_servers: req.mcp_servers,
             address_space: req.address_space,
@@ -1435,22 +1449,34 @@ mod tests {
     use tokio::sync::{Mutex as TokioMutex, mpsc};
     use tokio_stream::wrappers::ReceiverStream;
 
-    #[test]
-    fn resolve_prompt_payload_from_text_prompt() {
-        let req = PromptSessionRequest {
-            prompt: Some("  hello world  ".to_string()),
-            prompt_blocks: None,
-            working_dir: None,
-            env: std::collections::HashMap::new(),
-            executor_config: None,
+    fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
+        PromptSessionRequest {
+            user_input: UserPromptInput {
+                prompt: Some(prompt.to_string()),
+                prompt_blocks: None,
+                working_dir: None,
+                env: HashMap::new(),
+                executor_config: None,
+            },
             mcp_servers: vec![],
             workspace_root: None,
             address_space: None,
             flow_capabilities: None,
             system_context: None,
+        }
+    }
+
+    #[test]
+    fn resolve_prompt_payload_from_text_prompt() {
+        let input = UserPromptInput {
+            prompt: Some("  hello world  ".to_string()),
+            prompt_blocks: None,
+            working_dir: None,
+            env: std::collections::HashMap::new(),
+            executor_config: None,
         };
 
-        let payload = req
+        let payload = input
             .resolve_prompt_payload()
             .expect("resolve should succeed");
         assert_eq!(payload.text_prompt, "hello world");
@@ -1467,7 +1493,7 @@ mod tests {
 
     #[test]
     fn resolve_prompt_payload_supports_multiple_block_types() {
-        let req = PromptSessionRequest {
+        let input = UserPromptInput {
             prompt: None,
             prompt_blocks: Some(vec![
                 json!({ "type": "text", "text": "请分析 @src/main.ts" }),
@@ -1477,14 +1503,9 @@ mod tests {
             working_dir: None,
             env: std::collections::HashMap::new(),
             executor_config: None,
-            mcp_servers: vec![],
-            workspace_root: None,
-            address_space: None,
-            flow_capabilities: None,
-            system_context: None,
         };
 
-        let payload = req
+        let payload = input
             .resolve_prompt_payload()
             .expect("resolve should succeed");
         assert_eq!(payload.user_blocks.len(), 3);
@@ -1679,18 +1700,7 @@ mod tests {
 
         hub.start_prompt(
             &session.id,
-            PromptSessionRequest {
-                prompt: Some("hello".to_string()),
-                prompt_blocks: None,
-                working_dir: None,
-                env: HashMap::new(),
-                executor_config: None,
-                mcp_servers: vec![],
-                workspace_root: None,
-                address_space: None,
-                flow_capabilities: None,
-                system_context: None,
-            },
+            simple_prompt_request("hello"),
         )
         .await
         .expect("prompt should start");
@@ -1783,11 +1793,13 @@ mod tests {
         hub.start_prompt(
             &session.id,
             PromptSessionRequest {
-                prompt: Some("hello".to_string()),
-                prompt_blocks: None,
-                working_dir: Some("src".to_string()),
-                env: HashMap::new(),
-                executor_config: None,
+                user_input: UserPromptInput {
+                    prompt: Some("hello".to_string()),
+                    prompt_blocks: None,
+                    working_dir: Some("src".to_string()),
+                    env: HashMap::new(),
+                    executor_config: None,
+                },
                 mcp_servers: vec![],
                 workspace_root: Some(workspace.path().to_path_buf()),
                 address_space: None,
@@ -1894,18 +1906,7 @@ mod tests {
 
         hub.start_prompt(
             &session.id,
-            PromptSessionRequest {
-                prompt: Some("hello".to_string()),
-                prompt_blocks: None,
-                working_dir: None,
-                env: HashMap::new(),
-                executor_config: None,
-                mcp_servers: vec![],
-                workspace_root: None,
-                address_space: None,
-                flow_capabilities: None,
-                system_context: None,
-            },
+            simple_prompt_request("hello"),
         )
         .await
         .expect("prompt should start");
@@ -1990,18 +1991,7 @@ mod tests {
         let error = hub
             .start_prompt(
                 &session.id,
-                PromptSessionRequest {
-                    prompt: Some("hello".to_string()),
-                    prompt_blocks: None,
-                    working_dir: None,
-                    env: HashMap::new(),
-                    executor_config: None,
-                    mcp_servers: vec![],
-                    workspace_root: None,
-                    address_space: None,
-                    flow_capabilities: None,
-                    system_context: None,
-                },
+                simple_prompt_request("hello"),
             )
             .await
             .expect_err("prompt should fail");
@@ -2111,18 +2101,7 @@ mod tests {
         let turn_id = hub
             .start_prompt(
                 &session.id,
-                PromptSessionRequest {
-                    prompt: Some("hello".to_string()),
-                    prompt_blocks: None,
-                    working_dir: None,
-                    env: HashMap::new(),
-                    executor_config: None,
-                    mcp_servers: vec![],
-                    workspace_root: None,
-                    address_space: None,
-                    flow_capabilities: None,
-                    system_context: None,
-                },
+                simple_prompt_request("hello"),
             )
             .await
             .expect("prompt should start");

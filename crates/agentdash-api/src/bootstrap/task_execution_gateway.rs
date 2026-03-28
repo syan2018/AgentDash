@@ -21,7 +21,7 @@ use agentdash_domain::{
     story::ChangeKind,
     task::Task,
 };
-use agentdash_executor::PromptSessionRequest;
+use agentdash_executor::{PromptSessionRequest, UserPromptInput};
 use agentdash_relay::{
     CommandCancelPayload, CommandPromptPayload, ExecutorConfigRelay, RelayMessage,
     ResponsePromptPayload,
@@ -186,11 +186,13 @@ async fn dispatch_cloud_native(
         .map(|item| std::path::PathBuf::from(item.root_ref.clone()));
 
     let prompt_req = PromptSessionRequest {
-        prompt: None,
-        prompt_blocks: Some(built.prompt_blocks),
-        working_dir: built.working_dir,
-        env: Default::default(),
-        executor_config: resolved_config.map(runtime_executor_config_to_connector),
+        user_input: UserPromptInput {
+            prompt: None,
+            prompt_blocks: Some(built.prompt_blocks),
+            working_dir: built.working_dir,
+            env: Default::default(),
+            executor_config: resolved_config.map(runtime_executor_config_to_connector),
+        },
         mcp_servers: runtime_mcp_servers_to_acp(&built.mcp_servers),
         workspace_root,
         address_space: address_space.clone(),

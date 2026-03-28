@@ -7,12 +7,7 @@ use crate::runtime::{
     MountCapabilitySet, RuntimeAddressSpace, RuntimeMcpServer, RuntimeMount,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionPlanOwnerKind {
-    ProjectAgent,
-    TaskExecution,
-    StoryOwner,
-}
+pub use agentdash_domain::session_binding::SessionOwnerType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanPhase {
@@ -20,6 +15,21 @@ pub enum SessionPlanPhase {
     TaskStart,
     TaskContinue,
     StoryOwner,
+}
+
+pub trait SessionOwnerTypeExt {
+    fn default_plan_phase(self, is_continuation: bool) -> SessionPlanPhase;
+}
+
+impl SessionOwnerTypeExt for SessionOwnerType {
+    fn default_plan_phase(self, is_continuation: bool) -> SessionPlanPhase {
+        match self {
+            SessionOwnerType::Project => SessionPlanPhase::ProjectAgent,
+            SessionOwnerType::Story => SessionPlanPhase::StoryOwner,
+            SessionOwnerType::Task if is_continuation => SessionPlanPhase::TaskContinue,
+            SessionOwnerType::Task => SessionPlanPhase::TaskStart,
+        }
+    }
 }
 
 pub struct SessionAddressSpaceSummary {
@@ -58,7 +68,7 @@ pub struct SessionRuntimePolicySummary {
 }
 
 pub struct SessionPlanInput<'a> {
-    pub owner_kind: SessionPlanOwnerKind,
+    pub owner_type: SessionOwnerType,
     pub phase: SessionPlanPhase,
     pub address_space: Option<&'a RuntimeAddressSpace>,
     pub mcp_servers: &'a [RuntimeMcpServer],
@@ -95,7 +105,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     let tool_visibility = summarize_tool_visibility_with_context(
         input.address_space,
         input.mcp_servers,
-        Some(input.owner_kind),
+        Some(input.owner_type),
     );
     let tool_names = tool_visibility.tool_names.clone();
     fragments.push(ContextFragment {
@@ -200,7 +210,7 @@ pub fn summarize_tool_visibility(
 pub fn summarize_tool_visibility_with_context(
     address_space: Option<&RuntimeAddressSpace>,
     mcp_servers: &[RuntimeMcpServer],
-    owner_kind: Option<SessionPlanOwnerKind>,
+    owner_type: Option<SessionOwnerType>,
 ) -> SessionToolVisibilitySummary {
     let resolved = address_space.is_some();
     let mut tool_names = address_space
@@ -209,7 +219,7 @@ pub fn summarize_tool_visibility_with_context(
 
     // 流程工具：按 session owner 类型条件注入
     if resolved {
-        let flow_tools = conditional_flow_tools(owner_kind);
+        let flow_tools = conditional_flow_tools(owner_type);
         tool_names.extend(flow_tools);
     }
 
@@ -265,24 +275,23 @@ pub fn summarize_tool_visibility_with_context(
 /// - `report_workflow_artifact`：所有 task/story session 可用
 /// - `companion_dispatch` / `companion_complete`：仅 story owner session 可用
 /// - `resolve_hook_action`：所有有 hook runtime 的 session 可用（暂所有 resolved session）
-fn conditional_flow_tools(owner_kind: Option<SessionPlanOwnerKind>) -> Vec<String> {
+fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
     let mut tools = Vec::new();
-    match owner_kind {
-        Some(SessionPlanOwnerKind::TaskExecution) => {
+    match owner_type {
+        Some(SessionOwnerType::Task) => {
             tools.push("report_workflow_artifact".to_string());
             tools.push("resolve_hook_action".to_string());
         }
-        Some(SessionPlanOwnerKind::StoryOwner) => {
+        Some(SessionOwnerType::Story) => {
             tools.push("report_workflow_artifact".to_string());
             tools.push("companion_dispatch".to_string());
             tools.push("companion_complete".to_string());
             tools.push("resolve_hook_action".to_string());
         }
-        Some(SessionPlanOwnerKind::ProjectAgent) => {
+        Some(SessionOwnerType::Project) => {
             tools.push("resolve_hook_action".to_string());
         }
         None => {
-            // 未知上下文时保守注入所有流程工具
             tools.push("report_workflow_artifact".to_string());
             tools.push("companion_dispatch".to_string());
             tools.push("companion_complete".to_string());
@@ -293,19 +302,19 @@ fn conditional_flow_tools(owner_kind: Option<SessionPlanOwnerKind>) -> Vec<Strin
 }
 
 fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
-    let role_label = match input.owner_kind {
-        SessionPlanOwnerKind::ProjectAgent => "project_agent",
-        SessionPlanOwnerKind::TaskExecution => "task_execution",
-        SessionPlanOwnerKind::StoryOwner => "story_owner",
+    let role_label = match input.owner_type {
+        SessionOwnerType::Project => "project_agent",
+        SessionOwnerType::Task => "task_execution",
+        SessionOwnerType::Story => "story_owner",
     };
-    let role_description = match input.owner_kind {
-        SessionPlanOwnerKind::ProjectAgent => {
+    let role_description = match input.owner_type {
+        SessionOwnerType::Project => {
             "Project 级协作代理，负责维护项目共享上下文、整理资料、沉淀决策并辅助后续 Story 准备"
         }
-        SessionPlanOwnerKind::TaskExecution => {
+        SessionOwnerType::Task => {
             "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报"
         }
-        SessionPlanOwnerKind::StoryOwner => {
+        SessionOwnerType::Story => {
             "Story 主代理，负责整理上下文、推进 Story、拆解并创建 Task"
         }
     };
@@ -709,7 +718,7 @@ mod tests {
         };
 
         let built = build_session_plan_fragments(SessionPlanInput {
-            owner_kind: SessionPlanOwnerKind::TaskExecution,
+            owner_type: SessionOwnerType::Task,
             phase: SessionPlanPhase::TaskStart,
             address_space: Some(&address_space),
             mcp_servers: &[],

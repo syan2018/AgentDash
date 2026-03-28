@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::address_space::selected_workspace_binding;
 use crate::runtime::{RuntimeAddressSpace, RuntimeMcpServer};
 use crate::session_plan::{
-    SessionPlanInput, SessionPlanOwnerKind, SessionPlanPhase, build_session_plan_fragments,
+    SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
 };
 
 pub struct ProjectContextBuildInput<'a> {
@@ -82,7 +82,7 @@ pub fn build_project_context_markdown(
     }
 
     let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_kind: SessionPlanOwnerKind::ProjectAgent,
+        owner_type: SessionOwnerType::Project,
         phase: SessionPlanPhase::ProjectAgent,
         address_space: input.address_space,
         mcp_servers: input.mcp_servers,

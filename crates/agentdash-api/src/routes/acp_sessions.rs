@@ -28,6 +28,7 @@ use agentdash_domain::{
 };
 use agentdash_executor::{
     HookSessionRuntimeSnapshot, PromptSessionRequest, SessionExecutionState, SessionMeta,
+    UserPromptInput,
 };
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_plugin_api::AuthIdentity;
@@ -553,7 +554,7 @@ pub async fn prompt_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
-    Json(req): Json<PromptSessionRequest>,
+    Json(user_input): Json<UserPromptInput>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_session_permission(
         state.as_ref(),
@@ -562,7 +563,12 @@ pub async fn prompt_session(
         ProjectPermission::Edit,
     )
     .await?;
-    let req = augment_prompt_request_for_owner(&state, &session_id, req).await?;
+    let req = augment_prompt_request_for_owner(
+        &state,
+        &session_id,
+        PromptSessionRequest::from_user_input(user_input),
+    )
+    .await?;
     let turn_id = state
         .services
         .executor_hub
@@ -645,6 +651,7 @@ async fn build_story_owner_prompt_request(
         Some(address_space) => Some(address_space),
         None => {
             let agent_type = req
+                .user_input
                 .executor_config
                 .as_ref()
                 .map(|config| config.executor.as_str())
@@ -659,6 +666,7 @@ async fn build_story_owner_prompt_request(
         }
     };
     let effective_agent_type = req
+        .user_input
         .executor_config
         .as_ref()
         .map(|config| config.executor.as_str())
@@ -692,15 +700,15 @@ async fn build_story_owner_prompt_request(
     let prompt_blocks = build_story_owner_prompt_blocks(
         story.id,
         context_markdown.clone(),
-        req.prompt.take(),
-        req.prompt_blocks.take(),
+        req.user_input.prompt.take(),
+        req.user_input.prompt_blocks.take(),
     );
 
-    req.prompt = None;
-    req.prompt_blocks = Some(prompt_blocks);
+    req.user_input.prompt = None;
+    req.user_input.prompt_blocks = Some(prompt_blocks);
     req.system_context = Some(context_markdown);
 
-    apply_workspace_defaults(&mut req.working_dir, &mut req.workspace_root, workspace);
+    apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.workspace_root, workspace);
     if req.address_space.is_none() {
         req.address_space = address_space;
     }
@@ -732,6 +740,7 @@ async fn build_project_owner_prompt_request(
     let workspace = resolve_project_workspace(state, project).await?;
 
     let effective_executor_config = req
+        .user_input
         .executor_config
         .clone()
         .unwrap_or_else(|| project_agent.executor_config.clone());
@@ -779,24 +788,24 @@ async fn build_project_owner_prompt_request(
     let prompt_blocks = build_project_owner_prompt_blocks(
         project.id,
         context_markdown.clone(),
-        req.prompt.take(),
-        req.prompt_blocks.take(),
+        req.user_input.prompt.take(),
+        req.user_input.prompt_blocks.take(),
     );
 
-    req.prompt = None;
-    req.prompt_blocks = Some(prompt_blocks);
+    req.user_input.prompt = None;
+    req.user_input.prompt_blocks = Some(prompt_blocks);
     req.system_context = Some(context_markdown);
 
     apply_workspace_defaults(
-        &mut req.working_dir,
+        &mut req.user_input.working_dir,
         &mut req.workspace_root,
         workspace.as_ref(),
     );
     if req.address_space.is_none() {
         req.address_space = address_space;
     }
-    if req.executor_config.is_none() {
-        req.executor_config = Some(effective_executor_config);
+    if req.user_input.executor_config.is_none() {
+        req.user_input.executor_config = Some(effective_executor_config);
     }
 
     req.mcp_servers = effective_mcp_servers;

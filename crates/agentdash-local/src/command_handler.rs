@@ -7,7 +7,7 @@ use agentdash_relay::*;
 use tokio::sync::mpsc;
 
 use crate::tool_executor::ToolExecutor;
-use agentdash_executor::{AgentConnector, ExecutorHub, hub::PromptSessionRequest};
+use agentdash_executor::{AgentConnector, ExecutorHub, hub::{PromptSessionRequest, UserPromptInput}};
 
 /// 命令处理器，路由云端命令到本地执行组件
 #[derive(Clone)]
@@ -161,17 +161,19 @@ impl CommandHandler {
         };
 
         let req = PromptSessionRequest {
-            prompt: payload.prompt,
-            prompt_blocks: payload.prompt_blocks.map(|v| {
-                if let serde_json::Value::Array(arr) = v {
-                    arr
-                } else {
-                    vec![v]
-                }
-            }),
-            working_dir: payload.working_dir.clone(),
-            env: payload.env,
-            executor_config,
+            user_input: UserPromptInput {
+                prompt: payload.prompt,
+                prompt_blocks: payload.prompt_blocks.map(|v| {
+                    if let serde_json::Value::Array(arr) = v {
+                        arr
+                    } else {
+                        vec![v]
+                    }
+                }),
+                working_dir: payload.working_dir.clone(),
+                env: payload.env,
+                executor_config,
+            },
             mcp_servers: parse_relay_mcp_servers(&payload.mcp_servers),
             workspace_root: Some(workspace_root),
             address_space: None,

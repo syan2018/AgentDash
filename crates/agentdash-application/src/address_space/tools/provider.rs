@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_connector_contract::{ConnectorError, ExecutionContext};
 use agentdash_executor::RuntimeToolProvider;
-use crate::session::ExecutorHub;
+use crate::session::SessionHub;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
@@ -27,7 +27,7 @@ pub struct RelayRuntimeToolProvider {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    executor_hub_handle: SharedExecutorHubHandle,
+    session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
 }
 
@@ -38,7 +38,7 @@ impl RelayRuntimeToolProvider {
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        executor_hub_handle: SharedExecutorHubHandle,
+        session_hub_handle: SharedSessionHubHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
     ) -> Self {
         Self {
@@ -47,24 +47,24 @@ impl RelayRuntimeToolProvider {
             workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
-            executor_hub_handle,
+            session_hub_handle,
             inline_persister,
         }
     }
 }
 
 #[derive(Clone, Default)]
-pub struct SharedExecutorHubHandle {
-    inner: Arc<RwLock<Option<ExecutorHub>>>,
+pub struct SharedSessionHubHandle {
+    inner: Arc<RwLock<Option<SessionHub>>>,
 }
 
-impl SharedExecutorHubHandle {
-    pub async fn set(&self, hub: ExecutorHub) {
+impl SharedSessionHubHandle {
+    pub async fn set(&self, hub: SessionHub) {
         let mut guard = self.inner.write().await;
         *guard = Some(hub);
     }
 
-    pub async fn get(&self) -> Option<ExecutorHub> {
+    pub async fn get(&self) -> Option<SessionHub> {
         self.inner.read().await.clone()
     }
 }
@@ -124,19 +124,19 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if caps.companion_dispatch {
             tools.push(Arc::new(CompanionDispatchTool::new(
                 self.session_binding_repo.clone(),
-                self.executor_hub_handle.clone(),
+                self.session_hub_handle.clone(),
                 context,
             )));
         }
         if caps.companion_complete {
             tools.push(Arc::new(CompanionCompleteTool::new(
-                self.executor_hub_handle.clone(),
+                self.session_hub_handle.clone(),
                 context,
             )));
         }
         if caps.resolve_hook_action {
             tools.push(Arc::new(ResolveHookActionTool::new(
-                self.executor_hub_handle.clone(),
+                self.session_hub_handle.clone(),
                 context,
             )));
         }

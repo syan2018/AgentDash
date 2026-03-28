@@ -227,7 +227,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 Ok(notification) => {
                     if let Err(err) = state
                         .services
-                        .executor_hub
+                        .session_hub
                         .inject_notification(&payload.session_id, notification)
                         .await
                     {

@@ -12,7 +12,7 @@ use super::value_objects::SessionOwnerType;
 pub struct SessionBinding {
     pub id: Uuid,
     pub project_id: Uuid,
-    /// ExecutorHub session ID（如 "sess-1234..."）
+    /// SessionHub session ID（如 "sess-1234..."）
     pub session_id: String,
     /// 归属实体类型
     pub owner_type: SessionOwnerType,

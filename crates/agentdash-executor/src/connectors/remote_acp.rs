@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, ExecutorInfo, PromptPayload,
+    ExecutionStream, AgentInfo, PromptPayload,
 };
 
 pub struct RemoteAcpConnector {
@@ -49,7 +49,7 @@ impl AgentConnector for RemoteAcpConnector {
         }
     }
 
-    fn list_executors(&self) -> Vec<ExecutorInfo> {
+    fn list_executors(&self) -> Vec<AgentInfo> {
         Vec::new()
     }
 

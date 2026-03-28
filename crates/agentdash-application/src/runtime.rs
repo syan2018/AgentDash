@@ -4,7 +4,7 @@ use agentdash_domain::common::MountCapability;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use agentdash_domain::common::{ExecutorConfig, ThinkingLevel};
+pub use agentdash_domain::common::{AgentConfig, ThinkingLevel};
 
 pub type RuntimeMount = agentdash_domain::common::Mount;
 pub type RuntimeAddressSpace = agentdash_domain::common::AddressSpace;

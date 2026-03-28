@@ -42,7 +42,7 @@ pub struct UserPromptInput {
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
-    pub executor_config: Option<agentdash_connector_contract::ExecutorConfig>,
+    pub executor_config: Option<agentdash_connector_contract::AgentConfig>,
 }
 
 /// 后端完整请求 — 包含用户输入 + 后端注入的运行时上下文。
@@ -291,7 +291,7 @@ pub struct SessionMeta {
     pub created_at: i64,
     pub updated_at: i64,
     /// 最后一次执行的终态：idle | running | completed | failed | interrupted
-    /// 由 ExecutorHub 在 turn 结束时写入，是执行状态的持久化 source of truth。
+    /// 由 SessionHub 在 turn 结束时写入，是执行状态的持久化 source of truth。
     #[serde(default = "SessionMeta::default_status")]
     pub last_execution_status: String,
     /// 最后一次 turn 的 ID（与 last_execution_status 同步写入）
@@ -301,7 +301,7 @@ pub struct SessionMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_terminal_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_config: Option<agentdash_connector_contract::ExecutorConfig>,
+    pub executor_config: Option<agentdash_connector_contract::AgentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -315,7 +315,7 @@ impl SessionMeta {
 }
 
 #[derive(Clone)]
-pub struct ExecutorHub {
+pub struct SessionHub {
     workspace_root: PathBuf,
     connector: Arc<dyn AgentConnector>,
     hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
@@ -409,7 +409,7 @@ fn meta_to_execution_state(meta: &SessionMeta, session_id: &str) -> SessionExecu
             }
         }
         other => unreachable!(
-            "last_execution_status 出现了非法值: {other:?}，这是 ExecutorHub 的 bug"
+            "last_execution_status 出现了非法值: {other:?}，这是 SessionHub 的 bug"
         ),
     }
 }
@@ -444,7 +444,7 @@ fn session_hook_trace_decision(trigger: &HookTrigger, resolution: &HookResolutio
     }
 }
 
-impl ExecutorHub {
+impl SessionHub {
     pub fn new(workspace_root: PathBuf, connector: Arc<dyn AgentConnector>) -> Self {
         Self::new_with_hooks(workspace_root, connector, None)
     }
@@ -1286,7 +1286,7 @@ impl ExecutorHub {
     }
 }
 
-impl ExecutorHub {
+impl SessionHub {
     async fn load_session_hook_runtime(
         &self,
         session_id: &str,
@@ -1598,7 +1598,7 @@ mod tests {
                 agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::AgentInfo> {
                 Vec::new()
             }
 
@@ -1692,7 +1692,7 @@ mod tests {
         let hook_provider = Arc::new(RecordingHookProvider {
             queries: queries.clone(),
         });
-        let hub = ExecutorHub::new_with_hooks(
+        let hub = SessionHub::new_with_hooks(
             base.path().to_path_buf(),
             connector.clone(),
             Some(hook_provider),
@@ -1738,7 +1738,7 @@ mod tests {
                 agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::AgentInfo> {
                 Vec::new()
             }
 
@@ -1788,7 +1788,7 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let workspace = tempfile::tempdir().expect("workspace");
         let connector = Arc::new(RecordingConnector::default());
-        let hub = ExecutorHub::new(base.path().to_path_buf(), connector.clone());
+        let hub = SessionHub::new(base.path().to_path_buf(), connector.clone());
         let session = hub.create_session("test").await.expect("create session");
 
         hub.start_prompt(
@@ -1838,8 +1838,8 @@ mod tests {
                 agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
-                vec![agentdash_connector_contract::ExecutorInfo {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::AgentInfo> {
+                vec![agentdash_connector_contract::AgentInfo {
                     id: "PI_AGENT".to_string(),
                     name: "PI Agent".to_string(),
                     variants: Vec::new(),
@@ -1892,7 +1892,7 @@ mod tests {
 
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(RecordingConnector::default());
-        let hub = ExecutorHub::new(base.path().to_path_buf(), connector.clone());
+        let hub = SessionHub::new(base.path().to_path_buf(), connector.clone());
 
         let session = hub
             .create_session("reuse existing executor")
@@ -1900,7 +1900,7 @@ mod tests {
             .expect("create session");
 
         hub.update_session_meta(&session.id, |meta| {
-            meta.executor_config = Some(agentdash_connector_contract::ExecutorConfig::new("PI_AGENT"));
+            meta.executor_config = Some(agentdash_connector_contract::AgentConfig::new("PI_AGENT"));
         })
         .await
         .expect("update meta should succeed");
@@ -1937,7 +1937,7 @@ mod tests {
                 agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::AgentInfo> {
                 Vec::new()
             }
 
@@ -1986,7 +1986,7 @@ mod tests {
         }
 
         let base = tempfile::tempdir().expect("tempdir");
-        let hub = ExecutorHub::new(base.path().to_path_buf(), Arc::new(FailingConnector));
+        let hub = SessionHub::new(base.path().to_path_buf(), Arc::new(FailingConnector));
         let session = hub.create_session("test").await.expect("create session");
 
         let error = hub
@@ -2045,7 +2045,7 @@ mod tests {
                 agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::AgentInfo> {
                 Vec::new()
             }
 
@@ -2096,7 +2096,7 @@ mod tests {
 
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(CancelAwareConnector::default());
-        let hub = ExecutorHub::new(base.path().to_path_buf(), connector);
+        let hub = SessionHub::new(base.path().to_path_buf(), connector);
         let session = hub.create_session("test").await.expect("create session");
 
         let turn_id = hub

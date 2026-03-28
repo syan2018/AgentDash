@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
 use crate::address_space_access::{
-    RelayAddressSpaceService, RelayRuntimeToolProvider, SharedExecutorHubHandle,
+    RelayAddressSpaceService, RelayRuntimeToolProvider, SharedSessionHubHandle,
 };
 use crate::mount_providers::RelayFsMountProvider;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
@@ -29,7 +29,7 @@ use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
 use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_application::session::ExecutorHub;
+use agentdash_application::session::SessionHub;
 use agentdash_executor::AgentConnector;
 use agentdash_infrastructure::{
     SqliteAgentRepository, SqliteBackendRepository, SqliteProjectRepository,
@@ -43,7 +43,7 @@ use agentdash_plugin_api::AuthMode;
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
-    pub executor_hub: ExecutorHub,
+    pub session_hub: SessionHub,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 Address Space 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
@@ -178,7 +178,7 @@ impl AppState {
 
         let address_space_service =
             Arc::new(RelayAddressSpaceService::new(mount_provider_registry.clone()));
-        let executor_hub_handle = SharedExecutorHubHandle::default();
+        let session_hub_handle = SharedSessionHubHandle::default();
 
         let inline_persister: Arc<dyn crate::address_space_access::InlineContentPersister> =
             Arc::new(crate::address_space_access::DbInlineContentPersister::new(
@@ -196,7 +196,7 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
             workflow_repo.clone(),
-            executor_hub_handle.clone(),
+            session_hub_handle.clone(),
             Some(inline_persister),
         )
         .await
@@ -217,12 +217,12 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
         ));
-        let executor_hub =
-            ExecutorHub::new_with_hooks(workspace_root, connector.clone(), Some(hook_provider));
-        executor_hub_handle.set(executor_hub.clone()).await;
+        let session_hub =
+            SessionHub::new_with_hooks(workspace_root, connector.clone(), Some(hook_provider));
+        session_hub_handle.set(session_hub.clone()).await;
 
         // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
-        if let Err(e) = executor_hub.recover_interrupted_sessions().await {
+        if let Err(e) = session_hub.recover_interrupted_sessions().await {
             tracing::warn!("启动恢复 session 状态失败（非致命）: {e}");
         }
 
@@ -235,7 +235,7 @@ impl AppState {
             &project_repo_port,
             &story_repo_port,
             &task_repo_port,
-            &executor_hub,
+            &session_hub,
             &restart_tracker,
         )
         .await?;
@@ -275,7 +275,7 @@ impl AppState {
                 lifecycle_run_repo: workflow_repo,
             },
             services: ServiceSet {
-                executor_hub,
+                session_hub,
                 connector,
                 address_space_service,
                 backend_registry,
@@ -316,7 +316,7 @@ async fn build_pi_agent_connector(
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    executor_hub_handle: SharedExecutorHubHandle,
+    session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn crate::address_space_access::InlineContentPersister>>,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
@@ -331,7 +331,7 @@ async fn build_pi_agent_connector(
         workflow_definition_repo,
         lifecycle_definition_repo,
         lifecycle_run_repo,
-        executor_hub_handle,
+        session_hub_handle,
         inline_persister,
     )));
     Some(connector)

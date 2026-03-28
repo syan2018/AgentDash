@@ -10,7 +10,7 @@ use agentdash_domain::task::{Task, TaskExecutionMode, TaskRepository, TaskStatus
 use super::restart_tracker::{RestartDecision, RestartTracker};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionExecutionState {
+pub enum TaskSessionState {
     Idle,
     Running {
         turn_id: Option<String>,
@@ -29,11 +29,11 @@ pub enum SessionExecutionState {
 }
 
 #[async_trait]
-pub trait SessionExecutionStateReader: Send + Sync {
+pub trait TaskSessionStateReader: Send + Sync {
     async fn inspect_session_execution_state(
         &self,
         session_id: &str,
-    ) -> Result<SessionExecutionState, String>;
+    ) -> Result<TaskSessionState, String>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -52,12 +52,12 @@ struct StatusReconcilePlan {
 
 fn plan_for_running_task(
     task: &Task,
-    execution_state: SessionExecutionState,
+    execution_state: TaskSessionState,
     restart_tracker: Option<&RestartTracker>,
 ) -> Option<StatusReconcilePlan> {
     match execution_state {
-        SessionExecutionState::Running { .. } => None,
-        SessionExecutionState::Completed { turn_id } => Some(StatusReconcilePlan {
+        TaskSessionState::Running { .. } => None,
+        TaskSessionState::Completed { turn_id } => Some(StatusReconcilePlan {
             next_status: TaskStatus::AwaitingVerification,
             reason: "boot_reconcile_turn_completed",
             context: json!({
@@ -66,7 +66,7 @@ fn plan_for_running_task(
                 "turn_id": turn_id,
             }),
         }),
-        SessionExecutionState::Failed { turn_id, message } => {
+        TaskSessionState::Failed { turn_id, message } => {
             let mut context = json!({
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
@@ -99,7 +99,7 @@ fn plan_for_running_task(
                 context,
             })
         }
-        SessionExecutionState::Interrupted { turn_id, message } => {
+        TaskSessionState::Interrupted { turn_id, message } => {
             let mut context = json!({
                 "session_id": task.session_id,
                 "executor_session_id": task.executor_session_id,
@@ -132,7 +132,7 @@ fn plan_for_running_task(
                 context,
             })
         }
-        SessionExecutionState::Idle => Some(StatusReconcilePlan {
+        TaskSessionState::Idle => Some(StatusReconcilePlan {
             next_status: TaskStatus::Failed,
             reason: "boot_reconcile_session_idle",
             context: json!({
@@ -193,7 +193,7 @@ pub async fn reconcile_running_tasks_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     story_repo: &Arc<dyn StoryRepository>,
     task_repo: &Arc<dyn TaskRepository>,
-    session_state_reader: &dyn SessionExecutionStateReader,
+    session_state_reader: &dyn TaskSessionStateReader,
     restart_tracker: Option<&RestartTracker>,
 ) -> Result<(), TaskStateReconcileError> {
     let projects = project_repo.list_all().await?;
@@ -209,7 +209,7 @@ pub async fn reconcile_running_tasks_on_boot(
             }
 
             let execution_state = match task.session_id.as_deref() {
-                None => SessionExecutionState::Interrupted {
+                None => TaskSessionState::Interrupted {
                     turn_id: None,
                     message: None,
                 },

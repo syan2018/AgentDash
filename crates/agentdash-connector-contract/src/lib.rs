@@ -3,11 +3,11 @@ pub mod hooks;
 pub mod lifecycle;
 pub mod tool;
 
-pub use agentdash_domain::common::{ExecutorConfig, ThinkingLevel};
+pub use agentdash_domain::common::{AgentConfig, ThinkingLevel};
 pub use connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
-    ExecutionStream, ExecutorInfo, FlowCapabilities, PromptPayload,
+    ExecutionStream, AgentInfo, FlowCapabilities, PromptPayload,
     content_block_to_text,
 };
 pub use tool::{

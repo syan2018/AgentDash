@@ -10,7 +10,7 @@ use tracing_subscriber::EnvFilter;
 
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
-use agentdash_application::session::ExecutorHub;
+use agentdash_application::session::SessionHub;
 use agentdash_executor::AgentConnector;
 
 #[derive(Parser, Debug)]
@@ -36,7 +36,7 @@ struct Cli {
     #[arg(long)]
     backend_id: Option<String>,
 
-    /// 禁用 ExecutorHub（仅保留 ToolExecutor 能力）
+    /// 禁用 SessionHub（仅保留 ToolExecutor 能力）
     #[arg(long, default_value_t = false)]
     no_executor: bool,
 }
@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
 
     let tool_exec = tool_executor::ToolExecutor::new(accessible_roots.clone());
 
-    let (executor_hub, connector) = if !cli.no_executor {
+    let (session_hub, connector) = if !cli.no_executor {
         let workspace_root = accessible_roots
             .first()
             .cloned()
@@ -90,17 +90,17 @@ async fn main() -> anyhow::Result<()> {
             VibeKanbanExecutorsConnector::new(workspace_root.clone()),
         )];
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let hub = ExecutorHub::new(workspace_root, connector.clone());
+        let hub = SessionHub::new(workspace_root, connector.clone());
 
         // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
         if let Err(e) = hub.recover_interrupted_sessions().await {
             tracing::warn!("启动恢复 session 状态失败（非致命）: {e}");
         }
 
-        tracing::info!("ExecutorHub 已初始化");
+        tracing::info!("SessionHub 已初始化");
         (Some(hub), Some(connector))
     } else {
-        tracing::info!("ExecutorHub 已禁用（--no-executor）");
+        tracing::info!("SessionHub 已禁用（--no-executor）");
         (None, None)
     };
 
@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
         name: cli.name,
         accessible_roots,
         tool_executor: tool_exec,
-        executor_hub,
+        session_hub,
         connector,
     })
     .await

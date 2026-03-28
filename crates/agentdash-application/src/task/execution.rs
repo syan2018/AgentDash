@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_domain::{
-    common::ExecutorConfig,
+    common::AgentConfig,
     story::ChangeKind,
     task::{Task, TaskStatus},
 };
@@ -32,14 +32,14 @@ pub enum ExecutionPhase {
 pub struct StartTaskCommand {
     pub task_id: Uuid,
     pub override_prompt: Option<String>,
-    pub executor_config: Option<ExecutorConfig>,
+    pub executor_config: Option<AgentConfig>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ContinueTaskCommand {
     pub task_id: Uuid,
     pub additional_prompt: Option<String>,
-    pub executor_config: Option<ExecutorConfig>,
+    pub executor_config: Option<AgentConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,7 +108,7 @@ pub trait TaskExecutionGateway: Send + Sync {
         phase: ExecutionPhase,
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
-        executor_config: Option<ExecutorConfig>,
+        executor_config: Option<AgentConfig>,
     ) -> Result<StartedTurn, TaskExecutionError>;
     async fn bind_session_to_owner(
         &self,

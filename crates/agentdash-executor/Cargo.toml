@@ -1,6 +1,6 @@
 [package]
 name = "agentdash-executor"
-description = "AgentDash 执行器层 — AgentConnector trait、ExecutorHub、连接器实现"
+description = "AgentDash 执行器层 — AgentConnector trait、SessionHub、连接器实现"
 version.workspace = true
 edition.workspace = true
 

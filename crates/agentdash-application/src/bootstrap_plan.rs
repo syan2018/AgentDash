@@ -5,7 +5,7 @@ use agentdash_domain::story::Story;
 use agentdash_domain::workspace::Workspace;
 
 use crate::address_space::selected_workspace_binding;
-use crate::runtime::{ExecutorConfig, RuntimeAddressSpace, RuntimeMcpServer};
+use crate::runtime::{AgentConfig, RuntimeAddressSpace, RuntimeMcpServer};
 use crate::session_context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
     SessionProjectDefaults, SessionStoryOverrides, SharedContextMount,
@@ -26,7 +26,7 @@ use crate::workflow::ActiveWorkflowProjection;
 pub struct SessionBootstrapPlan {
     pub owner: BootstrapOwnerSummary,
     pub executor: SessionExecutorSummary,
-    pub resolved_config: Option<ExecutorConfig>,
+    pub resolved_config: Option<AgentConfig>,
     pub address_space: Option<RuntimeAddressSpace>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
@@ -67,7 +67,7 @@ pub struct BootstrapPlanInput {
     pub project: Project,
     pub story: Option<Story>,
     pub workspace: Option<Workspace>,
-    pub resolved_config: Option<ExecutorConfig>,
+    pub resolved_config: Option<AgentConfig>,
     pub address_space: Option<RuntimeAddressSpace>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,

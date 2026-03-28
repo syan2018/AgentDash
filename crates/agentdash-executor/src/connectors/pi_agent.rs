@@ -28,7 +28,7 @@ use agentdash_domain::settings::SettingsRepository;
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionMount, ExecutionMountCapability, ExecutionStream, ExecutorInfo, PromptPayload,
+    ExecutionMount, ExecutionMountCapability, ExecutionStream, AgentInfo, PromptPayload,
     RuntimeToolProvider,
 };
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
@@ -345,8 +345,8 @@ impl AgentConnector for PiAgentConnector {
         }
     }
 
-    fn list_executors(&self) -> Vec<ExecutorInfo> {
-        vec![ExecutorInfo {
+    fn list_executors(&self) -> Vec<AgentInfo> {
+        vec![AgentInfo {
             id: "PI_AGENT".to_string(),
             name: "Pi Agent".to_string(),
             variants: vec![],
@@ -1458,7 +1458,7 @@ mod tests {
             workspace_root: PathBuf::from("F:/Projects/AgentDash"),
             working_directory: PathBuf::from("F:/Projects/AgentDash/crates/agentdash-agent"),
             environment_variables: HashMap::new(),
-            executor_config: crate::connector::ExecutorConfig::new("PI_AGENT"),
+            executor_config: crate::connector::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
             address_space: None,
             hook_session: None,
@@ -1575,7 +1575,7 @@ mod tests {
                     workspace_root: PathBuf::from("F:/Projects/AgentDash"),
                     working_directory: PathBuf::from("F:/Projects/AgentDash"),
                     environment_variables: HashMap::new(),
-                    executor_config: crate::connector::ExecutorConfig::new("PI_AGENT"),
+                    executor_config: crate::connector::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
                     address_space: None,
                     hook_session: None,

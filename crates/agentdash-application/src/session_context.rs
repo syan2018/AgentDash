@@ -3,7 +3,7 @@ use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
 use serde::Serialize;
 
-use crate::runtime::{ExecutorConfig, ThinkingLevel};
+use crate::runtime::{AgentConfig, ThinkingLevel};
 use crate::session_plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
 
 // ─── Unified DTO ─────────────────────────────────────
@@ -85,7 +85,7 @@ pub struct SharedContextMount {
 // ─── Shared utility functions ────────────────────────
 
 pub fn build_session_executor_summary(
-    resolved_config: Option<&ExecutorConfig>,
+    resolved_config: Option<&AgentConfig>,
     preset_name: Option<String>,
     source: impl Into<String>,
     resolution_error: Option<String>,

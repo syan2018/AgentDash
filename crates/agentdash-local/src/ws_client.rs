@@ -13,7 +13,7 @@ use agentdash_relay::*;
 
 use crate::command_handler::CommandHandler;
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::ExecutorHub;
+use agentdash_application::session::SessionHub;
 use agentdash_executor::AgentConnector;
 
 pub struct Config {
@@ -23,7 +23,7 @@ pub struct Config {
     pub name: String,
     pub accessible_roots: Vec<PathBuf>,
     pub tool_executor: ToolExecutor,
-    pub executor_hub: Option<ExecutorHub>,
+    pub session_hub: Option<SessionHub>,
     pub connector: Option<Arc<dyn AgentConnector>>,
 }
 
@@ -69,7 +69,7 @@ async fn run_session(
 
     let handler = CommandHandler::new(
         config.tool_executor.clone(),
-        config.executor_hub.clone(),
+        config.session_hub.clone(),
         config.connector.clone(),
         event_tx,
     );

@@ -16,7 +16,7 @@ pub use inline_persistence::{
     DbInlineContentPersister, InlineContentOverlay, InlineContentPersister,
 };
 pub use relay_service::RelayAddressSpaceService;
-pub use runtime_provider::{RelayRuntimeToolProvider, SharedExecutorHubHandle};
+pub use runtime_provider::{RelayRuntimeToolProvider, SharedSessionHubHandle};
 
 #[cfg(test)]
 mod tests {

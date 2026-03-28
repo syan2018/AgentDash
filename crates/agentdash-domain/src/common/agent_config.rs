@@ -21,7 +21,7 @@ pub enum ThinkingLevel {
 /// （如 `"CLAUDE_CODE"`），也能表示 AgentDash 自有 agent（如 `"PI_AGENT"`）。
 /// 路由到具体连接器时由 adapter 层按需转换。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutorConfig {
+pub struct AgentConfig {
     pub executor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
@@ -37,7 +37,7 @@ pub struct ExecutorConfig {
     pub permission_policy: Option<String>,
 }
 
-impl ExecutorConfig {
+impl AgentConfig {
     pub fn new(executor: impl Into<String>) -> Self {
         Self {
             executor: executor.into(),
@@ -51,7 +51,7 @@ impl ExecutorConfig {
     }
 }
 
-impl Default for ExecutorConfig {
+impl Default for AgentConfig {
     fn default() -> Self {
         Self::new("CLAUDE_CODE")
     }

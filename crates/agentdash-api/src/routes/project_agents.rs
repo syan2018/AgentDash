@@ -11,7 +11,7 @@ use agentdash_domain::{
     session_binding::{SessionBinding, SessionOwnerType},
     workspace::Workspace,
 };
-use agentdash_executor::ExecutorConfig;
+use agentdash_executor::AgentConfig;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -30,7 +30,7 @@ pub(crate) struct ProjectAgentBridge {
     pub key: String,
     pub display_name: String,
     pub description: String,
-    pub executor_config: ExecutorConfig,
+    pub executor_config: AgentConfig,
     pub preset_name: Option<String>,
     pub source: String,
     /// Http/SSE MCP servers parsed from preset config — injected into ExecutionContext for cloud agents
@@ -237,7 +237,7 @@ pub async fn open_project_agent_session(
         if let Some(binding) = existing_binding
             && let Some(meta) = state
                 .services
-                .executor_hub
+                .session_hub
                 .get_session_meta(&binding.session_id)
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -276,7 +276,7 @@ pub async fn open_project_agent_session(
     {
         let session_alive = state
             .services
-            .executor_hub
+            .session_hub
             .get_session_meta(&binding.session_id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -295,7 +295,7 @@ pub async fn open_project_agent_session(
     let title = format!("{} · {}", project.name.trim(), agent.display_name.trim());
     let meta = state
         .services
-        .executor_hub
+        .session_hub
         .create_session(title.trim())
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -414,7 +414,7 @@ fn build_project_agent_summary(
 
 pub(crate) fn build_project_agent_visible_mounts(
     project: &Project,
-    executor_config: &ExecutorConfig,
+    executor_config: &AgentConfig,
 ) -> Vec<ProjectAgentMountResponse> {
     effective_context_containers(project, None)
         .into_iter()
@@ -471,7 +471,7 @@ async fn find_project_agent_session(
 
     let meta = state
         .services
-        .executor_hub
+        .session_hub
         .get_session_meta(&binding.session_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -512,7 +512,7 @@ pub async fn list_project_agent_sessions(
     for binding in matching {
         let meta = state
             .services
-            .executor_hub
+            .session_hub
             .get_session_meta(&binding.session_id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -1032,8 +1032,8 @@ pub(crate) fn build_agent_bridge(agent: &Agent, link: &ProjectAgentLink) -> Proj
 fn executor_config_from_agent_config(
     agent_type: &str,
     config: &serde_json::Value,
-) -> ExecutorConfig {
-    let mut ec = ExecutorConfig::new(agent_type.to_string());
+) -> AgentConfig {
+    let mut ec = AgentConfig::new(agent_type.to_string());
     if let Some(v) = config.get("variant").and_then(|v| v.as_str()) {
         ec.variant = Some(v.to_string());
     }

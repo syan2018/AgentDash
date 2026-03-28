@@ -6,11 +6,11 @@ use serde::Serialize;
 
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_executor::connector::{
-    ConnectorCapabilities, ConnectorType, ExecutorInfo as ConnectorExecutorInfo,
+    ConnectorCapabilities, ConnectorType, AgentInfo as ConnectorAgentInfo,
 };
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ExecutorInfoResponse {
+pub struct AgentInfoResponse {
     pub id: String,
     pub name: String,
     pub variants: Vec<String>,
@@ -30,7 +30,7 @@ pub struct ConnectorInfoResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct DiscoveryResponse {
     pub connector: ConnectorInfoResponse,
-    pub executors: Vec<ExecutorInfoResponse>,
+    pub executors: Vec<AgentInfoResponse>,
 }
 
 pub async fn get_discovery(
@@ -43,10 +43,10 @@ pub async fn get_discovery(
         capabilities: connector.capabilities(),
     };
 
-    let mut merged: HashMap<String, ExecutorInfoResponse> = HashMap::new();
+    let mut merged: HashMap<String, AgentInfoResponse> = HashMap::new();
 
     for info in connector.list_executors() {
-        let ConnectorExecutorInfo {
+        let ConnectorAgentInfo {
             id,
             name,
             variants,
@@ -54,7 +54,7 @@ pub async fn get_discovery(
         } = info;
         merged.insert(
             id.clone(),
-            ExecutorInfoResponse {
+            AgentInfoResponse {
                 id,
                 name,
                 variants,
@@ -76,7 +76,7 @@ pub async fn get_discovery(
                 None => {
                     merged.insert(
                         ex.id.clone(),
-                        ExecutorInfoResponse {
+                        AgentInfoResponse {
                             id: ex.id.clone(),
                             name: ex.name.clone(),
                             variants: ex.variants.clone(),
@@ -89,7 +89,7 @@ pub async fn get_discovery(
         }
     }
 
-    let mut executors: Vec<ExecutorInfoResponse> = merged.into_values().collect();
+    let mut executors: Vec<AgentInfoResponse> = merged.into_values().collect();
     executors.sort_by(|a, b| a.id.cmp(&b.id));
 
     Ok(Json(DiscoveryResponse {

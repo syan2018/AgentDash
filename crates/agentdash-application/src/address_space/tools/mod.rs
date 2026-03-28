@@ -4,4 +4,4 @@ pub mod provider;
 pub use fs::{
     FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool, ShellExecTool,
 };
-pub use provider::{RelayRuntimeToolProvider, SharedExecutorHubHandle};
+pub use provider::{RelayRuntimeToolProvider, SharedSessionHubHandle};

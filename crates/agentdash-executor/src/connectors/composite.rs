@@ -10,7 +10,7 @@ use futures::stream::BoxStream;
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, ExecutorInfo, PromptPayload,
+    ExecutionStream, AgentInfo, PromptPayload,
 };
 
 pub struct CompositeConnector {
@@ -81,7 +81,7 @@ impl AgentConnector for CompositeConnector {
         caps
     }
 
-    fn list_executors(&self) -> Vec<ExecutorInfo> {
+    fn list_executors(&self) -> Vec<AgentInfo> {
         self.refresh_routing();
         let mut all = Vec::new();
         for c in &self.connectors {

@@ -128,7 +128,7 @@ mod tests {
 
     use agentdash_executor::{
         AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-        ExecutionStream, ExecutorInfo, PromptPayload,
+        ExecutionStream, AgentInfo, PromptPayload,
     };
     use agentdash_plugin_api::{
         AgentDashPlugin, AuthError, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
@@ -216,10 +216,10 @@ mod tests {
             ConnectorCapabilities::default()
         }
 
-        fn list_executors(&self) -> Vec<ExecutorInfo> {
+        fn list_executors(&self) -> Vec<AgentInfo> {
             self.executors
                 .iter()
-                .map(|id| ExecutorInfo {
+                .map(|id| AgentInfo {
                     id: id.clone(),
                     name: id.clone(),
                     variants: vec![],

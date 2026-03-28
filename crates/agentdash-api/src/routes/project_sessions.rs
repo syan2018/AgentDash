@@ -80,7 +80,7 @@ pub async fn get_project_session(
 
     let meta = state
         .services
-        .executor_hub
+        .session_hub
         .get_session_meta(&binding.session_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -123,7 +123,7 @@ pub(crate) async fn build_project_session_context_response(
         .flatten();
     let session_meta = state
         .services
-        .executor_hub
+        .session_hub
         .get_session_meta(session_id)
         .await
         .ok()??;
@@ -299,7 +299,7 @@ pub async fn list_project_sessions(
 
     let meta_map = state
         .services
-        .executor_hub
+        .session_hub
         .get_session_metas_bulk(&session_ids)
         .await
         .map_err(|e| ApiError::Internal(format!("批量读取 session meta 失败: {e}")))?;
@@ -307,7 +307,7 @@ pub async fn list_project_sessions(
     // ── Step 3: 单次 lock 批量读执行状态（内存，不扫 JSONL）─────────────────
     let status_map = state
         .services
-        .executor_hub
+        .session_hub
         .inspect_execution_states_bulk(&session_ids)
         .await;
 

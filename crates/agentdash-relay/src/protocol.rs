@@ -334,7 +334,7 @@ pub struct PongPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilitiesPayload {
-    pub executors: Vec<ExecutorInfoRelay>,
+    pub executors: Vec<AgentInfoRelay>,
     #[serde(default)]
     pub supports_cancel: bool,
     #[serde(default)]
@@ -342,7 +342,7 @@ pub struct CapabilitiesPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutorInfoRelay {
+pub struct AgentInfoRelay {
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -372,13 +372,13 @@ pub struct CommandPromptPayload {
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub executor_config: Option<ExecutorConfigRelay>,
+    pub executor_config: Option<AgentConfigRelay>,
     #[serde(default)]
     pub mcp_servers: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutorConfigRelay {
+pub struct AgentConfigRelay {
     pub executor: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
@@ -510,7 +510,7 @@ pub struct ResponseCancelPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseDiscoverPayload {
-    pub executors: Vec<ExecutorInfoRelay>,
+    pub executors: Vec<AgentInfoRelay>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_domain::{
-    common::ExecutorConfig,
+    common::AgentConfig,
     session_binding::SessionOwnerType,
     story::ChangeKind,
     task::{Task, TaskStatus},
@@ -14,7 +14,7 @@ use agentdash_domain::{
 use crate::address_space::RelayAddressSpaceService;
 use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
-use crate::session::ExecutorHub;
+use crate::session::SessionHub;
 use crate::task::lock::TaskLockMap;
 use crate::task::restart_tracker::RestartTracker;
 use crate::workspace::BackendAvailability;
@@ -63,9 +63,9 @@ pub trait TurnDispatcher: Send + Sync {
 ///
 /// 持有所有必要的 Application 层依赖（repos / hub / context services），
 /// 仅通过 `TurnDispatcher` trait 依赖基础设施层的分发能力。
-pub struct TaskExecutionService {
+pub struct TaskLifecycleService {
     pub repos: RepositorySet,
-    pub hub: ExecutorHub,
+    pub hub: SessionHub,
     pub address_space_service: Arc<RelayAddressSpaceService>,
     pub contributor_registry: ContextContributorRegistry,
     pub mcp_base_url: Option<String>,
@@ -75,7 +75,7 @@ pub struct TaskExecutionService {
     pub lock_map: TaskLockMap,
 }
 
-impl TaskExecutionService {
+impl TaskLifecycleService {
     pub async fn start_task(
         &self,
         cmd: StartTaskCommand,
@@ -427,7 +427,7 @@ impl TaskExecutionService {
         phase: ExecutionPhase,
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
-        executor_config: Option<&ExecutorConfig>,
+        executor_config: Option<&AgentConfig>,
     ) -> Result<StartedTurn, TaskExecutionError> {
         let session_id = task
             .session_id

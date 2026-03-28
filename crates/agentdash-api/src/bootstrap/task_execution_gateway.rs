@@ -24,7 +24,7 @@ use agentdash_domain::{
 };
 use agentdash_application::session::{PromptSessionRequest, UserPromptInput};
 use agentdash_relay::{
-    CommandCancelPayload, CommandPromptPayload, ExecutorConfigRelay, RelayMessage,
+    CommandCancelPayload, CommandPromptPayload, AgentConfigRelay, RelayMessage,
     ResponsePromptPayload,
 };
 use async_trait::async_trait;
@@ -80,7 +80,7 @@ impl TaskExecutionGateway for AppStateTaskExecutionGateway {
     }
 
     async fn create_task_session(&self, task: &Task) -> Result<String, TaskExecutionError> {
-        Ok(gw_create_task_session(&self.state.services.executor_hub, task).await?.id)
+        Ok(gw_create_task_session(&self.state.services.session_hub, task).await?.id)
     }
 
     async fn start_task_turn(
@@ -89,7 +89,7 @@ impl TaskExecutionGateway for AppStateTaskExecutionGateway {
         phase: ExecutionPhase,
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
-        executor_config: Option<agentdash_domain::common::ExecutorConfig>,
+        executor_config: Option<agentdash_domain::common::AgentConfig>,
     ) -> Result<StartedTurn, TaskExecutionError> {
         let session_id = task.session_id.as_deref()
             .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
@@ -135,14 +135,14 @@ impl TaskExecutionGateway for AppStateTaskExecutionGateway {
         if let Some(backend_id) = remote_backend {
             relay_cancel(&self.state, &backend_id, session_id).await
         } else {
-            self.state.services.executor_hub.cancel(session_id).await.map_err(map_connector_error)
+            self.state.services.session_hub.cancel(session_id).await.map_err(map_connector_error)
         }
     }
 
     async fn get_session_overview(
         &self, session_id: &str,
     ) -> Result<Option<agentdash_application::task::execution::SessionOverview>, TaskExecutionError> {
-        gw_get_session_overview(&self.state.services.executor_hub, session_id).await
+        gw_get_session_overview(&self.state.services.session_hub, session_id).await
     }
 
     async fn bridge_task_status_event_to_session(
@@ -151,7 +151,7 @@ impl TaskExecutionGateway for AppStateTaskExecutionGateway {
         let notification = bridge_task_status_event_to_session_notification(
             session_id, turn_id, event_type, message, data,
         );
-        if let Err(err) = self.state.services.executor_hub
+        if let Err(err) = self.state.services.session_hub
             .inject_notification(session_id, notification).await
         {
             tracing::warn!(session_id, turn_id, event_type, error = %err,
@@ -173,7 +173,7 @@ async fn dispatch_cloud_native(
     session_id: &str,
     built: BuiltTaskAgentContext,
     address_space: Option<agentdash_domain::common::AddressSpace>,
-    resolved_config: Option<&agentdash_application::runtime::ExecutorConfig>,
+    resolved_config: Option<&agentdash_application::runtime::AgentConfig>,
     workspace: Option<&agentdash_domain::workspace::Workspace>,
 ) -> Result<StartedTurn, TaskExecutionError> {
     let resolved_binding = if let Some(ws) = workspace {
@@ -205,7 +205,7 @@ async fn dispatch_cloud_native(
         system_context: built.system_context.clone(),
     };
 
-    let turn_id = state.services.executor_hub
+    let turn_id = state.services.session_hub
         .start_prompt(session_id, prompt_req).await
         .map_err(map_connector_error)?;
 
@@ -216,7 +216,7 @@ async fn dispatch_relay(
     state: &Arc<AppState>,
     session_id: &str,
     built: &BuiltTaskAgentContext,
-    resolved_config: Option<agentdash_application::runtime::ExecutorConfig>,
+    resolved_config: Option<agentdash_application::runtime::AgentConfig>,
     workspace: Option<&agentdash_domain::workspace::Workspace>,
 ) -> Result<StartedTurn, TaskExecutionError> {
     let ws = workspace.ok_or_else(|| {
@@ -249,7 +249,7 @@ async fn dispatch_relay(
 pub async fn execute_start_task(
     state: Arc<AppState>, task_id: Uuid,
     override_prompt: Option<String>,
-    executor_config: Option<agentdash_domain::common::ExecutorConfig>,
+    executor_config: Option<agentdash_domain::common::AgentConfig>,
 ) -> Result<StartTaskResult, TaskExecutionError> {
     state.task_runtime.lock_map.with_lock(task_id, || async {
         let gw = AppStateTaskExecutionGateway::new(state.clone());
@@ -263,7 +263,7 @@ pub async fn execute_start_task(
 pub async fn execute_continue_task(
     state: Arc<AppState>, task_id: Uuid,
     additional_prompt: Option<String>,
-    executor_config: Option<agentdash_domain::common::ExecutorConfig>,
+    executor_config: Option<agentdash_domain::common::AgentConfig>,
 ) -> Result<ContinueTaskResult, TaskExecutionError> {
     state.task_runtime.lock_map.with_lock(task_id, || async {
         let gw = AppStateTaskExecutionGateway::new(state.clone());
@@ -301,7 +301,7 @@ fn spawn_task_turn_monitor(
 ) {
     tokio::spawn(async move {
         let outcome = run_turn_monitor(
-            &state.repos, &state.services.executor_hub,
+            &state.repos, &state.services.session_hub,
             &state.task_runtime.restart_tracker,
             task_id, &session_id, &turn_id, &backend_id,
         ).await;
@@ -345,11 +345,11 @@ pub(crate) use agentdash_application::task::config::resolve_task_agent_config;
 async fn relay_start_prompt(
     state: &Arc<AppState>, backend_id: &str, session_id: &str,
     built: &BuiltTaskAgentContext,
-    executor_config: Option<agentdash_domain::common::ExecutorConfig>,
+    executor_config: Option<agentdash_domain::common::AgentConfig>,
     binding: &ResolvedWorkspaceBinding,
 ) -> Result<String, TaskExecutionError> {
     let relay_config = executor_config.as_ref()
-        .map(|c| ExecutorConfigRelay {
+        .map(|c| AgentConfigRelay {
             executor: c.executor.clone(), variant: c.variant.clone(),
             provider_id: c.provider_id.clone(), model_id: c.model_id.clone(),
             agent_id: c.agent_id.clone(),

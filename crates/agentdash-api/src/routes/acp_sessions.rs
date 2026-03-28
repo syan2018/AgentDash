@@ -84,7 +84,7 @@ pub async fn list_sessions(
         for binding in &bindings {
             if let Ok(Some(meta)) = state
                 .services
-                .executor_hub
+                .session_hub
                 .get_session_meta(&binding.session_id)
                 .await
             {
@@ -96,7 +96,7 @@ pub async fn list_sessions(
 
     let mut sessions = state
         .services
-        .executor_hub
+        .session_hub
         .list_sessions()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -146,7 +146,7 @@ pub async fn create_session(
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
     let meta = state
         .services
-        .executor_hub
+        .session_hub
         .create_session(&title)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -167,7 +167,7 @@ pub async fn get_session(
     .await?;
     let meta = state
         .services
-        .executor_hub
+        .session_hub
         .get_session_meta(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -189,7 +189,7 @@ pub async fn get_session_hook_runtime(
     .await?;
     let runtime = state
         .services
-        .executor_hub
+        .session_hub
         .ensure_hook_session_runtime(&session_id, None)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -226,7 +226,7 @@ pub async fn get_session_state(
     .await?;
     state
         .services
-        .executor_hub
+        .session_hub
         .get_session_meta(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -234,7 +234,7 @@ pub async fn get_session_state(
 
     let execution_state = state
         .services
-        .executor_hub
+        .session_hub
         .inspect_session_execution_state(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -533,7 +533,7 @@ pub async fn delete_session(
     .await?;
     state
         .services
-        .executor_hub
+        .session_hub
         .delete_session(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -571,7 +571,7 @@ pub async fn prompt_session(
     .await?;
     let turn_id = state
         .services
-        .executor_hub
+        .session_hub
         .start_prompt(&session_id, req)
         .await
         .map_err(|e| match &e {
@@ -851,14 +851,14 @@ pub async fn cancel_session(
     .await?;
     state
         .services
-        .executor_hub
+        .session_hub
         .cancel(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let execution_state = state
         .services
-        .executor_hub
+        .session_hub
         .inspect_session_execution_state(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -906,7 +906,7 @@ pub async fn approve_tool_call(
     .await?;
     state
         .services
-        .executor_hub
+        .session_hub
         .approve_tool_call(&session_id, &tool_call_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -933,7 +933,7 @@ pub async fn reject_tool_call(
     .await?;
     state
         .services
-        .executor_hub
+        .session_hub
         .reject_tool_call(&session_id, &tool_call_id, req.reason.clone())
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -973,7 +973,7 @@ pub async fn acp_session_stream_sse(
 
     let (history, mut rx) = state
         .services
-        .executor_hub
+        .session_hub
         .subscribe_with_history(&session_id)
         .await;
     let start_index = std::cmp::min(last_event_id as usize, history.len());
@@ -1049,7 +1049,7 @@ pub async fn acp_session_stream_ndjson(
 
     let (history, mut rx) = state
         .services
-        .executor_hub
+        .session_hub
         .subscribe_with_history(&session_id)
         .await;
     let start_index = std::cmp::min(resume_from as usize, history.len());

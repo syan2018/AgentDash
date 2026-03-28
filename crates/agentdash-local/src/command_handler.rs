@@ -7,14 +7,14 @@ use agentdash_relay::*;
 use tokio::sync::mpsc;
 
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::{ExecutorHub, PromptSessionRequest, UserPromptInput};
+use agentdash_application::session::{SessionHub, PromptSessionRequest, UserPromptInput};
 use agentdash_executor::AgentConnector;
 
 /// 命令处理器，路由云端命令到本地执行组件
 #[derive(Clone)]
 pub struct CommandHandler {
     tool_executor: ToolExecutor,
-    executor_hub: Option<ExecutorHub>,
+    session_hub: Option<SessionHub>,
     connector: Option<Arc<dyn AgentConnector>>,
     /// 异步事件发送通道（用于 SessionNotification 等流式推送）
     event_tx: mpsc::UnboundedSender<RelayMessage>,
@@ -23,24 +23,24 @@ pub struct CommandHandler {
 impl CommandHandler {
     pub fn new(
         tool_executor: ToolExecutor,
-        executor_hub: Option<ExecutorHub>,
+        session_hub: Option<SessionHub>,
         connector: Option<Arc<dyn AgentConnector>>,
         event_tx: mpsc::UnboundedSender<RelayMessage>,
     ) -> Self {
         Self {
             tool_executor,
-            executor_hub,
+            session_hub,
             connector,
             event_tx,
         }
     }
 
-    pub fn list_executors(&self) -> Vec<ExecutorInfoRelay> {
+    pub fn list_executors(&self) -> Vec<AgentInfoRelay> {
         match &self.connector {
             Some(connector) => connector
                 .list_executors()
                 .into_iter()
-                .map(|info| ExecutorInfoRelay {
+                .map(|info| AgentInfoRelay {
                     id: info.id,
                     name: info.name,
                     variants: info.variants,
@@ -118,13 +118,13 @@ impl CommandHandler {
     // ─── 第三方 Agent 命令处理 ──────────────────────────────
 
     async fn handle_prompt(&self, id: String, payload: CommandPromptPayload) -> RelayMessage {
-        let hub = match &self.executor_hub {
+        let hub = match &self.session_hub {
             Some(hub) => hub.clone(),
             None => {
                 return RelayMessage::ResponsePrompt {
                     id,
                     payload: None,
-                    error: Some(RelayError::runtime_error("ExecutorHub 未初始化")),
+                    error: Some(RelayError::runtime_error("SessionHub 未初始化")),
                 };
             }
         };
@@ -133,7 +133,7 @@ impl CommandHandler {
         let follow_up = payload.follow_up_session_id.clone();
 
         let executor_config = payload.executor_config.map(|c| {
-            let mut cfg = agentdash_executor::connector::ExecutorConfig::new(c.executor);
+            let mut cfg = agentdash_executor::connector::AgentConfig::new(c.executor);
             cfg.variant = c.variant;
             cfg.provider_id = c.provider_id;
             cfg.model_id = c.model_id;
@@ -224,13 +224,13 @@ impl CommandHandler {
     }
 
     async fn handle_cancel(&self, id: String, payload: CommandCancelPayload) -> RelayMessage {
-        let hub = match &self.executor_hub {
+        let hub = match &self.session_hub {
             Some(hub) => hub,
             None => {
                 return RelayMessage::ResponseCancel {
                     id,
                     payload: None,
-                    error: Some(RelayError::runtime_error("ExecutorHub 未初始化")),
+                    error: Some(RelayError::runtime_error("SessionHub 未初始化")),
                 };
             }
         };
@@ -495,9 +495,9 @@ impl CommandHandler {
     }
 }
 
-/// 订阅 ExecutorHub 的通知流并通过事件通道转发到 WebSocket
+/// 订阅 SessionHub 的通知流并通过事件通道转发到 WebSocket
 async fn forward_session_notifications(
-    hub: ExecutorHub,
+    hub: SessionHub,
     session_id: &str,
     _turn_id: &str,
     event_tx: mpsc::UnboundedSender<RelayMessage>,

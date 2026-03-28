@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
 };
-use agentdash_domain::common::ExecutorConfig;
+use agentdash_domain::common::AgentConfig;
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
@@ -34,7 +34,7 @@ pub struct ConnectorCapabilities {
 
 /// 连接器对外暴露的执行器选项（用于前端选择器渲染）
 #[derive(Debug, Clone, Serialize)]
-pub struct ExecutorInfo {
+pub struct AgentInfo {
     pub id: String,
     pub name: String,
     pub variants: Vec<String>,
@@ -51,13 +51,13 @@ pub struct ExecutionContext {
     pub workspace_root: PathBuf,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
-    pub executor_config: ExecutorConfig,
+    pub executor_config: AgentConfig,
     /// ACP 协议 per-session MCP Server 列表，由 Connector 负责传递给 Agent
     pub mcp_servers: Vec<McpServer>,
     /// 会话级 Address Space 视图。云端原生 Agent 可基于它生成 provider-backed runtime tools。
     pub address_space: Option<ExecutionAddressSpace>,
     /// 会话级 Hook Runtime 快照。
-    /// 当前阶段仅作为执行层承载位，后续由 ExecutorHub / Hook provider 正式填充。
+    /// 当前阶段仅作为执行层承载位，后续由 SessionHub / Hook provider 正式填充。
     pub hook_session: Option<Arc<HookSessionRuntime>>,
     /// Session 级别声明的流程工具能力集。
     /// 工具构建时按此裁剪：仅注入声明可用的流程工具。
@@ -217,7 +217,7 @@ pub trait AgentConnector: Send + Sync {
 
     fn capabilities(&self) -> ConnectorCapabilities;
 
-    fn list_executors(&self) -> Vec<ExecutorInfo>;
+    fn list_executors(&self) -> Vec<AgentInfo>;
 
     async fn discover_options_stream(
         &self,

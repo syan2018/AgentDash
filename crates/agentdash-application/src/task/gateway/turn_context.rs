@@ -11,7 +11,7 @@ use crate::context::{
     TaskExecutionPhase, build_declared_source_warning_fragment, build_task_agent_context,
     resolve_workspace_declared_sources,
 };
-use agentdash_domain::common::ExecutorConfig;
+use agentdash_domain::common::AgentConfig;
 use agentdash_executor::is_native_agent;
 use agentdash_mcp::injection::McpInjectionConfig;
 
@@ -27,7 +27,7 @@ use crate::workspace::BackendAvailability;
 pub struct PreparedTurnContext {
     pub built: BuiltTaskAgentContext,
     pub address_space: Option<AddressSpace>,
-    pub resolved_config: Option<ExecutorConfig>,
+    pub resolved_config: Option<AgentConfig>,
     pub use_cloud_native_agent: bool,
     pub workspace: Option<agentdash_domain::workspace::Workspace>,
 }
@@ -44,7 +44,7 @@ pub async fn prepare_task_turn_context(
     phase: ExecutionPhase,
     override_prompt: Option<&str>,
     additional_prompt: Option<&str>,
-    connector_config: Option<&ExecutorConfig>,
+    connector_config: Option<&AgentConfig>,
     mcp_base_url: Option<&str>,
 ) -> Result<PreparedTurnContext, TaskExecutionError> {
     let (story, project, workspace) = load_related_context(repos, task)

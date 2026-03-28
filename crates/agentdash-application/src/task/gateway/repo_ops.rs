@@ -455,11 +455,11 @@ pub async fn resolve_project_scope_for_owner(
 }
 
 pub async fn create_task_session(
-    executor_hub: &crate::session::ExecutorHub,
+    session_hub: &crate::session::SessionHub,
     task: &Task,
 ) -> Result<SessionMeta, TaskExecutionError> {
     let title = format!("Task: {}", task.title.trim());
-    executor_hub
+    session_hub
         .create_session(title.trim())
         .await
         .map_err(map_internal_error)
@@ -467,13 +467,13 @@ pub async fn create_task_session(
 
 pub async fn sync_task_executor_session_binding_from_hub(
     repos: &RepositorySet,
-    executor_hub: &crate::session::ExecutorHub,
+    session_hub: &crate::session::SessionHub,
     task_id: Uuid,
     backend_id: &str,
     session_id: &str,
     turn_id: &str,
 ) -> Result<(), DomainError> {
-    let meta = match executor_hub.get_session_meta(session_id).await {
+    let meta = match session_hub.get_session_meta(session_id).await {
         Ok(Some(meta)) => meta,
         Ok(None) => return Ok(()),
         Err(err) => {

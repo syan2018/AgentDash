@@ -25,7 +25,7 @@ use crate::{
     adapters::normalized_to_acp::NormalizedToAcpConverter,
     connector::{
         AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-        ExecutionStream, ExecutorInfo, PromptPayload,
+        ExecutionStream, AgentInfo, PromptPayload,
     },
 };
 
@@ -104,9 +104,9 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         }
     }
 
-    fn list_executors(&self) -> Vec<ExecutorInfo> {
+    fn list_executors(&self) -> Vec<AgentInfo> {
         let configs = ExecutorConfigs::get_cached();
-        let mut out: Vec<ExecutorInfo> = configs
+        let mut out: Vec<AgentInfo> = configs
             .executors
             .iter()
             .map(|(&agent, profile)| {
@@ -119,7 +119,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
                 let mut variants: Vec<String> = profile.configurations.keys().cloned().collect();
                 variants.sort();
 
-                ExecutorInfo {
+                AgentInfo {
                     id: id.clone(),
                     name: humanize_executor_id(&id),
                     variants,

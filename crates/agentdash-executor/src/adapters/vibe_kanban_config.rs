@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
-use agentdash_domain::common::{ExecutorConfig, ThinkingLevel};
+use agentdash_domain::common::{AgentConfig, ThinkingLevel};
 
-/// 尝试将 ExecutorConfig 转换为 vibe-kanban 的 ExecutorConfig。
+/// 尝试将 AgentConfig 转换为 vibe-kanban 的 AgentConfig。
 /// 若 executor 字符串不是有效的 BaseCodingAgent 变体则返回 None。
 pub fn to_vibe_kanban_config(
-    config: &ExecutorConfig,
+    config: &AgentConfig,
 ) -> Option<executors::profile::ExecutorConfig> {
     use executors::executors::BaseCodingAgent;
 
@@ -37,6 +37,6 @@ pub fn to_vibe_kanban_config(
 }
 
 /// 是否是 AgentDash 自有 agent（不属于 vibe-kanban 执行器）
-pub fn is_native_agent(config: &ExecutorConfig) -> bool {
+pub fn is_native_agent(config: &AgentConfig) -> bool {
     to_vibe_kanban_config(config).is_none()
 }

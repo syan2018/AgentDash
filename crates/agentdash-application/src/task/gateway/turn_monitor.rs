@@ -23,10 +23,10 @@ pub enum TurnOutcome {
     },
 }
 
-/// Turn 监听主循环 — 从 executor_hub 订阅会话事件并逐条处理
+/// Turn 监听主循环 — 从 session_hub 订阅会话事件并逐条处理
 pub async fn run_turn_monitor(
     repos: &RepositorySet,
-    executor_hub: &crate::session::ExecutorHub,
+    session_hub: &crate::session::SessionHub,
     restart_tracker: &crate::task::restart_tracker::RestartTracker,
     task_id: Uuid,
     session_id: &str,
@@ -38,12 +38,12 @@ pub async fn run_turn_monitor(
         _ => TaskExecutionMode::Standard,
     };
 
-    let (history, mut rx) = executor_hub.subscribe_with_history(session_id).await;
+    let (history, mut rx) = session_hub.subscribe_with_history(session_id).await;
 
     for notification in history {
         match handle_turn_notification(
             repos,
-            executor_hub,
+            session_hub,
             restart_tracker,
             task_id,
             session_id,
@@ -73,7 +73,7 @@ pub async fn run_turn_monitor(
             Ok(notification) => {
                 match handle_turn_notification(
                     repos,
-                    executor_hub,
+                    session_hub,
                     restart_tracker,
                     task_id,
                     session_id,
@@ -133,7 +133,7 @@ pub async fn run_turn_monitor(
 
 pub async fn handle_turn_notification(
     repos: &RepositorySet,
-    executor_hub: &crate::session::ExecutorHub,
+    session_hub: &crate::session::SessionHub,
     restart_tracker: &crate::task::restart_tracker::RestartTracker,
     task_id: Uuid,
     session_id: &str,
@@ -175,7 +175,7 @@ pub async fn handle_turn_notification(
         }
         SessionUpdate::SessionInfoUpdate(info) => {
             sync_task_executor_session_binding_from_hub(
-                repos, executor_hub, task_id, backend_id, session_id, turn_id,
+                repos, session_hub, task_id, backend_id, session_id, turn_id,
             )
             .await?;
 
@@ -396,10 +396,10 @@ pub fn bridge_task_status_event_to_session_notification(
 }
 
 pub async fn get_session_overview(
-    executor_hub: &crate::session::ExecutorHub,
+    session_hub: &crate::session::SessionHub,
     session_id: &str,
 ) -> Result<Option<SessionOverview>, TaskExecutionError> {
-    let meta = executor_hub
+    let meta = session_hub
         .get_session_meta(session_id)
         .await
         .map_err(map_internal_error)?;

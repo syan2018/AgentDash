@@ -15,7 +15,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::address_space::tools::provider::SharedExecutorHubHandle;
+use crate::address_space::tools::provider::SharedSessionHubHandle;
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -39,11 +39,11 @@ pub struct ResolveHookActionTool {
     current_session_id: Option<String>,
     current_turn_id: String,
     hook_session: Option<Arc<agentdash_connector_contract::HookSessionRuntime>>,
-    executor_hub_handle: SharedExecutorHubHandle,
+    session_hub_handle: SharedSessionHubHandle,
 }
 
 impl ResolveHookActionTool {
-    pub fn new(executor_hub_handle: SharedExecutorHubHandle, context: &ExecutionContext) -> Self {
+    pub fn new(session_hub_handle: SharedSessionHubHandle, context: &ExecutionContext) -> Self {
         Self {
             current_session_id: context
                 .hook_session
@@ -51,7 +51,7 @@ impl ResolveHookActionTool {
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
-            executor_hub_handle,
+            session_hub_handle,
         }
     }
 }
@@ -116,13 +116,13 @@ impl AgentTool for ResolveHookActionTool {
                 ))
             })?;
 
-        if let Some(executor_hub) = self.executor_hub_handle.get().await {
+        if let Some(session_hub) = self.session_hub_handle.get().await {
             let notification = build_hook_action_resolved_notification(
                 &current_session_id,
                 &self.current_turn_id,
                 &action,
             );
-            let _ = executor_hub
+            let _ = session_hub
                 .inject_notification(&current_session_id, notification)
                 .await;
         }

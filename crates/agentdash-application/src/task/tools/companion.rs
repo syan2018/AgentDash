@@ -14,11 +14,11 @@ use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 use agentdash_connector_contract::{
-    ExecutionAddressSpace, ExecutionContext, ExecutionMountCapability, ExecutorConfig,
+    ExecutionAddressSpace, ExecutionContext, ExecutionMountCapability, AgentConfig,
     HookEvaluationQuery, HookPendingAction, HookTraceEntry, HookTrigger, SessionHookRefreshQuery,
 };
 use crate::session::{
-    CompanionSessionContext, ExecutorHub, PromptSessionRequest, UserPromptInput,
+    CompanionSessionContext, SessionHub, PromptSessionRequest, UserPromptInput,
     build_hook_trace_notification,
 };
 use async_trait::async_trait;
@@ -27,15 +27,15 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::address_space::tools::provider::SharedExecutorHubHandle;
+use crate::address_space::tools::provider::SharedSessionHubHandle;
 
 #[derive(Clone)]
 pub struct CompanionDispatchTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
-    executor_hub_handle: SharedExecutorHubHandle,
+    session_hub_handle: SharedSessionHubHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
-    current_executor_config: ExecutorConfig,
+    current_executor_config: AgentConfig,
     workspace_root: std::path::PathBuf,
     working_dir: String,
     address_space: Option<ExecutionAddressSpace>,
@@ -47,12 +47,12 @@ pub struct CompanionDispatchTool {
 impl CompanionDispatchTool {
     pub fn new(
         session_binding_repo: Arc<dyn SessionBindingRepository>,
-        executor_hub_handle: SharedExecutorHubHandle,
+        session_hub_handle: SharedSessionHubHandle,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             session_binding_repo,
-            executor_hub_handle,
+            session_hub_handle,
             current_session_id: context
                 .hook_session
                 .as_ref()
@@ -144,15 +144,15 @@ pub struct CompanionCompleteParams {
 
 #[derive(Clone)]
 pub struct CompanionCompleteTool {
-    executor_hub_handle: SharedExecutorHubHandle,
+    session_hub_handle: SharedSessionHubHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
 }
 
 impl CompanionCompleteTool {
-    pub fn new(executor_hub_handle: SharedExecutorHubHandle, context: &ExecutionContext) -> Self {
+    pub fn new(session_hub_handle: SharedSessionHubHandle, context: &ExecutionContext) -> Self {
         Self {
-            executor_hub_handle,
+            session_hub_handle,
             current_session_id: context
                 .hook_session
                 .as_ref()
@@ -230,16 +230,16 @@ impl AgentTool for CompanionDispatchTool {
         .await
         .map_err(AgentToolError::ExecutionFailed)?;
 
-        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
+        let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
-                "ExecutorHub 尚未完成初始化，无法执行 companion dispatch".to_string(),
+                "SessionHub 尚未完成初始化，无法执行 companion dispatch".to_string(),
             )
         })?;
 
         if let Some(reason) = before_resolution.block_reason.clone() {
             record_subagent_trace(
                 hook_session.as_ref(),
-                Some(&executor_hub),
+                Some(&session_hub),
                 Some(self.current_turn_id.as_str()),
                 HookTrigger::BeforeSubagentDispatch,
                 "deny",
@@ -263,7 +263,7 @@ impl AgentTool for CompanionDispatchTool {
         );
         record_subagent_trace(
             hook_session.as_ref(),
-            Some(&executor_hub),
+            Some(&session_hub),
             Some(self.current_turn_id.as_str()),
             HookTrigger::BeforeSubagentDispatch,
             "allow",
@@ -297,7 +297,7 @@ impl AgentTool for CompanionDispatchTool {
             inherited_fragment_labels: dispatch_plan.slice.inherited_fragment_labels.clone(),
             inherited_constraint_keys: dispatch_plan.slice.inherited_constraint_keys.clone(),
         };
-        let _ = executor_hub
+        let _ = session_hub
             .update_session_meta(&target_binding.session_id, |meta| {
                 meta.companion_context = Some(companion_context.clone());
             })
@@ -310,7 +310,7 @@ impl AgentTool for CompanionDispatchTool {
             &self.mcp_servers,
             slice_mode,
         );
-        let turn_id = executor_hub
+        let turn_id = session_hub
             .start_prompt_with_follow_up(
                 &target_binding.session_id,
                 None,
@@ -352,7 +352,7 @@ impl AgentTool for CompanionDispatchTool {
                 "mcp_server_count": execution_slice.mcp_servers.len(),
             }),
         );
-        let _ = executor_hub
+        let _ = session_hub
             .inject_notification(&target_binding.session_id, child_notification)
             .await;
 
@@ -375,7 +375,7 @@ impl AgentTool for CompanionDispatchTool {
         .map_err(AgentToolError::ExecutionFailed)?;
         record_subagent_trace(
             hook_session.as_ref(),
-            Some(&executor_hub),
+            Some(&session_hub),
             Some(self.current_turn_id.as_str()),
             HookTrigger::AfterSubagentDispatch,
             "dispatched",
@@ -442,12 +442,12 @@ impl CompanionDispatchTool {
             )
         })?;
         let project_id = companion_project_id_for_owner(&snapshot, owner_type, owner_id)?;
-        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
+        let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
-                "ExecutorHub 尚未完成初始化，无法创建 companion session".to_string(),
+                "SessionHub 尚未完成初始化，无法创建 companion session".to_string(),
             )
         })?;
-        let meta = executor_hub
+        let meta = session_hub
             .create_session(
                 title
                     .as_deref()
@@ -500,12 +500,12 @@ impl AgentTool for CompanionCompleteTool {
                 "当前 session 没有可识别的上下文，无法回传 companion 结果".to_string(),
             )
         })?;
-        let executor_hub = self.executor_hub_handle.get().await.ok_or_else(|| {
+        let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
-                "ExecutorHub 尚未完成初始化，无法回传 companion 结果".to_string(),
+                "SessionHub 尚未完成初始化，无法回传 companion 结果".to_string(),
             )
         })?;
-        let session_meta = executor_hub
+        let session_meta = session_hub
             .get_session_meta(&current_session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
@@ -537,7 +537,7 @@ impl AgentTool for CompanionCompleteTool {
             "artifact_refs": params.artifact_refs,
         });
 
-        if let Some(parent_hook_session) = executor_hub
+        if let Some(parent_hook_session) = session_hub
             .ensure_hook_session_runtime(
                 &companion_context.parent_session_id,
                 Some(companion_context.parent_turn_id.as_str()),
@@ -564,7 +564,7 @@ impl AgentTool for CompanionCompleteTool {
             }
             record_subagent_trace(
                 parent_hook_session.as_ref(),
-                Some(&executor_hub),
+                Some(&session_hub),
                 Some(companion_context.parent_turn_id.as_str()),
                 HookTrigger::SubagentResult,
                 "result_returned",
@@ -584,7 +584,7 @@ impl AgentTool for CompanionCompleteTool {
             ),
             payload.clone(),
         );
-        executor_hub
+        session_hub
             .inject_notification(&companion_context.parent_session_id, parent_notification)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
@@ -596,7 +596,7 @@ impl AgentTool for CompanionCompleteTool {
             "已将当前 companion 结果回传到主 session".to_string(),
             payload.clone(),
         );
-        let _ = executor_hub
+        let _ = session_hub
             .inject_notification(&current_session_id, child_notification)
             .await;
 
@@ -663,7 +663,7 @@ async fn evaluate_subagent_hook(
 
 async fn record_subagent_trace(
     hook_session: &agentdash_connector_contract::HookSessionRuntime,
-    executor_hub: Option<&ExecutorHub>,
+    session_hub: Option<&SessionHub>,
     turn_id: Option<&str>,
     trigger: HookTrigger,
     decision: &str,
@@ -687,14 +687,14 @@ async fn record_subagent_trace(
     };
     hook_session.append_trace(trace.clone());
 
-    if let (Some(executor_hub), Some(turn_id)) = (executor_hub, turn_id) {
+    if let (Some(session_hub), Some(turn_id)) = (session_hub, turn_id) {
         if let Some(notification) = build_hook_trace_notification(
             hook_session.session_id(),
             Some(turn_id),
             hook_trace_source(),
             &trace,
         ) {
-            let _ = executor_hub
+            let _ = session_hub
                 .inject_notification(hook_session.session_id(), notification)
                 .await;
         }

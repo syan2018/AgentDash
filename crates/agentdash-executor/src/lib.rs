@@ -10,7 +10,7 @@ pub use connector::{DynAgentTool, RuntimeToolProvider};
 pub use connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
-    ExecutionStream, ExecutorConfig, ExecutorInfo, FlowCapabilities, PromptPayload,
+    ExecutionStream, AgentConfig, AgentInfo, FlowCapabilities, PromptPayload,
     ThinkingLevel, is_native_agent, to_vibe_kanban_config,
 };
 pub use hooks::{

@@ -14,10 +14,10 @@ use agentdash_executor::{
 
 use super::ActiveWorkflowLocator;
 
-pub(crate) struct ResolvedOwnerSummary {
-    pub(crate) summary: HookOwnerSummary,
-    pub(crate) diagnostics: Vec<HookDiagnosticEntry>,
-    pub(crate) task_status: Option<String>,
+pub struct ResolvedOwnerSummary {
+    pub summary: HookOwnerSummary,
+    pub diagnostics: Vec<HookDiagnosticEntry>,
+    pub task_status: Option<String>,
 }
 
 pub(crate) fn workflow_run_status_tag(status: LifecycleRunStatus) -> &'static str {

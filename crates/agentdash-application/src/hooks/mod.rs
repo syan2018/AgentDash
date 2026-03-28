@@ -2,24 +2,20 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::workflow::{
-    ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
-    WorkflowCompletionDecision, WorkflowCompletionSignalSet, WorkflowRecordArtifactDraft,
-    build_step_completion_artifact_drafts, resolve_active_workflow_projection,
+    ActiveWorkflowProjection, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
+    build_step_completion_artifact_drafts,
 };
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::session_binding::{
-    SessionBinding, SessionBindingRepository, SessionOwnerType,
-};
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-    WorkflowRecordArtifactType, WorkflowTargetKind,
 };
 
 use agentdash_executor::{
     ExecutionHookProvider, HookCompletionStatus, HookConstraint, HookContextFragment,
-    HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary,
+    HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
     HookPolicyView, HookResolution, HookSourceLayer, HookSourceRef, HookStepAdvanceRequest,
     HookTrigger, PendingExecutionLogEntry, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery,
@@ -27,9 +23,13 @@ use agentdash_executor::{
 use async_trait::async_trait;
 use uuid::Uuid;
 
-
+mod owner_resolver;
 mod rules;
 mod snapshot_helpers;
+mod workflow_snapshot;
+
+pub use owner_resolver::SessionOwnerResolver;
+pub use workflow_snapshot::WorkflowSnapshotBuilder;
 
 use crate::workflow::execution_log as workflow_recording;
 use rules::*;
@@ -57,14 +57,12 @@ fn lifecycle_step_advance_label(
     }
 }
 
+/// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder，
+/// 对外仍实现 ExecutionHookProvider trait。
 pub struct AppExecutionHookProvider {
-    project_repo: Arc<dyn ProjectRepository>,
-    story_repo: Arc<dyn StoryRepository>,
-    task_repo: Arc<dyn TaskRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    owner_resolver: SessionOwnerResolver,
+    workflow_builder: WorkflowSnapshotBuilder,
 }
 
 impl AppExecutionHookProvider {
@@ -78,162 +76,18 @@ impl AppExecutionHookProvider {
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
-            project_repo,
-            story_repo,
-            task_repo,
             session_binding_repo,
-            workflow_definition_repo,
-            lifecycle_definition_repo,
-            lifecycle_run_repo,
-        }
-    }
-
-    async fn resolve_owner(
-        &self,
-        binding: &SessionBinding,
-    ) -> Result<ResolvedOwnerSummary, HookError> {
-        let binding_source_refs = vec![session_binding_source_ref(binding)];
-        let binding_source_summary = source_summary_from_refs(&binding_source_refs);
-        let mut summary = HookOwnerSummary {
-            owner_type: binding.owner_type.to_string(),
-            owner_id: binding.owner_id.to_string(),
-            label: None,
-            project_id: None,
-            story_id: None,
-            task_id: None,
-        };
-        let mut diagnostics = vec![HookDiagnosticEntry {
-            code: "session_binding_found".to_string(),
-            summary: format!(
-                "命中会话绑定：{} {}（label={}）",
-                binding.owner_type, binding.owner_id, binding.label
+            owner_resolver: SessionOwnerResolver::new(
+                project_repo,
+                story_repo,
+                task_repo,
             ),
-            detail: None,
-            source_summary: binding_source_summary.clone(),
-            source_refs: binding_source_refs.clone(),
-        }];
-
-        match binding.owner_type {
-            SessionOwnerType::Project => {
-                let project = self
-                    .project_repo
-                    .get_by_id(binding.owner_id)
-                    .await
-                    .map_err(map_hook_error)?;
-                if let Some(project) = project {
-                    summary.label = Some(project.name);
-                    summary.project_id = Some(project.id.to_string());
-                } else {
-                    diagnostics.push(HookDiagnosticEntry {
-                        code: "session_binding_owner_missing".to_string(),
-                        summary: "会话绑定引用的 Project 已不存在".to_string(),
-                        detail: Some(binding.owner_id.to_string()),
-                        source_summary: binding_source_summary.clone(),
-                        source_refs: binding_source_refs.clone(),
-                    });
-                }
-            }
-            SessionOwnerType::Story => {
-                let story = self
-                    .story_repo
-                    .get_by_id(binding.owner_id)
-                    .await
-                    .map_err(map_hook_error)?;
-                if let Some(story) = story {
-                    summary.label = Some(story.title);
-                    summary.project_id = Some(story.project_id.to_string());
-                    summary.story_id = Some(story.id.to_string());
-                } else {
-                    diagnostics.push(HookDiagnosticEntry {
-                        code: "session_binding_owner_missing".to_string(),
-                        summary: "会话绑定引用的 Story 已不存在".to_string(),
-                        detail: Some(binding.owner_id.to_string()),
-                        source_summary: binding_source_summary.clone(),
-                        source_refs: binding_source_refs.clone(),
-                    });
-                }
-            }
-            SessionOwnerType::Task => {
-                let task = self
-                    .task_repo
-                    .get_by_id(binding.owner_id)
-                    .await
-                    .map_err(map_hook_error)?;
-                if let Some(task) = task {
-                    summary.label = Some(task.title);
-                    summary.task_id = Some(task.id.to_string());
-                    summary.story_id = Some(task.story_id.to_string());
-
-                    let story = self
-                        .story_repo
-                        .get_by_id(task.story_id)
-                        .await
-                        .map_err(map_hook_error)?;
-                    if let Some(story) = story {
-                        summary.project_id = Some(story.project_id.to_string());
-                    } else {
-                        diagnostics.push(HookDiagnosticEntry {
-                            code: "task_story_missing".to_string(),
-                            summary: "Task 对应的 Story 已不存在，无法补全 project_id".to_string(),
-                            detail: Some(task.story_id.to_string()),
-                            source_summary: source_summary_from_refs(&[task_source_ref(task.id)]),
-                            source_refs: vec![task_source_ref(task.id)],
-                        });
-                    }
-                } else {
-                    diagnostics.push(HookDiagnosticEntry {
-                        code: "session_binding_owner_missing".to_string(),
-                        summary: "会话绑定引用的 Task 已不存在".to_string(),
-                        detail: Some(binding.owner_id.to_string()),
-                        source_summary: binding_source_summary,
-                        source_refs: binding_source_refs,
-                    });
-                }
-            }
+            workflow_builder: WorkflowSnapshotBuilder::new(
+                workflow_definition_repo,
+                lifecycle_definition_repo,
+                lifecycle_run_repo,
+            ),
         }
-
-        Ok(ResolvedOwnerSummary {
-            summary,
-            diagnostics,
-            task_status: match binding.owner_type {
-                SessionOwnerType::Task => self
-                    .task_repo
-                    .get_by_id(binding.owner_id)
-                    .await
-                    .map_err(map_hook_error)?
-                    .map(|task| task_status_tag(task.status).to_string()),
-                SessionOwnerType::Project | SessionOwnerType::Story => None,
-            },
-        })
-    }
-
-    async fn resolve_active_workflow(
-        &self,
-        owner: &HookOwnerSummary,
-    ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
-        let owner_id = Uuid::parse_str(owner.owner_id.as_str())
-            .map_err(|error| HookError::Runtime(format!("owner_id 不是有效 UUID: {error}")))?;
-        let target_kind = match owner.owner_type.as_str() {
-            "project" => WorkflowTargetKind::Project,
-            "story" => WorkflowTargetKind::Story,
-            "task" => WorkflowTargetKind::Task,
-            other => {
-                return Err(HookError::Runtime(format!(
-                    "未知 session owner_type，无法映射 workflow target: {other}"
-                )));
-            }
-        };
-
-        resolve_active_workflow_projection(
-            target_kind,
-            owner_id,
-            owner.label.clone(),
-            self.workflow_definition_repo.as_ref(),
-            self.lifecycle_definition_repo.as_ref(),
-            self.lifecycle_run_repo.as_ref(),
-        )
-        .await
-        .map_err(|e| HookError::Runtime(e))
     }
 
     async fn apply_completion_decision(
@@ -286,10 +140,9 @@ impl AppExecutionHookProvider {
         }
 
         let run = self
-            .lifecycle_run_repo
-            .get_by_id(locator.run_id)
-            .await
-            .map_err(map_hook_error)?;
+            .workflow_builder
+            .get_lifecycle_run(locator.run_id)
+            .await?;
         let Some(run) = run else {
             resolution.completion = Some(HookCompletionStatus {
                 mode: decision.transition_policy,
@@ -424,23 +277,6 @@ fn session_source_ref(session_id: &str) -> HookSourceRef {
     }
 }
 
-fn session_binding_source_ref(binding: &SessionBinding) -> HookSourceRef {
-    HookSourceRef {
-        layer: HookSourceLayer::Session,
-        key: format!("binding:{}", binding.id),
-        label: format!("Session Binding / {}", binding.label),
-        priority: 500,
-    }
-}
-
-fn task_source_ref(task_id: Uuid) -> HookSourceRef {
-    HookSourceRef {
-        layer: HookSourceLayer::Task,
-        key: task_id.to_string(),
-        label: format!("Task / {task_id}"),
-        priority: 400,
-    }
-}
 
 fn workflow_source_refs(workflow: &ActiveWorkflowProjection) -> Vec<HookSourceRef> {
     let scope = workflow_scope_key(workflow);
@@ -591,7 +427,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         }
 
         for binding in bindings.iter() {
-            let resolved_owner = self.resolve_owner(binding).await?;
+            let resolved_owner = self.owner_resolver.resolve(binding).await?;
             let task_status = resolved_owner.task_status.clone();
             snapshot
                 .diagnostics
@@ -626,7 +462,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 }
             }
 
-            if let Some(workflow) = self.resolve_active_workflow(&owner).await? {
+            if let Some(workflow) = self.workflow_builder.resolve_active_workflow(&owner).await? {
                 let source_refs = workflow_source_refs(&workflow);
                 let mut source_summary = source_summary_from_refs(&source_refs);
                 source_summary.push(format!("workflow_run:{}", workflow.run.id));
@@ -863,54 +699,14 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         request: HookStepAdvanceRequest,
     ) -> Result<(), HookError> {
-        let run_id = Uuid::parse_str(&request.run_id)
-            .map_err(|e| HookError::Runtime(format!("advance: invalid run_id: {e}")))?;
-
-        let record_artifacts: Vec<WorkflowRecordArtifactDraft> = request
-            .record_artifacts
-            .into_iter()
-            .filter_map(|value| {
-                let title = value.get("title")?.as_str()?.to_string();
-                let content = value.get("content")?.as_str()?.to_string();
-                let artifact_type_str = value.get("artifact_type")?.as_str()?;
-                let artifact_type: WorkflowRecordArtifactType =
-                    serde_json::from_value(serde_json::json!(artifact_type_str)).ok()?;
-                Some(WorkflowRecordArtifactDraft {
-                    artifact_type,
-                    title,
-                    content,
-                })
-            })
-            .collect();
-
-        let service = LifecycleRunService::new(
-            self.workflow_definition_repo.as_ref(),
-            self.lifecycle_definition_repo.as_ref(),
-            self.lifecycle_run_repo.as_ref(),
-        );
-        service
-            .complete_step(CompleteLifecycleStepCommand {
-                run_id,
-                step_key: request.step_key,
-                summary: request.summary,
-                record_artifacts,
-            })
-            .await
-            .map_err(|e| HookError::Runtime(format!("advance_workflow_step: {e}")))?;
-
-        Ok(())
+        self.workflow_builder.advance_workflow_step(request).await
     }
 
     async fn append_execution_log(
         &self,
         entries: Vec<PendingExecutionLogEntry>,
     ) -> Result<(), HookError> {
-        workflow_recording::flush_execution_log_entries(
-            self.lifecycle_run_repo.as_ref(),
-            entries,
-        )
-        .await
-        .map_err(|e| HookError::Runtime(format!("flush execution log: {e}")))
+        self.workflow_builder.append_execution_log(entries).await
     }
 }
 
@@ -1259,11 +1055,13 @@ mod tests {
     use agentdash_domain::workflow::{
         LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowCheckKind,
         WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind, WorkflowContract,
-        WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec, build_effective_contract,
+        WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec, WorkflowTargetKind,
+        build_effective_contract,
     };
     use agentdash_executor::{
-        ExecutionHookProvider, HookError, HookRuntimeDelegate, HookSessionRuntime,
-        HookSessionRuntimeSnapshot, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery,
+        ExecutionHookProvider, HookError, HookOwnerSummary, HookRuntimeDelegate,
+        HookSessionRuntime, HookSessionRuntimeSnapshot, HookTrigger, SessionHookRefreshQuery,
+        SessionHookSnapshotQuery,
     };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;

@@ -1,8 +1,7 @@
-//! [FROZEN LEGACY] workspace_files HTTP 桥接路由
+//! File Picker API — 前端 @ 文件引用选择器的后端入口。
 //!
-//! 这组路由为前端 @ 文件选择器提供直连通道，保留为遗留兼容层。
-//! 新功能请走 `/api/address-spaces` 统一入口。
-//! 参见 spec/backend/address-space-legacy-disposition.md
+//! 通过 Address Space 统一访问层实现文件列表/读取，
+//! 为前端 @ 引用选择器提供 workspace 级别的文件浏览能力。
 
 use std::path::{Component, Path};
 use std::sync::Arc;
@@ -28,7 +27,7 @@ pub struct ListFilesQuery {
     pub workspace_id: Option<String>,
 }
 
-/// 桥接对象 — workspace_files 遗留协议，保持原有 camelCase，不参与业务 DTO 命名规范
+/// 文件条目 — 保持 camelCase 与前端 DTO 对齐
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
@@ -86,7 +85,7 @@ pub struct ReadFileResult {
     pub error: Option<String>,
 }
 
-/// GET /api/workspace-files
+/// GET /api/file-picker
 pub async fn list_files(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -105,7 +104,7 @@ pub async fn list_files(
     relay_list_files(&state, backend_id, &workspace, &pattern).await
 }
 
-/// POST /api/workspace-files/read
+/// POST /api/file-picker/read
 pub async fn read_file(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -125,7 +124,7 @@ pub async fn read_file(
     relay_read_file(&state, backend_id, &workspace, &rel).await
 }
 
-/// POST /api/workspace-files/batch-read
+/// POST /api/file-picker/batch-read
 pub async fn batch_read_files(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -273,7 +272,7 @@ async fn require_online_backend<'a>(
     Ok(trimmed)
 }
 
-// ─── Relay 辅助：workspace_files 转发到远程后端 ──────────────
+// ─── Address Space 访问辅助函数 ──────────────────────────────
 
 async fn relay_list_files(
     state: &Arc<AppState>,

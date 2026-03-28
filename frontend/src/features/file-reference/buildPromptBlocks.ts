@@ -1,4 +1,4 @@
-import type { ReadFileResult } from "../../services/workspaceFiles";
+import type { ReadFileResult } from "../../services/filePicker";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 
 /**

@@ -30,7 +30,7 @@ import {
   RichInput,
   type RichInputRef,
 } from "../../file-reference";
-import { batchReadWorkspaceFiles, type FileEntry } from "../../../services/workspaceFiles";
+import { batchReadFiles, type FileEntry } from "../../../services/filePicker";
 import {
   fetchSessionExecutionState,
 } from "../../../services/session";
@@ -531,7 +531,7 @@ export function SessionChatView({
             throw new Error("当前会话没有可用的工作空间，无法附加文件引用");
           }
           const paths = fileRef.references.map((r) => r.relPath);
-          const batchResult = await batchReadWorkspaceFiles(workspaceId, paths);
+          const batchResult = await batchReadFiles(workspaceId, paths);
           const blocks = buildPromptBlocks(trimmed, batchResult.files);
           await promptSession(sid, { promptBlocks: blocks, executorConfig });
           fileRef.clearReferences();

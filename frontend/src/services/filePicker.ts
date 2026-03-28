@@ -33,7 +33,7 @@ export interface BatchReadFilesResponse {
   totalSize: number;
 }
 
-export async function listWorkspaceFiles(
+export async function listFiles(
   workspaceId: string,
   pattern?: string,
 ): Promise<ListFilesResponse> {
@@ -41,22 +41,22 @@ export async function listWorkspaceFiles(
   params.set("workspace_id", workspaceId);
   if (pattern) params.set("pattern", pattern);
 
-  const url = buildApiPath(`/workspace-files${params.toString() ? `?${params}` : ""}`);
+  const url = buildApiPath(`/file-picker${params.toString() ? `?${params}` : ""}`);
   const res = await fetch(url);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `listWorkspaceFiles failed: HTTP ${res.status}`);
+    throw new Error(text || `file-picker list failed: HTTP ${res.status}`);
   }
 
   return res.json();
 }
 
-export async function batchReadWorkspaceFiles(
+export async function batchReadFiles(
   workspaceId: string,
   paths: string[],
 ): Promise<BatchReadFilesResponse> {
-  const url = buildApiPath("/workspace-files/batch-read");
+  const url = buildApiPath("/file-picker/batch-read");
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,7 +65,7 @@ export async function batchReadWorkspaceFiles(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `batchReadWorkspaceFiles failed: HTTP ${res.status}`);
+    throw new Error(text || `file-picker batch-read failed: HTTP ${res.status}`);
   }
 
   return res.json();

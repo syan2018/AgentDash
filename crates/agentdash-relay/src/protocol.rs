@@ -68,22 +68,6 @@ pub enum RelayMessage {
         payload: CommandDiscoverOptionsPayload,
     },
 
-    /// [FROZEN] 列出工作空间文件 — 遗留 relay transport，新功能请走 Address Space Provider。
-    /// 参见 spec/backend/address-space-legacy-disposition.md
-    #[serde(rename = "command.workspace_files.list")]
-    CommandWorkspaceFilesList {
-        id: String,
-        payload: CommandWorkspaceFilesListPayload,
-    },
-
-    /// [FROZEN] 读取工作空间文件 — 遗留 relay transport，新功能请走 Address Space Provider。
-    /// 参见 spec/backend/address-space-legacy-disposition.md
-    #[serde(rename = "command.workspace_files.read")]
-    CommandWorkspaceFilesRead {
-        id: String,
-        payload: CommandWorkspaceFilesReadPayload,
-    },
-
     /// 检测 Git 信息
     #[serde(rename = "command.workspace_detect_git")]
     CommandWorkspaceDetectGit {
@@ -158,26 +142,6 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ResponseDiscoverPayload>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<RelayError>,
-    },
-
-    /// [FROZEN] 遗留 relay transport 响应
-    #[serde(rename = "response.workspace_files.list")]
-    ResponseWorkspaceFilesList {
-        id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<ResponseWorkspaceFilesListPayload>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<RelayError>,
-    },
-
-    /// [FROZEN] 遗留 relay transport 响应
-    #[serde(rename = "response.workspace_files.read")]
-    ResponseWorkspaceFilesRead {
-        id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<ResponseWorkspaceFilesReadPayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -292,8 +256,6 @@ impl RelayMessage {
             | Self::CommandCancel { id, .. }
             | Self::CommandDiscover { id, .. }
             | Self::CommandDiscoverOptions { id, .. }
-            | Self::CommandWorkspaceFilesList { id, .. }
-            | Self::CommandWorkspaceFilesRead { id, .. }
             | Self::CommandWorkspaceDetectGit { id, .. }
             | Self::CommandBrowseDirectory { id, .. }
             | Self::CommandToolFileRead { id, .. }
@@ -304,8 +266,6 @@ impl RelayMessage {
             | Self::ResponsePrompt { id, .. }
             | Self::ResponseCancel { id, .. }
             | Self::ResponseDiscover { id, .. }
-            | Self::ResponseWorkspaceFilesList { id, .. }
-            | Self::ResponseWorkspaceFilesRead { id, .. }
             | Self::ResponseWorkspaceDetectGit { id, .. }
             | Self::ResponseBrowseDirectory { id, .. }
             | Self::ResponseToolFileRead { id, .. }
@@ -377,9 +337,6 @@ pub struct CapabilitiesPayload {
     pub executors: Vec<ExecutorInfoRelay>,
     #[serde(default)]
     pub supports_cancel: bool,
-    /// [FROZEN] 遗留能力声明 — 由 relay_fs provider 内部使用
-    #[serde(default)]
-    pub supports_workspace_files: bool,
     #[serde(default)]
     pub supports_discover_options: bool,
 }
@@ -453,32 +410,6 @@ pub struct CommandDiscoverOptionsPayload {
     pub variant: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
-}
-
-// ── command.workspace_files [FROZEN] ──
-// 遗留 relay transport payload — 仅作为 relay_fs provider 内部实现使用。
-// 新功能请走 Address Space Provider / command.tool.* 通道。
-// 参见 spec/backend/address-space-legacy-disposition.md
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandWorkspaceFilesListPayload {
-    pub workspace_id: String,
-    /// 云端解析的物理根路径（workspace.container_ref）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pattern: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandWorkspaceFilesReadPayload {
-    pub workspace_id: String,
-    /// 云端解析的物理根路径（workspace.container_ref）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_path: Option<String>,
-    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -583,11 +514,6 @@ pub struct ResponseDiscoverPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseWorkspaceFilesListPayload {
-    pub files: Vec<FileEntryRelay>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntryRelay {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -596,18 +522,6 @@ pub struct FileEntryRelay {
     pub modified_at: Option<i64>,
     #[serde(default)]
     pub is_dir: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseWorkspaceFilesReadPayload {
-    pub path: String,
-    pub content: String,
-    #[serde(default = "default_utf8")]
-    pub encoding: String,
-}
-
-fn default_utf8() -> String {
-    "utf-8".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -639,6 +553,10 @@ pub struct BrowseDirectoryEntry {
 }
 
 // ── PiAgent tool call 响应 ──
+
+fn default_utf8() -> String {
+    "utf-8".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolFileReadResponse {

@@ -146,7 +146,6 @@ mod tests {
             capabilities: CapabilitiesPayload {
                 executors: Vec::new(),
                 supports_cancel: true,
-                supports_workspace_files: true,
                 supports_discover_options: true,
             },
             accessible_roots: Vec::new(),

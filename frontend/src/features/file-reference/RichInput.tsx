@@ -1,5 +1,5 @@
 import { useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
-import type { FileEntry } from "../../services/workspaceFiles";
+import type { FileEntry } from "../../services/filePicker";
 import {
   FILE_PILL_BADGE_CLASS,
   FILE_PILL_CLASS,

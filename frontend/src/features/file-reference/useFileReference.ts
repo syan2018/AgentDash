@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import type { FileEntry } from "../../services/workspaceFiles";
-import { listWorkspaceFiles } from "../../services/workspaceFiles";
+import type { FileEntry } from "../../services/filePicker";
+import { listFiles } from "../../services/filePicker";
 
 export interface FileReference {
   relPath: string;
@@ -29,7 +29,7 @@ export function useFileReference(workspaceId?: string | null) {
     setPickerLoading(true);
     setPickerError(null);
     try {
-      const result = await listWorkspaceFiles(workspaceId, query || undefined);
+      const result = await listFiles(workspaceId, query || undefined);
       setPickerFiles(result.files.filter((f) => f.isText));
     } catch (e) {
       setPickerError(e instanceof Error ? e.message : "加载文件列表失败");

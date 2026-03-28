@@ -15,7 +15,7 @@ pub mod stories;
 pub mod story_sessions;
 pub mod task_execution;
 pub mod workflows;
-pub mod workspace_files;
+pub mod file_picker;
 pub mod workspaces;
 
 use std::sync::Arc;
@@ -336,12 +336,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/address-spaces/preview",
             post(address_spaces::preview_address_space),
         )
-        // Workspace Files（内部 API，用于 @ 文件引用选择器）
-        .route("/workspace-files", get(workspace_files::list_files))
-        .route("/workspace-files/read", post(workspace_files::read_file))
+        // File Picker（@ 文件引用选择器 API，走 Address Space 统一访问层）
+        .route("/file-picker", get(file_picker::list_files))
+        .route("/file-picker/read", post(file_picker::read_file))
         .route(
-            "/workspace-files/batch-read",
-            post(workspace_files::batch_read_files),
+            "/file-picker/batch-read",
+            post(file_picker::batch_read_files),
         )
         // Agent Discovery
         .route("/agents/discovery", get(discovery::get_discovery))

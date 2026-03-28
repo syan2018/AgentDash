@@ -205,8 +205,6 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         RelayMessage::ResponsePrompt { .. }
         | RelayMessage::ResponseCancel { .. }
         | RelayMessage::ResponseDiscover { .. }
-        | RelayMessage::ResponseWorkspaceFilesList { .. }
-        | RelayMessage::ResponseWorkspaceFilesRead { .. }
         | RelayMessage::ResponseWorkspaceDetectGit { .. }
         | RelayMessage::ResponseToolFileRead { .. }
         | RelayMessage::ResponseToolFileWrite { .. }
@@ -469,7 +467,6 @@ mod tests {
             capabilities: CapabilitiesPayload {
                 executors: Vec::new(),
                 supports_cancel: true,
-                supports_workspace_files: true,
                 supports_discover_options: true,
             },
             accessible_roots: vec!["/tmp/project".to_string()],

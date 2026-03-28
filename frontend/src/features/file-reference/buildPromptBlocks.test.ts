@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildPromptBlocks } from "./buildPromptBlocks";
-import type { ReadFileResult } from "../../services/workspaceFiles";
+import type { ReadFileResult } from "../../services/filePicker";
 
 describe("buildPromptBlocks", () => {
   it("保留文本中的 @ 锚点并附加 resource block", () => {

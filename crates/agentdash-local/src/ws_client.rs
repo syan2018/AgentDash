@@ -171,7 +171,6 @@ fn build_capabilities(handler: &CommandHandler) -> CapabilitiesPayload {
     CapabilitiesPayload {
         executors,
         supports_cancel: true,
-        supports_workspace_files: true,
         supports_discover_options: false,
     }
 }

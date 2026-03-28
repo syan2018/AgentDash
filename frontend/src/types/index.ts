@@ -1095,7 +1095,6 @@ export interface BackendConfig {
       available: boolean;
     }>;
     supports_cancel: boolean;
-    supports_workspace_files: boolean;
     supports_discover_options: boolean;
   };
 }

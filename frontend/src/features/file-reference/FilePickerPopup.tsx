@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { FileEntry } from "../../services/workspaceFiles";
+import type { FileEntry } from "../../services/filePicker";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

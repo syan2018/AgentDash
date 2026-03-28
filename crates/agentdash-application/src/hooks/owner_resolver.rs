@@ -5,7 +5,7 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 
-use agentdash_executor::{HookDiagnosticEntry, HookError, HookOwnerSummary};
+use agentdash_connector_contract::{HookDiagnosticEntry, HookError, HookOwnerSummary};
 
 use super::snapshot_helpers::{ResolvedOwnerSummary, task_status_tag};
 
@@ -13,25 +13,25 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
 }
 
-fn session_binding_source_ref(binding: &SessionBinding) -> agentdash_executor::HookSourceRef {
-    agentdash_executor::HookSourceRef {
-        layer: agentdash_executor::HookSourceLayer::Session,
+fn session_binding_source_ref(binding: &SessionBinding) -> agentdash_connector_contract::HookSourceRef {
+    agentdash_connector_contract::HookSourceRef {
+        layer: agentdash_connector_contract::HookSourceLayer::Session,
         key: format!("binding:{}", binding.id),
         label: format!("Session Binding / {}", binding.label),
         priority: 500,
     }
 }
 
-fn task_source_ref(task_id: uuid::Uuid) -> agentdash_executor::HookSourceRef {
-    agentdash_executor::HookSourceRef {
-        layer: agentdash_executor::HookSourceLayer::Task,
+fn task_source_ref(task_id: uuid::Uuid) -> agentdash_connector_contract::HookSourceRef {
+    agentdash_connector_contract::HookSourceRef {
+        layer: agentdash_connector_contract::HookSourceLayer::Task,
         key: task_id.to_string(),
         label: format!("Task / {task_id}"),
         priority: 400,
     }
 }
 
-fn source_summary_from_refs(source_refs: &[agentdash_executor::HookSourceRef]) -> Vec<String> {
+fn source_summary_from_refs(source_refs: &[agentdash_connector_contract::HookSourceRef]) -> Vec<String> {
     source_refs
         .iter()
         .map(|source| {

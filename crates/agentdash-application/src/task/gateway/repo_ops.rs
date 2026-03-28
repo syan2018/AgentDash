@@ -7,7 +7,8 @@ use agentdash_domain::story::{ChangeKind, Story};
 use agentdash_domain::task::{Artifact, ArtifactType, Task, TaskStatus};
 use agentdash_domain::workspace::Workspace;
 use agentdash_domain::DomainError;
-use agentdash_executor::{ConnectorError, SessionMeta};
+use agentdash_connector_contract::ConnectorError;
+use crate::session::SessionMeta;
 
 use crate::repository_set::RepositorySet;
 use crate::task::artifact::upsert_tool_execution_artifact;
@@ -454,7 +455,7 @@ pub async fn resolve_project_scope_for_owner(
 }
 
 pub async fn create_task_session(
-    executor_hub: &agentdash_executor::ExecutorHub,
+    executor_hub: &crate::session::ExecutorHub,
     task: &Task,
 ) -> Result<SessionMeta, TaskExecutionError> {
     let title = format!("Task: {}", task.title.trim());
@@ -466,7 +467,7 @@ pub async fn create_task_session(
 
 pub async fn sync_task_executor_session_binding_from_hub(
     repos: &RepositorySet,
-    executor_hub: &agentdash_executor::ExecutorHub,
+    executor_hub: &crate::session::ExecutorHub,
     task_id: Uuid,
     backend_id: &str,
     session_id: &str,

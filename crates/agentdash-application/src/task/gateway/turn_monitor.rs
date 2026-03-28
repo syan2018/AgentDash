@@ -26,7 +26,7 @@ pub enum TurnOutcome {
 /// Turn 监听主循环 — 从 executor_hub 订阅会话事件并逐条处理
 pub async fn run_turn_monitor(
     repos: &RepositorySet,
-    executor_hub: &agentdash_executor::ExecutorHub,
+    executor_hub: &crate::session::ExecutorHub,
     restart_tracker: &crate::task::restart_tracker::RestartTracker,
     task_id: Uuid,
     session_id: &str,
@@ -133,7 +133,7 @@ pub async fn run_turn_monitor(
 
 pub async fn handle_turn_notification(
     repos: &RepositorySet,
-    executor_hub: &agentdash_executor::ExecutorHub,
+    executor_hub: &crate::session::ExecutorHub,
     restart_tracker: &crate::task::restart_tracker::RestartTracker,
     task_id: Uuid,
     session_id: &str,
@@ -396,7 +396,7 @@ pub fn bridge_task_status_event_to_session_notification(
 }
 
 pub async fn get_session_overview(
-    executor_hub: &agentdash_executor::ExecutorHub,
+    executor_hub: &crate::session::ExecutorHub,
     session_id: &str,
 ) -> Result<Option<SessionOverview>, TaskExecutionError> {
     let meta = executor_hub

@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     WorkflowRecordArtifactType,
 };
-use agentdash_executor::{ExecutionContext, SessionHookRefreshQuery, SessionHookSnapshot};
+use agentdash_connector_contract::{ExecutionContext, SessionHookRefreshQuery, SessionHookSnapshot};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -24,7 +24,7 @@ pub struct WorkflowArtifactReportTool {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     current_session_id: Option<String>,
     current_turn_id: String,
-    hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
+    hook_session: Option<Arc<agentdash_connector_contract::HookSessionRuntime>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

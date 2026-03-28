@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+#[allow(deprecated)]
 use agentdash_application::task::execution::{
     ContinueTaskCommand, ContinueTaskResult, ExecutionPhase, StartTaskCommand,
     StartTaskResult, StartedTurn, TaskExecutionError, TaskExecutionGateway, TaskSessionResult,
@@ -21,7 +22,7 @@ use agentdash_domain::{
     story::ChangeKind,
     task::Task,
 };
-use agentdash_executor::{PromptSessionRequest, UserPromptInput};
+use agentdash_application::session::{PromptSessionRequest, UserPromptInput};
 use agentdash_relay::{
     CommandCancelPayload, CommandPromptPayload, ExecutorConfigRelay, RelayMessage,
     ResponsePromptPayload,
@@ -30,10 +31,10 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use agentdash_domain::common::ThinkingLevel;
 use crate::task_agent_context::BuiltTaskAgentContext;
 use crate::{
     app_state::AppState,
-    runtime_bridge::runtime_executor_config_to_connector,
     runtime_bridge::runtime_mcp_servers_to_acp,
     workspace_resolution::{AppStateBackendAvailability, ResolvedWorkspaceBinding, resolve_workspace_binding},
 };
@@ -56,10 +57,9 @@ impl AppStateTaskExecutionGateway {
     }
 }
 
+#[allow(deprecated)]
 #[async_trait]
-impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
-    for AppStateTaskExecutionGateway
-{
+impl TaskExecutionGateway for AppStateTaskExecutionGateway {
     async fn get_task(&self, task_id: Uuid) -> Result<Task, TaskExecutionError> {
         gw_get_task(self.repos(), task_id).await
     }
@@ -89,7 +89,7 @@ impl TaskExecutionGateway<agentdash_executor::AgentDashExecutorConfig>
         phase: ExecutionPhase,
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
-        executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
+        executor_config: Option<agentdash_domain::common::ExecutorConfig>,
     ) -> Result<StartedTurn, TaskExecutionError> {
         let session_id = task.session_id.as_deref()
             .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
@@ -191,7 +191,7 @@ async fn dispatch_cloud_native(
             prompt_blocks: Some(built.prompt_blocks),
             working_dir: built.working_dir,
             env: Default::default(),
-            executor_config: resolved_config.map(runtime_executor_config_to_connector),
+            executor_config: resolved_config.cloned(),
         },
         mcp_servers: runtime_mcp_servers_to_acp(&built.mcp_servers),
         workspace_root,
@@ -245,10 +245,11 @@ async fn dispatch_relay(
 
 // ─── public execute_* wrappers ──────────────────────────────
 
+#[allow(deprecated)]
 pub async fn execute_start_task(
     state: Arc<AppState>, task_id: Uuid,
     override_prompt: Option<String>,
-    executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
+    executor_config: Option<agentdash_domain::common::ExecutorConfig>,
 ) -> Result<StartTaskResult, TaskExecutionError> {
     state.task_runtime.lock_map.with_lock(task_id, || async {
         let gw = AppStateTaskExecutionGateway::new(state.clone());
@@ -258,10 +259,11 @@ pub async fn execute_start_task(
     }).await
 }
 
+#[allow(deprecated)]
 pub async fn execute_continue_task(
     state: Arc<AppState>, task_id: Uuid,
     additional_prompt: Option<String>,
-    executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
+    executor_config: Option<agentdash_domain::common::ExecutorConfig>,
 ) -> Result<ContinueTaskResult, TaskExecutionError> {
     state.task_runtime.lock_map.with_lock(task_id, || async {
         let gw = AppStateTaskExecutionGateway::new(state.clone());
@@ -271,6 +273,7 @@ pub async fn execute_continue_task(
     }).await
 }
 
+#[allow(deprecated)]
 pub async fn execute_cancel_task(
     state: Arc<AppState>, task_id: Uuid,
 ) -> Result<Task, TaskExecutionError> {
@@ -282,6 +285,7 @@ pub async fn execute_cancel_task(
     result
 }
 
+#[allow(deprecated)]
 pub async fn execute_get_task_session(
     state: Arc<AppState>, task_id: Uuid,
 ) -> Result<TaskSessionResult, TaskExecutionError> {
@@ -341,23 +345,23 @@ pub(crate) use agentdash_application::task::config::resolve_task_agent_config;
 async fn relay_start_prompt(
     state: &Arc<AppState>, backend_id: &str, session_id: &str,
     built: &BuiltTaskAgentContext,
-    executor_config: Option<agentdash_application::runtime::ExecutorConfig>,
+    executor_config: Option<agentdash_domain::common::ExecutorConfig>,
     binding: &ResolvedWorkspaceBinding,
 ) -> Result<String, TaskExecutionError> {
     let relay_config = executor_config.as_ref()
-        .map(runtime_executor_config_to_connector)
         .map(|c| ExecutorConfigRelay {
-            executor: c.executor, variant: c.variant,
-            provider_id: c.provider_id, model_id: c.model_id, agent_id: c.agent_id,
+            executor: c.executor.clone(), variant: c.variant.clone(),
+            provider_id: c.provider_id.clone(), model_id: c.model_id.clone(),
+            agent_id: c.agent_id.clone(),
             thinking_level: c.thinking_level.map(|level| match level {
-                agentdash_executor::ThinkingLevel::Off => "off",
-                agentdash_executor::ThinkingLevel::Minimal => "minimal",
-                agentdash_executor::ThinkingLevel::Low => "low",
-                agentdash_executor::ThinkingLevel::Medium => "medium",
-                agentdash_executor::ThinkingLevel::High => "high",
-                agentdash_executor::ThinkingLevel::Xhigh => "xhigh",
+                ThinkingLevel::Off => "off",
+                ThinkingLevel::Minimal => "minimal",
+                ThinkingLevel::Low => "low",
+                ThinkingLevel::Medium => "medium",
+                ThinkingLevel::High => "high",
+                ThinkingLevel::Xhigh => "xhigh",
             }.to_string()),
-            permission_policy: c.permission_policy,
+            permission_policy: c.permission_policy.clone(),
         });
 
     let cmd = RelayMessage::CommandPrompt {

@@ -5,7 +5,9 @@ use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
-use agentdash_executor::{ConnectorError, ExecutionContext, ExecutorHub, RuntimeToolProvider};
+use agentdash_connector_contract::{ConnectorError, ExecutionContext};
+use agentdash_executor::RuntimeToolProvider;
+use crate::session::ExecutorHub;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 

@@ -689,16 +689,3 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
     }
 }
 
-// ─── AgentMessage 便利转换 ──────────────────────────────────
-
-impl From<String> for AgentMessage {
-    fn from(text: String) -> Self {
-        AgentMessage::user(text)
-    }
-}
-
-impl From<&str> for AgentMessage {
-    fn from(text: &str) -> Self {
-        AgentMessage::user(text)
-    }
-}

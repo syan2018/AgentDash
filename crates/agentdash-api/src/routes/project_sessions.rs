@@ -13,7 +13,7 @@ use agentdash_application::bootstrap_plan::{
     derive_session_context_snapshot,
 };
 use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
-use agentdash_executor::SessionExecutionState;
+use agentdash_application::session::SessionExecutionState;
 
 use crate::{
     app_state::AppState,
@@ -23,11 +23,9 @@ use crate::{
         resolve_project_workspace,
     },
     rpc::ApiError,
-    runtime_bridge::{
-        acp_mcp_servers_to_runtime, connector_executor_config_to_runtime,
-        runtime_executor_config_to_connector,
-    },
+    runtime_bridge::acp_mcp_servers_to_runtime,
 };
+use agentdash_executor::is_native_agent;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
 #[derive(Debug, Serialize)]
@@ -134,12 +132,10 @@ pub(crate) async fn build_project_session_context_response(
         .executor_config
         .clone()
         .or_else(|| Some(project_agent.executor_config.clone()));
-    let resolved_config = connector_config
-        .as_ref()
-        .map(connector_executor_config_to_runtime);
+    let resolved_config = connector_config.clone();
     let use_address_space = connector_config
         .as_ref()
-        .is_some_and(|c| c.is_native_agent());
+        .is_some_and(|c| is_native_agent(c));
     let address_space = if use_address_space {
         state
             .services
@@ -174,7 +170,7 @@ pub(crate) async fn build_project_session_context_response(
     let shared_mounts: Vec<SharedContextMount> = resolved_config
         .as_ref()
         .map(|config| {
-            build_project_agent_visible_mounts(project, &runtime_executor_config_to_connector(config))
+            build_project_agent_visible_mounts(project, config)
                 .into_iter()
                 .map(|m| SharedContextMount {
                     container_id: m.container_id,
@@ -392,7 +388,7 @@ fn execution_state_to_str(state: Option<&SessionExecutionState>) -> &'static str
 fn resolve_agent_info(
     binding: &SessionBinding,
     _project: &agentdash_domain::project::Project,
-    meta: &agentdash_executor::SessionMeta,
+    meta: &agentdash_application::session::SessionMeta,
 ) -> (Option<String>, Option<String>) {
     if binding.owner_type == agentdash_domain::session_binding::SessionOwnerType::Project {
         let agent_key = binding

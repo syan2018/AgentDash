@@ -8,7 +8,7 @@ use agentdash_domain::workflow::{
     EffectiveSessionContract, LifecycleRunStatus, WorkflowCheckKind, WorkflowConstraintKind,
     WorkflowSessionTerminalState,
 };
-use agentdash_executor::{
+use agentdash_connector_contract::{
     ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, HookSourceLayer, HookSourceRef,
     SessionHookSnapshot,
 };

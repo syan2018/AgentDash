@@ -22,8 +22,12 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+futures = { workspace = true }
 async-trait = "0.1"
 regex = "1"
 tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
+tempfile = "3.18"
+tokio-stream = { version = "0.1", features = ["sync"] }
+json-patch = "2.0"

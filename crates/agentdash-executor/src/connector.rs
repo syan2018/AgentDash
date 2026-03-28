@@ -1,10 +1,12 @@
 pub use agentdash_connector_contract::connector::{
-    AgentConnector, AgentDashExecutorConfig, ConnectorCapabilities, ConnectorError, ConnectorType,
+    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
-    ExecutionStream, ExecutorInfo, FlowCapabilities, PromptPayload, ThinkingLevel,
+    ExecutionStream, ExecutorInfo, FlowCapabilities, PromptPayload,
     content_block_to_text,
 };
+pub use agentdash_connector_contract::{ExecutorConfig, ThinkingLevel};
 pub use agentdash_connector_contract::tool::DynAgentTool;
+pub use crate::adapters::vibe_kanban_config::{is_native_agent, to_vibe_kanban_config};
 
 use async_trait::async_trait;
 

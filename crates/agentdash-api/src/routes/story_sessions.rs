@@ -21,10 +21,9 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
     routes::project_agents::resolve_project_workspace,
     rpc::ApiError,
-    runtime_bridge::{
-        acp_mcp_servers_to_runtime, connector_executor_config_to_runtime,
-    },
+    runtime_bridge::acp_mcp_servers_to_runtime,
 };
+use agentdash_executor::is_native_agent;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
 
@@ -366,9 +365,7 @@ pub(crate) async fn build_story_session_context_response(
         .ok()??;
 
     let connector_config = session_meta.executor_config.clone();
-    let resolved_config = connector_config
-        .as_ref()
-        .map(connector_executor_config_to_runtime);
+    let resolved_config = connector_config.clone();
     let default_agent_type = normalize_optional_string(project.config.default_agent_type.clone());
     let effective_agent_type = resolved_config
         .as_ref()
@@ -376,7 +373,7 @@ pub(crate) async fn build_story_session_context_response(
         .or(default_agent_type.clone());
     let use_address_space = connector_config
         .as_ref()
-        .is_some_and(|c| c.is_native_agent())
+        .is_some_and(|c| is_native_agent(c))
         || (resolved_config.is_none() && default_agent_type.is_some());
     let address_space = if use_address_space {
         state

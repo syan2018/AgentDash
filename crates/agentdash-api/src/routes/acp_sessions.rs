@@ -26,10 +26,10 @@ use agentdash_application::session_context::SessionContextSnapshot;
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
-use agentdash_executor::{
-    HookSessionRuntimeSnapshot, PromptSessionRequest, SessionExecutionState, SessionMeta,
-    UserPromptInput,
+use agentdash_application::session::{
+    PromptSessionRequest, SessionExecutionState, SessionMeta, UserPromptInput,
 };
+use agentdash_executor::HookSessionRuntimeSnapshot;
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_plugin_api::AuthIdentity;
 use serde::Serialize;

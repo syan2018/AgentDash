@@ -6,7 +6,7 @@ use agentdash_acp_meta::{
 };
 use agentdash_agent::tools::schema_value;
 use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
-use agentdash_executor::{
+use agentdash_connector_contract::{
     ExecutionContext, HookPendingAction, HookPendingActionResolutionKind,
     HookPendingActionStatus,
 };
@@ -38,7 +38,7 @@ pub struct ResolveHookActionParams {
 pub struct ResolveHookActionTool {
     current_session_id: Option<String>,
     current_turn_id: String,
-    hook_session: Option<Arc<agentdash_executor::HookSessionRuntime>>,
+    hook_session: Option<Arc<agentdash_connector_contract::HookSessionRuntime>>,
     executor_hub_handle: SharedExecutorHubHandle,
 }
 

@@ -7,7 +7,8 @@ use agentdash_relay::*;
 use tokio::sync::mpsc;
 
 use crate::tool_executor::ToolExecutor;
-use agentdash_executor::{AgentConnector, ExecutorHub, hub::{PromptSessionRequest, UserPromptInput}};
+use agentdash_application::session::{ExecutorHub, PromptSessionRequest, UserPromptInput};
+use agentdash_executor::AgentConnector;
 
 /// 命令处理器，路由云端命令到本地执行组件
 #[derive(Clone)]
@@ -132,7 +133,7 @@ impl CommandHandler {
         let follow_up = payload.follow_up_session_id.clone();
 
         let executor_config = payload.executor_config.map(|c| {
-            let mut cfg = agentdash_executor::connector::AgentDashExecutorConfig::new(c.executor);
+            let mut cfg = agentdash_executor::connector::ExecutorConfig::new(c.executor);
             cfg.variant = c.variant;
             cfg.provider_id = c.provider_id;
             cfg.model_id = c.model_id;

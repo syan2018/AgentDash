@@ -10,7 +10,8 @@ use agentdash_application::task_state_reconciler::{
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
-use agentdash_executor::ExecutorHub;
+use agentdash_application::session::ExecutorHub;
+use agentdash_application::session::SessionExecutionState as HubSessionExecutionState;
 
 struct HubSessionStateReader<'a> {
     hub: &'a ExecutorHub,
@@ -29,17 +30,17 @@ impl SessionExecutionStateReader for HubSessionStateReader<'_> {
             .map_err(|e| e.to_string())?;
 
         Ok(match raw {
-            agentdash_executor::SessionExecutionState::Idle => SessionExecutionState::Idle,
-            agentdash_executor::SessionExecutionState::Running { turn_id } => {
+            HubSessionExecutionState::Idle => SessionExecutionState::Idle,
+            HubSessionExecutionState::Running { turn_id } => {
                 SessionExecutionState::Running { turn_id }
             }
-            agentdash_executor::SessionExecutionState::Completed { turn_id } => {
+            HubSessionExecutionState::Completed { turn_id } => {
                 SessionExecutionState::Completed { turn_id }
             }
-            agentdash_executor::SessionExecutionState::Failed { turn_id, message } => {
+            HubSessionExecutionState::Failed { turn_id, message } => {
                 SessionExecutionState::Failed { turn_id, message }
             }
-            agentdash_executor::SessionExecutionState::Interrupted { turn_id, message } => {
+            HubSessionExecutionState::Interrupted { turn_id, message } => {
                 SessionExecutionState::Interrupted { turn_id, message }
             }
         })

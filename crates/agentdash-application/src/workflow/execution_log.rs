@@ -11,7 +11,7 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleRunRepository,
 };
-use agentdash_executor::PendingExecutionLogEntry;
+use agentdash_connector_contract::hooks::PendingExecutionLogEntry;
 
 use super::error::WorkflowApplicationError;
 

@@ -29,7 +29,8 @@ use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
 use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_executor::{AgentConnector, ExecutorHub};
+use agentdash_application::session::ExecutorHub;
+use agentdash_executor::AgentConnector;
 use agentdash_infrastructure::{
     SqliteAgentRepository, SqliteBackendRepository, SqliteProjectRepository,
     SqliteSessionBindingRepository, SqliteSettingsRepository, SqliteStoryRepository,

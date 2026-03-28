@@ -10,7 +10,8 @@ use tracing_subscriber::EnvFilter;
 
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
-use agentdash_executor::{AgentConnector, ExecutorHub};
+use agentdash_application::session::ExecutorHub;
+use agentdash_executor::AgentConnector;
 
 #[derive(Parser, Debug)]
 #[command(name = "agentdash-local", about = "AgentDash 本机后端")]

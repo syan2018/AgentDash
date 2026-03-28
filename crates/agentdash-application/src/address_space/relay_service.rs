@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::address_space::*;
 use crate::runtime::RuntimeMount;
-use agentdash_executor::{ExecutionAddressSpace, ExecutionMountCapability};
+use agentdash_connector_contract::{ExecutionAddressSpace, ExecutionMountCapability};
 
 use super::inline_persistence::InlineContentOverlay;
 
@@ -41,7 +41,7 @@ impl RelayAddressSpaceService {
     pub fn list_mounts(
         &self,
         address_space: &ExecutionAddressSpace,
-    ) -> Vec<agentdash_executor::ExecutionMount> {
+    ) -> Vec<agentdash_connector_contract::ExecutionMount> {
         address_space.mounts.clone()
     }
 

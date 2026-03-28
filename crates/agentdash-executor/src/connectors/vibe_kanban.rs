@@ -182,9 +182,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             ));
         }
 
-        let vk_config = context
-            .executor_config
-            .to_vibe_kanban_config()
+        let vk_config = crate::connector::to_vibe_kanban_config(&context.executor_config)
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(format!(
                     "执行器 '{}' 不是有效的 vibe-kanban 执行器",

@@ -4,8 +4,9 @@ use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     WorkflowRecordArtifactType, WorkflowTargetKind,
 };
-use agentdash_executor::{
-    HookError, HookOwnerSummary, HookStepAdvanceRequest, PendingExecutionLogEntry,
+use agentdash_connector_contract::{
+    HookError, HookOwnerSummary, HookStepAdvanceRequest,
+    hooks::PendingExecutionLogEntry,
 };
 use uuid::Uuid;
 

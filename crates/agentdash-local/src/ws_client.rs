@@ -13,7 +13,8 @@ use agentdash_relay::*;
 
 use crate::command_handler::CommandHandler;
 use crate::tool_executor::ToolExecutor;
-use agentdash_executor::{AgentConnector, ExecutorHub};
+use agentdash_application::session::ExecutorHub;
+use agentdash_executor::AgentConnector;
 
 pub struct Config {
     pub cloud_url: String,

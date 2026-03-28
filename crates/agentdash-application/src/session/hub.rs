@@ -19,13 +19,14 @@ use agentdash_acp_meta::{
 
 use agent_client_protocol::McpServer;
 
-use crate::connector::ExecutionAddressSpace;
-use crate::connector::{AgentConnector, ConnectorError, ExecutionContext, PromptPayload};
-use crate::hook_events::build_hook_trace_notification;
-use crate::hooks::{
+use agentdash_connector_contract::{
+    AgentConnector, ConnectorError, ExecutionAddressSpace, ExecutionContext, PromptPayload,
+};
+use agentdash_connector_contract::hooks::{
     ExecutionHookProvider, HookResolution, HookSessionRuntime, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
+use super::hook_events::build_hook_trace_notification;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -41,7 +42,7 @@ pub struct UserPromptInput {
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
-    pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
+    pub executor_config: Option<agentdash_connector_contract::ExecutorConfig>,
 }
 
 /// 后端完整请求 — 包含用户输入 + 后端注入的运行时上下文。
@@ -53,7 +54,7 @@ pub struct PromptSessionRequest {
     pub mcp_servers: Vec<McpServer>,
     pub workspace_root: Option<PathBuf>,
     pub address_space: Option<ExecutionAddressSpace>,
-    pub flow_capabilities: Option<crate::connector::FlowCapabilities>,
+    pub flow_capabilities: Option<agentdash_connector_contract::FlowCapabilities>,
     pub system_context: Option<String>,
 }
 
@@ -300,7 +301,7 @@ pub struct SessionMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_terminal_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_config: Option<crate::connector::AgentDashExecutorConfig>,
+    pub executor_config: Option<agentdash_connector_contract::ExecutorConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -499,7 +500,7 @@ impl ExecutorHub {
         tx: &broadcast::Sender<SessionNotification>,
     ) {
         match hook_session
-            .evaluate(crate::hooks::HookEvaluationQuery {
+            .evaluate(agentdash_connector_contract::hooks::HookEvaluationQuery {
                 session_id: session_id.to_string(),
                 trigger: trigger.clone(),
                 turn_id: turn_id.map(ToString::to_string),
@@ -935,8 +936,8 @@ impl ExecutorHub {
 
         // 注入用户消息到流和持久化存储（附带 `_meta.agentdash`）
         let connector_type = match self.connector.connector_type() {
-            crate::connector::ConnectorType::LocalExecutor => "local_executor",
-            crate::connector::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+            agentdash_connector_contract::ConnectorType::LocalExecutor => "local_executor",
+            agentdash_connector_contract::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
         let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
         source.executor_id = Some(context.executor_config.executor.to_string());
@@ -1441,7 +1442,7 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
+    use agentdash_connector_contract::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use futures::stream;
     use serde_json::json;
     use std::path::PathBuf;
@@ -1589,15 +1590,15 @@ mod tests {
                 "session-start-aware"
             }
 
-            fn connector_type(&self) -> crate::connector::ConnectorType {
-                crate::connector::ConnectorType::LocalExecutor
+            fn connector_type(&self) -> agentdash_connector_contract::ConnectorType {
+                agentdash_connector_contract::ConnectorType::LocalExecutor
             }
 
-            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
-                crate::connector::ConnectorCapabilities::default()
+            fn capabilities(&self) -> agentdash_connector_contract::ConnectorCapabilities {
+                agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
                 Vec::new()
             }
 
@@ -1617,7 +1618,7 @@ mod tests {
                 _follow_up_session_id: Option<&str>,
                 _prompt: &PromptPayload,
                 context: ExecutionContext,
-            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+            ) -> Result<agentdash_connector_contract::ExecutionStream, ConnectorError> {
                 let seen = context.hook_session.as_ref().is_some_and(|runtime| {
                     runtime
                         .trace()
@@ -1659,7 +1660,7 @@ mod tests {
             async fn load_session_snapshot(
                 &self,
                 query: SessionHookSnapshotQuery,
-            ) -> Result<SessionHookSnapshot, crate::hooks::HookError> {
+            ) -> Result<SessionHookSnapshot, agentdash_connector_contract::hooks::HookError> {
                 Ok(SessionHookSnapshot {
                     session_id: query.session_id,
                     ..SessionHookSnapshot::default()
@@ -1669,7 +1670,7 @@ mod tests {
             async fn refresh_session_snapshot(
                 &self,
                 query: SessionHookRefreshQuery,
-            ) -> Result<SessionHookSnapshot, crate::hooks::HookError> {
+            ) -> Result<SessionHookSnapshot, agentdash_connector_contract::hooks::HookError> {
                 Ok(SessionHookSnapshot {
                     session_id: query.session_id,
                     ..SessionHookSnapshot::default()
@@ -1679,7 +1680,7 @@ mod tests {
             async fn evaluate_hook(
                 &self,
                 query: HookEvaluationQuery,
-            ) -> Result<HookResolution, crate::hooks::HookError> {
+            ) -> Result<HookResolution, agentdash_connector_contract::hooks::HookError> {
                 self.queries.lock().await.push(query);
                 Ok(HookResolution::default())
             }
@@ -1729,15 +1730,15 @@ mod tests {
                 "recording"
             }
 
-            fn connector_type(&self) -> crate::connector::ConnectorType {
-                crate::connector::ConnectorType::LocalExecutor
+            fn connector_type(&self) -> agentdash_connector_contract::ConnectorType {
+                agentdash_connector_contract::ConnectorType::LocalExecutor
             }
 
-            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
-                crate::connector::ConnectorCapabilities::default()
+            fn capabilities(&self) -> agentdash_connector_contract::ConnectorCapabilities {
+                agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
                 Vec::new()
             }
 
@@ -1757,7 +1758,7 @@ mod tests {
                 _follow_up_session_id: Option<&str>,
                 _prompt: &PromptPayload,
                 context: ExecutionContext,
-            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+            ) -> Result<agentdash_connector_contract::ExecutionStream, ConnectorError> {
                 self.contexts.lock().await.push(context);
                 Ok(Box::pin(stream::empty()))
             }
@@ -1829,16 +1830,16 @@ mod tests {
                 "recording"
             }
 
-            fn connector_type(&self) -> crate::connector::ConnectorType {
-                crate::connector::ConnectorType::LocalExecutor
+            fn connector_type(&self) -> agentdash_connector_contract::ConnectorType {
+                agentdash_connector_contract::ConnectorType::LocalExecutor
             }
 
-            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
-                crate::connector::ConnectorCapabilities::default()
+            fn capabilities(&self) -> agentdash_connector_contract::ConnectorCapabilities {
+                agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
-                vec![crate::connector::ExecutorInfo {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
+                vec![agentdash_connector_contract::ExecutorInfo {
                     id: "PI_AGENT".to_string(),
                     name: "PI Agent".to_string(),
                     variants: Vec::new(),
@@ -1862,7 +1863,7 @@ mod tests {
                 _follow_up_session_id: Option<&str>,
                 _prompt: &PromptPayload,
                 context: ExecutionContext,
-            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+            ) -> Result<agentdash_connector_contract::ExecutionStream, ConnectorError> {
                 self.contexts.lock().await.push(context);
                 Ok(Box::pin(stream::empty()))
             }
@@ -1899,7 +1900,7 @@ mod tests {
             .expect("create session");
 
         hub.update_session_meta(&session.id, |meta| {
-            meta.executor_config = Some(crate::connector::AgentDashExecutorConfig::new("PI_AGENT"));
+            meta.executor_config = Some(agentdash_connector_contract::ExecutorConfig::new("PI_AGENT"));
         })
         .await
         .expect("update meta should succeed");
@@ -1928,15 +1929,15 @@ mod tests {
                 "failing"
             }
 
-            fn connector_type(&self) -> crate::connector::ConnectorType {
-                crate::connector::ConnectorType::LocalExecutor
+            fn connector_type(&self) -> agentdash_connector_contract::ConnectorType {
+                agentdash_connector_contract::ConnectorType::LocalExecutor
             }
 
-            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
-                crate::connector::ConnectorCapabilities::default()
+            fn capabilities(&self) -> agentdash_connector_contract::ConnectorCapabilities {
+                agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
                 Vec::new()
             }
 
@@ -1956,7 +1957,7 @@ mod tests {
                 _follow_up_session_id: Option<&str>,
                 _prompt: &PromptPayload,
                 _context: ExecutionContext,
-            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+            ) -> Result<agentdash_connector_contract::ExecutionStream, ConnectorError> {
                 Err(ConnectorError::Runtime(
                     "connector setup failed".to_string(),
                 ))
@@ -2036,15 +2037,15 @@ mod tests {
                 "cancel-aware"
             }
 
-            fn connector_type(&self) -> crate::connector::ConnectorType {
-                crate::connector::ConnectorType::LocalExecutor
+            fn connector_type(&self) -> agentdash_connector_contract::ConnectorType {
+                agentdash_connector_contract::ConnectorType::LocalExecutor
             }
 
-            fn capabilities(&self) -> crate::connector::ConnectorCapabilities {
-                crate::connector::ConnectorCapabilities::default()
+            fn capabilities(&self) -> agentdash_connector_contract::ConnectorCapabilities {
+                agentdash_connector_contract::ConnectorCapabilities::default()
             }
 
-            fn list_executors(&self) -> Vec<crate::connector::ExecutorInfo> {
+            fn list_executors(&self) -> Vec<agentdash_connector_contract::ExecutorInfo> {
                 Vec::new()
             }
 
@@ -2064,7 +2065,7 @@ mod tests {
                 _follow_up_session_id: Option<&str>,
                 _prompt: &PromptPayload,
                 _context: ExecutionContext,
-            ) -> Result<crate::connector::ExecutionStream, ConnectorError> {
+            ) -> Result<agentdash_connector_contract::ExecutionStream, ConnectorError> {
                 let (tx, rx) = mpsc::channel(4);
                 self.streams.lock().await.insert(session_id.to_string(), tx);
                 Ok(Box::pin(ReceiverStream::new(rx)))

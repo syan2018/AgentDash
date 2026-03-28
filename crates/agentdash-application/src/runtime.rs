@@ -4,47 +4,10 @@ use agentdash_domain::common::MountCapability;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use agentdash_connector_contract::connector::ThinkingLevel;
+pub use agentdash_domain::common::{ExecutorConfig, ThinkingLevel};
 
 pub type RuntimeMount = agentdash_domain::common::Mount;
 pub type RuntimeAddressSpace = agentdash_domain::common::AddressSpace;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutorConfig {
-    pub executor: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_level: Option<ThinkingLevel>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-}
-
-impl ExecutorConfig {
-    pub fn new(executor: impl Into<String>) -> Self {
-        Self {
-            executor: executor.into(),
-            variant: None,
-            provider_id: None,
-            model_id: None,
-            agent_id: None,
-            thinking_level: None,
-            permission_policy: None,
-        }
-    }
-}
-
-impl Default for ExecutorConfig {
-    fn default() -> Self {
-        Self::new("CLAUDE_CODE")
-    }
-}
 
 pub type MountCapabilitySet = MountCapability;
 

@@ -11,7 +11,7 @@ use agentdash_domain::{
     session_binding::{SessionBinding, SessionOwnerType},
     workspace::Workspace,
 };
-use agentdash_executor::AgentDashExecutorConfig;
+use agentdash_executor::ExecutorConfig;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -30,7 +30,7 @@ pub(crate) struct ProjectAgentBridge {
     pub key: String,
     pub display_name: String,
     pub description: String,
-    pub executor_config: AgentDashExecutorConfig,
+    pub executor_config: ExecutorConfig,
     pub preset_name: Option<String>,
     pub source: String,
     /// Http/SSE MCP servers parsed from preset config — injected into ExecutionContext for cloud agents
@@ -414,7 +414,7 @@ fn build_project_agent_summary(
 
 pub(crate) fn build_project_agent_visible_mounts(
     project: &Project,
-    executor_config: &AgentDashExecutorConfig,
+    executor_config: &ExecutorConfig,
 ) -> Vec<ProjectAgentMountResponse> {
     effective_context_containers(project, None)
         .into_iter()
@@ -1032,8 +1032,8 @@ pub(crate) fn build_agent_bridge(agent: &Agent, link: &ProjectAgentLink) -> Proj
 fn executor_config_from_agent_config(
     agent_type: &str,
     config: &serde_json::Value,
-) -> AgentDashExecutorConfig {
-    let mut ec = AgentDashExecutorConfig::new(agent_type.to_string());
+) -> ExecutorConfig {
+    let mut ec = ExecutorConfig::new(agent_type.to_string());
     if let Some(v) = config.get("variant").and_then(|v| v.as_str()) {
         ec.variant = Some(v.to_string());
     }

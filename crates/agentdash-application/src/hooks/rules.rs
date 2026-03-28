@@ -1,6 +1,6 @@
 use crate::workflow::{evaluate_step_completion, WorkflowCompletionSignalSet};
 use agentdash_domain::workflow::{WorkflowCheckKind, WorkflowConstraintKind};
-use agentdash_executor::{
+use agentdash_connector_contract::{
     HookApprovalRequest, HookCompletionStatus, HookConstraint, HookContextFragment,
     HookDiagnosticEntry, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookSnapshot,
 };

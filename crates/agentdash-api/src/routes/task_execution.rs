@@ -31,16 +31,17 @@ use crate::{
     rpc::ApiError,
     runtime_bridge::{
         acp_mcp_servers_to_runtime, mcp_injection_config_to_runtime_binding,
-        runtime_executor_config_to_connector, runtime_mcp_servers_to_acp,
+        runtime_mcp_servers_to_acp,
     },
 };
+use agentdash_executor::is_native_agent;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct StartTaskRequest {
     #[serde(default)]
     pub override_prompt: Option<String>,
     #[serde(default)]
-    pub executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
+    pub executor_config: Option<agentdash_executor::ExecutorConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,7 +59,7 @@ pub struct ContinueTaskRequest {
     #[serde(default)]
     pub additional_prompt: Option<String>,
     #[serde(default)]
-    pub executor_config: Option<agentdash_executor::AgentDashExecutorConfig>,
+    pub executor_config: Option<agentdash_executor::ExecutorConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -237,7 +238,7 @@ pub(crate) async fn build_task_session_context_response(
     let effective_agent_type = resolved_config.as_ref().map(|c| c.executor.as_str());
     let use_address_space = resolved_config
         .as_ref()
-        .is_some_and(|c| runtime_executor_config_to_connector(c).is_native_agent());
+        .is_some_and(|c| is_native_agent(c));
     let address_space = if use_address_space {
         state
             .services

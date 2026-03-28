@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_domain::{
+    common::ExecutorConfig,
     story::ChangeKind,
     task::{Task, TaskStatus},
 };
@@ -28,17 +29,17 @@ pub enum ExecutionPhase {
 }
 
 #[derive(Debug, Clone)]
-pub struct StartTaskCommand<C> {
+pub struct StartTaskCommand {
     pub task_id: Uuid,
     pub override_prompt: Option<String>,
-    pub executor_config: Option<C>,
+    pub executor_config: Option<ExecutorConfig>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ContinueTaskCommand<C> {
+pub struct ContinueTaskCommand {
     pub task_id: Uuid,
     pub additional_prompt: Option<String>,
-    pub executor_config: Option<C>,
+    pub executor_config: Option<ExecutorConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,8 +85,12 @@ pub struct StartedTurn {
     pub context_sources: Vec<String>,
 }
 
+/// Legacy gateway trait — 已被 `TaskExecutionService` 取代。
+///
+/// 保留此 trait 仅为支持渐进迁移；新代码请使用 `super::service::TaskExecutionService`。
+#[deprecated(note = "use TaskExecutionService instead")]
 #[async_trait]
-pub trait TaskExecutionGateway<C>: Send + Sync {
+pub trait TaskExecutionGateway: Send + Sync {
     async fn get_task(&self, task_id: Uuid) -> Result<Task, TaskExecutionError>;
     async fn update_task(&self, task: &Task) -> Result<(), TaskExecutionError>;
     async fn get_backend_id_for_task(&self, task: &Task) -> Result<String, TaskExecutionError>;
@@ -103,7 +108,7 @@ pub trait TaskExecutionGateway<C>: Send + Sync {
         phase: ExecutionPhase,
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
-        executor_config: Option<C>,
+        executor_config: Option<ExecutorConfig>,
     ) -> Result<StartedTurn, TaskExecutionError>;
     async fn bind_session_to_owner(
         &self,
@@ -134,9 +139,10 @@ pub trait TaskExecutionGateway<C>: Send + Sync {
     );
 }
 
-pub async fn start_task<C, G: TaskExecutionGateway<C>>(
+#[allow(deprecated)]
+pub async fn start_task<G: TaskExecutionGateway>(
     gateway: &G,
-    cmd: StartTaskCommand<C>,
+    cmd: StartTaskCommand,
 ) -> Result<StartTaskResult, TaskExecutionError> {
     let mut task = gateway.get_task(cmd.task_id).await?;
 
@@ -274,9 +280,10 @@ pub async fn start_task<C, G: TaskExecutionGateway<C>>(
     })
 }
 
-pub async fn continue_task<C, G: TaskExecutionGateway<C>>(
+#[allow(deprecated)]
+pub async fn continue_task<G: TaskExecutionGateway>(
     gateway: &G,
-    cmd: ContinueTaskCommand<C>,
+    cmd: ContinueTaskCommand,
 ) -> Result<ContinueTaskResult, TaskExecutionError> {
     let mut task = gateway.get_task(cmd.task_id).await?;
     let session_id = task.session_id.clone().ok_or_else(|| {
@@ -355,7 +362,8 @@ pub async fn continue_task<C, G: TaskExecutionGateway<C>>(
     })
 }
 
-pub async fn cancel_task<C, G: TaskExecutionGateway<C>>(
+#[allow(deprecated)]
+pub async fn cancel_task<G: TaskExecutionGateway>(
     gateway: &G,
     task_id: Uuid,
 ) -> Result<Task, TaskExecutionError> {
@@ -397,7 +405,8 @@ pub async fn cancel_task<C, G: TaskExecutionGateway<C>>(
     Ok(task)
 }
 
-pub async fn get_task_session<C, G: TaskExecutionGateway<C>>(
+#[allow(deprecated)]
+pub async fn get_task_session<G: TaskExecutionGateway>(
     gateway: &G,
     task_id: Uuid,
 ) -> Result<TaskSessionResult, TaskExecutionError> {

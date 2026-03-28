@@ -13,13 +13,14 @@ use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
 
-use agentdash_executor::{
+use agentdash_connector_contract::{
     ActiveTaskMeta, ActiveWorkflowMeta, ExecutionHookProvider, HookCompletionStatus,
     HookConstraint, HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookPolicyView, HookResolution, HookSourceLayer, HookSourceRef,
-    HookStepAdvanceRequest, HookTrigger, PendingExecutionLogEntry, SessionHookRefreshQuery,
+    HookStepAdvanceRequest, HookTrigger, SessionHookRefreshQuery,
     SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
 };
+use agentdash_connector_contract::hooks::PendingExecutionLogEntry;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -1046,11 +1047,12 @@ mod tests {
         WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec, WorkflowTargetKind,
         build_effective_contract,
     };
-    use agentdash_executor::{
-        ExecutionHookProvider, HookError, HookOwnerSummary, HookRuntimeDelegate,
+    use agentdash_connector_contract::{
+        ExecutionHookProvider, HookError, HookOwnerSummary,
         HookSessionRuntime, HookSessionRuntimeSnapshot, HookTrigger, SessionHookRefreshQuery,
         SessionHookSnapshotQuery,
     };
+    use agentdash_executor::HookRuntimeDelegate;
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 

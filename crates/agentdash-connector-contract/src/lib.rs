@@ -1,15 +1,25 @@
 pub mod connector;
 pub mod hooks;
+pub mod lifecycle;
 pub mod tool;
 
+pub use agentdash_domain::common::{ExecutorConfig, ThinkingLevel};
 pub use connector::{
-    AgentConnector, AgentDashExecutorConfig, ConnectorCapabilities, ConnectorError, ConnectorType,
+    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
-    ExecutionStream, ExecutorInfo, FlowCapabilities, PromptPayload, ThinkingLevel,
+    ExecutionStream, ExecutorInfo, FlowCapabilities, PromptPayload,
     content_block_to_text,
 };
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
+};
+pub use lifecycle::{
+    AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
+    AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
+    BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult,
+    DynAgentRuntimeDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
+    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
+    TransformContextOutput, TurnControlDecision, now_millis,
 };
 pub use hooks::{
     ActiveTaskMeta, ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest,

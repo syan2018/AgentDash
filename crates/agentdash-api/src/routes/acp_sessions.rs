@@ -640,6 +640,31 @@ async fn augment_prompt_request_for_owner(
     Ok(req)
 }
 
+/// Shared finalization step for all owner-type prompt augmentations.
+///
+/// Applies workspace defaults, assigns address space / MCP / flow capabilities,
+/// and injects system context + prompt blocks into the request.
+fn finalize_augmented_request(
+    req: &mut PromptSessionRequest,
+    context_markdown: String,
+    prompt_blocks: Vec<serde_json::Value>,
+    workspace: Option<&Workspace>,
+    address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
+    flow_capabilities: agentdash_executor::FlowCapabilities,
+) {
+    req.user_input.prompt = None;
+    req.user_input.prompt_blocks = Some(prompt_blocks);
+    req.system_context = Some(context_markdown);
+
+    apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.workspace_root, workspace);
+    if req.address_space.is_none() {
+        req.address_space = address_space;
+    }
+    req.mcp_servers = effective_mcp_servers;
+    req.flow_capabilities = Some(flow_capabilities);
+}
+
 async fn build_story_owner_prompt_request(
     state: &Arc<AppState>,
     mut req: PromptSessionRequest,
@@ -704,22 +729,20 @@ async fn build_story_owner_prompt_request(
         req.user_input.prompt_blocks.take(),
     );
 
-    req.user_input.prompt = None;
-    req.user_input.prompt_blocks = Some(prompt_blocks);
-    req.system_context = Some(context_markdown);
-
-    apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.workspace_root, workspace);
-    if req.address_space.is_none() {
-        req.address_space = address_space;
-    }
-
-    req.mcp_servers = effective_mcp_servers;
-    req.flow_capabilities = Some(agentdash_executor::FlowCapabilities {
-        workflow_artifact: true,
-        companion_dispatch: true,
-        companion_complete: true,
-        resolve_hook_action: true,
-    });
+    finalize_augmented_request(
+        &mut req,
+        context_markdown,
+        prompt_blocks,
+        workspace,
+        address_space,
+        effective_mcp_servers,
+        agentdash_executor::FlowCapabilities {
+            workflow_artifact: true,
+            companion_dispatch: true,
+            companion_complete: true,
+            resolve_hook_action: true,
+        },
+    );
 
     Ok(req)
 }
@@ -792,29 +815,24 @@ async fn build_project_owner_prompt_request(
         req.user_input.prompt_blocks.take(),
     );
 
-    req.user_input.prompt = None;
-    req.user_input.prompt_blocks = Some(prompt_blocks);
-    req.system_context = Some(context_markdown);
-
-    apply_workspace_defaults(
-        &mut req.user_input.working_dir,
-        &mut req.workspace_root,
-        workspace.as_ref(),
-    );
-    if req.address_space.is_none() {
-        req.address_space = address_space;
-    }
     if req.user_input.executor_config.is_none() {
         req.user_input.executor_config = Some(effective_executor_config);
     }
 
-    req.mcp_servers = effective_mcp_servers;
-    req.flow_capabilities = Some(agentdash_executor::FlowCapabilities {
-        workflow_artifact: false,
-        companion_dispatch: false,
-        companion_complete: false,
-        resolve_hook_action: true,
-    });
+    finalize_augmented_request(
+        &mut req,
+        context_markdown,
+        prompt_blocks,
+        workspace.as_ref(),
+        address_space,
+        effective_mcp_servers,
+        agentdash_executor::FlowCapabilities {
+            workflow_artifact: false,
+            companion_dispatch: false,
+            companion_complete: false,
+            resolve_hook_action: true,
+        },
+    );
 
     Ok(req)
 }

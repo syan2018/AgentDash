@@ -1053,7 +1053,7 @@ mod tests {
         SessionHookSnapshotQuery,
     };
     use crate::session::HookSessionRuntime;
-    use agentdash_executor::HookRuntimeDelegate;
+    use crate::session::HookRuntimeDelegate;
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 

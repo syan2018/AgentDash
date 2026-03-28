@@ -1,128 +1,106 @@
 use std::sync::Arc;
 
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use uuid::Uuid;
-
 pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
 use agentdash_application::workspace::{
-    BackendAvailability, WorkspaceResolutionError,
+    WorkspaceDetectionError, WorkspaceResolutionError,
 };
-use agentdash_domain::workspace::{
-    Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
-};
+use agentdash_application::backend_transport::{BackendTransport, GitRepoInfo, TransportError};
+use agentdash_domain::workspace::Workspace;
+use agentdash_relay::{CommandWorkspaceDetectGitPayload, RelayMessage};
 use async_trait::async_trait;
 
 use crate::app_state::AppState;
+use crate::relay::registry::BackendRegistry;
 use crate::rpc::ApiError;
 
 pub use agentdash_application::workspace::resolve_workspace_binding as resolve_workspace_binding_core;
+pub use agentdash_application::workspace::WorkspaceDetectionResult;
 
-pub(crate) struct AppStateBackendAvailability {
-    state: Arc<AppState>,
-}
-
-impl AppStateBackendAvailability {
-    pub(crate) fn new(state: Arc<AppState>) -> Self {
-        Self { state }
-    }
-}
-
+/// BackendRegistry 适配 BackendTransport trait —— API adapter 层
 #[async_trait]
-impl BackendAvailability for AppStateBackendAvailability {
+impl BackendTransport for BackendRegistry {
     async fn is_online(&self, backend_id: &str) -> bool {
-        self.state.services.backend_registry.is_online(backend_id).await
+        self.is_online(backend_id).await
+    }
+
+    async fn list_online_backend_ids(&self) -> Vec<String> {
+        self.list_online_ids().await
+    }
+
+    async fn detect_git_repo(
+        &self,
+        backend_id: &str,
+        root: &str,
+    ) -> Result<GitRepoInfo, TransportError> {
+        if !self.is_online(backend_id).await {
+            return Err(TransportError::BackendOffline(backend_id.to_string()));
+        }
+        let cmd = RelayMessage::CommandWorkspaceDetectGit {
+            id: RelayMessage::new_id("workspace-detect-git"),
+            payload: CommandWorkspaceDetectGitPayload {
+                path: root.to_string(),
+            },
+        };
+        let resp = self
+            .send_command(backend_id, cmd)
+            .await
+            .map_err(|e| TransportError::OperationFailed(e.to_string()))?;
+
+        match resp {
+            RelayMessage::ResponseWorkspaceDetectGit {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(GitRepoInfo {
+                is_git_repo: payload.is_git,
+                source_repo: payload
+                    .remote_url
+                    .clone()
+                    .or_else(|| payload.is_git.then(|| root.to_string())),
+                branch: payload.current_branch.or(payload.default_branch),
+                commit_hash: None,
+            }),
+            RelayMessage::ResponseWorkspaceDetectGit {
+                error: Some(err), ..
+            } => Err(TransportError::OperationFailed(format!(
+                "远程 workspace_detect_git 错误: {}",
+                err.message
+            ))),
+            _ => Err(TransportError::OperationFailed(
+                "远程 workspace_detect_git 返回了意外响应".into(),
+            )),
+        }
     }
 }
 
+/// 薄 API adapter：解析 workspace binding（错误映射到 ApiError）
 pub async fn resolve_workspace_binding(
     state: &Arc<AppState>,
     workspace: &Workspace,
 ) -> Result<ResolvedWorkspaceBinding, ApiError> {
-    let availability = AppStateBackendAvailability::new(state.clone());
-    resolve_workspace_binding_core(&availability, workspace)
+    resolve_workspace_binding_core(state.services.backend_registry.as_ref(), workspace)
         .await
         .map_err(|err| match err {
-            WorkspaceResolutionError::NoBindings(msg) | WorkspaceResolutionError::NoAvailable(msg) => {
-                ApiError::Conflict(msg)
-            }
+            WorkspaceResolutionError::NoBindings(msg)
+            | WorkspaceResolutionError::NoAvailable(msg) => ApiError::Conflict(msg),
         })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct WorkspaceDetectionResult {
-    pub identity_kind: WorkspaceIdentityKind,
-    pub identity_payload: Value,
-    pub binding: WorkspaceBinding,
-    pub confidence: String,
-    pub warnings: Vec<String>,
-}
-
+/// 薄 API adapter：探测远程 workspace（错误映射到 ApiError）
 pub async fn detect_workspace_from_backend(
     state: &Arc<AppState>,
     backend_id: &str,
     root_ref: &str,
 ) -> Result<WorkspaceDetectionResult, ApiError> {
-    let backend_id = backend_id.trim();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest("backend_id 不能为空".into()));
-    }
-    let root_ref = root_ref.trim();
-    if root_ref.is_empty() {
-        return Err(ApiError::BadRequest("root_ref 不能为空".into()));
-    }
-    if !state.services.backend_registry.is_online(backend_id).await {
-        return Err(ApiError::Conflict(format!(
-            "目标 Backend 当前不在线: {backend_id}"
-        )));
-    }
-
-    let git =
-        crate::routes::workspaces::detect_git_via_backend(state, backend_id, root_ref).await?;
-    let mut warnings = Vec::new();
-    let (identity_kind, identity_payload, confidence) = if git.is_git_repo {
-        (
-            WorkspaceIdentityKind::GitRepo,
-            json!({
-                "remote_url": git.source_repo.clone(),
-                "branch": git.branch.clone(),
-                "root_hint": root_ref,
-            }),
-            "high".to_string(),
-        )
-    } else {
-        warnings
-            .push("当前未识别为 Git 仓库，已按 local_dir 处理。P4 自动识别尚未接入。".to_string());
-        (
-            WorkspaceIdentityKind::LocalDir,
-            json!({ "root_hint": root_ref }),
-            "medium".to_string(),
-        )
-    };
-
-    let mut binding = WorkspaceBinding::new(
-        Uuid::nil(),
-        backend_id.to_string(),
-        root_ref.to_string(),
-        json!({
-            "git": {
-                "is_repo": git.is_git_repo,
-                "source_repo": git.source_repo,
-                "branch": git.branch,
-                "commit_hash": git.commit_hash,
-            },
-        }),
-    );
-    binding.status = WorkspaceBindingStatus::Ready;
-    binding.last_verified_at = Some(Utc::now());
-
-    Ok(WorkspaceDetectionResult {
-        identity_kind,
-        identity_payload,
-        binding,
-        confidence,
-        warnings,
+    agentdash_application::workspace::detect_workspace_from_backend(
+        state.services.backend_registry.as_ref(),
+        backend_id,
+        root_ref,
+    )
+    .await
+    .map_err(|err| match err {
+        WorkspaceDetectionError::BadRequest(msg) => ApiError::BadRequest(msg),
+        WorkspaceDetectionError::BackendOffline(msg) => ApiError::Conflict(msg),
+        WorkspaceDetectionError::TransportFailed(msg) => ApiError::Internal(msg),
     })
 }

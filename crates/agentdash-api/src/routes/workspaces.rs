@@ -10,7 +10,7 @@ use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
     WorkspaceResolutionPolicy, WorkspaceStatus,
 };
-use agentdash_relay::{CommandWorkspaceDetectGitPayload, RelayMessage};
+use agentdash_application::backend_transport::BackendTransport;
 
 use crate::app_state::AppState;
 use crate::auth::{
@@ -463,51 +463,16 @@ pub(crate) async fn detect_git_via_backend(
     backend_id: &str,
     root_ref: &str,
 ) -> Result<GitDetectionResult, ApiError> {
-    let backend_id = backend_id.trim();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest("backend_id 不能为空".into()));
-    }
-    if !state.services.backend_registry.is_online(backend_id).await {
-        return Err(ApiError::Conflict(format!(
-            "目标 Backend 当前不在线: {backend_id}"
-        )));
-    }
-
-    let cmd = RelayMessage::CommandWorkspaceDetectGit {
-        id: RelayMessage::new_id("workspace-detect-git"),
-        payload: CommandWorkspaceDetectGitPayload {
-            path: root_ref.to_string(),
-        },
-    };
-    let resp = state
-        .services
-        .backend_registry
-        .send_command(backend_id, cmd)
+    let transport: &dyn BackendTransport = state.services.backend_registry.as_ref();
+    let info = transport
+        .detect_git_repo(backend_id, root_ref)
         .await
-        .map_err(|e| ApiError::Internal(format!("relay workspace_detect_git 失败: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("detect_git 失败: {e}")))?;
 
-    match resp {
-        RelayMessage::ResponseWorkspaceDetectGit {
-            payload: Some(payload),
-            error: None,
-            ..
-        } => Ok(GitDetectionResult {
-            is_git_repo: payload.is_git,
-            source_repo: payload
-                .remote_url
-                .clone()
-                .or_else(|| payload.is_git.then(|| root_ref.to_string())),
-            branch: payload.current_branch.or(payload.default_branch),
-            commit_hash: None,
-        }),
-        RelayMessage::ResponseWorkspaceDetectGit {
-            error: Some(err), ..
-        } => Err(ApiError::Internal(format!(
-            "远程 workspace_detect_git 错误: {}",
-            err.message
-        ))),
-        _ => Err(ApiError::Internal(
-            "远程 workspace_detect_git 返回了意外响应".into(),
-        )),
-    }
+    Ok(GitDetectionResult {
+        is_git_repo: info.is_git_repo,
+        source_repo: info.source_repo,
+        branch: info.branch,
+        commit_hash: info.commit_hash,
+    })
 }

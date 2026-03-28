@@ -131,6 +131,10 @@ impl BackendRegistry {
     pub async fn is_online(&self, backend_id: &str) -> bool {
         self.backends.read().await.contains_key(backend_id)
     }
+
+    pub async fn list_online_ids(&self) -> Vec<String> {
+        self.backends.read().await.keys().cloned().collect()
+    }
 }
 
 #[cfg(test)]

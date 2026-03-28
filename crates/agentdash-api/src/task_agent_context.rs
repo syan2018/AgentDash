@@ -8,18 +8,16 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_injection::ResolveSourcesOutput;
 
 use crate::app_state::AppState;
-use crate::workspace_resolution::AppStateBackendAvailability;
 
-/// API 层适配器 — 委托给 application 层的核心实现，注入 AppState 的 BackendAvailability
+/// API 层适配器 — 委托给 application 层的核心实现，BackendRegistry 通过 blanket impl 满足 BackendAvailability
 pub async fn resolve_workspace_declared_sources(
     state: &Arc<AppState>,
     sources: &[ContextSourceRef],
     workspace: Option<&Workspace>,
     base_order: i32,
 ) -> Result<ResolveSourcesOutput, String> {
-    let availability = AppStateBackendAvailability::new(state.clone());
     agentdash_application::context::resolve_workspace_declared_sources(
-        &availability,
+        state.services.backend_registry.as_ref(),
         &state.services.address_space_service,
         sources,
         workspace,

@@ -18,6 +18,7 @@ use agentdash_domain::workspace::WorkspaceRepository;
 ///
 /// 在 application 层定义，使 gateway / service 可直接持有仓储引用，
 /// 无需依赖 api 层的 `AppState`。
+#[derive(Clone)]
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,

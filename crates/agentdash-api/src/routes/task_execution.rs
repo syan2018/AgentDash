@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_application::task_execution::TaskExecutionError;
+use agentdash_application::task::execution::{
+    ContinueTaskCommand, StartTaskCommand, TaskExecutionError,
+};
 use agentdash_domain::task::{Task, TaskStatus};
 use agentdash_mcp::injection::McpInjectionConfig;
 
@@ -20,14 +22,11 @@ use agentdash_application::bootstrap_plan::{
 use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
+use agentdash_application::task::config::resolve_task_agent_config;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
-    bootstrap::task_execution_gateway::{
-        execute_cancel_task, execute_continue_task, execute_get_task_session, execute_start_task,
-        resolve_task_agent_config,
-    },
     rpc::ApiError,
     runtime_bridge::{
         acp_mcp_servers_to_runtime, mcp_injection_config_to_runtime_binding,
@@ -108,7 +107,14 @@ pub async fn start_task(
         ProjectPermission::Edit,
     )
     .await?;
-    let result = execute_start_task(state, task_id, req.override_prompt, req.executor_config)
+    let result = state
+        .services
+        .task_lifecycle_service
+        .start_task(StartTaskCommand {
+            task_id,
+            override_prompt: req.override_prompt,
+            executor_config: req.executor_config,
+        })
         .await
         .map_err(map_task_execution_error)?;
 
@@ -136,7 +142,14 @@ pub async fn continue_task(
         ProjectPermission::Edit,
     )
     .await?;
-    let result = execute_continue_task(state, task_id, req.additional_prompt, req.executor_config)
+    let result = state
+        .services
+        .task_lifecycle_service
+        .continue_task(ContinueTaskCommand {
+            task_id,
+            additional_prompt: req.additional_prompt,
+            executor_config: req.executor_config,
+        })
         .await
         .map_err(map_task_execution_error)?;
 
@@ -163,7 +176,10 @@ pub async fn cancel_task(
         ProjectPermission::Edit,
     )
     .await?;
-    let task = execute_cancel_task(state, task_id)
+    let task = state
+        .services
+        .task_lifecycle_service
+        .cancel_task(task_id)
         .await
         .map_err(map_task_execution_error)?;
     Ok(Json(TaskResponse::from(task)))
@@ -182,7 +198,10 @@ pub async fn get_task_session(
         ProjectPermission::View,
     )
     .await?;
-    let result = execute_get_task_session(state.clone(), task_id)
+    let result = state
+        .services
+        .task_lifecycle_service
+        .get_task_session(task_id)
         .await
         .map_err(map_task_execution_error)?;
 

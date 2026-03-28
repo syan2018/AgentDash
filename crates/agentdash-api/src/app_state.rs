@@ -10,7 +10,7 @@ use crate::address_space_access::{
 };
 use crate::mount_providers::RelayFsMountProvider;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
-use crate::execution_hooks::AppExecutionHookProvider;
+use agentdash_application::hooks::AppExecutionHookProvider;
 use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
 };
@@ -18,6 +18,7 @@ use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
 use agentdash_application::address_space::{MountProviderRegistry, MountProviderRegistryBuilder};
 pub use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::task::service::TaskLifecycleService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_domain::project::ProjectRepository;
@@ -56,14 +57,18 @@ pub struct ServiceSet {
     pub address_space_registry: AddressSpaceDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
     pub mount_provider_registry: Arc<MountProviderRegistry>,
+    /// Task 生命周期服务 — Application 层直接编排 task start/continue/cancel
+    pub task_lifecycle_service: Arc<TaskLifecycleService>,
 }
 
 /// Task 执行运行时状态 — 并发锁与重试控制
+///
+/// 与 `TaskLifecycleService` 共享同一套实例（通过 `Arc`）。
 pub struct TaskRuntime {
     /// Per-Task 异步操作锁，确保同一 Task 的生命周期操作串行执行
-    pub lock_map: TaskLockMap,
+    pub lock_map: Arc<TaskLockMap>,
     /// Per-Task 重启追踪器，控制失败后的自动重试策略
-    pub restart_tracker: RestartTracker,
+    pub restart_tracker: Arc<RestartTracker>,
 }
 
 /// 应用级配置
@@ -90,17 +95,17 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(pool: SqlitePool) -> Result<Self> {
+    pub async fn new(pool: SqlitePool) -> Result<Arc<Self>> {
         Self::new_with_plugins(pool, builtin_plugins()).await
     }
 
     /// 携带插件列表构建 AppState
     ///
-    /// 宿主会先聚合所有插件注册结果，再统一构建运行时。
+    /// 返回 `Arc<Self>` 以支持内部 `DeferredTurnDispatcher` 的延迟绑定。
     pub async fn new_with_plugins(
         pool: SqlitePool,
         plugins: Vec<Box<dyn AgentDashPlugin>>,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>> {
         let plugin_registration = collect_plugin_registration(plugins)
             .map_err(|err| anyhow::anyhow!("插件注册失败: {err}"))?;
 
@@ -226,7 +231,8 @@ impl AppState {
             tracing::warn!("启动恢复 session 状态失败（非致命）: {e}");
         }
 
-        let restart_tracker = RestartTracker::default();
+        let restart_tracker = Arc::new(RestartTracker::default());
+        let lock_map = Arc::new(TaskLockMap::new());
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
         let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
@@ -257,23 +263,40 @@ impl AppState {
             address_space_registry.register(provider);
         }
 
-        Ok(Self {
-            repos: RepositorySet {
-                project_repo,
-                workspace_repo,
-                story_repo,
-                task_repo,
-                session_binding_repo,
-                backend_repo,
-                user_directory_repo,
-                settings_repo,
-                agent_repo: agent_repo.clone(),
-                agent_link_repo: agent_repo,
-                workflow_definition_repo: workflow_repo.clone(),
-                lifecycle_definition_repo: workflow_repo.clone(),
-                workflow_assignment_repo: workflow_repo.clone(),
-                lifecycle_run_repo: workflow_repo,
-            },
+        let deferred_dispatcher = crate::bootstrap::turn_dispatcher::DeferredTurnDispatcher::new();
+
+        let repos = RepositorySet {
+            project_repo,
+            workspace_repo,
+            story_repo,
+            task_repo,
+            session_binding_repo,
+            backend_repo,
+            user_directory_repo,
+            settings_repo,
+            agent_repo: agent_repo.clone(),
+            agent_link_repo: agent_repo,
+            workflow_definition_repo: workflow_repo.clone(),
+            lifecycle_definition_repo: workflow_repo.clone(),
+            workflow_assignment_repo: workflow_repo.clone(),
+            lifecycle_run_repo: workflow_repo,
+        };
+
+        let task_lifecycle_service = Arc::new(TaskLifecycleService {
+            repos: repos.clone(),
+            hub: session_hub.clone(),
+            address_space_service: address_space_service.clone(),
+            contributor_registry: ContextContributorRegistry::with_builtins(),
+            mcp_base_url: mcp_base_url.clone(),
+            backend_availability: backend_registry.clone(),
+            dispatcher: deferred_dispatcher.clone(),
+            restart_tracker: restart_tracker.clone(),
+            lock_map: lock_map.clone(),
+            is_native_agent_fn: agentdash_executor::is_native_agent,
+        });
+
+        let state = Self {
+            repos,
             services: ServiceSet {
                 session_hub,
                 connector,
@@ -282,9 +305,10 @@ impl AppState {
                 contributor_registry: ContextContributorRegistry::with_builtins(),
                 address_space_registry,
                 mount_provider_registry,
+                task_lifecycle_service,
             },
             task_runtime: TaskRuntime {
-                lock_map: TaskLockMap::new(),
+                lock_map,
                 restart_tracker,
             },
             config: AppConfig {
@@ -293,7 +317,12 @@ impl AppState {
             },
             remote_sessions: Arc::new(RwLock::new(HashMap::new())),
             auth_provider: plugin_registration.auth_provider,
-        })
+        };
+
+        let state = Arc::new(state);
+        deferred_dispatcher.bind(state.clone());
+
+        Ok(state)
     }
 }
 

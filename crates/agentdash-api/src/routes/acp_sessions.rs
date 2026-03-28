@@ -39,10 +39,9 @@ use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
-use crate::bootstrap::task_execution_gateway::execute_get_task_session;
 use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::runtime_bridge::acp_mcp_servers_to_runtime;
-use crate::session_context::apply_workspace_defaults;
+use agentdash_application::session_context::apply_workspace_defaults;
 use crate::task_agent_context::resolve_workspace_declared_sources;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
@@ -365,7 +364,10 @@ pub async fn get_session_context(
                 ProjectPermission::View,
             )
             .await?;
-            let result = execute_get_task_session(state.clone(), task_id)
+            let result = state
+                .services
+                .task_lifecycle_service
+                .get_task_session(task_id)
                 .await
                 .map_err(task_execution::map_task_execution_error)?;
             let built_context =

@@ -1,0 +1,388 @@
+use std::sync::Arc;
+
+use agentdash_application::task::execution::{StartedTurn, TaskExecutionError};
+use agentdash_application::task::gateway::{
+    PreparedTurnContext,
+    map_connector_error, map_internal_error, normalize_backend_id,
+    run_turn_monitor, TurnOutcome, update_task_status,
+};
+use agentdash_application::task::service::TurnDispatcher;
+use agentdash_application::session::{PromptSessionRequest, UserPromptInput};
+use agentdash_relay::{
+    AgentConfigRelay, CommandCancelPayload, CommandPromptPayload, RelayMessage,
+    ResponsePromptPayload,
+};
+use async_trait::async_trait;
+use serde_json::json;
+use uuid::Uuid;
+
+use agentdash_domain::common::ThinkingLevel;
+use crate::app_state::AppState;
+use crate::runtime_bridge::runtime_mcp_servers_to_acp;
+use crate::workspace_resolution::{ResolvedWorkspaceBinding, resolve_workspace_binding};
+
+/// API 层 `TurnDispatcher` 实现 — 封装 relay/云端原生执行分发逻辑
+///
+/// 持有构建 task lifecycle 所需的基础设施组件引用，不直接依赖完整的 `AppState`。
+pub struct AppStateTurnDispatcher {
+    pub(crate) state: Arc<AppState>,
+}
+
+impl AppStateTurnDispatcher {
+    pub fn new(state: Arc<AppState>) -> Self {
+        Self { state }
+    }
+}
+
+/// 延迟绑定的 dispatcher wrapper — 在 AppState 构建完成后注入实际 state
+pub struct DeferredTurnDispatcher {
+    inner: tokio::sync::OnceCell<Arc<AppStateTurnDispatcher>>,
+}
+
+impl DeferredTurnDispatcher {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: tokio::sync::OnceCell::new(),
+        })
+    }
+
+    pub fn bind(&self, state: Arc<AppState>) {
+        let _ = self.inner.set(Arc::new(AppStateTurnDispatcher::new(state)));
+    }
+
+    fn get(&self) -> &AppStateTurnDispatcher {
+        self.inner
+            .get()
+            .expect("DeferredTurnDispatcher::bind() must be called before use")
+    }
+}
+
+#[async_trait]
+impl TurnDispatcher for DeferredTurnDispatcher {
+    async fn dispatch_turn(
+        &self,
+        session_id: &str,
+        ctx: PreparedTurnContext,
+    ) -> Result<StartedTurn, TaskExecutionError> {
+        self.get().dispatch_turn(session_id, ctx).await
+    }
+
+    async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {
+        self.get().cancel_session(session_id).await
+    }
+
+    fn spawn_turn_monitor(
+        &self,
+        task_id: Uuid,
+        session_id: String,
+        turn_id: String,
+        backend_id: String,
+    ) {
+        self.get()
+            .spawn_turn_monitor(task_id, session_id, turn_id, backend_id);
+    }
+}
+
+#[async_trait]
+impl TurnDispatcher for AppStateTurnDispatcher {
+    async fn dispatch_turn(
+        &self,
+        session_id: &str,
+        ctx: PreparedTurnContext,
+    ) -> Result<StartedTurn, TaskExecutionError> {
+        if ctx.use_cloud_native_agent {
+            dispatch_cloud_native(&self.state, session_id, ctx).await
+        } else {
+            dispatch_relay(&self.state, session_id, ctx).await
+        }
+    }
+
+    async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {
+        let remote_backend = self.state.remote_sessions.read().await.get(session_id).cloned();
+        if let Some(backend_id) = remote_backend {
+            relay_cancel(&self.state, &backend_id, session_id).await
+        } else {
+            self.state
+                .services
+                .session_hub
+                .cancel(session_id)
+                .await
+                .map_err(map_connector_error)
+        }
+    }
+
+    fn spawn_turn_monitor(
+        &self,
+        task_id: Uuid,
+        session_id: String,
+        turn_id: String,
+        backend_id: String,
+    ) {
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            let outcome = run_turn_monitor(
+                &state.repos,
+                &state.services.session_hub,
+                &state.task_runtime.restart_tracker,
+                task_id,
+                &session_id,
+                &turn_id,
+                &backend_id,
+            )
+            .await;
+            if let TurnOutcome::NeedsRetry { delay, attempt } = outcome {
+                schedule_auto_retry(state, task_id, session_id, backend_id, delay, attempt).await;
+            }
+        });
+    }
+}
+
+async fn dispatch_cloud_native(
+    state: &Arc<AppState>,
+    session_id: &str,
+    ctx: PreparedTurnContext,
+) -> Result<StartedTurn, TaskExecutionError> {
+    let resolved_binding = if let Some(ws) = ctx.workspace.as_ref() {
+        Some(resolve_workspace_binding(state, ws).await.map_err(map_internal_error)?)
+    } else {
+        None
+    };
+    let workspace_root = resolved_binding
+        .as_ref()
+        .map(|item| std::path::PathBuf::from(item.root_ref.clone()));
+
+    let prompt_req = PromptSessionRequest {
+        user_input: UserPromptInput {
+            prompt: None,
+            prompt_blocks: Some(ctx.built.prompt_blocks),
+            working_dir: ctx.built.working_dir,
+            env: Default::default(),
+            executor_config: ctx.resolved_config.clone(),
+        },
+        mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers),
+        workspace_root,
+        address_space: ctx.address_space.clone(),
+        flow_capabilities: Some(agentdash_connector_contract::FlowCapabilities {
+            workflow_artifact: true,
+            companion_dispatch: false,
+            companion_complete: true,
+            resolve_hook_action: true,
+        }),
+        system_context: ctx.built.system_context.clone(),
+    };
+
+    let turn_id = state
+        .services
+        .session_hub
+        .start_prompt(session_id, prompt_req)
+        .await
+        .map_err(map_connector_error)?;
+
+    Ok(StartedTurn {
+        turn_id,
+        context_sources: ctx.built.source_summary,
+    })
+}
+
+async fn dispatch_relay(
+    state: &Arc<AppState>,
+    session_id: &str,
+    ctx: PreparedTurnContext,
+) -> Result<StartedTurn, TaskExecutionError> {
+    let ws = ctx.workspace.as_ref().ok_or_else(|| {
+        TaskExecutionError::BadRequest(
+            "第三方 Agent 任务必须绑定 Workspace，且运行位置由 Workspace.backend_id 决定".into(),
+        )
+    })?;
+    let resolved_binding = resolve_workspace_binding(state, ws)
+        .await
+        .map_err(map_internal_error)?;
+    let backend_id = normalize_backend_id(&resolved_binding.backend_id)?;
+
+    if !state.services.backend_registry.is_online(backend_id).await {
+        return Err(TaskExecutionError::Conflict(format!(
+            "目标 Workspace 所属 Backend 当前不在线: {backend_id}"
+        )));
+    }
+
+    let turn_id = relay_start_prompt(
+        state,
+        backend_id,
+        session_id,
+        &ctx,
+        &resolved_binding,
+    )
+    .await?;
+
+    state
+        .remote_sessions
+        .write()
+        .await
+        .insert(session_id.to_string(), backend_id.to_string());
+
+    Ok(StartedTurn {
+        turn_id,
+        context_sources: ctx.built.source_summary.clone(),
+    })
+}
+
+async fn relay_start_prompt(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    session_id: &str,
+    ctx: &PreparedTurnContext,
+    binding: &ResolvedWorkspaceBinding,
+) -> Result<String, TaskExecutionError> {
+    let relay_config = ctx.resolved_config.as_ref().map(|c| AgentConfigRelay {
+        executor: c.executor.clone(),
+        variant: c.variant.clone(),
+        provider_id: c.provider_id.clone(),
+        model_id: c.model_id.clone(),
+        agent_id: c.agent_id.clone(),
+        thinking_level: c.thinking_level.map(|level| {
+            match level {
+                ThinkingLevel::Off => "off",
+                ThinkingLevel::Minimal => "minimal",
+                ThinkingLevel::Low => "low",
+                ThinkingLevel::Medium => "medium",
+                ThinkingLevel::High => "high",
+                ThinkingLevel::Xhigh => "xhigh",
+            }
+            .to_string()
+        }),
+        permission_policy: c.permission_policy.clone(),
+    });
+
+    let cmd = RelayMessage::CommandPrompt {
+        id: RelayMessage::new_id("prompt"),
+        payload: Box::new(CommandPromptPayload {
+            session_id: session_id.to_string(),
+            follow_up_session_id: None,
+            prompt: None,
+            prompt_blocks: Some(serde_json::Value::Array(ctx.built.prompt_blocks.clone())),
+            workspace_root: binding.root_ref.clone(),
+            working_dir: ctx.built.working_dir.clone(),
+            env: Default::default(),
+            executor_config: relay_config,
+            mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers)
+                .iter()
+                .filter_map(|s| serde_json::to_value(s).ok())
+                .collect(),
+        }),
+    };
+
+    tracing::info!(backend_id, session_id, "中继 command.prompt → 远程后端");
+    let resp = state
+        .services
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
+        .map_err(|e| TaskExecutionError::Internal(format!("中继 prompt 失败: {e}")))?;
+
+    match resp {
+        RelayMessage::ResponsePrompt {
+            payload: Some(ResponsePromptPayload { turn_id, .. }),
+            error: None,
+            ..
+        } => Ok(turn_id),
+        RelayMessage::ResponsePrompt {
+            error: Some(err), ..
+        } => Err(TaskExecutionError::Internal(format!(
+            "远程后端执行失败: {}",
+            err.message
+        ))),
+        other => Err(TaskExecutionError::Internal(format!(
+            "远程后端返回意外响应: {}",
+            other.id()
+        ))),
+    }
+}
+
+async fn relay_cancel(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    session_id: &str,
+) -> Result<(), TaskExecutionError> {
+    tracing::info!(backend_id, session_id, "中继 command.cancel → 远程后端");
+    let cmd = RelayMessage::CommandCancel {
+        id: RelayMessage::new_id("cancel"),
+        payload: CommandCancelPayload {
+            session_id: session_id.to_string(),
+        },
+    };
+    let resp = state
+        .services
+        .backend_registry
+        .send_command(backend_id, cmd)
+        .await
+        .map_err(|e| TaskExecutionError::Internal(format!("中继 cancel 失败: {e}")))?;
+
+    match resp {
+        RelayMessage::ResponseCancel { error: None, .. } => Ok(()),
+        RelayMessage::ResponseCancel {
+            error: Some(err), ..
+        } => Err(TaskExecutionError::Internal(format!(
+            "远程取消失败: {}",
+            err.message
+        ))),
+        _ => Ok(()),
+    }
+}
+
+async fn schedule_auto_retry(
+    state: Arc<AppState>,
+    task_id: Uuid,
+    session_id: String,
+    backend_id: String,
+    delay: std::time::Duration,
+    attempt: u32,
+) {
+    tracing::info!(
+        task_id = %task_id, session_id = %session_id,
+        attempt, delay_ms = delay.as_millis() as u64,
+        "等待退避延迟后自动重试"
+    );
+    tokio::time::sleep(delay).await;
+
+    let retry_prompt = format!(
+        "上一次执行失败，这是第 {} 次自动重试。请继续完成任务。",
+        attempt
+    );
+    match state
+        .services
+        .task_lifecycle_service
+        .continue_task(agentdash_application::task::execution::ContinueTaskCommand {
+            task_id,
+            additional_prompt: Some(retry_prompt),
+            executor_config: None,
+        })
+        .await
+    {
+        Ok(result) => {
+            tracing::info!(
+                task_id = %task_id, session_id = %session_id,
+                new_turn_id = %result.turn_id, attempt,
+                "自动重试已成功发起新 turn"
+            );
+        }
+        Err(err) => {
+            tracing::error!(
+                task_id = %task_id, session_id = %session_id, attempt,
+                "自动重试发起失败，标记 Task 为 Failed: {}", err
+            );
+            let _ = update_task_status(
+                &state.repos,
+                task_id,
+                &backend_id,
+                agentdash_domain::task::TaskStatus::Failed,
+                "auto_retry_failed",
+                json!({
+                    "session_id": session_id,
+                    "attempt": attempt,
+                    "error": err.to_string(),
+                }),
+            )
+            .await;
+        }
+    }
+}

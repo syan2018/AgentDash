@@ -113,40 +113,116 @@ pub struct SessionHookSnapshot {
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
+    pub metadata: Option<SessionSnapshotMetadata>,
 }
 
-const SESSION_LEVEL_METADATA_KEYS: &[&str] = &[
-    "permission_policy",
-    "working_directory",
-    "workspace_root",
-    "connector_id",
-    "executor",
-];
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SessionSnapshotMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_task: Option<ActiveTaskMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_workflow: Option<ActiveWorkflowMeta>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+
+    /// 保留扩展口 — 非核心字段仍可用 JSON
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ActiveTaskMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ActiveWorkflowMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_advance: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_workflow_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_workflow_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_workflow_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_artifact_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_artifact_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_contract: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checklist_evidence_present: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checklist_evidence_artifact_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checklist_evidence_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checklist_evidence_artifact_ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checklist_evidence_titles: Option<Vec<String>>,
+}
 
 /// Merge back session-level constant metadata from the previous snapshot into a
 /// freshly-loaded snapshot. These fields are set once at session start and must
 /// survive snapshot refreshes triggered by runtime hooks.
 fn preserve_session_level_metadata(
     snapshot: &mut SessionHookSnapshot,
-    previous_metadata: Option<&serde_json::Value>,
+    previous_metadata: Option<&SessionSnapshotMetadata>,
 ) {
-    let Some(previous) = previous_metadata.and_then(serde_json::Value::as_object) else {
+    let Some(previous) = previous_metadata else {
         return;
     };
     let target = snapshot
         .metadata
-        .get_or_insert_with(|| serde_json::json!({}));
-    let Some(target) = target.as_object_mut() else {
-        return;
-    };
-    for &key in SESSION_LEVEL_METADATA_KEYS {
-        if target.get(key).is_none_or(serde_json::Value::is_null)
-            && let Some(value) = previous.get(key).filter(|v| !v.is_null())
-        {
-            target.insert(key.to_string(), value.clone());
-        }
+        .get_or_insert_with(SessionSnapshotMetadata::default);
+
+    macro_rules! preserve_field {
+        ($field:ident) => {
+            if target.$field.is_none() {
+                target.$field = previous.$field.clone();
+            }
+        };
     }
+    preserve_field!(permission_policy);
+    preserve_field!(working_directory);
+    preserve_field!(workspace_root);
+    preserve_field!(connector_id);
+    preserve_field!(executor);
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -792,68 +868,74 @@ mod tests {
     fn preserve_session_level_metadata_merges_missing_keys() {
         let mut snapshot = SessionHookSnapshot {
             session_id: "s1".into(),
-            metadata: Some(serde_json::json!({
-                "turn_id": "turn-2",
-                "active_task": { "status": "running" },
-            })),
+            metadata: Some(SessionSnapshotMetadata {
+                turn_id: Some("turn-2".into()),
+                active_task: Some(ActiveTaskMeta {
+                    status: Some("running".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
             ..Default::default()
         };
-        let previous = serde_json::json!({
-            "turn_id": "turn-1",
-            "permission_policy": "SUPERVISED",
-            "workspace_root": "F:/Projects/AgentDash",
-            "working_directory": ".",
-            "connector_id": "pi_agent",
-            "executor": "local",
-        });
+        let previous = SessionSnapshotMetadata {
+            turn_id: Some("turn-1".into()),
+            permission_policy: Some("SUPERVISED".into()),
+            workspace_root: Some("F:/Projects/AgentDash".into()),
+            working_directory: Some(".".into()),
+            connector_id: Some("pi_agent".into()),
+            executor: Some("local".into()),
+            ..Default::default()
+        };
 
         preserve_session_level_metadata(&mut snapshot, Some(&previous));
 
         let meta = snapshot.metadata.as_ref().unwrap();
-        assert_eq!(meta["permission_policy"], "SUPERVISED");
-        assert_eq!(meta["workspace_root"], "F:/Projects/AgentDash");
-        assert_eq!(meta["working_directory"], ".");
-        assert_eq!(meta["connector_id"], "pi_agent");
-        assert_eq!(meta["executor"], "local");
-        // turn_id should NOT be overwritten (not a session-level constant)
-        assert_eq!(meta["turn_id"], "turn-2");
-        // dynamic metadata should be kept
-        assert!(meta["active_task"].is_object());
+        assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
+        assert_eq!(meta.workspace_root.as_deref(), Some("F:/Projects/AgentDash"));
+        assert_eq!(meta.working_directory.as_deref(), Some("."));
+        assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
+        assert_eq!(meta.executor.as_deref(), Some("local"));
+        assert_eq!(meta.turn_id.as_deref(), Some("turn-2"));
+        assert!(meta.active_task.is_some());
     }
 
     #[test]
     fn preserve_session_level_metadata_does_not_overwrite_existing() {
         let mut snapshot = SessionHookSnapshot {
             session_id: "s1".into(),
-            metadata: Some(serde_json::json!({
-                "permission_policy": "AUTONOMOUS",
-                "workspace_root": "/new/root",
-            })),
+            metadata: Some(SessionSnapshotMetadata {
+                permission_policy: Some("AUTONOMOUS".into()),
+                workspace_root: Some("/new/root".into()),
+                ..Default::default()
+            }),
             ..Default::default()
         };
-        let previous = serde_json::json!({
-            "permission_policy": "SUPERVISED",
-            "workspace_root": "F:/Old/Root",
-        });
+        let previous = SessionSnapshotMetadata {
+            permission_policy: Some("SUPERVISED".into()),
+            workspace_root: Some("F:/Old/Root".into()),
+            ..Default::default()
+        };
 
         preserve_session_level_metadata(&mut snapshot, Some(&previous));
 
         let meta = snapshot.metadata.as_ref().unwrap();
-        assert_eq!(meta["permission_policy"], "AUTONOMOUS");
-        assert_eq!(meta["workspace_root"], "/new/root");
+        assert_eq!(meta.permission_policy.as_deref(), Some("AUTONOMOUS"));
+        assert_eq!(meta.workspace_root.as_deref(), Some("/new/root"));
     }
 
     #[tokio::test]
     async fn refresh_preserves_session_level_metadata() {
         let initial_snapshot = SessionHookSnapshot {
             session_id: "sess-1".into(),
-            metadata: Some(serde_json::json!({
-                "permission_policy": "SUPERVISED",
-                "workspace_root": "F:/Projects/AgentDash",
-                "working_directory": ".",
-                "connector_id": "pi_agent",
-                "executor": "local",
-            })),
+            metadata: Some(SessionSnapshotMetadata {
+                permission_policy: Some("SUPERVISED".into()),
+                workspace_root: Some("F:/Projects/AgentDash".into()),
+                working_directory: Some(".".into()),
+                connector_id: Some("pi_agent".into()),
+                executor: Some("local".into()),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let provider = Arc::new(NoopExecutionHookProvider);
@@ -869,10 +951,10 @@ mod tests {
             .expect("refresh should succeed");
 
         let meta = refreshed.metadata.unwrap();
-        assert_eq!(meta["permission_policy"], "SUPERVISED");
-        assert_eq!(meta["workspace_root"], "F:/Projects/AgentDash");
-        assert_eq!(meta["working_directory"], ".");
-        assert_eq!(meta["connector_id"], "pi_agent");
-        assert_eq!(meta["executor"], "local");
+        assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
+        assert_eq!(meta.workspace_root.as_deref(), Some("F:/Projects/AgentDash"));
+        assert_eq!(meta.working_directory.as_deref(), Some("."));
+        assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
+        assert_eq!(meta.executor.as_deref(), Some("local"));
     }
 }

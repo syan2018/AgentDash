@@ -166,15 +166,9 @@ impl AgentTool for WorkflowArtifactReportTool {
 pub fn active_workflow_locator_from_snapshot(
     snapshot: &SessionHookSnapshot,
 ) -> Option<ActiveWorkflowLocator> {
-    let active_workflow = snapshot.metadata.as_ref()?.get("active_workflow")?;
-    let run_id = active_workflow
-        .get("run_id")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|value| Uuid::parse_str(value).ok())?;
-    let step_key = active_workflow
-        .get("step_key")
-        .and_then(serde_json::Value::as_str)?
-        .to_string();
+    let aw = snapshot.metadata.as_ref()?.active_workflow.as_ref()?;
+    let run_id = Uuid::parse_str(aw.run_id.as_deref()?).ok()?;
+    let step_key = aw.step_key.clone()?;
     Some(ActiveWorkflowLocator { run_id, step_key })
 }
 
@@ -183,10 +177,11 @@ pub fn active_workflow_default_artifact_title_from_snapshot(
 ) -> Option<String> {
     snapshot
         .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_workflow"))
-        .and_then(|value| value.get("default_artifact_title"))
-        .and_then(serde_json::Value::as_str)
+        .as_ref()?
+        .active_workflow
+        .as_ref()?
+        .default_artifact_title
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)

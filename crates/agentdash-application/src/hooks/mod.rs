@@ -14,11 +14,11 @@ use agentdash_domain::workflow::{
 };
 
 use agentdash_executor::{
-    ExecutionHookProvider, HookCompletionStatus, HookConstraint, HookContextFragment,
-    HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
-    HookPolicyView, HookResolution, HookSourceLayer, HookSourceRef, HookStepAdvanceRequest,
-    HookTrigger, PendingExecutionLogEntry, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery,
+    ActiveTaskMeta, ActiveWorkflowMeta, ExecutionHookProvider, HookCompletionStatus,
+    HookConstraint, HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError,
+    HookEvaluationQuery, HookPolicyView, HookResolution, HookSourceLayer, HookSourceRef,
+    HookStepAdvanceRequest, HookTrigger, PendingExecutionLogEntry, SessionHookRefreshQuery,
+    SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -404,14 +404,15 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             constraints: Vec::new(),
             policies: Vec::new(),
             diagnostics: Vec::new(),
-            metadata: Some(serde_json::json!({
-                "turn_id": query.turn_id,
-                "connector_id": query.connector_id,
-                "executor": query.executor,
-                "permission_policy": query.permission_policy,
-                "working_directory": query.working_directory,
-                "workspace_root": query.workspace_root,
-            })),
+            metadata: Some(SessionSnapshotMetadata {
+                turn_id: query.turn_id,
+                connector_id: query.connector_id,
+                executor: query.executor,
+                permission_policy: query.permission_policy,
+                working_directory: query.working_directory,
+                workspace_root: query.workspace_root,
+                ..Default::default()
+            }),
         };
         merge_hook_contribution(&mut snapshot, global_builtin_hook_contribution());
 
@@ -446,19 +447,12 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
             if let Some(task_status) = task_status.as_deref() {
                 snapshot.tags.push(format!("task_status:{task_status}"));
-                if let Some(metadata) = snapshot
-                    .metadata
-                    .as_mut()
-                    .and_then(|value| value.as_object_mut())
-                {
-                    metadata.insert(
-                        "active_task".to_string(),
-                        serde_json::json!({
-                            "task_id": owner.task_id.clone(),
-                            "task_title": owner.label.clone(),
-                            "status": task_status,
-                        }),
-                    );
+                if let Some(meta) = snapshot.metadata.as_mut() {
+                    meta.active_task = Some(ActiveTaskMeta {
+                        task_id: owner.task_id.clone(),
+                        task_title: owner.label.clone(),
+                        status: Some(task_status.to_string()),
+                    });
                 }
             }
 
@@ -484,47 +478,41 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     source_refs: source_refs.clone(),
                 });
 
-                if let Some(metadata) = snapshot
-                    .metadata
-                    .as_mut()
-                    .and_then(|value| value.as_object_mut())
-                {
+                if let Some(meta) = snapshot.metadata.as_mut() {
                     let step_advance = lifecycle_step_advance_label(&workflow.active_step);
                     let step_title = if workflow.active_step.description.trim().is_empty() {
                         workflow.active_step.key.clone()
                     } else {
                         workflow.active_step.description.clone()
                     };
-                    metadata.insert(
-                        "active_workflow".to_string(),
-                        serde_json::json!({
-                            "lifecycle_id": workflow.lifecycle.id,
-                            "lifecycle_key": workflow.lifecycle.key,
-                            "lifecycle_name": workflow.lifecycle.name,
-                            "run_id": workflow.run.id,
-                            "run_status": workflow_run_status_tag(workflow.run.status),
-                            "step_key": workflow.active_step.key,
-                            "step_title": step_title,
-                            "workflow_key": workflow.active_step.workflow_key,
-                            "step_advance": step_advance,
-                            "transition_policy": step_advance,
-                            "primary_workflow_id": workflow.primary_workflow.as_ref().map(|w| w.id),
-                            "primary_workflow_key": workflow.primary_workflow.as_ref().map(|w| &w.key),
-                            "primary_workflow_name": workflow.primary_workflow.as_ref().map(|w| &w.name),
-                            "default_artifact_type": workflow
-                                .effective_contract
-                                .completion
-                                .default_artifact_type
-                                .map(workflow_record_artifact_type_tag),
-                            "default_artifact_title": workflow.effective_contract.completion.default_artifact_title.clone(),
-                            "effective_contract": workflow.effective_contract,
-                            "checklist_evidence_artifact_type": workflow_record_artifact_type_tag(checklist_evidence.artifact_type),
-                            "checklist_evidence_present": checklist_evidence.count > 0,
-                            "checklist_evidence_count": checklist_evidence.count,
-                            "checklist_evidence_artifact_ids": checklist_evidence.artifact_ids,
-                            "checklist_evidence_titles": checklist_evidence.titles,
-                        }),
-                    );
+                    meta.active_workflow = Some(ActiveWorkflowMeta {
+                        lifecycle_id: Some(workflow.lifecycle.id.to_string()),
+                        lifecycle_key: Some(workflow.lifecycle.key.clone()),
+                        lifecycle_name: Some(workflow.lifecycle.name.clone()),
+                        run_id: Some(workflow.run.id.to_string()),
+                        run_status: Some(workflow_run_status_tag(workflow.run.status).to_string()),
+                        step_key: Some(workflow.active_step.key.clone()),
+                        step_title: Some(step_title),
+                        workflow_key: workflow.active_step.workflow_key.clone(),
+                        step_advance: Some(step_advance.to_string()),
+                        transition_policy: Some(step_advance.to_string()),
+                        primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id.to_string()),
+                        primary_workflow_key: workflow.primary_workflow.as_ref().map(|w| w.key.clone()),
+                        primary_workflow_name: workflow.primary_workflow.as_ref().map(|w| w.name.clone()),
+                        default_artifact_type: workflow
+                            .effective_contract
+                            .completion
+                            .default_artifact_type
+                            .map(workflow_record_artifact_type_tag)
+                            .map(str::to_string),
+                        default_artifact_title: workflow.effective_contract.completion.default_artifact_title.clone(),
+                        effective_contract: serde_json::to_value(&workflow.effective_contract).ok(),
+                        checklist_evidence_artifact_type: Some(workflow_record_artifact_type_tag(checklist_evidence.artifact_type).to_string()),
+                        checklist_evidence_present: Some(checklist_evidence.count > 0),
+                        checklist_evidence_count: Some(checklist_evidence.count as u32),
+                        checklist_evidence_artifact_ids: Some(checklist_evidence.artifact_ids.iter().map(ToString::to_string).collect()),
+                        checklist_evidence_titles: Some(checklist_evidence.titles.clone()),
+                    });
                 }
 
                 merge_hook_contribution(
@@ -1140,34 +1128,30 @@ mod tests {
         let mut snapshot = SessionHookSnapshot {
             session_id: "sess-test".to_string(),
             sources: vec![workflow_source],
-            metadata: Some(serde_json::json!({
-                "workspace_root": "F:/Projects/AgentDash",
-                "active_workflow": {
-                    "lifecycle_key": "trellis_dev_task",
-                    "step_key": step_key,
-                    "step_advance": step_advance,
-                    "step_completion_mode": step_advance,
-                    "workflow_key": workflow_key,
-                    "run_id": "00000000-0000-0000-0000-0000000000aa",
-                    "effective_contract": effective_contract,
-                    "checklist_evidence_present": checklist_evidence_present,
-                }
-            })),
+            metadata: Some(SessionSnapshotMetadata {
+                workspace_root: Some("F:/Projects/AgentDash".to_string()),
+                active_workflow: Some(ActiveWorkflowMeta {
+                    lifecycle_key: Some("trellis_dev_task".to_string()),
+                    step_key: Some(step_key.to_string()),
+                    step_advance: Some(step_advance.to_string()),
+                    transition_policy: Some(step_advance.to_string()),
+                    workflow_key: workflow_key.map(str::to_string),
+                    run_id: Some("00000000-0000-0000-0000-0000000000aa".to_string()),
+                    effective_contract: Some(effective_contract),
+                    checklist_evidence_present: Some(checklist_evidence_present),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
             ..SessionHookSnapshot::default()
         };
         if let Some(task_status) = task_status {
-            if let Some(metadata) = snapshot
-                .metadata
-                .as_mut()
-                .and_then(|value| value.as_object_mut())
-            {
-                metadata.insert(
-                    "active_task".to_string(),
-                    serde_json::json!({
-                        "task_id": "task-1",
-                        "status": task_status,
-                    }),
-                );
+            if let Some(meta) = snapshot.metadata.as_mut() {
+                meta.active_task = Some(ActiveTaskMeta {
+                    task_id: Some("task-1".to_string()),
+                    status: Some(task_status.to_string()),
+                    ..Default::default()
+                });
             }
         }
         snapshot
@@ -1176,10 +1160,11 @@ mod tests {
     fn snapshot_with_supervised_policy() -> SessionHookSnapshot {
         SessionHookSnapshot {
             session_id: "sess-supervised".to_string(),
-            metadata: Some(serde_json::json!({
-                "workspace_root": "F:/Projects/AgentDash",
-                "permission_policy": "SUPERVISED",
-            })),
+            metadata: Some(SessionSnapshotMetadata {
+                workspace_root: Some("F:/Projects/AgentDash".to_string()),
+                permission_policy: Some("SUPERVISED".to_string()),
+                ..Default::default()
+            }),
             ..SessionHookSnapshot::default()
         }
     }
@@ -1525,12 +1510,14 @@ mod tests {
     fn before_stop_blocks_when_task_still_running_without_active_workflow() {
         let snapshot = SessionHookSnapshot {
             session_id: "sess-task-running".to_string(),
-            metadata: Some(serde_json::json!({
-                "active_task": {
-                    "task_id": "task-1",
-                    "status": "running",
-                }
-            })),
+            metadata: Some(SessionSnapshotMetadata {
+                active_task: Some(ActiveTaskMeta {
+                    task_id: Some("task-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
             ..SessionHookSnapshot::default()
         };
         let mut resolution = HookResolution::default();

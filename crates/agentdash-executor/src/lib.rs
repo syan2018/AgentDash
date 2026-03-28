@@ -15,13 +15,14 @@ pub use connector::{
 };
 pub use hook_events::build_hook_trace_notification;
 pub use hooks::{
-    ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus, HookConstraint,
-    HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError, HookEvaluationQuery,
-    HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookPolicyView, HookResolution, HookSessionRuntime, HookSessionRuntimeSnapshot,
-    HookSourceLayer, HookSourceRef, HookStepAdvanceRequest, HookTraceEntry, HookTrigger,
-    NoopExecutionHookProvider, PendingExecutionLogEntry, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    ActiveTaskMeta, ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest,
+    HookCompletionStatus, HookConstraint, HookContextFragment, HookContributionSet,
+    HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary, HookPendingAction,
+    HookPendingActionResolutionKind, HookPendingActionStatus, HookPolicyView, HookResolution,
+    HookSessionRuntime, HookSessionRuntimeSnapshot, HookSourceLayer, HookSourceRef,
+    HookStepAdvanceRequest, HookTraceEntry, HookTrigger, NoopExecutionHookProvider,
+    PendingExecutionLogEntry, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime,
 };
 pub use hub::{
     CompanionSessionContext, ExecutorHub, PromptSessionRequest, SessionExecutionState, SessionMeta,

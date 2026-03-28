@@ -9,7 +9,8 @@ use agentdash_domain::workflow::{
     WorkflowSessionTerminalState,
 };
 use agentdash_executor::{
-    HookDiagnosticEntry, HookOwnerSummary, HookSourceLayer, HookSourceRef, SessionHookSnapshot,
+    ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, HookSourceLayer, HookSourceRef,
+    SessionHookSnapshot,
 };
 
 use super::ActiveWorkflowLocator;
@@ -43,12 +44,15 @@ pub(crate) fn task_status_tag(status: TaskStatus) -> &'static str {
     }
 }
 
+fn active_workflow(snapshot: &SessionHookSnapshot) -> Option<&ActiveWorkflowMeta> {
+    snapshot.metadata.as_ref()?.active_workflow.as_ref()
+}
+
 pub(crate) fn workflow_transition_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    let aw = snapshot.metadata.as_ref()?.get("active_workflow")?;
-    aw.get("step_advance")
-        .or_else(|| aw.get("step_completion_mode"))
-        .or_else(|| aw.get("transition_policy"))
-        .and_then(serde_json::Value::as_str)
+    let aw = active_workflow(snapshot)?;
+    aw.step_advance
+        .as_deref()
+        .or(aw.transition_policy.as_deref())
 }
 
 pub(crate) fn workflow_auto_completion_snapshot(snapshot: &SessionHookSnapshot) -> bool {
@@ -61,12 +65,8 @@ pub(crate) fn workflow_auto_completion_snapshot(snapshot: &SessionHookSnapshot) 
 }
 
 pub(crate) fn active_workflow_checklist_evidence(snapshot: &SessionHookSnapshot) -> bool {
-    snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_workflow"))
-        .and_then(|value| value.get("checklist_evidence_present"))
-        .and_then(serde_json::Value::as_bool)
+    active_workflow(snapshot)
+        .and_then(|aw| aw.checklist_evidence_present)
         .unwrap_or(false)
 }
 
@@ -104,30 +104,16 @@ pub(crate) fn active_workflow_default_artifact_type(
     snapshot: &SessionHookSnapshot,
 ) -> Option<agentdash_domain::workflow::WorkflowRecordArtifactType> {
     parse_workflow_record_artifact_type_tag(
-        snapshot
-            .metadata
-            .as_ref()
-            .and_then(|value| value.get("active_workflow"))
-            .and_then(|value| value.get("default_artifact_type"))
-            .and_then(serde_json::Value::as_str)?,
+        active_workflow(snapshot)?.default_artifact_type.as_deref()?,
     )
 }
 
 pub(crate) fn active_workflow_default_artifact_title(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_workflow"))
-        .and_then(|value| value.get("default_artifact_title"))
-        .and_then(serde_json::Value::as_str)
+    active_workflow(snapshot)?.default_artifact_title.as_deref()
 }
 
 pub(crate) fn session_permission_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("permission_policy"))
-        .and_then(serde_json::Value::as_str)
+    snapshot.metadata.as_ref()?.permission_policy.as_deref()
 }
 
 pub(crate) fn requires_supervised_tool_approval(tool_name: &str) -> bool {
@@ -143,39 +129,27 @@ pub(crate) fn requires_supervised_tool_approval(tool_name: &str) -> bool {
 }
 
 pub(crate) fn workflow_step_key(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_workflow"))
-        .and_then(|value| value.get("step_key"))
-        .and_then(serde_json::Value::as_str)
+    active_workflow(snapshot)?.step_key.as_deref()
 }
 
 pub(crate) fn active_task_status(snapshot: &SessionHookSnapshot) -> Option<&str> {
     snapshot
         .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_task"))
-        .and_then(|value| value.get("status"))
-        .and_then(serde_json::Value::as_str)
+        .as_ref()?
+        .active_task
+        .as_ref()?
+        .status
+        .as_deref()
 }
 
 pub(crate) fn snapshot_workspace_root(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("workspace_root"))
-        .and_then(serde_json::Value::as_str)
+    snapshot.metadata.as_ref()?.workspace_root.as_deref()
 }
 
 pub(crate) fn active_workflow_source_summary(snapshot: &SessionHookSnapshot) -> Vec<String> {
     let mut summary = Vec::new();
-    if let Some(lifecycle_key) = snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_workflow"))
-        .and_then(|value| value.get("lifecycle_key"))
-        .and_then(serde_json::Value::as_str)
+    if let Some(lifecycle_key) = active_workflow(snapshot)
+        .and_then(|aw| aw.lifecycle_key.as_deref())
     {
         summary.push(format!("lifecycle:{lifecycle_key}"));
     }
@@ -195,27 +169,14 @@ pub(crate) fn active_workflow_source_refs(snapshot: &SessionHookSnapshot) -> Vec
 }
 
 pub(crate) fn active_workflow_locator(snapshot: &SessionHookSnapshot) -> Option<ActiveWorkflowLocator> {
-    let run_id = snapshot
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("active_workflow"))
-        .and_then(|value| value.get("run_id"))
-        .and_then(serde_json::Value::as_str)
-        .and_then(|value| Uuid::parse_str(value).ok())?;
-    let step_key = workflow_step_key(snapshot)?.to_string();
+    let aw = active_workflow(snapshot)?;
+    let run_id = Uuid::parse_str(aw.run_id.as_deref()?).ok()?;
+    let step_key = aw.step_key.clone()?;
     Some(ActiveWorkflowLocator { run_id, step_key })
 }
 
 pub(crate) fn active_workflow_contract(snapshot: &SessionHookSnapshot) -> Option<EffectiveSessionContract> {
-    serde_json::from_value(
-        snapshot
-            .metadata
-            .as_ref()?
-            .get("active_workflow")?
-            .get("effective_contract")?
-            .clone(),
-    )
-    .ok()
+    serde_json::from_value(active_workflow(snapshot)?.effective_contract.clone()?).ok()
 }
 
 pub(crate) fn completion_decision_for_active_workflow_snapshot(

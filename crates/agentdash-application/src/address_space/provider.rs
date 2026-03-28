@@ -103,34 +103,12 @@ pub trait MountProvider: Send + Sync {
 
 /// Runtime context passed to every `MountProvider` operation.
 ///
-/// Carries infrastructure references that individual providers may need
-/// (e.g. `BackendRegistry` for relay, overlay for inline_fs) without
-/// forcing the trait itself to own them.
-pub struct MountOperationContext {
-    pub extra: HashMap<String, Box<dyn std::any::Any + Send + Sync>>,
-}
-
-impl MountOperationContext {
-    pub fn new() -> Self {
-        Self {
-            extra: HashMap::new(),
-        }
-    }
-
-    pub fn get<T: 'static + Send + Sync>(&self, key: &str) -> Option<&T> {
-        self.extra.get(key)?.downcast_ref::<T>()
-    }
-
-    pub fn insert<T: 'static + Send + Sync>(&mut self, key: impl Into<String>, value: T) {
-        self.extra.insert(key.into(), Box::new(value));
-    }
-}
-
-impl Default for MountOperationContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Currently empty — providers that need infrastructure references
+/// (e.g. `BackendRegistry`, overlay) hold them via constructor injection.
+/// Kept as a named struct so future cross-cutting concerns (tracing,
+/// cancellation) can be added without changing every call site.
+#[derive(Debug, Default)]
+pub struct MountOperationContext;
 
 /// Registry holding all available `MountProvider` implementations.
 pub struct MountProviderRegistry {
@@ -161,5 +139,44 @@ impl MountProviderRegistry {
 impl Default for MountProviderRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Builder for assembling a `MountProviderRegistry` with built-in providers
+/// in the application layer, allowing the API layer to only append
+/// infrastructure-specific providers (e.g. `RelayFsMountProvider`).
+pub struct MountProviderRegistryBuilder {
+    registry: MountProviderRegistry,
+}
+
+impl MountProviderRegistryBuilder {
+    pub fn new() -> Self {
+        Self {
+            registry: MountProviderRegistry::new(),
+        }
+    }
+
+    /// Register the application-layer built-in providers (inline_fs, lifecycle_vfs).
+    pub fn with_builtins(
+        mut self,
+        lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
+    ) -> Self {
+        self.registry
+            .register(Arc::new(super::provider_inline::InlineFsMountProvider));
+        self.registry
+            .register(Arc::new(super::provider_lifecycle::LifecycleMountProvider::new(
+                lifecycle_run_repo,
+            )));
+        self
+    }
+
+    /// Append an additional provider (typically API-layer specific).
+    pub fn register(mut self, provider: Arc<dyn MountProvider>) -> Self {
+        self.registry.register(provider);
+        self
+    }
+
+    pub fn build(self) -> MountProviderRegistry {
+        self.registry
     }
 }

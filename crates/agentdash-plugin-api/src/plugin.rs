@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_connector_contract::AgentConnector;
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_injection::{AddressSpaceProvider, SourceResolver};
+use agentdash_injection::{AddressSpaceDiscoveryProvider, SourceResolver};
 
 use crate::auth::AuthProvider;
 use crate::external::ExternalServiceClient;
@@ -46,9 +46,9 @@ pub trait AgentDashPlugin: Send + Sync {
 
     /// 注册额外的寻址空间能力提供者。
     ///
-    /// 注意：当前 `AddressSpaceProvider` 仍是 descriptor / discovery 层抽象，
-    /// 不是统一 runtime provider；对企业仓的长期兼容性尚未承诺。
-    fn address_space_providers(&self) -> Vec<Box<dyn AddressSpaceProvider>> {
+    /// 注意：`AddressSpaceDiscoveryProvider` 仅负责 descriptor / discovery 层抽象，
+    /// 不是统一 runtime I/O provider（后者为 `MountProvider`）。
+    fn address_space_providers(&self) -> Vec<Box<dyn AddressSpaceDiscoveryProvider>> {
         vec![]
     }
 

@@ -4,8 +4,8 @@ pub mod error;
 pub mod resolver;
 
 pub use address_space::{
-    AddressSpaceContext, AddressSpaceDescriptor, AddressSpaceProvider, AddressSpaceRegistry,
-    builtin_address_space_registry,
+    AddressSpaceContext, AddressSpaceDescriptor, AddressSpaceDiscoveryProvider,
+    AddressSpaceDiscoveryRegistry, builtin_address_space_registry,
 };
 pub use composer::{ContextComposer, ContextFragment, MergeStrategy};
 pub use error::InjectionError;

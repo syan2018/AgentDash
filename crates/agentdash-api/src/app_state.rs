@@ -16,9 +16,7 @@ use crate::plugins::{
 };
 use crate::relay::registry::BackendRegistry;
 use crate::task_agent_context::ContextContributorRegistry;
-use agentdash_application::address_space::{
-    InlineFsMountProvider, LifecycleMountProvider, MountProviderRegistry,
-};
+use agentdash_application::address_space::{MountProviderRegistry, MountProviderRegistryBuilder};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
@@ -38,7 +36,7 @@ use agentdash_infrastructure::{
     SqliteTaskRepository, SqliteUserDirectoryRepository, SqliteWorkflowRepository,
     SqliteWorkspaceRepository,
 };
-use agentdash_injection::AddressSpaceRegistry;
+use agentdash_injection::AddressSpaceDiscoveryRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
 
@@ -54,7 +52,7 @@ pub struct ServiceSet {
     /// 上下文贡献者注册表 — 持有常驻贡献者（Core/Binding/DeclaredSources/Instruction 等）
     pub contributor_registry: ContextContributorRegistry,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
-    pub address_space_registry: AddressSpaceRegistry,
+    pub address_space_registry: AddressSpaceDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
     pub mount_provider_registry: Arc<MountProviderRegistry>,
 }
@@ -168,15 +166,14 @@ impl AppState {
         let workspace_root = std::env::current_dir()?;
         let backend_registry = BackendRegistry::new();
 
-        let mut mount_provider_registry = MountProviderRegistry::new();
-        mount_provider_registry.register(Arc::new(InlineFsMountProvider));
-        mount_provider_registry.register(Arc::new(RelayFsMountProvider::new(
-            backend_registry.clone(),
-        )));
-        mount_provider_registry.register(Arc::new(LifecycleMountProvider::new(
-            workflow_repo.clone(),
-        )));
-        let mount_provider_registry = Arc::new(mount_provider_registry);
+        let mount_provider_registry = Arc::new(
+            MountProviderRegistryBuilder::new()
+                .with_builtins(workflow_repo.clone())
+                .register(Arc::new(RelayFsMountProvider::new(
+                    backend_registry.clone(),
+                )))
+                .build(),
+        );
 
         let address_space_service =
             Arc::new(RelayAddressSpaceService::new(mount_provider_registry.clone()));

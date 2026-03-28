@@ -40,32 +40,33 @@ pub struct AddressSpaceContext<'a> {
     pub has_mcp: bool,
 }
 
-/// 寻址空间能力提供者
+/// 寻址空间能力发现提供者
 ///
-/// 每个 Provider 负责一类资源的能力描述、搜索和解析。
-/// 注册到 `AddressSpaceRegistry` 后，由 API 层统一暴露。
-pub trait AddressSpaceProvider: Send + Sync {
-    /// 返回此 Provider 的空间描述符（如果当前环境不支持则返回 None）
+/// 每个 Provider 负责一类资源的能力描述（discovery），
+/// 告诉前端当前环境中有哪些可引用的地址空间类型。
+/// 注册到 `AddressSpaceDiscoveryRegistry` 后，由 API 层统一暴露。
+///
+/// 注意：这不是 I/O 操作层的 `MountProvider`，后者负责 read/write/list/search/exec。
+pub trait AddressSpaceDiscoveryProvider: Send + Sync {
     fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor>;
 }
 
-/// 寻址空间注册表 — 持有所有已注册的能力提供者
-pub struct AddressSpaceRegistry {
-    providers: Vec<Box<dyn AddressSpaceProvider>>,
+/// 寻址空间发现注册表 — 持有所有已注册的能力发现提供者
+pub struct AddressSpaceDiscoveryRegistry {
+    providers: Vec<Box<dyn AddressSpaceDiscoveryProvider>>,
 }
 
-impl AddressSpaceRegistry {
+impl AddressSpaceDiscoveryRegistry {
     pub fn new() -> Self {
         Self {
             providers: Vec::new(),
         }
     }
 
-    pub fn register(&mut self, provider: Box<dyn AddressSpaceProvider>) {
+    pub fn register(&mut self, provider: Box<dyn AddressSpaceDiscoveryProvider>) {
         self.providers.push(provider);
     }
 
-    /// 根据当前环境，返回所有可用的寻址空间描述
     pub fn available_spaces(&self, ctx: &AddressSpaceContext<'_>) -> Vec<AddressSpaceDescriptor> {
         self.providers
             .iter()
@@ -74,7 +75,7 @@ impl AddressSpaceRegistry {
     }
 }
 
-impl Default for AddressSpaceRegistry {
+impl Default for AddressSpaceDiscoveryRegistry {
     fn default() -> Self {
         Self::new()
     }
@@ -85,7 +86,7 @@ impl Default for AddressSpaceRegistry {
 /// 工作空间文件 Provider — 当有工作空间时可用
 pub struct WorkspaceFileProvider;
 
-impl AddressSpaceProvider for WorkspaceFileProvider {
+impl AddressSpaceDiscoveryProvider for WorkspaceFileProvider {
     fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
         ctx.workspace_root?;
         Some(AddressSpaceDescriptor {
@@ -110,7 +111,7 @@ impl AddressSpaceProvider for WorkspaceFileProvider {
 /// 项目快照 Provider — 当有工作空间时可用
 pub struct WorkspaceSnapshotProvider;
 
-impl AddressSpaceProvider for WorkspaceSnapshotProvider {
+impl AddressSpaceDiscoveryProvider for WorkspaceSnapshotProvider {
     fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
         ctx.workspace_root?;
         Some(AddressSpaceDescriptor {
@@ -127,7 +128,7 @@ impl AddressSpaceProvider for WorkspaceSnapshotProvider {
 /// MCP 资源 Provider — 当有 MCP 服务时可用
 pub struct McpResourceProvider;
 
-impl AddressSpaceProvider for McpResourceProvider {
+impl AddressSpaceDiscoveryProvider for McpResourceProvider {
     fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
         if !ctx.has_mcp {
             return None;
@@ -151,7 +152,7 @@ impl AddressSpaceProvider for McpResourceProvider {
 /// Lifecycle 执行记录虚拟挂载 — 由会话在存在活跃 run 时挂载，`lifecycle_vfs` 提供读写浏览能力描述
 pub struct LifecycleAddressSpaceProvider;
 
-impl AddressSpaceProvider for LifecycleAddressSpaceProvider {
+impl AddressSpaceDiscoveryProvider for LifecycleAddressSpaceProvider {
     fn descriptor(&self, _ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
         Some(AddressSpaceDescriptor {
             id: "lifecycle".to_string(),
@@ -164,8 +165,8 @@ impl AddressSpaceProvider for LifecycleAddressSpaceProvider {
     }
 }
 
-pub fn builtin_address_space_registry() -> AddressSpaceRegistry {
-    let mut registry = AddressSpaceRegistry::new();
+pub fn builtin_address_space_registry() -> AddressSpaceDiscoveryRegistry {
+    let mut registry = AddressSpaceDiscoveryRegistry::new();
     registry.register(Box::new(WorkspaceFileProvider));
     registry.register(Box::new(WorkspaceSnapshotProvider));
     registry.register(Box::new(McpResourceProvider));

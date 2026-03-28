@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use agentdash_executor::AgentConnector;
-use agentdash_injection::AddressSpaceProvider;
+use agentdash_injection::AddressSpaceDiscoveryProvider;
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
 use thiserror::Error;
 
@@ -15,7 +15,7 @@ pub fn builtin_plugins() -> Vec<Box<dyn AgentDashPlugin>> {
 ///
 /// 宿主先汇总所有插件注册，再基于此统一构建运行时，避免“先构建、后塞插件”的假扩展点。
 pub(crate) struct PluginHostRegistration {
-    pub address_space_providers: Vec<Box<dyn AddressSpaceProvider>>,
+    pub address_space_providers: Vec<Box<dyn AddressSpaceDiscoveryProvider>>,
     pub connectors: Vec<Arc<dyn AgentConnector>>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
 }

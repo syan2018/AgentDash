@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
-use agentdash_agent::tools::schema_value;
+use agentdash_connector_contract::schema::schema_value;
 use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use agentdash_connector_contract::{
     ExecutionContext, HookPendingAction, HookPendingActionResolutionKind,
@@ -38,7 +36,7 @@ pub struct ResolveHookActionParams {
 pub struct ResolveHookActionTool {
     current_session_id: Option<String>,
     current_turn_id: String,
-    hook_session: Option<Arc<agentdash_connector_contract::HookSessionRuntime>>,
+    hook_session: Option<agentdash_connector_contract::hooks::SharedHookSessionRuntime>,
     session_hub_handle: SharedSessionHubHandle,
 }
 

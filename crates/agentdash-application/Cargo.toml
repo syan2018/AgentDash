@@ -7,9 +7,7 @@ license.workspace = true
 [dependencies]
 agentdash-domain = { workspace = true }
 agentdash-connector-contract = { workspace = true }
-agentdash-agent = { workspace = true }
 agentdash-injection = { workspace = true }
-agentdash-executor = { workspace = true, features = ["pi-agent"] }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
 agent-client-protocol = { workspace = true }
@@ -31,3 +29,5 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tempfile = "3.18"
 tokio-stream = { version = "0.1", features = ["sync"] }
 json-patch = "2.0"
+agentdash-agent = { workspace = true }
+agentdash-executor = { workspace = true, features = ["pi-agent"] }

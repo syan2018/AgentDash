@@ -6,7 +6,7 @@ use agent_client_protocol::{
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
-use agentdash_agent::tools::schema_value;
+use agentdash_connector_contract::schema::schema_value;
 use agentdash_connector_contract::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
 };
@@ -40,7 +40,7 @@ pub struct CompanionDispatchTool {
     working_dir: String,
     address_space: Option<ExecutionAddressSpace>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
-    hook_session: Option<Arc<agentdash_connector_contract::HookSessionRuntime>>,
+    hook_session: Option<agentdash_connector_contract::hooks::SharedHookSessionRuntime>,
     system_context: Option<String>,
 }
 
@@ -412,7 +412,7 @@ impl AgentTool for CompanionDispatchTool {
 impl CompanionDispatchTool {
     async fn resolve_or_create_companion_binding(
         &self,
-        hook_session: &agentdash_connector_contract::HookSessionRuntime,
+        hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
         label: &str,
         auto_create: bool,
         title: Option<String>,
@@ -627,7 +627,7 @@ pub fn relative_working_dir(context: &ExecutionContext) -> String {
 }
 
 async fn evaluate_subagent_hook(
-    hook_session: &agentdash_connector_contract::HookSessionRuntime,
+    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
     trigger: HookTrigger,
     turn_id: Option<String>,
     subagent_type: &str,
@@ -662,7 +662,7 @@ async fn evaluate_subagent_hook(
 }
 
 async fn record_subagent_trace(
-    hook_session: &agentdash_connector_contract::HookSessionRuntime,
+    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
     session_hub: Option<&SessionHub>,
     turn_id: Option<&str>,
     trigger: HookTrigger,
@@ -814,7 +814,7 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
 }
 
 fn build_companion_dispatch_plan(
-    hook_session: &agentdash_connector_contract::HookSessionRuntime,
+    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
     resolution: &agentdash_connector_contract::HookResolution,
     parent_session_id: &str,
     parent_turn_id: &str,

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
-use crate::hooks::{
+use agentdash_connector_contract::hooks::{
     HookConstraint, HookContextFragment, HookDiagnosticEntry, HookEvaluationQuery,
     HookPendingAction, HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry,
     HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
@@ -439,8 +439,8 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
 }
 
 struct EvaluatedResolution {
-    snapshot: crate::hooks::SessionHookSnapshot,
-    resolution: crate::hooks::HookResolution,
+    snapshot: agentdash_connector_contract::hooks::SessionHookSnapshot,
+    resolution: agentdash_connector_contract::hooks::HookResolution,
     runtime: HookSessionRuntimeSnapshot,
 }
 
@@ -452,8 +452,8 @@ struct PendingHookMessages {
 }
 
 fn collect_pending_hook_messages(
-    hook_session: &crate::hooks::HookSessionRuntime,
-    snapshot: &crate::hooks::SessionHookSnapshot,
+    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
+    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> PendingHookMessages {
     let actions = hook_session.collect_pending_actions_for_injection();
@@ -480,7 +480,7 @@ fn collect_pending_hook_messages(
 }
 
 fn build_blocking_action_reminders(
-    snapshot: &crate::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
     actions: &[HookPendingAction],
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Vec<AgentMessage> {
@@ -491,8 +491,8 @@ fn build_blocking_action_reminders(
 }
 
 fn build_hook_injection_message(
-    snapshot: &crate::hooks::SessionHookSnapshot,
-    resolution: &crate::hooks::HookResolution,
+    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
+    resolution: &agentdash_connector_contract::hooks::HookResolution,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
     let content = build_hook_markdown(
@@ -505,7 +505,7 @@ fn build_hook_injection_message(
 }
 
 fn build_hook_steering_messages(
-    snapshot: &crate::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
     fragments: &[HookContextFragment],
     constraints: &[HookConstraint],
     runtime: &HookSessionRuntimeSnapshot,
@@ -516,7 +516,7 @@ fn build_hook_steering_messages(
 }
 
 fn build_hook_markdown(
-    snapshot: &crate::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
     fragments: &[HookContextFragment],
     constraints: &[HookConstraint],
     runtime: &HookSessionRuntimeSnapshot,
@@ -558,7 +558,7 @@ fn build_hook_markdown(
 }
 
 fn build_pending_action_message(
-    snapshot: &crate::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
     action: &HookPendingAction,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
@@ -675,7 +675,7 @@ fn append_hook_markdown_body(
     }
 }
 
-fn map_runtime_error(error: crate::hooks::HookError) -> AgentRuntimeError {
+fn map_runtime_error(error: agentdash_connector_contract::hooks::HookError) -> AgentRuntimeError {
     AgentRuntimeError::Runtime(error.to_string())
 }
 
@@ -697,11 +697,13 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::HookRuntimeDelegate;
-    use crate::hooks::{
+    use agentdash_application::session::HookSessionRuntime;
+    use agentdash_connector_contract::hooks::{
         ExecutionHookProvider, HookCompletionStatus, HookContextFragment, HookError,
         HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind, HookResolution,
-        HookSessionRuntime, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-        SessionHookSnapshot, SessionHookSnapshotQuery,
+        HookPendingActionStatus, HookSessionRuntimeAccess, HookTrigger,
+        NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+        SessionHookSnapshotQuery,
     };
 
     #[derive(Clone)]
@@ -765,7 +767,7 @@ mod tests {
             action_type: "blocking_review".to_string(),
             turn_id: Some("turn-parent-1".to_string()),
             source_trigger: HookTrigger::SubagentResult,
-            status: crate::hooks::HookPendingActionStatus::Pending,
+            status: agentdash_connector_contract::hooks::HookPendingActionStatus::Pending,
             last_injected_at_ms: None,
             resolved_at_ms: None,
             resolution_kind: None,
@@ -817,7 +819,7 @@ mod tests {
             .expect("应该能 resolve blocking action");
         assert!(matches!(
             action.status,
-            crate::hooks::HookPendingActionStatus::Resolved
+            agentdash_connector_contract::hooks::HookPendingActionStatus::Resolved
         ));
 
         let second = delegate
@@ -857,7 +859,7 @@ mod tests {
             action_type: "follow_up_required".to_string(),
             turn_id: Some("turn-1".to_string()),
             source_trigger: HookTrigger::SubagentResult,
-            status: crate::hooks::HookPendingActionStatus::Injected,
+            status: agentdash_connector_contract::hooks::HookPendingActionStatus::Injected,
             last_injected_at_ms: Some(1_710_000_100_000),
             resolved_at_ms: None,
             resolution_kind: None,

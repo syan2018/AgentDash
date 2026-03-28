@@ -29,7 +29,7 @@ use agentdash_domain::{
 use agentdash_application::session::{
     PromptSessionRequest, SessionExecutionState, SessionMeta, UserPromptInput,
 };
-use agentdash_executor::HookSessionRuntimeSnapshot;
+use agentdash_connector_contract::HookSessionRuntimeSnapshot;
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_plugin_api::AuthIdentity;
 use serde::Serialize;
@@ -327,7 +327,7 @@ pub struct SessionContextResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_binding: Option<agentdash_domain::task::AgentBinding>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    pub address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
@@ -575,7 +575,7 @@ pub async fn prompt_session(
         .start_prompt(&session_id, req)
         .await
         .map_err(|e| match &e {
-            agentdash_executor::ConnectorError::InvalidConfig(_) => {
+            agentdash_connector_contract::ConnectorError::InvalidConfig(_) => {
                 ApiError::BadRequest(e.to_string())
             }
             _ => ApiError::Internal(e.to_string()),
@@ -649,9 +649,9 @@ fn finalize_augmented_request(
     context_markdown: String,
     prompt_blocks: Vec<serde_json::Value>,
     workspace: Option<&Workspace>,
-    address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
     effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
-    flow_capabilities: agentdash_executor::FlowCapabilities,
+    flow_capabilities: agentdash_connector_contract::FlowCapabilities,
 ) {
     req.user_input.prompt = None;
     req.user_input.prompt_blocks = Some(prompt_blocks);
@@ -736,7 +736,7 @@ async fn build_story_owner_prompt_request(
         workspace,
         address_space,
         effective_mcp_servers,
-        agentdash_executor::FlowCapabilities {
+        agentdash_connector_contract::FlowCapabilities {
             workflow_artifact: true,
             companion_dispatch: true,
             companion_complete: true,
@@ -826,7 +826,7 @@ async fn build_project_owner_prompt_request(
         workspace.as_ref(),
         address_space,
         effective_mcp_servers,
-        agentdash_executor::FlowCapabilities {
+        agentdash_connector_contract::FlowCapabilities {
             workflow_artifact: false,
             companion_dispatch: false,
             companion_complete: false,

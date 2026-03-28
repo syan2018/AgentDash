@@ -102,6 +102,7 @@ impl TaskExecutionGateway for AppStateTaskExecutionGateway {
             task, phase, override_prompt, additional_prompt,
             executor_config.as_ref(),
             self.state.config.mcp_base_url.as_deref(),
+            agentdash_executor::is_native_agent,
         ).await?;
 
         if ctx.use_cloud_native_agent {
@@ -196,7 +197,7 @@ async fn dispatch_cloud_native(
         mcp_servers: runtime_mcp_servers_to_acp(&built.mcp_servers),
         workspace_root,
         address_space: address_space.clone(),
-        flow_capabilities: Some(agentdash_executor::FlowCapabilities {
+        flow_capabilities: Some(agentdash_connector_contract::FlowCapabilities {
             workflow_artifact: true,
             companion_dispatch: false,
             companion_complete: true,

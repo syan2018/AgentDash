@@ -12,7 +12,6 @@ use crate::context::{
     resolve_workspace_declared_sources,
 };
 use agentdash_domain::common::AgentConfig;
-use agentdash_executor::is_native_agent;
 use agentdash_mcp::injection::McpInjectionConfig;
 
 use crate::repository_set::RepositorySet;
@@ -46,6 +45,7 @@ pub async fn prepare_task_turn_context(
     additional_prompt: Option<&str>,
     connector_config: Option<&AgentConfig>,
     mcp_base_url: Option<&str>,
+    is_native_agent: fn(&AgentConfig) -> bool,
 ) -> Result<PreparedTurnContext, TaskExecutionError> {
     let (story, project, workspace) = load_related_context(repos, task)
         .await

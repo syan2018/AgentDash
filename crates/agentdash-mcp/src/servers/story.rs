@@ -603,7 +603,7 @@ impl ServerHandler for StoryMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_agent::tools::sanitize_tool_schema;
+    use agentdash_connector_contract::schema::sanitize_tool_schema;
     use serde_json::Value;
 
     #[test]

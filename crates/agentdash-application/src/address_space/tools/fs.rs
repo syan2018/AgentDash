@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent::tools::schema_value;
+use agentdash_connector_contract::schema::schema_value;
 use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use agentdash_connector_contract::ExecutionAddressSpace;
 use async_trait::async_trait;

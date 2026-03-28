@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::WorkflowTargetKind;
-use agentdash_executor::ExecutionAddressSpace;
+use agentdash_connector_contract::ExecutionAddressSpace;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
 use crate::address_space_access::{
@@ -375,7 +375,7 @@ pub async fn write_mount_file(
         .find(|m| m.id == req.mount_id)
         .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
 
-    if !mount.supports(agentdash_executor::ExecutionMountCapability::Write) {
+    if !mount.supports(agentdash_connector_contract::ExecutionMountCapability::Write) {
         return Err(ApiError::BadRequest(format!(
             "挂载点 \"{}\" 没有 write 能力",
             mount.display_name,

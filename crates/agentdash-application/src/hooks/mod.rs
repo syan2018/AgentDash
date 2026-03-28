@@ -1049,9 +1049,10 @@ mod tests {
     };
     use agentdash_connector_contract::{
         ExecutionHookProvider, HookError, HookOwnerSummary,
-        HookSessionRuntime, HookSessionRuntimeSnapshot, HookTrigger, SessionHookRefreshQuery,
+        HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookTrigger, SessionHookRefreshQuery,
         SessionHookSnapshotQuery,
     };
+    use crate::session::HookSessionRuntime;
     use agentdash_executor::HookRuntimeDelegate;
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;

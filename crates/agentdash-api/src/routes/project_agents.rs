@@ -11,7 +11,7 @@ use agentdash_domain::{
     session_binding::{SessionBinding, SessionOwnerType},
     workspace::Workspace,
 };
-use agentdash_executor::AgentConfig;
+use agentdash_connector_contract::AgentConfig;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -54,7 +54,7 @@ pub struct ProjectAgentExecutorResponse {
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
-    pub thinking_level: Option<agentdash_executor::ThinkingLevel>,
+    pub thinking_level: Option<agentdash_connector_contract::ThinkingLevel>,
     pub permission_policy: Option<String>,
 }
 

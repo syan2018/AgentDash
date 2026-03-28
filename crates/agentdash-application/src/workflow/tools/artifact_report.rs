@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent::tools::schema_value;
+use agentdash_connector_contract::schema::schema_value;
 use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
@@ -24,7 +24,7 @@ pub struct WorkflowArtifactReportTool {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     current_session_id: Option<String>,
     current_turn_id: String,
-    hook_session: Option<Arc<agentdash_connector_contract::HookSessionRuntime>>,
+    hook_session: Option<agentdash_connector_contract::hooks::SharedHookSessionRuntime>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

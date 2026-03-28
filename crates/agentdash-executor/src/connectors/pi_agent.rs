@@ -309,7 +309,7 @@ fn describe_mount(mount: &ExecutionMount) -> String {
     )
 }
 
-fn build_hook_runtime_sections(hook_session: &crate::hooks::HookSessionRuntime) -> Vec<String> {
+fn build_hook_runtime_sections(hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess) -> Vec<String> {
     let mut sections = vec![
         "当前会话启用了 Hook Runtime。active workflow、流程约束、stop gate 与 pending action 等动态治理信息，会在每次 LLM 调用边界由 runtime 注入；这里不再重复展开它们的静态副本。".to_string(),
     ];
@@ -639,7 +639,7 @@ impl AgentConnector for PiAgentConnector {
 }
 
 async fn emit_pending_hook_trace_notifications(
-    hook_trace_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<crate::HookTraceEntry>>,
+    hook_trace_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<agentdash_connector_contract::HookTraceEntry>>,
     tx: &tokio::sync::mpsc::Sender<Result<SessionNotification, ConnectorError>>,
     session_id: &SessionId,
     source: &AgentDashSourceV1,

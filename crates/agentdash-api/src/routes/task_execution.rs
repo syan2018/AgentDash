@@ -41,7 +41,7 @@ pub struct StartTaskRequest {
     #[serde(default)]
     pub override_prompt: Option<String>,
     #[serde(default)]
-    pub executor_config: Option<agentdash_executor::AgentConfig>,
+    pub executor_config: Option<agentdash_connector_contract::AgentConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,7 +59,7 @@ pub struct ContinueTaskRequest {
     #[serde(default)]
     pub additional_prompt: Option<String>,
     #[serde(default)]
-    pub executor_config: Option<agentdash_executor::AgentConfig>,
+    pub executor_config: Option<agentdash_connector_contract::AgentConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -83,14 +83,14 @@ pub struct TaskSessionResponse {
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    pub address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
 #[derive(Debug)]
 pub(crate) struct BuiltTaskSessionContextResponse {
-    pub(crate) address_space: Option<agentdash_executor::ExecutionAddressSpace>,
+    pub(crate) address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
     pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 

@@ -1,6 +1,7 @@
 pub mod connector;
 pub mod hooks;
 pub mod lifecycle;
+pub mod schema;
 pub mod tool;
 
 pub use agentdash_domain::common::{AgentConfig, ThinkingLevel};
@@ -26,7 +27,7 @@ pub use hooks::{
     HookCompletionStatus, HookConstraint, HookContextFragment, HookContributionSet,
     HookDiagnosticEntry, HookError, HookEvaluationQuery, HookOwnerSummary, HookPendingAction,
     HookPendingActionResolutionKind, HookPendingActionStatus, HookPolicyView, HookResolution,
-    HookSessionRuntime, HookSessionRuntimeSnapshot, HookSourceLayer, HookSourceRef,
+    HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookSourceLayer, HookSourceRef,
     HookStepAdvanceRequest, HookTraceEntry, HookTrigger, NoopExecutionHookProvider,
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
     SessionSnapshotMetadata, SharedHookSessionRuntime,

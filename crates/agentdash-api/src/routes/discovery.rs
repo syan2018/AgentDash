@@ -5,7 +5,7 @@ use axum::{Json, extract::State};
 use serde::Serialize;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_executor::connector::{
+use agentdash_connector_contract::connector::{
     ConnectorCapabilities, ConnectorType, AgentInfo as ConnectorAgentInfo,
 };
 

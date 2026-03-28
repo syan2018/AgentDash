@@ -2,7 +2,7 @@
 ///
 /// 值类型、路径工具、Mount 推导逻辑和全部 tool 实现已迁移到 `agentdash_application`。
 pub use agentdash_application::address_space::*;
-pub use agentdash_executor::{ExecutionAddressSpace, ExecutionMountCapability};
+pub use agentdash_connector_contract::{ExecutionAddressSpace, ExecutionMountCapability};
 
 pub mod inline_persistence;
 pub mod relay_service;
@@ -351,7 +351,7 @@ mod tests {
     fn runtime_tool_schemas_are_openai_compatible() {
         let service = Arc::new(RelayAddressSpaceService::new(empty_mount_registry()));
         let address_space = ExecutionAddressSpace {
-            mounts: vec![agentdash_executor::ExecutionMount {
+            mounts: vec![agentdash_connector_contract::ExecutionMount {
                 id: "brief".to_string(),
                 provider: PROVIDER_INLINE_FS.to_string(),
                 backend_id: String::new(),

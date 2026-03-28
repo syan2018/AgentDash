@@ -10,7 +10,7 @@ use futures::stream::BoxStream;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::hooks::HookSessionRuntime;
+use crate::hooks::HookSessionRuntimeAccess;
 
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -58,7 +58,7 @@ pub struct ExecutionContext {
     pub address_space: Option<ExecutionAddressSpace>,
     /// 会话级 Hook Runtime 快照。
     /// 当前阶段仅作为执行层承载位，后续由 SessionHub / Hook provider 正式填充。
-    pub hook_session: Option<Arc<HookSessionRuntime>>,
+    pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
     /// Session 级别声明的流程工具能力集。
     /// 工具构建时按此裁剪：仅注入声明可用的流程工具。
     #[allow(clippy::type_complexity)]
@@ -192,6 +192,16 @@ mod tests {
 
 pub type ExecutionStream =
     Pin<Box<dyn Stream<Item = Result<SessionNotification, ConnectorError>> + Send + 'static>>;
+
+/// 运行时工具构建 SPI。
+/// 由 application 层持有，executor 层提供具体实现。
+#[async_trait]
+pub trait RuntimeToolProvider: Send + Sync {
+    async fn build_tools(
+        &self,
+        context: &ExecutionContext,
+    ) -> Result<Vec<crate::tool::DynAgentTool>, ConnectorError>;
+}
 
 #[derive(Debug, Error)]
 pub enum ConnectorError {

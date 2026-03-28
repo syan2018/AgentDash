@@ -23,9 +23,10 @@ use agentdash_connector_contract::{
     AgentConnector, ConnectorError, ExecutionAddressSpace, ExecutionContext, PromptPayload,
 };
 use agentdash_connector_contract::hooks::{
-    ExecutionHookProvider, HookResolution, HookSessionRuntime, HookTraceEntry, HookTrigger,
+    ExecutionHookProvider, HookResolution, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
+use super::hook_runtime::HookSessionRuntime;
 use super::hook_events::build_hook_trace_notification;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
@@ -490,7 +491,7 @@ impl SessionHub {
 
     async fn emit_session_hook_trigger(
         &self,
-        hook_session: &HookSessionRuntime,
+        hook_session: &dyn HookSessionRuntimeAccess,
         session_id: &str,
         turn_id: Option<&str>,
         trigger: HookTrigger,

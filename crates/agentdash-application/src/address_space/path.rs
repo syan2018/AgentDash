@@ -1,4 +1,4 @@
-use crate::runtime::{MountCapabilitySet, RuntimeAddressSpace, RuntimeMount};
+use crate::runtime::{MountCapability, AddressSpace, Mount};
 use super::types::ResourceRef;
 
 const URI_SEPARATOR: &str = "://";
@@ -10,7 +10,7 @@ const URI_SEPARATOR: &str = "://";
 /// - `relative/path` — 使用 address space 的默认 mount
 pub fn parse_mount_uri(
     input: &str,
-    address_space: &RuntimeAddressSpace,
+    address_space: &AddressSpace,
 ) -> Result<ResourceRef, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -47,10 +47,10 @@ pub fn format_mount_uri(mount_id: &str, path: &str) -> String {
 }
 
 pub fn resolve_mount<'a>(
-    address_space: &'a RuntimeAddressSpace,
+    address_space: &'a AddressSpace,
     mount_id: &str,
-    capability: MountCapabilitySet,
-) -> Result<&'a RuntimeMount, String> {
+    capability: MountCapability,
+) -> Result<&'a Mount, String> {
     let mount = address_space
         .mounts
         .iter()
@@ -63,7 +63,7 @@ pub fn resolve_mount<'a>(
 }
 
 pub fn resolve_mount_id(
-    address_space: &RuntimeAddressSpace,
+    address_space: &AddressSpace,
     mount: Option<&str>,
 ) -> Result<String, String> {
     if let Some(mount_id) = mount.map(str::trim).filter(|value| !value.is_empty()) {
@@ -76,13 +76,13 @@ pub fn resolve_mount_id(
         .ok_or_else(|| "当前会话没有可用 mount".to_string())
 }
 
-pub fn capability_name(capability: &MountCapabilitySet) -> &'static str {
+pub fn capability_name(capability: &MountCapability) -> &'static str {
     match capability {
-        MountCapabilitySet::Read => "read",
-        MountCapabilitySet::Write => "write",
-        MountCapabilitySet::List => "list",
-        MountCapabilitySet::Search => "search",
-        MountCapabilitySet::Exec => "exec",
+        MountCapability::Read => "read",
+        MountCapability::Write => "write",
+        MountCapability::List => "list",
+        MountCapability::Search => "search",
+        MountCapability::Exec => "exec",
     }
 }
 

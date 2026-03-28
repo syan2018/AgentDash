@@ -327,7 +327,7 @@ pub struct SessionContextResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_binding: Option<agentdash_domain::task::AgentBinding>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
+    pub address_space: Option<agentdash_connector_contract::AddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
@@ -649,7 +649,7 @@ fn finalize_augmented_request(
     context_markdown: String,
     prompt_blocks: Vec<serde_json::Value>,
     workspace: Option<&Workspace>,
-    address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
+    address_space: Option<agentdash_connector_contract::AddressSpace>,
     effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
     flow_capabilities: agentdash_connector_contract::FlowCapabilities,
 ) {

@@ -1,15 +1,11 @@
 use std::collections::BTreeMap;
 
-use agentdash_domain::common::MountCapability;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use agentdash_domain::common::{AgentConfig, ThinkingLevel};
-
-pub type RuntimeMount = agentdash_domain::common::Mount;
-pub type RuntimeAddressSpace = agentdash_domain::common::AddressSpace;
-
-pub type MountCapabilitySet = MountCapability;
+pub use agentdash_domain::common::{
+    AddressSpace, AgentConfig, Mount, MountCapability, ThinkingLevel,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

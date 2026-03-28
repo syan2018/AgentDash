@@ -36,14 +36,14 @@ pub struct ProjectSessionDetailResponse {
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
+    pub address_space: Option<agentdash_connector_contract::AddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
 #[derive(Debug)]
 pub(crate) struct BuiltProjectSessionContextResponse {
-    pub(crate) address_space: Option<agentdash_connector_contract::ExecutionAddressSpace>,
+    pub(crate) address_space: Option<agentdash_connector_contract::AddressSpace>,
     pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 

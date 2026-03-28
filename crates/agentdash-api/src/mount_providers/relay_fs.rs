@@ -5,7 +5,7 @@ use agentdash_application::address_space::{
     MountProvider, ReadResult, SearchMatch, SearchQuery, SearchResult, join_root_ref,
     normalize_mount_relative_path, PROVIDER_RELAY_FS,
 };
-use agentdash_application::runtime::RuntimeMount;
+use agentdash_application::runtime::Mount;
 use agentdash_relay::{
     RelayMessage, ToolFileListPayload, ToolFileReadPayload, ToolFileWritePayload,
     ToolSearchPayload, ToolShellExecPayload,
@@ -36,7 +36,7 @@ impl MountProvider for RelayFsMountProvider {
         PROVIDER_RELAY_FS
     }
 
-    async fn is_available(&self, mount: &RuntimeMount) -> bool {
+    async fn is_available(&self, mount: &Mount) -> bool {
         if mount.backend_id.is_empty() {
             return true;
         }
@@ -45,7 +45,7 @@ impl MountProvider for RelayFsMountProvider {
 
     async fn read_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         path: &str,
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
@@ -88,7 +88,7 @@ impl MountProvider for RelayFsMountProvider {
 
     async fn write_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         path: &str,
         content: &str,
         _ctx: &MountOperationContext,
@@ -126,7 +126,7 @@ impl MountProvider for RelayFsMountProvider {
 
     async fn list(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         options: &ListOptions,
         _ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError> {
@@ -170,7 +170,7 @@ impl MountProvider for RelayFsMountProvider {
 
     async fn search_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
@@ -230,7 +230,7 @@ impl MountProvider for RelayFsMountProvider {
 
     async fn exec(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         request: &ExecRequest,
         _ctx: &MountOperationContext,
     ) -> Result<ExecResult, MountError> {

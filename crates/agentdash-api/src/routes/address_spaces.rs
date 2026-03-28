@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::WorkflowTargetKind;
-use agentdash_connector_contract::ExecutionAddressSpace;
+use agentdash_connector_contract::AddressSpace;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
 use crate::address_space_access::{
@@ -375,7 +375,7 @@ pub async fn write_mount_file(
         .find(|m| m.id == req.mount_id)
         .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
 
-    if !mount.supports(agentdash_connector_contract::ExecutionMountCapability::Write) {
+    if !mount.supports(agentdash_connector_contract::MountCapability::Write) {
         return Err(ApiError::BadRequest(format!(
             "挂载点 \"{}\" 没有 write 能力",
             mount.display_name,
@@ -472,7 +472,7 @@ pub struct PreviewAddressSpaceResponse {
 
 /// `POST /api/address-spaces/preview`
 ///
-/// 根据 project_id + 可选 story_id 预览将要生成的 ExecutionAddressSpace。
+/// 根据 project_id + 可选 story_id 预览将要生成的 AddressSpace。
 pub async fn preview_address_space(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -561,7 +561,7 @@ pub async fn preview_address_space(
 /// 通过已注册的 `MountProvider::is_available` 检查 mount 是否可用。
 async fn check_mount_available(
     state: &Arc<AppState>,
-    address_space: &ExecutionAddressSpace,
+    address_space: &AddressSpace,
     mount_id: &str,
 ) -> Result<(), ApiError> {
     if let Some(mount) = address_space.mounts.iter().find(|m| m.id == mount_id) {
@@ -591,7 +591,7 @@ async fn resolve_address_space(
     owner_type: &Option<String>,
     owner_id: &Option<String>,
     permission: ProjectPermission,
-) -> Result<ExecutionAddressSpace, ApiError> {
+) -> Result<AddressSpace, ApiError> {
     let pid_str = project_id
         .as_deref()
         .ok_or_else(|| ApiError::BadRequest("需要提供 project_id".into()))?;
@@ -693,7 +693,7 @@ async fn inject_lifecycle_mount(
     state: &Arc<AppState>,
     target_kind: WorkflowTargetKind,
     target_id: Uuid,
-    address_space: &mut ExecutionAddressSpace,
+    address_space: &mut AddressSpace,
 ) {
     use agentdash_application::address_space::build_lifecycle_mount;
     use agentdash_application::workflow::select_active_run;

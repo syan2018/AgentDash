@@ -6,7 +6,7 @@ use super::mount::PROVIDER_LIFECYCLE_VFS;
 use super::path::normalize_mount_relative_path;
 use super::provider::{MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult};
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
-use crate::runtime::{RuntimeFileEntry, RuntimeMount};
+use crate::runtime::{RuntimeFileEntry, Mount};
 use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository, LifecycleRunStatus};
 use agentdash_domain::workflow::WorkflowTargetKind;
 use async_trait::async_trait;
@@ -62,7 +62,7 @@ fn map_domain_err(e: agentdash_domain::common::error::DomainError) -> MountError
     MountError::OperationFailed(e.to_string())
 }
 
-fn parse_run_id_from_metadata(mount: &RuntimeMount) -> Result<Uuid, MountError> {
+fn parse_run_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
     let run_id_str = mount
         .metadata
         .get("run_id")
@@ -130,7 +130,7 @@ fn parse_lifecycle_root(root_ref: &str) -> LifecycleRoot {
     }
 }
 
-fn resolve_target_for_runs(mount: &RuntimeMount, active_run: &LifecycleRun) -> (WorkflowTargetKind, Uuid) {
+fn resolve_target_for_runs(mount: &Mount, active_run: &LifecycleRun) -> (WorkflowTargetKind, Uuid) {
     match parse_lifecycle_root(&mount.root_ref) {
         LifecycleRoot::Target { kind, target_id } => (kind, target_id),
         LifecycleRoot::RunAnchor | LifecycleRoot::Unknown => {
@@ -141,7 +141,7 @@ fn resolve_target_for_runs(mount: &RuntimeMount, active_run: &LifecycleRun) -> (
 
 async fn load_active_run(
     repo: &Arc<dyn LifecycleRunRepository>,
-    mount: &RuntimeMount,
+    mount: &Mount,
 ) -> Result<LifecycleRun, MountError> {
     let run_id = parse_run_id_from_metadata(mount)?;
     let run = repo
@@ -172,7 +172,7 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn read_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         path: &str,
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
@@ -240,7 +240,7 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn write_text(
         &self,
-        _mount: &RuntimeMount,
+        _mount: &Mount,
         _path: &str,
         _content: &str,
         _ctx: &MountOperationContext,
@@ -252,7 +252,7 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn list(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         options: &ListOptions,
         _ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError> {
@@ -345,7 +345,7 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn search_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
@@ -396,7 +396,7 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn exec(
         &self,
-        _mount: &RuntimeMount,
+        _mount: &Mount,
         _request: &ExecRequest,
         _ctx: &MountOperationContext,
     ) -> Result<ExecResult, MountError> {

@@ -3,7 +3,7 @@ use agentdash_injection::{ContextComposer, MergeStrategy};
 use serde_json::json;
 
 use crate::address_space::selected_workspace_binding;
-use crate::runtime::{RuntimeAddressSpace, RuntimeMcpServer};
+use crate::runtime::{AddressSpace, RuntimeMcpServer};
 use crate::session_plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
 };
@@ -11,7 +11,7 @@ use crate::session_plan::{
 pub struct ProjectContextBuildInput<'a> {
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub address_space: Option<&'a RuntimeAddressSpace>,
+    pub address_space: Option<&'a AddressSpace>,
     pub mcp_servers: &'a [RuntimeMcpServer],
     pub effective_agent_type: Option<&'a str>,
     pub preset_name: Option<&'a str>,

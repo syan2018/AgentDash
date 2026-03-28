@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{
-    MountCapabilitySet, RuntimeAddressSpace, RuntimeFileEntry, RuntimeMount,
+    MountCapability, AddressSpace, RuntimeFileEntry, Mount,
 };
 
 pub const PROVIDER_RELAY_FS: &str = "relay_fs";
@@ -44,7 +44,7 @@ pub fn build_derived_address_space(
     workspace: Option<&Workspace>,
     agent_type: Option<&str>,
     target: SessionMountTarget,
-) -> Result<RuntimeAddressSpace, String> {
+) -> Result<AddressSpace, String> {
     let mut mounts = Vec::new();
     let mount_policy = story
         .and_then(|item| item.context.mount_policy_override.clone())
@@ -69,7 +69,7 @@ pub fn build_derived_address_space(
         mounts.first().map(|mount| mount.id.clone())
     };
 
-    Ok(RuntimeAddressSpace {
+    Ok(AddressSpace {
         mounts,
         default_mount_id,
         source_project_id: Some(project.id.to_string()),
@@ -80,8 +80,8 @@ pub fn build_derived_address_space(
 /// 为 Workspace 创建简易单 mount Address Space
 pub fn build_workspace_address_space(
     workspace: &Workspace,
-) -> Result<RuntimeAddressSpace, String> {
-    Ok(RuntimeAddressSpace {
+) -> Result<AddressSpace, String> {
+    Ok(AddressSpace {
         mounts: vec![workspace_mount_from_policy(
             workspace,
             &MountDerivationPolicy::default(),
@@ -95,7 +95,7 @@ pub fn build_workspace_address_space(
 pub fn workspace_mount_from_policy(
     workspace: &Workspace,
     policy: &MountDerivationPolicy,
-) -> Result<RuntimeMount, String> {
+) -> Result<Mount, String> {
     let binding = selected_workspace_binding(workspace)
         .ok_or_else(|| "Workspace 当前没有可用 binding".to_string())?;
     let backend_id = binding.backend_id.trim();
@@ -108,17 +108,17 @@ pub fn workspace_mount_from_policy(
 
     let capabilities = if policy.local_workspace_capabilities.is_empty() {
         vec![
-            MountCapabilitySet::Read,
-            MountCapabilitySet::Write,
-            MountCapabilitySet::List,
-            MountCapabilitySet::Search,
-            MountCapabilitySet::Exec,
+            MountCapability::Read,
+            MountCapability::Write,
+            MountCapability::List,
+            MountCapability::Search,
+            MountCapability::Exec,
         ]
     } else {
         map_container_capabilities(&policy.local_workspace_capabilities)
     };
 
-    Ok(RuntimeMount {
+    Ok(Mount {
         id: "main".to_string(),
         provider: PROVIDER_RELAY_FS.to_string(),
         backend_id: backend_id.to_string(),
@@ -206,7 +206,7 @@ pub fn container_visible_for_target(
 
 pub fn build_context_container_mount(
     container: &ContextContainerDefinition,
-) -> Result<RuntimeMount, String> {
+) -> Result<Mount, String> {
     let id = non_empty_trimmed(&container.mount_id, "mount_id")?.to_string();
     let display_name = if container.display_name.trim().is_empty() {
         container.id.trim().to_string()
@@ -215,9 +215,9 @@ pub fn build_context_container_mount(
     };
     let capabilities = if container.capabilities.is_empty() {
         vec![
-            MountCapabilitySet::Read,
-            MountCapabilitySet::List,
-            MountCapabilitySet::Search,
+            MountCapability::Read,
+            MountCapability::List,
+            MountCapability::Search,
         ]
     } else {
         map_container_capabilities(&container.capabilities)
@@ -242,7 +242,7 @@ pub fn build_context_container_mount(
         ),
     };
 
-    Ok(RuntimeMount {
+    Ok(Mount {
         id,
         provider,
         backend_id: String::new(),
@@ -256,15 +256,15 @@ pub fn build_context_container_mount(
 
 pub fn map_container_capabilities(
     capabilities: &[ContextContainerCapability],
-) -> Vec<MountCapabilitySet> {
+) -> Vec<MountCapability> {
     let mut mapped = Vec::new();
     for capability in capabilities {
         let next = match capability {
-            ContextContainerCapability::Read => MountCapabilitySet::Read,
-            ContextContainerCapability::Write => MountCapabilitySet::Write,
-            ContextContainerCapability::List => MountCapabilitySet::List,
-            ContextContainerCapability::Search => MountCapabilitySet::Search,
-            ContextContainerCapability::Exec => MountCapabilitySet::Exec,
+            ContextContainerCapability::Read => MountCapability::Read,
+            ContextContainerCapability::Write => MountCapability::Write,
+            ContextContainerCapability::List => MountCapability::List,
+            ContextContainerCapability::Search => MountCapability::Search,
+            ContextContainerCapability::Exec => MountCapability::Exec,
         };
         if !mapped.contains(&next) {
             mapped.push(next);
@@ -293,16 +293,16 @@ pub fn normalize_inline_files(
     Ok(normalized)
 }
 
-pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> RuntimeMount {
-    RuntimeMount {
+pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
+    Mount {
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
         backend_id: String::new(),
         root_ref: format!("lifecycle://run/{run_id}"),
         capabilities: vec![
-            MountCapabilitySet::Read,
-            MountCapabilitySet::List,
-            MountCapabilitySet::Search,
+            MountCapability::Read,
+            MountCapability::List,
+            MountCapability::Search,
         ],
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),
@@ -313,7 +313,7 @@ pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> RuntimeMount 
     }
 }
 
-pub fn inline_files_from_mount(mount: &RuntimeMount) -> Result<BTreeMap<String, String>, String> {
+pub fn inline_files_from_mount(mount: &Mount) -> Result<BTreeMap<String, String>, String> {
     let raw_files = mount
         .metadata
         .get("files")

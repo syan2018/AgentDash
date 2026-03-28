@@ -2,7 +2,7 @@
 ///
 /// 值类型、路径工具、Mount 推导逻辑和全部 tool 实现已迁移到 `agentdash_application`。
 pub use agentdash_application::address_space::*;
-pub use agentdash_connector_contract::{ExecutionAddressSpace, ExecutionMountCapability};
+pub use agentdash_connector_contract::{AddressSpace, MountCapability};
 
 pub mod inline_persistence;
 pub mod relay_service;
@@ -24,7 +24,7 @@ mod tests {
 
     use super::*;
     use agentdash_agent::AgentTool;
-    use agentdash_application::runtime::RuntimeAddressSpace;
+    use agentdash_application::runtime::AddressSpace;
     use agentdash_relay::RelayMessage;
     use chrono::Utc;
     use tokio::sync::mpsc;
@@ -112,7 +112,7 @@ mod tests {
             .expect("session should build");
         assert_eq!(session.default_mount_id.as_deref(), Some("main"));
         assert_eq!(session.mounts.len(), 1);
-        assert!(session.mounts[0].supports(ExecutionMountCapability::Exec));
+        assert!(session.mounts[0].supports(MountCapability::Exec));
     }
 
     #[test]
@@ -159,8 +159,8 @@ mod tests {
             .iter()
             .find(|m| m.id == "main")
             .expect("main mount");
-        assert!(!main.supports(ExecutionMountCapability::Exec));
-        assert!(main.supports(ExecutionMountCapability::Read));
+        assert!(!main.supports(MountCapability::Exec));
+        assert!(main.supports(MountCapability::Read));
         assert!(address_space.mounts.iter().any(|m| m.id == "spec"));
         assert!(address_space.mounts.iter().any(|m| m.id == "brief"));
     }
@@ -203,7 +203,7 @@ mod tests {
     #[tokio::test]
     async fn inline_mount_supports_read_list_and_search() {
         let service = RelayAddressSpaceService::new(mount_registry_with_inline_fs());
-        let runtime_address_space = RuntimeAddressSpace {
+        let runtime_address_space = AddressSpace {
             mounts: vec![
                 build_context_container_mount(&ContextContainerDefinition {
                     id: "story-brief".to_string(),
@@ -350,16 +350,16 @@ mod tests {
     #[test]
     fn runtime_tool_schemas_are_openai_compatible() {
         let service = Arc::new(RelayAddressSpaceService::new(empty_mount_registry()));
-        let address_space = ExecutionAddressSpace {
-            mounts: vec![agentdash_connector_contract::ExecutionMount {
+        let address_space = AddressSpace {
+            mounts: vec![agentdash_connector_contract::Mount {
                 id: "brief".to_string(),
                 provider: PROVIDER_INLINE_FS.to_string(),
                 backend_id: String::new(),
                 root_ref: "context://inline/brief".to_string(),
                 capabilities: vec![
-                    ExecutionMountCapability::Read,
-                    ExecutionMountCapability::List,
-                    ExecutionMountCapability::Search,
+                    MountCapability::Read,
+                    MountCapability::List,
+                    MountCapability::Search,
                 ],
                 default_write: false,
                 display_name: "brief".to_string(),

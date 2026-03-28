@@ -14,7 +14,7 @@ use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 use agentdash_connector_contract::{
-    ExecutionAddressSpace, ExecutionContext, ExecutionMountCapability, AgentConfig,
+    AddressSpace, ExecutionContext, MountCapability, AgentConfig,
     HookEvaluationQuery, HookPendingAction, HookTraceEntry, HookTrigger, SessionHookRefreshQuery,
 };
 use crate::session::{
@@ -38,7 +38,7 @@ pub struct CompanionDispatchTool {
     current_executor_config: AgentConfig,
     workspace_root: std::path::PathBuf,
     working_dir: String,
-    address_space: Option<ExecutionAddressSpace>,
+    address_space: Option<AddressSpace>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
     hook_session: Option<agentdash_connector_contract::hooks::SharedHookSessionRuntime>,
     system_context: Option<String>,
@@ -126,7 +126,7 @@ pub struct CompanionDispatchPlan {
 
 #[derive(Debug, Clone)]
 pub struct CompanionExecutionSlice {
-    pub address_space: Option<ExecutionAddressSpace>,
+    pub address_space: Option<AddressSpace>,
     pub mcp_servers: Vec<McpServer>,
 }
 
@@ -944,7 +944,7 @@ pub fn build_companion_dispatch_slice(
 }
 
 pub fn build_companion_execution_slice(
-    address_space: Option<&ExecutionAddressSpace>,
+    address_space: Option<&AddressSpace>,
     mcp_servers: &[McpServer],
     mode: CompanionSliceMode,
 ) -> CompanionExecutionSlice {
@@ -957,17 +957,17 @@ pub fn build_companion_execution_slice(
             address_space: Some(filter_address_space_capabilities(
                 address_space,
                 &[
-                    ExecutionMountCapability::Read,
-                    ExecutionMountCapability::List,
-                    ExecutionMountCapability::Search,
-                    ExecutionMountCapability::Exec,
+                    MountCapability::Read,
+                    MountCapability::List,
+                    MountCapability::Search,
+                    MountCapability::Exec,
                 ],
             )),
             mcp_servers: Vec::new(),
         },
         CompanionSliceMode::WorkflowOnly | CompanionSliceMode::ConstraintsOnly => {
             CompanionExecutionSlice {
-                address_space: Some(ExecutionAddressSpace::default()),
+                address_space: Some(AddressSpace::default()),
                 mcp_servers: Vec::new(),
             }
         }
@@ -975,11 +975,11 @@ pub fn build_companion_execution_slice(
 }
 
 fn filter_address_space_capabilities(
-    address_space: Option<&ExecutionAddressSpace>,
-    allowed: &[ExecutionMountCapability],
-) -> ExecutionAddressSpace {
+    address_space: Option<&AddressSpace>,
+    allowed: &[MountCapability],
+) -> AddressSpace {
     let Some(address_space) = address_space else {
-        return ExecutionAddressSpace::default();
+        return AddressSpace::default();
     };
 
     let mounts = address_space
@@ -1000,7 +1000,7 @@ fn filter_address_space_capabilities(
             next_mount.capabilities = capabilities;
             next_mount.default_write = next_mount
                 .capabilities
-                .contains(&ExecutionMountCapability::Write);
+                .contains(&MountCapability::Write);
             Some(next_mount)
         })
         .collect::<Vec<_>>();
@@ -1015,7 +1015,7 @@ fn filter_address_space_capabilities(
                 .then(|| default_id.clone())
         });
 
-    ExecutionAddressSpace {
+    AddressSpace {
         mounts,
         default_mount_id,
         source_project_id: address_space.source_project_id.clone(),
@@ -1189,7 +1189,7 @@ mod companion_tests {
     };
     use agent_client_protocol::McpServer;
     use agentdash_domain::session_binding::SessionOwnerType;
-    use agentdash_connector_contract::{ExecutionAddressSpace, ExecutionMountCapability};
+    use agentdash_connector_contract::{AddressSpace, MountCapability};
     use uuid::Uuid;
 
     #[test]
@@ -1288,18 +1288,18 @@ mod companion_tests {
 
     #[test]
     fn compact_execution_slice_drops_write_and_mcp_servers() {
-        let address_space = ExecutionAddressSpace {
-            mounts: vec![agentdash_connector_contract::ExecutionMount {
+        let address_space = AddressSpace {
+            mounts: vec![agentdash_connector_contract::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
                 root_ref: "/workspace".to_string(),
                 capabilities: vec![
-                    ExecutionMountCapability::Read,
-                    ExecutionMountCapability::Write,
-                    ExecutionMountCapability::List,
-                    ExecutionMountCapability::Search,
-                    ExecutionMountCapability::Exec,
+                    MountCapability::Read,
+                    MountCapability::Write,
+                    MountCapability::List,
+                    MountCapability::Search,
+                    MountCapability::Exec,
                 ],
                 default_write: true,
                 display_name: "main".to_string(),
@@ -1325,27 +1325,27 @@ mod companion_tests {
         assert!(
             !sliced_space.mounts[0]
                 .capabilities
-                .contains(&ExecutionMountCapability::Write)
+                .contains(&MountCapability::Write)
         );
         assert!(
             sliced_space.mounts[0]
                 .capabilities
-                .contains(&ExecutionMountCapability::Exec)
+                .contains(&MountCapability::Exec)
         );
         assert!(!sliced_space.mounts[0].default_write);
     }
 
     #[test]
     fn workflow_only_execution_slice_uses_empty_address_space() {
-        let address_space = ExecutionAddressSpace {
-            mounts: vec![agentdash_connector_contract::ExecutionMount {
+        let address_space = AddressSpace {
+            mounts: vec![agentdash_connector_contract::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
                 root_ref: "/workspace".to_string(),
                 capabilities: vec![
-                    ExecutionMountCapability::Read,
-                    ExecutionMountCapability::Write,
+                    MountCapability::Read,
+                    MountCapability::Write,
                 ],
                 default_write: true,
                 display_name: "main".to_string(),

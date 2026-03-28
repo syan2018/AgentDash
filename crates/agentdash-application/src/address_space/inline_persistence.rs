@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::address_space::normalize_mount_relative_path;
-use crate::runtime::{RuntimeAddressSpace, RuntimeMount};
+use crate::runtime::{AddressSpace, Mount};
 use async_trait::async_trait;
 
 // ─── Inline Content Persistence ─────────────────────────────
@@ -75,8 +75,8 @@ impl InlineContentOverlay {
 
     pub async fn write(
         &self,
-        address_space: &RuntimeAddressSpace,
-        mount: &RuntimeMount,
+        address_space: &AddressSpace,
+        mount: &Mount,
         path: &str,
         content: &str,
     ) -> Result<(), String> {

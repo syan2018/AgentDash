@@ -8,7 +8,7 @@ use super::provider::{
     MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
-use crate::runtime::RuntimeMount;
+use crate::runtime::Mount;
 
 fn map_mount_err(e: String) -> MountError {
     MountError::OperationFailed(e)
@@ -25,7 +25,7 @@ impl MountProvider for InlineFsMountProvider {
 
     async fn read_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         path: &str,
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
@@ -40,7 +40,7 @@ impl MountProvider for InlineFsMountProvider {
 
     async fn write_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         path: &str,
         _content: &str,
         _ctx: &MountOperationContext,
@@ -53,7 +53,7 @@ impl MountProvider for InlineFsMountProvider {
 
     async fn list(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         options: &ListOptions,
         _ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError> {
@@ -71,7 +71,7 @@ impl MountProvider for InlineFsMountProvider {
 
     async fn search_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
@@ -117,7 +117,7 @@ impl MountProvider for InlineFsMountProvider {
 
     async fn exec(
         &self,
-        _mount: &RuntimeMount,
+        _mount: &Mount,
         _request: &ExecRequest,
         _ctx: &MountOperationContext,
     ) -> Result<ExecResult, MountError> {

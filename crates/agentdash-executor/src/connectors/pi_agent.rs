@@ -28,7 +28,7 @@ use agentdash_domain::settings::SettingsRepository;
 
 use crate::connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionMount, ExecutionMountCapability, ExecutionStream, AgentInfo, PromptPayload,
+    ExecutionStream, Mount, MountCapability, AgentInfo, PromptPayload,
     RuntimeToolProvider,
 };
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
@@ -290,16 +290,16 @@ fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn describe_mount(mount: &ExecutionMount) -> String {
+fn describe_mount(mount: &Mount) -> String {
     let capabilities = mount
         .capabilities
         .iter()
         .map(|capability| match capability {
-            ExecutionMountCapability::Read => "read",
-            ExecutionMountCapability::Write => "write",
-            ExecutionMountCapability::List => "list",
-            ExecutionMountCapability::Search => "search",
-            ExecutionMountCapability::Exec => "exec",
+            MountCapability::Read => "read",
+            MountCapability::Write => "write",
+            MountCapability::List => "list",
+            MountCapability::Search => "search",
+            MountCapability::Exec => "exec",
         })
         .collect::<Vec<_>>()
         .join(", ");

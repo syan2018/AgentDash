@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
 };
-use agentdash_domain::common::AgentConfig;
+use agentdash_domain::common::{AddressSpace, AgentConfig};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
@@ -55,7 +55,7 @@ pub struct ExecutionContext {
     /// ACP 协议 per-session MCP Server 列表，由 Connector 负责传递给 Agent
     pub mcp_servers: Vec<McpServer>,
     /// 会话级 Address Space 视图。云端原生 Agent 可基于它生成 provider-backed runtime tools。
-    pub address_space: Option<ExecutionAddressSpace>,
+    pub address_space: Option<AddressSpace>,
     /// 会话级 Hook Runtime 快照。
     /// 当前阶段仅作为执行层承载位，后续由 SessionHub / Hook provider 正式填充。
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
@@ -82,9 +82,6 @@ pub struct FlowCapabilities {
     pub resolve_hook_action: bool,
 }
 
-pub type ExecutionMountCapability = agentdash_domain::common::MountCapability;
-pub type ExecutionMount = agentdash_domain::common::Mount;
-pub type ExecutionAddressSpace = agentdash_domain::common::AddressSpace;
 
 #[derive(Debug, Clone)]
 pub enum PromptPayload {

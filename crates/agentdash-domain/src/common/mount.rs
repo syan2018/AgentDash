@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::MountCapability;
 
-/// 统一挂载点定义，被 connector-contract（ExecutionMount）和 application（RuntimeMount）共享。
+/// 统一挂载点定义，被 connector-contract 和 application 直接使用。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Mount {
     pub id: String,
@@ -22,7 +22,7 @@ impl Mount {
     }
 }
 
-/// 统一地址空间定义，被 connector-contract（ExecutionAddressSpace）和 application（RuntimeAddressSpace）共享。
+/// 统一地址空间定义，被 connector-contract 和 application 直接使用。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AddressSpace {
     #[serde(default)]

@@ -4,7 +4,7 @@ use agentdash_injection::{ContextFragment, MergeStrategy};
 use serde::Serialize;
 
 use crate::runtime::{
-    MountCapabilitySet, RuntimeAddressSpace, RuntimeMcpServer, RuntimeMount,
+    MountCapability, AddressSpace, RuntimeMcpServer, Mount,
 };
 
 pub use agentdash_domain::session_binding::SessionOwnerType;
@@ -70,7 +70,7 @@ pub struct SessionRuntimePolicySummary {
 pub struct SessionPlanInput<'a> {
     pub owner_type: SessionOwnerType,
     pub phase: SessionPlanPhase,
-    pub address_space: Option<&'a RuntimeAddressSpace>,
+    pub address_space: Option<&'a AddressSpace>,
     pub mcp_servers: &'a [RuntimeMcpServer],
     pub session_composition: Option<&'a SessionComposition>,
     pub agent_type: Option<&'a str>,
@@ -166,7 +166,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
 }
 
 pub fn summarize_address_space(
-    address_space: &RuntimeAddressSpace,
+    address_space: &AddressSpace,
 ) -> SessionAddressSpaceSummary {
     let default_mount_id = address_space.default_mount_id.clone();
     let mount_ids = address_space
@@ -201,14 +201,14 @@ pub fn summarize_address_space(
 }
 
 pub fn summarize_tool_visibility(
-    address_space: Option<&RuntimeAddressSpace>,
+    address_space: Option<&AddressSpace>,
     mcp_servers: &[RuntimeMcpServer],
 ) -> SessionToolVisibilitySummary {
     summarize_tool_visibility_with_context(address_space, mcp_servers, None)
 }
 
 pub fn summarize_tool_visibility_with_context(
-    address_space: Option<&RuntimeAddressSpace>,
+    address_space: Option<&AddressSpace>,
     mcp_servers: &[RuntimeMcpServer],
     owner_type: Option<SessionOwnerType>,
 ) -> SessionToolVisibilitySummary {
@@ -419,7 +419,7 @@ fn build_required_context_block_markdown(block: &SessionRequiredContextBlock) ->
 
 pub fn summarize_runtime_policy(
     workspace_attached: bool,
-    address_space: Option<&RuntimeAddressSpace>,
+    address_space: Option<&AddressSpace>,
     mcp_servers: &[RuntimeMcpServer],
     tool_names: &[String],
 ) -> SessionRuntimePolicySummary {
@@ -436,7 +436,7 @@ pub fn summarize_runtime_policy(
             address_space
                 .mounts
                 .iter()
-                .filter(|mount| mount.supports(MountCapabilitySet::Write))
+                .filter(|mount| mount.supports(MountCapability::Write))
                 .map(|mount| format!("`{}`", mount.id))
                 .collect::<Vec<_>>()
         })
@@ -446,7 +446,7 @@ pub fn summarize_runtime_policy(
             address_space
                 .mounts
                 .iter()
-                .filter(|mount| mount.supports(MountCapabilitySet::Exec))
+                .filter(|mount| mount.supports(MountCapability::Exec))
                 .map(|mount| format!("`{}`", mount.id))
                 .collect::<Vec<_>>()
         })
@@ -484,7 +484,7 @@ pub fn summarize_runtime_policy(
     }
 }
 
-fn render_mount_summary(mount: &RuntimeMount) -> String {
+fn render_mount_summary(mount: &Mount) -> String {
     let capabilities = mount
         .capabilities
         .iter()
@@ -521,7 +521,7 @@ fn render_mount_summary(mount: &RuntimeMount) -> String {
     lines.join("\n")
 }
 
-fn fallback_display_name(mount: &RuntimeMount) -> &str {
+fn fallback_display_name(mount: &Mount) -> &str {
     let trimmed = mount.display_name.trim();
     if trimmed.is_empty() {
         mount.id.as_str()
@@ -530,17 +530,17 @@ fn fallback_display_name(mount: &RuntimeMount) -> &str {
     }
 }
 
-fn render_capability(capability: &MountCapabilitySet) -> &'static str {
+fn render_capability(capability: &MountCapability) -> &'static str {
     match capability {
-        MountCapabilitySet::Read => "read",
-        MountCapabilitySet::Write => "write",
-        MountCapabilitySet::List => "list",
-        MountCapabilitySet::Search => "search",
-        MountCapabilitySet::Exec => "exec",
+        MountCapability::Read => "read",
+        MountCapability::Write => "write",
+        MountCapability::List => "list",
+        MountCapability::Search => "search",
+        MountCapability::Exec => "exec",
     }
 }
 
-fn runtime_address_space_tools(address_space: &RuntimeAddressSpace) -> Vec<String> {
+fn runtime_address_space_tools(address_space: &AddressSpace) -> Vec<String> {
     let mut tools = vec![
         "mounts_list".to_string(),
         "fs_read".to_string(),
@@ -550,14 +550,14 @@ fn runtime_address_space_tools(address_space: &RuntimeAddressSpace) -> Vec<Strin
     if address_space
         .mounts
         .iter()
-        .any(|mount| mount.supports(MountCapabilitySet::Write))
+        .any(|mount| mount.supports(MountCapability::Write))
     {
         tools.push("fs_write".to_string());
     }
     if address_space
         .mounts
         .iter()
-        .any(|mount| mount.supports(MountCapabilitySet::Exec))
+        .any(|mount| mount.supports(MountCapability::Exec))
     {
         tools.push("shell_exec".to_string());
     }
@@ -608,30 +608,30 @@ mod tests {
 
     #[test]
     fn summarize_address_space_includes_mount_details() {
-        let address_space = RuntimeAddressSpace {
+        let address_space = AddressSpace {
             mounts: vec![
-                RuntimeMount {
+                Mount {
                     id: "main".to_string(),
                     provider: "relay_fs".to_string(),
                     backend_id: "backend-a".to_string(),
                     root_ref: "/workspace/repo".to_string(),
                     capabilities: vec![
-                        MountCapabilitySet::Read,
-                        MountCapabilitySet::List,
-                        MountCapabilitySet::Exec,
+                        MountCapability::Read,
+                        MountCapability::List,
+                        MountCapability::Exec,
                     ],
                     default_write: false,
                     display_name: "主工作空间".to_string(),
                     metadata: serde_json::Value::Null,
                 },
-                RuntimeMount {
+                Mount {
                     id: "km".to_string(),
                     provider: "external_service".to_string(),
                     backend_id: String::new(),
                     root_ref: "tenant://project/km".to_string(),
                     capabilities: vec![
-                        MountCapabilitySet::Read,
-                        MountCapabilitySet::Search,
+                        MountCapability::Read,
+                        MountCapability::Search,
                     ],
                     default_write: false,
                     display_name: "知识库".to_string(),
@@ -656,18 +656,18 @@ mod tests {
 
     #[test]
     fn summarize_tool_visibility_includes_runtime_and_mcp_tools() {
-        let address_space = RuntimeAddressSpace {
-            mounts: vec![RuntimeMount {
+        let address_space = AddressSpace {
+            mounts: vec![Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-a".to_string(),
                 root_ref: "/workspace/repo".to_string(),
                 capabilities: vec![
-                    MountCapabilitySet::Read,
-                    MountCapabilitySet::List,
-                    MountCapabilitySet::Search,
-                    MountCapabilitySet::Write,
-                    MountCapabilitySet::Exec,
+                    MountCapability::Read,
+                    MountCapability::List,
+                    MountCapability::Search,
+                    MountCapability::Write,
+                    MountCapability::Exec,
                 ],
                 default_write: true,
                 display_name: "主工作空间".to_string(),
@@ -698,16 +698,16 @@ mod tests {
 
     #[test]
     fn build_session_plan_fragments_includes_persona_workflow_and_runtime_policy() {
-        let address_space = RuntimeAddressSpace {
-            mounts: vec![RuntimeMount {
+        let address_space = AddressSpace {
+            mounts: vec![Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-a".to_string(),
                 root_ref: "/workspace/repo".to_string(),
                 capabilities: vec![
-                    MountCapabilitySet::Read,
-                    MountCapabilitySet::List,
-                    MountCapabilitySet::Search,
+                    MountCapability::Read,
+                    MountCapability::List,
+                    MountCapability::Search,
                 ],
                 default_write: false,
                 display_name: "主工作空间".to_string(),

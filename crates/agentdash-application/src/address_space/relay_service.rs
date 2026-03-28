@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::address_space::*;
-use crate::runtime::RuntimeMount;
-use agentdash_connector_contract::{ExecutionAddressSpace, ExecutionMountCapability};
+use crate::runtime::Mount;
+use agentdash_connector_contract::{AddressSpace, MountCapability};
 
 use super::inline_persistence::InlineContentOverlay;
 
@@ -23,7 +23,7 @@ impl RelayAddressSpaceService {
     pub fn session_for_workspace(
         &self,
         workspace: &agentdash_domain::workspace::Workspace,
-    ) -> Result<ExecutionAddressSpace, String> {
+    ) -> Result<AddressSpace, String> {
         build_workspace_address_space(workspace)
     }
 
@@ -34,26 +34,26 @@ impl RelayAddressSpaceService {
         workspace: Option<&agentdash_domain::workspace::Workspace>,
         target: SessionMountTarget,
         agent_type: Option<&str>,
-    ) -> Result<ExecutionAddressSpace, String> {
+    ) -> Result<AddressSpace, String> {
         build_derived_address_space(project, story, workspace, agent_type, target)
     }
 
     pub fn list_mounts(
         &self,
-        address_space: &ExecutionAddressSpace,
-    ) -> Vec<agentdash_connector_contract::ExecutionMount> {
+        address_space: &AddressSpace,
+    ) -> Vec<agentdash_connector_contract::Mount> {
         address_space.mounts.clone()
     }
 
     pub async fn read_text(
         &self,
-        address_space: &ExecutionAddressSpace,
+        address_space: &AddressSpace,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ReadResult, String> {
         let runtime_address_space = address_space.clone();
         let mount =
-            resolve_mount(&runtime_address_space, &target.mount_id, ExecutionMountCapability::Read)?;
+            resolve_mount(&runtime_address_space, &target.mount_id, MountCapability::Read)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
 
         if let Some(ov) = overlay {
@@ -75,7 +75,7 @@ impl RelayAddressSpaceService {
 
     pub async fn write_text(
         &self,
-        address_space: &ExecutionAddressSpace,
+        address_space: &AddressSpace,
         target: &ResourceRef,
         content: &str,
         overlay: Option<&InlineContentOverlay>,
@@ -84,7 +84,7 @@ impl RelayAddressSpaceService {
         let mount = resolve_mount(
             &runtime_address_space,
             &target.mount_id,
-            ExecutionMountCapability::Write,
+            MountCapability::Write,
         )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
 
@@ -111,14 +111,14 @@ impl RelayAddressSpaceService {
 
     pub async fn list(
         &self,
-        address_space: &ExecutionAddressSpace,
+        address_space: &AddressSpace,
         mount_id: &str,
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ListResult, String> {
         let runtime_address_space = address_space.clone();
         let mount =
-            resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::List)?;
+            resolve_mount(&runtime_address_space, mount_id, MountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
@@ -156,14 +156,14 @@ impl RelayAddressSpaceService {
 
     pub async fn exec(
         &self,
-        address_space: &ExecutionAddressSpace,
+        address_space: &AddressSpace,
         request: &ExecRequest,
     ) -> Result<ExecResult, String> {
         let runtime_address_space = address_space.clone();
         let mount = resolve_mount(
             &runtime_address_space,
             &request.mount_id,
-            ExecutionMountCapability::Exec,
+            MountCapability::Exec,
         )?;
         let cwd = normalize_mount_relative_path(&request.cwd, true)?;
 
@@ -186,7 +186,7 @@ impl RelayAddressSpaceService {
 
     pub async fn search_text(
         &self,
-        address_space: &ExecutionAddressSpace,
+        address_space: &AddressSpace,
         mount_id: &str,
         path: &str,
         query: &str,
@@ -211,7 +211,7 @@ impl RelayAddressSpaceService {
     /// 扩展搜索接口 — 支持正则、glob 过滤、上下文行
     pub async fn search_text_extended(
         &self,
-        address_space: &ExecutionAddressSpace,
+        address_space: &AddressSpace,
         mount_id: &str,
         path: &str,
         query: &str,
@@ -223,7 +223,7 @@ impl RelayAddressSpaceService {
     ) -> Result<(Vec<String>, bool), String> {
         let runtime_address_space = address_space.clone();
         let mount =
-            resolve_mount(&runtime_address_space, mount_id, ExecutionMountCapability::Search)?;
+            resolve_mount(&runtime_address_space, mount_id, MountCapability::Search)?;
         let base_path = normalize_mount_relative_path(path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
@@ -271,7 +271,7 @@ impl RelayAddressSpaceService {
 
     async fn search_inline(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         base_path: &str,
         query: &str,
         is_regex: bool,

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
-use crate::runtime::RuntimeMount;
+use crate::runtime::Mount;
 
 #[derive(Debug)]
 pub enum MountError {
@@ -55,14 +55,14 @@ pub trait MountProvider: Send + Sync {
 
     async fn read_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         path: &str,
         ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError>;
 
     async fn write_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         path: &str,
         content: &str,
         ctx: &MountOperationContext,
@@ -70,21 +70,21 @@ pub trait MountProvider: Send + Sync {
 
     async fn list(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         options: &ListOptions,
         ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError>;
 
     async fn search_text(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         query: &SearchQuery,
         ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError>;
 
     async fn exec(
         &self,
-        mount: &RuntimeMount,
+        mount: &Mount,
         request: &ExecRequest,
         ctx: &MountOperationContext,
     ) -> Result<ExecResult, MountError> {
@@ -96,7 +96,7 @@ pub trait MountProvider: Send + Sync {
     }
 
     /// Whether this mount can be used right now (e.g. relay backend connected).
-    async fn is_available(&self, _mount: &RuntimeMount) -> bool {
+    async fn is_available(&self, _mount: &Mount) -> bool {
         true
     }
 }

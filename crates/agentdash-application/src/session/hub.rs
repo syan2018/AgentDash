@@ -20,7 +20,7 @@ use agentdash_acp_meta::{
 use agent_client_protocol::McpServer;
 
 use agentdash_connector_contract::{
-    AgentConnector, ConnectorError, ExecutionAddressSpace, ExecutionContext, PromptPayload,
+    AgentConnector, ConnectorError, AddressSpace, ExecutionContext, PromptPayload,
 };
 use agentdash_connector_contract::hooks::{
     ExecutionHookProvider, HookResolution, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
@@ -54,7 +54,7 @@ pub struct PromptSessionRequest {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<McpServer>,
     pub workspace_root: Option<PathBuf>,
-    pub address_space: Option<ExecutionAddressSpace>,
+    pub address_space: Option<AddressSpace>,
     pub flow_capabilities: Option<agentdash_connector_contract::FlowCapabilities>,
     pub system_context: Option<String>,
 }

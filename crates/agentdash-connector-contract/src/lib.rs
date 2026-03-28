@@ -4,11 +4,12 @@ pub mod lifecycle;
 pub mod schema;
 pub mod tool;
 
-pub use agentdash_domain::common::{AgentConfig, ThinkingLevel};
+pub use agentdash_domain::common::{
+    AddressSpace, AgentConfig, Mount, MountCapability, ThinkingLevel,
+};
 pub use connector::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionAddressSpace, ExecutionContext, ExecutionMount, ExecutionMountCapability,
-    ExecutionStream, AgentInfo, FlowCapabilities, PromptPayload,
+    ExecutionContext, ExecutionStream, AgentInfo, FlowCapabilities, PromptPayload,
     content_block_to_text,
 };
 pub use tool::{

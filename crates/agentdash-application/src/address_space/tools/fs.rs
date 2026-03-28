@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_connector_contract::schema::schema_value;
 use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
-use agentdash_connector_contract::ExecutionAddressSpace;
+use agentdash_connector_contract::AddressSpace;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -15,7 +15,7 @@ use crate::address_space::{
 };
 
 pub fn resolve_uri_path(
-    address_space: &ExecutionAddressSpace,
+    address_space: &AddressSpace,
     path: &str,
 ) -> Result<ResourceRef, String> {
     parse_mount_uri(path, address_space)
@@ -32,11 +32,11 @@ pub fn ok_text(text: String) -> AgentToolResult {
 #[derive(Clone)]
 pub struct MountsListTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: ExecutionAddressSpace,
+    address_space: AddressSpace,
 }
 
 impl MountsListTool {
-    pub fn new(service: Arc<RelayAddressSpaceService>, address_space: ExecutionAddressSpace) -> Self {
+    pub fn new(service: Arc<RelayAddressSpaceService>, address_space: AddressSpace) -> Self {
         Self {
             service,
             address_space,
@@ -93,13 +93,13 @@ impl AgentTool for MountsListTool {
 #[derive(Clone)]
 pub struct FsReadTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: ExecutionAddressSpace,
+    address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsReadTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: ExecutionAddressSpace,
+        address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
     ) -> Self {
         Self {
@@ -176,13 +176,13 @@ impl AgentTool for FsReadTool {
 #[derive(Clone)]
 pub struct FsWriteTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: ExecutionAddressSpace,
+    address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsWriteTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: ExecutionAddressSpace,
+        address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
     ) -> Self {
         Self {
@@ -247,13 +247,13 @@ impl AgentTool for FsWriteTool {
 #[derive(Clone)]
 pub struct FsListTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: ExecutionAddressSpace,
+    address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsListTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: ExecutionAddressSpace,
+        address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
     ) -> Self {
         Self {
@@ -331,13 +331,13 @@ impl AgentTool for FsListTool {
 #[derive(Clone)]
 pub struct FsSearchTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: ExecutionAddressSpace,
+    address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsSearchTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: ExecutionAddressSpace,
+        address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
     ) -> Self {
         Self {
@@ -416,10 +416,10 @@ impl AgentTool for FsSearchTool {
 #[derive(Clone)]
 pub struct ShellExecTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: ExecutionAddressSpace,
+    address_space: AddressSpace,
 }
 impl ShellExecTool {
-    pub fn new(service: Arc<RelayAddressSpaceService>, address_space: ExecutionAddressSpace) -> Self {
+    pub fn new(service: Arc<RelayAddressSpaceService>, address_space: AddressSpace) -> Self {
         Self {
             service,
             address_space,

@@ -1,4 +1,5 @@
 pub mod address_space;
+pub mod backend_transport;
 pub mod repository_set;
 pub mod bootstrap_plan;
 pub mod context;
@@ -14,7 +15,6 @@ pub mod task;
 pub mod workflow;
 pub mod workspace;
 
-pub use task::execution as task_execution;
 pub use task::lock as task_lock;
 pub use task::restart_tracker as task_restart_tracker;
 pub use task::service as task_service;

@@ -7,9 +7,21 @@ use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceResolutionPolicy,
 };
 
+use crate::backend_transport::BackendTransport;
+
+/// 后端在线探测能力 — workspace resolution 的最小依赖。
+///
+/// 所有 `BackendTransport` 实现自动满足此 trait（blanket impl）。
 #[async_trait]
 pub trait BackendAvailability: Send + Sync {
     async fn is_online(&self, backend_id: &str) -> bool;
+}
+
+#[async_trait]
+impl<T: BackendTransport + ?Sized> BackendAvailability for T {
+    async fn is_online(&self, backend_id: &str) -> bool {
+        BackendTransport::is_online(self, backend_id).await
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

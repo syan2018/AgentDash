@@ -2,37 +2,10 @@ use std::collections::BTreeMap;
 
 use agent_client_protocol::{EnvVariable, McpServer, McpServerHttp, McpServerSse, McpServerStdio};
 use agentdash_mcp::{injection::McpInjectionConfig, scope::ToolScope};
-use agentdash_relay::FileEntryRelay;
 
 use crate::runtime::{
-    RuntimeFileEntry, RuntimeMcpBinding, RuntimeMcpServer, RuntimeToolScope,
+    RuntimeMcpBinding, RuntimeMcpServer, RuntimeToolScope,
 };
-
-pub fn relay_file_entry_to_runtime(entry: &FileEntryRelay) -> RuntimeFileEntry {
-    RuntimeFileEntry {
-        path: entry.path.clone(),
-        size: entry.size,
-        modified_at: entry.modified_at,
-        is_dir: entry.is_dir,
-    }
-}
-
-pub fn runtime_file_entry_to_relay(entry: &RuntimeFileEntry) -> FileEntryRelay {
-    FileEntryRelay {
-        path: entry.path.clone(),
-        size: entry.size,
-        modified_at: entry.modified_at,
-        is_dir: entry.is_dir,
-    }
-}
-
-pub fn relay_file_entries_to_runtime(entries: &[FileEntryRelay]) -> Vec<RuntimeFileEntry> {
-    entries.iter().map(relay_file_entry_to_runtime).collect()
-}
-
-pub fn runtime_file_entries_to_relay(entries: &[RuntimeFileEntry]) -> Vec<FileEntryRelay> {
-    entries.iter().map(runtime_file_entry_to_relay).collect()
-}
 
 pub fn acp_mcp_server_to_runtime(server: &McpServer) -> RuntimeMcpServer {
     match server {

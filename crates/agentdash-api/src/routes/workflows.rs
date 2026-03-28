@@ -27,7 +27,7 @@ use crate::dto::{
     WorkflowRunResponse, WorkflowTemplateResponse, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
-use crate::session_context::normalize_string;
+use agentdash_application::session_context::normalize_string;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {

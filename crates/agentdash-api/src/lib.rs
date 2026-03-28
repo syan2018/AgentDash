@@ -4,19 +4,14 @@ pub mod mount_providers;
 pub mod auth;
 pub mod bootstrap;
 pub mod dto;
-pub mod execution_hooks;
 pub mod plugins;
 pub mod relay;
 pub mod routes;
 pub mod rpc;
 pub mod runtime_bridge;
-pub mod session_context;
-pub mod session_plan;
 pub mod stream;
 pub mod task_agent_context;
 pub mod workspace_resolution;
-
-use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -41,7 +36,7 @@ pub async fn run_server(plugins: Vec<Box<dyn AgentDashPlugin>>) -> Result<()> {
         .connect(&db_url)
         .await?;
 
-    let state = Arc::new(AppState::new_with_plugins(pool, plugins).await?);
+    let state = AppState::new_with_plugins(pool, plugins).await?;
 
     let app = routes::create_router(state);
 

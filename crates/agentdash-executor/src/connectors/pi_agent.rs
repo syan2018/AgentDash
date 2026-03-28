@@ -36,7 +36,7 @@ use crate::connectors::pi_agent_provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries,
 };
 use crate::hook_events::build_hook_trace_notification;
-use crate::runtime_delegate::HookRuntimeDelegate;
+use agentdash_application::session::HookRuntimeDelegate;
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 

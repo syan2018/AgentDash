@@ -9,7 +9,6 @@ agentdash-domain = { workspace = true }
 agentdash-connector-contract = { workspace = true }
 agentdash-injection = { workspace = true }
 agentdash-mcp = { workspace = true }
-agentdash-relay = { workspace = true }
 agent-client-protocol = { workspace = true }
 agentdash-acp-meta = { workspace = true }
 serde = { workspace = true }

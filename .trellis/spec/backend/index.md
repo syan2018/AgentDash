@@ -134,6 +134,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Address Space Access](./address-space-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
 | [LLM Model Config](./llm-model-config.md) | ThinkingLevel 枚举、ModelInfo 元数据、Provider Registry 架构跨层契约 | ✅ 已创建 |
 | [Execution Hook Runtime](./execution-hook-runtime.md) | Hook Runtime / Workflow Policy / Session Surface 跨层契约 | ✅ 已创建 |
+| [Agent Types & Loop](./directory-structure.md#2026-03-29-agent-核心类型抽取与-llm-bridge-下沉) | agent-types / agent / executor 三层分工与 LlmBridge 架构 | ✅ 已记录 |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | ✅ 已更新（含业务 API DTO 命名契约） |

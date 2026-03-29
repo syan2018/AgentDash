@@ -57,7 +57,8 @@ AgentDash/
 │   ├── agentdash-spi/                #   跨层 SPI 契约（Connector/Hook/Lifecycle/Tool）
 │   ├── agentdash-relay/             #   WebSocket 中继协议（Cloud ↔ Local）
 │   ├── agentdash-local/             #   本机后端（WS 客户端, 工具执行）
-│   ├── agentdash-agent/             #   Pi Agent 内置 Agent 实现
+│   ├── agentdash-agent-types/       #   Agent 领域通用类型（Message/Tool/Context/Delegate）
+│   ├── agentdash-agent/             #   Pi Agent 引擎（纯 Agent Loop + LlmBridge trait）
 │   ├── agentdash-infrastructure/    #   基础设施（数据库 Repo 实现）
 │   ├── agentdash-injection/         #   依赖注入 / Address Space
 │   ├── agentdash-acp-meta/          #   ACP 元数据解析

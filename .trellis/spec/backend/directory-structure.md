@@ -195,6 +195,8 @@ crates/
 │           ├── mod.rs
 │           ├── pi_agent.rs      # 内置 AI Agent 连接器
 │           ├── pi_agent_mcp.rs  # MCP 工具桥接
+│           ├── pi_agent_provider_registry.rs  # LLM Provider 注册
+│           ├── rig_bridge.rs    # RigBridge<M> — rig-core LlmBridge 实现 + AgentMessage ↔ rig::Message 转换
 │           ├── composite.rs     # 多连接器组合
 │           └── remote_acp.rs
 │
@@ -202,7 +204,8 @@ crates/
 ├── agentdash-mcp/               # MCP Server 实现
 ├── agentdash-relay/             # WebSocket Relay 协议
 ├── agentdash-acp-meta/          # ACP 元数据 TypeScript 绑定
-├── agentdash-agent/             # Agent 运行时核心（纯 loop + runtime delegate seam）
+├── agentdash-agent-types/       # Agent 领域通用类型（AgentMessage/AgentTool/AgentContext/Delegate）
+├── agentdash-agent/             # Agent 运行时核心（纯 loop + bridge trait，无 rig/spi 依赖）
 └── agentdash-local/             # 本机后端执行器
 ```
 
@@ -256,11 +259,18 @@ AgentConnector trait
 ```
 Interface Layer (agentdash-api)
     ↓ depends on
-Application Layer (agentdash-application) — 当前嵌入在 api 中
+Application Layer (agentdash-application)
     ↓ depends on
 Domain Layer (agentdash-domain)
     ↑ implemented by
 Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
+
+Agent 子系统（独立于主分层）：
+agentdash-agent-types  (零 runtime 核心类型)
+    ↑ 被以下 crate 依赖
+├── agentdash-agent    (Agent Loop 引擎，仅依赖 agent-types + domain)
+├── agentdash-spi      (re-export + Connector/Hook trait)
+└── agentdash-executor (RigBridge + rig-core LLM 调用)
 ```
 
 #### 分层职责
@@ -271,6 +281,8 @@ Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 | **Application** | `agentdash-application` | 用例编排：session plan / context / task / address space / story | domain, injection, executor, spi | ✅ 已填充 |
 | **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部库（仅 async-trait 等基础库） | ✅ |
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor`, `agentdash-relay` | Repository 实现、连接器、WebSocket 中继 | domain | ✅ |
+| **Agent Types** | `agentdash-agent-types` | 跨层共享的 Agent 类型（Message/Tool/Context/Delegate） | serde, async-trait, tokio-util | ✅ |
+| **Agent Engine** | `agentdash-agent` | Agent Loop 引擎、LlmBridge trait、内置工具 | agent-types, domain | ✅ |
 
 > Application 层（`agentdash-application`）已包含 session plan 构建、context contributor 框架、task 执行纯逻辑、address space 组装、story owner 编排等核心用例。API 层只保留请求解析→调用用例→映射 DTO 的协调职责。
 
@@ -278,8 +290,11 @@ Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 
 跨层 Hook Runtime 必须遵守以下目录/职责边界：
 
+- `agentdash-agent-types`
+  - 定义 `AgentRuntimeDelegate` trait、`ToolCallDecision`、`StopDecision` 等纯 runtime seam
+  - 定义 `AgentTool` trait、`AgentContext`、`ToolDefinition` 等跨层共享类型
 - `agentdash-agent`
-  - 只保留 `AgentRuntimeDelegate`、`ToolCallDecision`、`StopDecision` 等纯 runtime seam
+  - 仅依赖 `agentdash-agent-types` + `agentdash-domain`，不依赖 rig-core 或 agentdash-spi
   - 不直接访问 workflow/task/story/project/repository
 - `agentdash-executor`
   - 负责 `ExecutionHookProvider` port、`HookSessionRuntime`、`runtime_delegate.rs`
@@ -488,4 +503,24 @@ Workspace (1) ← (*) Task
 - Phase 6（SessionExecutor trait 解耦 application → executor）为延伸目标
 
 详见 `.trellis/tasks/03-27-api-god-module-decomposition/prd.md`。
+
+**2026-03-29: Agent 核心类型抽取与 LLM Bridge 下沉**
+
+将 `agentdash-agent` 从混合依赖（rig-core + agentdash-spi）重构为纯净 Agent Loop 引擎：
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| 1 | 创建 `agentdash-agent-types` crate（AgentMessage/AgentTool/Delegate 等共享类型） | ✅ |
+| 2 | `agentdash-spi` 改为 re-export agent-types，下游零破坏 | ✅ |
+| 3 | `agentdash-agent` 依赖瘦身：仅 agent-types + domain，移除 rig-core/spi | ✅ |
+| 4 | `RigBridge` + `convert.rs` 下沉到 `agentdash-executor/connectors/rig_bridge.rs` | ✅ |
+| 5 | 全量 check + clippy + test 通过 | ✅ |
+
+**关键设计决策**：
+- `AgentContext.tools` 改为 `Vec<ToolDefinition>`（仅 schema），Agent Loop 通过独立的 `tool_instances` 参数持有可执行实例
+- `AgentTool` trait 和 `AgentRuntimeDelegate` trait 放在 agent-types（允许 async-trait + tokio-util）
+- `LlmBridge` trait 留在 agent crate（是 Agent Loop 的 port），`RigBridge` 是 adapter 放在 executor
+- `BridgeRequest`/`BridgeResponse` 使用自有 `ToolDefinition` 和 `TokenUsage`，不引用任何 rig 类型
+
+详见 `.trellis/tasks/03-29-agent-types-extraction/prd.md`。
 <!-- PROJECT-SPECIFIC-END -->

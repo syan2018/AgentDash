@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use jsonschema::validator_for;
-use rig::completion::ToolDefinition;
 use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
@@ -32,11 +31,6 @@ use crate::types::{
 const DEFAULT_MAX_TURNS: usize = 25;
 
 // ─── 回调类型别名 ───────────────────────────────────────────
-
-/// 消息转换回调：AgentMessage[] → rig::Message[]
-/// 对齐 Pi `AgentLoopConfig.convertToLlm`
-pub type ConvertToLlmFn =
-    Arc<dyn Fn(&[AgentMessage]) -> Vec<rig::completion::Message> + Send + Sync>;
 
 /// 上下文变换回调：AgentMessage[] → AgentMessage[]
 /// 对齐 Pi `AgentLoopConfig.transformContext`
@@ -95,10 +89,6 @@ pub type AgentEventSink =
 pub struct AgentLoopConfig {
     pub max_turns: usize,
 
-    /// 消息格式转换：AgentMessage[] → LLM Message[]
-    /// 对齐 Pi `convertToLlm`。若为 None 则使用 `default_convert_to_llm`。
-    pub convert_to_llm: Option<ConvertToLlmFn>,
-
     /// 上下文变换管线（每次 LLM 调用前执行）
     /// 对齐 Pi `transformContext`：用于上下文裁剪、外部信息注入等。
     pub transform_context: Option<TransformContextFn>,
@@ -132,7 +122,6 @@ impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
             max_turns: DEFAULT_MAX_TURNS,
-            convert_to_llm: None,
             transform_context: None,
             get_steering_messages: None,
             get_follow_up_messages: None,
@@ -152,6 +141,7 @@ impl Default for AgentLoopConfig {
 pub async fn agent_loop(
     prompts: Vec<AgentMessage>,
     context: &mut AgentContext,
+    tool_instances: &[DynAgentTool],
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
     emit: &AgentEventSink,
@@ -177,13 +167,14 @@ pub async fn agent_loop(
         .await;
     }
     context.messages.extend(prompts);
-    run_loop(context, &mut new_messages, config, bridge, emit, &cancel).await
+    run_loop(context, tool_instances, &mut new_messages, config, bridge, emit, &cancel).await
 }
 
 /// 从当前上下文继续 Agent Loop（不添加新 prompt）
 /// 对齐 Pi `agentLoopContinue` / `runAgentLoopContinue`
 pub async fn agent_loop_continue(
     context: &mut AgentContext,
+    tool_instances: &[DynAgentTool],
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
     emit: &AgentEventSink,
@@ -206,7 +197,7 @@ pub async fn agent_loop_continue(
     let mut new_messages = Vec::new();
     emit_event(emit, AgentEvent::AgentStart).await;
     emit_event(emit, AgentEvent::TurnStart).await;
-    run_loop(context, &mut new_messages, config, bridge, emit, &cancel).await
+    run_loop(context, tool_instances, &mut new_messages, config, bridge, emit, &cancel).await
 }
 
 // ─── 主循环 ─────────────────────────────────────────────────
@@ -218,13 +209,13 @@ pub async fn agent_loop_continue(
 /// - 内循环：tool calls + steering 驱动（有工具调用或 pending 消息时继续）
 async fn run_loop(
     context: &mut AgentContext,
+    tool_instances: &[DynAgentTool],
     new_messages: &mut Vec<AgentMessage>,
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
     emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
-    let tool_definitions = build_tool_definitions(&context.tools);
     let mut turn_count: usize = 0;
     let mut first_turn = true;
     let mut pending_messages = poll_steering(config);
@@ -271,7 +262,7 @@ async fn run_loop(
             }
 
             let assistant_message =
-                stream_assistant_response(context, config, bridge, emit, &tool_definitions, cancel)
+                stream_assistant_response(context, config, bridge, emit, cancel)
                     .await?;
             new_messages.push(assistant_message.clone());
 
@@ -305,6 +296,7 @@ async fn run_loop(
             if has_more_tool_calls {
                 tool_results = execute_tool_calls(
                     context,
+                    tool_instances,
                     &assistant_message,
                     &tool_calls,
                     config,
@@ -507,9 +499,9 @@ async fn stream_assistant_response(
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
     emit: &AgentEventSink,
-    tool_definitions: &[ToolDefinition],
     cancel: &CancellationToken,
 ) -> Result<AgentMessage, AgentError> {
+    // delegate / transform_context 可在发送前裁剪或注入消息
     let messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
         delegate
             .transform_context(
@@ -527,17 +519,10 @@ async fn stream_assistant_response(
         context.messages.clone()
     };
 
-    let llm_messages = if let Some(ref convert) = config.convert_to_llm {
-        convert(&messages_for_llm)
-    } else {
-        crate::convert::default_convert_to_llm(&messages_for_llm)
-    };
-
     let request = BridgeRequest {
         system_prompt: Some(context.system_prompt.clone()),
-        messages: context.messages.clone(),
-        tools: tool_definitions.to_vec(),
-        llm_messages: Some(llm_messages),
+        messages: messages_for_llm,
+        tools: context.tools.clone(),
     };
 
     let mut partial = PartialAssistantState::new();
@@ -815,10 +800,7 @@ async fn stream_assistant_response(
                     })
                 }),
                 error_message,
-                usage: Some(crate::types::TokenUsage {
-                    input: response.usage.input_tokens,
-                    output: response.usage.output_tokens,
-                }),
+                usage: Some(response.usage.clone()),
                 timestamp: Some(crate::types::now_millis()),
             },
             other => other,
@@ -1007,6 +989,7 @@ fn compute_suffix(existing: &str, incoming: &str) -> String {
 /// 根据 `config.tool_execution` 分发到 sequential 或 parallel 实现。
 async fn execute_tool_calls(
     context: &AgentContext,
+    tool_instances: &[DynAgentTool],
     assistant_message: &AgentMessage,
     tool_calls: &[ToolCallInfo],
     config: &AgentLoopConfig,
@@ -1017,6 +1000,7 @@ async fn execute_tool_calls(
         ToolExecutionMode::Sequential => {
             execute_tool_calls_sequential(
                 context,
+                tool_instances,
                 assistant_message,
                 tool_calls,
                 config,
@@ -1028,6 +1012,7 @@ async fn execute_tool_calls(
         ToolExecutionMode::Parallel => {
             execute_tool_calls_parallel(
                 context,
+                tool_instances,
                 assistant_message,
                 tool_calls,
                 config,
@@ -1042,6 +1027,7 @@ async fn execute_tool_calls(
 /// 顺序执行 — 对齐 Pi `executeToolCallsSequential` (agent-loop.ts:350-388)
 async fn execute_tool_calls_sequential(
     context: &AgentContext,
+    tool_instances: &[DynAgentTool],
     assistant_message: &AgentMessage,
     tool_calls: &[ToolCallInfo],
     config: &AgentLoopConfig,
@@ -1061,7 +1047,7 @@ async fn execute_tool_calls_sequential(
         )
         .await;
 
-        let preparation = prepare_tool_call(context, assistant_message, tc, config, cancel).await;
+        let preparation = prepare_tool_call(context, tool_instances, assistant_message, tc, config, cancel).await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
@@ -1124,6 +1110,7 @@ async fn execute_tool_calls_sequential(
 /// 顺序 prepare → 并发 execute → 顺序 finalize + emit
 async fn execute_tool_calls_parallel(
     context: &AgentContext,
+    tool_instances: &[DynAgentTool],
     assistant_message: &AgentMessage,
     tool_calls: &[ToolCallInfo],
     config: &AgentLoopConfig,
@@ -1140,7 +1127,6 @@ async fn execute_tool_calls_parallel(
 
     let mut runnable: Vec<PreparedEntry> = Vec::new();
 
-    // Phase 1: 顺序 prepare
     for tc in tool_calls {
         emit_event(
             emit,
@@ -1152,7 +1138,7 @@ async fn execute_tool_calls_parallel(
         )
         .await;
 
-        let preparation = prepare_tool_call(context, assistant_message, tc, config, cancel).await;
+        let preparation = prepare_tool_call(context, tool_instances, assistant_message, tc, config, cancel).await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
@@ -1262,15 +1248,16 @@ struct ExecutedOutcome {
 
 /// Phase 1: prepare — 对齐 Pi `prepareToolCall` (agent-loop.ts:458-507)
 ///
-/// 查找工具 → beforeToolCall 钩子 → 返回 Prepared 或 Immediate
+/// 从 tool_instances 查找工具 → validate → delegate 钩子 → 返回 Prepared / Immediate
 async fn prepare_tool_call(
     context: &AgentContext,
+    tool_instances: &[DynAgentTool],
     assistant_message: &AgentMessage,
     tc: &ToolCallInfo,
     config: &AgentLoopConfig,
     cancel: &CancellationToken,
 ) -> ToolCallPreparation {
-    let tool = context.tools.iter().find(|t| t.name() == tc.name);
+    let tool = tool_instances.iter().find(|t| t.name() == tc.name);
     let tool = match tool {
         Some(t) => t.clone(),
         None => {
@@ -1364,7 +1351,6 @@ async fn prepare_tool_call(
         }
     }
 
-    // 对齐 Pi: beforeToolCall 钩子
     if let Some(ref hook) = config.before_tool_call {
         let ctx = BeforeToolCallContext {
             assistant_message,
@@ -1727,13 +1713,3 @@ fn poll_follow_up(config: &AgentLoopConfig) -> Vec<AgentMessage> {
         .unwrap_or_default()
 }
 
-fn build_tool_definitions(tools: &[DynAgentTool]) -> Vec<ToolDefinition> {
-    tools
-        .iter()
-        .map(|t| ToolDefinition {
-            name: t.name().to_string(),
-            description: t.description().to_string(),
-            parameters: t.parameters_schema(),
-        })
-        .collect()
-}

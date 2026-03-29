@@ -12,6 +12,7 @@ members = [
     "crates/agentdash-api",
     "crates/agentdash-acp-meta",
     "crates/agentdash-mcp",
+    "crates/agentdash-agent-types",
     "crates/agentdash-agent",
     "crates/agentdash-relay",
     "crates/agentdash-local",
@@ -65,6 +66,7 @@ agentdash-executor = { path = "crates/agentdash-executor", default-features = fa
 agentdash-first-party-plugins = { path = "crates/agentdash-first-party-plugins" }
 agentdash-acp-meta = { path = "crates/agentdash-acp-meta" }
 agentdash-mcp = { path = "crates/agentdash-mcp" }
+agentdash-agent-types = { path = "crates/agentdash-agent-types" }
 agentdash-agent = { path = "crates/agentdash-agent" }
 agentdash-relay = { path = "crates/agentdash-relay" }
 agentdash-local = { path = "crates/agentdash-local" }

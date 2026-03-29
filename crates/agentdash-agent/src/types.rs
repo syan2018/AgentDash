@@ -1,19 +1,16 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// ─── re-exports from connector-contract ─────────────────────
-// 生命周期 SPI 类型统一定义在 connector-contract/lifecycle.rs
+// ─── re-exports from agent-types ────────────────────────────
 
-pub use agentdash_spi::ThinkingLevel;
-pub use agentdash_spi::tool::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
-};
-pub use agentdash_spi::lifecycle::{
+pub use agentdash_domain::common::ThinkingLevel;
+pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
-    BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult,
-    DynAgentRuntimeDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
-    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
+    AgentTool, AgentToolError, AgentToolResult, BeforeStopInput, BeforeToolCallContext,
+    BeforeToolCallInput, BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool,
+    StopDecision, StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest,
+    ToolCallDecision, ToolCallInfo, ToolDefinition, ToolUpdateCallback, TransformContextInput,
     TransformContextOutput, TurnControlDecision, now_millis,
 };
 

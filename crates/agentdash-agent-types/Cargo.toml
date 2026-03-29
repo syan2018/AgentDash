@@ -1,0 +1,14 @@
+[package]
+name = "agentdash-agent-types"
+description = "AgentDash Agent 领域通用类型 — 消息、工具、上下文、委托接口"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }

@@ -10,11 +10,11 @@ use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
     AgentToolError, AgentToolResult, AssistantStreamEvent, BridgeError, BridgeRequest,
     BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopReason, ToolApprovalOutcome,
-    ToolCallInfo, agent_loop::AgentEventSink,
+    ToolCallInfo, ToolDefinition, agent_loop::AgentEventSink,
 };
+use agentdash_agent::types::TokenUsage;
 use async_trait::async_trait;
 use futures::Stream;
-use rig::completion::Usage;
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -115,7 +115,7 @@ fn bridge_response(message: AgentMessage) -> BridgeResponse {
     BridgeResponse {
         message,
         raw_content: vec![],
-        usage: Usage::default(),
+        usage: TokenUsage::default(),
     }
 }
 
@@ -185,9 +185,11 @@ async fn agent_loop_emits_prompt_before_assistant_and_returns_new_messages() {
         tools: vec![],
     };
 
+    let tool_instances: Vec<DynAgentTool> = vec![];
     let new_messages = agentdash_agent::agent_loop::agent_loop(
         vec![AgentMessage::user("hello")],
         &mut context,
+        &tool_instances,
         &AgentLoopConfig::default(),
         &bridge,
         &sink,
@@ -367,10 +369,11 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
             bridge_response(assistant_text("done")),
         ))],
     ]);
+    let tool_instances: Vec<DynAgentTool> = vec![tool.clone()];
     let mut context = AgentContext {
         system_prompt: String::new(),
         messages: vec![],
-        tools: vec![tool],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
     };
     let before_calls_clone = before_calls.clone();
     let config = AgentLoopConfig {
@@ -387,6 +390,7 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
     let new_messages = agentdash_agent::agent_loop::agent_loop(
         vec![AgentMessage::user("run tool")],
         &mut context,
+        &tool_instances,
         &config,
         &bridge,
         &collecting_sink(Arc::new(Mutex::new(Vec::new()))),
@@ -520,10 +524,11 @@ async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
             bridge_response(assistant_text("收到拒绝，改走别的方案")),
         ))],
     ]);
+    let tool_instances: Vec<DynAgentTool> = vec![tool.clone()];
     let mut context = AgentContext {
         system_prompt: String::new(),
         messages: vec![],
-        tools: vec![tool],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
     };
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = collecting_sink(events.clone());
@@ -550,6 +555,7 @@ async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
         agentdash_agent::agent_loop::agent_loop(
             vec![AgentMessage::user("run tool")],
             &mut context,
+            &tool_instances,
             &config,
             &bridge,
             &sink,

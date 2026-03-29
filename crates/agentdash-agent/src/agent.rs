@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::{
     self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, AwaitToolApprovalFn, BeforeToolCallFn,
-    ConvertToLlmFn, TransformContextFn,
+    TransformContextFn,
 };
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
@@ -54,9 +54,6 @@ pub struct AgentConfig {
     /// 思考/推理级别 — 对齐 Pi `AgentState.thinkingLevel`
     pub thinking_level: ThinkingLevel,
 
-    /// 消息格式转换回调
-    pub convert_to_llm: Option<ConvertToLlmFn>,
-
     /// 上下文变换管线
     pub transform_context: Option<TransformContextFn>,
 
@@ -85,7 +82,6 @@ impl Default for AgentConfig {
             system_prompt: String::new(),
             max_turns: 25,
             thinking_level: ThinkingLevel::default(),
-            convert_to_llm: None,
             transform_context: None,
             steering_mode: QueueMode::default(),
             follow_up_mode: QueueMode::default(),
@@ -434,8 +430,7 @@ impl Agent {
             Arc::new(AtomicBool::new(options.skip_initial_steering_poll));
 
         // 从 state 中取出构建 context 所需数据
-        let (system_prompt, messages, tools) = {
-            // 同步获取 — run_loop 在非 async 上下文调用
+        let (system_prompt, messages, tool_instances) = {
             let s = self
                 .state
                 .try_lock()
@@ -443,22 +438,24 @@ impl Agent {
             (s.system_prompt.clone(), s.messages.clone(), s.tools.clone())
         };
 
-        // 标记为 streaming
         if let Ok(mut s) = self.state.try_lock() {
             s.is_streaming = true;
             s.stream_message = None;
             s.error = None;
         }
 
+        let tool_definitions = tool_instances
+            .iter()
+            .map(|t| crate::types::ToolDefinition::from_tool(t.as_ref()))
+            .collect();
         let mut context = AgentContext {
             system_prompt,
             messages,
-            tools,
+            tools: tool_definitions,
         };
 
         let config = AgentLoopConfig {
             max_turns: self.config.max_turns,
-            convert_to_llm: self.config.convert_to_llm.clone(),
             transform_context: self.config.transform_context.clone(),
             tool_execution: self.config.tool_execution,
             before_tool_call: self.config.before_tool_call.clone(),
@@ -482,6 +479,7 @@ impl Agent {
                     agent_loop::agent_loop(
                         prompts,
                         &mut context,
+                        &tool_instances,
                         &config,
                         bridge.as_ref(),
                         &event_sink,
@@ -492,6 +490,7 @@ impl Agent {
                 None => {
                     agent_loop::agent_loop_continue(
                         &mut context,
+                        &tool_instances,
                         &config,
                         bridge.as_ref(),
                         &event_sink,

@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use agentdash_agent::{LlmBridge, RigBridge};
+use agentdash_agent::LlmBridge;
+use super::rig_bridge::RigBridge;
 use agentdash_domain::settings::{SettingScope, SettingsRepository};
 use futures::future::BoxFuture;
 use rig::client::CompletionClient as _;

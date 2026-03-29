@@ -13,7 +13,8 @@ pub use connector::{
     content_block_to_text,
 };
 pub use tool::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
+    ToolUpdateCallback,
 };
 pub use lifecycle::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,

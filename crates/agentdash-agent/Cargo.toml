@@ -1,15 +1,14 @@
 [package]
 name = "agentdash-agent"
-description = "Pi Agent 框架 — 基于 Rig 的 Agent Runtime SDK"
+description = "Pi Agent 框架 — 纯净 Agent Loop 引擎"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# 跨层工具合同（AgentTool SPI）
-agentdash-spi = { workspace = true }
-
-# Rig 核心（LLM 能力层）
-rig-core = { workspace = true }
+# Agent 领域核心类型
+agentdash-agent-types = { workspace = true }
+# ThinkingLevel 等 domain 层枚举
+agentdash-domain = { workspace = true }
 
 # 异步运行时
 tokio = { workspace = true }

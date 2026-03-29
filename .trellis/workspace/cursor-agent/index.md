@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-03-28
+- **Total Sessions**: 10
+- **Last Active**: 2026-03-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~453 | Active |
+| `journal-1.md` | ~485 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 10 | 2026-03-29 | Task/Session 运行时解耦与 Workflow Binding 收口 | `f99b8a2` |
 | 9 | 2026-03-28 | Backend Structural Refactoring: 5 Tasks Complete | `948dc5d`, `17af975`, `3717d73`, `a3b9b42`, `ca16a0a`, `e0d7390` |
 | 8 | 2026-03-28 | Architecture Closure: M1-M5 + S1-S2 Complete + README | `03e8dcd`, `b8b069b`, `78807f2`, `ce9cabe`, `b9963da` |
 | 7 | 2026-03-25 | Project Workspace Backend 重构收口 | `c5da82f` |

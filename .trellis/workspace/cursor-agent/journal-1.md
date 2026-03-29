@@ -451,3 +451,35 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Task/Session 运行时解耦与 Workflow Binding 收口
+
+**Date**: 2026-03-29
+**Task**: Task/Session 运行时解耦与 Workflow Binding 收口
+
+### Summary
+
+完成 Task/Session 运行职责解耦第一阶段，实现 task session runtime inputs 单一来源、hook/workflow 去 task-specific 运行时语义，并统一 workflow binding 命名口径。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f99b8a2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

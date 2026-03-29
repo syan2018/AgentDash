@@ -328,11 +328,10 @@ pub async fn list_project_sessions(
             let execution_status = execution_state_to_str(status_map.get(&pb.binding.session_id));
 
             // 状态过滤
-            if let Some(filter) = &status_filter {
-                if !filter.contains(&execution_status.to_string()) {
+            if let Some(filter) = &status_filter
+                && !filter.contains(&execution_status.to_string()) {
                     return None;
                 }
-            }
 
             let parent_session_id = meta
                 .companion_context

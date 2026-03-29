@@ -788,42 +788,44 @@ pub(super) fn extract_payload_string_list(payload: Option<&serde_json::Value>, k
         .collect()
 }
 
-pub(super) fn build_subagent_result_context(
-    subagent_type: &str,
-    summary: &str,
-    status: &str,
-    dispatch_id: &str,
-    companion_session_id: &str,
-    findings: &[String],
-    follow_ups: &[String],
-    artifact_refs: &[String],
-    is_blocking: bool,
-) -> String {
-    let mut sections = vec![if is_blocking {
+pub(super) struct SubagentResult<'a> {
+    pub subagent_type: &'a str,
+    pub summary: &'a str,
+    pub status: &'a str,
+    pub dispatch_id: &'a str,
+    pub companion_session_id: &'a str,
+    pub findings: &'a [String],
+    pub follow_ups: &'a [String],
+    pub artifact_refs: &'a [String],
+    pub is_blocking: bool,
+}
+
+pub(super) fn build_subagent_result_context(r: &SubagentResult<'_>) -> String {
+    let mut sections = vec![if r.is_blocking {
         "## Companion Blocking Review".to_string()
     } else {
         "## Companion Follow-up".to_string()
     }];
-    sections.push(format!("- 类型: {subagent_type}"));
-    sections.push(format!("- status: {status}"));
-    sections.push(format!("- dispatch_id: {dispatch_id}"));
-    sections.push(format!("- companion_session_id: {companion_session_id}"));
-    sections.push(format!("- 摘要: {summary}"));
+    sections.push(format!("- 类型: {}", r.subagent_type));
+    sections.push(format!("- status: {}", r.status));
+    sections.push(format!("- dispatch_id: {}", r.dispatch_id));
+    sections.push(format!("- companion_session_id: {}", r.companion_session_id));
+    sections.push(format!("- 摘要: {}", r.summary));
 
-    if !findings.is_empty() {
+    if !r.findings.is_empty() {
         sections.push("\n### 关键发现".to_string());
-        sections.extend(findings.iter().map(|item| format!("- {item}")));
+        sections.extend(r.findings.iter().map(|item| format!("- {item}")));
     }
-    if !follow_ups.is_empty() {
+    if !r.follow_ups.is_empty() {
         sections.push("\n### 建议后续动作".to_string());
-        sections.extend(follow_ups.iter().map(|item| format!("- {item}")));
+        sections.extend(r.follow_ups.iter().map(|item| format!("- {item}")));
     }
-    if !artifact_refs.is_empty() {
+    if !r.artifact_refs.is_empty() {
         sections.push("\n### 相关产物".to_string());
-        sections.extend(artifact_refs.iter().map(|item| format!("- {item}")));
+        sections.extend(r.artifact_refs.iter().map(|item| format!("- {item}")));
     }
 
-    sections.push(if is_blocking {
+    sections.push(if r.is_blocking {
         "\n请先明确这份 companion 结果如何被主 session 采纳、拒绝或拆解，不要直接忽略后继续结束本轮。"
             .to_string()
     } else {

@@ -1,0 +1,112 @@
+use std::path::PathBuf;
+
+use agent_client_protocol::SessionNotification;
+
+use super::types::SessionMeta;
+
+#[derive(Clone)]
+pub(super) struct SessionStore {
+    base_dir: PathBuf,
+}
+
+impl SessionStore {
+    pub fn new(base_dir: PathBuf) -> Self {
+        Self { base_dir }
+    }
+
+    fn jsonl_path(&self, session_id: &str) -> PathBuf {
+        self.base_dir.join(format!("{session_id}.jsonl"))
+    }
+
+    fn meta_path(&self, session_id: &str) -> PathBuf {
+        self.base_dir.join(format!("{session_id}.meta.json"))
+    }
+
+    pub async fn write_meta(&self, meta: &SessionMeta) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(&self.base_dir).await?;
+        let path = self.meta_path(&meta.id);
+        let json = serde_json::to_string_pretty(meta).unwrap_or_else(|_| "{}".into());
+        tokio::fs::write(path, json).await
+    }
+
+    pub async fn read_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
+        let path = self.meta_path(session_id);
+        match tokio::fs::read_to_string(path).await {
+            Ok(content) => {
+                let meta = serde_json::from_str::<SessionMeta>(&content)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                Ok(Some(meta))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn list_sessions(&self) -> std::io::Result<Vec<SessionMeta>> {
+        let mut entries = match tokio::fs::read_dir(&self.base_dir).await {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+
+        let mut sessions = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.ends_with(".meta.json") {
+                continue;
+            }
+            let content = tokio::fs::read_to_string(entry.path()).await?;
+            if let Ok(meta) = serde_json::from_str::<SessionMeta>(&content) {
+                sessions.push(meta);
+            }
+        }
+
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
+        Ok(sessions)
+    }
+
+    pub async fn delete(&self, session_id: &str) -> std::io::Result<()> {
+        let jsonl = self.jsonl_path(session_id);
+        let meta = self.meta_path(session_id);
+        let _ = tokio::fs::remove_file(jsonl).await;
+        let _ = tokio::fs::remove_file(meta).await;
+        Ok(())
+    }
+
+    pub async fn append(&self, session_id: &str, n: &SessionNotification) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(&self.base_dir).await?;
+        let path = self.jsonl_path(session_id);
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        let line = serde_json::to_string(n).unwrap_or_else(|_| "{}".to_string());
+        use tokio::io::AsyncWriteExt as _;
+        file.write_all(line.as_bytes()).await?;
+        file.write_all(b"\n").await?;
+        Ok(())
+    }
+
+    pub async fn read_all(&self, session_id: &str) -> std::io::Result<Vec<SessionNotification>> {
+        let path = self.jsonl_path(session_id);
+        let content = match tokio::fs::read_to_string(path).await {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+
+        let mut out = Vec::new();
+        for line in content.lines() {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if let Ok(n) = serde_json::from_str::<SessionNotification>(t) {
+                out.push(n);
+            }
+        }
+        Ok(out)
+    }
+}

@@ -359,8 +359,8 @@ impl ContextContributor for InstructionContributor {
             content: format!("## Instruction\n{rendered}"),
         });
 
-        if input.phase == TaskExecutionPhase::Continue {
-            if let Some(additional) = clean_text(input.additional_prompt) {
+        if input.phase == TaskExecutionPhase::Continue
+            && let Some(additional) = clean_text(input.additional_prompt) {
                 fragments.push(ContextFragment {
                     slot: "instruction",
                     label: "user_additional_prompt",
@@ -369,7 +369,6 @@ impl ContextContributor for InstructionContributor {
                     content: format!("## Additional Prompt\n{additional}"),
                 });
             }
-        }
 
         Contribution::fragments_only(fragments)
     }

@@ -179,6 +179,6 @@
 
 ### 遗留建议（下一轮优化）
 
-1. **SessionHub 进一步拆分**：`hub.rs` 仍有 1787 行，可继续拆分为 `store.rs`、`prompt.rs`、`event_pipeline.rs`、`hook_bridge.rs`
+1. ~~**SessionHub 进一步拆分**~~：✅ 已在 03-29 完成（拆出 `hub_support.rs`、`session_store.rs`）
 2. **address_space_access shim 清理**：`api/address_space_access/` 下仍有多个 `pub use application::...` 的 shim 文件
-3. **预存 clippy lint 修复**：`collapsible_if`、`too_many_arguments`、`type_complexity` 等
+3. ~~**预存 clippy lint 修复**~~：✅ 已在 03-29 完成（参数结构体重构，零 crate 级 allow）

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use futures::stream::BoxStream;
 
-use crate::connector::{
+use agentdash_connector_contract::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
     ExecutionStream, AgentInfo, PromptPayload,
 };

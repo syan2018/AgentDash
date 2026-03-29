@@ -9,6 +9,15 @@ use std::time::Duration;
 
 use agentdash_relay::{FileEntryRelay, SearchHit};
 
+pub(crate) struct SearchParams<'a> {
+    pub query: &'a str,
+    pub path: Option<&'a str>,
+    pub is_regex: bool,
+    pub include_glob: Option<&'a str>,
+    pub max_results: usize,
+    pub context_lines: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolExecutor {
     accessible_roots: Vec<PathBuf>,
@@ -52,11 +61,10 @@ impl ToolExecutor {
         }
 
         for root in &self.accessible_roots {
-            if let Ok(root_canonical) = std::fs::canonicalize(root) {
-                if canonical.starts_with(&root_canonical) {
+            if let Ok(root_canonical) = std::fs::canonicalize(root)
+                && canonical.starts_with(&root_canonical) {
                     return Ok(canonical);
                 }
-            }
         }
 
         Err(ToolError::PathNotAccessible(workspace_root.to_string()))
@@ -189,27 +197,20 @@ impl ToolExecutor {
         );
 
         let glob_matcher = pattern
-            .map(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()))
-            .flatten();
+            .and_then(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()));
 
         let mut entries = Vec::new();
         collect_entries(&base, &ws, &glob_matcher, recursive, &mut entries).await?;
         Ok(entries)
     }
 
-    /// 文本内容搜索，优先使用 ripgrep，不可用时走逐文件 fallback
     pub async fn search(
         &self,
         workspace_root: &str,
-        query: &str,
-        path: Option<&str>,
-        is_regex: bool,
-        include_glob: Option<&str>,
-        max_results: usize,
-        context_lines: usize,
+        params: &SearchParams<'_>,
     ) -> Result<(Vec<SearchHit>, bool), ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
-        let search_dir = match path {
+        let search_dir = match params.path {
             Some(p) if !p.trim().is_empty() && p.trim() != "." => {
                 resolve_existing_path_with_root(&ws, p)?
             }
@@ -217,28 +218,10 @@ impl ToolExecutor {
         };
 
         if let Some(rg) = detect_ripgrep().await {
-            return run_ripgrep(
-                &rg,
-                &search_dir,
-                &ws,
-                query,
-                is_regex,
-                include_glob,
-                max_results,
-                context_lines,
-            )
-            .await;
+            return run_ripgrep(&rg, &search_dir, &ws, params).await;
         }
 
-        fallback_search(
-            &ws,
-            &search_dir,
-            query,
-            is_regex,
-            max_results,
-            context_lines,
-        )
-        .await
+        fallback_search(&ws, &search_dir, params).await
     }
 }
 
@@ -256,15 +239,13 @@ async fn detect_ripgrep() -> Option<PathBuf> {
                 .stderr(std::process::Stdio::null())
                 .output()
                 .await
-        {
-            if output.status.success() {
+            && output.status.success() {
                 let path_str = String::from_utf8_lossy(&output.stdout);
                 let first_line = path_str.lines().next().unwrap_or("").trim();
                 if !first_line.is_empty() {
                     return Some(PathBuf::from(first_line));
                 }
             }
-        }
     }
     None
 }
@@ -273,28 +254,24 @@ async fn run_ripgrep(
     rg_path: &Path,
     search_dir: &Path,
     workspace_root: &Path,
-    query: &str,
-    is_regex: bool,
-    include_glob: Option<&str>,
-    max_results: usize,
-    context_lines: usize,
+    params: &SearchParams<'_>,
 ) -> Result<(Vec<SearchHit>, bool), ToolError> {
     let mut cmd = tokio::process::Command::new(rg_path);
     cmd.arg("--json")
         .arg("--max-count")
-        .arg(max_results.to_string());
+        .arg(params.max_results.to_string());
 
-    if context_lines > 0 {
-        cmd.arg("-C").arg(context_lines.to_string());
+    if params.context_lines > 0 {
+        cmd.arg("-C").arg(params.context_lines.to_string());
     }
-    if !is_regex {
+    if !params.is_regex {
         cmd.arg("--fixed-strings");
     }
-    if let Some(glob) = include_glob {
+    if let Some(glob) = params.include_glob {
         cmd.arg("--glob").arg(glob);
     }
 
-    cmd.arg("--").arg(query).arg(search_dir);
+    cmd.arg("--").arg(params.query).arg(search_dir);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -355,7 +332,7 @@ async fn run_ripgrep(
             context_after: Vec::new(),
         });
 
-        if hits.len() >= max_results {
+        if hits.len() >= params.max_results {
             truncated = true;
             break;
         }
@@ -364,19 +341,15 @@ async fn run_ripgrep(
     Ok((hits, truncated))
 }
 
-/// rg 不可用时的逐文件搜索 fallback
 async fn fallback_search(
     workspace_root: &Path,
     search_dir: &Path,
-    query: &str,
-    is_regex: bool,
-    max_results: usize,
-    context_lines: usize,
+    params: &SearchParams<'_>,
 ) -> Result<(Vec<SearchHit>, bool), ToolError> {
     let ws = workspace_root.to_path_buf();
     let dir = search_dir.to_path_buf();
-    let query = query.to_string();
-    let regex = if is_regex {
+    let query = params.query.to_string();
+    let regex = if params.is_regex {
         Some(
             regex::Regex::new(&query)
                 .map_err(|e| ToolError::InvalidPath(format!("无效正则: {e}")))?,
@@ -384,21 +357,21 @@ async fn fallback_search(
     } else {
         None
     };
+    let max_results = params.max_results;
+    let context_lines = params.context_lines;
 
     tokio::task::spawn_blocking(move || {
-        let mut hits = Vec::new();
-        let mut truncated = false;
-        fallback_walk(
-            &ws,
-            &dir,
-            &query,
-            regex.as_ref(),
+        let mut collector = FallbackCollector {
+            workspace_root: &ws,
+            query: &query,
+            regex: regex.as_ref(),
             max_results,
             context_lines,
-            &mut hits,
-            &mut truncated,
-        );
-        Ok((hits, truncated))
+            hits: Vec::new(),
+            truncated: false,
+        };
+        collector.walk(&dir);
+        Ok((collector.hits, collector.truncated))
     })
     .await
     .map_err(|e| ToolError::Io(std::io::Error::other(e)))?
@@ -416,100 +389,98 @@ const FALLBACK_SKIP_DIRS: &[&str] = &[
     ".venv",
 ];
 
-fn fallback_walk(
-    workspace_root: &Path,
-    dir: &Path,
-    query: &str,
-    regex: Option<&regex::Regex>,
+struct FallbackCollector<'a> {
+    workspace_root: &'a Path,
+    query: &'a str,
+    regex: Option<&'a regex::Regex>,
     max_results: usize,
     context_lines: usize,
-    hits: &mut Vec<SearchHit>,
-    truncated: &mut bool,
-) {
-    if hits.len() >= max_results {
-        *truncated = true;
-        return;
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        if hits.len() >= max_results {
-            *truncated = true;
+    hits: Vec<SearchHit>,
+    truncated: bool,
+}
+
+impl FallbackCollector<'_> {
+    fn walk(&mut self, dir: &Path) {
+        if self.hits.len() >= self.max_results {
+            self.truncated = true;
             return;
         }
-        let ft = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
         };
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-
-        if ft.is_dir() {
-            if FALLBACK_SKIP_DIRS.contains(&name_str.as_ref()) {
-                continue;
+        for entry in entries.flatten() {
+            if self.hits.len() >= self.max_results {
+                self.truncated = true;
+                return;
             }
-            fallback_walk(
-                workspace_root,
-                &entry.path(),
-                query,
-                regex,
-                max_results,
-                context_lines,
-                hits,
-                truncated,
-            );
-        } else if ft.is_file() {
-            let meta = match entry.metadata() {
-                Ok(m) => m,
+            let ft = match entry.file_type() {
+                Ok(ft) => ft,
                 Err(_) => continue,
             };
-            if meta.len() > FALLBACK_MAX_FILE_BYTES {
-                continue;
-            }
-            let content = match std::fs::read_to_string(entry.path()) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let lines: Vec<&str> = content.lines().collect();
-            let rel = entry
-                .path()
-                .strip_prefix(workspace_root)
-                .unwrap_or(&entry.path())
-                .to_string_lossy()
-                .replace('\\', "/");
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
 
-            for (idx, line) in lines.iter().enumerate() {
-                let matched = match &regex {
-                    Some(re) => re.is_match(line),
-                    None => line.contains(query),
+            if ft.is_dir() {
+                if FALLBACK_SKIP_DIRS.contains(&name_str.as_ref()) {
+                    continue;
+                }
+                self.walk(&entry.path());
+            } else if ft.is_file() {
+                self.scan_file(&entry);
+            }
+        }
+    }
+
+    fn scan_file(&mut self, entry: &std::fs::DirEntry) {
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        if meta.len() > FALLBACK_MAX_FILE_BYTES {
+            return;
+        }
+        let content = match std::fs::read_to_string(entry.path()) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let lines: Vec<&str> = content.lines().collect();
+        let rel = entry
+            .path()
+            .strip_prefix(self.workspace_root)
+            .unwrap_or(&entry.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        for (idx, line) in lines.iter().enumerate() {
+            let matched = match &self.regex {
+                Some(re) => re.is_match(line),
+                None => line.contains(self.query),
+            };
+            if matched {
+                let ctx_before: Vec<String> = if self.context_lines > 0 {
+                    let start = idx.saturating_sub(self.context_lines);
+                    lines[start..idx].iter().map(|s| s.to_string()).collect()
+                } else {
+                    Vec::new()
                 };
-                if matched {
-                    let ctx_before: Vec<String> = if context_lines > 0 {
-                        let start = idx.saturating_sub(context_lines);
-                        lines[start..idx].iter().map(|s| s.to_string()).collect()
-                    } else {
-                        Vec::new()
-                    };
-                    let ctx_after: Vec<String> = if context_lines > 0 {
-                        let end = (idx + 1 + context_lines).min(lines.len());
-                        lines[idx + 1..end].iter().map(|s| s.to_string()).collect()
-                    } else {
-                        Vec::new()
-                    };
+                let ctx_after: Vec<String> = if self.context_lines > 0 {
+                    let end = (idx + 1 + self.context_lines).min(lines.len());
+                    lines[idx + 1..end].iter().map(|s| s.to_string()).collect()
+                } else {
+                    Vec::new()
+                };
 
-                    hits.push(SearchHit {
-                        path: rel.clone(),
-                        line_number: idx + 1,
-                        content: line.to_string(),
-                        context_before: ctx_before,
-                        context_after: ctx_after,
-                    });
-                    if hits.len() >= max_results {
-                        *truncated = true;
-                        return;
-                    }
+                self.hits.push(SearchHit {
+                    path: rel.clone(),
+                    line_number: idx + 1,
+                    content: line.to_string(),
+                    context_before: ctx_before,
+                    context_after: ctx_after,
+                });
+                if self.hits.len() >= self.max_results {
+                    self.truncated = true;
+                    return;
                 }
             }
         }

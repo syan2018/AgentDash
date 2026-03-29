@@ -195,14 +195,16 @@ impl AppState {
 
         if let Some(pi_connector) = build_pi_agent_connector(
             &workspace_root,
-            settings_repo.clone(),
-            address_space_service.clone(),
-            session_binding_repo.clone(),
-            workflow_repo.clone(),
-            workflow_repo.clone(),
-            workflow_repo.clone(),
-            session_hub_handle.clone(),
-            Some(inline_persister),
+            PiAgentConnectorDeps {
+                settings_repo: settings_repo.clone(),
+                address_space_service: address_space_service.clone(),
+                session_binding_repo: session_binding_repo.clone(),
+                workflow_definition_repo: workflow_repo.clone(),
+                lifecycle_definition_repo: workflow_repo.clone(),
+                lifecycle_run_repo: workflow_repo.clone(),
+                session_hub_handle: session_hub_handle.clone(),
+                inline_persister: Some(inline_persister),
+            },
         )
         .await
         {
@@ -263,8 +265,8 @@ impl AppState {
             address_space_registry.register(provider);
         }
 
-        let deferred_dispatcher = crate::bootstrap::turn_dispatcher::DeferredTurnDispatcher::new();
         let contributor_registry = Arc::new(ContextContributorRegistry::with_builtins());
+        let remote_sessions = Arc::new(RwLock::new(HashMap::new()));
 
         let repos = RepositorySet {
             project_repo,
@@ -283,6 +285,14 @@ impl AppState {
             lifecycle_run_repo: workflow_repo,
         };
 
+        let dispatcher = crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(
+            session_hub.clone(),
+            backend_registry.clone(),
+            repos.clone(),
+            restart_tracker.clone(),
+            remote_sessions.clone(),
+        );
+
         let task_lifecycle_service = Arc::new(TaskLifecycleService {
             repos: repos.clone(),
             hub: session_hub.clone(),
@@ -290,7 +300,7 @@ impl AppState {
             contributor_registry: contributor_registry.clone(),
             mcp_base_url: mcp_base_url.clone(),
             backend_availability: backend_registry.clone(),
-            dispatcher: deferred_dispatcher.clone(),
+            dispatcher: dispatcher.clone(),
             restart_tracker: restart_tracker.clone(),
             lock_map: lock_map.clone(),
         });
@@ -315,12 +325,12 @@ impl AppState {
                 mcp_base_url,
                 auth_mode,
             },
-            remote_sessions: Arc::new(RwLock::new(HashMap::new())),
+            remote_sessions,
             auth_provider: plugin_registration.auth_provider,
         };
 
         let state = Arc::new(state);
-        deferred_dispatcher.bind(state.clone());
+        dispatcher.set_retry_service(state.services.task_lifecycle_service.clone());
 
         Ok(state)
     }
@@ -336,9 +346,7 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
     }
 }
 
-/// 尝试构建 PiAgentConnector，委托给 executor 层的 factory 后附加 runtime tool provider。
-async fn build_pi_agent_connector(
-    workspace_root: &std::path::Path,
+struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     address_space_service: Arc<RelayAddressSpaceService>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
@@ -347,21 +355,26 @@ async fn build_pi_agent_connector(
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn crate::address_space_access::InlineContentPersister>>,
+}
+
+async fn build_pi_agent_connector(
+    workspace_root: &std::path::Path,
+    deps: PiAgentConnectorDeps,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
         workspace_root,
-        settings_repo.as_ref(),
+        deps.settings_repo.as_ref(),
     )
     .await?;
-    connector.set_settings_repository(settings_repo);
+    connector.set_settings_repository(deps.settings_repo);
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
-        address_space_service,
-        session_binding_repo,
-        workflow_definition_repo,
-        lifecycle_definition_repo,
-        lifecycle_run_repo,
-        session_hub_handle,
-        inline_persister,
+        deps.address_space_service,
+        deps.session_binding_repo,
+        deps.workflow_definition_repo,
+        deps.lifecycle_definition_repo,
+        deps.lifecycle_run_repo,
+        deps.session_hub_handle,
+        deps.inline_persister,
     )));
     Some(connector)
 }

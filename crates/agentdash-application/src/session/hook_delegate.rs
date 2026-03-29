@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use agentdash_connector_contract::lifecycle::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
-    AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, StopDecision, ToolCallDecision,
+    AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, DynAgentRuntimeDelegate,
+    StopDecision, ToolCallDecision,
     TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use agentdash_connector_contract::hooks::{
@@ -17,23 +17,12 @@ use agentdash_connector_contract::hooks::{
 
 pub struct HookRuntimeDelegate {
     hook_session: SharedHookSessionRuntime,
-    trace_event_tx: Option<UnboundedSender<HookTraceEntry>>,
 }
 
 impl HookRuntimeDelegate {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(hook_session: SharedHookSessionRuntime) -> Arc<dyn AgentRuntimeDelegate> {
-        Self::new_with_trace_events(hook_session, None)
-    }
-
-    pub fn new_with_trace_events(
-        hook_session: SharedHookSessionRuntime,
-        trace_event_tx: Option<UnboundedSender<HookTraceEntry>>,
-    ) -> Arc<dyn AgentRuntimeDelegate> {
-        Arc::new(Self {
-            hook_session,
-            trace_event_tx,
-        })
+    pub fn new(hook_session: SharedHookSessionRuntime) -> DynAgentRuntimeDelegate {
+        Arc::new(Self { hook_session })
     }
 
     async fn evaluate(
@@ -102,10 +91,7 @@ impl HookRuntimeDelegate {
             completion: evaluated.resolution.completion.clone(),
             diagnostics: evaluated.resolution.diagnostics.clone(),
         };
-        self.hook_session.append_trace(trace.clone());
-        if let Some(sender) = &self.trace_event_tx {
-            let _ = sender.send(trace);
-        }
+        self.hook_session.append_trace(trace);
     }
 }
 

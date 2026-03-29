@@ -7,7 +7,8 @@ use agentdash_connector_contract::{
 
 use super::snapshot_helpers::*;
 use super::{
-    build_subagent_result_context, extract_payload_str, extract_payload_string_list, extract_tool_arg,
+    SubagentResult, build_subagent_result_context, extract_payload_str,
+    extract_payload_string_list, extract_tool_arg,
     global_builtin_sources, is_report_workflow_artifact_tool, is_update_task_status_tool,
     shell_exec_rewritten_args, tool_call_failed,
 };
@@ -554,17 +555,17 @@ pub(crate) fn rule_apply_subagent_result(ctx: &HookEvaluationContext<'_>, resolu
                 } else {
                     "subagent_follow_up_required".to_string()
                 },
-                content: build_subagent_result_context(
+                content: build_subagent_result_context(&SubagentResult {
                     subagent_type,
                     summary,
                     status,
                     dispatch_id,
                     companion_session_id,
-                    &findings,
-                    &follow_ups,
-                    &artifact_refs,
+                    findings: &findings,
+                    follow_ups: &follow_ups,
+                    artifact_refs: &artifact_refs,
                     is_blocking,
-                ),
+                }),
                 source_summary: active_workflow_source_summary(ctx.snapshot),
                 source_refs: active_workflow_source_refs(ctx.snapshot),
             });

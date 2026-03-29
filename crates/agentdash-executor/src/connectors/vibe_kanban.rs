@@ -21,12 +21,10 @@ use executors::{
     profile::ExecutorConfigs,
 };
 
-use crate::{
-    adapters::normalized_to_acp::NormalizedToAcpConverter,
-    connector::{
-        AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-        ExecutionStream, AgentInfo, PromptPayload,
-    },
+use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
+use agentdash_connector_contract::{
+    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
+    ExecutionStream, AgentInfo, PromptPayload,
 };
 
 pub struct VibeKanbanExecutorsConnector {
@@ -182,7 +180,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             ));
         }
 
-        let vk_config = crate::connector::to_vibe_kanban_config(&context.executor_config)
+        let vk_config = crate::adapters::vibe_kanban_config::to_vibe_kanban_config(&context.executor_config)
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(format!(
                     "执行器 '{}' 不是有效的 vibe-kanban 执行器",

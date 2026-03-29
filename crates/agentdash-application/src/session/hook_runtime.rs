@@ -10,6 +10,9 @@ use agentdash_connector_contract::hooks::{
     SessionHookRefreshQuery, SessionHookSnapshot, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
+use tokio::sync::broadcast;
+
+const TRACE_BROADCAST_CAPACITY: usize = 128;
 
 pub struct HookSessionRuntime {
     session_id: String,
@@ -20,6 +23,7 @@ pub struct HookSessionRuntime {
     pending_actions: RwLock<Vec<HookPendingAction>>,
     revision: AtomicU64,
     trace_sequence: AtomicU64,
+    trace_broadcast: broadcast::Sender<HookTraceEntry>,
 }
 
 impl std::fmt::Debug for HookSessionRuntime {
@@ -41,6 +45,7 @@ impl HookSessionRuntime {
         snapshot: SessionHookSnapshot,
     ) -> Self {
         let diagnostics = snapshot.diagnostics.clone();
+        let (trace_broadcast, _) = broadcast::channel(TRACE_BROADCAST_CAPACITY);
         Self {
             session_id,
             provider,
@@ -50,6 +55,7 @@ impl HookSessionRuntime {
             pending_actions: RwLock::new(Vec::new()),
             revision: AtomicU64::new(1),
             trace_sequence: AtomicU64::new(0),
+            trace_broadcast,
         }
     }
 
@@ -226,11 +232,17 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
 
     fn append_trace(&self, trace: HookTraceEntry) {
         let mut guard = self.trace.write().expect("hook trace write lock poisoned");
-        guard.push(trace);
+        guard.push(trace.clone());
         if guard.len() > 200 {
             let drain_count = guard.len() - 200;
             guard.drain(0..drain_count);
         }
+        drop(guard);
+        let _ = self.trace_broadcast.send(trace);
+    }
+
+    fn subscribe_traces(&self) -> Option<broadcast::Receiver<HookTraceEntry>> {
+        Some(self.trace_broadcast.subscribe())
     }
 
     fn next_trace_sequence(&self) -> u64 {

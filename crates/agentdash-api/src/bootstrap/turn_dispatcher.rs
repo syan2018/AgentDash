@@ -1,85 +1,69 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use agentdash_application::task::execution::{StartedTurn, TaskExecutionError};
-use agentdash_application::task::gateway::{
-    PreparedTurnContext,
-    map_connector_error, map_internal_error, normalize_backend_id,
-    run_turn_monitor, TurnOutcome, update_task_status,
+use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
+use agentdash_application::task::execution::{
+    ContinueTaskCommand, StartedTurn, TaskExecutionError,
 };
-use agentdash_application::task::service::TurnDispatcher;
-use agentdash_application::session::{PromptSessionRequest, UserPromptInput};
+use agentdash_application::task::gateway::{
+    PreparedTurnContext, TurnOutcome, map_connector_error,
+    normalize_backend_id, run_turn_monitor, update_task_status,
+};
+use agentdash_application::task::service::{TaskLifecycleService, TurnDispatcher};
+use agentdash_domain::common::ThinkingLevel;
 use agentdash_relay::{
     AgentConfigRelay, CommandCancelPayload, CommandPromptPayload, RelayMessage,
     ResponsePromptPayload,
 };
 use async_trait::async_trait;
 use serde_json::json;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use agentdash_domain::common::ThinkingLevel;
-use crate::app_state::AppState;
+use crate::relay::registry::BackendRegistry;
 use crate::runtime_bridge::runtime_mcp_servers_to_acp;
-use crate::workspace_resolution::{ResolvedWorkspaceBinding, resolve_workspace_binding};
+use agentdash_application::workspace::{
+    ResolvedWorkspaceBinding, WorkspaceResolutionError,
+};
+use crate::workspace_resolution::resolve_workspace_binding_core;
+use agentdash_application::task::restart_tracker::RestartTracker;
 
-/// API 层 `TurnDispatcher` 实现 — 封装 relay/云端原生执行分发逻辑
+/// API 层 `TurnDispatcher` 实现 — 封装 relay / 云端原生执行分发逻辑。
 ///
-/// 持有构建 task lifecycle 所需的基础设施组件引用，不直接依赖完整的 `AppState`。
+/// 持有独立的基础设施组件引用，不再依赖完整的 `AppState`，
+/// 消除了 AppState ↔ TaskLifecycleService 的循环依赖。
 pub struct AppStateTurnDispatcher {
-    pub(crate) state: Arc<AppState>,
+    pub(crate) session_hub: SessionHub,
+    pub(crate) backend_registry: Arc<BackendRegistry>,
+    pub(crate) repos: RepositorySet,
+    pub(crate) restart_tracker: Arc<RestartTracker>,
+    pub(crate) remote_sessions: Arc<RwLock<HashMap<String, String>>>,
+    /// 仅在 auto-retry 路径使用。构建后通过 `set_retry_service()` 注入，
+    /// 打断 dispatcher ↔ TaskLifecycleService 的循环引用。
+    retry_service: tokio::sync::OnceCell<Arc<TaskLifecycleService>>,
 }
 
 impl AppStateTurnDispatcher {
-    pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
-    }
-}
-
-/// 延迟绑定的 dispatcher wrapper — 在 AppState 构建完成后注入实际 state
-pub struct DeferredTurnDispatcher {
-    inner: tokio::sync::OnceCell<Arc<AppStateTurnDispatcher>>,
-}
-
-impl DeferredTurnDispatcher {
-    pub fn new() -> Arc<Self> {
+    pub fn new(
+        session_hub: SessionHub,
+        backend_registry: Arc<BackendRegistry>,
+        repos: RepositorySet,
+        restart_tracker: Arc<RestartTracker>,
+        remote_sessions: Arc<RwLock<HashMap<String, String>>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            inner: tokio::sync::OnceCell::new(),
+            session_hub,
+            backend_registry,
+            repos,
+            restart_tracker,
+            remote_sessions,
+            retry_service: tokio::sync::OnceCell::new(),
         })
     }
 
-    pub fn bind(&self, state: Arc<AppState>) {
-        let _ = self.inner.set(Arc::new(AppStateTurnDispatcher::new(state)));
-    }
-
-    fn get(&self) -> &AppStateTurnDispatcher {
-        self.inner
-            .get()
-            .expect("DeferredTurnDispatcher::bind() must be called before use")
-    }
-}
-
-#[async_trait]
-impl TurnDispatcher for DeferredTurnDispatcher {
-    async fn dispatch_turn(
-        &self,
-        session_id: &str,
-        ctx: PreparedTurnContext,
-    ) -> Result<StartedTurn, TaskExecutionError> {
-        self.get().dispatch_turn(session_id, ctx).await
-    }
-
-    async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {
-        self.get().cancel_session(session_id).await
-    }
-
-    fn spawn_turn_monitor(
-        &self,
-        task_id: Uuid,
-        session_id: String,
-        turn_id: String,
-        backend_id: String,
-    ) {
-        self.get()
-            .spawn_turn_monitor(task_id, session_id, turn_id, backend_id);
+    pub fn set_retry_service(&self, service: Arc<TaskLifecycleService>) {
+        let _ = self.retry_service.set(service);
     }
 }
 
@@ -91,20 +75,23 @@ impl TurnDispatcher for AppStateTurnDispatcher {
         ctx: PreparedTurnContext,
     ) -> Result<StartedTurn, TaskExecutionError> {
         if ctx.use_cloud_native_agent {
-            dispatch_cloud_native(&self.state, session_id, ctx).await
+            dispatch_cloud_native(self, session_id, ctx).await
         } else {
-            dispatch_relay(&self.state, session_id, ctx).await
+            dispatch_relay(self, session_id, ctx).await
         }
     }
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {
-        let remote_backend = self.state.remote_sessions.read().await.get(session_id).cloned();
+        let remote_backend = self
+            .remote_sessions
+            .read()
+            .await
+            .get(session_id)
+            .cloned();
         if let Some(backend_id) = remote_backend {
-            relay_cancel(&self.state, &backend_id, session_id).await
+            relay_cancel(&self.backend_registry, &backend_id, session_id).await
         } else {
-            self.state
-                .services
-                .session_hub
+            self.session_hub
                 .cancel(session_id)
                 .await
                 .map_err(map_connector_error)
@@ -118,32 +105,47 @@ impl TurnDispatcher for AppStateTurnDispatcher {
         turn_id: String,
         backend_id: String,
     ) {
-        let state = self.state.clone();
+        let repos = self.repos.clone();
+        let hub = self.session_hub.clone();
+        let tracker = self.restart_tracker.clone();
+        let retry_service = self.retry_service.get().cloned();
+        let retry_repos = self.repos.clone();
         tokio::spawn(async move {
-            let outcome = run_turn_monitor(
-                &state.repos,
-                &state.services.session_hub,
-                &state.task_runtime.restart_tracker,
-                task_id,
-                &session_id,
-                &turn_id,
-                &backend_id,
-            )
-            .await;
+            let outcome =
+                run_turn_monitor(&repos, &hub, &tracker, task_id, &session_id, &turn_id, &backend_id)
+                    .await;
             if let TurnOutcome::NeedsRetry { delay, attempt } = outcome {
-                schedule_auto_retry(state, task_id, session_id, backend_id, delay, attempt).await;
+                schedule_auto_retry(
+                    retry_service,
+                    &retry_repos,
+                    task_id,
+                    session_id,
+                    backend_id,
+                    delay,
+                    attempt,
+                )
+                .await;
             }
         });
     }
 }
 
 async fn dispatch_cloud_native(
-    state: &Arc<AppState>,
+    dispatcher: &AppStateTurnDispatcher,
     session_id: &str,
     ctx: PreparedTurnContext,
 ) -> Result<StartedTurn, TaskExecutionError> {
     let resolved_binding = if let Some(ws) = ctx.workspace.as_ref() {
-        Some(resolve_workspace_binding(state, ws).await.map_err(map_internal_error)?)
+        Some(
+            resolve_workspace_binding_core(dispatcher.backend_registry.as_ref(), ws)
+                .await
+                .map_err(|e| match e {
+                    WorkspaceResolutionError::NoBindings(msg)
+                    | WorkspaceResolutionError::NoAvailable(msg) => {
+                        TaskExecutionError::Internal(msg)
+                    }
+                })?,
+        )
     } else {
         None
     };
@@ -171,8 +173,7 @@ async fn dispatch_cloud_native(
         system_context: ctx.built.system_context.clone(),
     };
 
-    let turn_id = state
-        .services
+    let turn_id = dispatcher
         .session_hub
         .start_prompt(session_id, prompt_req)
         .await
@@ -185,7 +186,7 @@ async fn dispatch_cloud_native(
 }
 
 async fn dispatch_relay(
-    state: &Arc<AppState>,
+    dispatcher: &AppStateTurnDispatcher,
     session_id: &str,
     ctx: PreparedTurnContext,
 ) -> Result<StartedTurn, TaskExecutionError> {
@@ -194,19 +195,22 @@ async fn dispatch_relay(
             "第三方 Agent 任务必须绑定 Workspace，且运行位置由 Workspace.backend_id 决定".into(),
         )
     })?;
-    let resolved_binding = resolve_workspace_binding(state, ws)
+    let resolved_binding = resolve_workspace_binding_core(dispatcher.backend_registry.as_ref(), ws)
         .await
-        .map_err(map_internal_error)?;
+        .map_err(|e| match e {
+            WorkspaceResolutionError::NoBindings(msg)
+            | WorkspaceResolutionError::NoAvailable(msg) => TaskExecutionError::Internal(msg),
+        })?;
     let backend_id = normalize_backend_id(&resolved_binding.backend_id)?;
 
-    if !state.services.backend_registry.is_online(backend_id).await {
+    if !dispatcher.backend_registry.is_online(backend_id).await {
         return Err(TaskExecutionError::Conflict(format!(
             "目标 Workspace 所属 Backend 当前不在线: {backend_id}"
         )));
     }
 
     let turn_id = relay_start_prompt(
-        state,
+        &dispatcher.backend_registry,
         backend_id,
         session_id,
         &ctx,
@@ -214,7 +218,7 @@ async fn dispatch_relay(
     )
     .await?;
 
-    state
+    dispatcher
         .remote_sessions
         .write()
         .await
@@ -227,7 +231,7 @@ async fn dispatch_relay(
 }
 
 async fn relay_start_prompt(
-    state: &Arc<AppState>,
+    registry: &BackendRegistry,
     backend_id: &str,
     session_id: &str,
     ctx: &PreparedTurnContext,
@@ -272,9 +276,7 @@ async fn relay_start_prompt(
     };
 
     tracing::info!(backend_id, session_id, "中继 command.prompt → 远程后端");
-    let resp = state
-        .services
-        .backend_registry
+    let resp = registry
         .send_command(backend_id, cmd)
         .await
         .map_err(|e| TaskExecutionError::Internal(format!("中继 prompt 失败: {e}")))?;
@@ -299,7 +301,7 @@ async fn relay_start_prompt(
 }
 
 async fn relay_cancel(
-    state: &Arc<AppState>,
+    registry: &BackendRegistry,
     backend_id: &str,
     session_id: &str,
 ) -> Result<(), TaskExecutionError> {
@@ -310,9 +312,7 @@ async fn relay_cancel(
             session_id: session_id.to_string(),
         },
     };
-    let resp = state
-        .services
-        .backend_registry
+    let resp = registry
         .send_command(backend_id, cmd)
         .await
         .map_err(|e| TaskExecutionError::Internal(format!("中继 cancel 失败: {e}")))?;
@@ -330,13 +330,19 @@ async fn relay_cancel(
 }
 
 async fn schedule_auto_retry(
-    state: Arc<AppState>,
+    retry_service: Option<Arc<TaskLifecycleService>>,
+    repos: &RepositorySet,
     task_id: Uuid,
     session_id: String,
     backend_id: String,
     delay: std::time::Duration,
     attempt: u32,
 ) {
+    let Some(service) = retry_service else {
+        tracing::error!(task_id = %task_id, "auto-retry 服务未就绪，跳过重试");
+        return;
+    };
+
     tracing::info!(
         task_id = %task_id, session_id = %session_id,
         attempt, delay_ms = delay.as_millis() as u64,
@@ -348,10 +354,8 @@ async fn schedule_auto_retry(
         "上一次执行失败，这是第 {} 次自动重试。请继续完成任务。",
         attempt
     );
-    match state
-        .services
-        .task_lifecycle_service
-        .continue_task(agentdash_application::task::execution::ContinueTaskCommand {
+    match service
+        .continue_task(ContinueTaskCommand {
             task_id,
             additional_prompt: Some(retry_prompt),
             executor_config: None,
@@ -371,7 +375,7 @@ async fn schedule_auto_retry(
                 "自动重试发起失败，标记 Task 为 Failed: {}", err
             );
             let _ = update_task_status(
-                &state.repos,
+                repos,
                 task_id,
                 &backend_id,
                 agentdash_domain::task::TaskStatus::Failed,

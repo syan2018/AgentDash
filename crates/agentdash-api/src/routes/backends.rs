@@ -147,11 +147,10 @@ async fn resolve_backend_auth_token(
         return Ok(token);
     }
 
-    if let Some(config) = existing {
-        if let Some(token) = normalize_optional_string(config.auth_token.clone()) {
+    if let Some(config) = existing
+        && let Some(token) = normalize_optional_string(config.auth_token.clone()) {
             return Ok(token);
         }
-    }
 
     match backend_repo.get_backend(backend_id).await {
         Ok(config) => Ok(normalize_optional_string(config.auth_token)

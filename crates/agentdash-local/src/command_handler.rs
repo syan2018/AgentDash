@@ -403,12 +403,14 @@ impl CommandHandler {
             .tool_executor
             .search(
                 &payload.workspace_root,
-                &payload.query,
-                payload.path.as_deref(),
-                payload.is_regex,
-                payload.include_glob.as_deref(),
-                payload.max_results,
-                payload.context_lines,
+                &crate::tool_executor::SearchParams {
+                    query: &payload.query,
+                    path: payload.path.as_deref(),
+                    is_regex: payload.is_regex,
+                    include_glob: payload.include_glob.as_deref(),
+                    max_results: payload.max_results,
+                    context_lines: payload.context_lines,
+                },
             )
             .await
         {

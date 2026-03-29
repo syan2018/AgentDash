@@ -50,7 +50,7 @@ impl MountProvider for RelayFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
         let path = normalize_mount_relative_path(path, false)
-            .map_err(|e| MountError::OperationFailed(e))?;
+            .map_err(MountError::OperationFailed)?;
         let response = self
             .backends
             .send_command(
@@ -94,7 +94,7 @@ impl MountProvider for RelayFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
         let path = normalize_mount_relative_path(path, false)
-            .map_err(|e| MountError::OperationFailed(e))?;
+            .map_err(MountError::OperationFailed)?;
         let response = self
             .backends
             .send_command(
@@ -131,7 +131,7 @@ impl MountProvider for RelayFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError> {
         let path = normalize_mount_relative_path(&options.path, true)
-            .map_err(|e| MountError::OperationFailed(e))?;
+            .map_err(MountError::OperationFailed)?;
         let response = self
             .backends
             .send_command(
@@ -176,7 +176,7 @@ impl MountProvider for RelayFsMountProvider {
     ) -> Result<SearchResult, MountError> {
         let base_path = match &query.path {
             Some(p) => normalize_mount_relative_path(p, true)
-                .map_err(|e| MountError::OperationFailed(e))?,
+                .map_err(MountError::OperationFailed)?,
             None => String::new(),
         };
         let max_results = query.max_results.unwrap_or(50);
@@ -235,7 +235,7 @@ impl MountProvider for RelayFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<ExecResult, MountError> {
         let cwd = normalize_mount_relative_path(&request.cwd, true)
-            .map_err(|e| MountError::OperationFailed(e))?;
+            .map_err(MountError::OperationFailed)?;
         let response = self
             .backends
             .send_command(

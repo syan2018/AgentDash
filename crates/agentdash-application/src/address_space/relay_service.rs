@@ -6,6 +6,17 @@ use agentdash_connector_contract::{AddressSpace, MountCapability};
 
 use super::inline_persistence::InlineContentOverlay;
 
+pub struct TextSearchParams<'a> {
+    pub mount_id: &'a str,
+    pub path: &'a str,
+    pub query: &'a str,
+    pub is_regex: bool,
+    pub include_glob: Option<&'a str>,
+    pub max_results: usize,
+    pub context_lines: usize,
+    pub overlay: Option<&'a InlineContentOverlay>,
+}
+
 // ─── Service ────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -56,14 +67,13 @@ impl RelayAddressSpaceService {
             resolve_mount(&runtime_address_space, &target.mount_id, MountCapability::Read)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
 
-        if let Some(ov) = overlay {
-            if let Some(content) = ov.read(&mount.id, &path).await {
+        if let Some(ov) = overlay
+            && let Some(content) = ov.read(&mount.id, &path).await {
                 return Ok(ReadResult { path, content });
             }
-        }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
+            let ctx = MountOperationContext;
             return provider
                 .read_text(mount, &path, &ctx)
                 .await
@@ -99,7 +109,7 @@ impl RelayAddressSpaceService {
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
+            let ctx = MountOperationContext;
             return provider
                 .write_text(mount, &path, content, &ctx)
                 .await
@@ -139,7 +149,7 @@ impl RelayAddressSpaceService {
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
+            let ctx = MountOperationContext;
             let opts = ListOptions {
                 path,
                 pattern: options.pattern,
@@ -168,7 +178,7 @@ impl RelayAddressSpaceService {
         let cwd = normalize_mount_relative_path(&request.cwd, true)?;
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
+            let ctx = MountOperationContext;
             let req = ExecRequest {
                 mount_id: request.mount_id.clone(),
                 cwd,
@@ -193,60 +203,43 @@ impl RelayAddressSpaceService {
         max_results: usize,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<Vec<String>, String> {
-        self.search_text_extended(
-            address_space,
+        self.search_text_extended(address_space, &TextSearchParams {
             mount_id,
             path,
             query,
-            false,
-            None,
+            is_regex: false,
+            include_glob: None,
             max_results,
-            0,
+            context_lines: 0,
             overlay,
-        )
+        })
         .await
         .map(|(hits, _truncated)| hits)
     }
 
-    /// 扩展搜索接口 — 支持正则、glob 过滤、上下文行
     pub async fn search_text_extended(
         &self,
         address_space: &AddressSpace,
-        mount_id: &str,
-        path: &str,
-        query: &str,
-        is_regex: bool,
-        _include_glob: Option<&str>,
-        max_results: usize,
-        context_lines: usize,
-        overlay: Option<&InlineContentOverlay>,
+        params: &TextSearchParams<'_>,
     ) -> Result<(Vec<String>, bool), String> {
         let runtime_address_space = address_space.clone();
         let mount =
-            resolve_mount(&runtime_address_space, mount_id, MountCapability::Search)?;
-        let base_path = normalize_mount_relative_path(path, true)?;
+            resolve_mount(&runtime_address_space, params.mount_id, MountCapability::Search)?;
+        let base_path = normalize_mount_relative_path(params.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
             return self
-                .search_inline(
-                    mount,
-                    &base_path,
-                    query,
-                    is_regex,
-                    max_results,
-                    context_lines,
-                    overlay,
-                )
+                .search_inline(mount, &base_path, params)
                 .await;
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
+            let ctx = MountOperationContext;
             let sq = SearchQuery {
                 path: if base_path.is_empty() { None } else { Some(base_path) },
-                pattern: query.to_string(),
+                pattern: params.query.to_string(),
                 case_sensitive: true,
-                max_results: Some(max_results),
+                max_results: Some(params.max_results),
             };
             let result = provider
                 .search_text(mount, &sq, &ctx)
@@ -273,21 +266,17 @@ impl RelayAddressSpaceService {
         &self,
         mount: &Mount,
         base_path: &str,
-        query: &str,
-        is_regex: bool,
-        max_results: usize,
-        context_lines: usize,
-        overlay: Option<&InlineContentOverlay>,
+        params: &TextSearchParams<'_>,
     ) -> Result<(Vec<String>, bool), String> {
         let mut files = inline_files_from_mount(mount)?;
-        if let Some(ov) = overlay {
+        if let Some(ov) = params.overlay {
             for (p, c) in ov.overridden_files(&mount.id).await {
                 files.insert(p, c);
             }
         }
 
-        let re = if is_regex {
-            Some(regex::Regex::new(query).map_err(|e| format!("无效正则: {e}"))?)
+        let re = if params.is_regex {
+            Some(regex::Regex::new(params.query).map_err(|e| format!("无效正则: {e}"))?)
         } else {
             None
         };
@@ -306,13 +295,13 @@ impl RelayAddressSpaceService {
             for (idx, line) in lines.iter().enumerate() {
                 let matched = match &re {
                     Some(re) => re.is_match(line),
-                    None => line.contains(query),
+                    None => line.contains(params.query),
                 };
                 if matched {
                     let mut formatted = format!("{}:{}: {}", file_path, idx + 1, line.trim());
-                    if context_lines > 0 {
-                        let start = idx.saturating_sub(context_lines);
-                        let end = (idx + 1 + context_lines).min(lines.len());
+                    if params.context_lines > 0 {
+                        let start = idx.saturating_sub(params.context_lines);
+                        let end = (idx + 1 + params.context_lines).min(lines.len());
                         if start < idx {
                             let before: Vec<String> = (start..idx)
                                 .map(|i| format!("{}:{}- {}", file_path, i + 1, lines[i].trim()))
@@ -327,7 +316,7 @@ impl RelayAddressSpaceService {
                         }
                     }
                     hits.push(formatted);
-                    if hits.len() >= max_results {
+                    if hits.len() >= params.max_results {
                         truncated = true;
                         return Ok((hits, truncated));
                     }

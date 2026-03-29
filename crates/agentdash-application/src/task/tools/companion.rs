@@ -253,13 +253,15 @@ impl AgentTool for CompanionDispatchTool {
         let dispatch_plan = build_companion_dispatch_plan(
             hook_session.as_ref(),
             &before_resolution,
-            &current_session_id,
-            &self.current_turn_id,
-            &companion_label,
-            slice_mode,
-            adoption_mode,
-            params.max_fragments,
-            params.max_constraints,
+            &CompanionDispatchConfig {
+                parent_session_id: &current_session_id,
+                parent_turn_id: &self.current_turn_id,
+                companion_label: &companion_label,
+                slice_mode,
+                adoption_mode,
+                max_fragments: params.max_fragments,
+                max_constraints: params.max_constraints,
+            },
         );
         record_subagent_trace(
             hook_session.as_ref(),
@@ -687,8 +689,8 @@ async fn record_subagent_trace(
     };
     hook_session.append_trace(trace.clone());
 
-    if let (Some(session_hub), Some(turn_id)) = (session_hub, turn_id) {
-        if let Some(notification) = build_hook_trace_notification(
+    if let (Some(session_hub), Some(turn_id)) = (session_hub, turn_id)
+        && let Some(notification) = build_hook_trace_notification(
             hook_session.session_id(),
             Some(turn_id),
             hook_trace_source(),
@@ -698,7 +700,6 @@ async fn record_subagent_trace(
                 .inject_notification(hook_session.session_id(), notification)
                 .await;
         }
-    }
 }
 
 fn build_subagent_pending_action(
@@ -813,31 +814,35 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
     sections.join("\n\n")
 }
 
-fn build_companion_dispatch_plan(
-    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
-    resolution: &agentdash_connector_contract::HookResolution,
-    parent_session_id: &str,
-    parent_turn_id: &str,
-    companion_label: &str,
+struct CompanionDispatchConfig<'a> {
+    parent_session_id: &'a str,
+    parent_turn_id: &'a str,
+    companion_label: &'a str,
     slice_mode: CompanionSliceMode,
     adoption_mode: CompanionAdoptionMode,
     max_fragments: Option<usize>,
     max_constraints: Option<usize>,
+}
+
+fn build_companion_dispatch_plan(
+    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
+    resolution: &agentdash_connector_contract::HookResolution,
+    config: &CompanionDispatchConfig<'_>,
 ) -> CompanionDispatchPlan {
     let dispatch_id = format!("dispatch-{}", uuid::Uuid::new_v4().simple());
     let slice = build_companion_dispatch_slice(
         &hook_session.snapshot(),
         resolution,
-        slice_mode,
-        max_fragments.unwrap_or(3),
-        max_constraints.unwrap_or(4),
+        config.slice_mode,
+        config.max_fragments.unwrap_or(3),
+        config.max_constraints.unwrap_or(4),
     );
     CompanionDispatchPlan {
         dispatch_id,
-        companion_label: companion_label.to_string(),
-        parent_session_id: parent_session_id.to_string(),
-        parent_turn_id: parent_turn_id.to_string(),
-        adoption_mode,
+        companion_label: config.companion_label.to_string(),
+        parent_session_id: config.parent_session_id.to_string(),
+        parent_turn_id: config.parent_turn_id.to_string(),
+        adoption_mode: config.adoption_mode,
         slice,
     }
 }
@@ -1115,15 +1120,13 @@ pub fn companion_owner_candidates(
         )? {
             owners.push(candidate);
         }
-        if owner.owner_type == "task" {
-            if let Some(story_id) = owner.story_id.as_deref() {
-                if let Some(candidate) =
+        if owner.owner_type == "task"
+            && let Some(story_id) = owner.story_id.as_deref()
+                && let Some(candidate) =
                     parse_owner_candidate("story", story_id, owner.label.clone())?
                 {
                     owners.push(candidate);
                 }
-            }
-        }
     }
     owners.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);
     Ok(owners)

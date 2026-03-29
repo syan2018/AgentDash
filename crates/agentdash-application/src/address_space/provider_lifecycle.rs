@@ -177,7 +177,7 @@ impl MountProvider for LifecycleMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
         let path_norm = normalize_mount_relative_path(path, true)
-            .map_err(|e| MountError::OperationFailed(e))?;
+            .map_err(MountError::OperationFailed)?;
         let segs = segments_from_path(&path_norm);
         let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
 
@@ -257,7 +257,7 @@ impl MountProvider for LifecycleMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError> {
         let base = normalize_mount_relative_path(&options.path, true)
-            .map_err(|e| MountError::OperationFailed(e))?;
+            .map_err(MountError::OperationFailed)?;
         let segs = segments_from_path(&base);
         let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
 
@@ -355,7 +355,7 @@ impl MountProvider for LifecycleMountProvider {
             .as_deref()
             .map(|p| normalize_mount_relative_path(p, true))
             .transpose()
-            .map_err(|e| MountError::OperationFailed(e))?
+            .map_err(MountError::OperationFailed)?
             .unwrap_or_default();
 
         let pattern = &query.pattern;

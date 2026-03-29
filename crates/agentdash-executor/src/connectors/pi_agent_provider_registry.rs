@@ -7,6 +7,8 @@ use futures::future::BoxFuture;
 use rig::client::CompletionClient as _;
 use tokio::sync::RwLock;
 
+type BridgeFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>;
+
 pub(crate) const CONTEXT_WINDOW_STANDARD: u64 = 200_000;
 pub(crate) const CONTEXT_WINDOW_LEGACY: u64 = 128_000;
 pub(crate) const CONTEXT_WINDOW_1M: u64 = 1_048_576;
@@ -205,7 +207,7 @@ pub(crate) struct ProviderEntry {
     pub provider_id: &'static str,
     pub provider_name: &'static str,
     pub default_model: String,
-    bridge_factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>,
+    bridge_factory: BridgeFactory,
     list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
     configured_models: Vec<ModelMeta>,
     blocked_models: HashSet<String>,
@@ -217,7 +219,7 @@ impl ProviderEntry {
         provider_id: &'static str,
         provider_name: &'static str,
         default_model: String,
-        bridge_factory: Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>,
+        bridge_factory: BridgeFactory,
         list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
         configured_models: Vec<ModelMeta>,
         blocked_models: HashSet<String>,
@@ -356,7 +358,7 @@ fn build_bridge_factory(
     kind: BridgeKind,
     api_key: String,
     base_url: Option<String>,
-) -> Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync> {
+) -> BridgeFactory {
     match kind {
         BridgeKind::Anthropic => {
             let client = rig::providers::anthropic::Client::new(&api_key);

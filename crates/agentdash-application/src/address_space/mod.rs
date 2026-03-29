@@ -25,5 +25,5 @@ pub use provider::{
 };
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
-pub use relay_service::RelayAddressSpaceService;
+pub use relay_service::{RelayAddressSpaceService, TextSearchParams};
 pub use types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult, ResourceRef};

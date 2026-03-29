@@ -564,20 +564,17 @@ async fn check_mount_available(
     address_space: &AddressSpace,
     mount_id: &str,
 ) -> Result<(), ApiError> {
-    if let Some(mount) = address_space.mounts.iter().find(|m| m.id == mount_id) {
-        if let Some(provider) = state
+    if let Some(mount) = address_space.mounts.iter().find(|m| m.id == mount_id)
+        && let Some(provider) = state
             .services
             .mount_provider_registry
             .get(&mount.provider)
-        {
-            if !provider.is_available(mount).await {
+            && !provider.is_available(mount).await {
                 return Err(ApiError::ServiceUnavailable(format!(
                     "挂载点 \"{}\" 的 Backend 当前不在线（{}），无法浏览文件。请确认 Backend 已连接。",
                     mount.display_name, mount.backend_id,
                 )));
             }
-        }
-    }
     Ok(())
 }
 
@@ -654,13 +651,11 @@ async fn resolve_workspace_for_owner(
                 }
             }
             WorkflowTargetKind::Story => {
-                if let Some(story) = state.repos.story_repo.get_by_id(id).await.ok().flatten() {
-                    if let Some(ws_id) = story.default_workspace_id {
-                        if let Some(ws) = state.repos.workspace_repo.get_by_id(ws_id).await.ok().flatten() {
+                if let Some(story) = state.repos.story_repo.get_by_id(id).await.ok().flatten()
+                    && let Some(ws_id) = story.default_workspace_id
+                        && let Some(ws) = state.repos.workspace_repo.get_by_id(ws_id).await.ok().flatten() {
                             return Some(ws);
                         }
-                    }
-                }
             }
             WorkflowTargetKind::Project => {}
         }

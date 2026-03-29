@@ -185,8 +185,7 @@ impl InlineContentPersister for DbInlineContentPersister {
                 .get_by_id(story_uuid)
                 .await
                 .map_err(|e| format!("加载 story 失败: {e}"))?
-            {
-                if story
+                && story
                     .context
                     .context_containers
                     .iter()
@@ -204,7 +203,6 @@ impl InlineContentPersister for DbInlineContentPersister {
                         .map_err(|e| format!("保存 story 失败: {e}"))?;
                     return Ok(());
                 }
-            }
         }
 
         // 回退到 project

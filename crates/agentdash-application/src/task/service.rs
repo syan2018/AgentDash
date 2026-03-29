@@ -28,7 +28,7 @@ use super::gateway::{
     get_session_overview as gw_get_session_overview,
     get_task as gw_get_task,
     map_domain_error,
-    prepare_task_turn_context,
+    prepare_task_turn_context, TaskTurnServices,
     resolve_project_scope_for_owner,
     resolve_task_backend_id,
 };
@@ -434,17 +434,20 @@ impl TaskLifecycleService {
             .as_deref()
             .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
 
+        let svc = TaskTurnServices {
+            repos: &self.repos,
+            availability: self.backend_availability.as_ref(),
+            address_space_service: &self.address_space_service,
+            contributor_registry: &self.contributor_registry,
+            mcp_base_url: self.mcp_base_url.as_deref(),
+        };
         let ctx = prepare_task_turn_context(
-            &self.repos,
-            self.backend_availability.as_ref(),
-            &self.address_space_service,
-            &self.contributor_registry,
+            &svc,
             task,
             phase,
             override_prompt,
             additional_prompt,
             executor_config,
-            self.mcp_base_url.as_deref(),
         )
         .await?;
 

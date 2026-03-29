@@ -390,14 +390,16 @@ impl AgentTool for FsSearchTool {
             .service
             .search_text_extended(
                 &self.address_space,
-                &target.mount_id,
-                &search_path,
-                &params.query,
-                params.regex,
-                params.include.as_deref(),
-                params.max_results.unwrap_or(50).max(1),
-                params.context_lines.unwrap_or(0),
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
+                &crate::address_space::TextSearchParams {
+                    mount_id: &target.mount_id,
+                    path: &search_path,
+                    query: &params.query,
+                    is_regex: params.regex,
+                    include_glob: params.include.as_deref(),
+                    max_results: params.max_results.unwrap_or(50).max(1),
+                    context_lines: params.context_lines.unwrap_or(0),
+                    overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
+                },
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;

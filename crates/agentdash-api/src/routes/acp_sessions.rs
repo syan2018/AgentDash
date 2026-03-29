@@ -370,8 +370,13 @@ pub async fn get_session_context(
                 .get_task_session(task_id)
                 .await
                 .map_err(task_execution::map_task_execution_error)?;
-            let built_context =
-                task_execution::build_task_session_context_response(&state, task_id).await;
+            let built_context = agentdash_application::task::context_builder::build_task_session_context(
+                &state.repos,
+                &state.services.address_space_service,
+                state.config.mcp_base_url.as_deref(),
+                task_id,
+            )
+            .await;
             Ok(Json(SessionContextResponse {
                 workspace_id: task.workspace_id.map(|id| id.to_string()),
                 agent_binding: Some(result.agent_binding),

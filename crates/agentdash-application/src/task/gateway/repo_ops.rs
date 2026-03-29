@@ -130,23 +130,28 @@ pub async fn update_task_status(
     Ok(true)
 }
 
+pub struct ToolCallArtifactInput<'a> {
+    pub task_id: Uuid,
+    pub session_id: &'a str,
+    pub turn_id: &'a str,
+    pub tool_call_id: &'a str,
+    pub patch: Map<String, Value>,
+    pub backend_id: &'a str,
+    pub reason: &'a str,
+}
+
 pub async fn persist_tool_call_artifact(
     repos: &RepositorySet,
-    task_id: Uuid,
-    session_id: &str,
-    turn_id: &str,
-    tool_call_id: &str,
-    patch: Map<String, Value>,
-    backend_id: &str,
-    reason: &str,
+    input: ToolCallArtifactInput<'_>,
 ) -> Result<(), DomainError> {
-    let mut task = match repos.task_repo.get_by_id(task_id).await? {
+    let mut task = match repos.task_repo.get_by_id(input.task_id).await? {
         Some(task) => task,
         None => return Ok(()),
     };
 
-    let changed =
-        upsert_tool_execution_artifact(&mut task, session_id, turn_id, tool_call_id, patch);
+    let changed = upsert_tool_execution_artifact(
+        &mut task, input.session_id, input.turn_id, input.tool_call_id, input.patch,
+    );
     if !changed {
         return Ok(());
     }
@@ -155,15 +160,15 @@ pub async fn persist_tool_call_artifact(
     append_task_change(
         repos,
         task.id,
-        backend_id,
+        input.backend_id,
         ChangeKind::TaskArtifactAdded,
         json!({
-            "reason": reason,
+            "reason": input.reason,
             "task_id": task.id,
             "story_id": task.story_id,
-            "session_id": session_id,
-            "turn_id": turn_id,
-            "tool_call_id": tool_call_id,
+            "session_id": input.session_id,
+            "turn_id": input.turn_id,
+            "tool_call_id": input.tool_call_id,
             "artifact_type": "tool_execution",
         }),
     )

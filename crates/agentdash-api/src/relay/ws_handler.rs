@@ -173,11 +173,10 @@ async fn handle_backend_connection(
                 }
             }
             cmd = cmd_rx.recv() => {
-                if let Some(cmd) = cmd {
-                    if send_relay(&mut ws_tx, &cmd).await.is_err() {
+                if let Some(cmd) = cmd
+                    && send_relay(&mut ws_tx, &cmd).await.is_err() {
                         break;
                     }
-                }
             }
             _ = ping_interval.tick() => {
                 let ping = RelayMessage::Ping {

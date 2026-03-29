@@ -22,6 +22,15 @@ use crate::task::gateway::repo_ops::{load_related_context, map_internal_error};
 use crate::workflow::select_active_run;
 use crate::workspace::BackendAvailability;
 
+/// 基础设施引用 — prepare_task_turn_context 中不因调用而变化的部分
+pub struct TaskTurnServices<'a> {
+    pub repos: &'a RepositorySet,
+    pub availability: &'a dyn BackendAvailability,
+    pub address_space_service: &'a RelayAddressSpaceService,
+    pub contributor_registry: &'a ContextContributorRegistry,
+    pub mcp_base_url: Option<&'a str>,
+}
+
 /// 准备好的 turn 上下文 — 包含 dispatch 所需的所有数据
 pub struct PreparedTurnContext {
     pub built: BuiltTaskAgentContext,
@@ -35,18 +44,14 @@ pub struct PreparedTurnContext {
 ///
 /// 这是 `start_task_turn` 中"准备阶段"的核心逻辑，不涉及实际 dispatch。
 pub async fn prepare_task_turn_context(
-    repos: &RepositorySet,
-    availability: &dyn BackendAvailability,
-    address_space_service: &RelayAddressSpaceService,
-    contributor_registry: &ContextContributorRegistry,
+    svc: &TaskTurnServices<'_>,
     task: &Task,
     phase: ExecutionPhase,
     override_prompt: Option<&str>,
     additional_prompt: Option<&str>,
     connector_config: Option<&AgentConfig>,
-    mcp_base_url: Option<&str>,
 ) -> Result<PreparedTurnContext, TaskExecutionError> {
-    let (story, project, workspace) = load_related_context(repos, task)
+    let (story, project, workspace) = load_related_context(svc.repos, task)
         .await
         .map_err(map_internal_error)?;
 
@@ -56,8 +61,8 @@ pub async fn prepare_task_turn_context(
     let mut declared_sources = story.context.source_refs.clone();
     declared_sources.extend(task.agent_binding.context_sources.clone());
     let resolved_workspace_sources = resolve_workspace_declared_sources(
-        availability,
-        address_space_service,
+        svc.availability,
+        svc.address_space_service,
         &declared_sources,
         workspace.as_ref(),
         86,
@@ -81,7 +86,7 @@ pub async fn prepare_task_turn_context(
     }
 
     // MCP injection
-    if let Some(base_url) = mcp_base_url {
+    if let Some(base_url) = svc.mcp_base_url {
         let config = McpInjectionConfig::for_task(
             base_url.to_string(),
             story.project_id,
@@ -109,7 +114,7 @@ pub async fn prepare_task_turn_context(
         let agent_type = resolved_config
             .as_ref()
             .map(|config| config.executor.as_str());
-        let mut space = address_space_service
+        let mut space = svc.address_space_service
             .build_address_space(
                 &project,
                 Some(&story),
@@ -120,8 +125,8 @@ pub async fn prepare_task_turn_context(
             .map_err(map_internal_error)?;
 
         // lifecycle mount injection
-        if let Some(active_run) = find_active_lifecycle_run(repos, task).await? {
-            let lifecycle_key = resolve_lifecycle_key(repos, active_run.lifecycle_id).await;
+        if let Some(active_run) = find_active_lifecycle_run(svc.repos, task).await? {
+            let lifecycle_key = resolve_lifecycle_key(svc.repos, active_run.lifecycle_id).await;
             space
                 .mounts
                 .push(build_lifecycle_mount(active_run.id, &lifecycle_key));
@@ -151,7 +156,7 @@ pub async fn prepare_task_turn_context(
             additional_prompt,
             extra_contributors,
         },
-        contributor_registry,
+        svc.contributor_registry,
     )
     .map_err(TaskExecutionError::UnprocessableEntity)?;
 

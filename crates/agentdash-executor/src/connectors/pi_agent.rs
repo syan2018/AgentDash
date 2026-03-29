@@ -26,17 +26,16 @@ use agentdash_agent::{
 };
 use agentdash_domain::settings::SettingsRepository;
 
-use crate::connector::{
+use agentdash_connector_contract::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
     ExecutionStream, Mount, MountCapability, AgentInfo, PromptPayload,
-    RuntimeToolProvider,
 };
+use agentdash_connector_contract::connector::RuntimeToolProvider;
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
 use crate::connectors::pi_agent_provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries,
 };
 use crate::hook_events::build_hook_trace_notification;
-use agentdash_application::session::HookRuntimeDelegate;
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -478,15 +477,11 @@ impl AgentConnector for PiAgentConnector {
             .collect::<Vec<_>>();
         agent.set_tools(runtime_tools);
         agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
-        let (hook_trace_tx, hook_trace_rx) = if context.hook_session.is_some() {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-        agent.set_runtime_delegate(context.hook_session.clone().map(|hook_session| {
-            HookRuntimeDelegate::new_with_trace_events(hook_session, hook_trace_tx)
-        }));
+        let hook_trace_rx = context
+            .hook_session
+            .as_ref()
+            .and_then(|hs| hs.subscribe_traces());
+        agent.set_runtime_delegate(context.runtime_delegate.clone());
 
         if let Some(thinking_level) = context.executor_config.thinking_level {
             agent.set_thinking_level(thinking_level);
@@ -518,8 +513,8 @@ impl AgentConnector for PiAgentConnector {
             loop {
                 if let Some(receiver) = hook_trace_rx.as_mut() {
                     tokio::select! {
-                        maybe_trace = receiver.recv() => {
-                            if let Some(entry) = maybe_trace
+                        trace_result = receiver.recv() => {
+                            if let Ok(entry) = trace_result
                                 && let Some(notification) = build_hook_trace_notification(
                                     acp_session_id.0.as_ref(),
                                     Some(&turn_id),
@@ -639,7 +634,7 @@ impl AgentConnector for PiAgentConnector {
 }
 
 async fn emit_pending_hook_trace_notifications(
-    hook_trace_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<agentdash_connector_contract::HookTraceEntry>>,
+    hook_trace_rx: &mut Option<tokio::sync::broadcast::Receiver<agentdash_connector_contract::HookTraceEntry>>,
     tx: &tokio::sync::mpsc::Sender<Result<SessionNotification, ConnectorError>>,
     session_id: &SessionId,
     source: &AgentDashSourceV1,
@@ -696,24 +691,28 @@ fn make_meta(
     merge_agentdash_meta(None, &agentdash).expect("agentdash meta 不应为空")
 }
 
+struct EventDescription {
+    event_type: &'static str,
+    severity: &'static str,
+    message: String,
+    data: serde_json::Value,
+}
+
 fn make_event_notification(
     session_id: &SessionId,
     source: &AgentDashSourceV1,
     turn_id: &str,
     entry_index: u32,
-    event_type: &str,
-    severity: &str,
-    message: String,
-    data: serde_json::Value,
+    desc: EventDescription,
 ) -> SessionNotification {
     let mut trace = AgentDashTraceV1::new();
     trace.turn_id = Some(turn_id.to_string());
     trace.entry_index = Some(entry_index);
 
-    let mut event = AgentDashEventV1::new(event_type);
-    event.severity = Some(severity.to_string());
-    event.message = Some(message);
-    event.data = Some(data);
+    let mut event = AgentDashEventV1::new(desc.event_type);
+    event.severity = Some(desc.severity.to_string());
+    event.message = Some(desc.message);
+    event.data = Some(desc.data);
 
     let agentdash = AgentDashMetaV1::new()
         .source(Some(source.clone()))
@@ -892,16 +891,18 @@ fn convert_event_to_notifications(
                     source,
                     turn_id,
                     *entry_index,
-                    "approval_requested",
-                    "warning",
-                    format!("工具 `{tool_name}` 正等待审批"),
-                    serde_json::json!({
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "reason": reason,
-                        "args": args,
-                        "details": details,
-                    }),
+                    EventDescription {
+                        event_type: "approval_requested",
+                        severity: "warning",
+                        message: format!("工具 `{tool_name}` 正等待审批"),
+                        data: serde_json::json!({
+                            "tool_call_id": tool_call_id,
+                            "tool_name": tool_name,
+                            "reason": reason,
+                            "args": args,
+                            "details": details,
+                        }),
+                    },
                 ),
             ]
         }
@@ -946,20 +947,22 @@ fn convert_event_to_notifications(
                     source,
                     turn_id,
                     *entry_index,
-                    "approval_resolved",
-                    if *approved { "info" } else { "warning" },
-                    if *approved {
-                        format!("工具 `{tool_name}` 已获批准并继续执行")
-                    } else {
-                        format!("工具 `{tool_name}` 已被拒绝执行")
+                    EventDescription {
+                        event_type: "approval_resolved",
+                        severity: if *approved { "info" } else { "warning" },
+                        message: if *approved {
+                            format!("工具 `{tool_name}` 已获批准并继续执行")
+                        } else {
+                            format!("工具 `{tool_name}` 已被拒绝执行")
+                        },
+                        data: serde_json::json!({
+                            "tool_call_id": tool_call_id,
+                            "tool_name": tool_name,
+                            "approved": approved,
+                            "reason": reason,
+                            "args": args,
+                        }),
                     },
-                    serde_json::json!({
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "approved": approved,
-                        "reason": reason,
-                        "args": args,
-                    }),
                 ),
             ]
         }
@@ -1458,12 +1461,13 @@ mod tests {
             workspace_root: PathBuf::from("F:/Projects/AgentDash"),
             working_directory: PathBuf::from("F:/Projects/AgentDash/crates/agentdash-agent"),
             environment_variables: HashMap::new(),
-            executor_config: crate::connector::AgentConfig::new("PI_AGENT"),
+            executor_config: agentdash_connector_contract::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
             address_space: None,
             hook_session: None,
             flow_capabilities: Default::default(),
             system_context: None,
+            runtime_delegate: None,
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
@@ -1575,12 +1579,13 @@ mod tests {
                     workspace_root: PathBuf::from("F:/Projects/AgentDash"),
                     working_directory: PathBuf::from("F:/Projects/AgentDash"),
                     environment_variables: HashMap::new(),
-                    executor_config: crate::connector::AgentConfig::new("PI_AGENT"),
+                    executor_config: agentdash_connector_contract::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
                     address_space: None,
                     hook_session: None,
                     flow_capabilities: Default::default(),
                     system_context: None,
+                    runtime_delegate: None,
                 },
             )
             .await;

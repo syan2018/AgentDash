@@ -4,166 +4,32 @@ use std::{
     sync::Arc,
 };
 
-use agent_client_protocol::{
-    ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
-    SessionUpdate,
-};
+use agent_client_protocol::{SessionNotification, SessionUpdate};
 use futures::StreamExt;
 use tokio::sync::{Mutex, broadcast};
 
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
-    parse_agentdash_meta,
-};
+use agentdash_acp_meta::AgentDashSourceV1;
 
-use agentdash_connector_contract::{
-    AgentConnector, ConnectorError, ExecutionContext,
-};
+use agentdash_connector_contract::{AgentConnector, ConnectorError, ExecutionContext};
 use agentdash_connector_contract::hooks::{
-    ExecutionHookProvider, HookResolution, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
+    ExecutionHookProvider, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
+use super::hook_delegate::HookRuntimeDelegate;
 use super::hook_runtime::HookSessionRuntime;
 use super::hook_events::build_hook_trace_notification;
+use super::hub_support::*;
+use super::session_store::SessionStore;
 pub use super::types::*;
 
-fn build_user_message_notifications(
-    session_id: &str,
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-    user_blocks: &[ContentBlock],
-) -> Vec<SessionNotification> {
-    user_blocks
-        .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            let mut trace = AgentDashTraceV1::new();
-            trace.turn_id = Some(turn_id.to_string());
-            trace.entry_index = Some(index as u32);
-
-            let agentdash = AgentDashMetaV1::new()
-                .source(Some(source.clone()))
-                .trace(Some(trace));
-            let meta = merge_agentdash_meta(None, &agentdash);
-
-            let chunk = ContentChunk::new(block.clone()).meta(meta);
-            SessionNotification::new(
-                SessionId::new(session_id),
-                SessionUpdate::UserMessageChunk(chunk),
-            )
-        })
-        .collect()
+struct HookTriggerInput<'a> {
+    session_id: &'a str,
+    turn_id: Option<&'a str>,
+    trigger: HookTrigger,
+    payload: Option<serde_json::Value>,
+    refresh_reason: &'static str,
+    source: AgentDashSourceV1,
 }
-
-fn build_turn_lifecycle_notification(
-    session_id: &str,
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-    event_type: &str,
-    severity: &str,
-    message: Option<String>,
-) -> SessionNotification {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-
-    let mut event = AgentDashEventV1::new(event_type);
-    event.severity = Some(severity.to_string());
-    event.message = message;
-
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source.clone()))
-        .trace(Some(trace))
-        .event(Some(event));
-    let meta = merge_agentdash_meta(None, &agentdash);
-
-    let info = SessionInfoUpdate::new().meta(meta);
-    SessionNotification::new(
-        SessionId::new(session_id),
-        SessionUpdate::SessionInfoUpdate(info),
-    )
-}
-
-fn build_turn_terminal_notification(
-    session_id: &str,
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-    terminal_kind: TurnTerminalKind,
-    message: Option<String>,
-) -> SessionNotification {
-    build_turn_lifecycle_notification(
-        session_id,
-        source,
-        turn_id,
-        terminal_kind.event_type(),
-        terminal_kind.severity(),
-        message,
-    )
-}
-
-fn parse_executor_session_bound(meta: Option<&Meta>, expected_turn_id: &str) -> Option<String> {
-    let parsed = parse_agentdash_meta(meta?)?;
-    let trace = parsed.trace?;
-    let turn_id = trace.turn_id?;
-    if turn_id != expected_turn_id {
-        return None;
-    }
-
-    let event = parsed.event?;
-    if event.r#type != "executor_session_bound" {
-        return None;
-    }
-
-    if let Some(data) = event.data
-        && let Some(session_id) = data
-            .get("executor_session_id")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    {
-        return Some(session_id.to_string());
-    }
-
-    event
-        .message
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn parse_turn_id(meta: Option<&Meta>) -> Option<String> {
-    parse_agentdash_meta(meta?)
-        .and_then(|parsed| parsed.trace.and_then(|trace| trace.turn_id))
-        .map(|turn_id| turn_id.trim().to_string())
-        .filter(|turn_id| !turn_id.is_empty())
-}
-
-fn parse_turn_terminal_event(
-    meta: Option<&Meta>,
-) -> Option<(String, TurnTerminalKind, Option<String>)> {
-    let parsed = parse_agentdash_meta(meta?)?;
-    let trace = parsed.trace?;
-    let turn_id = trace.turn_id?;
-    let event = parsed.event?;
-
-    match event.r#type.as_str() {
-        "turn_completed" => Some((turn_id, TurnTerminalKind::Completed, event.message)),
-        "turn_failed" => Some((turn_id, TurnTerminalKind::Failed, event.message)),
-        "turn_interrupted" => Some((turn_id, TurnTerminalKind::Interrupted, event.message)),
-        _ => None,
-    }
-}
-
-fn build_session_runtime(tx: broadcast::Sender<SessionNotification>) -> SessionRuntime {
-    SessionRuntime {
-        tx,
-        running: false,
-        current_turn_id: None,
-        cancel_requested: false,
-        hook_session: None,
-    }
-}
-
 
 #[derive(Clone)]
 pub struct SessionHub {
@@ -172,109 +38,6 @@ pub struct SessionHub {
     hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
     store: SessionStore,
-}
-
-struct SessionRuntime {
-    tx: broadcast::Sender<SessionNotification>,
-    running: bool,
-    current_turn_id: Option<String>,
-    cancel_requested: bool,
-    hook_session: Option<SharedHookSessionRuntime>,
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TurnTerminalKind {
-    Completed,
-    Failed,
-    Interrupted,
-}
-
-impl TurnTerminalKind {
-    fn event_type(self) -> &'static str {
-        match self {
-            Self::Completed => "turn_completed",
-            Self::Failed => "turn_failed",
-            Self::Interrupted => "turn_interrupted",
-        }
-    }
-
-    fn severity(self) -> &'static str {
-        match self {
-            Self::Completed => "info",
-            Self::Failed => "error",
-            Self::Interrupted => "warning",
-        }
-    }
-
-    fn state_tag(self) -> &'static str {
-        match self {
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Interrupted => "interrupted",
-        }
-    }
-}
-
-/// 从 SessionMeta 的持久化字段派生 SessionExecutionState。
-/// 供 inspect_session_execution_state 和 inspect_execution_states_bulk 共用。
-fn meta_to_execution_state(meta: &SessionMeta, session_id: &str) -> SessionExecutionState {
-    match meta.last_execution_status.as_str() {
-        "idle" => SessionExecutionState::Idle,
-        "completed" => SessionExecutionState::Completed {
-            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
-        },
-        "failed" => SessionExecutionState::Failed {
-            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
-            message: meta.last_terminal_message.clone(),
-        },
-        "interrupted" => SessionExecutionState::Interrupted {
-            turn_id: meta.last_turn_id.clone(),
-            message: meta.last_terminal_message.clone(),
-        },
-        // "running" 在启动恢复时已被修正为 "interrupted"，
-        // 正常运行时由内存 map 已经处理，不应落到这里
-        "running" => {
-            tracing::warn!(session_id, "meta 显示 running 但内存 map 无记录，视为 interrupted");
-            SessionExecutionState::Interrupted {
-                turn_id: meta.last_turn_id.clone(),
-                message: None,
-            }
-        }
-        other => unreachable!(
-            "last_execution_status 出现了非法值: {other:?}，这是 SessionHub 的 bug"
-        ),
-    }
-}
-
-fn session_hook_trace_decision(trigger: &HookTrigger, resolution: &HookResolution) -> &'static str {
-    match trigger {
-        HookTrigger::SessionStart => {
-            if resolution.refresh_snapshot {
-                "baseline_refreshed"
-            } else if !resolution.context_fragments.is_empty()
-                || !resolution.constraints.is_empty()
-                || !resolution.policies.is_empty()
-                || !resolution.diagnostics.is_empty()
-            {
-                "baseline_initialized"
-            } else {
-                "noop"
-            }
-        }
-        HookTrigger::SessionTerminal => {
-            if resolution
-                .completion
-                .as_ref()
-                .is_some_and(|completion| completion.advanced)
-            {
-                "step_advanced"
-            } else {
-                "terminal_observed"
-            }
-        }
-        _ => "noop",
-    }
 }
 
 impl SessionHub {
@@ -324,14 +87,10 @@ impl SessionHub {
     async fn emit_session_hook_trigger(
         &self,
         hook_session: &dyn HookSessionRuntimeAccess,
-        session_id: &str,
-        turn_id: Option<&str>,
-        trigger: HookTrigger,
-        payload: Option<serde_json::Value>,
-        refresh_reason: &'static str,
-        source: &AgentDashSourceV1,
+        input: &HookTriggerInput<'_>,
         tx: &broadcast::Sender<SessionNotification>,
     ) {
+        let HookTriggerInput { session_id, turn_id, ref trigger, ref payload, refresh_reason, ref source } = *input;
         match hook_session
             .evaluate(agentdash_connector_contract::hooks::HookEvaluationQuery {
                 session_id: session_id.to_string(),
@@ -341,7 +100,7 @@ impl SessionHub {
                 tool_call_id: None,
                 subagent_type: None,
                 snapshot: Some(hook_session.snapshot()),
-                payload,
+                payload: payload.clone(),
             })
             .await
         {
@@ -360,7 +119,7 @@ impl SessionHub {
                     timestamp_ms: chrono::Utc::now().timestamp_millis(),
                     revision: hook_session.revision(),
                     trigger: trigger.clone(),
-                    decision: session_hook_trace_decision(&trigger, &resolution).to_string(),
+                    decision: session_hook_trace_decision(trigger, &resolution).to_string(),
                     tool_name: None,
                     tool_call_id: None,
                     subagent_type: None,
@@ -731,6 +490,10 @@ impl SessionHub {
             }
         }
 
+        let runtime_delegate = hook_session
+            .as_ref()
+            .map(|hs| HookRuntimeDelegate::new(hs.clone()));
+
         let context = ExecutionContext {
             turn_id: turn_id.clone(),
             workspace_root,
@@ -742,6 +505,7 @@ impl SessionHub {
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
             system_context: req.system_context,
+            runtime_delegate,
         };
 
         session_meta.updated_at = now;
@@ -800,15 +564,17 @@ impl SessionHub {
         if let Some(hook_session) = hook_session.as_ref() {
             self.emit_session_hook_trigger(
                 hook_session.as_ref(),
-                &sid,
-                Some(&turn_id),
-                HookTrigger::SessionStart,
-                Some(serde_json::json!({
-                    "text_prompt": resolved_payload.text_prompt,
-                    "user_block_count": resolved_payload.user_blocks.len(),
-                })),
-                "trigger:session_start",
-                &source,
+                &HookTriggerInput {
+                    session_id: &sid,
+                    turn_id: Some(&turn_id),
+                    trigger: HookTrigger::SessionStart,
+                    payload: Some(serde_json::json!({
+                        "text_prompt": resolved_payload.text_prompt,
+                        "user_block_count": resolved_payload.user_blocks.len(),
+                    })),
+                    refresh_reason: "trigger:session_start",
+                    source: source.clone(),
+                },
                 &tx,
             )
             .await;
@@ -965,15 +731,17 @@ impl SessionHub {
             if let Some(hook_session) = hook_session_for_spawn {
                 hub.emit_session_hook_trigger(
                     hook_session.as_ref(),
-                    &session_id,
-                    Some(&turn_id_for_spawn),
-                    HookTrigger::SessionTerminal,
-                    Some(serde_json::json!({
-                        "terminal_state": terminal_kind.state_tag(),
-                        "message": terminal_message,
-                    })),
-                    "trigger:session_terminal",
-                    &source,
+                    &HookTriggerInput {
+                        session_id: &session_id,
+                        turn_id: Some(&turn_id_for_spawn),
+                        trigger: HookTrigger::SessionTerminal,
+                        payload: Some(serde_json::json!({
+                            "terminal_state": terminal_kind.state_tag(),
+                            "message": terminal_message,
+                        })),
+                        refresh_reason: "trigger:session_terminal",
+                        source: source.clone(),
+                    },
                     &tx,
                 )
                 .await;
@@ -1165,116 +933,10 @@ fn resolve_working_dir(workspace_root: &Path, working_dir: Option<&str>) -> Path
     }
 }
 
-#[derive(Clone)]
-struct SessionStore {
-    base_dir: PathBuf,
-}
-
-impl SessionStore {
-    fn new(base_dir: PathBuf) -> Self {
-        Self { base_dir }
-    }
-
-    fn jsonl_path(&self, session_id: &str) -> PathBuf {
-        self.base_dir.join(format!("{session_id}.jsonl"))
-    }
-
-    fn meta_path(&self, session_id: &str) -> PathBuf {
-        self.base_dir.join(format!("{session_id}.meta.json"))
-    }
-
-    async fn write_meta(&self, meta: &SessionMeta) -> std::io::Result<()> {
-        tokio::fs::create_dir_all(&self.base_dir).await?;
-        let path = self.meta_path(&meta.id);
-        let json = serde_json::to_string_pretty(meta).unwrap_or_else(|_| "{}".into());
-        tokio::fs::write(path, json).await
-    }
-
-    async fn read_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
-        let path = self.meta_path(session_id);
-        match tokio::fs::read_to_string(path).await {
-            Ok(content) => {
-                let meta = serde_json::from_str::<SessionMeta>(&content)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                Ok(Some(meta))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    async fn list_sessions(&self) -> std::io::Result<Vec<SessionMeta>> {
-        let mut entries = match tokio::fs::read_dir(&self.base_dir).await {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e),
-        };
-
-        let mut sessions = Vec::new();
-        while let Some(entry) = entries.next_entry().await? {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if !name_str.ends_with(".meta.json") {
-                continue;
-            }
-            let content = tokio::fs::read_to_string(entry.path()).await?;
-            if let Ok(meta) = serde_json::from_str::<SessionMeta>(&content) {
-                sessions.push(meta);
-            }
-        }
-
-        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
-        Ok(sessions)
-    }
-
-    async fn delete(&self, session_id: &str) -> std::io::Result<()> {
-        let jsonl = self.jsonl_path(session_id);
-        let meta = self.meta_path(session_id);
-        let _ = tokio::fs::remove_file(jsonl).await;
-        let _ = tokio::fs::remove_file(meta).await;
-        Ok(())
-    }
-
-    async fn append(&self, session_id: &str, n: &SessionNotification) -> std::io::Result<()> {
-        tokio::fs::create_dir_all(&self.base_dir).await?;
-        let path = self.jsonl_path(session_id);
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await?;
-        let line = serde_json::to_string(n).unwrap_or_else(|_| "{}".to_string());
-        use tokio::io::AsyncWriteExt as _;
-        file.write_all(line.as_bytes()).await?;
-        file.write_all(b"\n").await?;
-        Ok(())
-    }
-
-    async fn read_all(&self, session_id: &str) -> std::io::Result<Vec<SessionNotification>> {
-        let path = self.jsonl_path(session_id);
-        let content = match tokio::fs::read_to_string(path).await {
-            Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e),
-        };
-
-        let mut out = Vec::new();
-        for line in content.lines() {
-            let t = line.trim();
-            if t.is_empty() {
-                continue;
-            }
-            if let Ok(n) = serde_json::from_str::<SessionNotification>(t) {
-                out.push(n);
-            }
-        }
-        Ok(out)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::ContentBlock;
     use agentdash_connector_contract::PromptPayload;
     use agentdash_connector_contract::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use futures::stream;

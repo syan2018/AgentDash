@@ -77,9 +77,9 @@ fn plan_for_running_task(
                 context["error"] = json!(msg);
             }
 
-            if task.execution_mode == TaskExecutionMode::AutoRetry {
-                if let Some(tracker) = restart_tracker {
-                    if let RestartDecision::Allowed { attempt, .. } =
+            if task.execution_mode == TaskExecutionMode::AutoRetry
+                && let Some(tracker) = restart_tracker
+                    && let RestartDecision::Allowed { attempt, .. } =
                         tracker.report_failure(task.id)
                     {
                         context["retry_attempt"] = json!(attempt);
@@ -90,8 +90,6 @@ fn plan_for_running_task(
                             context,
                         });
                     }
-                }
-            }
 
             Some(StatusReconcilePlan {
                 next_status: TaskStatus::Failed,
@@ -110,9 +108,9 @@ fn plan_for_running_task(
                 context["message"] = json!(msg);
             }
 
-            if task.execution_mode == TaskExecutionMode::AutoRetry {
-                if let Some(tracker) = restart_tracker {
-                    if let RestartDecision::Allowed { attempt, .. } =
+            if task.execution_mode == TaskExecutionMode::AutoRetry
+                && let Some(tracker) = restart_tracker
+                    && let RestartDecision::Allowed { attempt, .. } =
                         tracker.report_failure(task.id)
                     {
                         context["retry_attempt"] = json!(attempt);
@@ -123,8 +121,6 @@ fn plan_for_running_task(
                             context,
                         });
                     }
-                }
-            }
 
             Some(StatusReconcilePlan {
                 next_status: TaskStatus::Failed,

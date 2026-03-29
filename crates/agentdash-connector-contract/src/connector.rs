@@ -11,6 +11,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
+use crate::lifecycle::DynAgentRuntimeDelegate;
 
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -41,31 +42,34 @@ pub struct AgentInfo {
     pub available: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExecutionContext {
-    /// One prompt invocation == one turn. Used to correlate injected user message
-    /// with connector-emitted updates via `_meta.agentdash.trace.turnId`.
     pub turn_id: String,
-    /// 当前执行绑定的工作空间根目录。
-    /// 对第三方 Agent，这是真正的执行仓根；对云端原生 Agent，则是 mount `main` 的物理根引用。
     pub workspace_root: PathBuf,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
-    /// ACP 协议 per-session MCP Server 列表，由 Connector 负责传递给 Agent
     pub mcp_servers: Vec<McpServer>,
-    /// 会话级 Address Space 视图。云端原生 Agent 可基于它生成 provider-backed runtime tools。
     pub address_space: Option<AddressSpace>,
-    /// 会话级 Hook Runtime 快照。
-    /// 当前阶段仅作为执行层承载位，后续由 SessionHub / Hook provider 正式填充。
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
-    /// Session 级别声明的流程工具能力集。
-    /// 工具构建时按此裁剪：仅注入声明可用的流程工具。
     #[allow(clippy::type_complexity)]
     pub flow_capabilities: FlowCapabilities,
-    /// 会话级 owner 上下文 markdown（project/story 摘要）。
-    /// 由 session plan 层填充，注入到 system prompt 头部，不写入用户消息流。
     pub system_context: Option<String>,
+    /// 预构建的 Agent Runtime Delegate（由 Application 层基于 hook_session 创建）。
+    /// Connector 可直接使用，无需自行构造具体 delegate 类型。
+    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+}
+
+impl std::fmt::Debug for ExecutionContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecutionContext")
+            .field("turn_id", &self.turn_id)
+            .field("workspace_root", &self.workspace_root)
+            .field("executor_config", &self.executor_config)
+            .field("hook_session", &self.hook_session)
+            .field("runtime_delegate", &self.runtime_delegate.as_ref().map(|_| ".."))
+            .finish_non_exhaustive()
+    }
 }
 
 /// 流程工具能力声明。

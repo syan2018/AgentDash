@@ -105,7 +105,7 @@ pub fn build_session_executor_summary(
 }
 
 pub fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|item| normalize_string(item))
+    value.and_then(normalize_string)
 }
 
 /// 适用于 `.and_then(normalize_string)` 模式。

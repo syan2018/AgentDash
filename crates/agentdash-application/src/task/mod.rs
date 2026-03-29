@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod config;
+pub mod context_builder;
 pub mod execution;
 pub mod gateway;
 pub mod lock;

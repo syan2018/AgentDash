@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -317,6 +318,11 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
         note: Option<String>,
         turn_id: Option<String>,
     ) -> Option<HookPendingAction>;
+
+    /// 订阅实时 trace 事件流。返回 None 表示此实现不支持 trace 广播。
+    fn subscribe_traces(&self) -> Option<broadcast::Receiver<HookTraceEntry>> {
+        None
+    }
 }
 
 pub type SharedHookSessionRuntime = Arc<dyn HookSessionRuntimeAccess>;

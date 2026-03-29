@@ -314,8 +314,8 @@ pub async fn open_project_agent_session(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     // 自动启动 Lifecycle Run（如果 Agent Link 配置了 default_lifecycle_key）
-    if let Some(lifecycle_key) = resolve_agent_default_lifecycle(&state, project.id, &agent_key).await {
-        if let Err(err) = auto_start_lifecycle_run(&state, project.id, &lifecycle_key).await {
+    if let Some(lifecycle_key) = resolve_agent_default_lifecycle(&state, project.id, &agent_key).await
+        && let Err(err) = auto_start_lifecycle_run(&state, project.id, &lifecycle_key).await {
             tracing::warn!(
                 project_id = %project.id,
                 agent_key = %agent_key,
@@ -324,7 +324,6 @@ pub async fn open_project_agent_session(
                 "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
             );
         }
-    }
 
     let session = Some(ProjectAgentSessionResponse {
         binding_id: binding.id.to_string(),
@@ -1059,8 +1058,8 @@ async fn resolve_agent_default_lifecycle(
     agent_key: &str,
 ) -> Option<String> {
     // 尝试按 UUID 解析 — 如果 agent_key 是 UUID 则查 agent_link
-    if let Ok(agent_id) = Uuid::parse_str(agent_key) {
-        if let Ok(Some(link)) = state
+    if let Ok(agent_id) = Uuid::parse_str(agent_key)
+        && let Ok(Some(link)) = state
             .repos
             .agent_link_repo
             .find_by_project_and_agent(project_id, agent_id)
@@ -1068,7 +1067,6 @@ async fn resolve_agent_default_lifecycle(
         {
             return link.default_lifecycle_key;
         }
-    }
 
     // 旧模型 preset 不支持 lifecycle 绑定
     None

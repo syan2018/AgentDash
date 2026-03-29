@@ -149,6 +149,12 @@ pub struct MountProviderRegistryBuilder {
     registry: MountProviderRegistry,
 }
 
+impl Default for MountProviderRegistryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MountProviderRegistryBuilder {
     pub fn new() -> Self {
         Self {

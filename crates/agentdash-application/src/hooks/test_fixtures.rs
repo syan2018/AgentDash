@@ -1,24 +1,19 @@
-use agentdash_spi::{
-    ActiveTaskMeta, ActiveWorkflowMeta, HookSourceLayer, HookSourceRef,
-    SessionHookSnapshot, SessionSnapshotMetadata,
-};
 use agentdash_domain::workflow::{
     WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
     WorkflowContract,
 };
+use agentdash_spi::{
+    ActiveWorkflowMeta, HookSourceLayer, HookSourceRef, SessionHookSnapshot,
+    SessionSnapshotMetadata,
+};
 
-pub fn snapshot_with_workflow(
-    step_key: &str,
-    completion_mode: &str,
-    task_status: Option<&str>,
-) -> SessionHookSnapshot {
-    snapshot_with_workflow_and_evidence(step_key, completion_mode, task_status, false)
+pub fn snapshot_with_workflow(step_key: &str, completion_mode: &str) -> SessionHookSnapshot {
+    snapshot_with_workflow_and_evidence(step_key, completion_mode, false)
 }
 
 pub fn snapshot_with_workflow_and_evidence(
     step_key: &str,
     completion_mode: &str,
-    task_status: Option<&str>,
     checklist_evidence_present: bool,
 ) -> SessionHookSnapshot {
     let (step_advance, workflow_key, mut contract) = match completion_mode {
@@ -33,22 +28,12 @@ pub fn snapshot_with_workflow_and_evidence(
                     payload: None,
                 }],
                 completion: WorkflowCompletionSpec {
-                    checks: vec![
-                        WorkflowCheckSpec {
-                            key: "task_ready".to_string(),
-                            kind: WorkflowCheckKind::TaskStatusIn,
-                            description: "task ready".to_string(),
-                            payload: Some(serde_json::json!({
-                                "statuses": ["awaiting_verification", "completed"]
-                            })),
-                        },
-                        WorkflowCheckSpec {
-                            key: "checklist_evidence_present".to_string(),
-                            kind: WorkflowCheckKind::ChecklistEvidencePresent,
-                            description: "checklist evidence".to_string(),
-                            payload: None,
-                        },
-                    ],
+                    checks: vec![WorkflowCheckSpec {
+                        key: "checklist_evidence_present".to_string(),
+                        kind: WorkflowCheckKind::ChecklistEvidencePresent,
+                        description: "checklist evidence".to_string(),
+                        payload: None,
+                    }],
                     ..WorkflowCompletionSpec::default()
                 },
                 ..WorkflowContract::default()
@@ -61,18 +46,6 @@ pub fn snapshot_with_workflow_and_evidence(
         ),
         _ => ("manual", None, WorkflowContract::default()),
     };
-    if step_key == "implement" {
-        contract
-            .constraints
-            .push(agentdash_domain::workflow::WorkflowConstraintSpec {
-                key: "deny_complete_status".to_string(),
-                kind: WorkflowConstraintKind::DenyTaskStatusTransition,
-                description: "deny completed".to_string(),
-                payload: Some(serde_json::json!({
-                    "to": ["completed"]
-                })),
-            });
-    }
     let effective_contract = serde_json::json!(contract);
     let workflow_source = HookSourceRef {
         layer: HookSourceLayer::Workflow,
@@ -100,15 +73,6 @@ pub fn snapshot_with_workflow_and_evidence(
         }),
         ..SessionHookSnapshot::default()
     };
-    if let Some(task_status) = task_status {
-        if let Some(meta) = snapshot.metadata.as_mut() {
-            meta.active_task = Some(ActiveTaskMeta {
-                task_id: Some("task-1".to_string()),
-                status: Some(task_status.to_string()),
-                ..Default::default()
-            });
-        }
-    }
     snapshot
 }
 

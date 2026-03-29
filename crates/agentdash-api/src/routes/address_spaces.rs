@@ -5,14 +5,10 @@ use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_domain::workflow::WorkflowTargetKind;
-use agentdash_spi::AddressSpace;
+use agentdash_domain::workflow::WorkflowBindingKind;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
+use agentdash_spi::AddressSpace;
 
-use agentdash_application::address_space::{
-    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, SessionMountTarget,
-    inline_files_from_mount, normalize_mount_relative_path,
-};
 use crate::app_state::AppState;
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
@@ -20,6 +16,10 @@ use crate::auth::{
 };
 use crate::rpc::ApiError;
 use agentdash_application::address_space::selected_workspace_binding;
+use agentdash_application::address_space::{
+    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, SessionMountTarget,
+    inline_files_from_mount, normalize_mount_relative_path,
+};
 
 const MAX_ENTRIES: usize = 200;
 
@@ -386,12 +386,15 @@ pub async fn write_mount_file(
         normalize_mount_relative_path(&req.path, false).map_err(ApiError::BadRequest)?;
 
     if mount.provider == PROVIDER_INLINE_FS {
-        let persister = agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
-            state.repos.project_repo.clone(),
-            state.repos.story_repo.clone(),
-        );
+        let persister =
+            agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
+                state.repos.project_repo.clone(),
+                state.repos.story_repo.clone(),
+            );
         let overlay =
-            agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(std::sync::Arc::new(persister));
+            agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(
+                std::sync::Arc::new(persister),
+            );
         overlay
             .write(&address_space, mount, &normalized_path, &req.content)
             .await
@@ -493,7 +496,7 @@ pub async fn preview_address_space(
     let workspace = resolve_workspace_for_owner(&state, &project, parsed_owner).await;
 
     let target = match parsed_owner {
-        Some((WorkflowTargetKind::Task, _)) => SessionMountTarget::Task,
+        Some((WorkflowBindingKind::Task, _)) => SessionMountTarget::Task,
         _ => match req.target.as_str() {
             "story" => SessionMountTarget::Story,
             "task" => SessionMountTarget::Task,
@@ -507,8 +510,8 @@ pub async fn preview_address_space(
         .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
 
-    if let Some((target_kind, target_id)) = parsed_owner {
-        inject_lifecycle_mount(&state, target_kind, target_id, &mut address_space).await;
+    if let Some((binding_kind, binding_id)) = parsed_owner {
+        inject_lifecycle_mount(&state, binding_kind, binding_id, &mut address_space).await;
     }
 
     let mut mounts = Vec::new();
@@ -526,9 +529,7 @@ pub async fn preview_address_space(
         };
 
         let file_count = if mount.provider == PROVIDER_INLINE_FS {
-            inline_files_from_mount(mount)
-                .ok()
-                .map(|files| files.len())
+            inline_files_from_mount(mount).ok().map(|files| files.len())
         } else {
             None
         };
@@ -565,16 +566,14 @@ async fn check_mount_available(
     mount_id: &str,
 ) -> Result<(), ApiError> {
     if let Some(mount) = address_space.mounts.iter().find(|m| m.id == mount_id)
-        && let Some(provider) = state
-            .services
-            .mount_provider_registry
-            .get(&mount.provider)
-            && !provider.is_available(mount).await {
-                return Err(ApiError::ServiceUnavailable(format!(
-                    "挂载点 \"{}\" 的 Backend 当前不在线（{}），无法浏览文件。请确认 Backend 已连接。",
-                    mount.display_name, mount.backend_id,
-                )));
-            }
+        && let Some(provider) = state.services.mount_provider_registry.get(&mount.provider)
+        && !provider.is_available(mount).await
+    {
+        return Err(ApiError::ServiceUnavailable(format!(
+            "挂载点 \"{}\" 的 Backend 当前不在线（{}），无法浏览文件。请确认 Backend 已连接。",
+            mount.display_name, mount.backend_id,
+        )));
+    }
     Ok(())
 }
 
@@ -601,7 +600,7 @@ async fn resolve_address_space(
     let workspace = resolve_workspace_for_owner(state, &project, parsed_owner).await;
 
     let target = match parsed_owner {
-        Some((WorkflowTargetKind::Task, _)) => SessionMountTarget::Task,
+        Some((WorkflowBindingKind::Task, _)) => SessionMountTarget::Task,
         _ if story.is_some() => SessionMountTarget::Story,
         _ => SessionMountTarget::Project,
     };
@@ -612,8 +611,8 @@ async fn resolve_address_space(
         .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
 
-    if let Some((target_kind, target_id)) = parsed_owner {
-        inject_lifecycle_mount(state, target_kind, target_id, &mut address_space).await;
+    if let Some((binding_kind, binding_id)) = parsed_owner {
+        inject_lifecycle_mount(state, binding_kind, binding_id, &mut address_space).await;
     }
 
     Ok(address_space)
@@ -622,15 +621,10 @@ async fn resolve_address_space(
 fn parse_lifecycle_owner(
     owner_type: &Option<String>,
     owner_id: &Option<String>,
-) -> Option<(WorkflowTargetKind, Uuid)> {
+) -> Option<(WorkflowBindingKind, Uuid)> {
     let otype = owner_type.as_deref()?.trim();
     let oid = owner_id.as_deref()?.trim();
-    let kind = match otype {
-        "project" => WorkflowTargetKind::Project,
-        "story" => WorkflowTargetKind::Story,
-        "task" => WorkflowTargetKind::Task,
-        _ => return None,
-    };
+    let kind = WorkflowBindingKind::from_owner_type(otype)?;
     Uuid::parse_str(oid).ok().map(|id| (kind, id))
 }
 
@@ -641,23 +635,30 @@ fn parse_lifecycle_owner(
 async fn resolve_workspace_for_owner(
     state: &Arc<AppState>,
     project: &agentdash_domain::project::Project,
-    owner: Option<(WorkflowTargetKind, Uuid)>,
+    owner: Option<(WorkflowBindingKind, Uuid)>,
 ) -> Option<agentdash_domain::workspace::Workspace> {
     if let Some((kind, id)) = owner {
         match kind {
-            WorkflowTargetKind::Task => {
+            WorkflowBindingKind::Task => {
                 if let Some(ws) = resolve_task_workspace(state, id).await {
                     return Some(ws);
                 }
             }
-            WorkflowTargetKind::Story => {
+            WorkflowBindingKind::Story => {
                 if let Some(story) = state.repos.story_repo.get_by_id(id).await.ok().flatten()
                     && let Some(ws_id) = story.default_workspace_id
-                        && let Some(ws) = state.repos.workspace_repo.get_by_id(ws_id).await.ok().flatten() {
-                            return Some(ws);
-                        }
+                    && let Some(ws) = state
+                        .repos
+                        .workspace_repo
+                        .get_by_id(ws_id)
+                        .await
+                        .ok()
+                        .flatten()
+                {
+                    return Some(ws);
+                }
             }
-            WorkflowTargetKind::Project => {}
+            WorkflowBindingKind::Project => {}
         }
     }
 
@@ -686,8 +687,8 @@ async fn resolve_task_workspace(
 
 async fn inject_lifecycle_mount(
     state: &Arc<AppState>,
-    target_kind: WorkflowTargetKind,
-    target_id: Uuid,
+    binding_kind: WorkflowBindingKind,
+    binding_id: Uuid,
     address_space: &mut AddressSpace,
 ) {
     use agentdash_application::address_space::build_lifecycle_mount;
@@ -696,12 +697,12 @@ async fn inject_lifecycle_mount(
     let runs = match state
         .repos
         .lifecycle_run_repo
-        .list_by_target(target_kind, target_id)
+        .list_by_binding(binding_kind, binding_id)
         .await
     {
         Ok(runs) => runs,
         Err(e) => {
-            tracing::warn!(%target_id, "inject_lifecycle_mount: 查询失败 {e}");
+            tracing::warn!(%binding_id, "inject_lifecycle_mount: 查询失败 {e}");
             return;
         }
     };
@@ -793,4 +794,3 @@ async fn require_backend_online(
     }
     Ok(())
 }
-

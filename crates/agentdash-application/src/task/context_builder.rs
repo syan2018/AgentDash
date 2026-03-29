@@ -1,23 +1,18 @@
 use agent_client_protocol::McpServer;
 use uuid::Uuid;
 
-use agentdash_domain::common::AddressSpace;
-use agentdash_domain::project::Project;
-use agentdash_domain::task::Task;
 use crate::address_space::RelayAddressSpaceService;
-use crate::address_space::mount::SessionMountTarget;
 use crate::bootstrap_plan::{
-    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan, derive_session_context_snapshot,
+    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
+    derive_session_context_snapshot,
 };
 use crate::repository_set::RepositorySet;
-use crate::runtime::RuntimeMcpBinding;
-use crate::runtime_bridge::{
-    acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp,
-};
+use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
-use crate::task::config::resolve_task_agent_config;
+use crate::task::session_runtime_inputs::build_task_session_runtime_inputs;
+use agentdash_domain::common::AddressSpace;
 
 #[derive(Debug)]
 pub struct BuiltTaskSessionContext {
@@ -42,56 +37,41 @@ pub async fn build_task_session_context(
         None
     };
 
-    let preset_name = normalize_optional_string(task.agent_binding.preset_name.clone());
-    let executor_source = resolve_task_executor_source(&task, &project).to_string();
-    let (resolved_config, resolution_error) = match resolve_task_agent_config(&task, &project) {
-        Ok(config) => (config, None),
-        Err(err) => (None, Some(err.to_string())),
-    };
-    let effective_agent_type = resolved_config.as_ref().map(|c| c.executor.as_str());
-    let use_address_space = resolved_config
-        .as_ref()
-        .is_some_and(|c| c.is_cloud_native());
-    let address_space = if use_address_space {
-        address_space_service
-            .build_address_space(
-                &project,
-                Some(&story),
-                workspace.as_ref(),
-                SessionMountTarget::Task,
-                effective_agent_type,
-            )
-            .ok()
-    } else {
-        None
-    };
+    let session_runtime_inputs = build_task_session_runtime_inputs(
+        repos,
+        address_space_service,
+        mcp_base_url,
+        &task,
+        &story,
+        &project,
+        workspace.as_ref(),
+        None,
+        false,
+    )
+    .await
+    .ok()?;
 
-    let mcp_servers: Vec<McpServer> = mcp_base_url
-        .map(|base_url| {
-            runtime_mcp_servers_to_acp(&[RuntimeMcpBinding::for_task(
-                base_url.to_string(), task.project_id, task.story_id, task.id,
-            )
-            .to_runtime_server()])
-        })
-        .unwrap_or_default();
+    let preset_name = normalize_optional_string(task.agent_binding.preset_name.clone());
+    let mcp_servers: Vec<McpServer> =
+        runtime_mcp_servers_to_acp(&session_runtime_inputs.mcp_servers);
 
     let story_overrides = extract_story_overrides(&story);
-    let runtime_address_space = address_space.clone();
+    let runtime_address_space = session_runtime_inputs.address_space.clone();
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
         story: Some(story),
         workspace,
-        resolved_config,
+        resolved_config: session_runtime_inputs.resolved_config,
         address_space: runtime_address_space,
         mcp_servers: acp_mcp_servers_to_runtime(&mcp_servers),
         working_dir: None,
         workspace_root: None,
         executor_preset_name: preset_name,
-        executor_source,
-        executor_resolution_error: resolution_error,
+        executor_source: session_runtime_inputs.executor_source,
+        executor_resolution_error: session_runtime_inputs.executor_resolution_error,
         owner_variant: BootstrapOwnerVariant::Task { story_overrides },
-        workflow: None,
+        workflow: session_runtime_inputs.workflow,
     });
 
     let snapshot = derive_session_context_snapshot(&plan);
@@ -100,32 +80,4 @@ pub async fn build_task_session_context(
         address_space: plan.address_space.clone(),
         context_snapshot: Some(snapshot),
     })
-}
-
-fn resolve_task_executor_source(task: &Task, project: &Project) -> &'static str {
-    if task
-        .agent_binding
-        .agent_type
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return "task.agent_binding.agent_type";
-    }
-    if task
-        .agent_binding
-        .preset_name
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return "task.agent_binding.preset_name";
-    }
-    if project
-        .config
-        .default_agent_type
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return "project.config.default_agent_type";
-    }
-    "unresolved"
 }

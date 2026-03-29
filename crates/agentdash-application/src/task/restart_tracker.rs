@@ -103,10 +103,10 @@ impl RestartTracker {
         // 如果自上次失败后稳定运行超过阈值，重置计数
         if let Some(stable_start) = state.last_stable_start
             && stable_start > state.last_failure
-                && now.duration_since(stable_start) >= self.policy.reset_after
-            {
-                state.count = 0;
-            }
+            && now.duration_since(stable_start) >= self.policy.reset_after
+        {
+            state.count = 0;
+        }
 
         if state.count >= self.policy.max_restarts {
             return RestartDecision::Denied {

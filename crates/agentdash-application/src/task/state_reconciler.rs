@@ -79,17 +79,16 @@ fn plan_for_running_task(
 
             if task.execution_mode == TaskExecutionMode::AutoRetry
                 && let Some(tracker) = restart_tracker
-                    && let RestartDecision::Allowed { attempt, .. } =
-                        tracker.report_failure(task.id)
-                    {
-                        context["retry_attempt"] = json!(attempt);
-                        context["auto_retry"] = json!(true);
-                        return Some(StatusReconcilePlan {
-                            next_status: TaskStatus::AwaitingVerification,
-                            reason: "boot_reconcile_turn_failed_pending_retry",
-                            context,
-                        });
-                    }
+                && let RestartDecision::Allowed { attempt, .. } = tracker.report_failure(task.id)
+            {
+                context["retry_attempt"] = json!(attempt);
+                context["auto_retry"] = json!(true);
+                return Some(StatusReconcilePlan {
+                    next_status: TaskStatus::AwaitingVerification,
+                    reason: "boot_reconcile_turn_failed_pending_retry",
+                    context,
+                });
+            }
 
             Some(StatusReconcilePlan {
                 next_status: TaskStatus::Failed,
@@ -110,17 +109,16 @@ fn plan_for_running_task(
 
             if task.execution_mode == TaskExecutionMode::AutoRetry
                 && let Some(tracker) = restart_tracker
-                    && let RestartDecision::Allowed { attempt, .. } =
-                        tracker.report_failure(task.id)
-                    {
-                        context["retry_attempt"] = json!(attempt);
-                        context["auto_retry"] = json!(true);
-                        return Some(StatusReconcilePlan {
-                            next_status: TaskStatus::AwaitingVerification,
-                            reason: "boot_reconcile_turn_interrupted_pending_retry",
-                            context,
-                        });
-                    }
+                && let RestartDecision::Allowed { attempt, .. } = tracker.report_failure(task.id)
+            {
+                context["retry_attempt"] = json!(attempt);
+                context["auto_retry"] = json!(true);
+                return Some(StatusReconcilePlan {
+                    next_status: TaskStatus::AwaitingVerification,
+                    reason: "boot_reconcile_turn_interrupted_pending_retry",
+                    context,
+                });
+            }
 
             Some(StatusReconcilePlan {
                 next_status: TaskStatus::Failed,

@@ -3,11 +3,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{
-    EffectiveSessionContract, LifecycleExecutionEntry, LifecycleRunStatus,
-    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowAgentRole, WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus,
-    WorkflowRecordArtifact, WorkflowTargetKind, validate_lifecycle_definition,
-    validate_workflow_definition,
+    EffectiveSessionContract, LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowBindingKind,
+    WorkflowBindingRole, WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowRecordArtifact, validate_lifecycle_definition, validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,9 +15,9 @@ pub struct WorkflowDefinition {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub target_kind: WorkflowTargetKind,
+    pub binding_kind: WorkflowBindingKind,
     #[serde(default)]
-    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub source: WorkflowDefinitionSource,
     pub status: WorkflowDefinitionStatus,
     pub version: i32,
@@ -32,7 +31,7 @@ impl WorkflowDefinition {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        target_kind: WorkflowTargetKind,
+        binding_kind: WorkflowBindingKind,
         source: WorkflowDefinitionSource,
         contract: WorkflowContract,
     ) -> Result<Self, String> {
@@ -46,8 +45,8 @@ impl WorkflowDefinition {
             key,
             name,
             description: description.into(),
-            target_kind,
-            recommended_roles: Vec::new(),
+            binding_kind,
+            recommended_binding_roles: Vec::new(),
             source,
             status: match source {
                 WorkflowDefinitionSource::BuiltinSeed => WorkflowDefinitionStatus::Active,
@@ -82,9 +81,9 @@ pub struct LifecycleDefinition {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub target_kind: WorkflowTargetKind,
+    pub binding_kind: WorkflowBindingKind,
     #[serde(default)]
-    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub source: WorkflowDefinitionSource,
     pub status: WorkflowDefinitionStatus,
     pub version: i32,
@@ -99,7 +98,7 @@ impl LifecycleDefinition {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        target_kind: WorkflowTargetKind,
+        binding_kind: WorkflowBindingKind,
         source: WorkflowDefinitionSource,
         entry_step_key: impl Into<String>,
         steps: Vec<LifecycleStepDefinition>,
@@ -115,8 +114,8 @@ impl LifecycleDefinition {
             key,
             name,
             description: description.into(),
-            target_kind,
-            recommended_roles: Vec::new(),
+            binding_kind,
+            recommended_binding_roles: Vec::new(),
             source,
             status: match source {
                 WorkflowDefinitionSource::BuiltinSeed => WorkflowDefinitionStatus::Active,
@@ -156,7 +155,7 @@ pub struct WorkflowAssignment {
     pub id: Uuid,
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
-    pub role: WorkflowAgentRole,
+    pub role: WorkflowBindingRole,
     pub enabled: bool,
     pub is_default: bool,
     pub created_at: DateTime<Utc>,
@@ -164,7 +163,7 @@ pub struct WorkflowAssignment {
 }
 
 impl WorkflowAssignment {
-    pub fn new(project_id: Uuid, lifecycle_id: Uuid, role: WorkflowAgentRole) -> Self {
+    pub fn new(project_id: Uuid, lifecycle_id: Uuid, role: WorkflowBindingRole) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
@@ -184,8 +183,8 @@ pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
-    pub target_kind: WorkflowTargetKind,
-    pub target_id: Uuid,
+    pub binding_kind: WorkflowBindingKind,
+    pub binding_id: Uuid,
     pub status: LifecycleRunStatus,
     pub current_step_key: Option<String>,
     #[serde(default)]
@@ -203,8 +202,8 @@ impl LifecycleRun {
     pub fn new(
         project_id: Uuid,
         lifecycle_id: Uuid,
-        target_kind: WorkflowTargetKind,
-        target_id: Uuid,
+        binding_kind: WorkflowBindingKind,
+        binding_id: Uuid,
         steps: &[LifecycleStepDefinition],
         entry_step_key: &str,
     ) -> Result<Self, String> {
@@ -236,8 +235,8 @@ impl LifecycleRun {
             id: Uuid::new_v4(),
             project_id,
             lifecycle_id,
-            target_kind,
-            target_id,
+            binding_kind,
+            binding_id,
             status: LifecycleRunStatus::Ready,
             current_step_key: Some(entry_step_key.to_string()),
             step_states,
@@ -425,7 +424,7 @@ mod tests {
         let mut run = LifecycleRun::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
-            WorkflowTargetKind::Task,
+            WorkflowBindingKind::Task,
             Uuid::new_v4(),
             &[step("start", "wf_start"), step("check", "wf_check")],
             "start",
@@ -445,7 +444,7 @@ mod tests {
             "wf_primary",
             "Primary",
             "desc",
-            WorkflowTargetKind::Task,
+            WorkflowBindingKind::Task,
             WorkflowDefinitionSource::BuiltinSeed,
             contract(),
         )
@@ -461,7 +460,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "desc",
-            WorkflowTargetKind::Task,
+            WorkflowBindingKind::Task,
             WorkflowDefinitionSource::BuiltinSeed,
             "start",
             vec![step("start", "wf_start")],
@@ -474,11 +473,8 @@ mod tests {
     #[test]
     fn workflow_assignment_uses_lifecycle_id() {
         let lifecycle_id = Uuid::new_v4();
-        let assignment = WorkflowAssignment::new(
-            Uuid::new_v4(),
-            lifecycle_id,
-            WorkflowAgentRole::Task,
-        );
+        let assignment =
+            WorkflowAssignment::new(Uuid::new_v4(), lifecycle_id, WorkflowBindingRole::Task);
 
         assert_eq!(assignment.lifecycle_id, lifecycle_id);
     }

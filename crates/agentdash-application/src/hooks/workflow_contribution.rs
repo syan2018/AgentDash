@@ -130,13 +130,13 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    use agentdash_spi::HookSourceLayer;
+    use crate::workflow::{ActiveWorkflowProjection, WorkflowBindingSummary};
     use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition,
-        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
-        WorkflowInjectionSpec, WorkflowTargetKind, build_effective_contract,
+        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowBindingKind,
+        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
+        build_effective_contract,
     };
-    use crate::workflow::{ActiveWorkflowProjection, WorkflowTargetSummary};
+    use agentdash_spi::HookSourceLayer;
 
     fn workflow_projection_with_instructions(
         instructions: Vec<String>,
@@ -152,7 +152,7 @@ mod tests {
             "trellis_dev_task_implement",
             "Trellis Dev Workflow / Implement",
             "workflow desc",
-            WorkflowTargetKind::Task,
+            WorkflowBindingKind::Task,
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )
@@ -166,19 +166,19 @@ mod tests {
             "trellis_dev_task",
             "Trellis Dev Lifecycle",
             "lifecycle desc",
-            WorkflowTargetKind::Task,
+            WorkflowBindingKind::Task,
             WorkflowDefinitionSource::BuiltinSeed,
             "implement",
             vec![active_step.clone()],
         )
         .expect("lifecycle definition should build");
         let project_id = Uuid::new_v4();
-        let target_id = Uuid::new_v4();
+        let binding_id = Uuid::new_v4();
         let mut run = LifecycleRun::new(
             project_id,
             lifecycle.id,
-            WorkflowTargetKind::Task,
-            target_id,
+            WorkflowBindingKind::Task,
+            binding_id,
             &lifecycle.steps,
             &lifecycle.entry_step_key,
         )
@@ -193,10 +193,10 @@ mod tests {
             active_step,
             primary_workflow: Some(definition),
             effective_contract,
-            target: WorkflowTargetSummary {
-                target_kind: WorkflowTargetKind::Task,
-                target_id,
-                target_label: Some("Task A".to_string()),
+            binding: WorkflowBindingSummary {
+                binding_kind: WorkflowBindingKind::Task,
+                binding_id,
+                binding_label: Some("Task A".to_string()),
             },
         }
     }
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn workflow_step_fragments_do_not_duplicate_constraints_fragment() {
         let workflow = workflow_projection_with_instructions(vec![
-            "先更新 task 状态，再结束 session".to_string(),
+            "先补齐检查证据，再结束 session".to_string(),
         ]);
         let source_refs = vec![HookSourceRef {
             layer: HookSourceLayer::Workflow,

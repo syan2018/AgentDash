@@ -1,11 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_spi::{
-    ActiveTaskMeta, ActiveWorkflowMeta, HookContributionSet, HookConstraint, HookDiagnosticEntry,
-    HookError, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
-};
-use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
@@ -13,11 +7,15 @@ use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
+use agentdash_spi::hooks::PendingExecutionLogEntry;
+use agentdash_spi::{
+    ActiveWorkflowMeta, HookConstraint, HookContributionSet, HookDiagnosticEntry, HookError,
+    HookEvaluationQuery, HookResolution, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SessionSnapshotMetadata,
+};
 use async_trait::async_trait;
 
-use agentdash_spi::{
-    ExecutionHookProvider, HookStepAdvanceRequest,
-};
+use agentdash_spi::{ExecutionHookProvider, HookStepAdvanceRequest};
 
 use crate::workflow::WorkflowCompletionSignalSet;
 
@@ -111,7 +109,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 
         for binding in bindings.iter() {
             let resolved_owner = self.owner_resolver.resolve(binding).await?;
-            let task_status = resolved_owner.task_status.clone();
             snapshot.diagnostics.extend(resolved_owner.diagnostics);
             let owner = resolved_owner.summary;
             snapshot.tags.push(format!("owner:{}", owner.owner_type));
@@ -125,18 +122,12 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             if let Some(task_id) = owner.task_id.as_deref() {
                 snapshot.tags.push(format!("task:{task_id}"));
             }
-            if let Some(task_status) = task_status.as_deref() {
-                snapshot.tags.push(format!("task_status:{task_status}"));
-                if let Some(meta) = snapshot.metadata.as_mut() {
-                    meta.active_task = Some(ActiveTaskMeta {
-                        task_id: owner.task_id.clone(),
-                        task_title: owner.label.clone(),
-                        status: Some(task_status.to_string()),
-                    });
-                }
-            }
 
-            if let Some(workflow) = self.workflow_builder.resolve_active_workflow(&owner).await? {
+            if let Some(workflow) = self
+                .workflow_builder
+                .resolve_active_workflow(&owner)
+                .await?
+            {
                 let source_refs = workflow_source_refs(&workflow);
                 let mut source_summary = source_summary_from_refs(&source_refs);
                 source_summary.push(format!("workflow_run:{}", workflow.run.id));
@@ -170,9 +161,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         lifecycle_key: Some(workflow.lifecycle.key.clone()),
                         lifecycle_name: Some(workflow.lifecycle.name.clone()),
                         run_id: Some(workflow.run.id.to_string()),
-                        run_status: Some(
-                            workflow_run_status_tag(workflow.run.status).to_string(),
-                        ),
+                        run_status: Some(workflow_run_status_tag(workflow.run.status).to_string()),
                         step_key: Some(workflow.active_step.key.clone()),
                         step_title: Some(step_title),
                         workflow_key: workflow.active_step.workflow_key.clone(),
@@ -252,11 +241,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                                 source_refs: source_refs.clone(),
                             })
                             .collect(),
-                        policies: build_workflow_policies(
-                            &workflow,
-                            &source_summary,
-                            &source_refs,
-                        ),
+                        policies: build_workflow_policies(&workflow, &source_summary, &source_refs),
                         diagnostics: Vec::new(),
                     },
                 );
@@ -336,7 +321,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 if let Some(decision) = completion_decision_for_active_workflow_snapshot(
                     &snapshot,
                     &WorkflowCompletionSignalSet {
-                        task_status: active_task_status(&snapshot).map(ToString::to_string),
                         checklist_evidence_present: checklist_evidence_present(&snapshot),
                         ..WorkflowCompletionSignalSet::default()
                     },
@@ -410,14 +394,16 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_agent::{AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo};
+    use crate::session::{HookRuntimeDelegate, HookSessionRuntime};
+    use agentdash_agent::{
+        AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
+    };
+    use agentdash_spi::hooks::HookSessionRuntimeAccess;
+    use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use agentdash_spi::{
         ExecutionHookProvider, HookError, HookTrigger, SessionHookRefreshQuery,
         SessionHookSnapshotQuery,
     };
-    use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
-    use crate::session::{HookRuntimeDelegate, HookSessionRuntime};
-    use agentdash_spi::hooks::HookSessionRuntimeAccess;
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
@@ -467,7 +453,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_delegate_before_tool_rewrite_records_trace() {
-        let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
+        let snapshot = snapshot_with_workflow("implement", "session_ended");
         let hook_session = Arc::new(HookSessionRuntime::new(
             snapshot.session_id.clone(),
             Arc::new(RuleEngineTestProvider {

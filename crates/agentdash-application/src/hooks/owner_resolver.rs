@@ -7,7 +7,7 @@ use agentdash_domain::task::TaskRepository;
 
 use agentdash_spi::{HookDiagnosticEntry, HookError, HookOwnerSummary};
 
-use super::snapshot_helpers::{ResolvedOwnerSummary, task_status_tag};
+use super::snapshot_helpers::ResolvedOwnerSummary;
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
@@ -34,13 +34,7 @@ fn task_source_ref(task_id: uuid::Uuid) -> agentdash_spi::HookSourceRef {
 fn source_summary_from_refs(source_refs: &[agentdash_spi::HookSourceRef]) -> Vec<String> {
     source_refs
         .iter()
-        .map(|source| {
-            format!(
-                "{}:{}",
-                super::source_layer_tag(source.layer),
-                source.key
-            )
-        })
+        .map(|source| format!("{}:{}", super::source_layer_tag(source.layer), source.key))
         .collect()
 }
 
@@ -171,15 +165,6 @@ impl SessionOwnerResolver {
         Ok(ResolvedOwnerSummary {
             summary,
             diagnostics,
-            task_status: match binding.owner_type {
-                SessionOwnerType::Task => self
-                    .task_repo
-                    .get_by_id(binding.owner_id)
-                    .await
-                    .map_err(map_hook_error)?
-                    .map(|task| task_status_tag(task.status).to_string()),
-                SessionOwnerType::Project | SessionOwnerType::Story => None,
-            },
         })
     }
 }

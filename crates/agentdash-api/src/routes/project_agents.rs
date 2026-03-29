@@ -314,16 +314,18 @@ pub async fn open_project_agent_session(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     // 自动启动 Lifecycle Run（如果 Agent Link 配置了 default_lifecycle_key）
-    if let Some(lifecycle_key) = resolve_agent_default_lifecycle(&state, project.id, &agent_key).await
-        && let Err(err) = auto_start_lifecycle_run(&state, project.id, &lifecycle_key).await {
-            tracing::warn!(
-                project_id = %project.id,
-                agent_key = %agent_key,
-                lifecycle_key = %lifecycle_key,
-                error = %err,
-                "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
-            );
-        }
+    if let Some(lifecycle_key) =
+        resolve_agent_default_lifecycle(&state, project.id, &agent_key).await
+        && let Err(err) = auto_start_lifecycle_run(&state, project.id, &lifecycle_key).await
+    {
+        tracing::warn!(
+            project_id = %project.id,
+            agent_key = %agent_key,
+            lifecycle_key = %lifecycle_key,
+            error = %err,
+            "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
+        );
+    }
 
     let session = Some(ProjectAgentSessionResponse {
         binding_id: binding.id.to_string(),
@@ -793,12 +795,9 @@ pub async fn create_project_agent_link(
         return Err(ApiError::Conflict("该 Agent 已关联到此项目".into()));
     }
 
-    let lifecycle_key = resolve_lifecycle_key_for_link(
-        &state,
-        req.default_lifecycle_key,
-        req.default_workflow_key,
-    )
-    .await?;
+    let lifecycle_key =
+        resolve_lifecycle_key_for_link(&state, req.default_lifecycle_key, req.default_workflow_key)
+            .await?;
 
     let mut link = ProjectAgentLink::new(project_id, agent_id);
     link.config_override = req.config_override;
@@ -929,7 +928,11 @@ async fn resolve_lifecycle_key_for_link(
 ) -> Result<Option<String>, ApiError> {
     if let Some(lk) = lifecycle_key {
         let trimmed = lk.trim().to_string();
-        return Ok(if trimmed.is_empty() { None } else { Some(trimmed) });
+        return Ok(if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        });
     }
 
     if let Some(wk) = workflow_key {
@@ -957,16 +960,16 @@ async fn resolve_lifecycle_key_for_link(
 
         if existing.is_none() {
             use agentdash_domain::workflow::{
-                LifecycleDefinition, LifecycleStepDefinition, WorkflowDefinitionSource,
-                WorkflowDefinitionStatus, WorkflowTargetKind,
+                LifecycleDefinition, LifecycleStepDefinition, WorkflowBindingKind,
+                WorkflowDefinitionSource, WorkflowDefinitionStatus,
             };
             let lifecycle = LifecycleDefinition {
                 id: Uuid::new_v4(),
                 key: auto_key.clone(),
                 name: format!("Auto: {wk}"),
                 description: format!("自动创建：包装单个 workflow `{wk}`"),
-                target_kind: WorkflowTargetKind::Project,
-                recommended_roles: vec![],
+                binding_kind: WorkflowBindingKind::Project,
+                recommended_binding_roles: vec![],
                 source: WorkflowDefinitionSource::UserAuthored,
                 status: WorkflowDefinitionStatus::Active,
                 version: 1,
@@ -1028,10 +1031,7 @@ pub(crate) fn build_agent_bridge(agent: &Agent, link: &ProjectAgentLink) -> Proj
     }
 }
 
-fn executor_config_from_agent_config(
-    agent_type: &str,
-    config: &serde_json::Value,
-) -> AgentConfig {
+fn executor_config_from_agent_config(agent_type: &str, config: &serde_json::Value) -> AgentConfig {
     let mut ec = AgentConfig::new(agent_type.to_string());
     if let Some(v) = config.get("variant").and_then(|v| v.as_str()) {
         ec.variant = Some(v.to_string());
@@ -1064,9 +1064,9 @@ async fn resolve_agent_default_lifecycle(
             .agent_link_repo
             .find_by_project_and_agent(project_id, agent_id)
             .await
-        {
-            return link.default_lifecycle_key;
-        }
+    {
+        return link.default_lifecycle_key;
+    }
 
     // 旧模型 preset 不支持 lifecycle 绑定
     None
@@ -1079,7 +1079,7 @@ async fn auto_start_lifecycle_run(
     lifecycle_key: &str,
 ) -> Result<(), String> {
     use agentdash_application::workflow::{LifecycleRunService, StartLifecycleRunCommand};
-    use agentdash_domain::workflow::WorkflowTargetKind;
+    use agentdash_domain::workflow::WorkflowBindingKind;
 
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
@@ -1091,8 +1091,8 @@ async fn auto_start_lifecycle_run(
         project_id,
         lifecycle_id: None,
         lifecycle_key: Some(lifecycle_key.to_string()),
-        target_kind: WorkflowTargetKind::Project,
-        target_id: project_id,
+        binding_kind: WorkflowBindingKind::Project,
+        binding_id: project_id,
     };
 
     let run = service

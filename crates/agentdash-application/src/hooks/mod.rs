@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_spi::{
-    HookContributionSet, HookPolicyView, HookSourceLayer, HookSourceRef,
-    SessionHookSnapshot,
+    HookContributionSet, HookPolicyView, HookSourceLayer, HookSourceRef, SessionHookSnapshot,
 };
 
 use crate::workflow::ActiveWorkflowProjection;

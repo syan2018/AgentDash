@@ -4,10 +4,10 @@ use std::sync::{
 };
 
 use agentdash_spi::hooks::{
-    ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery,
-    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry,
-    SessionHookRefreshQuery, SessionHookSnapshot, SessionSnapshotMetadata,
+    ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookPendingAction,
+    HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
+    HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry, SessionHookRefreshQuery,
+    SessionHookSnapshot, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -353,9 +353,7 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::hooks::{
-        ActiveTaskMeta, NoopExecutionHookProvider,
-    };
+    use agentdash_spi::hooks::NoopExecutionHookProvider;
 
     #[test]
     fn preserve_session_level_metadata_merges_missing_keys() {
@@ -363,10 +361,6 @@ mod tests {
             session_id: "s1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 turn_id: Some("turn-2".into()),
-                active_task: Some(ActiveTaskMeta {
-                    status: Some("running".into()),
-                    ..Default::default()
-                }),
                 ..Default::default()
             }),
             ..Default::default()
@@ -385,12 +379,14 @@ mod tests {
 
         let meta = snapshot.metadata.as_ref().unwrap();
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
-        assert_eq!(meta.workspace_root.as_deref(), Some("F:/Projects/AgentDash"));
+        assert_eq!(
+            meta.workspace_root.as_deref(),
+            Some("F:/Projects/AgentDash")
+        );
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));
         assert_eq!(meta.turn_id.as_deref(), Some("turn-2"));
-        assert!(meta.active_task.is_some());
     }
 
     #[test]
@@ -445,7 +441,10 @@ mod tests {
 
         let meta = refreshed.metadata.unwrap();
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
-        assert_eq!(meta.workspace_root.as_deref(), Some("F:/Projects/AgentDash"));
+        assert_eq!(
+            meta.workspace_root.as_deref(),
+            Some("F:/Projects/AgentDash")
+        );
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));

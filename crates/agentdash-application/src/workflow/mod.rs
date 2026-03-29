@@ -22,7 +22,7 @@ pub use definition::{
 };
 pub use error::WorkflowApplicationError;
 pub use projection::{
-    ActiveWorkflowProjection, WorkflowProjectionSnapshot, WorkflowTargetSummary,
+    ActiveWorkflowProjection, WorkflowBindingSummary, WorkflowProjectionSnapshot,
     resolve_active_workflow_projection,
 };
 pub use run::{

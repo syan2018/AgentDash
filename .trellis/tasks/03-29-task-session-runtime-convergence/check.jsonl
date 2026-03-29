@@ -1,0 +1,5 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".trellis/spec/backend/execution-hook-runtime.md", "reason": "检查 Session runtime surface 是否真实生效"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Session 状态与 query/bootstrap 一致性"}
+{"file": ".trellis/tasks/03-29-task-session-runtime-convergence/prd.md", "reason": "按本任务 PRD 自检范围与验收标准"}

@@ -2,9 +2,9 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowDefinition,
-    WorkflowDefinitionRepository, WorkflowRecordArtifact, WorkflowRecordArtifactType,
-    WorkflowTargetKind,
+    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowBindingKind,
+    WorkflowDefinition, WorkflowDefinitionRepository, WorkflowRecordArtifact,
+    WorkflowRecordArtifactType,
 };
 
 use super::completion::WorkflowCompletionDecision;
@@ -15,8 +15,8 @@ pub struct StartLifecycleRunCommand {
     pub project_id: Uuid,
     pub lifecycle_id: Option<Uuid>,
     pub lifecycle_key: Option<String>,
-    pub target_kind: WorkflowTargetKind,
-    pub target_id: Uuid,
+    pub binding_kind: WorkflowBindingKind,
+    pub binding_id: Uuid,
 }
 
 #[derive(Debug, Clone)]
@@ -164,16 +164,16 @@ where
                 lifecycle.key, lifecycle.status
             )));
         }
-        if lifecycle.target_kind != cmd.target_kind {
+        if lifecycle.binding_kind != cmd.binding_kind {
             return Err(WorkflowApplicationError::BadRequest(format!(
-                "lifecycle `{}` 仅支持 target_kind={:?}，收到 {:?}",
-                lifecycle.key, lifecycle.target_kind, cmd.target_kind
+                "lifecycle `{}` 仅支持 binding_kind={:?}，收到 {:?}",
+                lifecycle.key, lifecycle.binding_kind, cmd.binding_kind
             )));
         }
 
         let existing_runs = self
             .run_repo
-            .list_by_target(cmd.target_kind, cmd.target_id)
+            .list_by_binding(cmd.binding_kind, cmd.binding_id)
             .await?;
         let conflicting_run = existing_runs.iter().find(|run| {
             matches!(
@@ -186,15 +186,15 @@ where
         if let Some(conflicting) = conflicting_run {
             return Err(WorkflowApplicationError::Conflict(format!(
                 "目标对象 {} 已存在进行中的 lifecycle run（lifecycle_id={}）",
-                cmd.target_id, conflicting.lifecycle_id
+                cmd.binding_id, conflicting.lifecycle_id
             )));
         }
 
         let run = LifecycleRun::new(
             cmd.project_id,
             lifecycle.id,
-            cmd.target_kind,
-            cmd.target_id,
+            cmd.binding_kind,
+            cmd.binding_id,
             &lifecycle.steps,
             &lifecycle.entry_step_key,
         )

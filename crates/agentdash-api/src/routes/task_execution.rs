@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_application::task::context_builder::build_task_session_context;
 use agentdash_application::session_context::SessionContextSnapshot;
+use agentdash_application::task::context_builder::build_task_session_context;
 use agentdash_application::task::execution::{
     ContinueTaskCommand, StartTaskCommand, TaskExecutionError,
 };
@@ -63,6 +63,8 @@ pub struct TaskSessionResponse {
     pub session_id: Option<String>,
     pub executor_session_id: Option<String>,
     pub task_status: TaskStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_execution_status: Option<String>,
     pub agent_binding: agentdash_domain::task::AgentBinding,
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
@@ -71,7 +73,6 @@ pub struct TaskSessionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
-
 
 pub async fn start_task(
     State(state): State<Arc<AppState>>,
@@ -199,6 +200,7 @@ pub async fn get_task_session(
         session_id: result.session_id,
         executor_session_id: result.executor_session_id,
         task_status: result.task_status,
+        session_execution_status: result.session_execution_status,
         agent_binding: result.agent_binding,
         session_title: result.session_title,
         last_activity: result.last_activity,
@@ -208,7 +210,6 @@ pub async fn get_task_session(
         context_snapshot: built_context.and_then(|context| context.context_snapshot),
     }))
 }
-
 
 fn parse_task_id(id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))

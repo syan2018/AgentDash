@@ -1,14 +1,14 @@
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+use crate::session::SessionMeta;
+use agentdash_domain::DomainError;
 use agentdash_domain::project::Project;
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::story::{ChangeKind, Story};
 use agentdash_domain::task::{Artifact, ArtifactType, Task, TaskStatus};
 use agentdash_domain::workspace::Workspace;
-use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
-use crate::session::SessionMeta;
 
 use crate::repository_set::RepositorySet;
 use crate::task::artifact::upsert_tool_execution_artifact;
@@ -50,10 +50,7 @@ pub fn normalize_backend_id(raw: &str) -> Result<&str, TaskExecutionError> {
 
 // ─── repo-based data operations ─────────────────────────────
 
-pub async fn get_task(
-    repos: &RepositorySet,
-    task_id: Uuid,
-) -> Result<Task, TaskExecutionError> {
+pub async fn get_task(repos: &RepositorySet, task_id: Uuid) -> Result<Task, TaskExecutionError> {
     repos
         .task_repo
         .get_by_id(task_id)
@@ -150,7 +147,11 @@ pub async fn persist_tool_call_artifact(
     };
 
     let changed = upsert_tool_execution_artifact(
-        &mut task, input.session_id, input.turn_id, input.tool_call_id, input.patch,
+        &mut task,
+        input.session_id,
+        input.turn_id,
+        input.tool_call_id,
+        input.patch,
     );
     if !changed {
         return Ok(());

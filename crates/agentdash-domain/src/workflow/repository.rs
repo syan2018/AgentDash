@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
 use super::entity::{LifecycleDefinition, LifecycleRun, WorkflowAssignment, WorkflowDefinition};
-use super::value_objects::{WorkflowAgentRole, WorkflowDefinitionStatus, WorkflowTargetKind};
+use super::value_objects::{WorkflowBindingKind, WorkflowBindingRole, WorkflowDefinitionStatus};
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
@@ -14,9 +14,9 @@ pub trait WorkflowDefinitionRepository: Send + Sync {
         &self,
         status: WorkflowDefinitionStatus,
     ) -> Result<Vec<WorkflowDefinition>, DomainError>;
-    async fn list_by_target_kind(
+    async fn list_by_binding_kind(
         &self,
-        target_kind: WorkflowTargetKind,
+        binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<WorkflowDefinition>, DomainError>;
     async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
@@ -32,9 +32,9 @@ pub trait LifecycleDefinitionRepository: Send + Sync {
         &self,
         status: WorkflowDefinitionStatus,
     ) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn list_by_target_kind(
+    async fn list_by_binding_kind(
         &self,
-        target_kind: WorkflowTargetKind,
+        binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<LifecycleDefinition>, DomainError>;
     async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
@@ -51,7 +51,7 @@ pub trait WorkflowAssignmentRepository: Send + Sync {
     async fn list_by_project_and_role(
         &self,
         project_id: Uuid,
-        role: WorkflowAgentRole,
+        role: WorkflowBindingRole,
     ) -> Result<Vec<WorkflowAssignment>, DomainError>;
     async fn update(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
@@ -64,10 +64,10 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_lifecycle(&self, lifecycle_id: Uuid)
     -> Result<Vec<LifecycleRun>, DomainError>;
-    async fn list_by_target(
+    async fn list_by_binding(
         &self,
-        target_kind: WorkflowTargetKind,
-        target_id: Uuid,
+        binding_kind: WorkflowBindingKind,
+        binding_id: Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;

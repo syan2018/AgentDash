@@ -13,10 +13,10 @@ pub use repository::{
 pub use value_objects::{
     EffectiveSessionContract, LifecycleExecutionEntry, LifecycleExecutionEventKind,
     LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
-    ValidationIssue, ValidationSeverity, WorkflowAgentRole, WorkflowCheckKind, WorkflowCheckSpec,
-    WorkflowCompletionSpec, WorkflowConstraintKind, WorkflowConstraintSpec,
-    WorkflowContextBinding, WorkflowContextBindingKind, WorkflowContract,
+    ValidationIssue, ValidationSeverity, WorkflowBindingKind, WorkflowBindingRole,
+    WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
+    WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContextBindingKind, WorkflowContract,
     WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowInjectionSpec,
     WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowSessionTerminalState,
-    WorkflowTargetKind, validate_lifecycle_definition, validate_workflow_definition,
+    validate_lifecycle_definition, validate_workflow_definition,
 };

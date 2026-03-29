@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleStepDefinition, WorkflowAgentRole, WorkflowContract,
-    WorkflowDefinition, WorkflowDefinitionSource, WorkflowTargetKind,
+    LifecycleDefinition, LifecycleStepDefinition, WorkflowBindingKind, WorkflowBindingRole,
+    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
 };
 
 pub const TRELLIS_DEV_PROJECT_TEMPLATE_KEY: &str = "trellis_dev_project";
@@ -14,9 +14,9 @@ pub struct BuiltinWorkflowTemplateBundle {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub target_kind: WorkflowTargetKind,
+    pub binding_kind: WorkflowBindingKind,
     #[serde(default)]
-    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     #[serde(default)]
     pub workflows: Vec<BuiltinWorkflowTemplate>,
     pub lifecycle: BuiltinLifecycleTemplate,
@@ -56,11 +56,11 @@ impl BuiltinWorkflowTemplateBundle {
                     template.key.clone(),
                     template.name.clone(),
                     template.description.clone(),
-                    self.target_kind,
+                    self.binding_kind,
                     WorkflowDefinitionSource::BuiltinSeed,
                     template.contract.clone(),
                 )?;
-                definition.recommended_roles = self.recommended_roles.clone();
+                definition.recommended_binding_roles = self.recommended_binding_roles.clone();
                 Ok(definition)
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -69,12 +69,12 @@ impl BuiltinWorkflowTemplateBundle {
             self.lifecycle.key.clone(),
             self.lifecycle.name.clone(),
             self.lifecycle.description.clone(),
-            self.target_kind,
+            self.binding_kind,
             WorkflowDefinitionSource::BuiltinSeed,
             self.lifecycle.entry_step_key.clone(),
             self.lifecycle.steps.clone(),
         )?;
-        lifecycle.recommended_roles = self.recommended_roles.clone();
+        lifecycle.recommended_binding_roles = self.recommended_binding_roles.clone();
 
         Ok(BuiltinWorkflowBundle {
             workflows,
@@ -142,7 +142,7 @@ mod tests {
             build_builtin_workflow_bundle(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("build bundle");
 
         assert_eq!(bundle.lifecycle.key, TRELLIS_DEV_TASK_TEMPLATE_KEY);
-        assert_eq!(bundle.lifecycle.target_kind, WorkflowTargetKind::Task);
+        assert_eq!(bundle.lifecycle.binding_kind, WorkflowBindingKind::Task);
         assert_eq!(bundle.workflows.len(), 4);
         assert_eq!(bundle.lifecycle.steps.len(), 4);
     }

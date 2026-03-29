@@ -2,8 +2,8 @@
   "key": "trellis_dev_task",
   "name": "Trellis Dev Lifecycle / Task",
   "description": "把 Trellis 研发流程拆成多个原子 workflow，并由 task lifecycle 负责顺序编排与检查推进。",
-  "target_kind": "task",
-  "recommended_roles": ["task"],
+  "binding_kind": "task",
+  "recommended_binding_roles": ["task"],
   "workflows": [
     {
       "key": "trellis_dev_task_start",
@@ -51,22 +51,14 @@
           "context_bindings": [
             {
               "kind": "runtime_context",
-              "locator": "task_execution_context",
-              "reason": "当前 Task 的执行上下文",
+              "locator": "execution_context",
+              "reason": "当前绑定对象的执行上下文",
               "required": true,
-              "title": "Task Execution Context"
+              "title": "Execution Context"
             }
           ]
         },
         "constraints": [
-          {
-            "key": "deny_complete_status_during_implement",
-            "kind": "deny_task_status_transition",
-            "description": "Implement 阶段不允许把 Task 直接标记为 completed",
-            "payload": {
-              "to": ["completed"]
-            }
-          },
           {
             "key": "deny_record_artifacts_during_implement",
             "kind": "custom",
@@ -96,17 +88,17 @@
           "context_bindings": [
             {
               "kind": "checklist",
-              "locator": "task_review_checklist",
-              "reason": "Task 级检查清单",
+              "locator": "review_checklist",
+              "reason": "当前绑定对象的检查清单",
               "required": true,
-              "title": "Task Review Checklist"
+              "title": "Review Checklist"
             },
             {
               "kind": "runtime_context",
-              "locator": "task_execution_context",
-              "reason": "当前 Task 的执行上下文",
+              "locator": "execution_context",
+              "reason": "当前绑定对象的执行上下文",
               "required": true,
-              "title": "Task Execution Context"
+              "title": "Execution Context"
             }
           ]
         },
@@ -119,14 +111,6 @@
         ],
         "completion": {
           "checks": [
-            {
-              "key": "task_ready_for_verification",
-              "kind": "task_status_in",
-              "description": "Task 状态必须进入 awaiting_verification 或 completed",
-              "payload": {
-                "statuses": ["awaiting_verification", "completed"]
-              }
-            },
             {
               "key": "checklist_evidence_present",
               "kind": "checklist_evidence_present",

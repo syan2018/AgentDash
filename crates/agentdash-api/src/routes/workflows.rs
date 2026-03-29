@@ -10,14 +10,14 @@ use uuid::Uuid;
 use agentdash_application::workflow::{
     ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand, AssignLifecycleCommand,
     CompleteLifecycleStepCommand, LifecycleRunService, StartLifecycleRunCommand,
-    WorkflowCatalogService, WorkflowRecordArtifactDraft,
-    build_builtin_workflow_bundle, list_builtin_workflow_templates,
+    WorkflowCatalogService, WorkflowRecordArtifactDraft, build_builtin_workflow_bundle,
+    list_builtin_workflow_templates,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
-    WorkflowAgentRole, WorkflowContextBindingKind, WorkflowContract, WorkflowDefinition,
-    WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowRecordArtifactType,
-    WorkflowTargetKind,
+    WorkflowBindingKind, WorkflowBindingRole, WorkflowContextBindingKind, WorkflowContract,
+    WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowRecordArtifactType,
 };
 
 use crate::app_state::AppState;
@@ -31,14 +31,14 @@ use agentdash_application::session_context::normalize_string;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {
-    pub target_kind: Option<WorkflowTargetKind>,
+    pub binding_kind: Option<WorkflowBindingKind>,
     pub enabled_only: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkflowAssignmentRequest {
     pub lifecycle_id: String,
-    pub role: WorkflowAgentRole,
+    pub role: WorkflowBindingRole,
     pub enabled: Option<bool>,
     pub is_default: Option<bool>,
 }
@@ -47,8 +47,8 @@ pub struct CreateWorkflowAssignmentRequest {
 pub struct StartWorkflowRunRequest {
     pub lifecycle_id: Option<String>,
     pub lifecycle_key: Option<String>,
-    pub target_kind: WorkflowTargetKind,
-    pub target_id: String,
+    pub binding_kind: WorkflowBindingKind,
+    pub binding_id: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -75,9 +75,9 @@ pub struct CreateWorkflowDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub target_kind: WorkflowTargetKind,
+    pub binding_kind: WorkflowBindingKind,
     #[serde(default)]
-    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub contract: WorkflowContract,
 }
 
@@ -85,7 +85,7 @@ pub struct CreateWorkflowDefinitionRequest {
 pub struct UpdateWorkflowDefinitionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub recommended_roles: Option<Vec<WorkflowAgentRole>>,
+    pub recommended_binding_roles: Option<Vec<WorkflowBindingRole>>,
     pub contract: Option<WorkflowContract>,
 }
 
@@ -95,9 +95,9 @@ pub struct ValidateWorkflowDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub target_kind: WorkflowTargetKind,
+    pub binding_kind: WorkflowBindingKind,
     #[serde(default)]
-    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub contract: WorkflowContract,
 }
 
@@ -107,9 +107,9 @@ pub struct CreateLifecycleDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub target_kind: WorkflowTargetKind,
+    pub binding_kind: WorkflowBindingKind,
     #[serde(default)]
-    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
 }
@@ -118,7 +118,7 @@ pub struct CreateLifecycleDefinitionRequest {
 pub struct UpdateLifecycleDefinitionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub recommended_roles: Option<Vec<WorkflowAgentRole>>,
+    pub recommended_binding_roles: Option<Vec<WorkflowBindingRole>>,
     pub entry_step_key: Option<String>,
     pub steps: Option<Vec<LifecycleStepDefinition>>,
 }
@@ -129,9 +129,9 @@ pub struct ValidateLifecycleDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub target_kind: WorkflowTargetKind,
+    pub binding_kind: WorkflowBindingKind,
     #[serde(default)]
-    pub recommended_roles: Vec<WorkflowAgentRole>,
+    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
 }
@@ -140,12 +140,12 @@ pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListWorkflowsQuery>,
 ) -> Result<Json<Vec<WorkflowDefinitionResponse>>, ApiError> {
-    let definitions = match (query.target_kind, query.enabled_only.unwrap_or(false)) {
-        (Some(target_kind), _) => {
+    let definitions = match (query.binding_kind, query.enabled_only.unwrap_or(false)) {
+        (Some(binding_kind), _) => {
             state
                 .repos
                 .workflow_definition_repo
-                .list_by_target_kind(target_kind)
+                .list_by_binding_kind(binding_kind)
                 .await?
         }
         (None, true) => {
@@ -164,12 +164,12 @@ pub async fn list_lifecycles(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListWorkflowsQuery>,
 ) -> Result<Json<Vec<LifecycleDefinitionResponse>>, ApiError> {
-    let definitions = match (query.target_kind, query.enabled_only.unwrap_or(false)) {
-        (Some(target_kind), _) => {
+    let definitions = match (query.binding_kind, query.enabled_only.unwrap_or(false)) {
+        (Some(binding_kind), _) => {
             state
                 .repos
                 .lifecycle_definition_repo
-                .list_by_target_kind(target_kind)
+                .list_by_binding_kind(binding_kind)
                 .await?
         }
         (None, true) => {
@@ -192,13 +192,13 @@ pub async fn create_lifecycle_definition(
         req.key,
         req.name,
         req.description,
-        req.target_kind,
+        req.binding_kind,
         WorkflowDefinitionSource::UserAuthored,
         req.entry_step_key,
         req.steps,
     )
     .map_err(ApiError::BadRequest)?;
-    definition.recommended_roles = req.recommended_roles;
+    definition.recommended_binding_roles = req.recommended_binding_roles;
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -290,9 +290,9 @@ pub async fn start_lifecycle_run(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<StartWorkflowRunRequest>,
 ) -> Result<Json<WorkflowRunResponse>, ApiError> {
-    let target_id = parse_uuid_required(&req.target_id, "target_id")?;
+    let binding_id = parse_uuid_required(&req.binding_id, "binding_id")?;
     let project_id =
-        resolve_project_id_for_workflow_target(&state, req.target_kind, target_id).await?;
+        resolve_project_id_for_workflow_binding(&state, req.binding_kind, binding_id).await?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -310,8 +310,8 @@ pub async fn start_lifecycle_run(
             project_id,
             lifecycle_id: parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?,
             lifecycle_key: req.lifecycle_key.and_then(normalize_string),
-            target_kind: req.target_kind,
-            target_id,
+            binding_kind: req.binding_kind,
+            binding_id,
         })
         .await?;
     Ok(Json(run.into()))
@@ -334,14 +334,15 @@ pub async fn get_lifecycle_run(
     Ok(Json(run.into()))
 }
 
-pub async fn list_lifecycle_runs_by_target(
+pub async fn list_lifecycle_runs_by_binding(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((target_kind_raw, target_id_raw)): Path<(String, String)>,
+    Path((binding_kind_raw, binding_id_raw)): Path<(String, String)>,
 ) -> Result<Json<Vec<WorkflowRunResponse>>, ApiError> {
-    let target_kind = parse_target_kind(&target_kind_raw)?;
-    let target_id = parse_uuid(&target_id_raw, "target_id")?;
-    let project_id = resolve_project_id_for_workflow_target(&state, target_kind, target_id).await?;
+    let binding_kind = parse_binding_kind(&binding_kind_raw)?;
+    let binding_id = parse_uuid(&binding_id_raw, "binding_id")?;
+    let project_id =
+        resolve_project_id_for_workflow_binding(&state, binding_kind, binding_id).await?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -352,7 +353,7 @@ pub async fn list_lifecycle_runs_by_target(
     let runs = state
         .repos
         .lifecycle_run_repo
-        .list_by_target(target_kind, target_id)
+        .list_by_binding(binding_kind, binding_id)
         .await?;
     Ok(Json(runs.into_iter().map(Into::into).collect()))
 }
@@ -377,10 +378,7 @@ pub async fn activate_workflow_step(
         state.repos.lifecycle_run_repo.as_ref(),
     );
     let run = service
-        .activate_step(ActivateLifecycleStepCommand {
-            run_id,
-            step_key,
-        })
+        .activate_step(ActivateLifecycleStepCommand { run_id, step_key })
         .await?;
     Ok(Json(run.into()))
 }
@@ -470,12 +468,12 @@ pub async fn create_workflow_definition(
         req.key,
         req.name,
         req.description,
-        req.target_kind,
+        req.binding_kind,
         WorkflowDefinitionSource::UserAuthored,
         req.contract,
     )
     .map_err(ApiError::BadRequest)?;
-    definition.recommended_roles = req.recommended_roles;
+    definition.recommended_binding_roles = req.recommended_binding_roles;
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -531,8 +529,8 @@ pub async fn update_workflow_definition(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(roles) = req.recommended_roles {
-        definition.recommended_roles = roles;
+    if let Some(roles) = req.recommended_binding_roles {
+        definition.recommended_binding_roles = roles;
     }
     if let Some(contract) = req.contract {
         definition.contract = contract;
@@ -580,8 +578,8 @@ pub async fn update_lifecycle_definition(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(roles) = req.recommended_roles {
-        definition.recommended_roles = roles;
+    if let Some(roles) = req.recommended_binding_roles {
+        definition.recommended_binding_roles = roles;
     }
     if let Some(entry_step_key) = req.entry_step_key {
         definition.entry_step_key = entry_step_key;
@@ -621,12 +619,12 @@ pub async fn validate_workflow_definition(
         req.key,
         req.name,
         req.description,
-        req.target_kind,
+        req.binding_kind,
         WorkflowDefinitionSource::UserAuthored,
         req.contract,
     ) {
         Ok(mut definition) => {
-            definition.recommended_roles = req.recommended_roles;
+            definition.recommended_binding_roles = req.recommended_binding_roles;
             let issues = definition.validate_full();
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
@@ -653,13 +651,13 @@ pub async fn validate_lifecycle_definition(
         req.key,
         req.name,
         req.description,
-        req.target_kind,
+        req.binding_kind,
         WorkflowDefinitionSource::UserAuthored,
         req.entry_step_key,
         req.steps,
     ) {
         Ok(mut definition) => {
-            definition.recommended_roles = req.recommended_roles;
+            definition.recommended_binding_roles = req.recommended_binding_roles;
             let issues = definition.validate_full();
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
@@ -828,7 +826,7 @@ pub struct BindingLocatorOption {
     pub locator: String,
     pub label: String,
     pub description: String,
-    pub applicable_target_kinds: Vec<WorkflowTargetKind>,
+    pub applicable_binding_kinds: Vec<WorkflowBindingKind>,
 }
 
 fn build_binding_metadata() -> Vec<BindingKindMetadata> {
@@ -841,7 +839,10 @@ fn build_binding_metadata() -> Vec<BindingKindMetadata> {
                 locator: ".trellis/workflow.md".to_string(),
                 label: "Workflow 文档".to_string(),
                 description: "Trellis 开发工作流文档".to_string(),
-                applicable_target_kinds: vec![WorkflowTargetKind::Task, WorkflowTargetKind::Story],
+                applicable_binding_kinds: vec![
+                    WorkflowBindingKind::Task,
+                    WorkflowBindingKind::Story,
+                ],
             }],
         },
         BindingKindMetadata {
@@ -853,35 +854,35 @@ fn build_binding_metadata() -> Vec<BindingKindMetadata> {
                     locator: "project_session_context".to_string(),
                     label: "项目会话上下文".to_string(),
                     description: "项目级上下文配置快照".to_string(),
-                    applicable_target_kinds: vec![
-                        WorkflowTargetKind::Project,
-                        WorkflowTargetKind::Story,
-                        WorkflowTargetKind::Task,
+                    applicable_binding_kinds: vec![
+                        WorkflowBindingKind::Project,
+                        WorkflowBindingKind::Story,
+                        WorkflowBindingKind::Task,
                     ],
                 },
                 BindingLocatorOption {
                     locator: "story_prd".to_string(),
                     label: "Story PRD".to_string(),
                     description: "Story 的产品需求文档".to_string(),
-                    applicable_target_kinds: vec![
-                        WorkflowTargetKind::Story,
-                        WorkflowTargetKind::Task,
+                    applicable_binding_kinds: vec![
+                        WorkflowBindingKind::Story,
+                        WorkflowBindingKind::Task,
                     ],
                 },
                 BindingLocatorOption {
                     locator: "story_context_snapshot".to_string(),
                     label: "Story 上下文快照".to_string(),
                     description: "Story 的结构化上下文".to_string(),
-                    applicable_target_kinds: vec![
-                        WorkflowTargetKind::Story,
-                        WorkflowTargetKind::Task,
+                    applicable_binding_kinds: vec![
+                        WorkflowBindingKind::Story,
+                        WorkflowBindingKind::Task,
                     ],
                 },
                 BindingLocatorOption {
                     locator: "task_execution_context".to_string(),
                     label: "Task 执行上下文".to_string(),
                     description: "Task 的执行配置快照".to_string(),
-                    applicable_target_kinds: vec![WorkflowTargetKind::Task],
+                    applicable_binding_kinds: vec![WorkflowBindingKind::Task],
                 },
             ],
         },
@@ -894,13 +895,13 @@ fn build_binding_metadata() -> Vec<BindingKindMetadata> {
                     locator: "task_review_checklist".to_string(),
                     label: "Task Review Checklist".to_string(),
                     description: "Task 级检查清单".to_string(),
-                    applicable_target_kinds: vec![WorkflowTargetKind::Task],
+                    applicable_binding_kinds: vec![WorkflowBindingKind::Task],
                 },
                 BindingLocatorOption {
                     locator: "story_review_checklist".to_string(),
                     label: "Story Review Checklist".to_string(),
                     description: "Story 级检查清单".to_string(),
-                    applicable_target_kinds: vec![WorkflowTargetKind::Story],
+                    applicable_binding_kinds: vec![WorkflowBindingKind::Story],
                 },
             ],
         },
@@ -912,10 +913,10 @@ fn build_binding_metadata() -> Vec<BindingKindMetadata> {
                 locator: "workspace_journal".to_string(),
                 label: "工作区日志".to_string(),
                 description: "Trellis 工作区日志目录".to_string(),
-                applicable_target_kinds: vec![
-                    WorkflowTargetKind::Task,
-                    WorkflowTargetKind::Story,
-                    WorkflowTargetKind::Project,
+                applicable_binding_kinds: vec![
+                    WorkflowBindingKind::Task,
+                    WorkflowBindingKind::Story,
+                    WorkflowBindingKind::Project,
                 ],
             }],
         },
@@ -927,7 +928,7 @@ fn build_binding_metadata() -> Vec<BindingKindMetadata> {
                 locator: "workflow_archive_action".to_string(),
                 label: "归档动作".to_string(),
                 description: "触发 workflow 任务归档".to_string(),
-                applicable_target_kinds: vec![WorkflowTargetKind::Task],
+                applicable_binding_kinds: vec![WorkflowBindingKind::Task],
             }],
         },
         BindingKindMetadata {
@@ -938,7 +939,10 @@ fn build_binding_metadata() -> Vec<BindingKindMetadata> {
                 locator: "latest_checklist_evidence".to_string(),
                 label: "最新检查证据".to_string(),
                 description: "最近一次 checklist evidence".to_string(),
-                applicable_target_kinds: vec![WorkflowTargetKind::Task, WorkflowTargetKind::Story],
+                applicable_binding_kinds: vec![
+                    WorkflowBindingKind::Task,
+                    WorkflowBindingKind::Story,
+                ],
             }],
         },
     ]
@@ -954,34 +958,34 @@ impl From<WorkflowRecordArtifactDraftRequest> for WorkflowRecordArtifactDraft {
     }
 }
 
-async fn resolve_project_id_for_workflow_target(
+async fn resolve_project_id_for_workflow_binding(
     state: &Arc<AppState>,
-    target_kind: WorkflowTargetKind,
-    target_id: Uuid,
+    binding_kind: WorkflowBindingKind,
+    binding_id: Uuid,
 ) -> Result<Uuid, ApiError> {
-    let project_id = match target_kind {
-        WorkflowTargetKind::Project => state
+    let project_id = match binding_kind {
+        WorkflowBindingKind::Project => state
             .repos
             .project_repo
-            .get_by_id(target_id)
+            .get_by_id(binding_id)
             .await?
             .map(|project| project.id),
-        WorkflowTargetKind::Story => state
+        WorkflowBindingKind::Story => state
             .repos
             .story_repo
-            .get_by_id(target_id)
+            .get_by_id(binding_id)
             .await?
             .map(|story| story.project_id),
-        WorkflowTargetKind::Task => state
+        WorkflowBindingKind::Task => state
             .repos
             .task_repo
-            .get_by_id(target_id)
+            .get_by_id(binding_id)
             .await?
             .map(|task| task.project_id),
     };
     project_id.ok_or_else(|| {
         ApiError::NotFound(format!(
-            "workflow target 不存在: kind={target_kind:?}, id={target_id}"
+            "workflow 绑定对象不存在: kind={binding_kind:?}, id={binding_id}"
         ))
     })
 }
@@ -1021,11 +1025,7 @@ fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, A
     }
 }
 
-fn parse_target_kind(raw: &str) -> Result<WorkflowTargetKind, ApiError> {
-    match raw.trim() {
-        "project" => Ok(WorkflowTargetKind::Project),
-        "story" => Ok(WorkflowTargetKind::Story),
-        "task" => Ok(WorkflowTargetKind::Task),
-        _ => Err(ApiError::BadRequest(format!("无效的 target_kind: {raw}"))),
-    }
+fn parse_binding_kind(raw: &str) -> Result<WorkflowBindingKind, ApiError> {
+    WorkflowBindingKind::from_binding_scope(raw)
+        .ok_or_else(|| ApiError::BadRequest(format!("无效的 binding_kind: {raw}")))
 }

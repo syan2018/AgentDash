@@ -1,24 +1,20 @@
 use agentdash_domain::common::AddressSpace;
 use agentdash_domain::task::Task;
-use uuid::Uuid;
 
-use crate::address_space::{
-    build_lifecycle_mount, RelayAddressSpaceService, SessionMountTarget,
-};
+use crate::address_space::RelayAddressSpaceService;
 use crate::context::{
-    BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry,
-    McpContextContributor, StaticFragmentsContributor, TaskAgentBuildInput,
-    TaskExecutionPhase, build_declared_source_warning_fragment, build_task_agent_context,
+    BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
+    StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
+    build_declared_source_warning_fragment, build_task_agent_context,
     resolve_workspace_declared_sources,
 };
-use agentdash_domain::common::AgentConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpBinding;
-use crate::task::config::resolve_task_executor_config;
 use crate::task::execution::{ExecutionPhase, TaskExecutionError};
 use crate::task::gateway::repo_ops::{load_related_context, map_internal_error};
-use crate::workflow::select_active_run;
+use crate::task::session_runtime_inputs::build_task_session_runtime_inputs;
 use crate::workspace::BackendAvailability;
+use agentdash_domain::common::AgentConfig;
 
 /// 基础设施引用 — prepare_task_turn_context 中不因调用而变化的部分
 pub struct TaskTurnServices<'a> {
@@ -94,44 +90,23 @@ pub async fn prepare_task_turn_context(
         extra_contributors.push(Box::new(McpContextContributor::new(binding)));
     }
 
-    // executor config resolution
-    let resolved_config = resolve_task_executor_config(
-        connector_config.cloned(),
+    let session_runtime_inputs = build_task_session_runtime_inputs(
+        svc.repos,
+        svc.address_space_service,
+        svc.mcp_base_url,
         task,
+        &story,
         &project,
+        workspace.as_ref(),
+        connector_config.cloned(),
+        true,
     )
-    .map_err(map_internal_error)?;
+    .await?;
+    let resolved_config = session_runtime_inputs.resolved_config.clone();
     let use_cloud_native_agent = resolved_config
         .as_ref()
         .is_some_and(|config| config.is_cloud_native());
-
-    // address space building
-    let address_space = if use_cloud_native_agent {
-        let agent_type = resolved_config
-            .as_ref()
-            .map(|config| config.executor.as_str());
-        let mut space = svc.address_space_service
-            .build_address_space(
-                &project,
-                Some(&story),
-                workspace.as_ref(),
-                SessionMountTarget::Task,
-                agent_type,
-            )
-            .map_err(map_internal_error)?;
-
-        // lifecycle mount injection
-        if let Some(active_run) = find_active_lifecycle_run(svc.repos, task).await? {
-            let lifecycle_key = resolve_lifecycle_key(svc.repos, active_run.lifecycle_id).await;
-            space
-                .mounts
-                .push(build_lifecycle_mount(active_run.id, &lifecycle_key));
-        }
-
-        Some(space)
-    } else {
-        None
-    };
+    let address_space = session_runtime_inputs.address_space.clone();
 
     // build full agent context
     let built = build_task_agent_context(
@@ -163,30 +138,4 @@ pub async fn prepare_task_turn_context(
         use_cloud_native_agent,
         workspace,
     })
-}
-
-async fn find_active_lifecycle_run(
-    repos: &RepositorySet,
-    task: &Task,
-) -> Result<Option<agentdash_domain::workflow::LifecycleRun>, TaskExecutionError> {
-    let runs = repos
-        .lifecycle_run_repo
-        .list_by_target(
-            agentdash_domain::workflow::WorkflowTargetKind::Task,
-            task.id,
-        )
-        .await
-        .map_err(|e| TaskExecutionError::Internal(format!("查询 lifecycle runs 失败: {e}")))?;
-    Ok(select_active_run(runs))
-}
-
-async fn resolve_lifecycle_key(repos: &RepositorySet, lifecycle_id: Uuid) -> String {
-    match repos
-        .lifecycle_definition_repo
-        .get_by_id(lifecycle_id)
-        .await
-    {
-        Ok(Some(def)) => def.key,
-        _ => "unknown".to_string(),
-    }
 }

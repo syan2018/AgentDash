@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use super::mount::PROVIDER_LIFECYCLE_VFS;
 use super::path::normalize_mount_relative_path;
-use super::provider::{MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult};
+use super::provider::{
+    MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
+};
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
-use crate::runtime::{RuntimeFileEntry, Mount};
+use crate::runtime::{Mount, RuntimeFileEntry};
+use agentdash_domain::workflow::WorkflowBindingKind;
 use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository, LifecycleRunStatus};
-use agentdash_domain::workflow::WorkflowTargetKind;
 use async_trait::async_trait;
 use serde::Serialize;
 use uuid::Uuid;
@@ -28,8 +30,8 @@ struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
     lifecycle_id: Uuid,
-    target_kind: WorkflowTargetKind,
-    target_id: Uuid,
+    binding_kind: WorkflowBindingKind,
+    binding_id: Uuid,
     status: &'a LifecycleRunStatus,
     current_step_key: Option<&'a str>,
     step_count: usize,
@@ -45,8 +47,8 @@ fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
         id: run.id,
         project_id: run.project_id,
         lifecycle_id: run.lifecycle_id,
-        target_kind: run.target_kind,
-        target_id: run.target_id,
+        binding_kind: run.binding_kind,
+        binding_id: run.binding_id,
         status: &run.status,
         current_step_key: run.current_step_key.as_deref(),
         step_count: run.step_states.len(),
@@ -67,18 +69,16 @@ fn parse_run_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
         .metadata
         .get("run_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            MountError::OperationFailed("mount metadata 缺少 run_id".to_string())
-        })?;
+        .ok_or_else(|| MountError::OperationFailed("mount metadata 缺少 run_id".to_string()))?;
     Uuid::parse_str(run_id_str)
         .map_err(|e| MountError::OperationFailed(format!("run_id 无效: {e}")))
 }
 
 #[derive(Debug, Clone, Copy)]
 enum LifecycleRoot {
-    Target {
-        kind: WorkflowTargetKind,
-        target_id: Uuid,
+    Binding {
+        kind: WorkflowBindingKind,
+        binding_id: Uuid,
     },
     RunAnchor,
     Unknown,
@@ -96,25 +96,22 @@ fn parse_lifecycle_root(root_ref: &str) -> LifecycleRoot {
         return LifecycleRoot::Unknown;
     };
     match kind {
-        "target" => {
+        "binding" => {
             let Some(k) = parts.next() else {
                 return LifecycleRoot::Unknown;
             };
             let Some(id_str) = parts.next() else {
                 return LifecycleRoot::Unknown;
             };
-            let Ok(target_id) = Uuid::parse_str(id_str) else {
+            let Ok(binding_id) = Uuid::parse_str(id_str) else {
                 return LifecycleRoot::Unknown;
             };
-            let tk = match k {
-                "project" => WorkflowTargetKind::Project,
-                "story" => WorkflowTargetKind::Story,
-                "task" => WorkflowTargetKind::Task,
-                _ => return LifecycleRoot::Unknown,
+            let Some(tk) = WorkflowBindingKind::from_binding_scope(k) else {
+                return LifecycleRoot::Unknown;
             };
-            LifecycleRoot::Target {
+            LifecycleRoot::Binding {
                 kind: tk,
-                target_id,
+                binding_id,
             }
         }
         "run" => {
@@ -130,11 +127,14 @@ fn parse_lifecycle_root(root_ref: &str) -> LifecycleRoot {
     }
 }
 
-fn resolve_target_for_runs(mount: &Mount, active_run: &LifecycleRun) -> (WorkflowTargetKind, Uuid) {
+fn resolve_binding_for_runs(
+    mount: &Mount,
+    active_run: &LifecycleRun,
+) -> (WorkflowBindingKind, Uuid) {
     match parse_lifecycle_root(&mount.root_ref) {
-        LifecycleRoot::Target { kind, target_id } => (kind, target_id),
+        LifecycleRoot::Binding { kind, binding_id } => (kind, binding_id),
         LifecycleRoot::RunAnchor | LifecycleRoot::Unknown => {
-            (active_run.target_kind, active_run.target_id)
+            (active_run.binding_kind, active_run.binding_id)
         }
     }
 }
@@ -176,8 +176,8 @@ impl MountProvider for LifecycleMountProvider {
         path: &str,
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
-        let path_norm = normalize_mount_relative_path(path, true)
-            .map_err(MountError::OperationFailed)?;
+        let path_norm =
+            normalize_mount_relative_path(path, true).map_err(MountError::OperationFailed)?;
         let segs = segments_from_path(&path_norm);
         let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
 
@@ -205,10 +205,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["active", "log"] => to_json_pretty(&active.execution_log)?,
             ["runs"] => {
-                let (tk, tid) = resolve_target_for_runs(mount, &active);
+                let (tk, tid) = resolve_binding_for_runs(mount, &active);
                 let runs = self
                     .lifecycle_run_repo
-                    .list_by_target(tk, tid)
+                    .list_by_binding(tk, tid)
                     .await
                     .map_err(map_domain_err)?;
                 let summaries: Vec<_> = runs.iter().map(run_overview).collect();
@@ -321,14 +321,13 @@ impl MountProvider for LifecycleMountProvider {
                 })
                 .collect(),
             ["runs"] => {
-                let (tk, tid) = resolve_target_for_runs(mount, &active);
+                let (tk, tid) = resolve_binding_for_runs(mount, &active);
                 let runs = self
                     .lifecycle_run_repo
-                    .list_by_target(tk, tid)
+                    .list_by_binding(tk, tid)
                     .await
                     .map_err(map_domain_err)?;
-                runs
-                    .iter()
+                runs.iter()
                     .map(|r| RuntimeFileEntry {
                         path: format!("runs/{}", r.id),
                         size: None,

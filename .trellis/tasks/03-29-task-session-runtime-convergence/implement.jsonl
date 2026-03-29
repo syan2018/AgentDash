@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/execution-hook-runtime.md", "reason": "Session hook runtime 与真实 runtime surface 契约"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "Address space 与 runtime tool 的统一访问契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Session 状态持久化与 query/bootstrap 一致性约束"}
+{"file": ".trellis/spec/project-overview.md", "reason": "修正 Task/Session 定位的总览锚点"}
+{"file": ".trellis/tasks/03-29-task-session-runtime-convergence/prd.md", "reason": "本任务需求与分阶段范围"}
+{"file": ".trellis/tasks/03-29-task-session-runtime-convergence/info.md", "reason": "本任务 research 输出"}

@@ -25,6 +25,11 @@
 - `ActiveWorkflowProjection.effective_contract`：会话运行时的唯一注入/治理 contract
 - `execution_hooks.rs`：只负责解释 `effective_contract + active_step.transition`，不再把 lifecycle step 之外的兼容 view 当 authority
 
+补充约定：
+
+- `WorkflowBindingKind` / `WorkflowBindingRole` 只是 workflow 的绑定层元数据，用来描述“可挂载到哪类 owner / 建议由哪类 session 使用”
+- 它们不代表 workflow 自身的业务语义，更不应反向把 task/story/project 语义内建进 hook runtime 或 workflow rule
+
 ---
 
 ## Scenario: Session Hook Runtime（Pi Agent / Workflow / Frontend）
@@ -178,9 +183,6 @@ pub struct HookSessionRuntimeSnapshot {
 - `active_workflow.requires_session`
 - `active_workflow.effective_contract`
 - `active_workflow.step_transition`
-- `active_task.task_id`
-- `active_task.task_title`
-- `active_task.status`
 
 #### 3.3 Trigger 行为契约
 
@@ -217,9 +219,8 @@ pub struct HookSessionRuntimeSnapshot {
 
 其中 `check_gate` 的当前语义已经明确为：
 
-- `Task.status in {awaiting_verification, completed}` 只是必要条件，不是充分条件
-- `BeforeStop` 还必须结合当前回合是否已经形成 checklist evidence（例如带检查结论/风险说明的阶段性总结）同步判定是否允许自然结束
-- 因此 check step 不能只靠“更新了状态”就放行，也不能把 evidence 约束做成每轮永续 `after_turn` steering
+- `BeforeStop` 必须结合当前回合是否已经形成 checklist evidence（例如带检查结论/风险说明的阶段性总结）同步判定是否允许自然结束
+- check step 不能只靠某个外部业务对象的状态变化就放行，也不能把 evidence 约束做成每轮永续 `after_turn` steering
 
 #### 3.5 Frontend 契约
 
@@ -384,14 +385,13 @@ pub struct HookSessionRuntimeSnapshot {
 | 场景 | 预期行为 | 错误/结果 |
 |---|---|---|
 | session 无可用 hook runtime | API 返回 404 | `session {id} 当前没有可用的 hook runtime` |
-| `BeforeTool` 命中 implement phase 且尝试直接 `completed` | 同步拒绝 | `ToolCallDecision::Deny` |
 | `BeforeTool` 命中 `shell_exec.cwd` 绝对工作区路径 | 同步改写为相对 workspace root | `ToolCallDecision::Rewrite` |
 | `BeforeTool` 命中 implement phase 且尝试上报 `session_summary` / `archive_suggestion` | 同步拒绝 | `ToolCallDecision::Deny` |
 | `BeforeTool` 命中 `permission_policy=SUPERVISED` 且工具属于执行/编辑类 | 同步挂起等待审批 | `ToolCallDecision::Ask` |
-| `AfterTool` 命中会改变 task/workflow 观察面的工具 | 请求刷新 snapshot | `refresh_snapshot = true` |
+| `AfterTool` 命中会改变 workflow 观察面的工具 | 请求刷新 snapshot | `refresh_snapshot = true` |
 | `BeforeStop` 命中 `session_ended` | 允许自然结束 | 仅 diagnostics，不阻止退出 |
-| `BeforeStop` 命中 `checklist_passed` 且 task 未达成 | 注入 stop gate，继续 loop | 返回 steering/constraints |
-| `BeforeStop` 命中 `checklist_passed` 且 task 已 `awaiting_verification/completed` | 允许结束 | diagnostics 标记 satisfied |
+| `BeforeStop` 命中 `checklist_passed` 且 evidence 缺失 | 注入 stop gate，继续 loop | 返回 steering/constraints |
+| `BeforeStop` 命中 `checklist_passed` 且 evidence 已齐备 | 允许结束 | diagnostics 标记 satisfied |
 | `BeforeStop` 存在未结案 `blocking_review` action | 持续阻止自然结束 | `StopDecision::Continue` + runtime pending action stop gate |
 | 用户批准 pending tool call | 原 tool call 继续执行 | `tool_call_update(status=in_progress)` |
 | 用户拒绝 pending tool call | 原 tool call 不执行，但 loop 继续推进 | `tool_result.details.approval_state=rejected` |
@@ -457,7 +457,6 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 至少应覆盖以下断言点：
 
 - `execution_hooks` 单测：
-  - implement step 阻止直接 `completed`
   - `shell_exec` 绝对 `cwd` 会在 hook runtime 中被 rewrite
   - `permission_policy=SUPERVISED` 时，执行类工具会返回 approval request
   - checklist step 未满足时 `before_stop` 注入 gate
@@ -492,7 +491,7 @@ frontend 展示实际生效的 policies/diagnostics/source registry
 
 ```text
 workflow runtime 直接长成“工具前后如何决策”的一大坨 if/else 中心；
-agent_loop 再直接去问 workflow 当前 step 和 task 状态；
+agent_loop 再直接去问 workflow 当前 step 和外部业务状态；
 前端只能看到 workflow step 文本，却看不到规则真正来自哪一层。
 ```
 
@@ -674,7 +673,7 @@ phase 未声明 default_artifact_type
   - 写入成功后 snapshot 已刷新
 - API / DTO：
   - `/api/workflow-runs/{id}`
-  - `/api/workflow-runs/targets/{kind}/{id}`
+  - `/api/lifecycle-runs/bindings/{kind}/{id}`
   - 返回的 `record_artifacts[].artifact_type` 必须保留 `checklist_evidence`
 - 联调：
   - 真实 session 至少一轮验证 `continue -> stop -> phase advance -> record`

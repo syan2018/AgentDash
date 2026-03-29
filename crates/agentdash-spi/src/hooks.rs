@@ -117,8 +117,6 @@ pub struct SessionHookSnapshot {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SessionSnapshotMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_task: Option<ActiveTaskMeta>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_workflow: Option<ActiveWorkflowMeta>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,16 +135,6 @@ pub struct SessionSnapshotMetadata {
     /// 保留扩展口 — 非核心字段仍可用 JSON
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ActiveTaskMeta {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -300,7 +288,10 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn pending_actions(&self) -> Vec<HookPendingAction>;
     fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot;
 
-    async fn refresh(&self, query: SessionHookRefreshQuery) -> Result<SessionHookSnapshot, HookError>;
+    async fn refresh(
+        &self,
+        query: SessionHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, HookError>;
     async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
 
     fn replace_snapshot(&self, snapshot: SessionHookSnapshot);
@@ -573,4 +564,3 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
         Ok(HookResolution::default())
     }
 }
-

@@ -41,10 +41,7 @@ pub fn resolve_task_agent_config(
         return Ok(executor_config_from_preset(preset));
     }
 
-    Ok(
-        normalize_option_string(project.config.default_agent_type.clone())
-            .map(AgentConfig::new),
-    )
+    Ok(normalize_option_string(project.config.default_agent_type.clone()).map(AgentConfig::new))
 }
 
 pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<AgentConfig> {

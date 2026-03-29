@@ -4,9 +4,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::session_binding::SessionOwnerType;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkflowTargetKind {
+/// Workflow 可挂载到哪一类 owner。
+/// 这里只描述绑定范围，不表达 workflow 自身的业务主语。
+pub enum WorkflowBindingKind {
     Project,
     Story,
     Task,
@@ -14,10 +18,65 @@ pub enum WorkflowTargetKind {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkflowAgentRole {
+/// Workflow 建议由哪一类 owner/session 使用。
+/// 它是绑定层提示，不是 workflow 内建业务角色。
+pub enum WorkflowBindingRole {
     Project,
     Story,
     Task,
+}
+
+impl WorkflowBindingKind {
+    pub fn binding_scope_key(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Story => "story",
+            Self::Task => "task",
+        }
+    }
+
+    pub fn from_binding_scope(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "project" => Some(Self::Project),
+            "story" => Some(Self::Story),
+            "task" => Some(Self::Task),
+            _ => None,
+        }
+    }
+
+    pub fn from_owner_type(raw: &str) -> Option<Self> {
+        Self::from_binding_scope(raw)
+    }
+}
+
+impl WorkflowBindingRole {
+    pub fn binding_scope_key(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Story => "story",
+            Self::Task => "task",
+        }
+    }
+}
+
+impl From<SessionOwnerType> for WorkflowBindingKind {
+    fn from(value: SessionOwnerType) -> Self {
+        match value {
+            SessionOwnerType::Project => Self::Project,
+            SessionOwnerType::Story => Self::Story,
+            SessionOwnerType::Task => Self::Task,
+        }
+    }
+}
+
+impl From<WorkflowBindingKind> for WorkflowBindingRole {
+    fn from(value: WorkflowBindingKind) -> Self {
+        match value {
+            WorkflowBindingKind::Project => Self::Project,
+            WorkflowBindingKind::Story => Self::Story,
+            WorkflowBindingKind::Task => Self::Task,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -114,7 +173,6 @@ pub struct WorkflowInjectionSpec {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowConstraintKind {
-    DenyTaskStatusTransition,
     BlockStopUntilChecksPass,
     Custom,
 }
@@ -131,7 +189,6 @@ pub struct WorkflowConstraintSpec {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowCheckKind {
-    TaskStatusIn,
     ArtifactExists,
     ArtifactCountGte,
     SessionTerminalIn,
@@ -474,5 +531,31 @@ mod tests {
         let error =
             validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps).expect_err("fail");
         assert!(error.contains("entry_step_key"));
+    }
+
+    #[test]
+    fn workflow_binding_kind_from_owner_type_uses_binding_scope() {
+        assert_eq!(
+            WorkflowBindingKind::from_owner_type(" task "),
+            Some(WorkflowBindingKind::Task)
+        );
+        assert_eq!(
+            WorkflowBindingKind::from_binding_scope("story"),
+            Some(WorkflowBindingKind::Story)
+        );
+        assert_eq!(WorkflowBindingKind::from_owner_type("session"), None);
+    }
+
+    #[test]
+    fn workflow_binding_scope_conversions_stay_consistent() {
+        assert_eq!(
+            WorkflowBindingKind::from(SessionOwnerType::Project),
+            WorkflowBindingKind::Project
+        );
+        assert_eq!(
+            WorkflowBindingRole::from(WorkflowBindingKind::Story).binding_scope_key(),
+            "story"
+        );
+        assert_eq!(WorkflowBindingKind::Task.binding_scope_key(), "task");
     }
 }

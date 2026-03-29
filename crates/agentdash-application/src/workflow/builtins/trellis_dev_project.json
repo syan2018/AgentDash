@@ -2,8 +2,8 @@
   "key": "trellis_dev_project",
   "name": "Trellis Dev Lifecycle / Project",
   "description": "Project 层面的上下文整理与记录沉淀生命周期。",
-  "target_kind": "project",
-  "recommended_roles": ["project"],
+  "binding_kind": "project",
+  "recommended_binding_roles": ["project"],
   "workflows": [
     {
       "key": "trellis_dev_project_start",

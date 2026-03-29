@@ -5,9 +5,9 @@ use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, S
 use agentdash_domain::task::{TaskExecutionMode, TaskStatus};
 
 use crate::repository_set::RepositorySet;
+use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
 use crate::task::execution::{SessionOverview, TaskExecutionError};
 use crate::task::meta::{build_task_lifecycle_meta, parse_turn_event, turn_matches};
-use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
 use crate::task::restart_tracker::RestartDecision;
 
 use super::repo_ops::*;
@@ -110,13 +110,9 @@ pub async fn run_turn_monitor(
                     turn_id = %turn_id,
                     "Task turn 监听通道关闭，未收到终态事件"
                 );
-                return resolve_failure_outcome(
-                    &ctx,
-                    "turn_monitor_closed",
-                    None,
-                )
-                .await
-                .unwrap_or(TurnOutcome::Failed);
+                return resolve_failure_outcome(&ctx, "turn_monitor_closed", None)
+                    .await
+                    .unwrap_or(TurnOutcome::Failed);
             }
         }
     }
@@ -129,40 +125,47 @@ pub async fn handle_turn_notification(
 ) -> Result<TurnOutcome, agentdash_domain::DomainError> {
     match &notification.update {
         SessionUpdate::ToolCall(tool_call)
-            if turn_matches(tool_call.meta.as_ref(), ctx.turn_id) => {
-                persist_tool_call_artifact(
-                    ctx.repos,
-                    ToolCallArtifactInput {
-                        task_id: ctx.task_id,
-                        session_id: ctx.session_id,
-                        turn_id: ctx.turn_id,
-                        tool_call_id: &tool_call.tool_call_id.to_string(),
-                        patch: build_tool_call_patch(tool_call),
-                        backend_id: ctx.backend_id,
-                        reason: "tool_call",
-                    },
-                )
-                .await?;
-            }
+            if turn_matches(tool_call.meta.as_ref(), ctx.turn_id) =>
+        {
+            persist_tool_call_artifact(
+                ctx.repos,
+                ToolCallArtifactInput {
+                    task_id: ctx.task_id,
+                    session_id: ctx.session_id,
+                    turn_id: ctx.turn_id,
+                    tool_call_id: &tool_call.tool_call_id.to_string(),
+                    patch: build_tool_call_patch(tool_call),
+                    backend_id: ctx.backend_id,
+                    reason: "tool_call",
+                },
+            )
+            .await?;
+        }
         SessionUpdate::ToolCallUpdate(update)
-            if turn_matches(update.meta.as_ref(), ctx.turn_id) => {
-                persist_tool_call_artifact(
-                    ctx.repos,
-                    ToolCallArtifactInput {
-                        task_id: ctx.task_id,
-                        session_id: ctx.session_id,
-                        turn_id: ctx.turn_id,
-                        tool_call_id: &update.tool_call_id.to_string(),
-                        patch: build_tool_call_update_patch(update),
-                        backend_id: ctx.backend_id,
-                        reason: "tool_call_update",
-                    },
-                )
-                .await?;
-            }
+            if turn_matches(update.meta.as_ref(), ctx.turn_id) =>
+        {
+            persist_tool_call_artifact(
+                ctx.repos,
+                ToolCallArtifactInput {
+                    task_id: ctx.task_id,
+                    session_id: ctx.session_id,
+                    turn_id: ctx.turn_id,
+                    tool_call_id: &update.tool_call_id.to_string(),
+                    patch: build_tool_call_update_patch(update),
+                    backend_id: ctx.backend_id,
+                    reason: "tool_call_update",
+                },
+            )
+            .await?;
+        }
         SessionUpdate::SessionInfoUpdate(info) => {
             sync_task_executor_session_binding_from_hub(
-                ctx.repos, session_hub, ctx.task_id, ctx.backend_id, ctx.session_id, ctx.turn_id,
+                ctx.repos,
+                session_hub,
+                ctx.task_id,
+                ctx.backend_id,
+                ctx.session_id,
+                ctx.turn_id,
             )
             .await?;
 
@@ -216,17 +219,17 @@ pub async fn handle_turn_notification(
                     "turn_failed" => {
                         if let Some(err_msg) = message.as_deref() {
                             persist_turn_failure_artifact(
-                                ctx.repos, ctx.task_id, ctx.backend_id, ctx.session_id, ctx.turn_id, err_msg,
+                                ctx.repos,
+                                ctx.task_id,
+                                ctx.backend_id,
+                                ctx.session_id,
+                                ctx.turn_id,
+                                err_msg,
                             )
                             .await?;
                         }
 
-                        return resolve_failure_outcome(
-                            ctx,
-                            "turn_failed",
-                            message.clone(),
-                        )
-                        .await;
+                        return resolve_failure_outcome(ctx, "turn_failed", message.clone()).await;
                     }
                     _ => {}
                 }
@@ -325,7 +328,8 @@ pub async fn resolve_failure_outcome(
                 }),
             )
             .await?;
-            clear_task_session_binding(ctx.repos, ctx.task_id, ctx.backend_id, "oneshot_failed").await;
+            clear_task_session_binding(ctx.repos, ctx.task_id, ctx.backend_id, "oneshot_failed")
+                .await;
             Ok(TurnOutcome::Failed)
         }
         TaskExecutionMode::Standard => {

@@ -2,8 +2,8 @@
   "key": "trellis_dev_story",
   "name": "Trellis Dev Lifecycle / Story",
   "description": "Story 层面的上下文整理、执行对齐与记录沉淀生命周期。",
-  "target_kind": "story",
-  "recommended_roles": ["story"],
+  "binding_kind": "story",
+  "recommended_binding_roles": ["story"],
   "workflows": [
     {
       "key": "trellis_dev_story_start",

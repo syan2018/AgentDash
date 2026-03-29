@@ -139,25 +139,25 @@ impl super::provider::AppExecutionHookProvider {
                 .collect(),
         });
 
-        resolution.pending_execution_log.push(
-            workflow_recording::completion_evaluated_entry(
+        resolution
+            .pending_execution_log
+            .push(workflow_recording::completion_evaluated_entry(
                 &run_id_str,
                 &step_key_str,
                 true,
                 completion_summary
                     .as_deref()
                     .unwrap_or("completion satisfied"),
-            ),
-        );
-        resolution.pending_execution_log.push(
-            workflow_recording::step_completed_entry(
+            ));
+        resolution
+            .pending_execution_log
+            .push(workflow_recording::step_completed_entry(
                 &run_id_str,
                 &step_key_str,
                 completion_summary
                     .as_deref()
                     .unwrap_or("step completed by hook"),
-            ),
-        );
+            ));
 
         resolution.diagnostics.push(HookDiagnosticEntry {
             code: "workflow_step_advance_requested".to_string(),
@@ -219,12 +219,8 @@ pub(super) fn workflow_record_artifact_type_tag(
         agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence => {
             "checklist_evidence"
         }
-        agentdash_domain::workflow::WorkflowRecordArtifactType::ExecutionTrace => {
-            "execution_trace"
-        }
-        agentdash_domain::workflow::WorkflowRecordArtifactType::DecisionRecord => {
-            "decision_record"
-        }
+        agentdash_domain::workflow::WorkflowRecordArtifactType::ExecutionTrace => "execution_trace",
+        agentdash_domain::workflow::WorkflowRecordArtifactType::DecisionRecord => "decision_record",
         agentdash_domain::workflow::WorkflowRecordArtifactType::ContextSnapshot => {
             "context_snapshot"
         }

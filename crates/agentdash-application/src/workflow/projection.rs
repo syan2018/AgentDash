@@ -1,6 +1,6 @@
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleStepDefinition, WorkflowDefinition, WorkflowDefinitionRepository, WorkflowTargetKind,
+    LifecycleStepDefinition, WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
     build_effective_contract,
 };
 use serde::Serialize;
@@ -13,14 +13,16 @@ pub struct ActiveWorkflowProjection {
     pub active_step: LifecycleStepDefinition,
     pub primary_workflow: Option<WorkflowDefinition>,
     pub effective_contract: agentdash_domain::workflow::EffectiveSessionContract,
-    pub target: WorkflowTargetSummary,
+    /// 当前 projection 绑定到的 owner 摘要。
+    pub binding: WorkflowBindingSummary,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct WorkflowTargetSummary {
-    pub target_kind: WorkflowTargetKind,
-    pub target_id: Uuid,
-    pub target_label: Option<String>,
+/// Workflow 当前绑定对象摘要。
+pub struct WorkflowBindingSummary {
+    pub binding_kind: WorkflowBindingKind,
+    pub binding_id: Uuid,
+    pub binding_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,7 +37,7 @@ pub struct WorkflowProjectionSnapshot {
     pub primary_workflow_id: Option<Uuid>,
     pub primary_workflow_key: Option<String>,
     pub primary_workflow_name: Option<String>,
-    pub target: WorkflowTargetSummary,
+    pub binding: WorkflowBindingSummary,
     pub instruction_count: usize,
     pub binding_count: usize,
     pub resolved_binding_count: usize,
@@ -62,7 +64,7 @@ impl ActiveWorkflowProjection {
             primary_workflow_id: self.primary_workflow.as_ref().map(|w| w.id),
             primary_workflow_key: self.primary_workflow.as_ref().map(|w| w.key.clone()),
             primary_workflow_name: self.primary_workflow.as_ref().map(|w| w.name.clone()),
-            target: self.target.clone(),
+            binding: self.binding.clone(),
             instruction_count: self.effective_contract.injection.instructions.len(),
             binding_count: self.effective_contract.injection.context_bindings.len(),
             resolved_binding_count: 0,
@@ -73,7 +75,9 @@ impl ActiveWorkflowProjection {
     }
 }
 
-fn lifecycle_run_status_tag(status: agentdash_domain::workflow::LifecycleRunStatus) -> &'static str {
+fn lifecycle_run_status_tag(
+    status: agentdash_domain::workflow::LifecycleRunStatus,
+) -> &'static str {
     use agentdash_domain::workflow::LifecycleRunStatus;
 
     match status {
@@ -88,15 +92,15 @@ fn lifecycle_run_status_tag(status: agentdash_domain::workflow::LifecycleRunStat
 }
 
 pub async fn resolve_active_workflow_projection(
-    target_kind: WorkflowTargetKind,
-    target_id: Uuid,
-    target_label: Option<String>,
+    binding_kind: WorkflowBindingKind,
+    binding_id: Uuid,
+    binding_label: Option<String>,
     definition_repo: &dyn WorkflowDefinitionRepository,
     lifecycle_repo: &dyn LifecycleDefinitionRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let runs = run_repo
-        .list_by_target(target_kind, target_id)
+        .list_by_binding(binding_kind, binding_id)
         .await
         .map_err(|e| format!("加载 lifecycle runs 失败: {e}"))?;
 
@@ -145,11 +149,8 @@ pub async fn resolve_active_workflow_projection(
         None => None,
     };
 
-    let effective_contract = build_effective_contract(
-        &lifecycle.key,
-        &active_step.key,
-        primary_workflow.as_ref(),
-    );
+    let effective_contract =
+        build_effective_contract(&lifecycle.key, &active_step.key, primary_workflow.as_ref());
 
     Ok(Some(ActiveWorkflowProjection {
         run,
@@ -157,10 +158,10 @@ pub async fn resolve_active_workflow_projection(
         active_step,
         primary_workflow,
         effective_contract,
-        target: WorkflowTargetSummary {
-            target_kind,
-            target_id,
-            target_label,
+        binding: WorkflowBindingSummary {
+            binding_kind,
+            binding_id,
+            binding_label,
         },
     }))
 }

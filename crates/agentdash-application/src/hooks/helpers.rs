@@ -58,7 +58,10 @@ pub(super) fn build_subagent_result_context(r: &SubagentResult<'_>) -> String {
     sections.push(format!("- 类型: {}", r.subagent_type));
     sections.push(format!("- status: {}", r.status));
     sections.push(format!("- dispatch_id: {}", r.dispatch_id));
-    sections.push(format!("- companion_session_id: {}", r.companion_session_id));
+    sections.push(format!(
+        "- companion_session_id: {}",
+        r.companion_session_id
+    ));
     sections.push(format!("- 摘要: {}", r.summary));
 
     if !r.findings.is_empty() {
@@ -133,10 +136,6 @@ pub(super) fn tool_call_failed(payload: Option<&serde_json::Value>) -> bool {
         .and_then(|value| value.get("is_error"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
-}
-
-pub(super) fn is_update_task_status_tool(tool_name: &str) -> bool {
-    tool_name.ends_with("update_task_status")
 }
 
 pub(super) fn is_report_workflow_artifact_tool(tool_name: &str) -> bool {

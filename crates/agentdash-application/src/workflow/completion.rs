@@ -3,14 +3,13 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
-    WorkflowCheckKind, WorkflowCompletionSpec, WorkflowRecordArtifactType, WorkflowSessionTerminalState,
+    WorkflowCheckKind, WorkflowCompletionSpec, WorkflowRecordArtifactType,
+    WorkflowSessionTerminalState,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkflowCompletionSignalSet {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_status: Option<String>,
     #[serde(default)]
     pub checklist_evidence_present: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,7 +96,10 @@ pub fn evaluate_step_completion(
         };
     }
 
-    let results: Vec<_> = checks.iter().map(|check| evaluate_check(check, signals)).collect();
+    let results: Vec<_> = checks
+        .iter()
+        .map(|check| evaluate_check(check, signals))
+        .collect();
     let all_satisfied = results.iter().all(|r| r.satisfied);
     let evidence: Vec<_> = results
         .iter()
@@ -169,28 +171,6 @@ fn evaluate_check(
     signals: &WorkflowCompletionSignalSet,
 ) -> CheckEvaluationResult {
     match check.kind {
-        WorkflowCheckKind::TaskStatusIn => {
-            let accepted = read_string_list(check.payload.as_ref(), "statuses");
-            let task_status = signals.task_status.clone();
-            let satisfied = task_status
-                .as_deref()
-                .map(|status| accepted.iter().any(|candidate| candidate == status))
-                .unwrap_or(false);
-            CheckEvaluationResult {
-                code: if satisfied {
-                    "task_status_in_satisfied".to_string()
-                } else {
-                    "task_status_in_pending".to_string()
-                },
-                summary: if satisfied {
-                    "Task 状态满足 workflow check".to_string()
-                } else {
-                    "Task 状态尚未满足 workflow check".to_string()
-                },
-                detail: task_status.map(|status| format!("task_status={status}")),
-                satisfied,
-            }
-        }
         WorkflowCheckKind::ArtifactExists => {
             let artifact_type = read_string(check.payload.as_ref(), "artifact_type");
             let count = artifact_type
@@ -367,22 +347,12 @@ mod tests {
 
     fn contract_with_checks() -> WorkflowCompletionSpec {
         WorkflowCompletionSpec {
-            checks: vec![
-                WorkflowCheckSpec {
-                    key: "task_ready".to_string(),
-                    kind: WorkflowCheckKind::TaskStatusIn,
-                    description: "task ready".to_string(),
-                    payload: Some(serde_json::json!({
-                        "statuses": ["awaiting_verification", "completed"]
-                    })),
-                },
-                WorkflowCheckSpec {
-                    key: "evidence".to_string(),
-                    kind: WorkflowCheckKind::ChecklistEvidencePresent,
-                    description: "evidence".to_string(),
-                    payload: None,
-                },
-            ],
+            checks: vec![WorkflowCheckSpec {
+                key: "evidence".to_string(),
+                kind: WorkflowCheckKind::ChecklistEvidencePresent,
+                description: "evidence".to_string(),
+                payload: None,
+            }],
             default_artifact_type: Some(WorkflowRecordArtifactType::ChecklistEvidence),
             default_artifact_title: Some("summary".to_string()),
         }
@@ -393,7 +363,6 @@ mod tests {
         let decision = evaluate_step_completion(
             Some(&contract_with_checks()),
             &WorkflowCompletionSignalSet {
-                task_status: Some("awaiting_verification".to_string()),
                 checklist_evidence_present: false,
                 ..WorkflowCompletionSignalSet::default()
             },
@@ -409,7 +378,6 @@ mod tests {
         let decision = evaluate_step_completion(
             Some(&contract_with_checks()),
             &WorkflowCompletionSignalSet {
-                task_status: Some("completed".to_string()),
                 checklist_evidence_present: true,
                 ..WorkflowCompletionSignalSet::default()
             },
@@ -452,10 +420,8 @@ mod tests {
             }],
             ..WorkflowCompletionSpec::default()
         };
-        let decision = evaluate_step_completion(
-            Some(&spec),
-            &WorkflowCompletionSignalSet::default(),
-        );
+        let decision =
+            evaluate_step_completion(Some(&spec), &WorkflowCompletionSignalSet::default());
 
         assert!(!decision.satisfied);
     }

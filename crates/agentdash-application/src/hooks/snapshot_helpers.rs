@@ -1,11 +1,10 @@
 use uuid::Uuid;
 
 use crate::workflow::{
-    evaluate_step_completion, WorkflowCompletionDecision, WorkflowCompletionSignalSet,
+    WorkflowCompletionDecision, WorkflowCompletionSignalSet, evaluate_step_completion,
 };
-use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleRunStatus, WorkflowCheckKind, WorkflowConstraintKind,
+    EffectiveSessionContract, LifecycleRunStatus, WorkflowConstraintKind,
     WorkflowSessionTerminalState,
 };
 use agentdash_spi::{
@@ -18,7 +17,6 @@ use super::ActiveWorkflowLocator;
 pub struct ResolvedOwnerSummary {
     pub summary: HookOwnerSummary,
     pub diagnostics: Vec<HookDiagnosticEntry>,
-    pub task_status: Option<String>,
 }
 
 pub(crate) fn workflow_run_status_tag(status: LifecycleRunStatus) -> &'static str {
@@ -30,17 +28,6 @@ pub(crate) fn workflow_run_status_tag(status: LifecycleRunStatus) -> &'static st
         LifecycleRunStatus::Completed => "completed",
         LifecycleRunStatus::Failed => "failed",
         LifecycleRunStatus::Cancelled => "cancelled",
-    }
-}
-
-pub(crate) fn task_status_tag(status: TaskStatus) -> &'static str {
-    match status {
-        TaskStatus::Pending => "pending",
-        TaskStatus::Assigned => "assigned",
-        TaskStatus::Running => "running",
-        TaskStatus::AwaitingVerification => "awaiting_verification",
-        TaskStatus::Completed => "completed",
-        TaskStatus::Failed => "failed",
     }
 }
 
@@ -58,9 +45,7 @@ pub(crate) fn workflow_transition_policy(snapshot: &SessionHookSnapshot) -> Opti
 pub(crate) fn workflow_auto_completion_snapshot(snapshot: &SessionHookSnapshot) -> bool {
     matches!(
         workflow_transition_policy(snapshot),
-        Some(
-            "auto" | "all_checks_pass" | "any_checks_pass" | "session_terminal_matches",
-        )
+        Some("auto" | "all_checks_pass" | "any_checks_pass" | "session_terminal_matches",)
     )
 }
 
@@ -104,11 +89,15 @@ pub(crate) fn active_workflow_default_artifact_type(
     snapshot: &SessionHookSnapshot,
 ) -> Option<agentdash_domain::workflow::WorkflowRecordArtifactType> {
     parse_workflow_record_artifact_type_tag(
-        active_workflow(snapshot)?.default_artifact_type.as_deref()?,
+        active_workflow(snapshot)?
+            .default_artifact_type
+            .as_deref()?,
     )
 }
 
-pub(crate) fn active_workflow_default_artifact_title(snapshot: &SessionHookSnapshot) -> Option<&str> {
+pub(crate) fn active_workflow_default_artifact_title(
+    snapshot: &SessionHookSnapshot,
+) -> Option<&str> {
     active_workflow(snapshot)?.default_artifact_title.as_deref()
 }
 
@@ -132,24 +121,14 @@ pub(crate) fn workflow_step_key(snapshot: &SessionHookSnapshot) -> Option<&str> 
     active_workflow(snapshot)?.step_key.as_deref()
 }
 
-pub(crate) fn active_task_status(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot
-        .metadata
-        .as_ref()?
-        .active_task
-        .as_ref()?
-        .status
-        .as_deref()
-}
-
 pub(crate) fn snapshot_workspace_root(snapshot: &SessionHookSnapshot) -> Option<&str> {
     snapshot.metadata.as_ref()?.workspace_root.as_deref()
 }
 
 pub(crate) fn active_workflow_source_summary(snapshot: &SessionHookSnapshot) -> Vec<String> {
     let mut summary = Vec::new();
-    if let Some(lifecycle_key) = active_workflow(snapshot)
-        .and_then(|aw| aw.lifecycle_key.as_deref())
+    if let Some(lifecycle_key) =
+        active_workflow(snapshot).and_then(|aw| aw.lifecycle_key.as_deref())
     {
         summary.push(format!("lifecycle:{lifecycle_key}"));
     }
@@ -168,14 +147,18 @@ pub(crate) fn active_workflow_source_refs(snapshot: &SessionHookSnapshot) -> Vec
         .collect()
 }
 
-pub(crate) fn active_workflow_locator(snapshot: &SessionHookSnapshot) -> Option<ActiveWorkflowLocator> {
+pub(crate) fn active_workflow_locator(
+    snapshot: &SessionHookSnapshot,
+) -> Option<ActiveWorkflowLocator> {
     let aw = active_workflow(snapshot)?;
     let run_id = Uuid::parse_str(aw.run_id.as_deref()?).ok()?;
     let step_key = aw.step_key.clone()?;
     Some(ActiveWorkflowLocator { run_id, step_key })
 }
 
-pub(crate) fn active_workflow_contract(snapshot: &SessionHookSnapshot) -> Option<EffectiveSessionContract> {
+pub(crate) fn active_workflow_contract(
+    snapshot: &SessionHookSnapshot,
+) -> Option<EffectiveSessionContract> {
     serde_json::from_value(active_workflow(snapshot)?.effective_contract.clone()?).ok()
 }
 
@@ -206,26 +189,9 @@ pub(crate) fn active_workflow_checks(
         .unwrap_or_default()
 }
 
-pub(crate) fn active_workflow_denied_task_statuses(snapshot: &SessionHookSnapshot) -> Vec<String> {
-    active_workflow_constraints(snapshot)
-        .into_iter()
-        .filter(|constraint| constraint.kind == WorkflowConstraintKind::DenyTaskStatusTransition)
-        .flat_map(|constraint| {
-            constraint
-                .payload
-                .as_ref()
-                .and_then(|payload| payload.get("to"))
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|value| value.as_str().map(ToString::to_string))
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-pub(crate) fn active_workflow_denied_record_artifact_types(snapshot: &SessionHookSnapshot) -> Vec<String> {
+pub(crate) fn active_workflow_denied_record_artifact_types(
+    snapshot: &SessionHookSnapshot,
+) -> Vec<String> {
     active_workflow_constraints(snapshot)
         .into_iter()
         .filter(|constraint| constraint.kind == WorkflowConstraintKind::Custom)
@@ -240,25 +206,6 @@ pub(crate) fn active_workflow_denied_record_artifact_types(snapshot: &SessionHoo
             }
             payload
                 .and_then(|value| value.get("artifact_types"))
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|value| value.as_str().map(ToString::to_string))
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-pub(crate) fn active_workflow_task_status_check_statuses(snapshot: &SessionHookSnapshot) -> Vec<String> {
-    active_workflow_checks(snapshot)
-        .into_iter()
-        .filter(|check| check.kind == WorkflowCheckKind::TaskStatusIn)
-        .flat_map(|check| {
-            check
-                .payload
-                .as_ref()
-                .and_then(|payload| payload.get("statuses"))
                 .and_then(serde_json::Value::as_array)
                 .cloned()
                 .unwrap_or_default()

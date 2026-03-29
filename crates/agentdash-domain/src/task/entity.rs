@@ -4,10 +4,10 @@ use uuid::Uuid;
 
 use super::value_objects::{AgentBinding, Artifact, TaskExecutionMode, TaskStatus};
 
-/// Task — 执行容器
+/// Task — 用户工作项与 Session 策略壳
 ///
-/// 一对一绑定 Agent 进程的执行单元，在隔离 Workspace 中完成具体工作。
-/// 通过 workspace_id 外键关联物理工作空间。
+/// 面向用户展示的工作项容器，承载归属关系、独立业务状态机、Session 默认执行策略和结果摘要。
+/// 真实执行在 Session 中发生；Task 通过 workspace_id 外键关联逻辑工作空间。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: Uuid,

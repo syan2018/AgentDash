@@ -1,26 +1,24 @@
 use std::sync::Arc;
 
+use crate::session::{
+    CompanionSessionContext, PromptSessionRequest, SessionHub, UserPromptInput,
+    build_hook_trace_notification,
+};
 use agent_client_protocol::{
     McpServer, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
 };
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
-use agentdash_spi::schema::schema_value;
-use agentdash_spi::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
-};
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
+use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
-    AddressSpace, ExecutionContext, MountCapability, AgentConfig,
-    HookEvaluationQuery, HookPendingAction, HookTraceEntry, HookTrigger, SessionHookRefreshQuery,
+    AddressSpace, AgentConfig, ExecutionContext, HookEvaluationQuery, HookPendingAction,
+    HookTraceEntry, HookTrigger, MountCapability, SessionHookRefreshQuery,
 };
-use crate::session::{
-    CompanionSessionContext, SessionHub, PromptSessionRequest, UserPromptInput,
-    build_hook_trace_notification,
-};
+use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -695,11 +693,12 @@ async fn record_subagent_trace(
             Some(turn_id),
             hook_trace_source(),
             &trace,
-        ) {
-            let _ = session_hub
-                .inject_notification(hook_session.session_id(), notification)
-                .await;
-        }
+        )
+    {
+        let _ = session_hub
+            .inject_notification(hook_session.session_id(), notification)
+            .await;
+    }
 }
 
 fn build_subagent_pending_action(
@@ -1003,9 +1002,7 @@ fn filter_address_space_capabilities(
 
             let mut next_mount = mount.clone();
             next_mount.capabilities = capabilities;
-            next_mount.default_write = next_mount
-                .capabilities
-                .contains(&MountCapability::Write);
+            next_mount.default_write = next_mount.capabilities.contains(&MountCapability::Write);
             Some(next_mount)
         })
         .collect::<Vec<_>>();
@@ -1028,9 +1025,7 @@ fn filter_address_space_capabilities(
     }
 }
 
-fn build_companion_owner_summary(
-    snapshot: &agentdash_spi::SessionHookSnapshot,
-) -> Option<String> {
+fn build_companion_owner_summary(snapshot: &agentdash_spi::SessionHookSnapshot) -> Option<String> {
     if snapshot.owners.is_empty() {
         return None;
     }
@@ -1122,11 +1117,10 @@ pub fn companion_owner_candidates(
         }
         if owner.owner_type == "task"
             && let Some(story_id) = owner.story_id.as_deref()
-                && let Some(candidate) =
-                    parse_owner_candidate("story", story_id, owner.label.clone())?
-                {
-                    owners.push(candidate);
-                }
+            && let Some(candidate) = parse_owner_candidate("story", story_id, owner.label.clone())?
+        {
+            owners.push(candidate);
+        }
     }
     owners.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);
     Ok(owners)
@@ -1186,9 +1180,9 @@ fn companion_project_id_for_owner(
 #[cfg(test)]
 mod companion_tests {
     use super::{
+        CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionSliceMode,
         build_companion_dispatch_prompt, build_companion_dispatch_slice,
-        build_companion_execution_slice, companion_owner_candidates, CompanionAdoptionMode,
-        CompanionDispatchPlan, CompanionDispatchSlice, CompanionSliceMode,
+        build_companion_execution_slice, companion_owner_candidates,
     };
     use agent_client_protocol::McpServer;
     use agentdash_domain::session_binding::SessionOwnerType;
@@ -1346,10 +1340,7 @@ mod companion_tests {
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
                 root_ref: "/workspace".to_string(),
-                capabilities: vec![
-                    MountCapability::Read,
-                    MountCapability::Write,
-                ],
+                capabilities: vec![MountCapability::Read, MountCapability::Write],
                 default_write: true,
                 display_name: "main".to_string(),
                 metadata: serde_json::Value::Null,

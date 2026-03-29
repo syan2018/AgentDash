@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-    WorkflowRecordArtifactType, WorkflowTargetKind,
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowBindingKind,
+    WorkflowDefinitionRepository, WorkflowRecordArtifactType,
 };
 use agentdash_spi::{
-    HookError, HookOwnerSummary, HookStepAdvanceRequest,
-    hooks::PendingExecutionLogEntry,
+    HookError, HookOwnerSummary, HookStepAdvanceRequest, hooks::PendingExecutionLogEntry,
 };
 use uuid::Uuid;
 
+use crate::workflow::execution_log as workflow_recording;
 use crate::workflow::{
     ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
     WorkflowRecordArtifactDraft, resolve_active_workflow_projection,
 };
-use crate::workflow::execution_log as workflow_recording;
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
@@ -56,19 +55,16 @@ impl WorkflowSnapshotBuilder {
     ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
         let owner_id = Uuid::parse_str(owner.owner_id.as_str())
             .map_err(|error| HookError::Runtime(format!("owner_id 不是有效 UUID: {error}")))?;
-        let target_kind = match owner.owner_type.as_str() {
-            "project" => WorkflowTargetKind::Project,
-            "story" => WorkflowTargetKind::Story,
-            "task" => WorkflowTargetKind::Task,
-            other => {
-                return Err(HookError::Runtime(format!(
-                    "未知 session owner_type，无法映射 workflow target: {other}"
-                )));
-            }
-        };
+        let binding_kind = WorkflowBindingKind::from_owner_type(owner.owner_type.as_str())
+            .ok_or_else(|| {
+                HookError::Runtime(format!(
+                    "未知 session owner_type，无法映射 workflow 绑定对象: {}",
+                    owner.owner_type
+                ))
+            })?;
 
         resolve_active_workflow_projection(
-            target_kind,
+            binding_kind,
             owner_id,
             owner.label.clone(),
             self.workflow_definition_repo.as_ref(),
@@ -125,11 +121,8 @@ impl WorkflowSnapshotBuilder {
         &self,
         entries: Vec<PendingExecutionLogEntry>,
     ) -> Result<(), HookError> {
-        workflow_recording::flush_execution_log_entries(
-            self.lifecycle_run_repo.as_ref(),
-            entries,
-        )
-        .await
-        .map_err(|e| HookError::Runtime(format!("flush execution log: {e}")))
+        workflow_recording::flush_execution_log_entries(self.lifecycle_run_repo.as_ref(), entries)
+            .await
+            .map_err(|e| HookError::Runtime(format!("flush execution log: {e}")))
     }
 }

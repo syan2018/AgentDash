@@ -1,4 +1,4 @@
-use crate::workflow::{evaluate_step_completion, WorkflowCompletionSignalSet};
+use crate::workflow::{WorkflowCompletionSignalSet, evaluate_step_completion};
 use agentdash_domain::workflow::{WorkflowCheckKind, WorkflowConstraintKind};
 use agentdash_spi::{
     HookApprovalRequest, HookCompletionStatus, HookConstraint, HookContextFragment,
@@ -8,9 +8,8 @@ use agentdash_spi::{
 use super::snapshot_helpers::*;
 use super::{
     SubagentResult, build_subagent_result_context, extract_payload_str,
-    extract_payload_string_list, extract_tool_arg,
-    global_builtin_sources, is_report_workflow_artifact_tool, is_update_task_status_tool,
-    shell_exec_rewritten_args, tool_call_failed,
+    extract_payload_string_list, extract_tool_arg, global_builtin_sources,
+    is_report_workflow_artifact_tool, shell_exec_rewritten_args, tool_call_failed,
 };
 
 pub(crate) struct HookEvaluationContext<'a> {
@@ -51,18 +50,6 @@ pub(crate) fn hook_rule_registry() -> &'static [NormalizedHookRule] {
             apply: rule_apply_shell_exec_absolute_cwd_rewrite,
         },
         NormalizedHookRule {
-            key: "workflow_step:implement:block_completed_status",
-            trigger: HookTrigger::BeforeTool,
-            matches: rule_matches_implement_completed_status_block,
-            apply: rule_apply_implement_completed_status_block,
-        },
-        NormalizedHookRule {
-            key: "workflow_step:checklist:status_signal_refresh",
-            trigger: HookTrigger::BeforeTool,
-            matches: rule_matches_checklist_status_signal,
-            apply: rule_apply_checklist_status_signal,
-        },
-        NormalizedHookRule {
             key: "workflow_step:implement:block_record_artifact",
             trigger: HookTrigger::BeforeTool,
             matches: rule_matches_implement_record_artifact_block,
@@ -93,12 +80,6 @@ pub(crate) fn hook_rule_registry() -> &'static [NormalizedHookRule] {
             apply: rule_apply_checklist_pending_gate,
         },
         NormalizedHookRule {
-            key: "task_runtime:running_status:stop_gate",
-            trigger: HookTrigger::BeforeStop,
-            matches: rule_matches_task_running_stop_gate,
-            apply: rule_apply_task_running_stop_gate,
-        },
-        NormalizedHookRule {
             key: "workflow_completion:manual:notice",
             trigger: HookTrigger::BeforeStop,
             matches: rule_matches_manual_notice,
@@ -125,19 +106,9 @@ pub(crate) fn hook_rule_registry() -> &'static [NormalizedHookRule] {
     ]
 }
 
-pub(crate) fn rule_matches_implement_completed_status_block(ctx: &HookEvaluationContext<'_>) -> bool {
-    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
-        return false;
-    };
-    is_update_task_status_tool(tool_name)
-        && extract_tool_arg(ctx.query.payload.as_ref(), "status").is_some_and(|status| {
-            active_workflow_denied_task_statuses(ctx.snapshot)
-                .iter()
-                .any(|item| item == status)
-        })
-}
-
-pub(crate) fn rule_matches_shell_exec_absolute_cwd_rewrite(ctx: &HookEvaluationContext<'_>) -> bool {
+pub(crate) fn rule_matches_shell_exec_absolute_cwd_rewrite(
+    ctx: &HookEvaluationContext<'_>,
+) -> bool {
     let Some(tool_name) = ctx.query.tool_name.as_deref() else {
         return false;
     };
@@ -172,52 +143,9 @@ pub(crate) fn rule_apply_shell_exec_absolute_cwd_rewrite(
     });
 }
 
-pub(crate) fn rule_apply_implement_completed_status_block(
+pub(crate) fn rule_matches_implement_record_artifact_block(
     ctx: &HookEvaluationContext<'_>,
-    resolution: &mut HookResolution,
-) {
-    resolution.block_reason = Some(
-        "当前 workflow contract 禁止把 Task 直接迁移到该目标状态；请先满足当前 step 的检查与交接要求。"
-            .to_string(),
-    );
-    resolution.diagnostics.push(HookDiagnosticEntry {
-        code: "before_tool_task_status_blocked".to_string(),
-        summary: "Hook 根据 workflow contract 阻止了当前 Task 状态迁移".to_string(),
-        detail: extract_tool_arg(ctx.query.payload.as_ref(), "status")
-            .map(|status| format!("blocked_status={status}")),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
-    });
-}
-
-pub(crate) fn rule_matches_checklist_status_signal(ctx: &HookEvaluationContext<'_>) -> bool {
-    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
-        return false;
-    };
-    is_update_task_status_tool(tool_name)
-        && extract_tool_arg(ctx.query.payload.as_ref(), "status").is_some_and(|status| {
-            active_workflow_task_status_check_statuses(ctx.snapshot)
-                .iter()
-                .any(|item| item == status)
-        })
-}
-
-pub(crate) fn rule_apply_checklist_status_signal(
-    ctx: &HookEvaluationContext<'_>,
-    resolution: &mut HookResolution,
-) {
-    let next_status = extract_tool_arg(ctx.query.payload.as_ref(), "status").unwrap_or("unknown");
-    resolution.refresh_snapshot = true;
-    resolution.diagnostics.push(HookDiagnosticEntry {
-        code: "before_tool_check_status_signal".to_string(),
-        summary: format!("捕获到 contract check 状态信号：Task 即将更新为 `{next_status}`"),
-        detail: None,
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
-    });
-}
-
-pub(crate) fn rule_matches_implement_record_artifact_block(ctx: &HookEvaluationContext<'_>) -> bool {
+) -> bool {
     let Some(tool_name) = ctx.query.tool_name.as_deref() else {
         return false;
     };
@@ -287,11 +215,13 @@ pub(crate) fn rule_matches_after_tool_refresh(ctx: &HookEvaluationContext<'_>) -
     let Some(tool_name) = ctx.query.tool_name.as_deref() else {
         return false;
     };
-    !tool_call_failed(ctx.query.payload.as_ref())
-        && (is_update_task_status_tool(tool_name) || is_report_workflow_artifact_tool(tool_name))
+    !tool_call_failed(ctx.query.payload.as_ref()) && is_report_workflow_artifact_tool(tool_name)
 }
 
-pub(crate) fn rule_apply_after_tool_refresh(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+pub(crate) fn rule_apply_after_tool_refresh(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
     let tool_name = ctx.query.tool_name.as_deref().unwrap_or("unknown_tool");
     resolution.refresh_snapshot = true;
     resolution.diagnostics.push(HookDiagnosticEntry {
@@ -340,7 +270,6 @@ pub(crate) fn rule_matches_checklist_pending_gate(ctx: &HookEvaluationContext<'_
                 !evaluate_step_completion(
                     Some(&contract.completion),
                     &WorkflowCompletionSignalSet {
-                        task_status: active_task_status(ctx.snapshot).map(ToString::to_string),
                         checklist_evidence_present: checklist_evidence_present(ctx.snapshot),
                         ..WorkflowCompletionSignalSet::default()
                     },
@@ -361,7 +290,7 @@ pub(crate) fn rule_apply_checklist_pending_gate(
             "## Session Stop Gate",
             "- 当前 workflow step 通过 contract checks 自动推进。",
             "- 结束前请先补齐验证结论、剩余风险与必要证据，让 checks 真正满足。",
-            "- 如果 contract 依赖 Task 状态或 checklist evidence，请先补齐对应信号。",
+            "- 如果 contract 依赖 checklist evidence 或其它显式信号，请先补齐对应条件。",
             "- 只要 checks 尚未满足，就不要直接结束本轮 session。",
         ]
         .join("\n"),
@@ -380,52 +309,11 @@ pub(crate) fn rule_apply_checklist_pending_gate(
         code: "before_stop_workflow_checks_pending".to_string(),
         summary: "当前 workflow step 尚未满足 contract checks，Hook 要求继续 loop".to_string(),
         detail: Some(format!(
-            "current_task_status={}, checklist_evidence_present={}",
-            active_task_status(ctx.snapshot).unwrap_or("unknown"),
-            checklist_evidence_present(ctx.snapshot)
+            "checklist_evidence_present={}",
+            checklist_evidence_present(ctx.snapshot),
         )),
         source_summary: active_workflow_source_summary(ctx.snapshot),
         source_refs: active_workflow_source_refs(ctx.snapshot),
-    });
-}
-
-pub(crate) fn rule_matches_task_running_stop_gate(ctx: &HookEvaluationContext<'_>) -> bool {
-    active_task_status(ctx.snapshot) == Some("running")
-        && !workflow_auto_completion_snapshot(ctx.snapshot)
-}
-
-pub(crate) fn rule_apply_task_running_stop_gate(
-    _ctx: &HookEvaluationContext<'_>,
-    resolution: &mut HookResolution,
-) {
-    resolution.context_fragments.push(HookContextFragment {
-        slot: "workflow".to_string(),
-        label: "before_stop_task_status_gate".to_string(),
-        content: [
-            "## Task Stop Gate",
-            "- 当前 session 关联的 Task 仍处于 `running`。",
-            "- 自然结束前，必须显式把 Task 迁移到新的终态或交接态。",
-            "- 正常完成实现/检查时，优先更新为 `awaiting_verification`。",
-            "- 如果执行失败，请显式更新为 `failed` 并说明原因。",
-        ]
-        .join("\n"),
-        source_summary: vec!["task_status:running".to_string()],
-        source_refs: Vec::new(),
-    });
-    resolution.constraints.push(HookConstraint {
-        key: "before_stop:task_status_running".to_string(),
-        description:
-            "当前 Task 仍为 running；请先显式更新 Task 状态（通常为 awaiting_verification / completed / failed），再结束 session。"
-                .to_string(),
-        source_summary: vec!["task_status:running".to_string()],
-        source_refs: Vec::new(),
-    });
-    resolution.diagnostics.push(HookDiagnosticEntry {
-        code: "before_stop_task_status_running".to_string(),
-        summary: "Task 仍处于 running，Hook 阻止当前 session 自然结束".to_string(),
-        detail: Some("expected_status=awaiting_verification|completed|failed".to_string()),
-        source_summary: vec!["task_status:running".to_string()],
-        source_refs: Vec::new(),
     });
 }
 
@@ -433,7 +321,10 @@ pub(crate) fn rule_matches_manual_notice(ctx: &HookEvaluationContext<'_>) -> boo
     workflow_transition_policy(ctx.snapshot) == Some("manual")
 }
 
-pub(crate) fn rule_apply_manual_notice(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+pub(crate) fn rule_apply_manual_notice(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_stop_manual_phase".to_string(),
         summary: "当前 workflow step 使用 manual transition，不会由 Hook 自动推进 step".to_string(),
@@ -456,7 +347,10 @@ pub(crate) fn rule_matches_subagent_dispatch(ctx: &HookEvaluationContext<'_>) ->
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-pub(crate) fn rule_apply_subagent_dispatch(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+pub(crate) fn rule_apply_subagent_dispatch(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
     let subagent_type = ctx.query.subagent_type.as_deref().unwrap_or("companion");
     resolution
         .context_fragments
@@ -522,7 +416,10 @@ pub(crate) fn rule_matches_subagent_result(ctx: &HookEvaluationContext<'_>) -> b
         .is_some_and(|summary| !summary.trim().is_empty())
 }
 
-pub(crate) fn rule_apply_subagent_result(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+pub(crate) fn rule_apply_subagent_result(
+    ctx: &HookEvaluationContext<'_>,
+    resolution: &mut HookResolution,
+) {
     let subagent_type = ctx.query.subagent_type.as_deref().unwrap_or("companion");
     let summary = extract_payload_str(ctx.query.payload.as_ref(), "summary").unwrap_or("无摘要");
     let status = extract_payload_str(ctx.query.payload.as_ref(), "status").unwrap_or("completed");
@@ -618,28 +515,28 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    use crate::workflow::{WorkflowCompletionSignalSet, evaluate_step_completion};
     use agentdash_spi::{
         HookOwnerSummary, HookSourceLayer, HookSourceRef, HookTrigger, SessionHookSnapshot,
     };
-    use crate::workflow::{evaluate_step_completion, WorkflowCompletionSignalSet};
 
     use super::super::test_fixtures::*;
 
     #[test]
-    fn before_tool_blocks_completed_during_implement_phase() {
-        let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
+    fn before_tool_blocks_record_artifact_during_implement_phase() {
+        let snapshot = snapshot_with_workflow("implement", "session_ended");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
             trigger: HookTrigger::BeforeTool,
             turn_id: None,
-            tool_name: Some("mcp_agentdash_task_tools_demo_update_task_status".to_string()),
+            tool_name: Some("mcp_agentdash_workflow_tools_report_workflow_artifact".to_string()),
             tool_call_id: Some("call-1".to_string()),
             subagent_type: None,
             snapshot: None,
             payload: Some(serde_json::json!({
                 "args": {
-                    "status": "completed"
+                    "artifact_type": "session_summary"
                 }
             })),
         };
@@ -652,23 +549,22 @@ mod tests {
             &mut resolution,
         );
 
-        assert!(resolution.block_reason.is_some());
         assert!(
             resolution
                 .matched_rule_keys
-                .contains(&"workflow_step:implement:block_completed_status".to_string())
+                .contains(&"workflow_step:implement:block_record_artifact".to_string())
         );
         assert!(
             resolution
                 .diagnostics
                 .iter()
-                .any(|entry| entry.code == "before_tool_task_status_blocked")
+                .any(|entry| entry.code == "before_tool_record_artifact_blocked")
         );
     }
 
     #[test]
     fn before_tool_rewrites_shell_exec_absolute_cwd_to_workspace_relative() {
-        let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
+        let snapshot = snapshot_with_workflow("implement", "session_ended");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -716,8 +612,8 @@ mod tests {
     }
 
     #[test]
-    fn before_stop_requires_checklist_completion_when_task_not_ready() {
-        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("running"));
+    fn before_stop_requires_checklist_completion_when_evidence_missing() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -754,9 +650,8 @@ mod tests {
     }
 
     #[test]
-    fn before_stop_requires_checklist_evidence_even_when_task_ready() {
-        let snapshot =
-            snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+    fn before_stop_requires_checklist_evidence_when_auto_checks_enabled() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -787,13 +682,8 @@ mod tests {
     }
 
     #[test]
-    fn before_stop_allows_ready_task_with_checklist_evidence() {
-        let snapshot = snapshot_with_workflow_and_evidence(
-            "check",
-            "checklist_passed",
-            Some("awaiting_verification"),
-            true,
-        );
+    fn before_stop_allows_checklist_completion_with_evidence() {
+        let snapshot = snapshot_with_workflow_and_evidence("check", "checklist_passed", true);
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -821,7 +711,7 @@ mod tests {
 
     #[test]
     fn after_turn_does_not_inject_perpetual_check_phase_steering() {
-        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("running"));
+        let snapshot = snapshot_with_workflow("check", "checklist_passed");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -854,13 +744,12 @@ mod tests {
     }
 
     #[test]
-    fn before_stop_allows_checklist_completion_when_task_ready() {
-        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("completed"));
+    fn before_stop_allows_checklist_completion_when_evidence_present() {
+        let snapshot = snapshot_with_workflow_and_evidence("check", "checklist_passed", true);
         let contract = active_workflow_contract(&snapshot).expect("contract");
         let decision = evaluate_step_completion(
             Some(&contract.completion),
             &WorkflowCompletionSignalSet {
-                task_status: active_task_status(&snapshot).map(ToString::to_string),
                 checklist_evidence_present: true,
                 ..WorkflowCompletionSignalSet::default()
             },
@@ -871,59 +760,6 @@ mod tests {
         assert_eq!(
             decision.summary.as_deref(),
             Some("All completion checks passed")
-        );
-    }
-
-    #[test]
-    fn before_stop_blocks_when_task_still_running_without_active_workflow() {
-        let snapshot = SessionHookSnapshot {
-            session_id: "sess-task-running".to_string(),
-            metadata: Some(agentdash_spi::SessionSnapshotMetadata {
-                active_task: Some(agentdash_spi::ActiveTaskMeta {
-                    task_id: Some("task-1".to_string()),
-                    status: Some("running".to_string()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            ..SessionHookSnapshot::default()
-        };
-        let mut resolution = HookResolution::default();
-        let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
-            trigger: HookTrigger::BeforeStop,
-            turn_id: None,
-            tool_name: None,
-            tool_call_id: None,
-            subagent_type: None,
-            snapshot: None,
-            payload: None,
-        };
-
-        apply_hook_rules(
-            HookEvaluationContext {
-                snapshot: &snapshot,
-                query: &query,
-            },
-            &mut resolution,
-        );
-
-        assert!(
-            resolution
-                .matched_rule_keys
-                .contains(&"task_runtime:running_status:stop_gate".to_string())
-        );
-        assert!(
-            resolution
-                .constraints
-                .iter()
-                .any(|constraint| constraint.key == "before_stop:task_status_running")
-        );
-        assert!(
-            resolution
-                .diagnostics
-                .iter()
-                .any(|entry| entry.code == "before_stop_task_status_running")
         );
     }
 
@@ -1045,8 +881,7 @@ mod tests {
 
     #[test]
     fn subagent_result_records_structured_return_channel_diagnostic() {
-        let snapshot =
-            snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let snapshot = snapshot_with_workflow("check", "checklist_passed");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),

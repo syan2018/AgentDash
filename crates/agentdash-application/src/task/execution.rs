@@ -1,9 +1,6 @@
 use uuid::Uuid;
 
-use agentdash_domain::{
-    common::AgentConfig,
-    task::TaskStatus,
-};
+use agentdash_domain::{common::AgentConfig, task::TaskStatus};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskExecutionError {
@@ -71,6 +68,7 @@ pub struct TaskSessionResult {
     pub session_id: Option<String>,
     pub executor_session_id: Option<String>,
     pub task_status: TaskStatus,
+    pub session_execution_status: Option<String>,
     pub agent_binding: agentdash_domain::task::AgentBinding,
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,

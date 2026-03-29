@@ -4,6 +4,7 @@ pub mod agents;
 pub mod backends;
 pub mod discovered_options;
 pub mod discovery;
+pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
 pub mod me;
@@ -15,7 +16,6 @@ pub mod stories;
 pub mod story_sessions;
 pub mod task_execution;
 pub mod workflows;
-pub mod file_picker;
 pub mod workspaces;
 
 use std::sync::Arc;
@@ -234,8 +234,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/lifecycle-runs", post(workflows::start_lifecycle_run))
         .route("/lifecycle-runs/{id}", get(workflows::get_lifecycle_run))
         .route(
-            "/lifecycle-runs/targets/{target_kind}/{target_id}",
-            get(workflows::list_lifecycle_runs_by_target),
+            "/lifecycle-runs/bindings/{binding_kind}/{binding_id}",
+            get(workflows::list_lifecycle_runs_by_binding),
         )
         .route(
             "/lifecycle-runs/{id}/steps/{step_key}/activate",

@@ -2,8 +2,9 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleDefinitionRepository, WorkflowAgentRole, WorkflowAssignment,
-    WorkflowAssignmentRepository, WorkflowDefinition, WorkflowDefinitionRepository,
+    LifecycleDefinition, LifecycleDefinitionRepository, WorkflowAssignment,
+    WorkflowAssignmentRepository, WorkflowBindingRole, WorkflowDefinition,
+    WorkflowDefinitionRepository,
 };
 
 use super::definition::BuiltinWorkflowBundle;
@@ -13,7 +14,7 @@ use super::error::WorkflowApplicationError;
 pub struct AssignLifecycleCommand {
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
-    pub role: WorkflowAgentRole,
+    pub role: WorkflowBindingRole,
     pub enabled: bool,
     pub is_default: bool,
 }
@@ -43,10 +44,10 @@ where
         definition: WorkflowDefinition,
     ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
         if let Some(existing) = self.definition_repo.get_by_key(&definition.key).await? {
-            if existing.target_kind != definition.target_kind {
+            if existing.binding_kind != definition.binding_kind {
                 return Err(WorkflowApplicationError::Conflict(format!(
-                    "workflow `{}` 已绑定 target_kind={:?}，不能直接改为 {:?}",
-                    definition.key, existing.target_kind, definition.target_kind
+                    "workflow `{}` 已绑定 binding_kind={:?}，不能直接改为 {:?}",
+                    definition.key, existing.binding_kind, definition.binding_kind
                 )));
             }
 
@@ -81,20 +82,20 @@ where
                         step.key, wk
                     )));
                 };
-                if workflow.target_kind != lifecycle.target_kind {
+                if workflow.binding_kind != lifecycle.binding_kind {
                     return Err(WorkflowApplicationError::Conflict(format!(
-                        "lifecycle step `{}` 引用的 workflow `{}` target_kind={:?}，与 lifecycle {:?} 不一致",
-                        step.key, workflow.key, workflow.target_kind, lifecycle.target_kind
+                        "lifecycle step `{}` 引用的 workflow `{}` binding_kind={:?}，与 lifecycle {:?} 不一致",
+                        step.key, workflow.key, workflow.binding_kind, lifecycle.binding_kind
                     )));
                 }
             }
         }
 
         if let Some(existing) = self.lifecycle_repo.get_by_key(&lifecycle.key).await? {
-            if existing.target_kind != lifecycle.target_kind {
+            if existing.binding_kind != lifecycle.binding_kind {
                 return Err(WorkflowApplicationError::Conflict(format!(
-                    "lifecycle `{}` 已绑定 target_kind={:?}，不能直接改为 {:?}",
-                    lifecycle.key, existing.target_kind, lifecycle.target_kind
+                    "lifecycle `{}` 已绑定 binding_kind={:?}，不能直接改为 {:?}",
+                    lifecycle.key, existing.binding_kind, lifecycle.binding_kind
                 )));
             }
 

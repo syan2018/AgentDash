@@ -5,8 +5,7 @@ use agentdash_acp_meta::{
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use agentdash_spi::{
-    ExecutionContext, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus,
+    ExecutionContext, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
 };
 use async_trait::async_trait;
 use schemars::JsonSchema;

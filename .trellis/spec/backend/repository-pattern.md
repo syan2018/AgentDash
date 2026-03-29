@@ -185,17 +185,22 @@ pub async fn list_stories(
 ### Base: 依赖注入配置
 
 ```rust
-// agentdash-api/src/app_state.rs
-pub struct AppState {
-    pub story_repo: Arc<dyn StoryRepository>,  // trait 对象
+// agentdash-application/src/repository_set.rs
+pub struct RepositorySet {
+    pub project_repo: Arc<dyn ProjectRepository>,
+    pub workspace_repo: Arc<dyn WorkspaceRepository>,
+    pub story_repo: Arc<dyn StoryRepository>,
+    pub task_repo: Arc<dyn TaskRepository>,
+    pub backend_repo: Arc<dyn BackendRepository>,
+    // ... 其他 repo
 }
 
-impl AppState {
-    pub async fn new(pool: SqlitePool) -> Result<Self> {
-        let story_repo = Arc::new(SqliteStoryRepository::new(pool));
-        // ...
-        Ok(Self { story_repo })
-    }
+// agentdash-api/src/app_state.rs
+pub struct AppState {
+    pub repos: RepositorySet,         // 所有 Repository 的集合
+    pub services: ServiceSet,         // executor_hub, connector 等
+    pub task_runtime: TaskRuntime,    // lock_map, restart_tracker
+    pub config: AppConfig,            // mcp_base_url 等
 }
 ```
 

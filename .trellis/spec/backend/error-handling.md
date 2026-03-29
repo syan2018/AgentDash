@@ -1,41 +1,95 @@
-# Error Handling
+# 错误处理
 
-> How errors are handled in this project.
-
----
-
-## Overview
-
-使用自定义 `ConnectorError` 枚举处理执行器相关错误，配合 `thiserror` 实现错误转换。
-
-- 使用 `Result<T, ConnectorError>` 作为返回类型
-- 错误自动转换为 HTTP 状态码
-- 关键错误使用 `tracing::error!` 记录
+> AgentDashboard 后端错误处理规范。
 
 ---
 
-## Error Types
+## 概览
 
-参考 `executor/connector.rs`：
+后端使用分层错误体系：
+
+| 层级 | 错误类型 | 用途 |
+|------|---------|------|
+| Domain | `DomainError` | 领域层统一错误（NotFound、Storage、Validation 等） |
+| Connector | `ConnectorError` | 执行器相关错误 |
+| API | `ApiError` | HTTP 语义映射（自动转 HTTP 状态码） |
+
+使用 `thiserror` 实现错误枚举，配合 `?` 操作符自动转换。
+
+---
+
+## 错误类型
+
+### DomainError（领域层）
 
 ```rust
+// agentdash-domain/src/common/error.rs
+#[derive(Debug, thiserror::Error)]
+pub enum DomainError {
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("already exists: {0}")]
+    AlreadyExists(String),
+    #[error("invalid data: {0}")]
+    InvalidData(String),
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
+    #[error("storage error: {0}")]
+    Storage(String),
+}
+```
+
+### ConnectorError（执行器层）
+
+```rust
+// agentdash-executor/src/connector.rs
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectorError {
-    #[error("Execution failed: {0}")]
+    #[error("execution failed: {0}")]
     Execution(String),
-    #[error("Connection failed: {0}")]
+    #[error("connection failed: {0}")]
     Connection(String),
-    #[error("Invalid configuration: {0}")]
+    #[error("invalid configuration: {0}")]
     InvalidConfig(String),
 }
 ```
 
----
-
-## Error Handling Patterns
+### ApiError（接口层）
 
 ```rust
-// SSE 流中的错误处理
+// agentdash-api/src/rpc.rs
+pub struct ApiError { ... }
+```
+
+ApiError 自动映射 HTTP 状态码：
+- `DomainError::NotFound` → 404
+- `DomainError::AlreadyExists` → 409
+- `DomainError::InvalidData` / `InvalidConfig` → 400
+- `ConnectorError` → 500 / 502
+- 其他 → 500
+
+---
+
+## 错误处理模式
+
+### 路由层：使用 `?` 自动转换
+
+```rust
+pub async fn get_story(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<StoryResponse>, ApiError> {
+    let story = state.repos.story_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| DomainError::NotFound(format!("story {id}")))?;
+    Ok(Json(StoryResponse::from(story)))
+}
+```
+
+### 流处理：记录并继续
+
+```rust
 while let Some(next) = stream.next().await {
     match next {
         Ok(notification) => {
@@ -52,119 +106,34 @@ while let Some(next) = stream.next().await {
 
 ---
 
-## API Error Responses
+## 错误边界规则
 
-错误以纯文本返回，客户端通过 HTTP 状态码判断：
-
-```rust
-if !res.ok {
-    let text = await res.text().catch(() => "");
-    throw new Error(text || `promptSession failed: HTTP ${res.status}`);
-}
-```
+| 层级 | 允许的错误类型 | 禁止 |
+|------|---------------|------|
+| Domain | `DomainError` | 裸 `String`、`anyhow::Error` 直传 |
+| Application | `DomainError` + `std::io::Error` | 裸 `.to_string()` 后 wrap |
+| Connector | `ConnectorError` | `Box<dyn Error>` |
+| API | `ApiError` | 领域枚举直接序列化给前端 |
 
 ---
 
-## Common Mistakes
+## 常见错误
 
 | 错误 | 正确 |
 |------|------|
-| `unwrap()` 直接 panic | 使用 `?` 或 `match` 处理错误 |
-| 吞掉错误（空的 match arm） | 至少记录错误信息 |
-| 返回 String 作为错误 | 定义具体的错误枚举 |
+| `unwrap()` 直接 panic | 使用 `?` 或 `match` 处理 |
+| 吞掉错误（空 match arm） | 至少记录错误信息 |
+| 返回 `String` 作为错误 | 定义具体的错误枚举 |
+| 在领域层引用 `sqlx::Error` | 转换为 `DomainError::Storage` |
 
 ---
 
-## 场景：SSE/NDJSON 流式契约（2026-02-26）
+## 相关规范
 
-### 1. Scope / Trigger
+- [流式协议](./streaming-protocol.md) — SSE/NDJSON 流式推送契约
+- [领域类型化标准](./domain-payload-typing.md) — 结构化错误边界标准
+- [Quality Guidelines](./quality-guidelines.md) — Session 执行状态持久化
 
-- 触发条件：
-  - 新增 API 签名：`/api/events/stream/ndjson`、`/api/acp/sessions/{id}/stream/ndjson`
-  - 变更跨层契约：服务端流式 envelope + 前端 transport（fetch ndjson -> sse fallback）
-  - 变更 resume 行为：全局流 `Last-Event-ID`，会话流 `x-stream-since-id`
-- 影响层：
-  - Backend route/stream implementation
-  - Frontend stream hook/transport
-  - Dev proxy/HMR 连接生命周期
+---
 
-### 2. Signatures（命令/API/接口签名）
-
-- 全局 SSE：
-  - `GET /api/events/stream`
-  - Header: `Last-Event-ID: <i64>`（可选）
-- 全局 NDJSON：
-  - `GET /api/events/stream/ndjson`
-  - Header: `Last-Event-ID: <i64>`（可选）
-- ACP 会话 SSE：
-  - `GET /api/acp/sessions/{id}/stream`
-  - Header: `Last-Event-ID: <u64>`（可选）
-- ACP 会话 NDJSON：
-  - `GET /api/acp/sessions/{id}/stream/ndjson`
-  - Header: `x-stream-since-id: <u64>`（主方案）
-  - Query: `?since_id=<u64>`（兼容）
-
-### 3. Contracts（请求/响应/env）
-
-- `GET /api/events/stream`（SSE）：
-  - 每条 `StateChanged` 事件都必须包含 `Event.id(...)`（值来源 `state_changes.id`）
-  - 首次连接与重连后，都发送 `Connected { last_event_id }`
-  - 心跳：`Heartbeat { timestamp }`
-- `GET /api/events/stream/ndjson`：
-  - `Content-Type: application/x-ndjson; charset=utf-8`
-  - 行内容为 `StreamEvent` JSON，每行一个对象
-- `GET /api/acp/sessions/{id}/stream/ndjson`：
-  - 连接确认行：`{"type":"connected","last_event_id":<u64>}`
-  - 消息行：`{"type":"notification","id":<u64>,"notification":<SessionNotification>}`
-  - 心跳行：`{"type":"heartbeat","timestamp":<i64>}`
-- Header/缓存契约：
-  - 必须返回 `Cache-Control: no-cache, no-transform`
-  - 必须返回 `X-Content-Type-Options: nosniff`
-
-### 4. Validation & Error Matrix（校验/错误矩阵）
-
-| 条件 | 服务端行为 | 客户端行为 |
-|------|------------|------------|
-| `Last-Event-ID` 非法或缺失 | 按 `0` 处理，不返回 4xx | 正常建立连接 |
-| `x-stream-since-id` 非法 | 按 `0` 处理 | 使用全量历史 + 实时 |
-| `get_changes_since` 失败 | 记录 `tracing::error!`，连接保持 | 标记重连中并重试 |
-| broadcast `Lagged(n)` | 记录 `tracing::warn!` | 不致命，等待后续消息 |
-| broadcast `Closed` | 记录关闭日志并结束流 | 触发重连策略 |
-| JSON 序列化失败 | 记录 `tracing::error!`，跳过该条 | 不中断整条连接 |
-
-### 5. Good/Base/Bad Cases
-
-- Good：
-  - 客户端携带合法 `Last-Event-ID` 或 `x-stream-since-id`
-  - 服务端补发缺失消息后进入实时流
-  - 前端 UI 显示 `connected`
-- Base：
-  - 客户端不带 resume header
-  - 服务端从当前可读历史开始推送，随后实时流
-- Bad：
-  - 代理/HMR 频繁断连导致大量 `ECONNRESET`
-  - 处理：前端统一连接注册 + HMR dispose close，全局状态显示 `reconnecting` 而非 fatal
-
-### 6. Tests Required（含断言点）
-
-- Backend：
-  - `events/stream` 在带 `Last-Event-ID` 时，返回事件 `id` 必须单调递增
-  - `events/stream/ndjson` Content-Type 必须是 `application/x-ndjson`
-  - `acp/.../stream/ndjson` 必须输出 `connected/notification/heartbeat` 三类 envelope
-  - `x-stream-since-id` 与 `since_id` 同时存在时，header 优先
-- Frontend：
-  - NDJSON 首次连接失败时，必须自动降级到 SSE
-  - 断流后状态应进入 `reconnecting`，恢复后进入 `connected`
-  - HMR dispose 时，注册表中的流连接必须全部 close（无重复连接累积）
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-- 全局 SSE 只 `data(json)` 不带 `Event.id`，重连后无法准确补发
-- Hook 直接绑定 `EventSource` 且无统一连接注册，HMR 后容易泄漏连接
-
-#### Correct
-
-- 全局 SSE 用 `state_changes.id` 作为稳定 `Event.id`，并读取 `Last-Event-ID` 先补发后实时
-- 前端通过 transport 抽象（`FetchNdjsonTransport` + `EventSourceTransport` fallback），并接入全局 stream registry
+*更新：2026-03-29 — 充实错误体系，流式协议已拆分到独立文件*

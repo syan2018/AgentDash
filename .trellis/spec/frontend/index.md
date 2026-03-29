@@ -1,15 +1,10 @@
-# Frontend Development Guidelines
+# 前端开发指南
 
-> Best practices for frontend development in this project.
+> **AgentDashboard 前端开发规范。**
 
 ---
 
-## Overview
-
-<!-- PROJECT-SPECIFIC-START: Frontend Overview -->
-> **AgentDashboard 前端开发规范。**
-
-### 项目总览
+## 项目总览
 
 前端客户端（Client）负责以下核心职责：
 - 管理 Project → Workspace → Story → Task 的完整领域模型
@@ -20,7 +15,7 @@
 
 ---
 
-### 核心领域模型层次
+## 核心领域模型层次
 
 ```
 Project（项目）
@@ -34,9 +29,11 @@ Project（项目）
 - **Story** 挂在 Project 下，包含 PRD/规格引用/资源列表
 - **Task** 挂在 Story 下，可绑定 Workspace 和 Agent
 
-### 核心UI概念
+---
 
-#### 侧边栏
+## 核心 UI 概念
+
+### 侧边栏
 
 侧边栏包含四个区域：
 - **导航**：看板 / 会话 视图切换
@@ -44,50 +41,33 @@ Project（项目）
 - **工作空间列表**：当前 Project 的 Workspace 列表 + 创建
 - **后端连接**：后端连接状态展示
 
-#### 看板（Dashboard）
+### 看板（Dashboard）
 
 以 Project 为中心的核心视图：
-- 按 Project 加载 Story 列表（替代旧的按 Backend 加载）
+- 按 Project 加载 Story 列表
 - Story 状态卡片：显示当前状态、进度、关联 Task 数量
 - Task 进度追踪：显示 Agent 执行状态和产物
 
-#### 实时状态更新
+### 实时状态更新
 
 Agent 执行是异步的，前端需要：
 - 实时接收 Task 状态变更推送
-- 流式显示 Agent 输出（类似 Claude Code 的输出流）
+- 流式显示 Agent 输出
 - 连接断线时的降级处理
-<!-- PROJECT-SPECIFIC-END -->
-
-This directory contains guidelines for frontend development. Fill in each file with your project's specific conventions.
 
 ---
 
-## Guidelines Index
+## 规范索引
 
-| Guide | Description | Status |
-|-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns, ACP 事件归并契约 | ✅ 已更新 |
-| [State Management](./state-management.md) | Local state, global state, server state | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Type Safety](./type-safety.md) | Type patterns, validation | ✅ 已更新（含业务 API snake_case 映射边界） |
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [目录结构](./directory-structure.md) | FSD 模块组织、features/stores/pages 布局 | ✅ 已更新 |
+| [组件规范](./component-guidelines.md) | 组件模式、Props、样式约定 | ✅ 已更新 |
+| [Hook 规范](./hook-guidelines.md) | 自定义 hooks、ACP 事件归并契约 | ✅ 已更新 |
+| [状态管理](./state-management.md) | Zustand 5、10 个 Store 清单 | ✅ 已更新 |
+| [质量规范](./quality-guidelines.md) | 代码标准、禁止模式 | ✅ 已更新 |
+| [类型安全](./type-safety.md) | snake_case 直接映射、类型守卫 | ✅ 已更新 |
 
----
-
-## How to Fill These Guidelines
-
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
-<!-- PROJECT-SPECIFIC-START: Design Constraints -->
 ---
 
 ## 设计约束（编码前必读）
@@ -104,9 +84,9 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 ### Project 驱动原则
 
 - 前端以 **Project** 为核心导航单元（不再以 Backend 为中心）
-- Story 列表按 `projectId` 加载，不再按 `backendId`
+- Story 列表按 `projectId` 加载
 - Workspace 列表按 `projectId` 加载
-- Backend 信息不再挂在 Project 本体上，而是服务于 Workspace binding 创建和 runtime resolution 诊断
+- Backend 信息服务于 Workspace binding 创建和 runtime resolution 诊断
 
 ### 实时状态原则
 
@@ -130,8 +110,7 @@ The goal is to help AI assistants and new team members understand how YOUR proje
 - 所有文档更新必须使用中文
 - 代码注释必须使用中文
 - 提交信息必须使用中文
-<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-**Language**: All documentation should be written in **English**.
+*更新：2026-03-29 — 清理模板残留，对齐规范索引*

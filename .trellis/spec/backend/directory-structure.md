@@ -4,21 +4,9 @@
 
 ---
 
-## Overview
+## 概览
 
-<!--
-Document your project's backend directory structure here.
-
-Questions to answer:
-- How are modules/packages organized?
-- Where does business logic live?
-- Where are API endpoints defined?
-- How are utilities and helpers organized?
--->
-
-<!-- PROJECT-SPECIFIC-START: AgentDashboard Backend Structure -->
 > **AgentDashboard 后端代码的组织方式。**
-> **注意：当前为概念阶段，技术栈未定，目录结构仅为参考设计。**
 
 ### 设计原则
 
@@ -26,21 +14,10 @@ Questions to answer:
 - 每个模块独立目录，模块间通过接口交互
 - 接口定义与实现分离
 - 策略（Strategy）作为可替换组件
-<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-## Directory Layout
-
-```
-<!-- Replace with your actual structure -->
-src/
-├── ...
-└── ...
-```
-
-<!-- PROJECT-SPECIFIC-START: Directory Tree -->
-### 实际目录布局（Rust / Axum）— 整洁架构分层
+## 目录布局（Rust / Axum — 整洁架构分层）
 
 **架构原则**：依赖方向 外层 → 内层（Interface → Application → Domain）
 
@@ -243,16 +220,10 @@ AgentConnector trait
 ├── VibeKanbanExecutorsConnector  → LocalExecutor（通过 vibe-kanban executors crate）
 └── RemoteAcpConnector            → RemoteAcpBackend（骨架，待实现）
 ```
-<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-## Module Organization
-
-<!-- How should new features/modules be organized? -->
-
-<!-- PROJECT-SPECIFIC-START: Module Guidelines -->
-### 整洁架构分层约定
+## 整洁架构分层约定
 
 **核心原则**：依赖方向始终向内，外层依赖内层。
 
@@ -374,15 +345,11 @@ pub struct AppState {
 
 > **禁止跨层依赖**：API 层不能直接访问 Repository 的具体实现
 > **Application 层规划**：当前简单业务逻辑直接写在路由中。当业务复杂时，必须提取到独立的 `agentdash-application` crate。
-<!-- PROJECT-SPECIFIC-END -->
 
 ---
 
-## Naming Conventions
+## 命名规范
 
-<!-- File and folder naming rules -->
-
-<!-- PROJECT-SPECIFIC-START: Naming Rules -->
 ### Crate 命名
 
 - **领域层**：`agentdash-domain` — 核心业务
@@ -408,119 +375,10 @@ agentdash-domain/src/<entity>/           # 小写，单数
 agentdash-infrastructure/src/persistence/<db_type>/  # 如 sqlite/
 └── <entity>_repository.rs                         # 如 story_repository.rs
 ```
-<!-- PROJECT-SPECIFIC-END -->
-
 ---
 
-## Examples
-
-<!-- Link to well-organized modules as examples -->
-
-<!-- PROJECT-SPECIFIC-START: Current Status -->
 ### 架构演进记录
 
-**2026-02-26: 整洁架构重构完成**
-
-从混合分层迁移到整洁架构：
-
-| 旧架构 | 新架构 | 状态 |
-|--------|--------|------|
-| `agentdash-state` | `agentdash-domain` + `agentdash-infrastructure` | ✅ 已迁移 |
-| `agentdash-coordinator` | （待整合到 infrastructure）| ⏭️ 遗留 |
-| `agentdash-api/executor/` | `agentdash-executor` | ✅ 已提取 |
-
-**关键变更**：
-1. 引入 `agentdash-domain` crate，包含实体和 Repository traits
-2. 引入 `agentdash-infrastructure` crate，实现 Repository 接口
-3. 使用 `Arc<dyn Repository>` 在 AppState 中进行依赖注入
-4. 废弃 `agentdash-state` crate（删除 9 个文件，541 行）
-
-**依赖方向验证**：
-```
-cargo check --workspace  ✅ 通过
-cargo test --workspace   ✅ 通过
-```
-
-**后续优化**：
-- [x] 创建 `agentdash-application` crate — 2026-03-20 解耦重构完成
-- [ ] 整合 `agentdash-coordinator` 到 `agentdash-infrastructure`
-- [ ] 补充领域层单元测试
-- [ ] 修复 minor clippy 警告
-
-**2026-02-27: Project/Workspace/Story 领域模型重构**
-
-引入完整的 Project → Workspace → Story → Task 领域模型层次：
-
-| 变更 | 说明 | 状态 |
-|------|------|------|
-| 新增 `project` 模块 | 项目容器，管理 Story/Workspace/Agent 预设 | ✅ 已完成 |
-| 新增 `workspace` 模块 | 物理工作空间，支持 GitWorktree/Static/Ephemeral | ✅ 已完成 |
-| 扩展 `Story` | 添加 `project_id`，`context` 改为结构化 `StoryContext` | ✅ 已完成 |
-| 扩展 `Task` | `workspace_path` → `workspace_id`，`agent_binding` 结构化 | ✅ 已完成 |
-| 扩展 Repository 接口 | Story/Task 支持完整 CRUD | ✅ 已完成 |
-| API 路由 | 新增 Project/Workspace 端点 | ✅ 已完成 |
-| Mock 数据脚本 | 适配新模型，包含 Project/Workspace 数据 | ✅ 已完成 |
-
-**实体关系**：
-```
-Project (1) → (*) Workspace
-Project (1) → (*) Story
-Story (1)   → (*) Task
-Workspace (1) ← (*) Task
-```
-
-**2026-03-20: API / Application 解耦重构**
-
-将 ~5640 行业务逻辑从 `agentdash-api` 迁移到 `agentdash-application`，完成 6 个阶段：
-
-| Phase | 内容 | 状态 |
-|-------|------|------|
-| 1 | Session Plan + Context Composition → application | ✅ |
-| 2 | Task Execution Gateway 纯逻辑 → application/task/ | ✅ |
-| 3 | Address Space Access 三重职责拆分 | ✅ |
-| 4 | Story Owner Session 编排 → application/story/ | ✅ |
-| 5 | 引入 Response DTO / Assembler 层 (api/dto/) | ✅ |
-| 6 | AppState 瘦身 → RepositorySet / ServiceSet / TaskRuntime / AppConfig | ✅ |
-
-详见 `.trellis/tasks/03-19-decouple-api-domain-business-orchestration/plan.md`。
-
-**2026-03-27: API God Module Decomposition（深度解耦）**
-
-延续 03-20 的解耦目标，将 api 层残留的 God Module 逻辑进一步下沉到 application 层：
-
-| Task | 内容 | API 层行数变化 |
-|------|------|---------------|
-| Task 1 | AgentTool SPI 下沉到 agentdash-spi + ThinkingLevel 统一 | - |
-| Task 2 | execution_hooks 迁移到 application::hooks | ~2800 → 1 |
-| Task 3 | Mount/AddressSpace 统一到 domain + service/tool 迁移 | ~1500 → ~6 |
-| Task 4 | RepositorySet/runtime_bridge/workspace_resolution/gateway 核心下沉 | gateway 1493 → 360 |
-
-**架构改进**：
-- `RepositorySet` 定义从 api 下沉到 application，使 application 层服务可直接持有
-- `BackendAvailability` trait 解耦了 workspace resolution 对 AppState 的依赖
-- Turn 监听/事件处理/artifact 持久化等核心逻辑已参数化并迁入 application
-- API 层 relay dispatch 因依赖 api 独有的 BackendRegistry 暂时保留
-- Phase 6（SessionExecutor trait 解耦 application → executor）为延伸目标
-
-详见 `.trellis/tasks/03-27-api-god-module-decomposition/prd.md`。
-
-**2026-03-29: Agent 核心类型抽取与 LLM Bridge 下沉**
-
-将 `agentdash-agent` 从混合依赖（rig-core + agentdash-spi）重构为纯净 Agent Loop 引擎：
-
-| Phase | 内容 | 状态 |
-|-------|------|------|
-| 1 | 创建 `agentdash-agent-types` crate（AgentMessage/AgentTool/Delegate 等共享类型） | ✅ |
-| 2 | `agentdash-spi` 改为 re-export agent-types，下游零破坏 | ✅ |
-| 3 | `agentdash-agent` 依赖瘦身：仅 agent-types + domain，移除 rig-core/spi | ✅ |
-| 4 | `RigBridge` + `convert.rs` 下沉到 `agentdash-executor/connectors/rig_bridge.rs` | ✅ |
-| 5 | 全量 check + clippy + test 通过 | ✅ |
-
-**关键设计决策**：
-- `AgentContext.tools` 改为 `Vec<ToolDefinition>`（仅 schema），Agent Loop 通过独立的 `tool_instances` 参数持有可执行实例
-- `AgentTool` trait 和 `AgentRuntimeDelegate` trait 放在 agent-types（允许 async-trait + tokio-util）
-- `LlmBridge` trait 留在 agent crate（是 Agent Loop 的 port），`RigBridge` 是 adapter 放在 executor
-- `BridgeRequest`/`BridgeResponse` 使用自有 `ToolDefinition` 和 `TokenUsage`，不引用任何 rig 类型
-
-详见 `.trellis/tasks/03-29-agent-types-extraction/prd.md`。
-<!-- PROJECT-SPECIFIC-END -->
+> 详细的架构演进历史已拆分到 [architecture-evolution.md](./architecture-evolution.md)。
+>
+> 摘要：2026-02-26 整洁架构 → 02-27 领域模型 → 03-20 API/Application 解耦 → 03-27 God Module 分解 → 03-29 Agent Types 抽取

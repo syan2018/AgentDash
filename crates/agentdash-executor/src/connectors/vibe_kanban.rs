@@ -22,7 +22,7 @@ use executors::{
 };
 
 use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
-use agentdash_connector_contract::{
+use agentdash_spi::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
     ExecutionStream, AgentInfo, PromptPayload,
 };

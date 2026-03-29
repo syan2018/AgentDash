@@ -16,7 +16,7 @@ use rmcp::{
 };
 use tokio_util::sync::CancellationToken;
 
-use agentdash_connector_contract::ConnectorError;
+use agentdash_spi::ConnectorError;
 
 #[derive(Debug, Clone)]
 struct McpHttpServerSpec {

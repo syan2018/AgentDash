@@ -5,8 +5,9 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
-use crate::address_space_access::{
-    RelayAddressSpaceService, RelayRuntimeToolProvider, SharedSessionHubHandle,
+use agentdash_application::address_space::RelayAddressSpaceService;
+use agentdash_application::address_space::tools::provider::{
+    RelayRuntimeToolProvider, SharedSessionHubHandle,
 };
 use crate::mount_providers::RelayFsMountProvider;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
@@ -185,8 +186,8 @@ impl AppState {
             Arc::new(RelayAddressSpaceService::new(mount_provider_registry.clone()));
         let session_hub_handle = SharedSessionHubHandle::default();
 
-        let inline_persister: Arc<dyn crate::address_space_access::InlineContentPersister> =
-            Arc::new(crate::address_space_access::DbInlineContentPersister::new(
+        let inline_persister: Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister> =
+            Arc::new(agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
                 project_repo.clone(),
                 story_repo.clone(),
             ));
@@ -354,7 +355,7 @@ struct PiAgentConnectorDeps {
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     session_hub_handle: SharedSessionHubHandle,
-    inline_persister: Option<Arc<dyn crate::address_space_access::InlineContentPersister>>,
+    inline_persister: Option<Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister>>,
 }
 
 async fn build_pi_agent_connector(

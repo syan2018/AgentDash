@@ -8,7 +8,7 @@ use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
     parse_agentdash_meta,
 };
-use agentdash_connector_contract::hooks::{
+use agentdash_spi::hooks::{
     HookResolution, HookTrigger, SharedHookSessionRuntime,
 };
 

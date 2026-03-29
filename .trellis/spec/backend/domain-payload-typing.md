@@ -21,8 +21,8 @@
 |------|--------|------|
 | `hooks/rules.rs` | 4 | Rule condition evaluation context |
 | `workflow/completion.rs` | 7 | Workflow artifact & completion payload |
-| `connector-contract/hooks.rs` | 10 | Hook contract 公共接口 |
-| `connector-contract/tool.rs` | 3 | Tool input/output schema |
+| `agentdash-spi/hooks.rs` | 10 | Hook contract 公共接口 |
+| `agentdash-spi/tool.rs` | 3 | Tool input/output schema |
 | `agent/tools/builtins.rs` | 10 | 内置工具参数/结果 |
 | `settings.rs` | 3 | Settings value (用户可编辑配置) |
 | `mcp/servers/story.rs` | 5 | MCP story server payload |
@@ -201,5 +201,5 @@ pub enum HookEventPayload {
 | Phase 1 | `hooks/mod.rs` + `hooks/rules.rs` | Hook 系统是最高频交互路径，类型化后 IDE 补全和编译时校验立即生效 |
 | Phase 2 | `agent/entity.rs` + `routes/project_agents.rs` | Agent 配置是用户直接编辑的数据，类型安全直接提升用户面可靠性 |
 | Phase 3 | `workflow/completion.rs` | Workflow 校验链是稳定化阶段的核心，结构化错误直接降低排查成本 |
-| Phase 4 | `connector-contract/tool.rs` + `pi_agent.rs` | 工具面类型化需要协调 connector 契约，建议在 connector 升级时一并处理 |
+| Phase 4 | `agentdash-spi/tool.rs` + `pi_agent.rs` | 工具面类型化需要协调 SPI 契约，建议在 SPI 升级时一并处理 |
 | Deferred | `plugin-api`, `mcp/servers/` | 外部扩展点刻意保持 Value 灵活性，暂不强制类型化 |

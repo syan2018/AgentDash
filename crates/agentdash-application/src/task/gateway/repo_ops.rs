@@ -7,7 +7,7 @@ use agentdash_domain::story::{ChangeKind, Story};
 use agentdash_domain::task::{Artifact, ArtifactType, Task, TaskStatus};
 use agentdash_domain::workspace::Workspace;
 use agentdash_domain::DomainError;
-use agentdash_connector_contract::ConnectorError;
+use agentdash_spi::ConnectorError;
 use crate::session::SessionMeta;
 
 use crate::repository_set::RepositorySet;

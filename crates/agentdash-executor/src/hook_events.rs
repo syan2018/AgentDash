@@ -4,7 +4,7 @@ use agentdash_acp_meta::{
 };
 use serde_json::json;
 
-use agentdash_connector_contract::{HookTraceEntry, HookTrigger};
+use agentdash_spi::{HookTraceEntry, HookTrigger};
 
 pub fn build_hook_trace_notification(
     session_id: &str,
@@ -175,7 +175,7 @@ fn describe_hook_trace(entry: &HookTraceEntry) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_connector_contract::{HookCompletionStatus, HookDiagnosticEntry};
+    use agentdash_spi::{HookCompletionStatus, HookDiagnosticEntry};
 
     fn sample_source() -> AgentDashSourceV1 {
         let mut source = AgentDashSourceV1::new("pi-agent", "local_executor");

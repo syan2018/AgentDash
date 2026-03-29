@@ -54,7 +54,7 @@ AgentDash/
 │   ├── agentdash-application/       #   应用服务（上下文构建, Hook 运行时, 任务编排）
 │   ├── agentdash-api/               #   HTTP API 层（Axum 路由, SSE 推送, 认证）
 │   ├── agentdash-executor/          #   执行器 Hub（连接各类 Agent Connector）
-│   ├── agentdash-connector-contract/#   Connector SPI 契约
+│   ├── agentdash-spi/                #   跨层 SPI 契约（Connector/Hook/Lifecycle/Tool）
 │   ├── agentdash-relay/             #   WebSocket 中继协议（Cloud ↔ Local）
 │   ├── agentdash-local/             #   本机后端（WS 客户端, 工具执行）
 │   ├── agentdash-agent/             #   Pi Agent 内置 Agent 实现

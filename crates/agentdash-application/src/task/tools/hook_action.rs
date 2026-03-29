@@ -2,9 +2,9 @@ use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, S
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
-use agentdash_connector_contract::schema::schema_value;
-use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
-use agentdash_connector_contract::{
+use agentdash_spi::schema::schema_value;
+use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_spi::{
     ExecutionContext, HookPendingAction, HookPendingActionResolutionKind,
     HookPendingActionStatus,
 };
@@ -36,7 +36,7 @@ pub struct ResolveHookActionParams {
 pub struct ResolveHookActionTool {
     current_session_id: Option<String>,
     current_turn_id: String,
-    hook_session: Option<agentdash_connector_contract::hooks::SharedHookSessionRuntime>,
+    hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
     session_hub_handle: SharedSessionHubHandle,
 }
 

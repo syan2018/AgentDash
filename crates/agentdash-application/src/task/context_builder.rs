@@ -4,16 +4,15 @@ use uuid::Uuid;
 use agentdash_domain::common::AddressSpace;
 use agentdash_domain::project::Project;
 use agentdash_domain::task::Task;
-use agentdash_mcp::injection::McpInjectionConfig;
-
 use crate::address_space::RelayAddressSpaceService;
 use crate::address_space::mount::SessionMountTarget;
 use crate::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan, derive_session_context_snapshot,
 };
 use crate::repository_set::RepositorySet;
+use crate::runtime::RuntimeMcpBinding;
 use crate::runtime_bridge::{
-    acp_mcp_servers_to_runtime, mcp_injection_config_to_runtime_binding, runtime_mcp_servers_to_acp,
+    acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp,
 };
 use crate::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
@@ -69,8 +68,8 @@ pub async fn build_task_session_context(
 
     let mcp_servers: Vec<McpServer> = mcp_base_url
         .map(|base_url| {
-            runtime_mcp_servers_to_acp(&[mcp_injection_config_to_runtime_binding(
-                &McpInjectionConfig::for_task(base_url.to_string(), task.project_id, task.story_id, task.id),
+            runtime_mcp_servers_to_acp(&[RuntimeMcpBinding::for_task(
+                base_url.to_string(), task.project_id, task.story_id, task.id,
             )
             .to_runtime_server()])
         })

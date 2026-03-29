@@ -1,6 +1,6 @@
 [package]
-name = "agentdash-connector-contract"
-description = "AgentDash 连接器合同层：AgentConnector trait、执行上下文与 Hook DTO"
+name = "agentdash-spi"
+description = "AgentDash 跨层 SPI 契约：Connector、Hook、Lifecycle、Tool 等 Service Provider Interface"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

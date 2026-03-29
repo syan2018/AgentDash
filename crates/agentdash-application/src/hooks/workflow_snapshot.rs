@@ -4,7 +4,7 @@ use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     WorkflowRecordArtifactType, WorkflowTargetKind,
 };
-use agentdash_connector_contract::{
+use agentdash_spi::{
     HookError, HookOwnerSummary, HookStepAdvanceRequest,
     hooks::PendingExecutionLogEntry,
 };

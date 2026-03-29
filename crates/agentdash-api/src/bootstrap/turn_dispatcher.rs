@@ -164,7 +164,7 @@ async fn dispatch_cloud_native(
         mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers),
         workspace_root,
         address_space: ctx.address_space.clone(),
-        flow_capabilities: Some(agentdash_connector_contract::FlowCapabilities {
+        flow_capabilities: Some(agentdash_spi::FlowCapabilities {
             workflow_artifact: true,
             companion_dispatch: false,
             companion_complete: true,

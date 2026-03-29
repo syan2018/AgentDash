@@ -2,7 +2,9 @@ pub mod hook_delegate;
 pub mod hook_events;
 pub mod hook_runtime;
 pub mod hub;
+mod event_bridge;
 mod hub_support;
+mod prompt_pipeline;
 mod session_store;
 pub mod types;
 

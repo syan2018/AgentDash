@@ -12,10 +12,8 @@ use crate::context::{
     resolve_workspace_declared_sources,
 };
 use agentdash_domain::common::AgentConfig;
-use agentdash_mcp::injection::McpInjectionConfig;
-
 use crate::repository_set::RepositorySet;
-use crate::runtime_bridge::mcp_injection_config_to_runtime_binding;
+use crate::runtime::RuntimeMcpBinding;
 use crate::task::config::resolve_task_executor_config;
 use crate::task::execution::{ExecutionPhase, TaskExecutionError};
 use crate::task::gateway::repo_ops::{load_related_context, map_internal_error};
@@ -87,15 +85,13 @@ pub async fn prepare_task_turn_context(
 
     // MCP injection
     if let Some(base_url) = svc.mcp_base_url {
-        let config = McpInjectionConfig::for_task(
+        let binding = RuntimeMcpBinding::for_task(
             base_url.to_string(),
             story.project_id,
             task.story_id,
             task.id,
         );
-        extra_contributors.push(Box::new(McpContextContributor::new(
-            mcp_injection_config_to_runtime_binding(&config),
-        )));
+        extra_contributors.push(Box::new(McpContextContributor::new(binding)));
     }
 
     // executor config resolution

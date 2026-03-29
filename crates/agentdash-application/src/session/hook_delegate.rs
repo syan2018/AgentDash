@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_connector_contract::lifecycle::{
+use agentdash_spi::lifecycle::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
     AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, DynAgentRuntimeDelegate,
     StopDecision, ToolCallDecision,
@@ -9,7 +9,7 @@ use agentdash_connector_contract::lifecycle::{
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use agentdash_connector_contract::hooks::{
+use agentdash_spi::hooks::{
     HookConstraint, HookContextFragment, HookDiagnosticEntry, HookEvaluationQuery,
     HookPendingAction, HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry,
     HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
@@ -420,8 +420,8 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
 }
 
 struct EvaluatedResolution {
-    snapshot: agentdash_connector_contract::hooks::SessionHookSnapshot,
-    resolution: agentdash_connector_contract::hooks::HookResolution,
+    snapshot: agentdash_spi::hooks::SessionHookSnapshot,
+    resolution: agentdash_spi::hooks::HookResolution,
     runtime: HookSessionRuntimeSnapshot,
 }
 
@@ -433,8 +433,8 @@ struct PendingHookMessages {
 }
 
 fn collect_pending_hook_messages(
-    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
-    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
+    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> PendingHookMessages {
     let actions = hook_session.collect_pending_actions_for_injection();
@@ -461,7 +461,7 @@ fn collect_pending_hook_messages(
 }
 
 fn build_blocking_action_reminders(
-    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     actions: &[HookPendingAction],
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Vec<AgentMessage> {
@@ -472,8 +472,8 @@ fn build_blocking_action_reminders(
 }
 
 fn build_hook_injection_message(
-    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
-    resolution: &agentdash_connector_contract::hooks::HookResolution,
+    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
+    resolution: &agentdash_spi::hooks::HookResolution,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
     let content = build_hook_markdown(
@@ -486,7 +486,7 @@ fn build_hook_injection_message(
 }
 
 fn build_hook_steering_messages(
-    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     fragments: &[HookContextFragment],
     constraints: &[HookConstraint],
     runtime: &HookSessionRuntimeSnapshot,
@@ -497,7 +497,7 @@ fn build_hook_steering_messages(
 }
 
 fn build_hook_markdown(
-    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     fragments: &[HookContextFragment],
     constraints: &[HookConstraint],
     runtime: &HookSessionRuntimeSnapshot,
@@ -539,7 +539,7 @@ fn build_hook_markdown(
 }
 
 fn build_pending_action_message(
-    snapshot: &agentdash_connector_contract::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     action: &HookPendingAction,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
@@ -656,7 +656,7 @@ fn append_hook_markdown_body(
     }
 }
 
-fn map_runtime_error(error: agentdash_connector_contract::hooks::HookError) -> AgentRuntimeError {
+fn map_runtime_error(error: agentdash_spi::hooks::HookError) -> AgentRuntimeError {
     AgentRuntimeError::Runtime(error.to_string())
 }
 
@@ -673,13 +673,13 @@ fn pending_action_status_label(status: HookPendingActionStatus) -> &'static str 
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_connector_contract::lifecycle::{AgentContext, StopDecision};
+    use agentdash_spi::lifecycle::{AgentContext, StopDecision};
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
     use super::HookRuntimeDelegate;
     use crate::session::HookSessionRuntime;
-    use agentdash_connector_contract::hooks::{
+    use agentdash_spi::hooks::{
         ExecutionHookProvider, HookCompletionStatus, HookContextFragment, HookError,
         HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind, HookResolution,
         HookSessionRuntimeAccess, HookTrigger,
@@ -748,7 +748,7 @@ mod tests {
             action_type: "blocking_review".to_string(),
             turn_id: Some("turn-parent-1".to_string()),
             source_trigger: HookTrigger::SubagentResult,
-            status: agentdash_connector_contract::hooks::HookPendingActionStatus::Pending,
+            status: agentdash_spi::hooks::HookPendingActionStatus::Pending,
             last_injected_at_ms: None,
             resolved_at_ms: None,
             resolution_kind: None,
@@ -767,7 +767,7 @@ mod tests {
 
         let first = delegate
             .before_stop(
-                agentdash_connector_contract::lifecycle::BeforeStopInput {
+                agentdash_spi::lifecycle::BeforeStopInput {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
@@ -800,12 +800,12 @@ mod tests {
             .expect("应该能 resolve blocking action");
         assert!(matches!(
             action.status,
-            agentdash_connector_contract::hooks::HookPendingActionStatus::Resolved
+            agentdash_spi::hooks::HookPendingActionStatus::Resolved
         ));
 
         let second = delegate
             .before_stop(
-                agentdash_connector_contract::lifecycle::BeforeStopInput {
+                agentdash_spi::lifecycle::BeforeStopInput {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
@@ -840,7 +840,7 @@ mod tests {
             action_type: "follow_up_required".to_string(),
             turn_id: Some("turn-1".to_string()),
             source_trigger: HookTrigger::SubagentResult,
-            status: agentdash_connector_contract::hooks::HookPendingActionStatus::Injected,
+            status: agentdash_spi::hooks::HookPendingActionStatus::Injected,
             last_injected_at_ms: Some(1_710_000_100_000),
             resolved_at_ms: None,
             resolution_kind: None,
@@ -859,7 +859,7 @@ mod tests {
         let message = super::build_pending_action_message(&snapshot, &action, &runtime)
             .expect("应该生成 pending action 消息");
         let text = match message {
-            agentdash_connector_contract::lifecycle::AgentMessage::User { content, .. } => content
+            agentdash_spi::lifecycle::AgentMessage::User { content, .. } => content
                 .iter()
                 .filter_map(|part| part.extract_text())
                 .collect::<Vec<_>>()

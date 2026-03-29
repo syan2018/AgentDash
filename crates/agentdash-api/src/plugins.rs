@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agentdash_connector_contract::AgentConnector;
+use agentdash_spi::AgentConnector;
 use agentdash_injection::AddressSpaceDiscoveryProvider;
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
 use thiserror::Error;
@@ -126,7 +126,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use agentdash_connector_contract::{
+    use agentdash_spi::{
         AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
         ExecutionStream, AgentInfo, PromptPayload,
     };

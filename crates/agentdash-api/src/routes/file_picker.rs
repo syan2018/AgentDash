@@ -12,7 +12,7 @@ use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::address_space_access::{ListOptions, ResourceRef};
+use agentdash_application::address_space::{ListOptions, ResourceRef};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_workspace_and_project_with_permission};
 use crate::rpc::ApiError;

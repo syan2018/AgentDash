@@ -1,6 +1,6 @@
 use crate::workflow::{evaluate_step_completion, WorkflowCompletionSignalSet};
 use agentdash_domain::workflow::{WorkflowCheckKind, WorkflowConstraintKind};
-use agentdash_connector_contract::{
+use agentdash_spi::{
     HookApprovalRequest, HookCompletionStatus, HookConstraint, HookContextFragment,
     HookDiagnosticEntry, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookSnapshot,
 };
@@ -610,5 +610,498 @@ pub(crate) fn rule_apply_subagent_result(ctx: &HookEvaluationContext<'_>, resolu
             });
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    use agentdash_spi::{
+        HookOwnerSummary, HookSourceLayer, HookSourceRef, HookTrigger, SessionHookSnapshot,
+    };
+    use crate::workflow::{evaluate_step_completion, WorkflowCompletionSignalSet};
+
+    use super::super::test_fixtures::*;
+
+    #[test]
+    fn before_tool_blocks_completed_during_implement_phase() {
+        let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeTool,
+            turn_id: None,
+            tool_name: Some("mcp_agentdash_task_tools_demo_update_task_status".to_string()),
+            tool_call_id: Some("call-1".to_string()),
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "args": {
+                    "status": "completed"
+                }
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(resolution.block_reason.is_some());
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"workflow_step:implement:block_completed_status".to_string())
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "before_tool_task_status_blocked")
+        );
+    }
+
+    #[test]
+    fn before_tool_rewrites_shell_exec_absolute_cwd_to_workspace_relative() {
+        let snapshot = snapshot_with_workflow("implement", "session_ended", Some("running"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeTool,
+            turn_id: None,
+            tool_name: Some("shell_exec".to_string()),
+            tool_call_id: Some("call-shell-1".to_string()),
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "args": {
+                    "cwd": "F:\\Projects\\AgentDash\\crates\\agentdash-agent",
+                    "command": "cargo test"
+                }
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert_eq!(
+            resolution
+                .rewritten_tool_input
+                .as_ref()
+                .and_then(|value| value.get("cwd"))
+                .and_then(serde_json::Value::as_str),
+            Some("crates/agentdash-agent")
+        );
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"tool:shell_exec:rewrite_absolute_cwd".to_string())
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "before_tool_shell_exec_cwd_rewritten")
+        );
+    }
+
+    #[test]
+    fn before_stop_requires_checklist_completion_when_task_not_ready() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("running"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeStop,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: None,
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(!resolution.context_fragments.is_empty());
+        assert!(!resolution.constraints.is_empty());
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"workflow_completion:checklist_pending:stop_gate".to_string())
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "before_stop_workflow_checks_pending")
+        );
+    }
+
+    #[test]
+    fn before_stop_requires_checklist_evidence_even_when_task_ready() {
+        let snapshot =
+            snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeStop,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: None,
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(!resolution.context_fragments.is_empty());
+        assert!(!resolution.constraints.is_empty());
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"workflow_completion:checklist_pending:stop_gate".to_string())
+        );
+    }
+
+    #[test]
+    fn before_stop_allows_ready_task_with_checklist_evidence() {
+        let snapshot = snapshot_with_workflow_and_evidence(
+            "check",
+            "checklist_passed",
+            Some("awaiting_verification"),
+            true,
+        );
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeStop,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: None,
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(resolution.context_fragments.is_empty());
+        assert!(resolution.constraints.is_empty());
+        assert!(resolution.matched_rule_keys.is_empty());
+    }
+
+    #[test]
+    fn after_turn_does_not_inject_perpetual_check_phase_steering() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("running"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::AfterTurn,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "assistant_message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "检查完成，准备结束。" }]
+                },
+                "tool_results": []
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(resolution.context_fragments.is_empty());
+        assert!(resolution.constraints.is_empty());
+        assert!(resolution.matched_rule_keys.is_empty());
+    }
+
+    #[test]
+    fn before_stop_allows_checklist_completion_when_task_ready() {
+        let snapshot = snapshot_with_workflow("check", "checklist_passed", Some("completed"));
+        let contract = active_workflow_contract(&snapshot).expect("contract");
+        let decision = evaluate_step_completion(
+            Some(&contract.completion),
+            &WorkflowCompletionSignalSet {
+                task_status: active_task_status(&snapshot).map(ToString::to_string),
+                checklist_evidence_present: true,
+                ..WorkflowCompletionSignalSet::default()
+            },
+        );
+
+        assert!(decision.satisfied);
+        assert!(decision.should_complete_step);
+        assert_eq!(
+            decision.summary.as_deref(),
+            Some("All completion checks passed")
+        );
+    }
+
+    #[test]
+    fn before_stop_blocks_when_task_still_running_without_active_workflow() {
+        let snapshot = SessionHookSnapshot {
+            session_id: "sess-task-running".to_string(),
+            metadata: Some(agentdash_spi::SessionSnapshotMetadata {
+                active_task: Some(agentdash_spi::ActiveTaskMeta {
+                    task_id: Some("task-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..SessionHookSnapshot::default()
+        };
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeStop,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            snapshot: None,
+            payload: None,
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"task_runtime:running_status:stop_gate".to_string())
+        );
+        assert!(
+            resolution
+                .constraints
+                .iter()
+                .any(|constraint| constraint.key == "before_stop:task_status_running")
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "before_stop_task_status_running")
+        );
+    }
+
+    #[test]
+    fn before_tool_supervised_policy_requests_approval() {
+        let snapshot = snapshot_with_supervised_policy();
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeTool,
+            turn_id: Some("turn-approval-1".to_string()),
+            tool_name: Some("shell_exec".to_string()),
+            tool_call_id: Some("call-shell-approval".to_string()),
+            subagent_type: None,
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "args": {
+                    "cwd": ".",
+                    "command": "cargo test"
+                }
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert_eq!(
+            resolution
+                .approval_request
+                .as_ref()
+                .map(|request| request.reason.as_str()),
+            Some("当前会话使用 SUPERVISED 权限策略，执行 `shell_exec` 前需要用户审批。")
+        );
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"global_builtin:supervised:ask_tool_approval".to_string())
+        );
+    }
+
+    #[test]
+    fn before_subagent_dispatch_inherits_runtime_context_and_constraints() {
+        let snapshot = SessionHookSnapshot {
+            session_id: "sess-test".to_string(),
+            sources: vec![HookSourceRef {
+                layer: HookSourceLayer::Workflow,
+                key: "trellis_dev_task:check".to_string(),
+                label: "Workflow / Trellis Dev Workflow / Check".to_string(),
+                priority: 300,
+            }],
+            owners: vec![HookOwnerSummary {
+                owner_type: "story".to_string(),
+                owner_id: Uuid::new_v4().to_string(),
+                label: Some("Story A".to_string()),
+                project_id: None,
+                story_id: None,
+                task_id: None,
+            }],
+            context_fragments: vec![HookContextFragment {
+                slot: "workflow".to_string(),
+                label: "active_workflow_step".to_string(),
+                content: "step info".to_string(),
+                source_summary: vec!["workflow:trellis_dev_task".to_string()],
+                source_refs: vec![HookSourceRef {
+                    layer: HookSourceLayer::Workflow,
+                    key: "trellis_dev_task:check".to_string(),
+                    label: "Workflow / Trellis Dev Workflow / Check".to_string(),
+                    priority: 300,
+                }],
+            }],
+            constraints: vec![HookConstraint {
+                key: "workflow:check".to_string(),
+                description: "先验证再结束".to_string(),
+                source_summary: vec!["workflow_step:check".to_string()],
+                source_refs: vec![HookSourceRef {
+                    layer: HookSourceLayer::Workflow,
+                    key: "trellis_dev_task:check".to_string(),
+                    label: "Workflow / Trellis Dev Workflow / Check".to_string(),
+                    priority: 300,
+                }],
+            }],
+            ..SessionHookSnapshot::default()
+        };
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::BeforeSubagentDispatch,
+            turn_id: None,
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: Some("companion".to_string()),
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "prompt": "请帮我 review"
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert_eq!(resolution.context_fragments.len(), 1);
+        assert_eq!(resolution.constraints.len(), 1);
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"subagent_dispatch:inherit_runtime_context".to_string())
+        );
+    }
+
+    #[test]
+    fn subagent_result_records_structured_return_channel_diagnostic() {
+        let snapshot =
+            snapshot_with_workflow("check", "checklist_passed", Some("awaiting_verification"));
+        let mut resolution = HookResolution::default();
+        let query = HookEvaluationQuery {
+            session_id: snapshot.session_id.clone(),
+            trigger: HookTrigger::SubagentResult,
+            turn_id: Some("turn-parent-1".to_string()),
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: Some("companion".to_string()),
+            snapshot: None,
+            payload: Some(serde_json::json!({
+                "dispatch_id": "dispatch-1",
+                "companion_session_id": "sess-companion-1",
+                "adoption_mode": "blocking_review",
+                "status": "completed",
+                "summary": "子 agent 已完成 review，并附带后续建议"
+            })),
+        };
+
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+        );
+
+        assert!(
+            resolution
+                .matched_rule_keys
+                .contains(&"subagent_result:return_channel_recorded".to_string())
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "subagent_result_recorded"
+                    && entry.summary.contains("子 agent 已完成 review"))
+        );
+        assert_eq!(resolution.context_fragments.len(), 1);
+        assert_eq!(resolution.constraints.len(), 1);
+        assert!(
+            resolution.context_fragments[0]
+                .label
+                .contains("subagent_blocking_review")
+        );
+        assert!(
+            resolution.constraints[0]
+                .key
+                .contains("subagent_result:blocking_review")
+        );
+        assert!(
+            resolution
+                .diagnostics
+                .iter()
+                .any(|entry| entry.code == "subagent_result_blocking_review_enqueued")
+        );
     }
 }

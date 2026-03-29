@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_connector_contract::schema::schema_value;
-use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
-use agentdash_connector_contract::AddressSpace;
+use agentdash_spi::schema::schema_value;
+use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_spi::AddressSpace;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;

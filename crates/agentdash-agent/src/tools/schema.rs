@@ -1,4 +1,4 @@
-pub use agentdash_connector_contract::schema::{sanitize_tool_schema, schema_value};
+pub use agentdash_spi::schema::{sanitize_tool_schema, schema_value};
 
 #[cfg(test)]
 mod tests {

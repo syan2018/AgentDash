@@ -1,24 +1,12 @@
-/// Address Space 访问层 — API crate 便捷 re-export
-///
-/// 所有核心实现位于 `agentdash_application::address_space`。
-/// 此模块仅为 API crate 内部使用提供便捷 re-export。
-pub use agentdash_application::address_space::*;
-pub use agentdash_connector_contract::{AddressSpace, MountCapability};
-
-pub use agentdash_application::address_space::inline_persistence::{
-    DbInlineContentPersister, InlineContentOverlay, InlineContentPersister,
-};
-pub use agentdash_application::address_space::tools::provider::{
-    RelayRuntimeToolProvider, SharedSessionHubHandle,
-};
-
+/// Address Space 集成测试 — 需要 API 层组件（BackendRegistry、MountProvider 等）
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use super::*;
+    use agentdash_application::address_space::*;
+    use agentdash_spi::{AddressSpace, MountCapability};
+
     use agentdash_agent::AgentTool;
-    use agentdash_application::runtime::AddressSpace;
     use agentdash_relay::RelayMessage;
     use chrono::Utc;
     use tokio::sync::mpsc;
@@ -345,7 +333,7 @@ mod tests {
     fn runtime_tool_schemas_are_openai_compatible() {
         let service = Arc::new(RelayAddressSpaceService::new(empty_mount_registry()));
         let address_space = AddressSpace {
-            mounts: vec![agentdash_connector_contract::Mount {
+            mounts: vec![agentdash_spi::Mount {
                 id: "brief".to_string(),
                 provider: PROVIDER_INLINE_FS.to_string(),
                 backend_id: String::new(),

@@ -6,14 +6,14 @@ use agent_client_protocol::{
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
-use agentdash_connector_contract::schema::schema_value;
-use agentdash_connector_contract::{
+use agentdash_spi::schema::schema_value;
+use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
 };
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
-use agentdash_connector_contract::{
+use agentdash_spi::{
     AddressSpace, ExecutionContext, MountCapability, AgentConfig,
     HookEvaluationQuery, HookPendingAction, HookTraceEntry, HookTrigger, SessionHookRefreshQuery,
 };
@@ -40,7 +40,7 @@ pub struct CompanionDispatchTool {
     working_dir: String,
     address_space: Option<AddressSpace>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
-    hook_session: Option<agentdash_connector_contract::hooks::SharedHookSessionRuntime>,
+    hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
     system_context: Option<String>,
 }
 
@@ -105,8 +105,8 @@ pub struct CompanionDispatchParams {
 #[serde(rename_all = "snake_case")]
 pub struct CompanionDispatchSlice {
     pub mode: CompanionSliceMode,
-    pub fragments: Vec<agentdash_connector_contract::HookContextFragment>,
-    pub constraints: Vec<agentdash_connector_contract::HookConstraint>,
+    pub fragments: Vec<agentdash_spi::HookContextFragment>,
+    pub constraints: Vec<agentdash_spi::HookConstraint>,
     pub inherited_fragment_labels: Vec<String>,
     pub inherited_constraint_keys: Vec<String>,
     pub omitted_fragment_count: usize,
@@ -414,7 +414,7 @@ impl AgentTool for CompanionDispatchTool {
 impl CompanionDispatchTool {
     async fn resolve_or_create_companion_binding(
         &self,
-        hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
+        hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
         label: &str,
         auto_create: bool,
         title: Option<String>,
@@ -629,12 +629,12 @@ pub fn relative_working_dir(context: &ExecutionContext) -> String {
 }
 
 async fn evaluate_subagent_hook(
-    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
+    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
     trigger: HookTrigger,
     turn_id: Option<String>,
     subagent_type: &str,
     payload: Option<serde_json::Value>,
-) -> Result<agentdash_connector_contract::HookResolution, String> {
+) -> Result<agentdash_spi::HookResolution, String> {
     let resolution = hook_session
         .evaluate(HookEvaluationQuery {
             session_id: hook_session.session_id().to_string(),
@@ -664,13 +664,13 @@ async fn evaluate_subagent_hook(
 }
 
 async fn record_subagent_trace(
-    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
+    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
     session_hub: Option<&SessionHub>,
     turn_id: Option<&str>,
     trigger: HookTrigger,
     decision: &str,
     subagent_type: &str,
-    resolution: &agentdash_connector_contract::HookResolution,
+    resolution: &agentdash_spi::HookResolution,
 ) {
     let trace = HookTraceEntry {
         sequence: hook_session.next_trace_sequence(),
@@ -706,7 +706,7 @@ fn build_subagent_pending_action(
     parent_turn_id: &str,
     companion_label: &str,
     payload: &serde_json::Value,
-    resolution: &agentdash_connector_contract::HookResolution,
+    resolution: &agentdash_spi::HookResolution,
 ) -> Option<HookPendingAction> {
     if resolution.context_fragments.is_empty() && resolution.constraints.is_empty() {
         return None;
@@ -751,7 +751,7 @@ fn build_subagent_pending_action(
         action_type: adoption_mode,
         turn_id: Some(parent_turn_id.to_string()),
         source_trigger: HookTrigger::SubagentResult,
-        status: agentdash_connector_contract::HookPendingActionStatus::Pending,
+        status: agentdash_spi::HookPendingActionStatus::Pending,
         last_injected_at_ms: None,
         resolved_at_ms: None,
         resolution_kind: None,
@@ -825,8 +825,8 @@ struct CompanionDispatchConfig<'a> {
 }
 
 fn build_companion_dispatch_plan(
-    hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess,
-    resolution: &agentdash_connector_contract::HookResolution,
+    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+    resolution: &agentdash_spi::HookResolution,
     config: &CompanionDispatchConfig<'_>,
 ) -> CompanionDispatchPlan {
     let dispatch_id = format!("dispatch-{}", uuid::Uuid::new_v4().simple());
@@ -848,8 +848,8 @@ fn build_companion_dispatch_plan(
 }
 
 pub fn build_companion_dispatch_slice(
-    snapshot: &agentdash_connector_contract::SessionHookSnapshot,
-    resolution: &agentdash_connector_contract::HookResolution,
+    snapshot: &agentdash_spi::SessionHookSnapshot,
+    resolution: &agentdash_spi::HookResolution,
     mode: CompanionSliceMode,
     max_fragments: usize,
     max_constraints: usize,
@@ -865,7 +865,7 @@ pub fn build_companion_dispatch_slice(
                     || fragment
                         .source_refs
                         .iter()
-                        .any(|source| source.layer == agentdash_connector_contract::HookSourceLayer::Workflow)
+                        .any(|source| source.layer == agentdash_spi::HookSourceLayer::Workflow)
             })
             .cloned()
             .collect(),
@@ -873,7 +873,7 @@ pub fn build_companion_dispatch_slice(
         CompanionSliceMode::Compact => {
             let mut compact = Vec::new();
             if let Some(owner_summary) = build_companion_owner_summary(snapshot) {
-                compact.push(agentdash_connector_contract::HookContextFragment {
+                compact.push(agentdash_spi::HookContextFragment {
                     slot: "companion".to_string(),
                     label: "owner_summary".to_string(),
                     content: owner_summary,
@@ -914,7 +914,7 @@ pub fn build_companion_dispatch_slice(
                 constraint
                     .source_refs
                     .iter()
-                    .any(|source| source.layer == agentdash_connector_contract::HookSourceLayer::Workflow)
+                    .any(|source| source.layer == agentdash_spi::HookSourceLayer::Workflow)
             })
             .cloned()
             .collect(),
@@ -1029,7 +1029,7 @@ fn filter_address_space_capabilities(
 }
 
 fn build_companion_owner_summary(
-    snapshot: &agentdash_connector_contract::SessionHookSnapshot,
+    snapshot: &agentdash_spi::SessionHookSnapshot,
 ) -> Option<String> {
     if snapshot.owners.is_empty() {
         return None;
@@ -1109,7 +1109,7 @@ fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
 }
 
 pub fn companion_owner_candidates(
-    snapshot: &agentdash_connector_contract::SessionHookSnapshot,
+    snapshot: &agentdash_spi::SessionHookSnapshot,
 ) -> Result<Vec<(SessionOwnerType, Uuid, Option<String>)>, AgentToolError> {
     let mut owners = Vec::new();
     for owner in &snapshot.owners {
@@ -1150,7 +1150,7 @@ fn parse_owner_candidate(
 }
 
 fn companion_project_id_for_owner(
-    snapshot: &agentdash_connector_contract::SessionHookSnapshot,
+    snapshot: &agentdash_spi::SessionHookSnapshot,
     owner_type: SessionOwnerType,
     owner_id: Uuid,
 ) -> Result<Uuid, AgentToolError> {
@@ -1192,15 +1192,15 @@ mod companion_tests {
     };
     use agent_client_protocol::McpServer;
     use agentdash_domain::session_binding::SessionOwnerType;
-    use agentdash_connector_contract::{AddressSpace, MountCapability};
+    use agentdash_spi::{AddressSpace, MountCapability};
     use uuid::Uuid;
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {
         let story_id = Uuid::new_v4();
-        let snapshot = agentdash_connector_contract::SessionHookSnapshot {
+        let snapshot = agentdash_spi::SessionHookSnapshot {
             session_id: "sess-test".to_string(),
-            owners: vec![agentdash_connector_contract::HookOwnerSummary {
+            owners: vec![agentdash_spi::HookOwnerSummary {
                 owner_type: "task".to_string(),
                 owner_id: Uuid::new_v4().to_string(),
                 label: Some("Task A".to_string()),
@@ -1208,7 +1208,7 @@ mod companion_tests {
                 story_id: Some(story_id.to_string()),
                 task_id: None,
             }],
-            ..agentdash_connector_contract::SessionHookSnapshot::default()
+            ..agentdash_spi::SessionHookSnapshot::default()
         };
 
         let candidates = companion_owner_candidates(&snapshot).expect("candidates");
@@ -1221,9 +1221,9 @@ mod companion_tests {
 
     #[test]
     fn compact_companion_slice_keeps_owner_summary_and_limits_payload() {
-        let snapshot = agentdash_connector_contract::SessionHookSnapshot {
+        let snapshot = agentdash_spi::SessionHookSnapshot {
             session_id: "sess-parent".to_string(),
-            owners: vec![agentdash_connector_contract::HookOwnerSummary {
+            owners: vec![agentdash_spi::HookOwnerSummary {
                 owner_type: "task".to_string(),
                 owner_id: Uuid::new_v4().to_string(),
                 label: Some("Task A".to_string()),
@@ -1231,25 +1231,25 @@ mod companion_tests {
                 story_id: None,
                 task_id: None,
             }],
-            ..agentdash_connector_contract::SessionHookSnapshot::default()
+            ..agentdash_spi::SessionHookSnapshot::default()
         };
-        let resolution = agentdash_connector_contract::HookResolution {
+        let resolution = agentdash_spi::HookResolution {
             context_fragments: vec![
-                agentdash_connector_contract::HookContextFragment {
+                agentdash_spi::HookContextFragment {
                     slot: "workflow".to_string(),
                     label: "active_workflow_step".to_string(),
                     content: "step info".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
                 },
-                agentdash_connector_contract::HookContextFragment {
+                agentdash_spi::HookContextFragment {
                     slot: "instruction_append".to_string(),
                     label: "workflow_step_constraints".to_string(),
                     content: "follow rules".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
                 },
-                agentdash_connector_contract::HookContextFragment {
+                agentdash_spi::HookContextFragment {
                     slot: "workflow".to_string(),
                     label: "overflow".to_string(),
                     content: "should be omitted".to_string(),
@@ -1258,20 +1258,20 @@ mod companion_tests {
                 },
             ],
             constraints: vec![
-                agentdash_connector_contract::HookConstraint {
+                agentdash_spi::HookConstraint {
                     key: "constraint:1".to_string(),
                     description: "first".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
                 },
-                agentdash_connector_contract::HookConstraint {
+                agentdash_spi::HookConstraint {
                     key: "constraint:2".to_string(),
                     description: "second".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
                 },
             ],
-            ..agentdash_connector_contract::HookResolution::default()
+            ..agentdash_spi::HookResolution::default()
         };
 
         let slice = build_companion_dispatch_slice(
@@ -1292,7 +1292,7 @@ mod companion_tests {
     #[test]
     fn compact_execution_slice_drops_write_and_mcp_servers() {
         let address_space = AddressSpace {
-            mounts: vec![agentdash_connector_contract::Mount {
+            mounts: vec![agentdash_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
@@ -1341,7 +1341,7 @@ mod companion_tests {
     #[test]
     fn workflow_only_execution_slice_uses_empty_address_space() {
         let address_space = AddressSpace {
-            mounts: vec![agentdash_connector_contract::Mount {
+            mounts: vec![agentdash_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
@@ -1384,14 +1384,14 @@ mod companion_tests {
             adoption_mode: CompanionAdoptionMode::BlockingReview,
             slice: CompanionDispatchSlice {
                 mode: CompanionSliceMode::Compact,
-                fragments: vec![agentdash_connector_contract::HookContextFragment {
+                fragments: vec![agentdash_spi::HookContextFragment {
                     slot: "workflow".to_string(),
                     label: "active_workflow_step".to_string(),
                     content: "step info".to_string(),
                     source_summary: vec![],
                     source_refs: vec![],
                 }],
-                constraints: vec![agentdash_connector_contract::HookConstraint {
+                constraints: vec![agentdash_spi::HookConstraint {
                     key: "constraint:1".to_string(),
                     description: "first".to_string(),
                     source_summary: vec![],

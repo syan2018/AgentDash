@@ -668,7 +668,7 @@ phase 未声明 default_artifact_type
   - `checklist_passed` 未见 evidence 时，`before_stop` 必须继续
   - phase 默认 artifact type 为 `checklist_evidence` 时，`before_stop` 必须认 `checklist_evidence`
   - 自动 phase completion 生成的 artifact type 必须跟随 phase 配置
-- `address_space_access` / runtime tool：
+- `application::address_space` / runtime tool：
   - `report_workflow_artifact` 支持 `checklist_evidence`
   - 非法 `artifact_type` 返回明确错误
   - 写入成功后 snapshot 已刷新

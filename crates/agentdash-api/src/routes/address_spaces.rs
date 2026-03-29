@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::WorkflowTargetKind;
-use agentdash_connector_contract::AddressSpace;
+use agentdash_spi::AddressSpace;
 use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
 
-use crate::address_space_access::{
+use agentdash_application::address_space::{
     ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, SessionMountTarget,
     inline_files_from_mount, normalize_mount_relative_path,
 };
@@ -375,7 +375,7 @@ pub async fn write_mount_file(
         .find(|m| m.id == req.mount_id)
         .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
 
-    if !mount.supports(agentdash_connector_contract::MountCapability::Write) {
+    if !mount.supports(agentdash_spi::MountCapability::Write) {
         return Err(ApiError::BadRequest(format!(
             "挂载点 \"{}\" 没有 write 能力",
             mount.display_name,
@@ -386,12 +386,12 @@ pub async fn write_mount_file(
         normalize_mount_relative_path(&req.path, false).map_err(ApiError::BadRequest)?;
 
     if mount.provider == PROVIDER_INLINE_FS {
-        let persister = crate::address_space_access::DbInlineContentPersister::new(
+        let persister = agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
             state.repos.project_repo.clone(),
             state.repos.story_repo.clone(),
         );
         let overlay =
-            crate::address_space_access::InlineContentOverlay::new(std::sync::Arc::new(persister));
+            agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(std::sync::Arc::new(persister));
         overlay
             .write(&address_space, mount, &normalized_path, &req.content)
             .await

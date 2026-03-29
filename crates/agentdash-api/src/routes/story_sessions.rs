@@ -15,8 +15,8 @@ use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
 
+use agentdash_application::address_space::SessionMountTarget;
 use crate::{
-    address_space_access::SessionMountTarget,
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
     routes::project_agents::resolve_project_workspace,
@@ -34,14 +34,14 @@ pub struct StorySessionDetailResponse {
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_space: Option<agentdash_connector_contract::AddressSpace>,
+    pub address_space: Option<agentdash_spi::AddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
 #[derive(Debug)]
 pub(crate) struct BuiltStorySessionContextResponse {
-    pub(crate) address_space: Option<agentdash_connector_contract::AddressSpace>,
+    pub(crate) address_space: Option<agentdash_spi::AddressSpace>,
     pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 

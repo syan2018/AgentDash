@@ -30,4 +30,4 @@ thiserror = { workspace = true }
 async-trait = "0.1"
 
 [dev-dependencies]
-agentdash-connector-contract = { workspace = true }
+agentdash-spi = { workspace = true }

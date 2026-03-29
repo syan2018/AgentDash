@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use agent_client_protocol::{ContentBlock, McpServer, TextContent};
 use serde::{Deserialize, Serialize};
 
-use agentdash_connector_contract::{AddressSpace, PromptPayload};
+use agentdash_spi::{AddressSpace, PromptPayload};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -19,7 +19,7 @@ pub struct UserPromptInput {
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
-    pub executor_config: Option<agentdash_connector_contract::AgentConfig>,
+    pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
 /// 后端完整请求 — 包含用户输入 + 后端注入的运行时上下文。
@@ -31,7 +31,7 @@ pub struct PromptSessionRequest {
     pub mcp_servers: Vec<McpServer>,
     pub workspace_root: Option<PathBuf>,
     pub address_space: Option<AddressSpace>,
-    pub flow_capabilities: Option<agentdash_connector_contract::FlowCapabilities>,
+    pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
     pub system_context: Option<String>,
 }
 
@@ -137,7 +137,7 @@ pub struct SessionMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_terminal_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_config: Option<agentdash_connector_contract::AgentConfig>,
+    pub executor_config: Option<agentdash_spi::AgentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use agentdash_connector_contract::DynAgentTool;
+use agentdash_spi::DynAgentTool;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
-use agentdash_connector_contract::{ConnectorError, ExecutionContext};
-use agentdash_connector_contract::connector::RuntimeToolProvider;
+use agentdash_spi::{ConnectorError, ExecutionContext};
+use agentdash_spi::connector::RuntimeToolProvider;
 use crate::session::SessionHub;
 use async_trait::async_trait;
 use tokio::sync::RwLock;

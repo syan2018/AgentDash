@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use agentdash_connector_contract::hooks::{
+use agentdash_spi::hooks::{
     ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
     HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry,
@@ -353,7 +353,7 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_connector_contract::hooks::{
+    use agentdash_spi::hooks::{
         ActiveTaskMeta, NoopExecutionHookProvider,
     };
 

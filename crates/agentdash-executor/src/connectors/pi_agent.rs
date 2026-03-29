@@ -26,11 +26,11 @@ use agentdash_agent::{
 };
 use agentdash_domain::settings::SettingsRepository;
 
-use agentdash_connector_contract::{
+use agentdash_spi::{
     AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
     ExecutionStream, Mount, MountCapability, AgentInfo, PromptPayload,
 };
-use agentdash_connector_contract::connector::RuntimeToolProvider;
+use agentdash_spi::connector::RuntimeToolProvider;
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
 use crate::connectors::pi_agent_provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries,
@@ -308,7 +308,7 @@ fn describe_mount(mount: &Mount) -> String {
     )
 }
 
-fn build_hook_runtime_sections(hook_session: &dyn agentdash_connector_contract::hooks::HookSessionRuntimeAccess) -> Vec<String> {
+fn build_hook_runtime_sections(hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess) -> Vec<String> {
     let mut sections = vec![
         "当前会话启用了 Hook Runtime。active workflow、流程约束、stop gate 与 pending action 等动态治理信息，会在每次 LLM 调用边界由 runtime 注入；这里不再重复展开它们的静态副本。".to_string(),
     ];
@@ -634,7 +634,7 @@ impl AgentConnector for PiAgentConnector {
 }
 
 async fn emit_pending_hook_trace_notifications(
-    hook_trace_rx: &mut Option<tokio::sync::broadcast::Receiver<agentdash_connector_contract::HookTraceEntry>>,
+    hook_trace_rx: &mut Option<tokio::sync::broadcast::Receiver<agentdash_spi::HookTraceEntry>>,
     tx: &tokio::sync::mpsc::Sender<Result<SessionNotification, ConnectorError>>,
     session_id: &SessionId,
     source: &AgentDashSourceV1,
@@ -1461,7 +1461,7 @@ mod tests {
             workspace_root: PathBuf::from("F:/Projects/AgentDash"),
             working_directory: PathBuf::from("F:/Projects/AgentDash/crates/agentdash-agent"),
             environment_variables: HashMap::new(),
-            executor_config: agentdash_connector_contract::AgentConfig::new("PI_AGENT"),
+            executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
             address_space: None,
             hook_session: None,
@@ -1579,7 +1579,7 @@ mod tests {
                     workspace_root: PathBuf::from("F:/Projects/AgentDash"),
                     working_directory: PathBuf::from("F:/Projects/AgentDash"),
                     environment_variables: HashMap::new(),
-                    executor_config: agentdash_connector_contract::AgentConfig::new("PI_AGENT"),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
                     address_space: None,
                     hook_session: None,

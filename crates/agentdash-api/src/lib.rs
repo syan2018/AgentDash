@@ -1,4 +1,5 @@
-pub mod address_space_access;
+#[cfg(test)]
+mod address_space_access;
 pub mod app_state;
 pub mod mount_providers;
 pub mod auth;

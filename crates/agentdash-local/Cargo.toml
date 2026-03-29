@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 agentdash-relay.workspace = true
-agentdash-connector-contract.workspace = true
+agentdash-spi.workspace = true
 agentdash-executor = { workspace = true }
 agentdash-application.workspace = true
 agentdash-domain.workspace = true

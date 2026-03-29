@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use agentdash_connector_contract::schema::schema_value;
-use agentdash_connector_contract::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_spi::schema::schema_value;
+use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     WorkflowRecordArtifactType,
 };
-use agentdash_connector_contract::{ExecutionContext, SessionHookRefreshQuery, SessionHookSnapshot};
+use agentdash_spi::{ExecutionContext, SessionHookRefreshQuery, SessionHookSnapshot};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -24,7 +24,7 @@ pub struct WorkflowArtifactReportTool {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     current_session_id: Option<String>,
     current_turn_id: String,
-    hook_session: Option<agentdash_connector_contract::hooks::SharedHookSessionRuntime>,
+    hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

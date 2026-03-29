@@ -5,7 +5,7 @@ members = [
     "crates/agentdash-application",
     "crates/agentdash-injection",
     "crates/agentdash-infrastructure",
-    "crates/agentdash-connector-contract",
+    "crates/agentdash-spi",
     "crates/agentdash-executor",
     "crates/agentdash-first-party-plugins",
     "crates/agentdash-plugin-api",
@@ -60,7 +60,7 @@ agentdash-domain = { path = "crates/agentdash-domain" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-injection = { path = "crates/agentdash-injection" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
-agentdash-connector-contract = { path = "crates/agentdash-connector-contract" }
+agentdash-spi = { path = "crates/agentdash-spi" }
 agentdash-executor = { path = "crates/agentdash-executor", default-features = false }
 agentdash-first-party-plugins = { path = "crates/agentdash-first-party-plugins" }
 agentdash-acp-meta = { path = "crates/agentdash-acp-meta" }

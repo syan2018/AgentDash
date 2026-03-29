@@ -1,11 +1,8 @@
 use std::collections::BTreeMap;
 
 use agent_client_protocol::{EnvVariable, McpServer, McpServerHttp, McpServerSse, McpServerStdio};
-use agentdash_mcp::{injection::McpInjectionConfig, scope::ToolScope};
 
-use crate::runtime::{
-    RuntimeMcpBinding, RuntimeMcpServer, RuntimeToolScope,
-};
+use crate::runtime::RuntimeMcpServer;
 
 pub fn acp_mcp_server_to_runtime(server: &McpServer) -> RuntimeMcpServer {
     match server {
@@ -72,24 +69,6 @@ pub fn runtime_mcp_servers_to_acp(servers: &[RuntimeMcpServer]) -> Vec<McpServer
         .iter()
         .filter_map(runtime_mcp_server_to_acp)
         .collect()
-}
-
-pub fn mcp_injection_config_to_runtime_binding(
-    config: &McpInjectionConfig,
-) -> RuntimeMcpBinding {
-    let scope = match config.scope {
-        ToolScope::Relay => RuntimeToolScope::Relay,
-        ToolScope::Story => RuntimeToolScope::Story,
-        ToolScope::Task => RuntimeToolScope::Task,
-    };
-
-    RuntimeMcpBinding {
-        base_url: config.base_url.clone(),
-        scope,
-        project_id: config.project_id,
-        story_id: config.story_id,
-        task_id: config.task_id,
-    }
 }
 
 #[cfg(test)]

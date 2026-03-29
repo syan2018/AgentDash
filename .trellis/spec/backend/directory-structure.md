@@ -63,7 +63,7 @@ crates/
 │       ├── task_agent_context.rs # re-export → application
 │       ├── runtime_bridge.rs    # re-export → application
 │       ├── workspace_resolution.rs # 薄适配器（BackendAvailability → AppState）
-│       ├── address_space_access/ # re-export → application（inline_persistence/relay/tools/provider）
+│       ├── address_space_access/ # 集成测试 only（re-export 已清除，API 层消费者直接导入 application::address_space）
 │       ├── execution_hooks/     # re-export → application::hooks
 │       ├── bootstrap/
 │       │   ├── task_execution_gateway.rs  # 薄适配器（~360行，含 relay dispatch）
@@ -99,6 +99,16 @@ crates/
 │       │   ├── builder.rs       # build_task_agent_context 入口
 │       │   └── workspace_sources.rs # 声明式来源解析（File/ProjectSnapshot）
 │       ├── hooks/               # ExecutionHookProvider（从 api 迁入）
+│       │   ├── mod.rs           # 模块声明 + 共享辅助函数
+│       │   ├── provider.rs      # AppExecutionHookProvider 实现
+│       │   ├── rules.rs         # Hook 规则评估引擎
+│       │   ├── completion.rs    # Workflow 完成判定
+│       │   ├── workflow_contribution.rs # Workflow 上下文片段构建
+│       │   ├── helpers.rs       # Payload 提取 / shell cwd 重写等工具函数
+│       │   ├── owner_resolver.rs
+│       │   ├── snapshot_helpers.rs
+│       │   ├── workflow_snapshot.rs
+│       │   └── test_fixtures.rs # 测试共享 fixtures
 │       ├── task/                # Task 执行相关纯逻辑
 │       │   ├── mod.rs
 │       │   ├── artifact.rs      # Tool call artifact 构建
@@ -258,7 +268,7 @@ Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 | 分层 | Crate | 职责 | 允许依赖 | 状态 |
 |------|-------|------|----------|------|
 | **Interface** | `agentdash-api` | HTTP 路由、DTO/Assembler、中间件、错误映射 | application, domain | ✅ |
-| **Application** | `agentdash-application` | 用例编排：session plan / context / task / address space / story | domain, injection, executor, mcp | ✅ 已填充 |
+| **Application** | `agentdash-application` | 用例编排：session plan / context / task / address space / story | domain, injection, executor, spi | ✅ 已填充 |
 | **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部库（仅 async-trait 等基础库） | ✅ |
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor`, `agentdash-relay` | Repository 实现、连接器、WebSocket 中继 | domain | ✅ |
 
@@ -465,7 +475,7 @@ Workspace (1) ← (*) Task
 
 | Task | 内容 | API 层行数变化 |
 |------|------|---------------|
-| Task 1 | AgentTool SPI 下沉到 connector-contract + ThinkingLevel 统一 | - |
+| Task 1 | AgentTool SPI 下沉到 agentdash-spi + ThinkingLevel 统一 | - |
 | Task 2 | execution_hooks 迁移到 application::hooks | ~2800 → 1 |
 | Task 3 | Mount/AddressSpace 统一到 domain + service/tool 迁移 | ~1500 → ~6 |
 | Task 4 | RepositorySet/runtime_bridge/workspace_resolution/gateway 核心下沉 | gateway 1493 → 360 |

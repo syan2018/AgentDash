@@ -7,7 +7,7 @@ use agentdash_relay::*;
 use tokio::sync::mpsc;
 
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::{SessionHub, PromptSessionRequest, UserPromptInput};
+use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
 use agentdash_spi::AgentConnector;
 
 /// 命令处理器，路由云端命令到本地执行组件
@@ -469,10 +469,8 @@ impl CommandHandler {
         id: String,
         payload: CommandBrowseDirectoryPayload,
     ) -> RelayMessage {
-        let result = tokio::task::spawn_blocking(move || {
-            browse_directory(payload.path.as_deref())
-        })
-        .await;
+        let result =
+            tokio::task::spawn_blocking(move || browse_directory(payload.path.as_deref())).await;
 
         match result {
             Ok(Ok((current_path, entries))) => RelayMessage::ResponseBrowseDirectory {
@@ -545,9 +543,7 @@ async fn forward_session_notifications(
 
 // ─── 目录浏览实现 ─────────────────────────────────────────
 
-fn browse_directory(
-    path: Option<&str>,
-) -> Result<(String, Vec<BrowseDirectoryEntry>), String> {
+fn browse_directory(path: Option<&str>) -> Result<(String, Vec<BrowseDirectoryEntry>), String> {
     let path = path.map(|p| p.trim()).filter(|p| !p.is_empty());
 
     match path {
@@ -591,12 +587,10 @@ fn list_directory_children(dir_path: &str) -> Result<(String, Vec<BrowseDirector
         return Err(format!("不是目录: {dir_path}"));
     }
 
-    let canonical = std::fs::canonicalize(path)
-        .map_err(|e| format!("路径规范化失败: {e}"))?;
+    let canonical = std::fs::canonicalize(path).map_err(|e| format!("路径规范化失败: {e}"))?;
     let current_path = normalize_display_path(&canonical);
 
-    let read_dir = std::fs::read_dir(&canonical)
-        .map_err(|e| format!("无法读取目录: {e}"))?;
+    let read_dir = std::fs::read_dir(&canonical).map_err(|e| format!("无法读取目录: {e}"))?;
 
     let mut entries: Vec<BrowseDirectoryEntry> = Vec::new();
 

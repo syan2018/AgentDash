@@ -272,7 +272,8 @@ fn emit_deduped(
 
     // Fast path: per-index delta (same entry updated incrementally).
     if let Some(prev) = prev_at_index
-        && !prev.is_empty() && full_content.starts_with(prev)
+        && !prev.is_empty()
+        && full_content.starts_with(prev)
     {
         let suffix = &full_content[prev.len()..];
         if suffix.is_empty() {

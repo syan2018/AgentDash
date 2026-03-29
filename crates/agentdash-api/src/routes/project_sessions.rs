@@ -12,8 +12,8 @@ use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
-use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
 use agentdash_application::session::SessionExecutionState;
+use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
 
 use crate::{
     app_state::AppState,
@@ -114,8 +114,7 @@ pub(crate) async fn build_project_session_context_response(
         .trim()
         .strip_prefix("project_agent:")
         .unwrap_or_default();
-    let project_agent =
-        resolve_project_agent_bridge_async(state, project.id, agent_key).await?;
+    let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key).await?;
     let workspace = resolve_project_workspace(state, project)
         .await
         .ok()
@@ -329,9 +328,10 @@ pub async fn list_project_sessions(
 
             // 状态过滤
             if let Some(filter) = &status_filter
-                && !filter.contains(&execution_status.to_string()) {
-                    return None;
-                }
+                && !filter.contains(&execution_status.to_string())
+            {
+                return None;
+            }
 
             let parent_session_id = meta
                 .companion_context

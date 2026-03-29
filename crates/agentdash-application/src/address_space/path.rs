@@ -1,5 +1,5 @@
-use crate::runtime::{MountCapability, AddressSpace, Mount};
 use super::types::ResourceRef;
+use crate::runtime::{AddressSpace, Mount, MountCapability};
 
 const URI_SEPARATOR: &str = "://";
 
@@ -8,10 +8,7 @@ const URI_SEPARATOR: &str = "://";
 /// 支持两种格式：
 /// - `mount_id://relative/path` — 显式指定 mount
 /// - `relative/path` — 使用 address space 的默认 mount
-pub fn parse_mount_uri(
-    input: &str,
-    address_space: &AddressSpace,
-) -> Result<ResourceRef, String> {
+pub fn parse_mount_uri(input: &str, address_space: &AddressSpace) -> Result<ResourceRef, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err("路径不能为空".to_string());

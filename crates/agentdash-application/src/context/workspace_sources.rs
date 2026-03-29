@@ -6,7 +6,7 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_injection::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
 use crate::address_space::{
-    selected_workspace_binding, ListOptions, RelayAddressSpaceService, ResourceRef,
+    ListOptions, RelayAddressSpaceService, ResourceRef, selected_workspace_binding,
 };
 use crate::runtime::RuntimeFileEntry;
 use crate::workspace::BackendAvailability;

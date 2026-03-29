@@ -62,9 +62,10 @@ impl ToolExecutor {
 
         for root in &self.accessible_roots {
             if let Ok(root_canonical) = std::fs::canonicalize(root)
-                && canonical.starts_with(&root_canonical) {
-                    return Ok(canonical);
-                }
+                && canonical.starts_with(&root_canonical)
+            {
+                return Ok(canonical);
+            }
         }
 
         Err(ToolError::PathNotAccessible(workspace_root.to_string()))
@@ -196,8 +197,8 @@ impl ToolExecutor {
             "file_list"
         );
 
-        let glob_matcher = pattern
-            .and_then(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()));
+        let glob_matcher =
+            pattern.and_then(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()));
 
         let mut entries = Vec::new();
         collect_entries(&base, &ws, &glob_matcher, recursive, &mut entries).await?;
@@ -239,13 +240,14 @@ async fn detect_ripgrep() -> Option<PathBuf> {
                 .stderr(std::process::Stdio::null())
                 .output()
                 .await
-            && output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout);
-                let first_line = path_str.lines().next().unwrap_or("").trim();
-                if !first_line.is_empty() {
-                    return Some(PathBuf::from(first_line));
-                }
+            && output.status.success()
+        {
+            let path_str = String::from_utf8_lossy(&output.stdout);
+            let first_line = path_str.lines().next().unwrap_or("").trim();
+            if !first_line.is_empty() {
+                return Some(PathBuf::from(first_line));
             }
+        }
     }
     None
 }

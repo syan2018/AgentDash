@@ -7,8 +7,8 @@ use agentdash_application::task::execution::{
     ContinueTaskCommand, StartedTurn, TaskExecutionError,
 };
 use agentdash_application::task::gateway::{
-    PreparedTurnContext, TurnOutcome, map_connector_error,
-    normalize_backend_id, run_turn_monitor, update_task_status,
+    PreparedTurnContext, TurnOutcome, map_connector_error, normalize_backend_id, run_turn_monitor,
+    update_task_status,
 };
 use agentdash_application::task::service::{TaskLifecycleService, TurnDispatcher};
 use agentdash_domain::common::ThinkingLevel;
@@ -23,11 +23,9 @@ use uuid::Uuid;
 
 use crate::relay::registry::BackendRegistry;
 use crate::runtime_bridge::runtime_mcp_servers_to_acp;
-use agentdash_application::workspace::{
-    ResolvedWorkspaceBinding, WorkspaceResolutionError,
-};
 use crate::workspace_resolution::resolve_workspace_binding_core;
 use agentdash_application::task::restart_tracker::RestartTracker;
+use agentdash_application::workspace::{ResolvedWorkspaceBinding, WorkspaceResolutionError};
 
 /// API 层 `TurnDispatcher` 实现 — 封装 relay / 云端原生执行分发逻辑。
 ///
@@ -82,12 +80,7 @@ impl TurnDispatcher for AppStateTurnDispatcher {
     }
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {
-        let remote_backend = self
-            .remote_sessions
-            .read()
-            .await
-            .get(session_id)
-            .cloned();
+        let remote_backend = self.remote_sessions.read().await.get(session_id).cloned();
         if let Some(backend_id) = remote_backend {
             relay_cancel(&self.backend_registry, &backend_id, session_id).await
         } else {
@@ -111,9 +104,16 @@ impl TurnDispatcher for AppStateTurnDispatcher {
         let retry_service = self.retry_service.get().cloned();
         let retry_repos = self.repos.clone();
         tokio::spawn(async move {
-            let outcome =
-                run_turn_monitor(&repos, &hub, &tracker, task_id, &session_id, &turn_id, &backend_id)
-                    .await;
+            let outcome = run_turn_monitor(
+                &repos,
+                &hub,
+                &tracker,
+                task_id,
+                &session_id,
+                &turn_id,
+                &backend_id,
+            )
+            .await;
             if let TurnOutcome::NeedsRetry { delay, attempt } = outcome {
                 schedule_auto_retry(
                     retry_service,

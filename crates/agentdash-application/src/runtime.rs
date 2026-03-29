@@ -160,7 +160,9 @@ impl RuntimeMcpBinding {
         let tool_desc = match self.scope {
             RuntimeToolScope::Relay => "项目管理、Story 创建与状态变更",
             RuntimeToolScope::Story => "Story 上下文管理、Task 创建与批量拆解、状态推进",
-            RuntimeToolScope::Task => "Task 状态更新、执行产物上报、兄弟 Task 查看、Story 上下文读取",
+            RuntimeToolScope::Task => {
+                "Task 状态更新、执行产物上报、兄弟 Task 查看、Story 上下文读取"
+            }
         };
 
         format!(

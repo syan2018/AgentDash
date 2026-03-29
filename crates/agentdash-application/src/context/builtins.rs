@@ -360,15 +360,16 @@ impl ContextContributor for InstructionContributor {
         });
 
         if input.phase == TaskExecutionPhase::Continue
-            && let Some(additional) = clean_text(input.additional_prompt) {
-                fragments.push(ContextFragment {
-                    slot: "instruction",
-                    label: "user_additional_prompt",
-                    order: 100,
-                    strategy: MergeStrategy::Append,
-                    content: format!("## Additional Prompt\n{additional}"),
-                });
-            }
+            && let Some(additional) = clean_text(input.additional_prompt)
+        {
+            fragments.push(ContextFragment {
+                slot: "instruction",
+                label: "user_additional_prompt",
+                order: 100,
+                strategy: MergeStrategy::Append,
+                content: format!("## Additional Prompt\n{additional}"),
+            });
+        }
 
         Contribution::fragments_only(fragments)
     }

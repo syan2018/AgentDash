@@ -21,9 +21,8 @@ use crate::agent_loop::{
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
 use crate::types::{
-    AgentContext, AgentError, AgentEvent, AgentMessage, AgentState,
-    DynAgentRuntimeDelegate, DynAgentTool, ThinkingLevel,
-    ToolApprovalOutcome, ToolApprovalRequest, ToolExecutionMode,
+    AgentContext, AgentError, AgentEvent, AgentMessage, AgentState, DynAgentRuntimeDelegate,
+    DynAgentTool, ThinkingLevel, ToolApprovalOutcome, ToolApprovalRequest, ToolExecutionMode,
 };
 
 /// prompt / continue_loop / run_loop 的统一返回类型
@@ -347,17 +346,12 @@ impl Agent {
     /// 发起一次 prompt 并运行 agent loop — 对齐 Pi `prompt(message)`
     ///
     /// 返回事件接收流和一个 JoinHandle（loop 在后台 task 中运行）。
-    pub fn prompt(
-        &mut self,
-        input: impl Into<AgentMessage>,
-    ) -> Result<LoopHandle, AgentError> {
+    pub fn prompt(&mut self, input: impl Into<AgentMessage>) -> Result<LoopHandle, AgentError> {
         self.run_loop(Some(vec![input.into()]), RunLoopOptions::default())
     }
 
     /// 从当前消息历史继续运行 agent loop — 对齐 Pi `continue()`
-    pub fn continue_loop(
-        &mut self,
-    ) -> Result<LoopHandle, AgentError> {
+    pub fn continue_loop(&mut self) -> Result<LoopHandle, AgentError> {
         self.ensure_not_running(
             "Agent is already processing. Wait for completion before continuing.",
         )?;
@@ -672,10 +666,11 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
             s.pending_tool_calls.remove(tool_call_id);
         }
         AgentEvent::TurnEnd {
-            message: AgentMessage::Assistant {
-                error_message: Some(err),
-                ..
-            },
+            message:
+                AgentMessage::Assistant {
+                    error_message: Some(err),
+                    ..
+                },
             ..
         } => {
             s.error = Some(err.clone());
@@ -687,4 +682,3 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
         _ => {}
     }
 }
-

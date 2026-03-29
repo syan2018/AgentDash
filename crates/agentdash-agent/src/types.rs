@@ -3,16 +3,16 @@ use thiserror::Error;
 
 // ─── re-exports from agent-types ────────────────────────────
 
-pub use agentdash_domain::common::ThinkingLevel;
 pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
-    AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
-    AgentTool, AgentToolError, AgentToolResult, BeforeStopInput, BeforeToolCallContext,
-    BeforeToolCallInput, BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool,
-    StopDecision, StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest,
-    ToolCallDecision, ToolCallInfo, ToolDefinition, ToolUpdateCallback, TransformContextInput,
+    AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError, AgentTool,
+    AgentToolError, AgentToolResult, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
+    BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool, StopDecision,
+    StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision,
+    ToolCallInfo, ToolDefinition, ToolUpdateCallback, TransformContextInput,
     TransformContextOutput, TurnControlDecision, now_millis,
 };
+pub use agentdash_domain::common::ThinkingLevel;
 
 // ─── Agent-specific types (不属于通用 SPI) ──────────────────
 

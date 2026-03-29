@@ -4,9 +4,7 @@ use agentdash_domain::common::{AgentConfig, ThinkingLevel};
 
 /// 尝试将 AgentConfig 转换为 vibe-kanban 的 AgentConfig。
 /// 若 executor 字符串不是有效的 BaseCodingAgent 变体则返回 None。
-pub fn to_vibe_kanban_config(
-    config: &AgentConfig,
-) -> Option<executors::profile::ExecutorConfig> {
+pub fn to_vibe_kanban_config(config: &AgentConfig) -> Option<executors::profile::ExecutorConfig> {
     use executors::executors::BaseCodingAgent;
 
     let norm = config.executor.replace('-', "_").to_ascii_uppercase();

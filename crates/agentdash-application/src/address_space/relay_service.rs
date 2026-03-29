@@ -49,10 +49,7 @@ impl RelayAddressSpaceService {
         build_derived_address_space(project, story, workspace, agent_type, target)
     }
 
-    pub fn list_mounts(
-        &self,
-        address_space: &AddressSpace,
-    ) -> Vec<agentdash_spi::Mount> {
+    pub fn list_mounts(&self, address_space: &AddressSpace) -> Vec<agentdash_spi::Mount> {
         address_space.mounts.clone()
     }
 
@@ -63,14 +60,18 @@ impl RelayAddressSpaceService {
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ReadResult, String> {
         let runtime_address_space = address_space.clone();
-        let mount =
-            resolve_mount(&runtime_address_space, &target.mount_id, MountCapability::Read)?;
+        let mount = resolve_mount(
+            &runtime_address_space,
+            &target.mount_id,
+            MountCapability::Read,
+        )?;
         let path = normalize_mount_relative_path(&target.path, false)?;
 
         if let Some(ov) = overlay
-            && let Some(content) = ov.read(&mount.id, &path).await {
-                return Ok(ReadResult { path, content });
-            }
+            && let Some(content) = ov.read(&mount.id, &path).await
+        {
+            return Ok(ReadResult { path, content });
+        }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
             let ctx = MountOperationContext;
@@ -105,7 +106,9 @@ impl RelayAddressSpaceService {
                     mount.id
                 )
             })?;
-            return ov.write(&runtime_address_space, mount, &path, content).await;
+            return ov
+                .write(&runtime_address_space, mount, &path, content)
+                .await;
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
@@ -127,8 +130,7 @@ impl RelayAddressSpaceService {
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<ListResult, String> {
         let runtime_address_space = address_space.clone();
-        let mount =
-            resolve_mount(&runtime_address_space, mount_id, MountCapability::List)?;
+        let mount = resolve_mount(&runtime_address_space, mount_id, MountCapability::List)?;
         let path = normalize_mount_relative_path(&options.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
@@ -203,16 +205,19 @@ impl RelayAddressSpaceService {
         max_results: usize,
         overlay: Option<&InlineContentOverlay>,
     ) -> Result<Vec<String>, String> {
-        self.search_text_extended(address_space, &TextSearchParams {
-            mount_id,
-            path,
-            query,
-            is_regex: false,
-            include_glob: None,
-            max_results,
-            context_lines: 0,
-            overlay,
-        })
+        self.search_text_extended(
+            address_space,
+            &TextSearchParams {
+                mount_id,
+                path,
+                query,
+                is_regex: false,
+                include_glob: None,
+                max_results,
+                context_lines: 0,
+                overlay,
+            },
+        )
         .await
         .map(|(hits, _truncated)| hits)
     }
@@ -223,20 +228,25 @@ impl RelayAddressSpaceService {
         params: &TextSearchParams<'_>,
     ) -> Result<(Vec<String>, bool), String> {
         let runtime_address_space = address_space.clone();
-        let mount =
-            resolve_mount(&runtime_address_space, params.mount_id, MountCapability::Search)?;
+        let mount = resolve_mount(
+            &runtime_address_space,
+            params.mount_id,
+            MountCapability::Search,
+        )?;
         let base_path = normalize_mount_relative_path(params.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
-            return self
-                .search_inline(mount, &base_path, params)
-                .await;
+            return self.search_inline(mount, &base_path, params).await;
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
             let ctx = MountOperationContext;
             let sq = SearchQuery {
-                path: if base_path.is_empty() { None } else { Some(base_path) },
+                path: if base_path.is_empty() {
+                    None
+                } else {
+                    Some(base_path)
+                },
                 pattern: params.query.to_string(),
                 case_sensitive: true,
                 max_results: Some(params.max_results),

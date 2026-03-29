@@ -148,9 +148,10 @@ async fn resolve_backend_auth_token(
     }
 
     if let Some(config) = existing
-        && let Some(token) = normalize_optional_string(config.auth_token.clone()) {
-            return Ok(token);
-        }
+        && let Some(token) = normalize_optional_string(config.auth_token.clone())
+    {
+        return Ok(token);
+    }
 
     match backend_repo.get_backend(backend_id).await {
         Ok(config) => Ok(normalize_optional_string(config.auth_token)
@@ -325,9 +326,7 @@ pub async fn browse_directory(
 
     let cmd = agentdash_relay::RelayMessage::CommandBrowseDirectory {
         id: agentdash_relay::RelayMessage::new_id("browse-dir"),
-        payload: agentdash_relay::CommandBrowseDirectoryPayload {
-            path: req.path,
-        },
+        payload: agentdash_relay::CommandBrowseDirectoryPayload { path: req.path },
     };
     let resp = state
         .services

@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use agentdash_spi::{
-    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, AgentInfo, PromptPayload,
+    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+    ExecutionContext, ExecutionStream, PromptPayload,
 };
 
 pub struct RemoteAcpConnector {

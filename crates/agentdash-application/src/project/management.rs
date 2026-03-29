@@ -154,7 +154,7 @@ pub async fn clone_project_assignments(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::workflow::WorkflowAgentRole;
+    use agentdash_domain::workflow::WorkflowBindingRole;
 
     #[test]
     fn normalize_clone_name_rejects_blank_name() {
@@ -188,7 +188,7 @@ mod tests {
     fn clone_workflow_assignment_preserves_flags_but_switches_project() {
         let lifecycle_id = Uuid::new_v4();
         let mut assignment =
-            WorkflowAssignment::new(Uuid::new_v4(), lifecycle_id, WorkflowAgentRole::Task);
+            WorkflowAssignment::new(Uuid::new_v4(), lifecycle_id, WorkflowBindingRole::Task);
         assignment.enabled = false;
         assignment.is_default = true;
 

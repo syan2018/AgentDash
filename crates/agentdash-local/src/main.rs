@@ -8,9 +8,9 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
+use agentdash_application::session::SessionHub;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
-use agentdash_application::session::SessionHub;
 use agentdash_spi::AgentConnector;
 
 #[derive(Parser, Debug)]

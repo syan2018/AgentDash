@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agentdash_spi::AgentConnector;
 use agentdash_injection::AddressSpaceDiscoveryProvider;
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
+use agentdash_spi::AgentConnector;
 use thiserror::Error;
 
 /// 开源版内置插件集合。
@@ -126,12 +126,12 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use agentdash_spi::{
-        AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-        ExecutionStream, AgentInfo, PromptPayload,
-    };
     use agentdash_plugin_api::{
         AgentDashPlugin, AuthError, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
+    };
+    use agentdash_spi::{
+        AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+        ExecutionContext, ExecutionStream, PromptPayload,
     };
     use async_trait::async_trait;
     use futures::stream::{self, BoxStream};

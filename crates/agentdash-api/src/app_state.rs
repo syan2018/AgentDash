@@ -5,20 +5,21 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
-use agentdash_application::address_space::RelayAddressSpaceService;
-use agentdash_application::address_space::tools::provider::{
-    RelayRuntimeToolProvider, SharedSessionHubHandle,
-};
-use crate::mount_providers::RelayFsMountProvider;
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
-use agentdash_application::hooks::AppExecutionHookProvider;
+use crate::mount_providers::RelayFsMountProvider;
 use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
 };
 use crate::relay::registry::BackendRegistry;
-use agentdash_application::context::ContextContributorRegistry;
+use agentdash_application::address_space::RelayAddressSpaceService;
+use agentdash_application::address_space::tools::provider::{
+    RelayRuntimeToolProvider, SharedSessionHubHandle,
+};
 use agentdash_application::address_space::{MountProviderRegistry, MountProviderRegistryBuilder};
+use agentdash_application::context::ContextContributorRegistry;
+use agentdash_application::hooks::AppExecutionHookProvider;
 pub use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::TaskLifecycleService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
@@ -30,9 +31,8 @@ use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
-use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_application::session::SessionHub;
 use agentdash_executor::AgentConnector;
+use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     SqliteAgentRepository, SqliteBackendRepository, SqliteProjectRepository,
     SqliteSessionBindingRepository, SqliteSettingsRepository, SqliteStoryRepository,
@@ -182,15 +182,19 @@ impl AppState {
                 .build(),
         );
 
-        let address_space_service =
-            Arc::new(RelayAddressSpaceService::new(mount_provider_registry.clone()));
+        let address_space_service = Arc::new(RelayAddressSpaceService::new(
+            mount_provider_registry.clone(),
+        ));
         let session_hub_handle = SharedSessionHubHandle::default();
 
-        let inline_persister: Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister> =
-            Arc::new(agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
+        let inline_persister: Arc<
+            dyn agentdash_application::address_space::inline_persistence::InlineContentPersister,
+        > = Arc::new(
+            agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
                 project_repo.clone(),
                 story_repo.clone(),
-            ));
+            ),
+        );
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
 
@@ -355,7 +359,9 @@ struct PiAgentConnectorDeps {
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     session_hub_handle: SharedSessionHubHandle,
-    inline_persister: Option<Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister>>,
+    inline_persister: Option<
+        Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister>,
+    >,
 }
 
 async fn build_pi_agent_connector(

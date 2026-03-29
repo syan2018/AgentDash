@@ -15,7 +15,6 @@ use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
 
-use agentdash_application::address_space::SessionMountTarget;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
@@ -23,6 +22,7 @@ use crate::{
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
+use agentdash_application::address_space::SessionMountTarget;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
 

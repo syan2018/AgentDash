@@ -5,7 +5,7 @@ pub mod pi_agent;
 pub mod pi_agent_mcp;
 #[cfg(feature = "pi-agent")]
 pub mod pi_agent_provider_registry;
+pub mod remote_acp;
 #[cfg(feature = "pi-agent")]
 pub mod rig_bridge;
-pub mod remote_acp;
 pub mod vibe_kanban;

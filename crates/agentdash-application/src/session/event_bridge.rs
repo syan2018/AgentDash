@@ -1,14 +1,14 @@
+use agent_client_protocol::SessionNotification;
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
     HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery,
 };
-use agent_client_protocol::SessionNotification;
 use tokio::sync::broadcast;
 
 use super::hook_events::build_hook_trace_notification;
-use super::hub_support::session_hook_trace_decision;
 use super::hub::SessionHub;
+use super::hub_support::session_hook_trace_decision;
 
 pub(super) struct HookTriggerInput<'a> {
     pub session_id: &'a str,

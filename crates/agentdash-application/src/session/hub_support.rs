@@ -8,9 +8,7 @@ use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
     parse_agentdash_meta,
 };
-use agentdash_spi::hooks::{
-    HookResolution, HookTrigger, SharedHookSessionRuntime,
-};
+use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
 
 use super::types::{SessionExecutionState, SessionMeta};
 
@@ -144,9 +142,7 @@ pub(super) fn parse_turn_terminal_event(
     }
 }
 
-pub(super) fn build_session_runtime(
-    tx: broadcast::Sender<SessionNotification>,
-) -> SessionRuntime {
+pub(super) fn build_session_runtime(tx: broadcast::Sender<SessionNotification>) -> SessionRuntime {
     SessionRuntime {
         tx,
         running: false,
@@ -216,15 +212,18 @@ pub(super) fn meta_to_execution_state(
             message: meta.last_terminal_message.clone(),
         },
         "running" => {
-            tracing::warn!(session_id, "meta 显示 running 但内存 map 无记录，视为 interrupted");
+            tracing::warn!(
+                session_id,
+                "meta 显示 running 但内存 map 无记录，视为 interrupted"
+            );
             SessionExecutionState::Interrupted {
                 turn_id: meta.last_turn_id.clone(),
                 message: None,
             }
         }
-        other => unreachable!(
-            "last_execution_status 出现了非法值: {other:?}，这是 SessionHub 的 bug"
-        ),
+        other => {
+            unreachable!("last_execution_status 出现了非法值: {other:?}，这是 SessionHub 的 bug")
+        }
     }
 }
 

@@ -12,12 +12,8 @@ use rig::completion::{CompletionModel, CompletionRequest, Usage};
 use rig::streaming::StreamedAssistantContent;
 use tokio_stream::wrappers::ReceiverStream;
 
-use agentdash_agent::bridge::{
-    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk,
-};
-use agentdash_agent::types::{
-    AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis,
-};
+use agentdash_agent::bridge::{BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk};
+use agentdash_agent::types::{AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis};
 
 // ─── RigBridge ──────────────────────────────────────────────
 

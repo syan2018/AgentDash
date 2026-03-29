@@ -5,10 +5,8 @@ use agent_client_protocol::{SessionNotification, SessionUpdate};
 use futures::StreamExt;
 
 use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_spi::hooks::{HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime};
 use agentdash_spi::{ConnectorError, ExecutionContext};
-use agentdash_spi::hooks::{
-    HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime,
-};
 
 use super::event_bridge::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
@@ -315,8 +313,7 @@ impl SessionHub {
                     match guard.get(&session_id) {
                         Some(runtime) => (
                             runtime.cancel_requested,
-                            runtime.current_turn_id.as_deref()
-                                == Some(turn_id_for_spawn.as_str()),
+                            runtime.current_turn_id.as_deref() == Some(turn_id_for_spawn.as_str()),
                         ),
                         None => (false, false),
                     }

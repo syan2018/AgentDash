@@ -4,8 +4,8 @@
 /// 避免 Application 层直接依赖 `agentdash-relay` 类型。
 /// ACP/MCP ↔ Runtime 的转换依然在 Application 层（无 relay 依赖）。
 pub use agentdash_application::runtime_bridge::{
-    acp_mcp_server_to_runtime, acp_mcp_servers_to_runtime,
-    runtime_mcp_server_to_acp, runtime_mcp_servers_to_acp,
+    acp_mcp_server_to_runtime, acp_mcp_servers_to_runtime, runtime_mcp_server_to_acp,
+    runtime_mcp_servers_to_acp,
 };
 
 use agentdash_application::runtime::RuntimeFileEntry;

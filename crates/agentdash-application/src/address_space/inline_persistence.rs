@@ -190,19 +190,19 @@ impl InlineContentPersister for DbInlineContentPersister {
                     .context_containers
                     .iter()
                     .any(|c| c.id.trim() == container_id)
-                {
-                    Self::upsert_inline_file(
-                        &mut story.context.context_containers,
-                        container_id,
-                        path,
-                        content,
-                    )?;
-                    self.story_repo
-                        .update(&story)
-                        .await
-                        .map_err(|e| format!("保存 story 失败: {e}"))?;
-                    return Ok(());
-                }
+            {
+                Self::upsert_inline_file(
+                    &mut story.context.context_containers,
+                    container_id,
+                    path,
+                    content,
+                )?;
+                self.story_repo
+                    .update(&story)
+                    .await
+                    .map_err(|e| format!("保存 story 失败: {e}"))?;
+                return Ok(());
+            }
         }
 
         // 回退到 project

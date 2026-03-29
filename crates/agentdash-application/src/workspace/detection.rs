@@ -75,9 +75,8 @@ pub async fn detect_workspace_from_backend(
             "high".to_string(),
         )
     } else {
-        warnings.push(
-            "当前未识别为 Git 仓库，已按 local_dir 处理。P4 自动识别尚未接入。".to_string(),
-        );
+        warnings
+            .push("当前未识别为 Git 仓库，已按 local_dir 处理。P4 自动识别尚未接入。".to_string());
         (
             WorkspaceIdentityKind::LocalDir,
             json!({ "root_hint": root_ref }),

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use agentdash_spi::AddressSpace;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
-use agentdash_spi::AddressSpace;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -14,10 +14,7 @@ use crate::address_space::{
     ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri,
 };
 
-pub fn resolve_uri_path(
-    address_space: &AddressSpace,
-    path: &str,
-) -> Result<ResourceRef, String> {
+pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<ResourceRef, String> {
     parse_mount_uri(path, address_space)
 }
 
@@ -292,18 +289,19 @@ impl AgentTool for FsListTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsListParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(
-            &self.address_space,
-            params.path.as_deref().unwrap_or("."),
-        )
-        .map_err(AgentToolError::ExecutionFailed)?;
+        let target = resolve_uri_path(&self.address_space, params.path.as_deref().unwrap_or("."))
+            .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .list(
                 &self.address_space,
                 &target.mount_id,
                 ListOptions {
-                    path: if target.path.is_empty() { ".".to_string() } else { target.path },
+                    path: if target.path.is_empty() {
+                        ".".to_string()
+                    } else {
+                        target.path
+                    },
                     pattern: params.pattern,
                     recursive: params.recursive.unwrap_or(false),
                 },
@@ -380,12 +378,13 @@ impl AgentTool for FsSearchTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsSearchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(
-            &self.address_space,
-            params.path.as_deref().unwrap_or("."),
-        )
-        .map_err(AgentToolError::ExecutionFailed)?;
-        let search_path = if target.path.is_empty() { ".".to_string() } else { target.path };
+        let target = resolve_uri_path(&self.address_space, params.path.as_deref().unwrap_or("."))
+            .map_err(AgentToolError::ExecutionFailed)?;
+        let search_path = if target.path.is_empty() {
+            ".".to_string()
+        } else {
+            target.path
+        };
         let (hits, truncated) = self
             .service
             .search_text_extended(
@@ -457,12 +456,13 @@ impl AgentTool for ShellExecTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(
-            &self.address_space,
-            params.cwd.as_deref().unwrap_or("."),
-        )
-        .map_err(AgentToolError::ExecutionFailed)?;
-        let cwd = if target.path.is_empty() { ".".to_string() } else { target.path };
+        let target = resolve_uri_path(&self.address_space, params.cwd.as_deref().unwrap_or("."))
+            .map_err(AgentToolError::ExecutionFailed)?;
+        let cwd = if target.path.is_empty() {
+            ".".to_string()
+        } else {
+            target.path
+        };
         let result = self
             .service
             .exec(

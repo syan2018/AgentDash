@@ -35,9 +35,10 @@ pub fn acp_mcp_server_to_runtime(server: &McpServer) -> RuntimeMcpServer {
 
 pub fn runtime_mcp_server_to_acp(server: &RuntimeMcpServer) -> Option<McpServer> {
     match server {
-        RuntimeMcpServer::Http { name, url } => {
-            Some(McpServer::Http(McpServerHttp::new(name.clone(), url.clone())))
-        }
+        RuntimeMcpServer::Http { name, url } => Some(McpServer::Http(McpServerHttp::new(
+            name.clone(),
+            url.clone(),
+        ))),
         RuntimeMcpServer::Sse { name, url } => {
             Some(McpServer::Sse(McpServerSse::new(name.clone(), url.clone())))
         }

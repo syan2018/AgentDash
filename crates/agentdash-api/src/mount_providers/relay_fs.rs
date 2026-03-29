@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use agentdash_application::address_space::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
-    MountProvider, ReadResult, SearchMatch, SearchQuery, SearchResult, join_root_ref,
-    normalize_mount_relative_path, PROVIDER_RELAY_FS,
+    MountProvider, PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,
+    join_root_ref, normalize_mount_relative_path,
 };
 use agentdash_application::runtime::Mount;
 use agentdash_relay::{
@@ -49,8 +49,8 @@ impl MountProvider for RelayFsMountProvider {
         path: &str,
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
-        let path = normalize_mount_relative_path(path, false)
-            .map_err(MountError::OperationFailed)?;
+        let path =
+            normalize_mount_relative_path(path, false).map_err(MountError::OperationFailed)?;
         let response = self
             .backends
             .send_command(
@@ -93,8 +93,8 @@ impl MountProvider for RelayFsMountProvider {
         content: &str,
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
-        let path = normalize_mount_relative_path(path, false)
-            .map_err(MountError::OperationFailed)?;
+        let path =
+            normalize_mount_relative_path(path, false).map_err(MountError::OperationFailed)?;
         let response = self
             .backends
             .send_command(
@@ -175,8 +175,9 @@ impl MountProvider for RelayFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
         let base_path = match &query.path {
-            Some(p) => normalize_mount_relative_path(p, true)
-                .map_err(MountError::OperationFailed)?,
+            Some(p) => {
+                normalize_mount_relative_path(p, true).map_err(MountError::OperationFailed)?
+            }
             None => String::new(),
         };
         let max_results = query.max_results.unwrap_or(50);

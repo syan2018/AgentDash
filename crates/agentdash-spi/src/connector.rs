@@ -67,7 +67,10 @@ impl std::fmt::Debug for ExecutionContext {
             .field("workspace_root", &self.workspace_root)
             .field("executor_config", &self.executor_config)
             .field("hook_session", &self.hook_session)
-            .field("runtime_delegate", &self.runtime_delegate.as_ref().map(|_| ".."))
+            .field(
+                "runtime_delegate",
+                &self.runtime_delegate.as_ref().map(|_| ".."),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -85,7 +88,6 @@ pub struct FlowCapabilities {
     /// 是否允许解析 hook pending action
     pub resolve_hook_action: bool,
 }
-
 
 #[derive(Debug, Clone)]
 pub enum PromptPayload {

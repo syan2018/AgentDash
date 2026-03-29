@@ -23,8 +23,8 @@ use executors::{
 
 use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
 use agentdash_spi::{
-    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, AgentInfo, PromptPayload,
+    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+    ExecutionContext, ExecutionStream, PromptPayload,
 };
 
 pub struct VibeKanbanExecutorsConnector {
@@ -180,13 +180,14 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             ));
         }
 
-        let vk_config = crate::adapters::vibe_kanban_config::to_vibe_kanban_config(&context.executor_config)
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!(
-                    "执行器 '{}' 不是有效的 vibe-kanban 执行器",
-                    context.executor_config.executor
-                ))
-            })?;
+        let vk_config =
+            crate::adapters::vibe_kanban_config::to_vibe_kanban_config(&context.executor_config)
+                .ok_or_else(|| {
+                    ConnectorError::InvalidConfig(format!(
+                        "执行器 '{}' 不是有效的 vibe-kanban 执行器",
+                        context.executor_config.executor
+                    ))
+                })?;
 
         let mut agent = ExecutorConfigs::get_cached()
             .get_coding_agent(&vk_config.profile_id())

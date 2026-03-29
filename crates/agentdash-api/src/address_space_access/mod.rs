@@ -167,15 +167,19 @@ mod tests {
         )];
 
         let address_space = service
-            .build_address_space(&project, Some(&story), None, SessionMountTarget::Task, Some("PI_AGENT"))
+            .build_address_space(
+                &project,
+                Some(&story),
+                None,
+                SessionMountTarget::Task,
+                Some("PI_AGENT"),
+            )
             .expect("address space should build");
 
         assert_eq!(address_space.mounts.len(), 1);
         let mount = &address_space.mounts[0];
         assert_eq!(mount.id, "shared");
-        let files =
-            inline_files_from_mount(mount)
-                .expect("inline files");
+        let files = inline_files_from_mount(mount).expect("inline files");
         assert_eq!(
             files.get("spec.md").map(String::as_str),
             Some("story override")
@@ -277,9 +281,9 @@ mod tests {
             .expect("backend should register");
 
         let mut mount_registry = MountProviderRegistry::new();
-        mount_registry.register(Arc::new(
-            crate::mount_providers::RelayFsMountProvider::new(registry.clone()),
-        ));
+        mount_registry.register(Arc::new(crate::mount_providers::RelayFsMountProvider::new(
+            registry.clone(),
+        )));
         let service = RelayAddressSpaceService::new(Arc::new(mount_registry));
         let session = service
             .session_for_workspace(&sample_workspace())

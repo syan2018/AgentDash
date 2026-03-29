@@ -3,9 +3,7 @@ use agentdash_domain::story::Story;
 use agentdash_injection::{ContextFragment, MergeStrategy};
 use serde::Serialize;
 
-use crate::runtime::{
-    MountCapability, AddressSpace, RuntimeMcpServer, Mount,
-};
+use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeMcpServer};
 
 pub use agentdash_domain::session_binding::SessionOwnerType;
 
@@ -165,9 +163,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     SessionPlanFragments { fragments }
 }
 
-pub fn summarize_address_space(
-    address_space: &AddressSpace,
-) -> SessionAddressSpaceSummary {
+pub fn summarize_address_space(address_space: &AddressSpace) -> SessionAddressSpaceSummary {
     let default_mount_id = address_space.default_mount_id.clone();
     let mount_ids = address_space
         .mounts
@@ -311,12 +307,8 @@ fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
         SessionOwnerType::Project => {
             "Project 级协作代理，负责维护项目共享上下文、整理资料、沉淀决策并辅助后续 Story 准备"
         }
-        SessionOwnerType::Task => {
-            "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报"
-        }
-        SessionOwnerType::Story => {
-            "Story 主代理，负责整理上下文、推进 Story、拆解并创建 Task"
-        }
+        SessionOwnerType::Task => "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报",
+        SessionOwnerType::Story => "Story 主代理，负责整理上下文、推进 Story、拆解并创建 Task",
     };
     let identity = input
         .agent_type
@@ -629,10 +621,7 @@ mod tests {
                     provider: "external_service".to_string(),
                     backend_id: String::new(),
                     root_ref: "tenant://project/km".to_string(),
-                    capabilities: vec![
-                        MountCapability::Read,
-                        MountCapability::Search,
-                    ],
+                    capabilities: vec![MountCapability::Read, MountCapability::Search],
                     default_write: false,
                     display_name: "知识库".to_string(),
                     metadata: json!({ "service_id": "km-gateway" }),

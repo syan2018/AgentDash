@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
-use agentdash_application::workspace::{
-    WorkspaceDetectionError, WorkspaceResolutionError,
-};
 use agentdash_application::backend_transport::{BackendTransport, GitRepoInfo, TransportError};
+pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
+use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolutionError};
 use agentdash_domain::workspace::Workspace;
 use agentdash_relay::{CommandWorkspaceDetectGitPayload, RelayMessage};
 use async_trait::async_trait;
@@ -13,8 +11,8 @@ use crate::app_state::AppState;
 use crate::relay::registry::BackendRegistry;
 use crate::rpc::ApiError;
 
-pub use agentdash_application::workspace::resolve_workspace_binding as resolve_workspace_binding_core;
 pub use agentdash_application::workspace::WorkspaceDetectionResult;
+pub use agentdash_application::workspace::resolve_workspace_binding as resolve_workspace_binding_core;
 
 /// BackendRegistry 适配 BackendTransport trait —— API adapter 层
 #[async_trait]

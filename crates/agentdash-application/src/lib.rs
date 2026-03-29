@@ -1,10 +1,10 @@
 pub mod address_space;
 pub mod backend_transport;
-pub mod repository_set;
 pub mod bootstrap_plan;
 pub mod context;
 pub mod hooks;
 pub mod project;
+pub mod repository_set;
 pub mod runtime;
 pub mod runtime_bridge;
 pub mod session;

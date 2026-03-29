@@ -3,6 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use agentdash_application::session::SessionExecutionState as HubSessionExecutionState;
+use agentdash_application::session::SessionHub;
 use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_application::task_state_reconciler::{
     TaskSessionState, TaskSessionStateReader, reconcile_running_tasks_on_boot,
@@ -10,8 +12,6 @@ use agentdash_application::task_state_reconciler::{
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
-use agentdash_application::session::SessionHub;
-use agentdash_application::session::SessionExecutionState as HubSessionExecutionState;
 
 struct HubSessionStateReader<'a> {
     hub: &'a SessionHub,
@@ -31,9 +31,7 @@ impl TaskSessionStateReader for HubSessionStateReader<'_> {
 
         Ok(match raw {
             HubSessionExecutionState::Idle => TaskSessionState::Idle,
-            HubSessionExecutionState::Running { turn_id } => {
-                TaskSessionState::Running { turn_id }
-            }
+            HubSessionExecutionState::Running { turn_id } => TaskSessionState::Running { turn_id },
             HubSessionExecutionState::Completed { turn_id } => {
                 TaskSessionState::Completed { turn_id }
             }

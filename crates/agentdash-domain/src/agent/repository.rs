@@ -27,7 +27,8 @@ pub trait ProjectAgentLinkRepository: Send + Sync {
     ) -> Result<Option<ProjectAgentLink>, DomainError>;
 
     /// 列出项目下所有关联
-    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<ProjectAgentLink>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid)
+    -> Result<Vec<ProjectAgentLink>, DomainError>;
 
     /// 列出 Agent 关联的所有项目
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<ProjectAgentLink>, DomainError>;

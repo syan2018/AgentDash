@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use agentdash_spi::lifecycle::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
-    AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, DynAgentRuntimeDelegate,
-    StopDecision, ToolCallDecision,
-    TransformContextInput, TransformContextOutput, TurnControlDecision,
+    AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, DynAgentRuntimeDelegate, StopDecision,
+    ToolCallDecision, TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -682,9 +681,8 @@ mod tests {
     use agentdash_spi::hooks::{
         ExecutionHookProvider, HookCompletionStatus, HookContextFragment, HookError,
         HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind, HookResolution,
-        HookSessionRuntimeAccess, HookTrigger,
-        NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
-        SessionHookSnapshotQuery,
+        HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
+        SessionHookSnapshot, SessionHookSnapshotQuery,
     };
 
     #[derive(Clone)]

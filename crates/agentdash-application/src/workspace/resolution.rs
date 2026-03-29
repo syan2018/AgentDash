@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use agentdash_domain::workspace::{
-    Workspace, WorkspaceBinding, WorkspaceResolutionPolicy,
-};
+use agentdash_domain::workspace::{Workspace, WorkspaceBinding, WorkspaceResolutionPolicy};
 
 use crate::backend_transport::BackendTransport;
 

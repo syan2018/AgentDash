@@ -9,8 +9,8 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use agentdash_spi::{
-    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, AgentInfo, PromptPayload,
+    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+    ExecutionContext, ExecutionStream, PromptPayload,
 };
 
 pub struct CompositeConnector {

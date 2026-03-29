@@ -15,24 +15,24 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
-use agentdash_application::address_space::SessionMountTarget;
 use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_application::address_space::SessionMountTarget;
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
-};
-use agentdash_application::story::context_builder::{
-    StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
-};
-use agentdash_application::session_context::SessionContextSnapshot;
-use agentdash_domain::{
-    project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
 use agentdash_application::session::{
     PromptSessionRequest, SessionExecutionState, SessionMeta, UserPromptInput,
 };
-use agentdash_spi::HookSessionRuntimeSnapshot;
+use agentdash_application::session_context::SessionContextSnapshot;
+use agentdash_application::story::context_builder::{
+    StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
+};
+use agentdash_domain::{
+    project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
+};
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_plugin_api::AuthIdentity;
+use agentdash_spi::HookSessionRuntimeSnapshot;
 use serde::Serialize;
 
 use super::project_agents::{resolve_project_agent_bridge_async, resolve_project_workspace};
@@ -42,8 +42,8 @@ use crate::auth::{
 };
 use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::runtime_bridge::acp_mcp_servers_to_runtime;
-use agentdash_application::session_context::apply_workspace_defaults;
 use crate::task_agent_context::resolve_workspace_declared_sources;
+use agentdash_application::session_context::apply_workspace_defaults;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -371,13 +371,14 @@ pub async fn get_session_context(
                 .get_task_session(task_id)
                 .await
                 .map_err(task_execution::map_task_execution_error)?;
-            let built_context = agentdash_application::task::context_builder::build_task_session_context(
-                &state.repos,
-                &state.services.address_space_service,
-                state.config.mcp_base_url.as_deref(),
-                task_id,
-            )
-            .await;
+            let built_context =
+                agentdash_application::task::context_builder::build_task_session_context(
+                    &state.repos,
+                    &state.services.address_space_service,
+                    state.config.mcp_base_url.as_deref(),
+                    task_id,
+                )
+                .await;
             Ok(Json(SessionContextResponse {
                 workspace_id: task.workspace_id.map(|id| id.to_string()),
                 agent_binding: Some(result.agent_binding),
@@ -396,12 +397,9 @@ pub async fn get_session_context(
                 ProjectPermission::View,
             )
             .await?;
-            let built_context = story_sessions::build_story_session_context_response(
-                &state,
-                &story,
-                &session_id,
-            )
-            .await;
+            let built_context =
+                story_sessions::build_story_session_context_response(&state, &story, &session_id)
+                    .await;
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
@@ -446,8 +444,16 @@ fn pick_primary_session_binding(
     bindings
         .iter()
         .find(|b| b.owner_type == SessionOwnerType::Project)
-        .or_else(|| bindings.iter().find(|b| b.owner_type == SessionOwnerType::Story))
-        .or_else(|| bindings.iter().find(|b| b.owner_type == SessionOwnerType::Task))
+        .or_else(|| {
+            bindings
+                .iter()
+                .find(|b| b.owner_type == SessionOwnerType::Story)
+        })
+        .or_else(|| {
+            bindings
+                .iter()
+                .find(|b| b.owner_type == SessionOwnerType::Task)
+        })
         .or_else(|| bindings.first())
 }
 
@@ -583,9 +589,7 @@ pub async fn prompt_session(
         .start_prompt(&session_id, req)
         .await
         .map_err(|e| match &e {
-            agentdash_spi::ConnectorError::InvalidConfig(_) => {
-                ApiError::BadRequest(e.to_string())
-            }
+            agentdash_spi::ConnectorError::InvalidConfig(_) => ApiError::BadRequest(e.to_string()),
             _ => ApiError::Internal(e.to_string()),
         })?;
 
@@ -665,7 +669,11 @@ fn finalize_augmented_request(
     req.user_input.prompt_blocks = Some(prompt_blocks);
     req.system_context = Some(context_markdown);
 
-    apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.workspace_root, workspace);
+    apply_workspace_defaults(
+        &mut req.user_input.working_dir,
+        &mut req.workspace_root,
+        workspace,
+    );
     if req.address_space.is_none() {
         req.address_space = address_space;
     }
@@ -693,7 +701,13 @@ async fn build_story_owner_prompt_request(
                 state
                     .services
                     .address_space_service
-                    .build_address_space(project, Some(story), workspace, SessionMountTarget::Story, agent_type)
+                    .build_address_space(
+                        project,
+                        Some(story),
+                        workspace,
+                        SessionMountTarget::Story,
+                        agent_type,
+                    )
                     .map_err(ApiError::BadRequest)?,
             )
         }
@@ -782,7 +796,13 @@ async fn build_project_owner_prompt_request(
             state
                 .services
                 .address_space_service
-                .build_address_space(project, None, workspace.as_ref(), SessionMountTarget::Project, effective_agent_type)
+                .build_address_space(
+                    project,
+                    None,
+                    workspace.as_ref(),
+                    SessionMountTarget::Project,
+                    effective_agent_type,
+                )
                 .map_err(ApiError::BadRequest)?,
         ),
     };

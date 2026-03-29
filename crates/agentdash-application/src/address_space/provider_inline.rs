@@ -95,9 +95,7 @@ impl MountProvider for InlineFsMountProvider {
                 let matched = if query.case_sensitive {
                     line.contains(&query.pattern)
                 } else {
-                    line
-                        .to_lowercase()
-                        .contains(&query.pattern.to_lowercase())
+                    line.to_lowercase().contains(&query.pattern.to_lowercase())
                 };
                 if matched {
                     matches.push(SearchMatch {

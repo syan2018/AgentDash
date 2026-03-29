@@ -167,7 +167,16 @@ pub async fn agent_loop(
         .await;
     }
     context.messages.extend(prompts);
-    run_loop(context, tool_instances, &mut new_messages, config, bridge, emit, &cancel).await
+    run_loop(
+        context,
+        tool_instances,
+        &mut new_messages,
+        config,
+        bridge,
+        emit,
+        &cancel,
+    )
+    .await
 }
 
 /// 从当前上下文继续 Agent Loop（不添加新 prompt）
@@ -197,7 +206,16 @@ pub async fn agent_loop_continue(
     let mut new_messages = Vec::new();
     emit_event(emit, AgentEvent::AgentStart).await;
     emit_event(emit, AgentEvent::TurnStart).await;
-    run_loop(context, tool_instances, &mut new_messages, config, bridge, emit, &cancel).await
+    run_loop(
+        context,
+        tool_instances,
+        &mut new_messages,
+        config,
+        bridge,
+        emit,
+        &cancel,
+    )
+    .await
 }
 
 // ─── 主循环 ─────────────────────────────────────────────────
@@ -262,8 +280,7 @@ async fn run_loop(
             }
 
             let assistant_message =
-                stream_assistant_response(context, config, bridge, emit, cancel)
-                    .await?;
+                stream_assistant_response(context, config, bridge, emit, cancel).await?;
             new_messages.push(assistant_message.clone());
 
             if assistant_message.is_error_or_aborted() {
@@ -1047,7 +1064,15 @@ async fn execute_tool_calls_sequential(
         )
         .await;
 
-        let preparation = prepare_tool_call(context, tool_instances, assistant_message, tc, config, cancel).await;
+        let preparation = prepare_tool_call(
+            context,
+            tool_instances,
+            assistant_message,
+            tc,
+            config,
+            cancel,
+        )
+        .await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
@@ -1138,7 +1163,15 @@ async fn execute_tool_calls_parallel(
         )
         .await;
 
-        let preparation = prepare_tool_call(context, tool_instances, assistant_message, tc, config, cancel).await;
+        let preparation = prepare_tool_call(
+            context,
+            tool_instances,
+            assistant_message,
+            tc,
+            config,
+            cancel,
+        )
+        .await;
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
@@ -1712,4 +1745,3 @@ fn poll_follow_up(config: &AgentLoopConfig) -> Vec<AgentMessage> {
         .map(|f| f())
         .unwrap_or_default()
 }
-

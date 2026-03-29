@@ -12,9 +12,7 @@ use agentdash_domain::{
 use uuid::Uuid;
 
 use super::path::normalize_mount_relative_path;
-use crate::runtime::{
-    MountCapability, AddressSpace, RuntimeFileEntry, Mount,
-};
+use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 
 pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
@@ -78,9 +76,7 @@ pub fn build_derived_address_space(
 }
 
 /// 为 Workspace 创建简易单 mount Address Space
-pub fn build_workspace_address_space(
-    workspace: &Workspace,
-) -> Result<AddressSpace, String> {
+pub fn build_workspace_address_space(workspace: &Workspace) -> Result<AddressSpace, String> {
     Ok(AddressSpace {
         mounts: vec![workspace_mount_from_policy(
             workspace,

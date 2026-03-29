@@ -169,10 +169,9 @@ impl MountProviderRegistryBuilder {
     ) -> Self {
         self.registry
             .register(Arc::new(super::provider_inline::InlineFsMountProvider));
-        self.registry
-            .register(Arc::new(super::provider_lifecycle::LifecycleMountProvider::new(
-                lifecycle_run_repo,
-            )));
+        self.registry.register(Arc::new(
+            super::provider_lifecycle::LifecycleMountProvider::new(lifecycle_run_repo),
+        ));
         self
     }
 

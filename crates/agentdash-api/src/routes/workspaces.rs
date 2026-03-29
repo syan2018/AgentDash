@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use agentdash_application::backend_transport::BackendTransport;
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
     WorkspaceResolutionPolicy, WorkspaceStatus,
 };
-use agentdash_application::backend_transport::BackendTransport;
 
 use crate::app_state::AppState;
 use crate::auth::{

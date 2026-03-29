@@ -88,7 +88,10 @@ fn merge_json(base: &serde_json::Value, over: &serde_json::Value) -> serde_json:
         (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
             let mut merged = b.clone();
             for (key, value) in o {
-                merged.insert(key.clone(), merge_json(b.get(key).unwrap_or(&serde_json::Value::Null), value));
+                merged.insert(
+                    key.clone(),
+                    merge_json(b.get(key).unwrap_or(&serde_json::Value::Null), value),
+                );
             }
             serde_json::Value::Object(merged)
         }

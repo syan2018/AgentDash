@@ -168,10 +168,12 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
         Ok(ProjectAgentLink {
             id: Uuid::parse_str(&row.id)
                 .map_err(|e| DomainError::InvalidConfig(format!("project_agent_links.id: {e}")))?,
-            project_id: Uuid::parse_str(&row.project_id)
-                .map_err(|e| DomainError::InvalidConfig(format!("project_agent_links.project_id: {e}")))?,
-            agent_id: Uuid::parse_str(&row.agent_id)
-                .map_err(|e| DomainError::InvalidConfig(format!("project_agent_links.agent_id: {e}")))?,
+            project_id: Uuid::parse_str(&row.project_id).map_err(|e| {
+                DomainError::InvalidConfig(format!("project_agent_links.project_id: {e}"))
+            })?,
+            agent_id: Uuid::parse_str(&row.agent_id).map_err(|e| {
+                DomainError::InvalidConfig(format!("project_agent_links.agent_id: {e}"))
+            })?,
             config_override: row
                 .config_override
                 .as_deref()
@@ -228,7 +230,9 @@ impl ProjectAgentLinkRepository for SqliteAgentRepository {
         project_id: Uuid,
         agent_id: Uuid,
     ) -> Result<Option<ProjectAgentLink>, DomainError> {
-        let sql = format!("SELECT {LINK_COLUMNS} FROM project_agent_links WHERE project_id = ? AND agent_id = ?");
+        let sql = format!(
+            "SELECT {LINK_COLUMNS} FROM project_agent_links WHERE project_id = ? AND agent_id = ?"
+        );
         let row: Option<LinkRow> = sqlx::query_as(&sql)
             .bind(project_id.to_string())
             .bind(agent_id.to_string())
@@ -238,8 +242,13 @@ impl ProjectAgentLinkRepository for SqliteAgentRepository {
         row.map(ProjectAgentLink::try_from).transpose()
     }
 
-    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<ProjectAgentLink>, DomainError> {
-        let sql = format!("SELECT {LINK_COLUMNS} FROM project_agent_links WHERE project_id = ? ORDER BY created_at");
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectAgentLink>, DomainError> {
+        let sql = format!(
+            "SELECT {LINK_COLUMNS} FROM project_agent_links WHERE project_id = ? ORDER BY created_at"
+        );
         let rows: Vec<LinkRow> = sqlx::query_as(&sql)
             .bind(project_id.to_string())
             .fetch_all(&self.pool)
@@ -249,7 +258,9 @@ impl ProjectAgentLinkRepository for SqliteAgentRepository {
     }
 
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<ProjectAgentLink>, DomainError> {
-        let sql = format!("SELECT {LINK_COLUMNS} FROM project_agent_links WHERE agent_id = ? ORDER BY created_at");
+        let sql = format!(
+            "SELECT {LINK_COLUMNS} FROM project_agent_links WHERE agent_id = ? ORDER BY created_at"
+        );
         let rows: Vec<LinkRow> = sqlx::query_as(&sql)
             .bind(agent_id.to_string())
             .fetch_all(&self.pool)

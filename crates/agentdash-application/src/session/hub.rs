@@ -7,15 +7,15 @@ use std::{
 use agent_client_protocol::{SessionNotification, SessionUpdate};
 use tokio::sync::{Mutex, broadcast};
 
-use agentdash_acp_meta::AgentDashSourceV1;
-use agentdash_spi::{AgentConnector, ConnectorError};
-use agentdash_spi::hooks::{
-    ExecutionHookProvider, SessionHookSnapshotQuery, SharedHookSessionRuntime,
-};
 use super::hook_runtime::HookSessionRuntime;
 use super::hub_support::*;
 use super::session_store::SessionStore;
 pub use super::types::*;
+use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_spi::hooks::{
+    ExecutionHookProvider, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+};
+use agentdash_spi::{AgentConnector, ConnectorError};
 
 #[derive(Clone)]
 pub struct SessionHub {
@@ -435,15 +435,15 @@ mod tests {
     use super::*;
     use agent_client_protocol::ContentBlock;
     use agentdash_spi::PromptPayload;
-    use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
+    use agentdash_spi::hooks::HookTrigger;
     use agentdash_spi::hooks::SessionHookRefreshQuery;
+    use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use futures::stream;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::{Mutex as TokioMutex, mpsc};
     use tokio_stream::wrappers::ReceiverStream;
-    use agentdash_spi::hooks::HookTrigger;
 
     fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
         PromptSessionRequest {
@@ -581,23 +581,63 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AgentConnector for SessionStartAwareConnector {
-            fn connector_id(&self) -> &'static str { "session-start-aware" }
-            fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
-            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
-            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> { Vec::new() }
-            async fn discover_options_stream(&self, _executor: &str, _variant: Option<&str>, _working_dir: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
+            fn connector_id(&self) -> &'static str {
+                "session-start-aware"
+            }
+            fn connector_type(&self) -> agentdash_spi::ConnectorType {
+                agentdash_spi::ConnectorType::LocalExecutor
+            }
+            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+                agentdash_spi::ConnectorCapabilities::default()
+            }
+            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+                Vec::new()
+            }
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
 
-            async fn prompt(&self, _session_id: &str, _follow_up_session_id: Option<&str>, _prompt: &PromptPayload, context: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                context: agentdash_spi::ExecutionContext,
+            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
                 let seen = context.hook_session.as_ref().is_some_and(|runtime| {
-                    runtime.trace().iter().any(|trace| matches!(&trace.trigger, HookTrigger::SessionStart))
+                    runtime
+                        .trace()
+                        .iter()
+                        .any(|trace| matches!(&trace.trigger, HookTrigger::SessionStart))
                 });
                 self.session_start_seen.lock().await.push(seen);
                 Ok(Box::pin(stream::empty()))
             }
 
-            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn approve_tool_call(&self, _session_id: &str, _tool_call_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn reject_tool_call(&self, _session_id: &str, _tool_call_id: &str, _reason: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
         }
 
         struct RecordingHookProvider {
@@ -606,13 +646,28 @@ mod tests {
 
         #[async_trait::async_trait]
         impl agentdash_spi::hooks::ExecutionHookProvider for RecordingHookProvider {
-            async fn load_session_snapshot(&self, query: SessionHookSnapshotQuery) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-                Ok(SessionHookSnapshot { session_id: query.session_id, ..SessionHookSnapshot::default() })
+            async fn load_session_snapshot(
+                &self,
+                query: SessionHookSnapshotQuery,
+            ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+                Ok(SessionHookSnapshot {
+                    session_id: query.session_id,
+                    ..SessionHookSnapshot::default()
+                })
             }
-            async fn refresh_session_snapshot(&self, query: SessionHookRefreshQuery) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-                Ok(SessionHookSnapshot { session_id: query.session_id, ..SessionHookSnapshot::default() })
+            async fn refresh_session_snapshot(
+                &self,
+                query: SessionHookRefreshQuery,
+            ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+                Ok(SessionHookSnapshot {
+                    session_id: query.session_id,
+                    ..SessionHookSnapshot::default()
+                })
             }
-            async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+            async fn evaluate_hook(
+                &self,
+                query: HookEvaluationQuery,
+            ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
                 self.queries.lock().await.push(query);
                 Ok(HookResolution::default())
             }
@@ -621,17 +676,29 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(SessionStartAwareConnector::default());
         let queries = Arc::new(TokioMutex::new(Vec::new()));
-        let hook_provider = Arc::new(RecordingHookProvider { queries: queries.clone() });
-        let hub = SessionHub::new_with_hooks(base.path().to_path_buf(), connector.clone(), Some(hook_provider));
+        let hook_provider = Arc::new(RecordingHookProvider {
+            queries: queries.clone(),
+        });
+        let hub = SessionHub::new_with_hooks(
+            base.path().to_path_buf(),
+            connector.clone(),
+            Some(hook_provider),
+        );
         let session = hub.create_session("test").await.expect("create session");
 
-        hub.start_prompt(&session.id, simple_prompt_request("hello")).await.expect("prompt should start");
+        hub.start_prompt(&session.id, simple_prompt_request("hello"))
+            .await
+            .expect("prompt should start");
 
         let seen = connector.session_start_seen.lock().await;
         assert_eq!(seen.as_slice(), &[true]);
 
         let queries = queries.lock().await;
-        assert!(queries.iter().any(|query| matches!(query.trigger, HookTrigger::SessionStart)));
+        assert!(
+            queries
+                .iter()
+                .any(|query| matches!(query.trigger, HookTrigger::SessionStart))
+        );
     }
 
     #[tokio::test]
@@ -643,18 +710,55 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AgentConnector for RecordingConnector {
-            fn connector_id(&self) -> &'static str { "recording" }
-            fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
-            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
-            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> { Vec::new() }
-            async fn discover_options_stream(&self, _executor: &str, _variant: Option<&str>, _working_dir: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
-            async fn prompt(&self, _session_id: &str, _follow_up_session_id: Option<&str>, _prompt: &PromptPayload, context: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            fn connector_id(&self) -> &'static str {
+                "recording"
+            }
+            fn connector_type(&self) -> agentdash_spi::ConnectorType {
+                agentdash_spi::ConnectorType::LocalExecutor
+            }
+            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+                agentdash_spi::ConnectorCapabilities::default()
+            }
+            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+                Vec::new()
+            }
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                context: agentdash_spi::ExecutionContext,
+            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
                 self.contexts.lock().await.push(context);
                 Ok(Box::pin(stream::empty()))
             }
-            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn approve_tool_call(&self, _session_id: &str, _tool_call_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn reject_tool_call(&self, _session_id: &str, _tool_call_id: &str, _reason: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
         }
 
         let base = tempfile::tempdir().expect("tempdir");
@@ -698,32 +802,79 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AgentConnector for RecordingConnector {
-            fn connector_id(&self) -> &'static str { "recording" }
-            fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
-            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
-            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-                vec![agentdash_spi::AgentInfo { id: "PI_AGENT".to_string(), name: "PI Agent".to_string(), variants: Vec::new(), available: true }]
+            fn connector_id(&self) -> &'static str {
+                "recording"
             }
-            async fn discover_options_stream(&self, _executor: &str, _variant: Option<&str>, _working_dir: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
-            async fn prompt(&self, _session_id: &str, _follow_up_session_id: Option<&str>, _prompt: &PromptPayload, context: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            fn connector_type(&self) -> agentdash_spi::ConnectorType {
+                agentdash_spi::ConnectorType::LocalExecutor
+            }
+            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+                agentdash_spi::ConnectorCapabilities::default()
+            }
+            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+                vec![agentdash_spi::AgentInfo {
+                    id: "PI_AGENT".to_string(),
+                    name: "PI Agent".to_string(),
+                    variants: Vec::new(),
+                    available: true,
+                }]
+            }
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                context: agentdash_spi::ExecutionContext,
+            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
                 self.contexts.lock().await.push(context);
                 Ok(Box::pin(stream::empty()))
             }
-            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn approve_tool_call(&self, _session_id: &str, _tool_call_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn reject_tool_call(&self, _session_id: &str, _tool_call_id: &str, _reason: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
         }
 
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(RecordingConnector::default());
         let hub = SessionHub::new(base.path().to_path_buf(), connector.clone());
 
-        let session = hub.create_session("reuse existing executor").await.expect("create session");
+        let session = hub
+            .create_session("reuse existing executor")
+            .await
+            .expect("create session");
         hub.update_session_meta(&session.id, |meta| {
             meta.executor_config = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
-        }).await.expect("update meta should succeed");
+        })
+        .await
+        .expect("update meta should succeed");
 
-        hub.start_prompt(&session.id, simple_prompt_request("hello")).await.expect("prompt should start");
+        hub.start_prompt(&session.id, simple_prompt_request("hello"))
+            .await
+            .expect("prompt should start");
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
         let contexts = connector.contexts.lock().await;
@@ -737,57 +888,154 @@ mod tests {
 
         #[async_trait::async_trait]
         impl AgentConnector for FailingConnector {
-            fn connector_id(&self) -> &'static str { "failing" }
-            fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
-            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
-            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> { Vec::new() }
-            async fn discover_options_stream(&self, _executor: &str, _variant: Option<&str>, _working_dir: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
-            async fn prompt(&self, _session_id: &str, _follow_up_session_id: Option<&str>, _prompt: &PromptPayload, _context: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-                Err(ConnectorError::Runtime("connector setup failed".to_string()))
+            fn connector_id(&self) -> &'static str {
+                "failing"
             }
-            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn approve_tool_call(&self, _session_id: &str, _tool_call_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn reject_tool_call(&self, _session_id: &str, _tool_call_id: &str, _reason: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
+            fn connector_type(&self) -> agentdash_spi::ConnectorType {
+                agentdash_spi::ConnectorType::LocalExecutor
+            }
+            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+                agentdash_spi::ConnectorCapabilities::default()
+            }
+            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+                Vec::new()
+            }
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                _context: agentdash_spi::ExecutionContext,
+            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+                Err(ConnectorError::Runtime(
+                    "connector setup failed".to_string(),
+                ))
+            }
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
         }
 
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionHub::new(base.path().to_path_buf(), Arc::new(FailingConnector));
         let session = hub.create_session("test").await.expect("create session");
 
-        let error = hub.start_prompt(&session.id, simple_prompt_request("hello")).await.expect_err("prompt should fail");
+        let error = hub
+            .start_prompt(&session.id, simple_prompt_request("hello"))
+            .await
+            .expect_err("prompt should fail");
         assert!(error.to_string().contains("connector setup failed"));
 
-        let history = hub.store.read_all(&session.id).await.expect("history should load");
-        let terminal = history.iter().filter_map(|notification| match &notification.update {
-            SessionUpdate::SessionInfoUpdate(info) => parse_turn_terminal_event(info.meta.as_ref()),
-            _ => None,
-        }).last().expect("terminal event should exist");
+        let history = hub
+            .store
+            .read_all(&session.id)
+            .await
+            .expect("history should load");
+        let terminal = history
+            .iter()
+            .filter_map(|notification| match &notification.update {
+                SessionUpdate::SessionInfoUpdate(info) => {
+                    parse_turn_terminal_event(info.meta.as_ref())
+                }
+                _ => None,
+            })
+            .last()
+            .expect("terminal event should exist");
         assert_eq!(terminal.1, TurnTerminalKind::Failed);
-        assert_eq!(terminal.2.as_deref(), Some("执行器运行错误: connector setup failed"));
+        assert_eq!(
+            terminal.2.as_deref(),
+            Some("执行器运行错误: connector setup failed")
+        );
     }
 
     #[tokio::test]
     async fn cancel_marks_running_turn_interrupted() {
         #[derive(Default)]
         struct CancelAwareConnector {
-            streams: Arc<TokioMutex<HashMap<String, mpsc::Sender<Result<SessionNotification, ConnectorError>>>>>,
+            streams: Arc<
+                TokioMutex<
+                    HashMap<String, mpsc::Sender<Result<SessionNotification, ConnectorError>>>,
+                >,
+            >,
         }
 
         #[async_trait::async_trait]
         impl AgentConnector for CancelAwareConnector {
-            fn connector_id(&self) -> &'static str { "cancel-aware" }
-            fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
-            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
-            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> { Vec::new() }
-            async fn discover_options_stream(&self, _executor: &str, _variant: Option<&str>, _working_dir: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
-            async fn prompt(&self, session_id: &str, _follow_up_session_id: Option<&str>, _prompt: &PromptPayload, _context: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            fn connector_id(&self) -> &'static str {
+                "cancel-aware"
+            }
+            fn connector_type(&self) -> agentdash_spi::ConnectorType {
+                agentdash_spi::ConnectorType::LocalExecutor
+            }
+            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+                agentdash_spi::ConnectorCapabilities::default()
+            }
+            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+                Vec::new()
+            }
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _variant: Option<&str>,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+            async fn prompt(
+                &self,
+                session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                _context: agentdash_spi::ExecutionContext,
+            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
                 let (tx, rx) = mpsc::channel(4);
                 self.streams.lock().await.insert(session_id.to_string(), tx);
                 Ok(Box::pin(ReceiverStream::new(rx)))
             }
-            async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> { self.streams.lock().await.remove(session_id); Ok(()) }
-            async fn approve_tool_call(&self, _session_id: &str, _tool_call_id: &str) -> Result<(), ConnectorError> { Ok(()) }
-            async fn reject_tool_call(&self, _session_id: &str, _tool_call_id: &str, _reason: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
+            async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
+                self.streams.lock().await.remove(session_id);
+                Ok(())
+            }
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
         }
 
         let base = tempfile::tempdir().expect("tempdir");
@@ -795,18 +1043,42 @@ mod tests {
         let hub = SessionHub::new(base.path().to_path_buf(), connector);
         let session = hub.create_session("test").await.expect("create session");
 
-        let turn_id = hub.start_prompt(&session.id, simple_prompt_request("hello")).await.expect("prompt should start");
-        hub.cancel(&session.id).await.expect("cancel should succeed");
+        let turn_id = hub
+            .start_prompt(&session.id, simple_prompt_request("hello"))
+            .await
+            .expect("prompt should start");
+        hub.cancel(&session.id)
+            .await
+            .expect("cancel should succeed");
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 
-        let state = hub.inspect_session_execution_state(&session.id).await.expect("state should load");
-        assert_eq!(state, SessionExecutionState::Interrupted { turn_id: Some(turn_id.clone()), message: Some("执行已取消".to_string()) });
+        let state = hub
+            .inspect_session_execution_state(&session.id)
+            .await
+            .expect("state should load");
+        assert_eq!(
+            state,
+            SessionExecutionState::Interrupted {
+                turn_id: Some(turn_id.clone()),
+                message: Some("执行已取消".to_string())
+            }
+        );
 
-        let history = hub.store.read_all(&session.id).await.expect("history should load");
-        let terminal = history.iter().filter_map(|notification| match &notification.update {
-            SessionUpdate::SessionInfoUpdate(info) => parse_turn_terminal_event(info.meta.as_ref()),
-            _ => None,
-        }).last().expect("terminal event should exist");
+        let history = hub
+            .store
+            .read_all(&session.id)
+            .await
+            .expect("history should load");
+        let terminal = history
+            .iter()
+            .filter_map(|notification| match &notification.update {
+                SessionUpdate::SessionInfoUpdate(info) => {
+                    parse_turn_terminal_event(info.meta.as_ref())
+                }
+                _ => None,
+            })
+            .last()
+            .expect("terminal event should exist");
         assert_eq!(terminal.0, turn_id);
         assert_eq!(terminal.1, TurnTerminalKind::Interrupted);
         assert_eq!(terminal.2.as_deref(), Some("执行已取消"));

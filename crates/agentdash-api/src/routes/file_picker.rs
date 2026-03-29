@@ -12,10 +12,10 @@ use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::address_space::{ListOptions, ResourceRef};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_workspace_and_project_with_permission};
 use crate::rpc::ApiError;
+use agentdash_application::address_space::{ListOptions, ResourceRef};
 
 pub(crate) const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
 pub(crate) const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB

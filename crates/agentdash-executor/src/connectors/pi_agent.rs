@@ -26,16 +26,16 @@ use agentdash_agent::{
 };
 use agentdash_domain::settings::SettingsRepository;
 
-use agentdash_spi::{
-    AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, Mount, MountCapability, AgentInfo, PromptPayload,
-};
-use agentdash_spi::connector::RuntimeToolProvider;
 use crate::connectors::pi_agent_mcp::discover_mcp_tools;
 use crate::connectors::pi_agent_provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries,
 };
 use crate::hook_events::build_hook_trace_notification;
+use agentdash_spi::connector::RuntimeToolProvider;
+use agentdash_spi::{
+    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+    ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload,
+};
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -308,7 +308,9 @@ fn describe_mount(mount: &Mount) -> String {
     )
 }
 
-fn build_hook_runtime_sections(hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess) -> Vec<String> {
+fn build_hook_runtime_sections(
+    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+) -> Vec<String> {
     let mut sections = vec![
         "当前会话启用了 Hook Runtime。active workflow、流程约束、stop gate 与 pending action 等动态治理信息，会在每次 LLM 调用边界由 runtime 注入；这里不再重复展开它们的静态副本。".to_string(),
     ];
@@ -650,8 +652,7 @@ async fn emit_pending_hook_trace_notifications(
             Some(turn_id),
             source.clone(),
             &entry,
-        )
-            && tx.send(Ok(notification)).await.is_err()
+        ) && tx.send(Ok(notification)).await.is_err()
         {
             return;
         }

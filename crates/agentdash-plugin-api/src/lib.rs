@@ -24,9 +24,9 @@ pub mod external;
 pub mod plugin;
 
 // 复用已有 trait，不重新定义
-pub use agentdash_spi::AgentConnector;
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_injection::{AddressSpaceDiscoveryProvider, SourceResolver};
+pub use agentdash_spi::AgentConnector;
 
 pub use auth::{AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest};
 pub use external::{

@@ -25,7 +25,6 @@ use crate::{
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
-use agentdash_executor::is_native_agent;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
 #[derive(Debug, Serialize)]
@@ -135,7 +134,7 @@ pub(crate) async fn build_project_session_context_response(
     let resolved_config = connector_config.clone();
     let use_address_space = connector_config
         .as_ref()
-        .is_some_and(|c| is_native_agent(c));
+        .is_some_and(|c| c.is_cloud_native());
     let address_space = if use_address_space {
         state
             .services

@@ -33,7 +33,6 @@ use crate::{
         runtime_mcp_servers_to_acp,
     },
 };
-use agentdash_executor::is_native_agent;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct StartTaskRequest {
@@ -257,7 +256,7 @@ pub(crate) async fn build_task_session_context_response(
     let effective_agent_type = resolved_config.as_ref().map(|c| c.executor.as_str());
     let use_address_space = resolved_config
         .as_ref()
-        .is_some_and(|c| is_native_agent(c));
+        .is_some_and(|c| c.is_cloud_native());
     let address_space = if use_address_space {
         state
             .services

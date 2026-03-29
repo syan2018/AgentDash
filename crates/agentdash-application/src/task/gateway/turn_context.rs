@@ -45,7 +45,6 @@ pub async fn prepare_task_turn_context(
     additional_prompt: Option<&str>,
     connector_config: Option<&AgentConfig>,
     mcp_base_url: Option<&str>,
-    is_native_agent: fn(&AgentConfig) -> bool,
 ) -> Result<PreparedTurnContext, TaskExecutionError> {
     let (story, project, workspace) = load_related_context(repos, task)
         .await
@@ -103,7 +102,7 @@ pub async fn prepare_task_turn_context(
     .map_err(map_internal_error)?;
     let use_cloud_native_agent = resolved_config
         .as_ref()
-        .is_some_and(|config| is_native_agent(config));
+        .is_some_and(|config| config.is_cloud_native());
 
     // address space building
     let address_space = if use_cloud_native_agent {

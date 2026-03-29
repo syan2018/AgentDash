@@ -1,22 +1,16 @@
-/// Address Space 访问层 — Relay 传输实现与 Runtime 工具
+/// Address Space 访问层 — API crate 便捷 re-export
 ///
-/// 值类型、路径工具、Mount 推导逻辑和全部 tool 实现已迁移到 `agentdash_application`。
+/// 所有核心实现位于 `agentdash_application::address_space`。
+/// 此模块仅为 API crate 内部使用提供便捷 re-export。
 pub use agentdash_application::address_space::*;
 pub use agentdash_connector_contract::{AddressSpace, MountCapability};
 
-pub mod inline_persistence;
-pub mod relay_service;
-pub mod tools_fs;
-pub mod tools_hook;
-pub mod tools_workflow;
-pub mod tools_companion;
-pub mod runtime_provider;
-
-pub use inline_persistence::{
+pub use agentdash_application::address_space::inline_persistence::{
     DbInlineContentPersister, InlineContentOverlay, InlineContentPersister,
 };
-pub use relay_service::RelayAddressSpaceService;
-pub use runtime_provider::{RelayRuntimeToolProvider, SharedSessionHubHandle};
+pub use agentdash_application::address_space::tools::provider::{
+    RelayRuntimeToolProvider, SharedSessionHubHandle,
+};
 
 #[cfg(test)]
 mod tests {

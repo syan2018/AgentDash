@@ -37,6 +37,10 @@ pub struct AgentConfig {
     pub permission_policy: Option<String>,
 }
 
+/// 已注册的云端原生 Agent executor ID 列表。
+/// 这些 Agent 在云端进程内运行，不通过本机后端中继。
+const CLOUD_NATIVE_EXECUTORS: &[&str] = &["PI_AGENT"];
+
 impl AgentConfig {
     pub fn new(executor: impl Into<String>) -> Self {
         Self {
@@ -48,6 +52,13 @@ impl AgentConfig {
             thinking_level: None,
             permission_policy: None,
         }
+    }
+
+    /// 判断此配置是否指向云端原生 Agent（在云端进程内执行，不经由本机后端中继）。
+    pub fn is_cloud_native(&self) -> bool {
+        CLOUD_NATIVE_EXECUTORS
+            .iter()
+            .any(|id| self.executor.eq_ignore_ascii_case(id))
     }
 }
 

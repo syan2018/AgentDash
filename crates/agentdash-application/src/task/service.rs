@@ -67,15 +67,12 @@ pub struct TaskLifecycleService {
     pub repos: RepositorySet,
     pub hub: SessionHub,
     pub address_space_service: Arc<RelayAddressSpaceService>,
-    pub contributor_registry: ContextContributorRegistry,
+    pub contributor_registry: Arc<ContextContributorRegistry>,
     pub mcp_base_url: Option<String>,
     pub backend_availability: Arc<dyn BackendAvailability>,
     pub dispatcher: Arc<dyn TurnDispatcher>,
     pub restart_tracker: Arc<RestartTracker>,
     pub lock_map: Arc<TaskLockMap>,
-    /// 判断 AgentConfig 是否指向云端原生 Agent（不属于 vibe-kanban 执行器）。
-    /// 由 Host/API 层注入，避免 application 层直接依赖 executor 层。
-    pub is_native_agent_fn: fn(&AgentConfig) -> bool,
 }
 
 impl TaskLifecycleService {
@@ -448,7 +445,6 @@ impl TaskLifecycleService {
             additional_prompt,
             executor_config,
             self.mcp_base_url.as_deref(),
-            self.is_native_agent_fn,
         )
         .await?;
 

@@ -15,7 +15,7 @@ use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
 };
 use crate::relay::registry::BackendRegistry;
-use crate::task_agent_context::ContextContributorRegistry;
+use agentdash_application::context::ContextContributorRegistry;
 use agentdash_application::address_space::{MountProviderRegistry, MountProviderRegistryBuilder};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::task::service::TaskLifecycleService;
@@ -52,7 +52,7 @@ pub struct ServiceSet {
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
     /// 上下文贡献者注册表 — 持有常驻贡献者（Core/Binding/DeclaredSources/Instruction 等）
-    pub contributor_registry: ContextContributorRegistry,
+    pub contributor_registry: Arc<ContextContributorRegistry>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub address_space_registry: AddressSpaceDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
@@ -264,6 +264,7 @@ impl AppState {
         }
 
         let deferred_dispatcher = crate::bootstrap::turn_dispatcher::DeferredTurnDispatcher::new();
+        let contributor_registry = Arc::new(ContextContributorRegistry::with_builtins());
 
         let repos = RepositorySet {
             project_repo,
@@ -286,13 +287,12 @@ impl AppState {
             repos: repos.clone(),
             hub: session_hub.clone(),
             address_space_service: address_space_service.clone(),
-            contributor_registry: ContextContributorRegistry::with_builtins(),
+            contributor_registry: contributor_registry.clone(),
             mcp_base_url: mcp_base_url.clone(),
             backend_availability: backend_registry.clone(),
             dispatcher: deferred_dispatcher.clone(),
             restart_tracker: restart_tracker.clone(),
             lock_map: lock_map.clone(),
-            is_native_agent_fn: agentdash_executor::is_native_agent,
         });
 
         let state = Self {
@@ -302,7 +302,7 @@ impl AppState {
                 connector,
                 address_space_service,
                 backend_registry,
-                contributor_registry: ContextContributorRegistry::with_builtins(),
+                contributor_registry: contributor_registry.clone(),
                 address_space_registry,
                 mount_provider_registry,
                 task_lifecycle_service,

@@ -13,13 +13,11 @@ pub use connector::{
 };
 pub use hooks::{
     ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus,
-    HookConstraint, HookContextFragment, HookContributionSet, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookPolicyView, HookResolution, HookSessionRuntimeAccess,
-    HookSessionRuntimeSnapshot, HookSourceLayer, HookSourceRef, HookStepAdvanceRequest,
-    HookTraceEntry, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
-    SharedHookSessionRuntime,
+    HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookOwnerSummary,
+    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
+    HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry,
+    HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime,
 };
 pub use lifecycle::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,

@@ -1,15 +1,15 @@
 use crate::workflow::{WorkflowCompletionSignalSet, evaluate_step_completion};
 use agentdash_domain::workflow::{WorkflowCheckKind, WorkflowConstraintKind};
 use agentdash_spi::{
-    HookApprovalRequest, HookCompletionStatus, HookConstraint, HookContextFragment,
-    HookDiagnosticEntry, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookSnapshot,
+    HookApprovalRequest, HookCompletionStatus, HookDiagnosticEntry, HookEvaluationQuery,
+    HookInjection, HookResolution, HookTrigger, SessionHookSnapshot,
 };
 
 use super::snapshot_helpers::*;
 use super::{
     SubagentResult, build_subagent_result_context, extract_payload_str,
-    extract_payload_string_list, extract_tool_arg, global_builtin_sources,
-    is_report_workflow_artifact_tool, shell_exec_rewritten_args, tool_call_failed,
+    extract_payload_string_list, extract_tool_arg, is_report_workflow_artifact_tool,
+    shell_exec_rewritten_args, tool_call_failed,
 };
 
 pub(crate) struct HookEvaluationContext<'a> {
@@ -133,13 +133,9 @@ pub(crate) fn rule_apply_shell_exec_absolute_cwd_rewrite(
     resolution.rewritten_tool_input = Some(rewritten_args);
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_tool_shell_exec_cwd_rewritten".to_string(),
-        summary: "Hook 已把 shell_exec 的绝对 cwd 改写为相对 workspace root 的路径".to_string(),
-        detail: Some(format!("rewritten_cwd={rewritten_cwd}")),
-        source_summary: vec![
-            "tool:shell_exec".to_string(),
-            "hook_rewrite:absolute_cwd".to_string(),
-        ],
-        source_refs: global_builtin_sources(),
+        message: format!(
+            "Hook 已把 shell_exec 的绝对 cwd 改写为相对 workspace root 的路径 (rewritten_cwd={rewritten_cwd})"
+        ),
     });
 }
 
@@ -176,13 +172,12 @@ pub(crate) fn rule_apply_implement_record_artifact_block(
         "当前 workflow contract 禁止在此 step 上报该类记录产物，请先满足当前 step 的收口要求。"
             .to_string(),
     );
+    let source = active_workflow_source_from_snapshot(ctx.snapshot);
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_tool_record_artifact_blocked".to_string(),
-        summary: "Hook 根据 workflow contract 阻止了当前记录产物上报".to_string(),
-        detail: extract_tool_arg(ctx.query.payload.as_ref(), "artifact_type")
-            .map(|artifact_type| format!("blocked_artifact_type={artifact_type}")),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        message: format!(
+            "Hook 根据 workflow contract 阻止了当前记录产物上报 (source={source})"
+        ),
     });
 }
 
@@ -201,13 +196,7 @@ pub(crate) fn rule_apply_supervised_tool_approval(
     });
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_tool_requires_approval".to_string(),
-        summary: format!("Hook 要求在执行 `{tool_name}` 前进入人工审批"),
-        detail: Some("permission_policy=SUPERVISED".to_string()),
-        source_summary: vec![
-            "global_builtin:supervised_tool_approval".to_string(),
-            format!("tool:{tool_name}"),
-        ],
-        source_refs: global_builtin_sources(),
+        message: format!("Hook 要求在执行 `{tool_name}` 前进入人工审批"),
     });
 }
 
@@ -226,10 +215,7 @@ pub(crate) fn rule_apply_after_tool_refresh(
     resolution.refresh_snapshot = true;
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "after_tool_runtime_refresh".to_string(),
-        summary: format!("工具 `{tool_name}` 可能改变 workflow/hook 观察面，已请求刷新 snapshot"),
-        detail: None,
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        message: format!("工具 `{tool_name}` 可能改变 workflow/hook 观察面，已请求刷新 snapshot"),
     });
 }
 
@@ -242,15 +228,12 @@ pub(crate) fn rule_matches_session_ended_notice(ctx: &HookEvaluationContext<'_>)
 }
 
 pub(crate) fn rule_apply_session_ended_notice(
-    ctx: &HookEvaluationContext<'_>,
+    _ctx: &HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
 ) {
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_stop_session_ended".to_string(),
-        summary: "当前 workflow step 会在 session 进入终态后自然推进".to_string(),
-        detail: None,
-        source_summary: vec!["workflow_transition:session_terminal_matches".to_string()],
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        message: "当前 workflow step 会在 session 进入终态后自然推进".to_string(),
     });
     resolution.completion.get_or_insert(HookCompletionStatus {
         mode: "session_terminal_matches".to_string(),
@@ -283,9 +266,9 @@ pub(crate) fn rule_apply_checklist_pending_gate(
     ctx: &HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
 ) {
-    resolution.context_fragments.push(HookContextFragment {
+    let source = active_workflow_source_from_snapshot(ctx.snapshot);
+    resolution.injections.push(HookInjection {
         slot: "workflow".to_string(),
-        label: "before_stop_check_gate".to_string(),
         content: [
             "## Session Stop Gate",
             "- 当前 workflow step 通过 contract checks 自动推进。",
@@ -294,26 +277,21 @@ pub(crate) fn rule_apply_checklist_pending_gate(
             "- 只要 checks 尚未满足，就不要直接结束本轮 session。",
         ]
         .join("\n"),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        source: source.clone(),
     });
-    resolution.constraints.push(HookConstraint {
-        key: "before_stop:workflow_checks_pending".to_string(),
-        description:
+    resolution.injections.push(HookInjection {
+        slot: "constraint".to_string(),
+        content:
             "当前 step 的 contract checks 还未满足；请先补齐验证结论、必要证据与状态信号，再结束 session。"
                 .to_string(),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        source: source.clone(),
     });
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_stop_workflow_checks_pending".to_string(),
-        summary: "当前 workflow step 尚未满足 contract checks，Hook 要求继续 loop".to_string(),
-        detail: Some(format!(
-            "checklist_evidence_present={}",
+        message: format!(
+            "当前 workflow step 尚未满足 contract checks，Hook 要求继续 loop (checklist_evidence_present={})",
             checklist_evidence_present(ctx.snapshot),
-        )),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        ),
     });
 }
 
@@ -322,15 +300,12 @@ pub(crate) fn rule_matches_manual_notice(ctx: &HookEvaluationContext<'_>) -> boo
 }
 
 pub(crate) fn rule_apply_manual_notice(
-    ctx: &HookEvaluationContext<'_>,
+    _ctx: &HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
 ) {
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_stop_manual_phase".to_string(),
-        summary: "当前 workflow step 使用 manual transition，不会由 Hook 自动推进 step".to_string(),
-        detail: None,
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        message: "当前 workflow step 使用 manual transition，不会由 Hook 自动推进 step".to_string(),
     });
     resolution.completion.get_or_insert(HookCompletionStatus {
         mode: "manual".to_string(),
@@ -353,19 +328,13 @@ pub(crate) fn rule_apply_subagent_dispatch(
 ) {
     let subagent_type = ctx.query.subagent_type.as_deref().unwrap_or("companion");
     resolution
-        .context_fragments
-        .extend(ctx.snapshot.context_fragments.clone());
-    resolution
-        .constraints
-        .extend(ctx.snapshot.constraints.clone());
+        .injections
+        .extend(ctx.snapshot.injections.clone());
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "before_subagent_dispatch_prepared".to_string(),
-        summary: format!(
+        message: format!(
             "已为 `{subagent_type}` 准备 companion/subagent dispatch 上下文与约束继承"
         ),
-        detail: workflow_step_key(ctx.snapshot).map(|step_key| format!("step={step_key}")),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
     });
 }
 
@@ -396,14 +365,11 @@ pub(crate) fn rule_apply_subagent_dispatch_result(
 
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "after_subagent_dispatch_recorded".to_string(),
-        summary: format!("已记录 `{subagent_type}` 的 subagent dispatch 结果"),
-        detail: Some(format!(
-            "companion_session_id={}, turn_id={}",
+        message: format!(
+            "已记录 `{subagent_type}` 的 subagent dispatch 结果 (companion_session_id={}, turn_id={})",
             companion_session_id.unwrap_or("-"),
             turn_id.unwrap_or("-")
-        )),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        ),
     });
 }
 
@@ -432,26 +398,20 @@ pub(crate) fn rule_apply_subagent_result(
     let follow_ups = extract_payload_string_list(ctx.query.payload.as_ref(), "follow_ups");
     let artifact_refs = extract_payload_string_list(ctx.query.payload.as_ref(), "artifact_refs");
 
+    let source = active_workflow_source_from_snapshot(ctx.snapshot);
+
     resolution.diagnostics.push(HookDiagnosticEntry {
         code: "subagent_result_recorded".to_string(),
-        summary: format!("已收到 `{subagent_type}` 的回流结果：{summary}"),
-        detail: Some(format!(
-            "status={status}, adoption_mode={adoption_mode}, companion_session_id={companion_session_id}, dispatch_id={dispatch_id}"
-        )),
-        source_summary: active_workflow_source_summary(ctx.snapshot),
-        source_refs: active_workflow_source_refs(ctx.snapshot),
+        message: format!(
+            "已收到 `{subagent_type}` 的回流结果：{summary} (status={status}, adoption_mode={adoption_mode}, companion_session_id={companion_session_id}, dispatch_id={dispatch_id})"
+        ),
     });
 
     match adoption_mode {
         "follow_up_required" | "blocking_review" => {
             let is_blocking = adoption_mode == "blocking_review";
-            resolution.context_fragments.push(HookContextFragment {
+            resolution.injections.push(HookInjection {
                 slot: "workflow".to_string(),
-                label: if is_blocking {
-                    "subagent_blocking_review".to_string()
-                } else {
-                    "subagent_follow_up_required".to_string()
-                },
                 content: build_subagent_result_context(&SubagentResult {
                     subagent_type,
                     summary,
@@ -463,16 +423,11 @@ pub(crate) fn rule_apply_subagent_result(
                     artifact_refs: &artifact_refs,
                     is_blocking,
                 }),
-                source_summary: active_workflow_source_summary(ctx.snapshot),
-                source_refs: active_workflow_source_refs(ctx.snapshot),
+                source: source.clone(),
             });
-            resolution.constraints.push(HookConstraint {
-                key: if is_blocking {
-                    "subagent_result:blocking_review".to_string()
-                } else {
-                    "subagent_result:follow_up_required".to_string()
-                },
-                description: if is_blocking {
+            resolution.injections.push(HookInjection {
+                slot: "constraint".to_string(),
+                content: if is_blocking {
                     format!(
                         "当前 `{subagent_type}` 回流被标记为 blocking_review；主 session 必须先明确采纳/拒绝/拆解该结果，再继续其它推进或自然结束。"
                     )
@@ -481,8 +436,7 @@ pub(crate) fn rule_apply_subagent_result(
                         "当前 `{subagent_type}` 回流要求 follow-up；主 session 需要先吸收结果并落实下一步动作，再继续推进。"
                     )
                 },
-                source_summary: active_workflow_source_summary(ctx.snapshot),
-                source_refs: active_workflow_source_refs(ctx.snapshot),
+                source: source.clone(),
             });
             resolution.diagnostics.push(HookDiagnosticEntry {
                 code: if is_blocking {
@@ -490,20 +444,12 @@ pub(crate) fn rule_apply_subagent_result(
                 } else {
                     "subagent_result_follow_up_enqueued".to_string()
                 },
-                summary: if is_blocking {
+                message: if is_blocking {
                     "已把 companion 回流升级为阻塞式 review 待办，要求主 session 优先处理"
                         .to_string()
                 } else {
                     "已把 companion 回流升级为 follow-up 待办，要求主 session 继续处理".to_string()
                 },
-                detail: Some(format!(
-                    "findings={}, follow_ups={}, artifact_refs={}",
-                    findings.len(),
-                    follow_ups.len(),
-                    artifact_refs.len()
-                )),
-                source_summary: active_workflow_source_summary(ctx.snapshot),
-                source_refs: active_workflow_source_refs(ctx.snapshot),
             });
         }
         _ => {}
@@ -513,12 +459,9 @@ pub(crate) fn rule_apply_subagent_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     use crate::workflow::{WorkflowCompletionSignalSet, evaluate_step_completion};
-    use agentdash_spi::{
-        HookOwnerSummary, HookSourceLayer, HookSourceRef, HookTrigger, SessionHookSnapshot,
-    };
+    use agentdash_spi::{HookInjection, HookOwnerSummary, HookTrigger, SessionHookSnapshot};
 
     use super::super::test_fixtures::*;
 
@@ -634,8 +577,7 @@ mod tests {
             &mut resolution,
         );
 
-        assert!(!resolution.context_fragments.is_empty());
-        assert!(!resolution.constraints.is_empty());
+        assert!(!resolution.injections.is_empty());
         assert!(
             resolution
                 .matched_rule_keys
@@ -672,8 +614,7 @@ mod tests {
             &mut resolution,
         );
 
-        assert!(!resolution.context_fragments.is_empty());
-        assert!(!resolution.constraints.is_empty());
+        assert!(!resolution.injections.is_empty());
         assert!(
             resolution
                 .matched_rule_keys
@@ -704,8 +645,7 @@ mod tests {
             &mut resolution,
         );
 
-        assert!(resolution.context_fragments.is_empty());
-        assert!(resolution.constraints.is_empty());
+        assert!(resolution.injections.is_empty());
         assert!(resolution.matched_rule_keys.is_empty());
     }
 
@@ -738,8 +678,7 @@ mod tests {
             &mut resolution,
         );
 
-        assert!(resolution.context_fragments.is_empty());
-        assert!(resolution.constraints.is_empty());
+        assert!(resolution.injections.is_empty());
         assert!(resolution.matched_rule_keys.is_empty());
     }
 
@@ -806,46 +745,30 @@ mod tests {
     }
 
     #[test]
-    fn before_subagent_dispatch_inherits_runtime_context_and_constraints() {
+    fn before_subagent_dispatch_inherits_runtime_context() {
         let snapshot = SessionHookSnapshot {
             session_id: "sess-test".to_string(),
-            sources: vec![HookSourceRef {
-                layer: HookSourceLayer::Workflow,
-                key: "trellis_dev_task:check".to_string(),
-                label: "Workflow / Trellis Dev Workflow / Check".to_string(),
-                priority: 300,
-            }],
+            sources: vec!["workflow:trellis_dev_task:check".to_string()],
             owners: vec![HookOwnerSummary {
                 owner_type: "story".to_string(),
-                owner_id: Uuid::new_v4().to_string(),
+                owner_id: uuid::Uuid::new_v4().to_string(),
                 label: Some("Story A".to_string()),
                 project_id: None,
                 story_id: None,
                 task_id: None,
             }],
-            context_fragments: vec![HookContextFragment {
-                slot: "workflow".to_string(),
-                label: "active_workflow_step".to_string(),
-                content: "step info".to_string(),
-                source_summary: vec!["workflow:trellis_dev_task".to_string()],
-                source_refs: vec![HookSourceRef {
-                    layer: HookSourceLayer::Workflow,
-                    key: "trellis_dev_task:check".to_string(),
-                    label: "Workflow / Trellis Dev Workflow / Check".to_string(),
-                    priority: 300,
-                }],
-            }],
-            constraints: vec![HookConstraint {
-                key: "workflow:check".to_string(),
-                description: "先验证再结束".to_string(),
-                source_summary: vec!["workflow_step:check".to_string()],
-                source_refs: vec![HookSourceRef {
-                    layer: HookSourceLayer::Workflow,
-                    key: "trellis_dev_task:check".to_string(),
-                    label: "Workflow / Trellis Dev Workflow / Check".to_string(),
-                    priority: 300,
-                }],
-            }],
+            injections: vec![
+                HookInjection {
+                    slot: "workflow".to_string(),
+                    content: "step info".to_string(),
+                    source: "workflow:trellis_dev_task:check".to_string(),
+                },
+                HookInjection {
+                    slot: "constraint".to_string(),
+                    content: "先验证再结束".to_string(),
+                    source: "workflow:trellis_dev_task:check".to_string(),
+                },
+            ],
             ..SessionHookSnapshot::default()
         };
         let mut resolution = HookResolution::default();
@@ -870,8 +793,7 @@ mod tests {
             &mut resolution,
         );
 
-        assert_eq!(resolution.context_fragments.len(), 1);
-        assert_eq!(resolution.constraints.len(), 1);
+        assert_eq!(resolution.injections.len(), 2);
         assert!(
             resolution
                 .matched_rule_keys
@@ -918,20 +840,12 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|entry| entry.code == "subagent_result_recorded"
-                    && entry.summary.contains("子 agent 已完成 review"))
+                    && entry.message.contains("子 agent 已完成 review"))
         );
-        assert_eq!(resolution.context_fragments.len(), 1);
-        assert_eq!(resolution.constraints.len(), 1);
-        assert!(
-            resolution.context_fragments[0]
-                .label
-                .contains("subagent_blocking_review")
-        );
-        assert!(
-            resolution.constraints[0]
-                .key
-                .contains("subagent_result:blocking_review")
-        );
+        // Two injections: one workflow context, one constraint
+        assert_eq!(resolution.injections.len(), 2);
+        assert!(resolution.injections[0].slot == "workflow");
+        assert!(resolution.injections[1].slot == "constraint");
         assert!(
             resolution
                 .diagnostics

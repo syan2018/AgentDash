@@ -9,8 +9,8 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
-    ActiveWorkflowMeta, HookConstraint, HookContributionSet, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookResolution, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
+    ActiveWorkflowMeta, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection,
+    HookResolution, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
@@ -25,12 +25,11 @@ use super::completion::{
 use super::owner_resolver::SessionOwnerResolver;
 use super::rules::*;
 use super::snapshot_helpers::*;
-use super::workflow_contribution::{build_workflow_policies, build_workflow_step_fragments};
+use super::workflow_contribution::build_workflow_step_fragments;
 use super::workflow_snapshot::WorkflowSnapshotBuilder;
 use super::{
-    dedupe_tags, global_builtin_hook_contribution, lifecycle_step_advance_label, map_hook_error,
-    merge_hook_contribution, session_source_ref, source_summary_from_refs, workflow_scope_key,
-    workflow_source_refs,
+    dedupe_tags, global_builtin_source, lifecycle_step_advance_label, map_hook_error,
+    workflow_scope_key, workflow_source,
 };
 
 /// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder，
@@ -80,9 +79,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             owners: Vec::new(),
             sources: Vec::new(),
             tags: query.tags,
-            context_fragments: Vec::new(),
-            constraints: Vec::new(),
-            policies: Vec::new(),
+            injections: Vec::new(),
             diagnostics: Vec::new(),
             metadata: Some(SessionSnapshotMetadata {
                 turn_id: query.turn_id,
@@ -94,16 +91,22 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 ..Default::default()
             }),
         };
-        merge_hook_contribution(&mut snapshot, global_builtin_hook_contribution());
+
+        // Add global builtin source and tags
+        snapshot
+            .sources
+            .push(global_builtin_source().to_string());
+        snapshot.tags.extend([
+            "hook_source:global_builtin".to_string(),
+            "hook_builtin:runtime_trace".to_string(),
+            "hook_builtin:workspace_path_safety".to_string(),
+            "hook_builtin:supervised_tool_approval".to_string(),
+        ]);
 
         if bindings.is_empty() {
-            let source_refs = vec![session_source_ref(&snapshot.session_id)];
             snapshot.diagnostics.push(HookDiagnosticEntry {
                 code: "session_binding_missing".to_string(),
-                summary: "当前 session 没有关联的业务 owner，Hook snapshot 为空基线".to_string(),
-                detail: None,
-                source_summary: source_summary_from_refs(&source_refs),
-                source_refs,
+                message: "当前 session 没有关联的业务 owner，Hook snapshot 为空基线".to_string(),
             });
         }
 
@@ -128,25 +131,15 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 .resolve_active_workflow(&owner)
                 .await?
             {
-                let source_refs = workflow_source_refs(&workflow);
-                let mut source_summary = source_summary_from_refs(&source_refs);
-                source_summary.push(format!("workflow_run:{}", workflow.run.id));
+                let wf_source = workflow_source(&workflow);
                 let checklist_evidence = active_workflow_checklist_evidence_summary(&workflow);
 
                 snapshot.diagnostics.push(HookDiagnosticEntry {
                     code: "active_workflow_resolved".to_string(),
-                    summary: format!(
+                    message: format!(
                         "命中 active lifecycle step：{} / {}",
                         workflow.lifecycle.key, workflow.active_step.key
                     ),
-                    detail: Some(format!(
-                        "workflow_key={:?}, step={}, status={}",
-                        workflow.active_step.workflow_key,
-                        workflow.active_step.key,
-                        workflow_run_status_tag(workflow.run.status)
-                    )),
-                    source_summary: source_summary.clone(),
-                    source_refs: source_refs.clone(),
                 });
 
                 if let Some(meta) = snapshot.metadata.as_mut() {
@@ -208,42 +201,35 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     });
                 }
 
-                merge_hook_contribution(
-                    &mut snapshot,
-                    HookContributionSet {
-                        sources: source_refs.clone(),
-                        tags: vec![
-                            format!("workflow:{}", workflow_scope_key(&workflow)),
-                            format!("workflow_step:{}", workflow.active_step.key),
-                            format!(
-                                "workflow_status:{}",
-                                workflow_run_status_tag(workflow.run.status)
-                            ),
-                        ],
-                        context_fragments: build_workflow_step_fragments(
-                            &workflow,
-                            &source_summary,
-                            &source_refs,
-                        ),
-                        constraints: workflow
-                            .effective_contract
-                            .constraints
-                            .iter()
-                            .map(|constraint| HookConstraint {
-                                key: format!(
-                                    "workflow:{}:{}:constraint:{}",
-                                    workflow_scope_key(&workflow),
-                                    workflow.active_step.key,
-                                    constraint.key
-                                ),
-                                description: constraint.description.clone(),
-                                source_summary: source_summary.clone(),
-                                source_refs: source_refs.clone(),
-                            })
-                            .collect(),
-                        policies: build_workflow_policies(&workflow, &source_summary, &source_refs),
-                        diagnostics: Vec::new(),
-                    },
+                // Add workflow source
+                snapshot.sources.push(wf_source.clone());
+
+                // Add workflow tags
+                snapshot.tags.extend([
+                    format!("workflow:{}", workflow_scope_key(&workflow)),
+                    format!("workflow_step:{}", workflow.active_step.key),
+                    format!(
+                        "workflow_status:{}",
+                        workflow_run_status_tag(workflow.run.status)
+                    ),
+                ]);
+
+                // Add workflow step injections
+                snapshot
+                    .injections
+                    .extend(build_workflow_step_fragments(&workflow, &wf_source));
+
+                // Add workflow constraint injections
+                snapshot.injections.extend(
+                    workflow
+                        .effective_contract
+                        .constraints
+                        .iter()
+                        .map(|constraint| HookInjection {
+                            slot: "constraint".to_string(),
+                            content: constraint.description.clone(),
+                            source: wf_source.clone(),
+                        }),
                 );
             }
 
@@ -281,7 +267,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 ..SessionHookSnapshot::default()
             });
         let mut resolution = HookResolution {
-            policies: snapshot.policies.clone(),
             diagnostics: snapshot
                 .diagnostics
                 .iter()
@@ -298,8 +283,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 
         match query.trigger {
             HookTrigger::SessionStart | HookTrigger::UserPromptSubmit => {
-                resolution.context_fragments = snapshot.context_fragments.clone();
-                resolution.constraints = snapshot.constraints.clone();
+                resolution.injections = snapshot.injections.clone();
             }
             HookTrigger::BeforeTool | HookTrigger::AfterTool | HookTrigger::AfterTurn => {
                 apply_hook_rules(
@@ -395,14 +379,14 @@ mod tests {
     use std::sync::Arc;
 
     use crate::session::{HookRuntimeDelegate, HookSessionRuntime};
-    use agentdash_agent::{
-        AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
-    };
     use agentdash_spi::hooks::HookSessionRuntimeAccess;
     use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use agentdash_spi::{
         ExecutionHookProvider, HookError, HookTrigger, SessionHookRefreshQuery,
         SessionHookSnapshotQuery,
+    };
+    use agentdash_spi::{
+        AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
     };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;

@@ -8,8 +8,7 @@ use agentdash_domain::workflow::{
     WorkflowSessionTerminalState,
 };
 use agentdash_spi::{
-    ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, HookSourceLayer, HookSourceRef,
-    SessionHookSnapshot,
+    ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, SessionHookSnapshot,
 };
 
 use super::ActiveWorkflowLocator;
@@ -125,28 +124,6 @@ pub(crate) fn snapshot_workspace_root(snapshot: &SessionHookSnapshot) -> Option<
     snapshot.metadata.as_ref()?.workspace_root.as_deref()
 }
 
-pub(crate) fn active_workflow_source_summary(snapshot: &SessionHookSnapshot) -> Vec<String> {
-    let mut summary = Vec::new();
-    if let Some(lifecycle_key) =
-        active_workflow(snapshot).and_then(|aw| aw.lifecycle_key.as_deref())
-    {
-        summary.push(format!("lifecycle:{lifecycle_key}"));
-    }
-    if let Some(step_key) = workflow_step_key(snapshot) {
-        summary.push(format!("workflow_step:{step_key}"));
-    }
-    summary
-}
-
-pub(crate) fn active_workflow_source_refs(snapshot: &SessionHookSnapshot) -> Vec<HookSourceRef> {
-    snapshot
-        .sources
-        .iter()
-        .filter(|source| source.layer == HookSourceLayer::Workflow)
-        .cloned()
-        .collect()
-}
-
 pub(crate) fn active_workflow_locator(
     snapshot: &SessionHookSnapshot,
 ) -> Option<ActiveWorkflowLocator> {
@@ -232,4 +209,13 @@ pub(crate) fn parse_session_terminal_state(
         Some("interrupted") => Some(WorkflowSessionTerminalState::Interrupted),
         _ => None,
     }
+}
+
+/// Build a source string from the snapshot's active workflow metadata.
+pub(crate) fn active_workflow_source_from_snapshot(snapshot: &SessionHookSnapshot) -> String {
+    let lifecycle_key = active_workflow(snapshot)
+        .and_then(|aw| aw.lifecycle_key.as_deref())
+        .unwrap_or("unknown");
+    let step_key = workflow_step_key(snapshot).unwrap_or("unknown");
+    format!("workflow:{lifecycle_key}:{step_key}")
 }

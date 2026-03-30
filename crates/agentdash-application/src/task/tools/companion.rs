@@ -103,8 +103,7 @@ pub struct CompanionDispatchParams {
 #[serde(rename_all = "snake_case")]
 pub struct CompanionDispatchSlice {
     pub mode: CompanionSliceMode,
-    pub fragments: Vec<agentdash_spi::HookContextFragment>,
-    pub constraints: Vec<agentdash_spi::HookConstraint>,
+    pub injections: Vec<agentdash_spi::HookInjection>,
     pub inherited_fragment_labels: Vec<String>,
     pub inherited_constraint_keys: Vec<String>,
     pub omitted_fragment_count: usize,
@@ -367,8 +366,8 @@ impl AgentTool for CompanionDispatchTool {
                 "turn_id": turn_id,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
-                "fragment_count": dispatch_plan.slice.fragments.len(),
-                "constraint_count": dispatch_plan.slice.constraints.len(),
+                "fragment_count": dispatch_plan.slice.injections.iter().filter(|i| i.slot != "constraint").count(),
+                "constraint_count": dispatch_plan.slice.injections.iter().filter(|i| i.slot == "constraint").count(),
             })),
         )
         .await
@@ -707,7 +706,7 @@ fn build_subagent_pending_action(
     payload: &serde_json::Value,
     resolution: &agentdash_spi::HookResolution,
 ) -> Option<HookPendingAction> {
-    if resolution.context_fragments.is_empty() && resolution.constraints.is_empty() {
+    if resolution.injections.is_empty() {
         return None;
     }
 
@@ -756,8 +755,7 @@ fn build_subagent_pending_action(
         resolution_kind: None,
         resolution_note: None,
         resolution_turn_id: None,
-        context_fragments: resolution.context_fragments.clone(),
-        constraints: resolution.constraints.clone(),
+        injections: resolution.injections.clone(),
     })
 }
 
@@ -775,25 +773,36 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
         plan.dispatch_id, plan.companion_label, plan.slice.mode, plan.adoption_mode
     ));
 
-    if !plan.slice.fragments.is_empty() {
+    let context_injections: Vec<_> = plan
+        .slice
+        .injections
+        .iter()
+        .filter(|i| i.slot != "constraint")
+        .collect();
+    let constraint_injections: Vec<_> = plan
+        .slice
+        .injections
+        .iter()
+        .filter(|i| i.slot == "constraint")
+        .collect();
+
+    if !context_injections.is_empty() {
         sections.push(format!(
             "## 继承上下文\n{}",
-            plan.slice
-                .fragments
+            context_injections
                 .iter()
-                .map(|fragment| format!("### {}\n{}", fragment.label, fragment.content.trim()))
+                .map(|injection| format!("### {}\n{}", injection.source, injection.content.trim()))
                 .collect::<Vec<_>>()
                 .join("\n\n")
         ));
     }
 
-    if !plan.slice.constraints.is_empty() {
+    if !constraint_injections.is_empty() {
         sections.push(format!(
             "## 继承约束\n{}",
-            plan.slice
-                .constraints
+            constraint_injections
                 .iter()
-                .map(|constraint| format!("- {}", constraint.description))
+                .map(|injection| format!("- {}", injection.content))
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
@@ -853,18 +862,27 @@ pub fn build_companion_dispatch_slice(
     max_fragments: usize,
     max_constraints: usize,
 ) -> CompanionDispatchSlice {
-    let all_fragments = match mode {
-        CompanionSliceMode::Full => resolution.context_fragments.clone(),
-        CompanionSliceMode::WorkflowOnly => resolution
-            .context_fragments
+    let context_injections: Vec<_> = resolution
+        .injections
+        .iter()
+        .filter(|i| i.slot != "constraint")
+        .cloned()
+        .collect();
+    let constraint_injections: Vec<_> = resolution
+        .injections
+        .iter()
+        .filter(|i| i.slot == "constraint")
+        .cloned()
+        .collect();
+
+    let all_context = match mode {
+        CompanionSliceMode::Full => context_injections.clone(),
+        CompanionSliceMode::WorkflowOnly => context_injections
             .iter()
-            .filter(|fragment| {
-                fragment.slot == "workflow"
-                    || fragment.label.contains("workflow")
-                    || fragment
-                        .source_refs
-                        .iter()
-                        .any(|source| source.layer == agentdash_spi::HookSourceLayer::Workflow)
+            .filter(|injection| {
+                injection.slot == "workflow"
+                    || injection.source.contains("workflow")
+                    || injection.source.contains("workflow:")
             })
             .cloned()
             .collect(),
@@ -872,29 +890,25 @@ pub fn build_companion_dispatch_slice(
         CompanionSliceMode::Compact => {
             let mut compact = Vec::new();
             if let Some(owner_summary) = build_companion_owner_summary(snapshot) {
-                compact.push(agentdash_spi::HookContextFragment {
+                compact.push(agentdash_spi::HookInjection {
                     slot: "companion".to_string(),
-                    label: "owner_summary".to_string(),
                     content: owner_summary,
-                    source_summary: vec!["session:owner_summary".to_string()],
-                    source_refs: Vec::new(),
+                    source: "session:owner_summary".to_string(),
                 });
             }
             compact.extend(
-                resolution
-                    .context_fragments
+                context_injections
                     .iter()
-                    .filter(|fragment| {
-                        fragment.slot == "workflow" || fragment.label.contains("workflow")
+                    .filter(|injection| {
+                        injection.slot == "workflow" || injection.source.contains("workflow")
                     })
                     .take(1)
                     .cloned(),
             );
             compact.extend(
-                resolution
-                    .context_fragments
+                context_injections
                     .iter()
-                    .filter(|fragment| fragment.slot == "instruction_append")
+                    .filter(|injection| injection.slot == "instruction_append")
                     .take(1)
                     .cloned(),
             );
@@ -905,45 +919,46 @@ pub fn build_companion_dispatch_slice(
     let all_constraints = match mode {
         CompanionSliceMode::ConstraintsOnly
         | CompanionSliceMode::Full
-        | CompanionSliceMode::Compact => resolution.constraints.clone(),
-        CompanionSliceMode::WorkflowOnly => resolution
-            .constraints
+        | CompanionSliceMode::Compact => constraint_injections.clone(),
+        CompanionSliceMode::WorkflowOnly => constraint_injections
             .iter()
-            .filter(|constraint| {
-                constraint
-                    .source_refs
-                    .iter()
-                    .any(|source| source.layer == agentdash_spi::HookSourceLayer::Workflow)
-            })
+            .filter(|injection| injection.source.contains("workflow:"))
             .cloned()
             .collect(),
     };
 
-    let fragments = all_fragments
+    let kept_context: Vec<_> = all_context
         .iter()
         .take(max_fragments.max(1))
         .cloned()
-        .collect::<Vec<_>>();
-    let constraints = all_constraints
+        .collect();
+    let kept_constraints: Vec<_> = all_constraints
         .iter()
         .take(max_constraints.max(1))
         .cloned()
-        .collect::<Vec<_>>();
+        .collect();
+
+    let inherited_fragment_labels: Vec<String> = kept_context
+        .iter()
+        .map(|injection| injection.source.clone())
+        .collect();
+    let inherited_constraint_keys: Vec<String> = kept_constraints
+        .iter()
+        .map(|injection| injection.source.clone())
+        .collect();
+    let omitted_fragment_count = all_context.len().saturating_sub(kept_context.len());
+    let omitted_constraint_count = all_constraints.len().saturating_sub(kept_constraints.len());
+
+    let mut injections = kept_context;
+    injections.extend(kept_constraints);
 
     CompanionDispatchSlice {
         mode,
-        inherited_fragment_labels: fragments
-            .iter()
-            .map(|fragment| fragment.label.clone())
-            .collect(),
-        inherited_constraint_keys: constraints
-            .iter()
-            .map(|constraint| constraint.key.clone())
-            .collect(),
-        omitted_fragment_count: all_fragments.len().saturating_sub(fragments.len()),
-        omitted_constraint_count: all_constraints.len().saturating_sub(constraints.len()),
-        fragments,
-        constraints,
+        inherited_fragment_labels,
+        inherited_constraint_keys,
+        omitted_fragment_count,
+        omitted_constraint_count,
+        injections,
     }
 }
 
@@ -1228,41 +1243,31 @@ mod companion_tests {
             ..agentdash_spi::SessionHookSnapshot::default()
         };
         let resolution = agentdash_spi::HookResolution {
-            context_fragments: vec![
-                agentdash_spi::HookContextFragment {
+            injections: vec![
+                agentdash_spi::HookInjection {
                     slot: "workflow".to_string(),
-                    label: "active_workflow_step".to_string(),
                     content: "step info".to_string(),
-                    source_summary: vec![],
-                    source_refs: vec![],
+                    source: "active_workflow_step".to_string(),
                 },
-                agentdash_spi::HookContextFragment {
+                agentdash_spi::HookInjection {
                     slot: "instruction_append".to_string(),
-                    label: "workflow_step_constraints".to_string(),
                     content: "follow rules".to_string(),
-                    source_summary: vec![],
-                    source_refs: vec![],
+                    source: "workflow_step_constraints".to_string(),
                 },
-                agentdash_spi::HookContextFragment {
+                agentdash_spi::HookInjection {
                     slot: "workflow".to_string(),
-                    label: "overflow".to_string(),
                     content: "should be omitted".to_string(),
-                    source_summary: vec![],
-                    source_refs: vec![],
+                    source: "overflow".to_string(),
                 },
-            ],
-            constraints: vec![
-                agentdash_spi::HookConstraint {
-                    key: "constraint:1".to_string(),
-                    description: "first".to_string(),
-                    source_summary: vec![],
-                    source_refs: vec![],
+                agentdash_spi::HookInjection {
+                    slot: "constraint".to_string(),
+                    content: "first".to_string(),
+                    source: "constraint:1".to_string(),
                 },
-                agentdash_spi::HookConstraint {
-                    key: "constraint:2".to_string(),
-                    description: "second".to_string(),
-                    source_summary: vec![],
-                    source_refs: vec![],
+                agentdash_spi::HookInjection {
+                    slot: "constraint".to_string(),
+                    content: "second".to_string(),
+                    source: "constraint:2".to_string(),
                 },
             ],
             ..agentdash_spi::HookResolution::default()
@@ -1276,11 +1281,13 @@ mod companion_tests {
             1,
         );
 
-        assert_eq!(slice.fragments.len(), 2);
-        assert_eq!(slice.constraints.len(), 1);
+        let context_count = slice.injections.iter().filter(|i| i.slot != "constraint").count();
+        let constraint_count = slice.injections.iter().filter(|i| i.slot == "constraint").count();
+        assert_eq!(context_count, 2);
+        assert_eq!(constraint_count, 1);
         assert_eq!(slice.omitted_fragment_count, 1);
         assert_eq!(slice.omitted_constraint_count, 1);
-        assert_eq!(slice.inherited_fragment_labels[0], "owner_summary");
+        assert_eq!(slice.inherited_fragment_labels[0], "session:owner_summary");
     }
 
     #[test]
@@ -1375,19 +1382,18 @@ mod companion_tests {
             adoption_mode: CompanionAdoptionMode::BlockingReview,
             slice: CompanionDispatchSlice {
                 mode: CompanionSliceMode::Compact,
-                fragments: vec![agentdash_spi::HookContextFragment {
-                    slot: "workflow".to_string(),
-                    label: "active_workflow_step".to_string(),
-                    content: "step info".to_string(),
-                    source_summary: vec![],
-                    source_refs: vec![],
-                }],
-                constraints: vec![agentdash_spi::HookConstraint {
-                    key: "constraint:1".to_string(),
-                    description: "first".to_string(),
-                    source_summary: vec![],
-                    source_refs: vec![],
-                }],
+                injections: vec![
+                    agentdash_spi::HookInjection {
+                        slot: "workflow".to_string(),
+                        content: "step info".to_string(),
+                        source: "active_workflow_step".to_string(),
+                    },
+                    agentdash_spi::HookInjection {
+                        slot: "constraint".to_string(),
+                        content: "first".to_string(),
+                        source: "constraint:1".to_string(),
+                    },
+                ],
                 inherited_fragment_labels: vec!["active_workflow_step".to_string()],
                 inherited_constraint_keys: vec!["constraint:1".to_string()],
                 omitted_fragment_count: 0,

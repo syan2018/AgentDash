@@ -20,76 +20,32 @@ pub struct HookOwnerSummary {
     pub task_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum HookSourceLayer {
-    #[default]
-    GlobalBuiltin,
-    Workflow,
-    Project,
-    Story,
-    Task,
-    Session,
-}
-
+/// 统一的 Hook 注入单元。
+/// 合并了原来的 `HookContextFragment`（上下文注入）、`HookConstraint`（硬约束）、
+/// `HookPolicyView`（策略描述）三种类型。
+/// 通过 `slot` 字段区分用途：
+/// - `"context"` — 通用上下文片段（原 HookContextFragment）
+/// - `"constraint"` — 硬约束，delegate 层可据此做 gate 判断（原 HookConstraint）
+/// - `"workflow"` — workflow 相关注入
+/// - 其它自定义 slot 值
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct HookSourceRef {
-    pub layer: HookSourceLayer,
-    pub key: String,
-    pub label: String,
-    pub priority: i32,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct HookContextFragment {
+pub struct HookInjection {
+    /// 用途标识：`"context"` / `"constraint"` / `"workflow"` / 自定义
     pub slot: String,
-    pub label: String,
+    /// 注入内容（Markdown 文本）
     pub content: String,
+    /// 溯源标签（如 `"builtin:workspace_path_safety"` / `"workflow:trellis_dev_task:implement"`）
     #[serde(default)]
-    pub source_summary: Vec<String>,
-    #[serde(default)]
-    pub source_refs: Vec<HookSourceRef>,
+    pub source: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct HookConstraint {
-    pub key: String,
-    pub description: String,
-    #[serde(default)]
-    pub source_summary: Vec<String>,
-    #[serde(default)]
-    pub source_refs: Vec<HookSourceRef>,
-}
-
-/// 只读的 Hook policy 视图。
-/// 它用于 runtime surface / frontend 展示，不是直接解释执行规则的 authority。
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub struct HookPolicyView {
-    pub key: String,
-    pub description: String,
-    #[serde(default)]
-    pub source_summary: Vec<String>,
-    #[serde(default)]
-    pub source_refs: Vec<HookSourceRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<serde_json::Value>,
-}
-
+/// 精简的诊断条目。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookDiagnosticEntry {
     pub code: String,
-    pub summary: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-    #[serde(default)]
-    pub source_summary: Vec<String>,
-    #[serde(default)]
-    pub source_refs: Vec<HookSourceRef>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -98,16 +54,14 @@ pub struct SessionHookSnapshot {
     pub session_id: String,
     #[serde(default)]
     pub owners: Vec<HookOwnerSummary>,
+    /// 溯源标签集（如 `["builtin:runtime_trace", "workflow:trellis_dev_task:implement"]`）
     #[serde(default)]
-    pub sources: Vec<HookSourceRef>,
+    pub sources: Vec<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// 统一注入列表（合并了原 context_fragments + constraints + policies）
     #[serde(default)]
-    pub context_fragments: Vec<HookContextFragment>,
-    #[serde(default)]
-    pub constraints: Vec<HookConstraint>,
-    #[serde(default)]
-    pub policies: Vec<HookPolicyView>,
+    pub injections: Vec<HookInjection>,
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,23 +139,6 @@ pub struct ActiveWorkflowMeta {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct HookContributionSet {
-    #[serde(default)]
-    pub sources: Vec<HookSourceRef>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub context_fragments: Vec<HookContextFragment>,
-    #[serde(default)]
-    pub constraints: Vec<HookConstraint>,
-    #[serde(default)]
-    pub policies: Vec<HookPolicyView>,
-    #[serde(default)]
-    pub diagnostics: Vec<HookDiagnosticEntry>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
 pub struct HookSessionRuntimeSnapshot {
     pub session_id: String,
     pub revision: u64,
@@ -238,9 +175,7 @@ pub struct HookPendingAction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_turn_id: Option<String>,
     #[serde(default)]
-    pub context_fragments: Vec<HookContextFragment>,
-    #[serde(default)]
-    pub constraints: Vec<HookConstraint>,
+    pub injections: Vec<HookInjection>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -248,27 +183,19 @@ pub struct HookPendingAction {
 pub enum HookPendingActionStatus {
     #[default]
     Pending,
-    Injected,
     Resolved,
-    Dismissed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HookPendingActionResolutionKind {
     Adopted,
-    Rejected,
-    Completed,
-    Superseded,
-    UserDismissed,
+    Dismissed,
 }
 
 impl HookPendingAction {
     pub fn is_unresolved(&self) -> bool {
-        matches!(
-            self.status,
-            HookPendingActionStatus::Pending | HookPendingActionStatus::Injected
-        )
+        matches!(self.status, HookPendingActionStatus::Pending)
     }
 
     pub fn is_blocking(&self) -> bool {
@@ -389,12 +316,9 @@ pub struct HookEvaluationQuery {
 pub struct HookResolution {
     #[serde(default)]
     pub refresh_snapshot: bool,
+    /// 统一注入列表（合并了原 context_fragments + constraints + policies）
     #[serde(default)]
-    pub context_fragments: Vec<HookContextFragment>,
-    #[serde(default)]
-    pub constraints: Vec<HookConstraint>,
-    #[serde(default)]
-    pub policies: Vec<HookPolicyView>,
+    pub injections: Vec<HookInjection>,
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
     #[serde(default)]

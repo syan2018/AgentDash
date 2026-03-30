@@ -297,10 +297,7 @@ mod tests {
             }),
             diagnostics: vec![HookDiagnosticEntry {
                 code: "before_stop_checklist_pending".to_string(),
-                summary: "需要继续执行".to_string(),
-                detail: None,
-                source_summary: vec![],
-                source_refs: vec![],
+                message: "需要继续执行".to_string(),
             }],
         };
 

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use agentdash_spi::hooks::{
-    HookConstraint, HookContextFragment, HookDiagnosticEntry, HookEvaluationQuery,
+    HookDiagnosticEntry, HookEvaluationQuery, HookInjection,
     HookPendingAction, HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry,
     HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
 };
@@ -119,8 +119,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         );
         self.record_trace(
             HookTrigger::UserPromptSubmit,
-            if evaluated.resolution.context_fragments.is_empty()
-                && evaluated.resolution.constraints.is_empty()
+            if evaluated.resolution.injections.is_empty()
                 && pending_messages.consumed == 0
             {
                 "noop"
@@ -251,7 +250,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 .resolution
                 .diagnostics
                 .into_iter()
-                .map(|entry| entry.summary)
+                .map(|entry| entry.message)
                 .collect(),
             ..AfterToolCallEffects::default()
         })
@@ -276,8 +275,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             .await?;
         let mut steering = build_hook_steering_messages(
             &evaluated.snapshot,
-            &evaluated.resolution.context_fragments,
-            &evaluated.resolution.constraints,
+            &evaluated.resolution.injections,
             &evaluated.runtime,
         );
         let pending_messages = collect_pending_hook_messages(
@@ -285,8 +283,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             &evaluated.snapshot,
             &self.hook_session.runtime_snapshot(),
         );
-        let has_runtime_output = !evaluated.resolution.context_fragments.is_empty()
-            || !evaluated.resolution.constraints.is_empty()
+        let has_runtime_output = !evaluated.resolution.injections.is_empty()
             || pending_messages.consumed > 0;
         self.record_trace(
             HookTrigger::AfterTurn,
@@ -310,7 +307,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 .resolution
                 .diagnostics
                 .into_iter()
-                .map(|entry| entry.summary)
+                .map(|entry| entry.message)
                 .collect(),
         })
     }
@@ -334,8 +331,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
 
         let mut steering = build_hook_steering_messages(
             &evaluated.snapshot,
-            &evaluated.resolution.context_fragments,
-            &evaluated.resolution.constraints,
+            &evaluated.resolution.injections,
             &evaluated.runtime,
         );
         let pending_messages = collect_pending_hook_messages(
@@ -355,10 +351,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 .push("runtime_pending_action:blocking_review:stop_gate".to_string());
             evaluated.resolution.diagnostics.push(HookDiagnosticEntry {
                 code: "pending_action_blocking_review_unresolved".to_string(),
-                summary: "当前仍有未结案的 blocking_review hook action，不能自然结束。".to_string(),
-                detail: Some(format!("action_ids={}", unresolved_ids.join(","))),
-                source_summary: vec!["session_runtime:pending_actions".to_string()],
-                source_refs: Vec::new(),
+                message: format!(
+                    "当前仍有未结案的 blocking_review hook action，不能自然结束。action_ids={}",
+                    unresolved_ids.join(",")
+                ),
             });
         }
         steering.extend(pending_messages.steering.clone());
@@ -477,8 +473,7 @@ fn build_hook_injection_message(
 ) -> Option<AgentMessage> {
     let content = build_hook_markdown(
         snapshot,
-        &resolution.context_fragments,
-        &resolution.constraints,
+        &resolution.injections,
         runtime,
     )?;
     Some(AgentMessage::user(content))
@@ -486,22 +481,20 @@ fn build_hook_injection_message(
 
 fn build_hook_steering_messages(
     snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
-    fragments: &[HookContextFragment],
-    constraints: &[HookConstraint],
+    injections: &[HookInjection],
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Vec<AgentMessage> {
-    build_hook_markdown(snapshot, fragments, constraints, runtime)
+    build_hook_markdown(snapshot, injections, runtime)
         .map(|content| vec![AgentMessage::user(content)])
         .unwrap_or_default()
 }
 
 fn build_hook_markdown(
     snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
-    fragments: &[HookContextFragment],
-    constraints: &[HookConstraint],
+    injections: &[HookInjection],
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<String> {
-    if fragments.is_empty() && constraints.is_empty() {
+    if injections.is_empty() {
         return None;
     }
 
@@ -529,7 +522,7 @@ fn build_hook_markdown(
         ));
     }
 
-    append_hook_markdown_body(&mut sections, fragments, constraints);
+    append_hook_markdown_body(&mut sections, injections);
 
     sections
         .push("以上内容由 Hook Runtime 自动注入，不代表用户新增需求，但必须优先遵守。".to_string());
@@ -542,10 +535,7 @@ fn build_pending_action_message(
     action: &HookPendingAction,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
-    if action.summary.trim().is_empty()
-        && action.context_fragments.is_empty()
-        && action.constraints.is_empty()
-    {
+    if action.summary.trim().is_empty() && action.injections.is_empty() {
         return None;
     }
 
@@ -593,24 +583,32 @@ fn build_pending_action_message(
                 .join("\n")
         ));
     }
-    if !action.context_fragments.is_empty() {
+    let context_injections: Vec<_> = action
+        .injections
+        .iter()
+        .filter(|i| i.slot != "constraint")
+        .collect();
+    let constraint_injections: Vec<_> = action
+        .injections
+        .iter()
+        .filter(|i| i.slot == "constraint")
+        .collect();
+    if !context_injections.is_empty() {
         sections.push(format!(
             "已挂载上下文片段：{}",
-            action
-                .context_fragments
+            context_injections
                 .iter()
-                .map(|fragment| fragment.label.as_str())
+                .map(|injection| injection.source.as_str())
                 .collect::<Vec<_>>()
                 .join("，")
         ));
     }
-    if !action.constraints.is_empty() {
+    if !constraint_injections.is_empty() {
         sections.push(format!(
             "必须完成的约束：\n{}",
-            action
-                .constraints
+            constraint_injections
                 .iter()
-                .map(|constraint| format!("- {}", constraint.description))
+                .map(|injection| format!("- {}", injection.content))
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
@@ -624,15 +622,23 @@ fn build_pending_action_message(
 
 fn append_hook_markdown_body(
     sections: &mut Vec<String>,
-    fragments: &[HookContextFragment],
-    constraints: &[HookConstraint],
+    injections: &[HookInjection],
 ) {
+    let context_injections: Vec<_> = injections
+        .iter()
+        .filter(|i| i.slot != "constraint")
+        .collect();
+    let constraint_injections: Vec<_> = injections
+        .iter()
+        .filter(|i| i.slot == "constraint")
+        .collect();
+
     let mut fragment_lines = Vec::new();
-    if !fragments.is_empty() {
+    if !context_injections.is_empty() {
         fragment_lines.push("## 动态注入上下文".to_string());
-        for fragment in fragments {
-            fragment_lines.push(format!("### {}", fragment.label));
-            fragment_lines.push(fragment.content.clone());
+        for injection in &context_injections {
+            fragment_lines.push(format!("### {}", injection.source));
+            fragment_lines.push(injection.content.clone());
             fragment_lines.push(String::new());
         }
     }
@@ -643,12 +649,12 @@ fn append_hook_markdown_body(
         sections.push(fragment_lines.join("\n"));
     }
 
-    if !constraints.is_empty() {
+    if !constraint_injections.is_empty() {
         sections.push(format!(
             "## 必须遵守的流程约束\n{}",
-            constraints
+            constraint_injections
                 .iter()
-                .map(|constraint| format!("- {}", constraint.description))
+                .map(|injection| format!("- {}", injection.content))
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
@@ -662,9 +668,7 @@ fn map_runtime_error(error: agentdash_spi::hooks::HookError) -> AgentRuntimeErro
 fn pending_action_status_label(status: HookPendingActionStatus) -> &'static str {
     match status {
         HookPendingActionStatus::Pending => "pending",
-        HookPendingActionStatus::Injected => "injected",
         HookPendingActionStatus::Resolved => "resolved",
-        HookPendingActionStatus::Dismissed => "dismissed",
     }
 }
 
@@ -679,10 +683,10 @@ mod tests {
     use super::HookRuntimeDelegate;
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
-        ExecutionHookProvider, HookCompletionStatus, HookContextFragment, HookError,
-        HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind, HookResolution,
-        HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-        SessionHookSnapshot, SessionHookSnapshotQuery,
+        ExecutionHookProvider, HookCompletionStatus, HookError,
+        HookEvaluationQuery, HookInjection, HookPendingAction, HookPendingActionResolutionKind,
+        HookResolution, HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider,
+        SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
     };
 
     #[derive(Clone)]
@@ -752,14 +756,11 @@ mod tests {
             resolution_kind: None,
             resolution_note: None,
             resolution_turn_id: None,
-            context_fragments: vec![HookContextFragment {
+            injections: vec![HookInjection {
                 slot: "workflow".to_string(),
-                label: "subagent_blocking_review".to_string(),
                 content: "必须先处理 review 结果。".to_string(),
-                source_summary: vec![],
-                source_refs: vec![],
+                source: "subagent_blocking_review".to_string(),
             }],
-            constraints: vec![],
         });
         let delegate = HookRuntimeDelegate::new(hook_session.clone());
 
@@ -838,20 +839,17 @@ mod tests {
             action_type: "follow_up_required".to_string(),
             turn_id: Some("turn-1".to_string()),
             source_trigger: HookTrigger::SubagentResult,
-            status: agentdash_spi::hooks::HookPendingActionStatus::Injected,
+            status: agentdash_spi::hooks::HookPendingActionStatus::Pending,
             last_injected_at_ms: Some(1_710_000_100_000),
             resolved_at_ms: None,
             resolution_kind: None,
             resolution_note: None,
             resolution_turn_id: None,
-            context_fragments: vec![HookContextFragment {
+            injections: vec![HookInjection {
                 slot: "workflow".to_string(),
-                label: "follow_up".to_string(),
                 content: "继续落实下一步".to_string(),
-                source_summary: vec![],
-                source_refs: vec![],
+                source: "follow_up".to_string(),
             }],
-            constraints: vec![],
         };
 
         let message = super::build_pending_action_message(&snapshot, &action, &runtime)
@@ -867,6 +865,6 @@ mod tests {
 
         assert!(text.contains("resolve_hook_action"));
         assert!(text.contains("follow_up_required"));
-        assert!(text.contains("status=injected"));
+        assert!(text.contains("status=pending"));
     }
 }

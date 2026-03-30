@@ -18,10 +18,7 @@ use crate::address_space::tools::provider::SharedSessionHubHandle;
 #[serde(rename_all = "snake_case")]
 pub enum HookActionResolutionMode {
     Adopted,
-    Rejected,
-    Completed,
-    Superseded,
-    UserDismissed,
+    Dismissed,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -60,7 +57,7 @@ impl AgentTool for ResolveHookActionTool {
     }
 
     fn description(&self) -> &str {
-        "把当前 session 中的 hook pending action 显式标记为 adopted/rejected/completed/superseded 等已结案状态"
+        "把当前 session 中的 hook pending action 显式标记为 adopted/dismissed 已结案状态"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -187,28 +184,20 @@ pub fn map_hook_action_resolution_kind(
 ) -> HookPendingActionResolutionKind {
     match mode {
         HookActionResolutionMode::Adopted => HookPendingActionResolutionKind::Adopted,
-        HookActionResolutionMode::Rejected => HookPendingActionResolutionKind::Rejected,
-        HookActionResolutionMode::Completed => HookPendingActionResolutionKind::Completed,
-        HookActionResolutionMode::Superseded => HookPendingActionResolutionKind::Superseded,
-        HookActionResolutionMode::UserDismissed => HookPendingActionResolutionKind::UserDismissed,
+        HookActionResolutionMode::Dismissed => HookPendingActionResolutionKind::Dismissed,
     }
 }
 
 pub fn hook_action_status_key(status: HookPendingActionStatus) -> &'static str {
     match status {
         HookPendingActionStatus::Pending => "pending",
-        HookPendingActionStatus::Injected => "injected",
         HookPendingActionStatus::Resolved => "resolved",
-        HookPendingActionStatus::Dismissed => "dismissed",
     }
 }
 
 pub fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static str {
     match kind {
         HookPendingActionResolutionKind::Adopted => "adopted",
-        HookPendingActionResolutionKind::Rejected => "rejected",
-        HookPendingActionResolutionKind::Completed => "completed",
-        HookPendingActionResolutionKind::Superseded => "superseded",
-        HookPendingActionResolutionKind::UserDismissed => "user_dismissed",
+        HookPendingActionResolutionKind::Dismissed => "dismissed",
     }
 }

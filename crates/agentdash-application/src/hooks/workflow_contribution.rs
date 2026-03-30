@@ -1,8 +1,8 @@
-use agentdash_spi::{HookContextFragment, HookPolicyView, HookSourceRef};
+use agentdash_spi::HookInjection;
 
 use crate::workflow::ActiveWorkflowProjection;
 
-use super::{lifecycle_step_advance_label, workflow_scope_key};
+use super::lifecycle_step_advance_label;
 
 pub(super) fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -> String {
     let wf_line = match workflow.primary_workflow.as_ref() {
@@ -23,15 +23,12 @@ pub(super) fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -
 
 pub(super) fn build_workflow_step_fragments(
     workflow: &ActiveWorkflowProjection,
-    source_summary: &[String],
-    source_refs: &[HookSourceRef],
-) -> Vec<HookContextFragment> {
-    let mut fragments = vec![HookContextFragment {
+    source: &str,
+) -> Vec<HookInjection> {
+    let mut injections = vec![HookInjection {
         slot: "workflow".to_string(),
-        label: "active_workflow_step".to_string(),
         content: build_step_summary_markdown(workflow),
-        source_summary: source_summary.to_vec(),
-        source_refs: source_refs.to_vec(),
+        source: source.to_string(),
     }];
 
     if !workflow
@@ -40,18 +37,16 @@ pub(super) fn build_workflow_step_fragments(
         .instructions
         .is_empty()
     {
-        fragments.push(HookContextFragment {
+        injections.push(HookInjection {
             slot: "workflow".to_string(),
-            label: "active_workflow_instructions".to_string(),
             content: build_instruction_injection_markdown(
                 &workflow.effective_contract.injection.instructions,
             ),
-            source_summary: source_summary.to_vec(),
-            source_refs: source_refs.to_vec(),
+            source: source.to_string(),
         });
     }
 
-    fragments
+    injections
 }
 
 fn build_instruction_injection_markdown(instructions: &[String]) -> String {
@@ -61,68 +56,6 @@ fn build_instruction_injection_markdown(instructions: &[String]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!("## Workflow Instructions\n{body}")
-}
-
-pub(super) fn build_workflow_policies(
-    workflow: &ActiveWorkflowProjection,
-    source_summary: &[String],
-    source_refs: &[HookSourceRef],
-) -> Vec<HookPolicyView> {
-    let scope = workflow_scope_key(workflow);
-    let step_advance = lifecycle_step_advance_label(&workflow.active_step);
-    let mut policies = vec![HookPolicyView {
-        key: format!(
-            "workflow:{}:{}:step_advance",
-            scope, workflow.active_step.key
-        ),
-        description: format!(
-            "当前 step 推进模式为 `{step_advance}`（有 workflow_key 时为 auto，否则为 manual）。",
-        ),
-        source_summary: source_summary.to_vec(),
-        source_refs: source_refs.to_vec(),
-        payload: Some(serde_json::json!({
-            "lifecycle_key": workflow.lifecycle.key,
-            "step_key": workflow.active_step.key,
-            "step_advance": step_advance,
-            "workflow_key": workflow.active_step.workflow_key,
-        })),
-    }];
-
-    for constraint in &workflow.effective_contract.constraints {
-        policies.push(HookPolicyView {
-            key: format!(
-                "workflow:{}:{}:constraint:{}",
-                scope, workflow.active_step.key, constraint.key
-            ),
-            description: constraint.description.clone(),
-            source_summary: source_summary.to_vec(),
-            source_refs: source_refs.to_vec(),
-            payload: Some(serde_json::json!({
-                "kind": constraint.kind,
-                "payload": constraint.payload.clone(),
-            })),
-        });
-    }
-
-    if step_advance == "auto" && !workflow.effective_contract.completion.checks.is_empty() {
-        policies.push(HookPolicyView {
-            key: format!(
-                "workflow:{}:{}:check_gate",
-                scope, workflow.active_step.key
-            ),
-            description:
-                "当前 step 会基于 contract checks 自动推进；在满足所有检查前，不应提前结束当前 loop。"
-                    .to_string(),
-            source_summary: source_summary.to_vec(),
-            source_refs: source_refs.to_vec(),
-            payload: Some(serde_json::json!({
-                "check_count": workflow.effective_contract.completion.checks.len(),
-                "step_key": workflow.active_step.key,
-            })),
-        });
-    }
-
-    policies
 }
 
 #[cfg(test)]
@@ -136,7 +69,6 @@ mod tests {
         WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
         build_effective_contract,
     };
-    use agentdash_spi::HookSourceLayer;
 
     fn workflow_projection_with_instructions(
         instructions: Vec<String>,
@@ -206,23 +138,14 @@ mod tests {
         let workflow = workflow_projection_with_instructions(vec![
             "先补齐检查证据，再结束 session".to_string(),
         ]);
-        let source_refs = vec![HookSourceRef {
-            layer: HookSourceLayer::Workflow,
-            key: "trellis_dev_task:implement".to_string(),
-            label: "Workflow / Trellis Dev Workflow / implement".to_string(),
-            priority: 300,
-        }];
-        let source_summary = super::super::source_summary_from_refs(&source_refs);
+        let source = super::super::workflow_source(&workflow);
 
-        let fragments = build_workflow_step_fragments(&workflow, &source_summary, &source_refs);
+        let injections = build_workflow_step_fragments(&workflow, &source);
 
-        assert_eq!(fragments.len(), 2);
-        assert_eq!(fragments[0].label, "active_workflow_step");
-        assert_eq!(fragments[1].label, "active_workflow_instructions");
-        assert!(
-            !fragments
-                .iter()
-                .any(|fragment| fragment.label == "workflow_step_constraints")
-        );
+        assert_eq!(injections.len(), 2);
+        assert_eq!(injections[0].slot, "workflow");
+        assert!(injections[0].content.contains("Active Workflow Step"));
+        assert_eq!(injections[1].slot, "workflow");
+        assert!(injections[1].content.contains("Workflow Instructions"));
     }
 }

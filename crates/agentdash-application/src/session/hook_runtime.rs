@@ -68,12 +68,10 @@ impl HookSessionRuntime {
             .write()
             .expect("hook diagnostics write lock poisoned");
         for entry in entries {
-            if guard.iter().any(|existing| {
-                existing.code == entry.code
-                    && existing.summary == entry.summary
-                    && existing.detail == entry.detail
-                    && existing.source_summary == entry.source_summary
-            }) {
+            if guard
+                .iter()
+                .any(|existing| existing.code == entry.code && existing.message == entry.message)
+            {
                 continue;
             }
             guard.push(entry);
@@ -183,10 +181,7 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
                 Err(error) => {
                     resolution.diagnostics.push(HookDiagnosticEntry {
                         code: "workflow_step_advance_failed".to_string(),
-                        summary: "post-evaluate step advancement failed".to_string(),
-                        detail: Some(error.to_string()),
-                        source_summary: Vec::new(),
-                        source_refs: Vec::new(),
+                        message: format!("post-evaluate step advancement failed: {error}"),
                     });
                     if let Some(completion) = resolution.completion.as_mut() {
                         completion.advanced = false;
@@ -203,10 +198,7 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
         {
             resolution.diagnostics.push(HookDiagnosticEntry {
                 code: "execution_log_flush_failed".to_string(),
-                summary: "failed to flush execution log entries".to_string(),
-                detail: Some(error.to_string()),
-                source_summary: Vec::new(),
-                source_refs: Vec::new(),
+                message: format!("failed to flush execution log entries: {error}"),
             });
         }
 
@@ -284,7 +276,6 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
             if action.status != HookPendingActionStatus::Pending {
                 continue;
             }
-            action.status = HookPendingActionStatus::Injected;
             action.last_injected_at_ms = Some(now);
             injected.push(action.clone());
         }
@@ -330,13 +321,7 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
             return Some(action.clone());
         }
 
-        action.status = match resolution_kind {
-            HookPendingActionResolutionKind::UserDismissed => HookPendingActionStatus::Dismissed,
-            HookPendingActionResolutionKind::Adopted
-            | HookPendingActionResolutionKind::Rejected
-            | HookPendingActionResolutionKind::Completed
-            | HookPendingActionResolutionKind::Superseded => HookPendingActionStatus::Resolved,
-        };
+        action.status = HookPendingActionStatus::Resolved;
         action.resolved_at_ms = Some(chrono::Utc::now().timestamp_millis());
         action.resolution_kind = Some(resolution_kind);
         action.resolution_note = note

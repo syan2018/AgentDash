@@ -2,10 +2,7 @@ use agentdash_domain::workflow::{
     WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
     WorkflowContract,
 };
-use agentdash_spi::{
-    ActiveWorkflowMeta, HookSourceLayer, HookSourceRef, SessionHookSnapshot,
-    SessionSnapshotMetadata,
-};
+use agentdash_spi::{ActiveWorkflowMeta, SessionHookSnapshot, SessionSnapshotMetadata};
 
 pub fn snapshot_with_workflow(step_key: &str, completion_mode: &str) -> SessionHookSnapshot {
     snapshot_with_workflow_and_evidence(step_key, completion_mode, false)
@@ -16,7 +13,7 @@ pub fn snapshot_with_workflow_and_evidence(
     completion_mode: &str,
     checklist_evidence_present: bool,
 ) -> SessionHookSnapshot {
-    let (step_advance, workflow_key, mut contract) = match completion_mode {
+    let (step_advance, workflow_key, contract) = match completion_mode {
         "checklist_passed" => (
             "auto",
             Some("trellis_dev_task_check"),
@@ -47,13 +44,8 @@ pub fn snapshot_with_workflow_and_evidence(
         _ => ("manual", None, WorkflowContract::default()),
     };
     let effective_contract = serde_json::json!(contract);
-    let workflow_source = HookSourceRef {
-        layer: HookSourceLayer::Workflow,
-        key: format!("trellis_dev_task:{step_key}"),
-        label: format!("Workflow / Trellis Dev Workflow / {step_key}"),
-        priority: 300,
-    };
-    let mut snapshot = SessionHookSnapshot {
+    let workflow_source = format!("workflow:trellis_dev_task:{step_key}");
+    let snapshot = SessionHookSnapshot {
         session_id: "sess-test".to_string(),
         sources: vec![workflow_source],
         metadata: Some(SessionSnapshotMetadata {

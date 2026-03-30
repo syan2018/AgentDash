@@ -13,31 +13,6 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
 }
 
-fn session_binding_source_ref(binding: &SessionBinding) -> agentdash_spi::HookSourceRef {
-    agentdash_spi::HookSourceRef {
-        layer: agentdash_spi::HookSourceLayer::Session,
-        key: format!("binding:{}", binding.id),
-        label: format!("Session Binding / {}", binding.label),
-        priority: 500,
-    }
-}
-
-fn task_source_ref(task_id: uuid::Uuid) -> agentdash_spi::HookSourceRef {
-    agentdash_spi::HookSourceRef {
-        layer: agentdash_spi::HookSourceLayer::Task,
-        key: task_id.to_string(),
-        label: format!("Task / {task_id}"),
-        priority: 400,
-    }
-}
-
-fn source_summary_from_refs(source_refs: &[agentdash_spi::HookSourceRef]) -> Vec<String> {
-    source_refs
-        .iter()
-        .map(|source| format!("{}:{}", super::source_layer_tag(source.layer), source.key))
-        .collect()
-}
-
 /// 根据 SessionBinding 反查 project/story/task 实体，构建 HookOwnerSummary。
 pub struct SessionOwnerResolver {
     project_repo: Arc<dyn ProjectRepository>,
@@ -62,8 +37,6 @@ impl SessionOwnerResolver {
         &self,
         binding: &SessionBinding,
     ) -> Result<ResolvedOwnerSummary, HookError> {
-        let binding_source_refs = vec![session_binding_source_ref(binding)];
-        let binding_source_summary = source_summary_from_refs(&binding_source_refs);
         let mut summary = HookOwnerSummary {
             owner_type: binding.owner_type.to_string(),
             owner_id: binding.owner_id.to_string(),
@@ -74,13 +47,10 @@ impl SessionOwnerResolver {
         };
         let mut diagnostics = vec![HookDiagnosticEntry {
             code: "session_binding_found".to_string(),
-            summary: format!(
+            message: format!(
                 "命中会话绑定：{} {}（label={}）",
                 binding.owner_type, binding.owner_id, binding.label
             ),
-            detail: None,
-            source_summary: binding_source_summary.clone(),
-            source_refs: binding_source_refs.clone(),
         }];
 
         match binding.owner_type {
@@ -96,10 +66,7 @@ impl SessionOwnerResolver {
                 } else {
                     diagnostics.push(HookDiagnosticEntry {
                         code: "session_binding_owner_missing".to_string(),
-                        summary: "会话绑定引用的 Project 已不存在".to_string(),
-                        detail: Some(binding.owner_id.to_string()),
-                        source_summary: binding_source_summary.clone(),
-                        source_refs: binding_source_refs.clone(),
+                        message: "会话绑定引用的 Project 已不存在".to_string(),
                     });
                 }
             }
@@ -116,10 +83,7 @@ impl SessionOwnerResolver {
                 } else {
                     diagnostics.push(HookDiagnosticEntry {
                         code: "session_binding_owner_missing".to_string(),
-                        summary: "会话绑定引用的 Story 已不存在".to_string(),
-                        detail: Some(binding.owner_id.to_string()),
-                        source_summary: binding_source_summary.clone(),
-                        source_refs: binding_source_refs.clone(),
+                        message: "会话绑定引用的 Story 已不存在".to_string(),
                     });
                 }
             }
@@ -144,19 +108,13 @@ impl SessionOwnerResolver {
                     } else {
                         diagnostics.push(HookDiagnosticEntry {
                             code: "task_story_missing".to_string(),
-                            summary: "Task 对应的 Story 已不存在，无法补全 project_id".to_string(),
-                            detail: Some(task.story_id.to_string()),
-                            source_summary: source_summary_from_refs(&[task_source_ref(task.id)]),
-                            source_refs: vec![task_source_ref(task.id)],
+                            message: "Task 对应的 Story 已不存在，无法补全 project_id".to_string(),
                         });
                     }
                 } else {
                     diagnostics.push(HookDiagnosticEntry {
                         code: "session_binding_owner_missing".to_string(),
-                        summary: "会话绑定引用的 Task 已不存在".to_string(),
-                        detail: Some(binding.owner_id.to_string()),
-                        source_summary: binding_source_summary,
-                        source_refs: binding_source_refs,
+                        message: "会话绑定引用的 Task 已不存在".to_string(),
                     });
                 }
             }

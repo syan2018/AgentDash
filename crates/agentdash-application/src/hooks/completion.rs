@@ -31,8 +31,6 @@ impl super::provider::AppExecutionHookProvider {
         decision: WorkflowCompletionDecision,
         resolution: &mut HookResolution,
     ) -> Result<(), HookError> {
-        let source_summary = active_workflow_source_summary(snapshot);
-        let source_refs = active_workflow_source_refs(snapshot);
         resolution
             .diagnostics
             .extend(
@@ -41,10 +39,7 @@ impl super::provider::AppExecutionHookProvider {
                     .iter()
                     .map(|evidence| HookDiagnosticEntry {
                         code: evidence.code.clone(),
-                        summary: evidence.summary.clone(),
-                        detail: evidence.detail.clone(),
-                        source_summary: source_summary.clone(),
-                        source_refs: source_refs.clone(),
+                        message: evidence.summary.clone(),
                     }),
             );
 
@@ -87,10 +82,7 @@ impl super::provider::AppExecutionHookProvider {
             });
             resolution.diagnostics.push(HookDiagnosticEntry {
                 code: "workflow_run_missing_for_completion".to_string(),
-                summary: "Hook 发现 workflow run 已不存在，无法写回 completion".to_string(),
-                detail: Some(locator.run_id.to_string()),
-                source_summary,
-                source_refs,
+                message: "Hook 发现 workflow run 已不存在，无法写回 completion".to_string(),
             });
             return Ok(());
         };
@@ -161,13 +153,10 @@ impl super::provider::AppExecutionHookProvider {
 
         resolution.diagnostics.push(HookDiagnosticEntry {
             code: "workflow_step_advance_requested".to_string(),
-            summary: format!(
+            message: format!(
                 "Hook 产出 step 推进信号：run={}, step=`{}`",
                 locator.run_id, locator.step_key
             ),
-            detail: None,
-            source_summary,
-            source_refs,
         });
 
         Ok(())

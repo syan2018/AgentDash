@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 use crate::workflow::{
     WorkflowCompletionDecision, WorkflowCompletionSignalSet, evaluate_step_completion,
 };
@@ -35,10 +33,7 @@ fn active_workflow(snapshot: &SessionHookSnapshot) -> Option<&ActiveWorkflowMeta
 }
 
 pub(crate) fn workflow_transition_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    let aw = active_workflow(snapshot)?;
-    aw.step_advance
-        .as_deref()
-        .or(aw.transition_policy.as_deref())
+    active_workflow(snapshot)?.transition_policy.as_deref()
 }
 
 pub(crate) fn workflow_auto_completion_snapshot(snapshot: &SessionHookSnapshot) -> bool {
@@ -54,44 +49,10 @@ pub(crate) fn active_workflow_checklist_evidence(snapshot: &SessionHookSnapshot)
         .unwrap_or(false)
 }
 
-pub(crate) fn parse_workflow_record_artifact_type_tag(
-    value: &str,
-) -> Option<agentdash_domain::workflow::WorkflowRecordArtifactType> {
-    match value {
-        "session_summary" => {
-            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary)
-        }
-        "journal_update" => {
-            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate)
-        }
-        "archive_suggestion" => {
-            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion)
-        }
-        "phase_note" => Some(agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote),
-        "checklist_evidence" => {
-            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence)
-        }
-        "execution_trace" => {
-            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::ExecutionTrace)
-        }
-        "decision_record" => {
-            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::DecisionRecord)
-        }
-        "context_snapshot" => {
-            Some(agentdash_domain::workflow::WorkflowRecordArtifactType::ContextSnapshot)
-        }
-        _ => None,
-    }
-}
-
 pub(crate) fn active_workflow_default_artifact_type(
     snapshot: &SessionHookSnapshot,
 ) -> Option<agentdash_domain::workflow::WorkflowRecordArtifactType> {
-    parse_workflow_record_artifact_type_tag(
-        active_workflow(snapshot)?
-            .default_artifact_type
-            .as_deref()?,
-    )
+    active_workflow(snapshot)?.default_artifact_type
 }
 
 pub(crate) fn active_workflow_default_artifact_title(
@@ -128,15 +89,16 @@ pub(crate) fn active_workflow_locator(
     snapshot: &SessionHookSnapshot,
 ) -> Option<ActiveWorkflowLocator> {
     let aw = active_workflow(snapshot)?;
-    let run_id = Uuid::parse_str(aw.run_id.as_deref()?).ok()?;
-    let step_key = aw.step_key.clone()?;
-    Some(ActiveWorkflowLocator { run_id, step_key })
+    Some(ActiveWorkflowLocator {
+        run_id: aw.run_id?,
+        step_key: aw.step_key.clone()?,
+    })
 }
 
 pub(crate) fn active_workflow_contract(
     snapshot: &SessionHookSnapshot,
 ) -> Option<EffectiveSessionContract> {
-    serde_json::from_value(active_workflow(snapshot)?.effective_contract.clone()?).ok()
+    active_workflow(snapshot)?.effective_contract.clone()
 }
 
 pub(crate) fn completion_decision_for_active_workflow_snapshot(

@@ -19,9 +19,7 @@ use agentdash_spi::{ExecutionHookProvider, HookStepAdvanceRequest};
 
 use crate::workflow::WorkflowCompletionSignalSet;
 
-use super::completion::{
-    active_workflow_checklist_evidence_summary, workflow_record_artifact_type_tag,
-};
+use super::completion::active_workflow_checklist_evidence_summary;
 use super::owner_resolver::SessionOwnerResolver;
 use super::rules::*;
 use super::snapshot_helpers::*;
@@ -143,27 +141,26 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 });
 
                 if let Some(meta) = snapshot.metadata.as_mut() {
-                    let step_advance = lifecycle_step_advance_label(&workflow.active_step);
+                    let transition_policy = lifecycle_step_advance_label(&workflow.active_step);
                     let step_title = if workflow.active_step.description.trim().is_empty() {
                         workflow.active_step.key.clone()
                     } else {
                         workflow.active_step.description.clone()
                     };
                     meta.active_workflow = Some(ActiveWorkflowMeta {
-                        lifecycle_id: Some(workflow.lifecycle.id.to_string()),
+                        lifecycle_id: Some(workflow.lifecycle.id),
                         lifecycle_key: Some(workflow.lifecycle.key.clone()),
                         lifecycle_name: Some(workflow.lifecycle.name.clone()),
-                        run_id: Some(workflow.run.id.to_string()),
-                        run_status: Some(workflow_run_status_tag(workflow.run.status).to_string()),
+                        run_id: Some(workflow.run.id),
+                        run_status: Some(workflow.run.status),
                         step_key: Some(workflow.active_step.key.clone()),
                         step_title: Some(step_title),
                         workflow_key: workflow.active_step.workflow_key.clone(),
-                        step_advance: Some(step_advance.to_string()),
-                        transition_policy: Some(step_advance.to_string()),
+                        transition_policy: Some(transition_policy.to_string()),
                         primary_workflow_id: workflow
                             .primary_workflow
                             .as_ref()
-                            .map(|w| w.id.to_string()),
+                            .map(|w| w.id),
                         primary_workflow_key: workflow
                             .primary_workflow
                             .as_ref()
@@ -175,28 +172,17 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         default_artifact_type: workflow
                             .effective_contract
                             .completion
-                            .default_artifact_type
-                            .map(workflow_record_artifact_type_tag)
-                            .map(str::to_string),
+                            .default_artifact_type,
                         default_artifact_title: workflow
                             .effective_contract
                             .completion
                             .default_artifact_title
                             .clone(),
-                        effective_contract: serde_json::to_value(&workflow.effective_contract).ok(),
-                        checklist_evidence_artifact_type: Some(
-                            workflow_record_artifact_type_tag(checklist_evidence.artifact_type)
-                                .to_string(),
-                        ),
+                        effective_contract: Some(workflow.effective_contract.clone()),
+                        checklist_evidence_artifact_type: Some(checklist_evidence.artifact_type),
                         checklist_evidence_present: Some(checklist_evidence.count > 0),
                         checklist_evidence_count: Some(checklist_evidence.count as u32),
-                        checklist_evidence_artifact_ids: Some(
-                            checklist_evidence
-                                .artifact_ids
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect(),
-                        ),
+                        checklist_evidence_artifact_ids: Some(checklist_evidence.artifact_ids.clone()),
                         checklist_evidence_titles: Some(checklist_evidence.titles.clone()),
                     });
                 }

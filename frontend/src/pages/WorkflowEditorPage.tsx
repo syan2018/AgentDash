@@ -7,10 +7,10 @@ import { WorkflowEditor } from "../features/workflow/workflow-editor";
 export function WorkflowEditorPage() {
   const { definitionId } = useParams<{ definitionId: string }>();
   const navigate = useNavigate();
-  const editorDraft = useWorkflowStore((s) => s.editorDraft);
+  const editorDraft = useWorkflowStore((s) => s.wfEditor.draft);
   const openNewDraft = useWorkflowStore((s) => s.openNewDraft);
   const openEditDraft = useWorkflowStore((s) => s.openEditDraft);
-  const isLoading = useWorkflowStore((s) => s.editorIsLoading);
+  const isLoading = useWorkflowStore((s) => s.wfEditor.isLoading);
 
   const isNew = definitionId === "new";
 

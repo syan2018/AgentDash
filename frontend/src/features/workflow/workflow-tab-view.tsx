@@ -45,8 +45,8 @@ export function WorkflowTabView() {
   const openEditLifecycleDraft = useWorkflowStore((s) => s.openEditLifecycleDraft);
   const removeDefinition = useWorkflowStore((s) => s.removeDefinition);
   const removeLifecycle = useWorkflowStore((s) => s.removeLifecycle);
-  const editorDraft = useWorkflowStore((s) => s.editorDraft);
-  const lifecycleEditorDraft = useWorkflowStore((s) => s.lifecycleEditorDraft);
+  const editorDraft = useWorkflowStore((s) => s.wfEditor.draft);
+  const lifecycleEditorDraft = useWorkflowStore((s) => s.lcEditor.draft);
   const closeDraft = useWorkflowStore((s) => s.closeDraft);
   const closeLifecycleDraft = useWorkflowStore((s) => s.closeLifecycleDraft);
 

@@ -467,7 +467,32 @@ mod tests {
 
     #[test]
     fn before_tool_blocks_record_artifact_during_implement_phase() {
-        let snapshot = snapshot_with_workflow("implement", "session_ended");
+        use agentdash_domain::workflow::{
+            EffectiveSessionContract, WorkflowConstraintKind, WorkflowConstraintSpec,
+        };
+        use agentdash_spi::{ActiveWorkflowMeta, SessionSnapshotMetadata};
+
+        let snapshot = {
+            let mut s = snapshot_with_workflow("implement", "session_ended");
+            if let Some(meta) = s.metadata.as_mut() {
+                if let Some(aw) = meta.active_workflow.as_mut() {
+                    aw.effective_contract = Some(EffectiveSessionContract {
+                        constraints: vec![WorkflowConstraintSpec {
+                            key: "deny_artifact".to_string(),
+                            kind: WorkflowConstraintKind::Custom,
+                            description: "block session_summary during implement".to_string(),
+                            payload: Some(serde_json::json!({
+                                "policy": "deny_record_artifact_types",
+                                "artifact_types": ["session_summary"]
+                            })),
+                        }],
+                        ..Default::default()
+                    });
+                }
+            }
+            s
+        };
+
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),

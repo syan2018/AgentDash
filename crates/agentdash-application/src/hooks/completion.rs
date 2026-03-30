@@ -195,27 +195,6 @@ pub(super) fn active_workflow_checklist_evidence_summary(
     }
 }
 
-pub(super) fn workflow_record_artifact_type_tag(
-    artifact_type: agentdash_domain::workflow::WorkflowRecordArtifactType,
-) -> &'static str {
-    match artifact_type {
-        agentdash_domain::workflow::WorkflowRecordArtifactType::SessionSummary => "session_summary",
-        agentdash_domain::workflow::WorkflowRecordArtifactType::JournalUpdate => "journal_update",
-        agentdash_domain::workflow::WorkflowRecordArtifactType::ArchiveSuggestion => {
-            "archive_suggestion"
-        }
-        agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote => "phase_note",
-        agentdash_domain::workflow::WorkflowRecordArtifactType::ChecklistEvidence => {
-            "checklist_evidence"
-        }
-        agentdash_domain::workflow::WorkflowRecordArtifactType::ExecutionTrace => "execution_trace",
-        agentdash_domain::workflow::WorkflowRecordArtifactType::DecisionRecord => "decision_record",
-        agentdash_domain::workflow::WorkflowRecordArtifactType::ContextSnapshot => {
-            "context_snapshot"
-        }
-    }
-}
-
 fn build_completion_record_artifacts_from_snapshot(
     snapshot: &SessionHookSnapshot,
     decision: &WorkflowCompletionDecision,

@@ -232,23 +232,6 @@ interface WorkflowState {
   disableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
   removeLifecycle: (id: string) => Promise<boolean>;
 
-  // ── backward-compat selectors (旧式 flat 字段 → wfEditor/lcEditor) ──
-  readonly editorDraft: WorkflowEditorDraft | null;
-  readonly editorOriginalId: string | null;
-  readonly editorValidation: WorkflowValidationResult | null;
-  readonly editorIsSaving: boolean;
-  readonly editorIsValidating: boolean;
-  readonly editorDirty: boolean;
-  readonly editorIsLoading: boolean;
-  readonly editorError: string | null;
-  readonly lifecycleEditorDraft: LifecycleEditorDraft | null;
-  readonly lifecycleEditorOriginalId: string | null;
-  readonly lifecycleEditorValidation: WorkflowValidationResult | null;
-  readonly lifecycleEditorIsSaving: boolean;
-  readonly lifecycleEditorIsValidating: boolean;
-  readonly lifecycleEditorDirty: boolean;
-  readonly lifecycleEditorIsLoading: boolean;
-  readonly lifecycleEditorError: string | null;
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -261,24 +244,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   wfEditor: emptyEditor<WorkflowEditorDraft>(),
   lcEditor: emptyEditor<LifecycleEditorDraft>(),
-
-  // backward-compat getters
-  get editorDraft() { return get().wfEditor.draft; },
-  get editorOriginalId() { return get().wfEditor.originalId; },
-  get editorValidation() { return get().wfEditor.validation; },
-  get editorIsSaving() { return get().wfEditor.isSaving; },
-  get editorIsValidating() { return get().wfEditor.isValidating; },
-  get editorDirty() { return get().wfEditor.dirty; },
-  get editorIsLoading() { return get().wfEditor.isLoading; },
-  get editorError() { return get().wfEditor.error; },
-  get lifecycleEditorDraft() { return get().lcEditor.draft; },
-  get lifecycleEditorOriginalId() { return get().lcEditor.originalId; },
-  get lifecycleEditorValidation() { return get().lcEditor.validation; },
-  get lifecycleEditorIsSaving() { return get().lcEditor.isSaving; },
-  get lifecycleEditorIsValidating() { return get().lcEditor.isValidating; },
-  get lifecycleEditorDirty() { return get().lcEditor.dirty; },
-  get lifecycleEditorIsLoading() { return get().lcEditor.isLoading; },
-  get lifecycleEditorError() { return get().lcEditor.error; },
 
   // ── Data fetching ──
 

@@ -88,13 +88,13 @@ function LifecycleStepCard({
 }
 
 export function LifecycleEditor() {
-  const draft = useWorkflowStore((s) => s.lifecycleEditorDraft);
-  const originalId = useWorkflowStore((s) => s.lifecycleEditorOriginalId);
-  const validation = useWorkflowStore((s) => s.lifecycleEditorValidation);
-  const isSaving = useWorkflowStore((s) => s.lifecycleEditorIsSaving);
-  const isValidating = useWorkflowStore((s) => s.lifecycleEditorIsValidating);
-  const isDirty = useWorkflowStore((s) => s.lifecycleEditorDirty);
-  const error = useWorkflowStore((s) => s.lifecycleEditorError);
+  const draft = useWorkflowStore((s) => s.lcEditor.draft);
+  const originalId = useWorkflowStore((s) => s.lcEditor.originalId);
+  const validation = useWorkflowStore((s) => s.lcEditor.validation);
+  const isSaving = useWorkflowStore((s) => s.lcEditor.isSaving);
+  const isValidating = useWorkflowStore((s) => s.lcEditor.isValidating);
+  const isDirty = useWorkflowStore((s) => s.lcEditor.dirty);
+  const error = useWorkflowStore((s) => s.lcEditor.error);
   const lifecycleDefinitions = useWorkflowStore((s) => s.lifecycleDefinitions);
   const workflowDefinitions = useWorkflowStore((s) => s.definitions);
 

@@ -13,7 +13,7 @@ pub fn snapshot_with_workflow_and_evidence(
     completion_mode: &str,
     checklist_evidence_present: bool,
 ) -> SessionHookSnapshot {
-    let (step_advance, workflow_key, contract) = match completion_mode {
+    let (transition_policy, workflow_key, contract) = match completion_mode {
         "checklist_passed" => (
             "auto",
             Some("trellis_dev_task_check"),
@@ -43,9 +43,14 @@ pub fn snapshot_with_workflow_and_evidence(
         ),
         _ => ("manual", None, WorkflowContract::default()),
     };
-    let effective_contract = serde_json::json!(contract);
+    let effective_contract = agentdash_domain::workflow::EffectiveSessionContract {
+        injection: contract.injection,
+        constraints: contract.constraints,
+        completion: contract.completion,
+        ..Default::default()
+    };
     let workflow_source = format!("workflow:trellis_dev_task:{step_key}");
-    let snapshot = SessionHookSnapshot {
+    SessionHookSnapshot {
         session_id: "sess-test".to_string(),
         sources: vec![workflow_source],
         metadata: Some(SessionSnapshotMetadata {
@@ -53,10 +58,9 @@ pub fn snapshot_with_workflow_and_evidence(
             active_workflow: Some(ActiveWorkflowMeta {
                 lifecycle_key: Some("trellis_dev_task".to_string()),
                 step_key: Some(step_key.to_string()),
-                step_advance: Some(step_advance.to_string()),
-                transition_policy: Some(step_advance.to_string()),
+                transition_policy: Some(transition_policy.to_string()),
                 workflow_key: workflow_key.map(str::to_string),
-                run_id: Some("00000000-0000-0000-0000-0000000000aa".to_string()),
+                run_id: Some(uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000aa").unwrap()),
                 effective_contract: Some(effective_contract),
                 checklist_evidence_present: Some(checklist_evidence_present),
                 ..Default::default()
@@ -64,8 +68,7 @@ pub fn snapshot_with_workflow_and_evidence(
             ..Default::default()
         }),
         ..SessionHookSnapshot::default()
-    };
-    snapshot
+    }
 }
 
 pub fn snapshot_with_supervised_policy() -> SessionHookSnapshot {

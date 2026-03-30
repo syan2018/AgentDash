@@ -9,23 +9,20 @@ use uuid::Uuid;
 
 use agentdash_application::workflow::{
     ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand, AssignLifecycleCommand,
-    CompleteLifecycleStepCommand, LifecycleRunService, StartLifecycleRunCommand,
-    WorkflowCatalogService, WorkflowRecordArtifactDraft, build_builtin_workflow_bundle,
-    list_builtin_workflow_templates,
+    BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand, LifecycleRunService,
+    StartLifecycleRunCommand, WorkflowCatalogService, WorkflowRecordArtifactDraft,
+    build_builtin_workflow_bundle, list_builtin_workflow_templates,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
+    WorkflowAssignment, WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
     WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
     WorkflowRecordArtifactType,
 };
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::{
-    LifecycleDefinitionResponse, WorkflowAssignmentResponse, WorkflowDefinitionResponse,
-    WorkflowRunResponse, WorkflowTemplateResponse, WorkflowValidationResponse,
-};
+use crate::dto::WorkflowValidationResponse;
 use crate::rpc::ApiError;
 use agentdash_application::session_context::normalize_string;
 
@@ -139,7 +136,7 @@ pub struct ValidateLifecycleDefinitionRequest {
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListWorkflowsQuery>,
-) -> Result<Json<Vec<WorkflowDefinitionResponse>>, ApiError> {
+) -> Result<Json<Vec<WorkflowDefinition>>, ApiError> {
     let definitions = match (query.binding_kind, query.enabled_only.unwrap_or(false)) {
         (Some(binding_kind), _) => {
             state
@@ -163,7 +160,7 @@ pub async fn list_workflows(
 pub async fn list_lifecycles(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListWorkflowsQuery>,
-) -> Result<Json<Vec<LifecycleDefinitionResponse>>, ApiError> {
+) -> Result<Json<Vec<LifecycleDefinition>>, ApiError> {
     let definitions = match (query.binding_kind, query.enabled_only.unwrap_or(false)) {
         (Some(binding_kind), _) => {
             state
@@ -187,7 +184,7 @@ pub async fn list_lifecycles(
 pub async fn create_lifecycle_definition(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateLifecycleDefinitionRequest>,
-) -> Result<Json<LifecycleDefinitionResponse>, ApiError> {
+) -> Result<Json<LifecycleDefinition>, ApiError> {
     let mut definition = LifecycleDefinition::new(
         req.key,
         req.name,
@@ -208,7 +205,7 @@ pub async fn create_lifecycle_definition(
     Ok(Json(saved.into()))
 }
 
-pub async fn list_workflow_templates() -> Result<Json<Vec<WorkflowTemplateResponse>>, ApiError> {
+pub async fn list_workflow_templates() -> Result<Json<Vec<BuiltinWorkflowTemplateBundle>>, ApiError> {
     Ok(Json(
         list_builtin_workflow_templates()
             .map_err(ApiError::BadRequest)?
@@ -221,7 +218,7 @@ pub async fn list_workflow_templates() -> Result<Json<Vec<WorkflowTemplateRespon
 pub async fn bootstrap_workflow_template(
     State(state): State<Arc<AppState>>,
     Path(builtin_key): Path<String>,
-) -> Result<Json<LifecycleDefinitionResponse>, ApiError> {
+) -> Result<Json<LifecycleDefinition>, ApiError> {
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -236,7 +233,7 @@ pub async fn list_project_workflow_assignments(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(project_id): Path<String>,
-) -> Result<Json<Vec<WorkflowAssignmentResponse>>, ApiError> {
+) -> Result<Json<Vec<WorkflowAssignment>>, ApiError> {
     let project_id = parse_uuid(&project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -258,7 +255,7 @@ pub async fn create_project_workflow_assignment(
     CurrentUser(current_user): CurrentUser,
     Path(project_id): Path<String>,
     Json(req): Json<CreateWorkflowAssignmentRequest>,
-) -> Result<Json<WorkflowAssignmentResponse>, ApiError> {
+) -> Result<Json<WorkflowAssignment>, ApiError> {
     let project_id = parse_uuid(&project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -289,7 +286,7 @@ pub async fn start_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<StartWorkflowRunRequest>,
-) -> Result<Json<WorkflowRunResponse>, ApiError> {
+) -> Result<Json<LifecycleRun>, ApiError> {
     let binding_id = parse_uuid_required(&req.binding_id, "binding_id")?;
     let project_id =
         resolve_project_id_for_workflow_binding(&state, req.binding_kind, binding_id).await?;
@@ -321,7 +318,7 @@ pub async fn get_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(run_id): Path<String>,
-) -> Result<Json<WorkflowRunResponse>, ApiError> {
+) -> Result<Json<LifecycleRun>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
     let run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
@@ -338,7 +335,7 @@ pub async fn list_lifecycle_runs_by_binding(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((binding_kind_raw, binding_id_raw)): Path<(String, String)>,
-) -> Result<Json<Vec<WorkflowRunResponse>>, ApiError> {
+) -> Result<Json<Vec<LifecycleRun>>, ApiError> {
     let binding_kind = parse_binding_kind(&binding_kind_raw)?;
     let binding_id = parse_uuid(&binding_id_raw, "binding_id")?;
     let project_id =
@@ -362,7 +359,7 @@ pub async fn activate_workflow_step(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, step_key)): Path<(String, String)>,
-) -> Result<Json<WorkflowRunResponse>, ApiError> {
+) -> Result<Json<LifecycleRun>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
     let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
@@ -388,7 +385,7 @@ pub async fn complete_workflow_step(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, step_key)): Path<(String, String)>,
     Json(req): Json<CompleteWorkflowStepRequest>,
-) -> Result<Json<WorkflowRunResponse>, ApiError> {
+) -> Result<Json<LifecycleRun>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
     let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
@@ -424,7 +421,7 @@ pub async fn append_workflow_step_artifacts(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, step_key)): Path<(String, String)>,
     Json(req): Json<AppendWorkflowStepArtifactsRequest>,
-) -> Result<Json<WorkflowRunResponse>, ApiError> {
+) -> Result<Json<LifecycleRun>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
     let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
@@ -463,7 +460,7 @@ pub async fn append_workflow_step_artifacts(
 pub async fn create_workflow_definition(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateWorkflowDefinitionRequest>,
-) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+) -> Result<Json<WorkflowDefinition>, ApiError> {
     let mut definition = WorkflowDefinition::new(
         req.key,
         req.name,
@@ -486,7 +483,7 @@ pub async fn create_workflow_definition(
 pub async fn get_workflow_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+) -> Result<Json<WorkflowDefinition>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let definition = state
         .repos
@@ -500,7 +497,7 @@ pub async fn get_workflow_definition(
 pub async fn get_lifecycle_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<LifecycleDefinitionResponse>, ApiError> {
+) -> Result<Json<LifecycleDefinition>, ApiError> {
     let id = parse_uuid(&id, "lifecycle_id")?;
     let definition = state
         .repos
@@ -515,7 +512,7 @@ pub async fn update_workflow_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<UpdateWorkflowDefinitionRequest>,
-) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+) -> Result<Json<WorkflowDefinition>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let mut definition = state
         .repos
@@ -564,7 +561,7 @@ pub async fn update_lifecycle_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<UpdateLifecycleDefinitionRequest>,
-) -> Result<Json<LifecycleDefinitionResponse>, ApiError> {
+) -> Result<Json<LifecycleDefinition>, ApiError> {
     let id = parse_uuid(&id, "lifecycle_id")?;
     let mut definition = state
         .repos
@@ -680,7 +677,7 @@ pub async fn validate_lifecycle_definition(
 pub async fn enable_workflow_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+) -> Result<Json<WorkflowDefinition>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let mut definition = state
         .repos
@@ -716,7 +713,7 @@ pub async fn enable_workflow_definition(
 pub async fn enable_lifecycle_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<LifecycleDefinitionResponse>, ApiError> {
+) -> Result<Json<LifecycleDefinition>, ApiError> {
     let id = parse_uuid(&id, "lifecycle_id")?;
     let mut definition = state
         .repos
@@ -752,7 +749,7 @@ pub async fn enable_lifecycle_definition(
 pub async fn disable_workflow_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<WorkflowDefinitionResponse>, ApiError> {
+) -> Result<Json<WorkflowDefinition>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let mut definition = state
         .repos
@@ -773,7 +770,7 @@ pub async fn disable_workflow_definition(
 pub async fn disable_lifecycle_definition(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<LifecycleDefinitionResponse>, ApiError> {
+) -> Result<Json<LifecycleDefinition>, ApiError> {
     let id = parse_uuid(&id, "lifecycle_id")?;
     let mut definition = state
         .repos

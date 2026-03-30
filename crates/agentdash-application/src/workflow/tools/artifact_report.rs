@@ -167,9 +167,10 @@ pub fn active_workflow_locator_from_snapshot(
     snapshot: &SessionHookSnapshot,
 ) -> Option<ActiveWorkflowLocator> {
     let aw = snapshot.metadata.as_ref()?.active_workflow.as_ref()?;
-    let run_id = Uuid::parse_str(aw.run_id.as_deref()?).ok()?;
-    let step_key = aw.step_key.clone()?;
-    Some(ActiveWorkflowLocator { run_id, step_key })
+    Some(ActiveWorkflowLocator {
+        run_id: aw.run_id?,
+        step_key: aw.step_key.clone()?,
+    })
 }
 
 pub fn active_workflow_default_artifact_title_from_snapshot(

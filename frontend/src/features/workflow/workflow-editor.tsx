@@ -194,13 +194,13 @@ function CheckItemEditor({
 }
 
 export function WorkflowEditor() {
-  const draft = useWorkflowStore((s) => s.editorDraft);
-  const originalId = useWorkflowStore((s) => s.editorOriginalId);
-  const validation = useWorkflowStore((s) => s.editorValidation);
-  const isSaving = useWorkflowStore((s) => s.editorIsSaving);
-  const isValidating = useWorkflowStore((s) => s.editorIsValidating);
-  const isDirty = useWorkflowStore((s) => s.editorDirty);
-  const error = useWorkflowStore((s) => s.editorError);
+  const draft = useWorkflowStore((s) => s.wfEditor.draft);
+  const originalId = useWorkflowStore((s) => s.wfEditor.originalId);
+  const validation = useWorkflowStore((s) => s.wfEditor.validation);
+  const isSaving = useWorkflowStore((s) => s.wfEditor.isSaving);
+  const isValidating = useWorkflowStore((s) => s.wfEditor.isValidating);
+  const isDirty = useWorkflowStore((s) => s.wfEditor.dirty);
+  const error = useWorkflowStore((s) => s.wfEditor.error);
 
   const updateDraft = useWorkflowStore((s) => s.updateDraft);
   const updateDraftBinding = useWorkflowStore((s) => s.updateDraftBinding);

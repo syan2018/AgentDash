@@ -5,8 +5,6 @@ import { useWorkflowStore } from "../../stores/workflowStore";
 import { DetailSection } from "../../components/ui/detail-panel";
 import {
   DEFINITION_STATUS_LABEL,
-  ROLE_LABEL,
-  ROLE_ORDER,
   TARGET_KIND_LABEL,
 } from "./shared-labels";
 import { ValidationPanel } from "./ui/validation-panel";
@@ -191,35 +189,15 @@ export function LifecycleEditor() {
           <label className="agentdash-form-label">描述</label>
           <textarea value={draft.description} onChange={(e) => updateLifecycleDraft({ description: e.target.value })} rows={2} className="agentdash-form-textarea" placeholder="描述该 lifecycle 如何为 agent 分配阶段性 workflow" />
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="agentdash-form-label">目标类型</label>
+            <label className="agentdash-form-label">挂载类型</label>
             <select value={draft.target_kind} onChange={(e) => updateLifecycleDraft({ target_kind: e.target.value as WorkflowTargetKind })} disabled={!isNew} className="agentdash-form-select disabled:opacity-60">
               {Object.entries(TARGET_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
           <div>
-            <label className="agentdash-form-label">Recommended Roles</label>
-            <div className="mt-1 flex flex-wrap gap-3">
-              {ROLE_ORDER.map((r) => (
-                <label key={r} className="flex items-center gap-1.5 text-xs text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={draft.recommended_roles.includes(r)}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...draft.recommended_roles, r]
-                        : draft.recommended_roles.filter((v) => v !== r);
-                      updateLifecycleDraft({ recommended_roles: next });
-                    }}
-                  />
-                  {ROLE_LABEL[r]}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="agentdash-form-label">Entry Step Key</label>
+            <label className="agentdash-form-label">入口 Step</label>
             <input value={draft.entry_step_key} onChange={(e) => updateLifecycleDraft({ entry_step_key: e.target.value })} list="entry-step-opts" className="agentdash-form-input" placeholder="start" />
             <datalist id="entry-step-opts">
               {availableStepKeys.map((k) => <option key={k} value={k} />)}

@@ -4,47 +4,32 @@ import type {
   WorkflowCheckKind,
   WorkflowCheckSpec,
   WorkflowCompletionSpec,
-  WorkflowConstraintKind,
-  WorkflowConstraintSpec,
   WorkflowInjectionSpec,
-  WorkflowRecordArtifactType,
   WorkflowTargetKind,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import {
-  ARTIFACT_TYPE_LABEL,
   DEFINITION_STATUS_LABEL,
-  ROLE_LABEL,
-  ROLE_ORDER,
   TARGET_KIND_LABEL,
 } from "./shared-labels";
 import { BindingEditor } from "./binding-editor";
 import { ValidationPanel } from "./ui/validation-panel";
 import { DetailSection } from "../../components/ui/detail-panel";
 
-const CONSTRAINT_KIND_LABEL: Record<WorkflowConstraintKind, string> = {
-  block_stop_until_checks_pass: "Block Stop Until Checks Pass",
-  custom: "Custom",
-};
-
 const CHECK_KIND_LABEL: Record<WorkflowCheckKind, string> = {
-  artifact_exists: "Artifact Exists",
-  artifact_count_gte: "Artifact Count >=",
-  session_terminal_in: "Session Terminal In",
-  checklist_evidence_present: "Checklist Evidence Present",
-  explicit_action_received: "Explicit Action Received",
-  custom: "Custom",
+  artifact_exists: "产物已提交",
+  artifact_count_gte: "产物数量 ≥",
+  session_terminal_in: "会话终态匹配",
+  checklist_evidence_present: "检查清单已完成",
+  explicit_action_received: "显式确认操作",
+  custom: "自定义",
 };
 
-function StringListEditor({
-  label,
+function InstructionListEditor({
   values,
-  placeholder,
   onChange,
 }: {
-  label: string;
   values: string[];
-  placeholder: string;
   onChange: (next: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -58,8 +43,11 @@ function StringListEditor({
 
   return (
     <div>
-      <label className="agentdash-form-label">{label} ({values.length})</label>
-      <div className="mt-1.5 space-y-1.5">
+      <label className="agentdash-form-label">注入指令 ({values.length})</label>
+      <p className="mb-1.5 text-[11px] text-muted-foreground">
+        Session 启动时注入给 Agent 的行为指令，按数组顺序拼接到 system prompt。
+      </p>
+      <div className="space-y-1.5">
         {values.map((value, index) => (
           <div key={`${value}-${index}`} className="flex items-start gap-2">
             <p className="flex-1 rounded-[8px] border border-border bg-secondary/20 px-2 py-1.5 text-xs text-foreground/80 leading-5">
@@ -81,7 +69,7 @@ function StringListEditor({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addItem(); } }}
           className="agentdash-form-input flex-1 text-sm"
-          placeholder={placeholder}
+          placeholder="添加一条注入指令…"
         />
         <button type="button" onClick={addItem} className="agentdash-button-secondary shrink-0 text-sm">
           添加
@@ -91,60 +79,8 @@ function StringListEditor({
   );
 }
 
-function ConstraintItemEditor({
-  spec,
-  index,
-  onChange,
-  onRemove,
-}: {
-  spec: WorkflowConstraintSpec;
-  index: number;
-  onChange: (patch: Partial<WorkflowConstraintSpec>) => void;
-  onRemove: () => void;
-}) {
-  const [payloadDraft, setPayloadDraft] = useState(() => JSON.stringify(spec.payload ?? {}, null, 2));
-
-  return (
-    <div className="space-y-2 rounded-[10px] border border-border bg-background p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-foreground">Constraint #{index + 1}</span>
-        <button type="button" onClick={onRemove} className="text-xs text-destructive hover:underline">删除</button>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div>
-          <label className="agentdash-form-label">Key</label>
-          <input value={spec.key} onChange={(e) => onChange({ key: e.target.value })} className="agentdash-form-input" placeholder="deny_complete" />
-        </div>
-        <div>
-          <label className="agentdash-form-label">类型</label>
-          <select value={spec.kind} onChange={(e) => onChange({ kind: e.target.value as WorkflowConstraintKind })} className="agentdash-form-select">
-            {Object.entries(CONSTRAINT_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="agentdash-form-label">描述</label>
-          <input value={spec.description} onChange={(e) => onChange({ description: e.target.value })} className="agentdash-form-input" />
-        </div>
-      </div>
-      <div>
-        <label className="agentdash-form-label">Payload (JSON)</label>
-        <textarea
-          value={payloadDraft}
-          onChange={(e) => setPayloadDraft(e.target.value)}
-          onBlur={() => {
-            try { onChange({ payload: JSON.parse(payloadDraft) as Record<string, unknown> }); } catch { /* keep draft */ }
-          }}
-          rows={2}
-          className="agentdash-form-textarea font-mono text-xs"
-        />
-      </div>
-    </div>
-  );
-}
-
 function CheckItemEditor({
   spec,
-  index,
   onChange,
   onRemove,
 }: {
@@ -153,42 +89,36 @@ function CheckItemEditor({
   onChange: (patch: Partial<WorkflowCheckSpec>) => void;
   onRemove: () => void;
 }) {
-  const [payloadDraft, setPayloadDraft] = useState(() => JSON.stringify(spec.payload ?? {}, null, 2));
-
   return (
-    <div className="space-y-2 rounded-[10px] border border-border bg-background p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-foreground">Check #{index + 1}</span>
-        <button type="button" onClick={onRemove} className="text-xs text-destructive hover:underline">删除</button>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div>
-          <label className="agentdash-form-label">Key</label>
-          <input value={spec.key} onChange={(e) => onChange({ key: e.target.value })} className="agentdash-form-input" placeholder="task_ready" />
-        </div>
-        <div>
-          <label className="agentdash-form-label">类型</label>
-          <select value={spec.kind} onChange={(e) => onChange({ kind: e.target.value as WorkflowCheckKind })} className="agentdash-form-select">
-            {Object.entries(CHECK_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="agentdash-form-label">描述</label>
-          <input value={spec.description} onChange={(e) => onChange({ description: e.target.value })} className="agentdash-form-input" />
-        </div>
-      </div>
-      <div>
-        <label className="agentdash-form-label">Payload (JSON)</label>
-        <textarea
-          value={payloadDraft}
-          onChange={(e) => setPayloadDraft(e.target.value)}
-          onBlur={() => {
-            try { onChange({ payload: JSON.parse(payloadDraft) as Record<string, unknown> }); } catch { /* keep draft */ }
-          }}
-          rows={2}
-          className="agentdash-form-textarea font-mono text-xs"
+    <div className="flex items-center gap-2 rounded-[10px] border border-border bg-background p-2.5">
+      <div className="min-w-0 flex-1 grid gap-2 sm:grid-cols-3">
+        <input
+          value={spec.key}
+          onChange={(e) => onChange({ key: e.target.value })}
+          className="agentdash-form-input text-xs"
+          placeholder="check_key"
+        />
+        <select
+          value={spec.kind}
+          onChange={(e) => onChange({ kind: e.target.value as WorkflowCheckKind })}
+          className="agentdash-form-select text-xs"
+        >
+          {Object.entries(CHECK_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <input
+          value={spec.description}
+          onChange={(e) => onChange({ description: e.target.value })}
+          className="agentdash-form-input text-xs"
+          placeholder="检查说明"
         />
       </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10"
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -254,25 +184,6 @@ export function WorkflowEditor() {
     updateContract({ completion: { ...draft.contract.completion, ...patch } });
   };
 
-  const updateConstraint = (idx: number, patch: Partial<WorkflowConstraintSpec>) => {
-    const next = [...draft.contract.constraints];
-    next[idx] = { ...next[idx], ...patch };
-    updateDraft({ contract: { ...draft.contract, constraints: next } });
-  };
-  const addConstraint = () => {
-    updateDraft({
-      contract: {
-        ...draft.contract,
-        constraints: [...draft.contract.constraints, { key: "", kind: "custom", description: "", payload: null }],
-      },
-    });
-  };
-  const removeConstraint = (idx: number) => {
-    updateDraft({
-      contract: { ...draft.contract, constraints: draft.contract.constraints.filter((_, i) => i !== idx) },
-    });
-  };
-
   const updateCheck = (idx: number, patch: Partial<WorkflowCheckSpec>) => {
     const next = [...draft.contract.completion.checks];
     next[idx] = { ...next[idx], ...patch };
@@ -280,7 +191,7 @@ export function WorkflowEditor() {
   };
   const addCheck = () => {
     updateCompletion({
-      checks: [...draft.contract.completion.checks, { key: "", kind: "task_status_in", description: "", payload: null }],
+      checks: [...draft.contract.completion.checks, { key: "", kind: "checklist_evidence_present", description: "", payload: null }],
     });
   };
   const removeCheck = (idx: number) => {
@@ -327,52 +238,33 @@ export function WorkflowEditor() {
             <input value={draft.name} onChange={(e) => updateDraft({ name: e.target.value })} className="agentdash-form-input" placeholder="Workflow 显示名" />
           </div>
         </div>
-        <div>
-          <label className="agentdash-form-label">描述</label>
-          <textarea value={draft.description} onChange={(e) => updateDraft({ description: e.target.value })} rows={2} className="agentdash-form-textarea" placeholder="Workflow 描述" />
-        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="agentdash-form-label">目标类型</label>
+            <label className="agentdash-form-label">描述</label>
+            <textarea value={draft.description} onChange={(e) => updateDraft({ description: e.target.value })} rows={2} className="agentdash-form-textarea" placeholder="这个 Workflow 做什么" />
+          </div>
+          <div>
+            <label className="agentdash-form-label">挂载类型</label>
             <select value={draft.target_kind} onChange={(e) => updateDraft({ target_kind: e.target.value as WorkflowTargetKind })} disabled={!isNew} className="agentdash-form-select disabled:opacity-60">
               {Object.entries(TARGET_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="agentdash-form-label">Recommended Roles</label>
-            <div className="mt-1 flex flex-wrap gap-3">
-              {ROLE_ORDER.map((r) => (
-                <label key={r} className="flex items-center gap-1.5 text-xs text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={draft.recommended_roles.includes(r)}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...draft.recommended_roles, r]
-                        : draft.recommended_roles.filter((v) => v !== r);
-                      updateDraft({ recommended_roles: next });
-                    }}
-                  />
-                  {ROLE_LABEL[r]}
-                </label>
-              ))}
-            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">决定此 Workflow 挂载到哪类实体（Project/Story/Task）。</p>
           </div>
         </div>
       </DetailSection>
 
-      {/* 注入配置 */}
-      <DetailSection title="输入注入" description="定义 workflow 注入到 agent 的 goal / instructions / context bindings。">
-        <div>
-          <label className="agentdash-form-label">Goal</label>
-          <textarea value={draft.contract.injection.goal ?? ""} onChange={(e) => updateInjection({ goal: e.target.value || null })} rows={2} className="agentdash-form-textarea" placeholder="当前 workflow 的目标" />
-        </div>
-        <StringListEditor label="注入指令" values={draft.contract.injection.instructions} placeholder="新增一条 workflow 注入指令…" onChange={(instructions) => updateInjection({ instructions })} />
+      {/* Session 注入 */}
+      <DetailSection title="Session 注入" description="Session 启动或 Workflow 切换时，hook 向 Agent 上下文注入的内容。">
+        <InstructionListEditor
+          values={draft.contract.injection.instructions}
+          onChange={(instructions) => updateInjection({ instructions })}
+        />
       </DetailSection>
 
       {/* Context Bindings */}
       <DetailSection
-        title={`Context Bindings (${draft.contract.injection.context_bindings.length})`}
+        title={`上下文挂载 (${draft.contract.injection.context_bindings.length})`}
+        description="Session 启动时自动挂载的外部上下文资源。"
         extra={<button type="button" onClick={addDraftBinding} className="agentdash-button-secondary text-sm">+ 添加</button>}
       >
         <div className="space-y-2">
@@ -386,31 +278,15 @@ export function WorkflowEditor() {
             />
           ))}
           {draft.contract.injection.context_bindings.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">暂无 Context Binding</p>
+            <p className="py-4 text-center text-sm text-muted-foreground">暂无上下文挂载</p>
           )}
         </div>
       </DetailSection>
 
-      {/* Constraints */}
+      {/* 完成条件 */}
       <DetailSection
-        title={`Constraints (${draft.contract.constraints.length})`}
-        description="Behavior constraints for this workflow."
-        extra={<button type="button" onClick={addConstraint} className="agentdash-button-secondary text-sm">+ 添加</button>}
-      >
-        <div className="space-y-2">
-          {draft.contract.constraints.map((c, idx) => (
-            <ConstraintItemEditor key={`c-${idx}`} spec={c} index={idx} onChange={(p) => updateConstraint(idx, p)} onRemove={() => removeConstraint(idx)} />
-          ))}
-          {draft.contract.constraints.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">No constraints yet</p>
-          )}
-        </div>
-      </DetailSection>
-
-      {/* 完成检查 */}
-      <DetailSection
-        title={`完成检查 (${draft.contract.completion.checks.length})`}
-        description="workflow 完成的条件检查列表。"
+        title={`完成条件 (${draft.contract.completion.checks.length})`}
+        description="BeforeStop hook 评估的条件，全部满足后 step 才可推进。"
         extra={<button type="button" onClick={addCheck} className="agentdash-button-secondary text-sm">+ 添加</button>}
       >
         <div className="space-y-2">
@@ -418,23 +294,24 @@ export function WorkflowEditor() {
             <CheckItemEditor key={`ck-${idx}`} spec={c} index={idx} onChange={(p) => updateCheck(idx, p)} onRemove={() => removeCheck(idx)} />
           ))}
           {draft.contract.completion.checks.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">暂无完成检查</p>
+            <p className="py-4 text-center text-sm text-muted-foreground">无完成条件（手动推进）</p>
           )}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 mt-3">
-          <div>
-            <label className="agentdash-form-label">默认 Artifact 类型</label>
-            <select value={draft.contract.completion.default_artifact_type ?? ""} onChange={(e) => updateCompletion({ default_artifact_type: (e.target.value || null) as WorkflowRecordArtifactType | null })} className="agentdash-form-select">
-              <option value="">(无)</option>
-              {Object.entries(ARTIFACT_TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="agentdash-form-label">默认 Artifact 标题</label>
-            <input value={draft.contract.completion.default_artifact_title ?? ""} onChange={(e) => updateCompletion({ default_artifact_title: e.target.value || null })} className="agentdash-form-input" placeholder="可选标题" />
-          </div>
-        </div>
       </DetailSection>
+
+      {/* 既有 Constraints（只读，存在时才展示） */}
+      {draft.contract.constraints.length > 0 && (
+        <DetailSection title={`行为约束 (${draft.contract.constraints.length})`} description="由 hook 规则引擎管理，不支持手动编辑。">
+          <div className="space-y-1.5">
+            {draft.contract.constraints.map((c, idx) => (
+              <div key={`cs-${idx}`} className="flex items-center gap-2 rounded-[8px] border border-border/60 bg-secondary/20 px-3 py-2">
+                <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">{c.kind}</span>
+                <span className="text-xs text-foreground/80">{c.description || c.key}</span>
+              </div>
+            ))}
+          </div>
+        </DetailSection>
+      )}
     </div>
   );
 }

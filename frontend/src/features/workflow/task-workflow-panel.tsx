@@ -16,7 +16,6 @@ import { useWorkflowStore } from "../../stores/workflowStore";
 import { fetchSessionBindings } from "../../services/session";
 import {
   ARTIFACT_TYPE_LABEL,
-  BINDING_KIND_LABEL,
   EXECUTION_EVENT_KIND_LABEL,
   RUN_STATUS_LABEL,
   STEP_STATUS_LABEL,
@@ -597,7 +596,8 @@ export function TaskWorkflowPanel({
                       className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[11px] text-muted-foreground"
                       title={`${binding.reason} · ${binding.locator}`}
                     >
-                      {BINDING_KIND_LABEL[binding.kind]}: {binding.title?.trim() || binding.locator}
+                      {binding.title?.trim() || binding.locator}
+                      {binding.required && <span className="ml-0.5 text-amber-600">*</span>}
                     </span>
                   ))}
                 </div>

@@ -23,13 +23,11 @@ import { ValidationPanel } from "./ui/validation-panel";
 import { DetailSection } from "../../components/ui/detail-panel";
 
 const CONSTRAINT_KIND_LABEL: Record<WorkflowConstraintKind, string> = {
-  deny_task_status_transition: "Deny Task Status Transition",
   block_stop_until_checks_pass: "Block Stop Until Checks Pass",
   custom: "Custom",
 };
 
 const CHECK_KIND_LABEL: Record<WorkflowCheckKind, string> = {
-  task_status_in: "Task Status In",
   artifact_exists: "Artifact Exists",
   artifact_count_gte: "Artifact Count >=",
   session_terminal_in: "Session Terminal In",

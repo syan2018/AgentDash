@@ -38,6 +38,34 @@ import {
   validateWorkflowDefinition,
 } from "../services/workflow";
 
+// ─── Editor state（消除 workflow / lifecycle 编辑器的镜像重复）───
+
+interface EditorState<T> {
+  draft: T | null;
+  originalId: string | null;
+  validation: WorkflowValidationResult | null;
+  isSaving: boolean;
+  isValidating: boolean;
+  dirty: boolean;
+  isLoading: boolean;
+  error: string | null;
+}
+
+function emptyEditor<T>(): EditorState<T> {
+  return {
+    draft: null,
+    originalId: null,
+    validation: null,
+    isSaving: false,
+    isValidating: false,
+    dirty: false,
+    isLoading: false,
+    error: null,
+  };
+}
+
+// ─── Draft types ─────────────────────────────────────────
+
 export interface WorkflowEditorDraft {
   id: string | null;
   key: string;
@@ -68,17 +96,9 @@ export function createEmptyDraft(): WorkflowEditorDraft {
     target_kind: "task",
     recommended_roles: ["task"],
     contract: {
-      injection: {
-        goal: null,
-        instructions: [],
-        context_bindings: [],
-      },
+      injection: { goal: null, instructions: [], context_bindings: [] },
       constraints: [],
-      completion: {
-        checks: [],
-        default_artifact_type: null,
-        default_artifact_title: null,
-      },
+      completion: { checks: [], default_artifact_type: null, default_artifact_title: null },
     },
   };
 }
@@ -95,14 +115,6 @@ export function definitionToDraft(definition: WorkflowDefinition): WorkflowEdito
   };
 }
 
-function createEmptyLifecycleStep(): LifecycleStepDefinition {
-  return {
-    key: "",
-    description: "",
-    workflow_key: null,
-  };
-}
-
 export function createEmptyLifecycleDraft(): LifecycleEditorDraft {
   return {
     id: null,
@@ -112,7 +124,7 @@ export function createEmptyLifecycleDraft(): LifecycleEditorDraft {
     target_kind: "task",
     recommended_roles: ["task"],
     entry_step_key: "",
-    steps: [createEmptyLifecycleStep()],
+    steps: [{ key: "", description: "", workflow_key: null }],
   };
 }
 
@@ -129,6 +141,37 @@ export function lifecycleToDraft(definition: LifecycleDefinition): LifecycleEdit
   };
 }
 
+// ─── Collection helpers ──────────────────────────────────
+
+function upsert<T extends { id: string }>(list: T[], next: T): T[] {
+  const idx = list.findIndex((item) => item.id === next.id);
+  if (idx >= 0) {
+    const updated = [...list];
+    updated[idx] = next;
+    return updated;
+  }
+  return [next, ...list];
+}
+
+function targetKey(targetKind: WorkflowTargetKind, targetId: string): string {
+  return `${targetKind}:${targetId}`;
+}
+
+function upsertRun(
+  runsByTargetKey: Record<string, WorkflowRun[]>,
+  run: WorkflowRun,
+): Record<string, WorkflowRun[]> {
+  const key = targetKey(run.target_kind, run.target_id);
+  const existing = runsByTargetKey[key] ?? [];
+  const nextRuns = existing.some((item) => item.id === run.id)
+    ? existing.map((item) => (item.id === run.id ? run : item))
+    : [run, ...existing];
+  nextRuns.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  return { ...runsByTargetKey, [key]: nextRuns };
+}
+
+// ─── Store ───────────────────────────────────────────────
+
 interface WorkflowState {
   templates: WorkflowTemplate[];
   definitions: WorkflowDefinition[];
@@ -137,23 +180,8 @@ interface WorkflowState {
   isLoading: boolean;
   error: string | null;
 
-  editorDraft: WorkflowEditorDraft | null;
-  editorOriginalId: string | null;
-  editorValidation: WorkflowValidationResult | null;
-  editorIsSaving: boolean;
-  editorIsValidating: boolean;
-  editorDirty: boolean;
-  editorIsLoading: boolean;
-  editorError: string | null;
-
-  lifecycleEditorDraft: LifecycleEditorDraft | null;
-  lifecycleEditorOriginalId: string | null;
-  lifecycleEditorValidation: WorkflowValidationResult | null;
-  lifecycleEditorIsSaving: boolean;
-  lifecycleEditorIsValidating: boolean;
-  lifecycleEditorDirty: boolean;
-  lifecycleEditorIsLoading: boolean;
-  lifecycleEditorError: string | null;
+  wfEditor: EditorState<WorkflowEditorDraft>;
+  lcEditor: EditorState<LifecycleEditorDraft>;
 
   fetchTemplates: () => Promise<WorkflowTemplate[]>;
   fetchDefinitions: (targetKind?: WorkflowTargetKind) => Promise<WorkflowDefinition[]>;
@@ -166,10 +194,7 @@ interface WorkflowState {
     target_kind: WorkflowTargetKind;
     target_id: string;
   }) => Promise<WorkflowRun | null>;
-  activateStep: (input: {
-    run_id: string;
-    step_key: string;
-  }) => Promise<WorkflowRun | null>;
+  activateStep: (input: { run_id: string; step_key: string }) => Promise<WorkflowRun | null>;
   completeStep: (input: {
     run_id: string;
     step_key: string;
@@ -206,49 +231,24 @@ interface WorkflowState {
   enableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
   disableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
   removeLifecycle: (id: string) => Promise<boolean>;
-}
 
-function upsertDefinition(definitions: WorkflowDefinition[], next: WorkflowDefinition): WorkflowDefinition[] {
-  const existingIndex = definitions.findIndex((item) => item.id === next.id);
-  if (existingIndex >= 0) {
-    const updated = [...definitions];
-    updated[existingIndex] = next;
-    return updated;
-  }
-  return [next, ...definitions];
-}
-
-function upsertLifecycle(
-  definitions: LifecycleDefinition[],
-  next: LifecycleDefinition,
-): LifecycleDefinition[] {
-  const existingIndex = definitions.findIndex((item) => item.id === next.id);
-  if (existingIndex >= 0) {
-    const updated = [...definitions];
-    updated[existingIndex] = next;
-    return updated;
-  }
-  return [next, ...definitions];
-}
-
-function targetKey(targetKind: WorkflowTargetKind, targetId: string): string {
-  return `${targetKind}:${targetId}`;
-}
-
-function upsertRun(
-  runsByTargetKey: Record<string, WorkflowRun[]>,
-  run: WorkflowRun,
-): Record<string, WorkflowRun[]> {
-  const key = targetKey(run.target_kind, run.target_id);
-  const existing = runsByTargetKey[key] ?? [];
-  const nextRuns = existing.some((item) => item.id === run.id)
-    ? existing.map((item) => (item.id === run.id ? run : item))
-    : [run, ...existing];
-  nextRuns.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-  return {
-    ...runsByTargetKey,
-    [key]: nextRuns,
-  };
+  // ── backward-compat selectors (旧式 flat 字段 → wfEditor/lcEditor) ──
+  readonly editorDraft: WorkflowEditorDraft | null;
+  readonly editorOriginalId: string | null;
+  readonly editorValidation: WorkflowValidationResult | null;
+  readonly editorIsSaving: boolean;
+  readonly editorIsValidating: boolean;
+  readonly editorDirty: boolean;
+  readonly editorIsLoading: boolean;
+  readonly editorError: string | null;
+  readonly lifecycleEditorDraft: LifecycleEditorDraft | null;
+  readonly lifecycleEditorOriginalId: string | null;
+  readonly lifecycleEditorValidation: WorkflowValidationResult | null;
+  readonly lifecycleEditorIsSaving: boolean;
+  readonly lifecycleEditorIsValidating: boolean;
+  readonly lifecycleEditorDirty: boolean;
+  readonly lifecycleEditorIsLoading: boolean;
+  readonly lifecycleEditorError: string | null;
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -259,23 +259,28 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  editorDraft: null,
-  editorOriginalId: null,
-  editorValidation: null,
-  editorIsSaving: false,
-  editorIsValidating: false,
-  editorDirty: false,
-  editorIsLoading: false,
-  editorError: null,
+  wfEditor: emptyEditor<WorkflowEditorDraft>(),
+  lcEditor: emptyEditor<LifecycleEditorDraft>(),
 
-  lifecycleEditorDraft: null,
-  lifecycleEditorOriginalId: null,
-  lifecycleEditorValidation: null,
-  lifecycleEditorIsSaving: false,
-  lifecycleEditorIsValidating: false,
-  lifecycleEditorDirty: false,
-  lifecycleEditorIsLoading: false,
-  lifecycleEditorError: null,
+  // backward-compat getters
+  get editorDraft() { return get().wfEditor.draft; },
+  get editorOriginalId() { return get().wfEditor.originalId; },
+  get editorValidation() { return get().wfEditor.validation; },
+  get editorIsSaving() { return get().wfEditor.isSaving; },
+  get editorIsValidating() { return get().wfEditor.isValidating; },
+  get editorDirty() { return get().wfEditor.dirty; },
+  get editorIsLoading() { return get().wfEditor.isLoading; },
+  get editorError() { return get().wfEditor.error; },
+  get lifecycleEditorDraft() { return get().lcEditor.draft; },
+  get lifecycleEditorOriginalId() { return get().lcEditor.originalId; },
+  get lifecycleEditorValidation() { return get().lcEditor.validation; },
+  get lifecycleEditorIsSaving() { return get().lcEditor.isSaving; },
+  get lifecycleEditorIsValidating() { return get().lcEditor.isValidating; },
+  get lifecycleEditorDirty() { return get().lcEditor.dirty; },
+  get lifecycleEditorIsLoading() { return get().lcEditor.isLoading; },
+  get lifecycleEditorError() { return get().lcEditor.error; },
+
+  // ── Data fetching ──
 
   fetchTemplates: async () => {
     try {
@@ -292,13 +297,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     try {
       const definitions = await fetchWorkflowDefinitions(targetKind);
       set((state) => {
-        const nextDefinitions = targetKind
-          ? [
-              ...state.definitions.filter((item) => item.target_kind !== targetKind),
-              ...definitions,
-            ]
+        const next = targetKind
+          ? [...state.definitions.filter((item) => item.target_kind !== targetKind), ...definitions]
           : definitions;
-        return { definitions: nextDefinitions };
+        return { definitions: next };
       });
       return definitions;
     } catch (error) {
@@ -311,13 +313,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     try {
       const lifecycleDefinitions = await fetchLifecycleDefinitions(targetKind);
       set((state) => {
-        const nextDefinitions = targetKind
-          ? [
-              ...state.lifecycleDefinitions.filter((item) => item.target_kind !== targetKind),
-              ...lifecycleDefinitions,
-            ]
+        const next = targetKind
+          ? [...state.lifecycleDefinitions.filter((item) => item.target_kind !== targetKind), ...lifecycleDefinitions]
           : lifecycleDefinitions;
-        return { lifecycleDefinitions: nextDefinitions };
+        return { lifecycleDefinitions: next };
       });
       return lifecycleDefinitions;
     } catch (error) {
@@ -346,10 +345,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     try {
       const runs = await fetchWorkflowRunsByTarget(targetKind, targetId);
       set((state) => ({
-        runsByTargetKey: {
-          ...state.runsByTargetKey,
-          [targetKey(targetKind, targetId)]: runs,
-        },
+        runsByTargetKey: { ...state.runsByTargetKey, [targetKey(targetKind, targetId)]: runs },
       }));
       return runs;
     } catch (error) {
@@ -362,9 +358,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const run = await startWorkflowRun(input);
-      set((state) => ({
-        runsByTargetKey: upsertRun(state.runsByTargetKey, run),
-      }));
+      set((state) => ({ runsByTargetKey: upsertRun(state.runsByTargetKey, run) }));
       return run;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -376,9 +370,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const run = await activateWorkflowStep(input);
-      set((state) => ({
-        runsByTargetKey: upsertRun(state.runsByTargetKey, run),
-      }));
+      set((state) => ({ runsByTargetKey: upsertRun(state.runsByTargetKey, run) }));
       return run;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -390,9 +382,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const run = await completeWorkflowStep(input);
-      set((state) => ({
-        runsByTargetKey: upsertRun(state.runsByTargetKey, run),
-      }));
+      set((state) => ({ runsByTargetKey: upsertRun(state.runsByTargetKey, run) }));
       return run;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -400,136 +390,90 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
+  // ── Workflow Definition editor ──
+
   openNewDraft: () => {
-    set({
-      editorDraft: createEmptyDraft(),
-      editorOriginalId: null,
-      editorValidation: null,
-      editorIsSaving: false,
-      editorIsValidating: false,
-      editorDirty: false,
-      editorIsLoading: false,
-      editorError: null,
-    });
+    set({ wfEditor: { ...emptyEditor<WorkflowEditorDraft>(), draft: createEmptyDraft() } });
   },
 
   openEditDraft: async (definitionId) => {
-    set({ editorIsLoading: true, editorError: null });
+    set((s) => ({ wfEditor: { ...s.wfEditor, isLoading: true, error: null } }));
     try {
       const definition = await getWorkflowDefinition(definitionId);
       set((state) => ({
-        definitions: upsertDefinition(state.definitions, definition),
-        editorDraft: definitionToDraft(definition),
-        editorOriginalId: definition.id,
-        editorValidation: null,
-        editorIsSaving: false,
-        editorIsValidating: false,
-        editorDirty: false,
-        editorIsLoading: false,
+        definitions: upsert(state.definitions, definition),
+        wfEditor: {
+          ...emptyEditor<WorkflowEditorDraft>(),
+          draft: definitionToDraft(definition),
+          originalId: definition.id,
+        },
       }));
     } catch (error) {
-      set({ editorError: (error as Error).message, editorIsLoading: false });
+      set((s) => ({ wfEditor: { ...s.wfEditor, error: (error as Error).message, isLoading: false } }));
     }
   },
 
   closeDraft: () => {
-    set({
-      editorDraft: null,
-      editorOriginalId: null,
-      editorValidation: null,
-      editorIsSaving: false,
-      editorIsValidating: false,
-      editorDirty: false,
-      editorIsLoading: false,
-      editorError: null,
-    });
+    set({ wfEditor: emptyEditor<WorkflowEditorDraft>() });
   },
 
   updateDraft: (patch) => {
     set((state) => {
-      if (!state.editorDraft) return state;
-      return {
-        editorDraft: { ...state.editorDraft, ...patch },
-        editorDirty: true,
-      };
+      if (!state.wfEditor.draft) return state;
+      return { wfEditor: { ...state.wfEditor, draft: { ...state.wfEditor.draft, ...patch }, dirty: true } };
     });
   },
 
   updateDraftBinding: (bindingIndex, patch) => {
     set((state) => {
-      if (!state.editorDraft) return state;
-      const bindings = state.editorDraft.contract.injection.context_bindings.map((binding, index) =>
-        index === bindingIndex ? { ...binding, ...patch } : binding,
+      const draft = state.wfEditor.draft;
+      if (!draft) return state;
+      const bindings = draft.contract.injection.context_bindings.map((b, i) =>
+        i === bindingIndex ? { ...b, ...patch } : b,
       );
       return {
-        editorDraft: {
-          ...state.editorDraft,
-          contract: {
-            ...state.editorDraft.contract,
-            injection: {
-              ...state.editorDraft.contract.injection,
-              context_bindings: bindings,
-            },
-          },
+        wfEditor: {
+          ...state.wfEditor,
+          draft: { ...draft, contract: { ...draft.contract, injection: { ...draft.contract.injection, context_bindings: bindings } } },
+          dirty: true,
         },
-        editorDirty: true,
       };
     });
   },
 
   addDraftBinding: () => {
     set((state) => {
-      if (!state.editorDraft) return state;
-      const newBinding: WorkflowContextBinding = {
-        locator: "",
-        reason: "",
-        required: true,
-        title: null,
-      };
+      const draft = state.wfEditor.draft;
+      if (!draft) return state;
+      const newBinding: WorkflowContextBinding = { locator: "", reason: "", required: true, title: null };
       return {
-        editorDraft: {
-          ...state.editorDraft,
-          contract: {
-            ...state.editorDraft.contract,
-            injection: {
-              ...state.editorDraft.contract.injection,
-              context_bindings: [
-                ...state.editorDraft.contract.injection.context_bindings,
-                newBinding,
-              ],
-            },
-          },
+        wfEditor: {
+          ...state.wfEditor,
+          draft: { ...draft, contract: { ...draft.contract, injection: { ...draft.contract.injection, context_bindings: [...draft.contract.injection.context_bindings, newBinding] } } },
+          dirty: true,
         },
-        editorDirty: true,
       };
     });
   },
 
   removeDraftBinding: (bindingIndex) => {
     set((state) => {
-      if (!state.editorDraft) return state;
+      const draft = state.wfEditor.draft;
+      if (!draft) return state;
       return {
-        editorDraft: {
-          ...state.editorDraft,
-          contract: {
-            ...state.editorDraft.contract,
-            injection: {
-              ...state.editorDraft.contract.injection,
-              context_bindings: state.editorDraft.contract.injection.context_bindings.filter(
-                (_, index) => index !== bindingIndex,
-              ),
-            },
-          },
+        wfEditor: {
+          ...state.wfEditor,
+          draft: { ...draft, contract: { ...draft.contract, injection: { ...draft.contract.injection, context_bindings: draft.contract.injection.context_bindings.filter((_, i) => i !== bindingIndex) } } },
+          dirty: true,
         },
-        editorDirty: true,
       };
     });
   },
 
   validateDraft: async () => {
-    const draft = get().editorDraft;
+    const draft = get().wfEditor.draft;
     if (!draft) return null;
-    set({ editorIsValidating: true, editorError: null });
+    set((s) => ({ wfEditor: { ...s.wfEditor, isValidating: true, error: null } }));
     try {
       const result = await validateWorkflowDefinition({
         key: draft.key,
@@ -539,49 +483,48 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         recommended_roles: draft.recommended_roles,
         contract: draft.contract,
       });
-      set({ editorValidation: result, editorIsValidating: false });
+      set((s) => ({ wfEditor: { ...s.wfEditor, validation: result, isValidating: false } }));
       return result;
     } catch (error) {
-      set({ editorError: (error as Error).message, editorIsValidating: false });
+      set((s) => ({ wfEditor: { ...s.wfEditor, error: (error as Error).message, isValidating: false } }));
       return null;
     }
   },
 
   saveDraft: async () => {
-    const draft = get().editorDraft;
-    const originalId = get().editorOriginalId;
+    const { draft, originalId } = get().wfEditor;
     if (!draft) return null;
-    set({ editorIsSaving: true, editorError: null });
+    set((s) => ({ wfEditor: { ...s.wfEditor, isSaving: true, error: null } }));
     try {
-      let definition: WorkflowDefinition;
-      if (originalId) {
-        definition = await updateWorkflowDefinition(originalId, {
-          name: draft.name,
-          description: draft.description,
-          recommended_roles: draft.recommended_roles,
-          contract: draft.contract,
-        });
-      } else {
-        definition = await createWorkflowDefinition({
-          key: draft.key,
-          name: draft.name,
-          description: draft.description,
-          target_kind: draft.target_kind,
-          recommended_roles: draft.recommended_roles,
-          contract: draft.contract,
-        });
-      }
+      const definition = originalId
+        ? await updateWorkflowDefinition(originalId, {
+            name: draft.name,
+            description: draft.description,
+            recommended_roles: draft.recommended_roles,
+            contract: draft.contract,
+          })
+        : await createWorkflowDefinition({
+            key: draft.key,
+            name: draft.name,
+            description: draft.description,
+            target_kind: draft.target_kind,
+            recommended_roles: draft.recommended_roles,
+            contract: draft.contract,
+          });
       set((state) => ({
-        definitions: upsertDefinition(state.definitions, definition),
-        editorDraft: definitionToDraft(definition),
-        editorOriginalId: definition.id,
-        editorValidation: null,
-        editorIsSaving: false,
-        editorDirty: false,
+        definitions: upsert(state.definitions, definition),
+        wfEditor: {
+          ...state.wfEditor,
+          draft: definitionToDraft(definition),
+          originalId: definition.id,
+          validation: null,
+          isSaving: false,
+          dirty: false,
+        },
       }));
       return definition;
     } catch (error) {
-      set({ editorError: (error as Error).message, editorIsSaving: false });
+      set((s) => ({ wfEditor: { ...s.wfEditor, error: (error as Error).message, isSaving: false } }));
       return null;
     }
   },
@@ -590,9 +533,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const definition = await enableWorkflowDefinition(id);
-      set((state) => ({
-        definitions: upsertDefinition(state.definitions, definition),
-      }));
+      set((state) => ({ definitions: upsert(state.definitions, definition) }));
       return definition;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -604,9 +545,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const definition = await disableWorkflowDefinition(id);
-      set((state) => ({
-        definitions: upsertDefinition(state.definitions, definition),
-      }));
+      set((state) => ({ definitions: upsert(state.definitions, definition) }));
       return definition;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -618,9 +557,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       await deleteWorkflowDefinition(id);
-      set((state) => ({
-        definitions: state.definitions.filter((item) => item.id !== id),
-      }));
+      set((state) => ({ definitions: state.definitions.filter((item) => item.id !== id) }));
       return true;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -628,106 +565,86 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
+  // ── Lifecycle Definition editor ──
+
   openNewLifecycleDraft: () => {
-    set({
-      lifecycleEditorDraft: createEmptyLifecycleDraft(),
-      lifecycleEditorOriginalId: null,
-      lifecycleEditorValidation: null,
-      lifecycleEditorIsSaving: false,
-      lifecycleEditorIsValidating: false,
-      lifecycleEditorDirty: false,
-      lifecycleEditorIsLoading: false,
-      lifecycleEditorError: null,
-    });
+    set({ lcEditor: { ...emptyEditor<LifecycleEditorDraft>(), draft: createEmptyLifecycleDraft() } });
   },
 
   openEditLifecycleDraft: async (definitionId) => {
-    set({ lifecycleEditorIsLoading: true, lifecycleEditorError: null });
+    set((s) => ({ lcEditor: { ...s.lcEditor, isLoading: true, error: null } }));
     try {
       const definition = await getLifecycleDefinition(definitionId);
       set((state) => ({
-        lifecycleDefinitions: upsertLifecycle(state.lifecycleDefinitions, definition),
-        lifecycleEditorDraft: lifecycleToDraft(definition),
-        lifecycleEditorOriginalId: definition.id,
-        lifecycleEditorValidation: null,
-        lifecycleEditorIsSaving: false,
-        lifecycleEditorIsValidating: false,
-        lifecycleEditorDirty: false,
-        lifecycleEditorIsLoading: false,
+        lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition),
+        lcEditor: {
+          ...emptyEditor<LifecycleEditorDraft>(),
+          draft: lifecycleToDraft(definition),
+          originalId: definition.id,
+        },
       }));
     } catch (error) {
-      set({ lifecycleEditorError: (error as Error).message, lifecycleEditorIsLoading: false });
+      set((s) => ({ lcEditor: { ...s.lcEditor, error: (error as Error).message, isLoading: false } }));
     }
   },
 
   closeLifecycleDraft: () => {
-    set({
-      lifecycleEditorDraft: null,
-      lifecycleEditorOriginalId: null,
-      lifecycleEditorValidation: null,
-      lifecycleEditorIsSaving: false,
-      lifecycleEditorIsValidating: false,
-      lifecycleEditorDirty: false,
-      lifecycleEditorIsLoading: false,
-      lifecycleEditorError: null,
-    });
+    set({ lcEditor: emptyEditor<LifecycleEditorDraft>() });
   },
 
   updateLifecycleDraft: (patch) => {
     set((state) => {
-      if (!state.lifecycleEditorDraft) return state;
-      return {
-        lifecycleEditorDraft: { ...state.lifecycleEditorDraft, ...patch },
-        lifecycleEditorDirty: true,
-      };
+      if (!state.lcEditor.draft) return state;
+      return { lcEditor: { ...state.lcEditor, draft: { ...state.lcEditor.draft, ...patch }, dirty: true } };
     });
   },
 
   updateLifecycleStep: (stepIndex, patch) => {
     set((state) => {
-      if (!state.lifecycleEditorDraft) return state;
+      const draft = state.lcEditor.draft;
+      if (!draft) return state;
       return {
-        lifecycleEditorDraft: {
-          ...state.lifecycleEditorDraft,
-          steps: state.lifecycleEditorDraft.steps.map((step, index) =>
-            index === stepIndex ? { ...step, ...patch } : step,
-          ),
+        lcEditor: {
+          ...state.lcEditor,
+          draft: { ...draft, steps: draft.steps.map((step, i) => (i === stepIndex ? { ...step, ...patch } : step)) },
+          dirty: true,
         },
-        lifecycleEditorDirty: true,
       };
     });
   },
 
   addLifecycleStep: () => {
     set((state) => {
-      if (!state.lifecycleEditorDraft) return state;
+      const draft = state.lcEditor.draft;
+      if (!draft) return state;
       return {
-        lifecycleEditorDraft: {
-          ...state.lifecycleEditorDraft,
-          steps: [...state.lifecycleEditorDraft.steps, createEmptyLifecycleStep()],
+        lcEditor: {
+          ...state.lcEditor,
+          draft: { ...draft, steps: [...draft.steps, { key: "", description: "", workflow_key: null }] },
+          dirty: true,
         },
-        lifecycleEditorDirty: true,
       };
     });
   },
 
   removeLifecycleStep: (stepIndex) => {
     set((state) => {
-      if (!state.lifecycleEditorDraft) return state;
+      const draft = state.lcEditor.draft;
+      if (!draft) return state;
       return {
-        lifecycleEditorDraft: {
-          ...state.lifecycleEditorDraft,
-          steps: state.lifecycleEditorDraft.steps.filter((_, index) => index !== stepIndex),
+        lcEditor: {
+          ...state.lcEditor,
+          draft: { ...draft, steps: draft.steps.filter((_, i) => i !== stepIndex) },
+          dirty: true,
         },
-        lifecycleEditorDirty: true,
       };
     });
   },
 
   validateLifecycleDraft: async () => {
-    const draft = get().lifecycleEditorDraft;
+    const draft = get().lcEditor.draft;
     if (!draft) return null;
-    set({ lifecycleEditorIsValidating: true, lifecycleEditorError: null });
+    set((s) => ({ lcEditor: { ...s.lcEditor, isValidating: true, error: null } }));
     try {
       const result = await validateLifecycleDefinition({
         key: draft.key,
@@ -738,51 +655,50 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         entry_step_key: draft.entry_step_key,
         steps: draft.steps,
       });
-      set({ lifecycleEditorValidation: result, lifecycleEditorIsValidating: false });
+      set((s) => ({ lcEditor: { ...s.lcEditor, validation: result, isValidating: false } }));
       return result;
     } catch (error) {
-      set({ lifecycleEditorError: (error as Error).message, lifecycleEditorIsValidating: false });
+      set((s) => ({ lcEditor: { ...s.lcEditor, error: (error as Error).message, isValidating: false } }));
       return null;
     }
   },
 
   saveLifecycleDraft: async () => {
-    const draft = get().lifecycleEditorDraft;
-    const originalId = get().lifecycleEditorOriginalId;
+    const { draft, originalId } = get().lcEditor;
     if (!draft) return null;
-    set({ lifecycleEditorIsSaving: true, lifecycleEditorError: null });
+    set((s) => ({ lcEditor: { ...s.lcEditor, isSaving: true, error: null } }));
     try {
-      let definition: LifecycleDefinition;
-      if (originalId) {
-        definition = await updateLifecycleDefinition(originalId, {
-          name: draft.name,
-          description: draft.description,
-          recommended_roles: draft.recommended_roles,
-          entry_step_key: draft.entry_step_key,
-          steps: draft.steps,
-        });
-      } else {
-        definition = await createLifecycleDefinition({
-          key: draft.key,
-          name: draft.name,
-          description: draft.description,
-          target_kind: draft.target_kind,
-          recommended_roles: draft.recommended_roles,
-          entry_step_key: draft.entry_step_key,
-          steps: draft.steps,
-        });
-      }
+      const definition = originalId
+        ? await updateLifecycleDefinition(originalId, {
+            name: draft.name,
+            description: draft.description,
+            recommended_roles: draft.recommended_roles,
+            entry_step_key: draft.entry_step_key,
+            steps: draft.steps,
+          })
+        : await createLifecycleDefinition({
+            key: draft.key,
+            name: draft.name,
+            description: draft.description,
+            target_kind: draft.target_kind,
+            recommended_roles: draft.recommended_roles,
+            entry_step_key: draft.entry_step_key,
+            steps: draft.steps,
+          });
       set((state) => ({
-        lifecycleDefinitions: upsertLifecycle(state.lifecycleDefinitions, definition),
-        lifecycleEditorDraft: lifecycleToDraft(definition),
-        lifecycleEditorOriginalId: definition.id,
-        lifecycleEditorValidation: null,
-        lifecycleEditorIsSaving: false,
-        lifecycleEditorDirty: false,
+        lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition),
+        lcEditor: {
+          ...state.lcEditor,
+          draft: lifecycleToDraft(definition),
+          originalId: definition.id,
+          validation: null,
+          isSaving: false,
+          dirty: false,
+        },
       }));
       return definition;
     } catch (error) {
-      set({ lifecycleEditorError: (error as Error).message, lifecycleEditorIsSaving: false });
+      set((s) => ({ lcEditor: { ...s.lcEditor, error: (error as Error).message, isSaving: false } }));
       return null;
     }
   },
@@ -791,9 +707,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const definition = await enableLifecycleDefinition(id);
-      set((state) => ({
-        lifecycleDefinitions: upsertLifecycle(state.lifecycleDefinitions, definition),
-      }));
+      set((state) => ({ lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition) }));
       return definition;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -805,9 +719,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const definition = await disableLifecycleDefinition(id);
-      set((state) => ({
-        lifecycleDefinitions: upsertLifecycle(state.lifecycleDefinitions, definition),
-      }));
+      set((state) => ({ lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition) }));
       return definition;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -819,9 +731,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       await deleteLifecycleDefinition(id);
-      set((state) => ({
-        lifecycleDefinitions: state.lifecycleDefinitions.filter((item) => item.id !== id),
-      }));
+      set((state) => ({ lifecycleDefinitions: state.lifecycleDefinitions.filter((item) => item.id !== id) }));
       return true;
     } catch (error) {
       set({ error: (error as Error).message });

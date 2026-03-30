@@ -1,6 +1,8 @@
 import { api } from "../api/client";
 import type {
   LifecycleDefinition,
+  LifecycleExecutionEntry,
+  LifecycleExecutionEventKind,
   LifecycleStepDefinition,
   WorkflowAgentRole,
   WorkflowAssignment,
@@ -27,109 +29,55 @@ import type {
   WorkflowValidationResult,
 } from "../types";
 
-function normalizeWorkflowTargetKind(value: string): WorkflowTargetKind {
-  return value === "project" || value === "story" || value === "task" ? value : "task";
+// ─── 枚举 normalizer（将后端字符串收窄到前端联合类型）───
+
+const WORKFLOW_TARGET_KINDS = new Set<string>(["project", "story", "task"]);
+const WORKFLOW_AGENT_ROLES = new Set<string>(["project", "story", "task"]);
+const WORKFLOW_CONSTRAINT_KINDS = new Set<string>(["block_stop_until_checks_pass", "custom"]);
+const WORKFLOW_CHECK_KINDS = new Set<string>([
+  "artifact_exists", "artifact_count_gte", "session_terminal_in",
+  "checklist_evidence_present", "explicit_action_received", "custom",
+]);
+const WORKFLOW_RUN_STATUSES = new Set<string>([
+  "draft", "ready", "running", "blocked", "completed", "failed", "cancelled",
+]);
+const WORKFLOW_STEP_STATUSES = new Set<string>([
+  "pending", "ready", "running", "completed", "failed", "skipped",
+]);
+const WORKFLOW_ARTIFACT_TYPES = new Set<string>([
+  "session_summary", "journal_update", "archive_suggestion", "phase_note",
+  "checklist_evidence", "execution_trace", "decision_record", "context_snapshot",
+]);
+const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "cloned"]);
+const WORKFLOW_DEF_STATUSES = new Set<string>(["draft", "active", "disabled"]);
+const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
+  "step_activated", "step_completed", "constraint_blocked",
+  "completion_evaluated", "artifact_appended", "context_injected",
+]);
+
+function normalizeEnum<T extends string>(value: unknown, allowed: Set<string>, fallback: T): T {
+  const s = typeof value === "string" ? value : String(value ?? "");
+  return (allowed.has(s) ? s : fallback) as T;
 }
 
-function normalizeWorkflowAgentRole(value: string): WorkflowAgentRole {
-  switch (value) {
-    case "project":
-    case "story":
-    case "task":
-      return value;
-    default:
-      return "task";
-  }
+// ─── 子结构 mapper ──────────────────────────────────────
+
+function asRecord(raw: unknown): Record<string, unknown> | null {
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
 }
 
-function normalizeWorkflowConstraintKind(value: string): WorkflowConstraintKind {
-  switch (value) {
-    case "deny_task_status_transition":
-    case "block_stop_until_checks_pass":
-    case "custom":
-      return value;
-    default:
-      return "custom";
-  }
+function asRecordArray(raw: unknown): Record<string, unknown>[] {
+  return Array.isArray(raw)
+    ? raw.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    : [];
 }
 
-function normalizeWorkflowCheckKind(value: string): WorkflowCheckKind {
-  switch (value) {
-    case "task_status_in":
-    case "artifact_exists":
-    case "artifact_count_gte":
-    case "session_terminal_in":
-    case "checklist_evidence_present":
-    case "explicit_action_received":
-    case "custom":
-      return value;
-    default:
-      return "custom";
-  }
+function asStringArray(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : [];
 }
 
-function normalizeWorkflowRunStatus(value: string): WorkflowRunStatus {
-  switch (value) {
-    case "draft":
-    case "ready":
-    case "running":
-    case "blocked":
-    case "completed":
-    case "failed":
-    case "cancelled":
-      return value;
-    default:
-      return "draft";
-  }
-}
-
-function normalizeWorkflowStepExecutionStatus(value: string): WorkflowStepExecutionStatus {
-  switch (value) {
-    case "pending":
-    case "ready":
-    case "running":
-    case "completed":
-    case "failed":
-    case "skipped":
-      return value;
-    default:
-      return "pending";
-  }
-}
-
-function normalizeWorkflowRecordArtifactType(value: string): WorkflowRecordArtifactType {
-  switch (value) {
-    case "session_summary":
-    case "journal_update":
-    case "archive_suggestion":
-    case "phase_note":
-    case "checklist_evidence":
-      return value;
-    default:
-      return "phase_note";
-  }
-}
-
-function normalizeWorkflowDefinitionSource(value: string): WorkflowDefinitionSource {
-  switch (value) {
-    case "builtin_seed":
-    case "user_authored":
-    case "cloned":
-      return value;
-    default:
-      return "user_authored";
-  }
-}
-
-function normalizeWorkflowDefinitionStatus(value: string): WorkflowDefinitionStatus {
-  switch (value) {
-    case "draft":
-    case "active":
-    case "disabled":
-      return value;
-    default:
-      return "draft";
-  }
+function optString(raw: unknown): string | null {
+  return raw != null ? String(raw) : null;
 }
 
 function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContextBinding {
@@ -137,96 +85,58 @@ function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContex
     locator: String(raw.locator ?? ""),
     reason: String(raw.reason ?? ""),
     required: raw.required !== false,
-    title: raw.title != null ? String(raw.title) : null,
+    title: optString(raw.title),
   };
 }
 
 function mapWorkflowConstraintSpec(raw: Record<string, unknown>): WorkflowConstraintSpec {
   return {
     key: String(raw.key ?? ""),
-    kind: normalizeWorkflowConstraintKind(String(raw.kind ?? "custom")),
+    kind: normalizeEnum<WorkflowConstraintKind>(raw.kind, WORKFLOW_CONSTRAINT_KINDS, "custom"),
     description: String(raw.description ?? ""),
-    payload:
-      raw.payload && typeof raw.payload === "object"
-        ? (raw.payload as Record<string, unknown>)
-        : null,
+    payload: asRecord(raw.payload),
   };
 }
 
 function mapWorkflowCheckSpec(raw: Record<string, unknown>): WorkflowCheckSpec {
   return {
     key: String(raw.key ?? ""),
-    kind: normalizeWorkflowCheckKind(String(raw.kind ?? "custom")),
+    kind: normalizeEnum<WorkflowCheckKind>(raw.kind, WORKFLOW_CHECK_KINDS, "custom"),
     description: String(raw.description ?? ""),
-    payload:
-      raw.payload && typeof raw.payload === "object"
-        ? (raw.payload as Record<string, unknown>)
-        : null,
+    payload: asRecord(raw.payload),
   };
 }
 
 function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
-  if (!raw || typeof raw !== "object") {
-    return {
-      goal: null,
-      instructions: [],
-      context_bindings: [],
-    };
-  }
-  const value = raw as Record<string, unknown>;
+  const value = asRecord(raw);
+  if (!value) return { goal: null, instructions: [], context_bindings: [] };
   return {
-    goal: value.goal != null ? String(value.goal) : null,
-    instructions: Array.isArray(value.instructions)
-      ? value.instructions.filter((item): item is string => typeof item === "string")
-      : [],
-    context_bindings: Array.isArray(value.context_bindings)
-      ? value.context_bindings
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .map(mapWorkflowContextBinding)
-      : [],
+    goal: optString(value.goal),
+    instructions: asStringArray(value.instructions),
+    context_bindings: asRecordArray(value.context_bindings).map(mapWorkflowContextBinding),
   };
 }
 
 function mapWorkflowCompletionSpec(raw: unknown): WorkflowCompletionSpec {
-  if (!raw || typeof raw !== "object") {
-    return {
-      checks: [],
-      default_artifact_type: null,
-      default_artifact_title: null,
-    };
-  }
-  const value = raw as Record<string, unknown>;
+  const value = asRecord(raw);
+  if (!value) return { checks: [], default_artifact_type: null, default_artifact_title: null };
   return {
-    checks: Array.isArray(value.checks)
-      ? value.checks
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .map(mapWorkflowCheckSpec)
-      : [],
-    default_artifact_type:
-      value.default_artifact_type != null
-        ? normalizeWorkflowRecordArtifactType(String(value.default_artifact_type))
-        : null,
-    default_artifact_title:
-      value.default_artifact_title != null ? String(value.default_artifact_title) : null,
+    checks: asRecordArray(value.checks).map(mapWorkflowCheckSpec),
+    default_artifact_type: value.default_artifact_type != null
+      ? normalizeEnum<WorkflowRecordArtifactType>(value.default_artifact_type, WORKFLOW_ARTIFACT_TYPES, "phase_note")
+      : null,
+    default_artifact_title: optString(value.default_artifact_title),
   };
 }
 
 function mapWorkflowContract(raw: unknown): WorkflowContract {
-  if (!raw || typeof raw !== "object") {
-    return {
-      injection: mapWorkflowInjectionSpec(null),
-      constraints: [],
-      completion: mapWorkflowCompletionSpec(null),
-    };
+  const value = asRecord(raw);
+  if (!value) {
+    return { injection: mapWorkflowInjectionSpec(null), constraints: [], completion: mapWorkflowCompletionSpec(null) };
   }
-  const value = raw as Record<string, unknown>;
   return {
     injection: mapWorkflowInjectionSpec(value.injection),
-    constraints: Array.isArray(value.constraints)
-      ? value.constraints
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .map(mapWorkflowConstraintSpec)
-      : [],
+    constraints: asRecordArray(value.constraints).map(mapWorkflowConstraintSpec),
     completion: mapWorkflowCompletionSpec(value.completion),
   };
 }
@@ -241,27 +151,24 @@ function mapWorkflowTemplateWorkflow(raw: Record<string, unknown>): WorkflowTemp
 }
 
 function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
-  if (!raw || typeof raw !== "object") {
-    return { key: "", description: "", workflow_key: null };
-  }
-  const value = raw as Record<string, unknown>;
+  const value = asRecord(raw);
+  if (!value) return { key: "", description: "", workflow_key: null };
   const workflowKeyRaw = value.workflow_key ?? value.primary_workflow_key;
   return {
     key: typeof value.key === "string" ? value.key : "",
     description: typeof value.description === "string" ? value.description : "",
-    workflow_key:
-      typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
+    workflow_key: typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
   };
 }
 
 function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
   return {
     step_key: String(raw.step_key ?? ""),
-    status: normalizeWorkflowStepExecutionStatus(String(raw.status ?? "pending")),
-    started_at: raw.started_at != null ? String(raw.started_at) : null,
-    completed_at: raw.completed_at != null ? String(raw.completed_at) : null,
-    summary: raw.summary != null ? String(raw.summary) : null,
-    completed_by: raw.completed_by != null ? String(raw.completed_by) as WorkflowStepState["completed_by"] : null,
+    status: normalizeEnum<WorkflowStepExecutionStatus>(raw.status, WORKFLOW_STEP_STATUSES, "pending"),
+    started_at: optString(raw.started_at),
+    completed_at: optString(raw.completed_at),
+    summary: optString(raw.summary),
+    context_snapshot: asRecord(raw.context_snapshot),
   };
 }
 
@@ -269,12 +176,24 @@ function mapWorkflowRecordArtifact(raw: Record<string, unknown>): WorkflowRecord
   return {
     id: String(raw.id ?? ""),
     step_key: String(raw.step_key ?? ""),
-    artifact_type: normalizeWorkflowRecordArtifactType(String(raw.artifact_type ?? "phase_note")),
+    artifact_type: normalizeEnum<WorkflowRecordArtifactType>(raw.artifact_type, WORKFLOW_ARTIFACT_TYPES, "phase_note"),
     title: String(raw.title ?? ""),
     content: String(raw.content ?? ""),
     created_at: String(raw.created_at ?? new Date().toISOString()),
   };
 }
+
+function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExecutionEntry {
+  return {
+    timestamp: String(raw.timestamp ?? new Date().toISOString()),
+    step_key: String(raw.step_key ?? ""),
+    event_kind: normalizeEnum<LifecycleExecutionEventKind>(raw.event_kind, LIFECYCLE_EXECUTION_EVENT_KINDS, "step_activated"),
+    summary: String(raw.summary ?? ""),
+    detail: asRecord(raw.detail),
+  };
+}
+
+// ─── Entity mapper（后端 binding_kind → 前端 target_kind 翻译层）───
 
 export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDefinition {
   return {
@@ -282,14 +201,11 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
     key: String(raw.key ?? ""),
     name: String(raw.name ?? "未命名 Workflow"),
     description: String(raw.description ?? ""),
-    target_kind: normalizeWorkflowTargetKind(String(raw.target_kind ?? "task")),
-    recommended_roles: Array.isArray(raw.recommended_roles)
-      ? raw.recommended_roles
-          .filter((item): item is string => typeof item === "string")
-          .map(normalizeWorkflowAgentRole)
-      : [],
-    source: normalizeWorkflowDefinitionSource(String(raw.source ?? "user_authored")),
-    status: normalizeWorkflowDefinitionStatus(String(raw.status ?? "draft")),
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
+      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "task")),
+    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "user_authored"),
+    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "draft"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     contract: mapWorkflowContract(raw.contract),
     created_at: String(raw.created_at ?? new Date().toISOString()),
@@ -303,51 +219,36 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     key: String(raw.key ?? ""),
     name: String(raw.name ?? "未命名 Lifecycle"),
     description: String(raw.description ?? ""),
-    target_kind: normalizeWorkflowTargetKind(String(raw.target_kind ?? "task")),
-    recommended_roles: Array.isArray(raw.recommended_roles)
-      ? raw.recommended_roles
-          .filter((item): item is string => typeof item === "string")
-          .map(normalizeWorkflowAgentRole)
-      : [],
-    source: normalizeWorkflowDefinitionSource(String(raw.source ?? "user_authored")),
-    status: normalizeWorkflowDefinitionStatus(String(raw.status ?? "draft")),
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
+      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "task")),
+    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "user_authored"),
+    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "draft"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     entry_step_key: String(raw.entry_step_key ?? ""),
-    steps: Array.isArray(raw.steps)
-      ? raw.steps.map((item) => mapLifecycleStepDefinition(item))
-      : [],
+    steps: Array.isArray(raw.steps) ? raw.steps.map(mapLifecycleStepDefinition) : [],
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
   };
 }
 
 export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTemplate {
-  const lifecycleRaw =
-    raw.lifecycle && typeof raw.lifecycle === "object"
-      ? (raw.lifecycle as Record<string, unknown>)
-      : {};
+  const lifecycleRaw = asRecord(raw.lifecycle) ?? {};
   return {
     key: String(raw.key ?? ""),
     name: String(raw.name ?? "未命名 Workflow Template"),
     description: String(raw.description ?? ""),
-    target_kind: normalizeWorkflowTargetKind(String(raw.target_kind ?? "task")),
-    recommended_roles: Array.isArray(raw.recommended_roles)
-      ? raw.recommended_roles
-          .filter((item): item is string => typeof item === "string")
-          .map(normalizeWorkflowAgentRole)
-      : [],
-    workflows: Array.isArray(raw.workflows)
-      ? raw.workflows
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .map(mapWorkflowTemplateWorkflow)
-      : [],
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
+      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "task")),
+    workflows: asRecordArray(raw.workflows).map(mapWorkflowTemplateWorkflow),
     lifecycle: {
       key: String(lifecycleRaw.key ?? ""),
       name: String(lifecycleRaw.name ?? "未命名 Lifecycle"),
       description: String(lifecycleRaw.description ?? ""),
       entry_step_key: String(lifecycleRaw.entry_step_key ?? ""),
       steps: Array.isArray(lifecycleRaw.steps)
-        ? lifecycleRaw.steps.map((item) => mapLifecycleStepDefinition(item))
+        ? lifecycleRaw.steps.map(mapLifecycleStepDefinition)
         : [],
     },
   };
@@ -358,7 +259,7 @@ export function mapWorkflowAssignment(raw: Record<string, unknown>): WorkflowAss
     id: String(raw.id ?? ""),
     project_id: String(raw.project_id ?? ""),
     lifecycle_id: String(raw.lifecycle_id ?? ""),
-    role: normalizeWorkflowAgentRole(String(raw.role ?? "task")),
+    role: normalizeEnum<WorkflowAgentRole>(raw.role, WORKFLOW_AGENT_ROLES, "task"),
     enabled: raw.enabled !== false,
     is_default: Boolean(raw.is_default),
     created_at: String(raw.created_at ?? new Date().toISOString()),
@@ -371,20 +272,13 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     id: String(raw.id ?? ""),
     project_id: String(raw.project_id ?? ""),
     lifecycle_id: String(raw.lifecycle_id ?? ""),
-    target_kind: normalizeWorkflowTargetKind(String(raw.target_kind ?? "task")),
-    target_id: String(raw.target_id ?? ""),
-    status: normalizeWorkflowRunStatus(String(raw.status ?? "draft")),
-    current_step_key: raw.current_step_key != null ? String(raw.current_step_key) : null,
-    step_states: Array.isArray(raw.step_states)
-      ? raw.step_states
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .map(mapWorkflowStepState)
-      : [],
-    record_artifacts: Array.isArray(raw.record_artifacts)
-      ? raw.record_artifacts
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .map(mapWorkflowRecordArtifact)
-      : [],
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    target_id: String(raw.binding_id ?? raw.target_id ?? ""),
+    status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "draft"),
+    current_step_key: optString(raw.current_step_key),
+    step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
+    record_artifacts: asRecordArray(raw.record_artifacts).map(mapWorkflowRecordArtifact),
+    execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
     last_activity_at: String(raw.last_activity_at ?? new Date().toISOString()),
@@ -392,13 +286,13 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
 }
 
 export async function fetchWorkflowDefinitions(targetKind?: WorkflowTargetKind): Promise<WorkflowDefinition[]> {
-  const query = targetKind ? `?target_kind=${targetKind}` : "";
+  const query = targetKind ? `?binding_kind=${targetKind}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/workflow-definitions${query}`);
   return raw.map(mapWorkflowDefinition);
 }
 
 export async function fetchLifecycleDefinitions(targetKind?: WorkflowTargetKind): Promise<LifecycleDefinition[]> {
-  const query = targetKind ? `?target_kind=${targetKind}` : "";
+  const query = targetKind ? `?binding_kind=${targetKind}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/lifecycle-definitions${query}`);
   return raw.map(mapLifecycleDefinition);
 }
@@ -412,7 +306,15 @@ export async function createLifecycleDefinition(input: {
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
 }): Promise<LifecycleDefinition> {
-  const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions", input);
+  const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions", {
+    key: input.key,
+    name: input.name,
+    description: input.description,
+    binding_kind: input.target_kind,
+    recommended_binding_roles: input.recommended_roles,
+    entry_step_key: input.entry_step_key,
+    steps: input.steps,
+  });
   return mapLifecycleDefinition(raw);
 }
 
@@ -431,7 +333,13 @@ export async function updateLifecycleDefinition(
     steps?: LifecycleStepDefinition[];
   },
 ): Promise<LifecycleDefinition> {
-  const raw = await api.put<Record<string, unknown>>(`/lifecycle-definitions/${id}`, input);
+  const raw = await api.put<Record<string, unknown>>(`/lifecycle-definitions/${id}`, {
+    name: input.name,
+    description: input.description,
+    recommended_binding_roles: input.recommended_roles,
+    entry_step_key: input.entry_step_key,
+    steps: input.steps,
+  });
   return mapLifecycleDefinition(raw);
 }
 
@@ -444,7 +352,15 @@ export async function validateLifecycleDefinition(input: {
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
 }): Promise<WorkflowValidationResult> {
-  const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions/validate", input);
+  const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions/validate", {
+    key: input.key,
+    name: input.name,
+    description: input.description,
+    binding_kind: input.target_kind,
+    recommended_binding_roles: input.recommended_roles,
+    entry_step_key: input.entry_step_key,
+    steps: input.steps,
+  });
   return {
     valid: Boolean(raw.valid),
     issues: Array.isArray(raw.issues)
@@ -514,7 +430,7 @@ export async function fetchWorkflowRunsByTarget(
   targetId: string,
 ): Promise<WorkflowRun[]> {
   const raw = await api.get<Record<string, unknown>[]>(
-    `/lifecycle-runs/targets/${targetKind}/${targetId}`,
+    `/lifecycle-runs/bindings/${targetKind}/${targetId}`,
   );
   return raw.map(mapWorkflowRun);
 }
@@ -525,7 +441,12 @@ export async function startWorkflowRun(input: {
   target_kind: WorkflowTargetKind;
   target_id: string;
 }): Promise<WorkflowRun> {
-  const raw = await api.post<Record<string, unknown>>("/lifecycle-runs", input);
+  const raw = await api.post<Record<string, unknown>>("/lifecycle-runs", {
+    lifecycle_id: input.lifecycle_id,
+    lifecycle_key: input.lifecycle_key,
+    binding_kind: input.target_kind,
+    binding_id: input.target_id,
+  });
   return mapWorkflowRun(raw);
 }
 
@@ -568,7 +489,14 @@ export async function createWorkflowDefinition(input: {
   recommended_roles?: WorkflowAgentRole[];
   contract: WorkflowContract;
 }): Promise<WorkflowDefinition> {
-  const raw = await api.post<Record<string, unknown>>("/workflow-definitions", input);
+  const raw = await api.post<Record<string, unknown>>("/workflow-definitions", {
+    key: input.key,
+    name: input.name,
+    description: input.description,
+    binding_kind: input.target_kind,
+    recommended_binding_roles: input.recommended_roles,
+    contract: input.contract,
+  });
   return mapWorkflowDefinition(raw);
 }
 
@@ -586,7 +514,12 @@ export async function updateWorkflowDefinition(
     contract?: WorkflowContract;
   },
 ): Promise<WorkflowDefinition> {
-  const raw = await api.put<Record<string, unknown>>(`/workflow-definitions/${id}`, input);
+  const raw = await api.put<Record<string, unknown>>(`/workflow-definitions/${id}`, {
+    name: input.name,
+    description: input.description,
+    recommended_binding_roles: input.recommended_roles,
+    contract: input.contract,
+  });
   return mapWorkflowDefinition(raw);
 }
 
@@ -598,7 +531,14 @@ export async function validateWorkflowDefinition(input: {
   recommended_roles?: WorkflowAgentRole[];
   contract: WorkflowContract;
 }): Promise<WorkflowValidationResult> {
-  const raw = await api.post<Record<string, unknown>>("/workflow-definitions/validate", input);
+  const raw = await api.post<Record<string, unknown>>("/workflow-definitions/validate", {
+    key: input.key,
+    name: input.name,
+    description: input.description,
+    binding_kind: input.target_kind,
+    recommended_binding_roles: input.recommended_roles,
+    contract: input.contract,
+  });
   return {
     valid: Boolean(raw.valid),
     issues: Array.isArray(raw.issues)

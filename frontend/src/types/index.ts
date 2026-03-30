@@ -273,23 +273,16 @@ export type WorkflowStepExecutionStatus =
   | "skipped";
 
 export type WorkflowConstraintKind =
-  | "deny_task_status_transition"
   | "block_stop_until_checks_pass"
   | "custom";
 
 export type WorkflowCheckKind =
-  | "task_status_in"
   | "artifact_exists"
   | "artifact_count_gte"
   | "session_terminal_in"
   | "checklist_evidence_present"
   | "explicit_action_received"
   | "custom";
-
-export type WorkflowSessionTerminalState =
-  | "completed"
-  | "failed"
-  | "interrupted";
 
 export type WorkflowRecordArtifactType =
   | "session_summary"
@@ -435,15 +428,12 @@ export interface WorkflowAssignment {
   updated_at: string;
 }
 
-export type WorkflowProgressionSource = "hook_runtime" | "manual_override";
-
 export interface WorkflowStepState {
   step_key: string;
   status: WorkflowStepExecutionStatus;
   started_at?: string | null;
   completed_at?: string | null;
   summary?: string | null;
-  completed_by?: WorkflowProgressionSource | null;
   context_snapshot?: Record<string, unknown> | null;
 }
 
@@ -486,33 +476,6 @@ export interface WorkflowRun {
   created_at: string;
   updated_at: string;
   last_activity_at: string;
-}
-
-export interface WorkflowTargetSummary {
-  target_kind: WorkflowTargetKind;
-  target_id: string;
-  target_label: string;
-}
-
-export interface WorkflowProjectionSnapshot {
-  run_id: string;
-  lifecycle_id: string;
-  lifecycle_key: string;
-  lifecycle_name: string;
-  run_status: string;
-  step_key: string;
-  step_title: string;
-  primary_workflow_id: string;
-  primary_workflow_key: string;
-  primary_workflow_name: string;
-  target: WorkflowTargetSummary;
-  instruction_count: number;
-  binding_count: number;
-  resolved_binding_count: number;
-  attachment_count: number;
-  constraint_count: number;
-  check_count: number;
-  requires_session: boolean;
 }
 
 // ─── Project ──────────────────────────────────────────

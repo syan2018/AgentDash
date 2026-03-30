@@ -9,25 +9,18 @@ import type {
   WorkflowTargetKind,
 } from "../../types";
 
-export const TARGET_KIND_LABEL: Record<WorkflowTargetKind, string> = {
+export const BINDING_KIND_LABEL: Record<WorkflowTargetKind, string> = {
   project: "Project",
   story: "Story",
   task: "Task",
 };
 
-export const ROLE_LABEL: Record<WorkflowAgentRole, string> = {
-  project: "Project",
-  story: "Story",
-  task: "Task",
-};
+/** @deprecated Use BINDING_KIND_LABEL */
+export const TARGET_KIND_LABEL = BINDING_KIND_LABEL;
+
+export const ROLE_LABEL: Record<WorkflowAgentRole, string> = BINDING_KIND_LABEL;
 
 export const ROLE_ORDER: WorkflowAgentRole[] = ["project", "story", "task"];
-
-export const DEFAULT_ROLE_BY_TARGET: Record<WorkflowTargetKind, WorkflowAgentRole> = {
-  project: "project",
-  story: "story",
-  task: "task",
-};
 
 export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
   draft: "Draft",

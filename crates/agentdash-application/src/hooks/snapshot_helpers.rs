@@ -2,7 +2,7 @@ use crate::workflow::{
     WorkflowCompletionDecision, WorkflowCompletionSignalSet, evaluate_step_completion,
 };
 use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleRunStatus, WorkflowConstraintKind,
+    EffectiveSessionContract, LifecycleRunStatus, WorkflowConstraintKind, WorkflowHookRuleSpec,
     WorkflowSessionTerminalState,
 };
 use agentdash_spi::{
@@ -171,6 +171,15 @@ pub(crate) fn parse_session_terminal_state(
         Some("interrupted") => Some(WorkflowSessionTerminalState::Interrupted),
         _ => None,
     }
+}
+
+pub(crate) fn active_workflow_hook_rules(
+    snapshot: &SessionHookSnapshot,
+) -> &[WorkflowHookRuleSpec] {
+    active_workflow(snapshot)
+        .and_then(|aw| aw.effective_contract.as_ref())
+        .map(|c| c.hook_rules.as_slice())
+        .unwrap_or_default()
 }
 
 /// Build a source string from the snapshot's active workflow metadata.

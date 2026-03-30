@@ -327,8 +327,37 @@ export interface WorkflowCompletionSpec {
   default_artifact_title?: string | null;
 }
 
+export type WorkflowHookTrigger =
+  | "before_tool"
+  | "after_tool"
+  | "after_turn"
+  | "before_stop"
+  | "session_terminal"
+  | "before_subagent_dispatch"
+  | "after_subagent_dispatch"
+  | "subagent_result";
+
+export interface WorkflowHookRuleSpec {
+  key: string;
+  trigger: WorkflowHookTrigger;
+  description: string;
+  preset?: string | null;
+  params?: Record<string, unknown> | null;
+  script?: string | null;
+  enabled: boolean;
+}
+
+export interface HookRulePreset {
+  key: string;
+  trigger: WorkflowHookTrigger;
+  label: string;
+  description: string;
+  param_schema?: Record<string, unknown> | null;
+}
+
 export interface WorkflowContract {
   injection: WorkflowInjectionSpec;
+  hook_rules: WorkflowHookRuleSpec[];
   constraints: WorkflowConstraintSpec[];
   completion: WorkflowCompletionSpec;
 }

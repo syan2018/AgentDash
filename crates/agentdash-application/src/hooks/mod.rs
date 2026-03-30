@@ -5,6 +5,7 @@ use crate::workflow::ActiveWorkflowProjection;
 mod completion;
 mod helpers;
 mod owner_resolver;
+pub mod presets;
 mod provider;
 mod rules;
 mod snapshot_helpers;
@@ -12,6 +13,7 @@ mod workflow_contribution;
 mod workflow_snapshot;
 
 pub use owner_resolver::SessionOwnerResolver;
+pub use presets::{HookRulePreset, hook_rule_preset_registry};
 pub use provider::AppExecutionHookProvider;
 pub use workflow_snapshot::WorkflowSnapshotBuilder;
 

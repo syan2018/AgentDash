@@ -220,6 +220,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(workflows::disable_lifecycle_definition),
         )
         .route(
+            "/hook-presets",
+            get(workflows::list_hook_presets),
+        )
+        .route(
             "/workflow-templates",
             get(workflows::list_workflow_templates),
         )

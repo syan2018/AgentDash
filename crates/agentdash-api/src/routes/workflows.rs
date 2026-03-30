@@ -7,6 +7,7 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
     ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand, AssignLifecycleCommand,
     BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand, LifecycleRunService,
@@ -886,4 +887,33 @@ fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, A
 fn parse_binding_kind(raw: &str) -> Result<WorkflowBindingKind, ApiError> {
     WorkflowBindingKind::from_binding_scope(raw)
         .ok_or_else(|| ApiError::BadRequest(format!("无效的 binding_kind: {raw}")))
+}
+
+pub async fn list_hook_presets() -> Json<serde_json::Value> {
+    let presets = hook_rule_preset_registry();
+    let grouped = group_presets_by_trigger(presets);
+    Json(serde_json::json!({ "presets": grouped }))
+}
+
+fn group_presets_by_trigger(
+    presets: &[agentdash_application::hooks::HookRulePreset],
+) -> serde_json::Value {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+    for preset in presets {
+        let trigger_key = serde_json::to_value(&preset.trigger)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_default();
+        groups.entry(trigger_key).or_default().push(
+            serde_json::json!({
+                "key": preset.key,
+                "trigger": preset.trigger,
+                "label": preset.label,
+                "description": preset.description,
+                "param_schema": preset.param_schema,
+            }),
+        );
+    }
+    serde_json::to_value(groups).unwrap_or_default()
 }

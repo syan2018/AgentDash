@@ -217,10 +217,41 @@ pub struct WorkflowCompletionSpec {
     pub default_artifact_title: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowHookTrigger {
+    BeforeTool,
+    AfterTool,
+    AfterTurn,
+    BeforeStop,
+    SessionTerminal,
+    BeforeSubagentDispatch,
+    AfterSubagentDispatch,
+    SubagentResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct WorkflowHookRuleSpec {
+    pub key: String,
+    pub trigger: WorkflowHookTrigger,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub struct WorkflowContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
+    #[serde(default)]
+    pub hook_rules: Vec<WorkflowHookRuleSpec>,
     #[serde(default)]
     pub constraints: Vec<WorkflowConstraintSpec>,
     #[serde(default)]
@@ -340,6 +371,8 @@ pub struct EffectiveSessionContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
+    pub hook_rules: Vec<WorkflowHookRuleSpec>,
+    #[serde(default)]
     pub constraints: Vec<WorkflowConstraintSpec>,
     #[serde(default)]
     pub completion: WorkflowCompletionSpec,
@@ -397,7 +430,6 @@ pub fn validate_lifecycle_definition(
 }
 
 fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<(), String> {
-    let mut seen_constraint_keys = std::collections::BTreeSet::new();
     for (index, binding) in contract.injection.context_bindings.iter().enumerate() {
         validate_non_empty(
             &format!("{field_path}.injection.context_bindings[{index}].locator"),
@@ -408,6 +440,27 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
             &binding.reason,
         )?;
     }
+
+    let mut seen_rule_keys = std::collections::BTreeSet::new();
+    for (index, rule) in contract.hook_rules.iter().enumerate() {
+        validate_identity(
+            &format!("{field_path}.hook_rules[{index}].key"),
+            &rule.key,
+        )?;
+        if rule.preset.is_none() && rule.script.is_none() {
+            return Err(format!(
+                "{field_path}.hook_rules[{index}] 必须指定 preset 或 script"
+            ));
+        }
+        if !seen_rule_keys.insert(rule.key.clone()) {
+            return Err(format!(
+                "{field_path}.hook_rules[{index}].key 重复: {}",
+                rule.key
+            ));
+        }
+    }
+
+    let mut seen_constraint_keys = std::collections::BTreeSet::new();
     for (index, constraint) in contract.constraints.iter().enumerate() {
         validate_identity(
             &format!("{field_path}.constraints[{index}].key"),

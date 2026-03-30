@@ -1,5 +1,6 @@
 import { api } from "../api/client";
 import type {
+  HookRulePreset,
   LifecycleDefinition,
   LifecycleExecutionEntry,
   LifecycleExecutionEventKind,
@@ -16,6 +17,8 @@ import type {
   WorkflowDefinition,
   WorkflowDefinitionSource,
   WorkflowDefinitionStatus,
+  WorkflowHookRuleSpec,
+  WorkflowHookTrigger,
   WorkflowInjectionSpec,
   WorkflowRecordArtifact,
   WorkflowRecordArtifactType,
@@ -50,6 +53,10 @@ const WORKFLOW_ARTIFACT_TYPES = new Set<string>([
 ]);
 const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "cloned"]);
 const WORKFLOW_DEF_STATUSES = new Set<string>(["draft", "active", "disabled"]);
+const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
+  "before_tool", "after_tool", "after_turn", "before_stop", "session_terminal",
+  "before_subagent_dispatch", "after_subagent_dispatch", "subagent_result",
+]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
   "step_activated", "step_completed", "constraint_blocked",
   "completion_evaluated", "artifact_appended", "context_injected",
@@ -129,13 +136,26 @@ function mapWorkflowCompletionSpec(raw: unknown): WorkflowCompletionSpec {
   };
 }
 
+function mapWorkflowHookRuleSpec(raw: Record<string, unknown>): WorkflowHookRuleSpec {
+  return {
+    key: String(raw.key ?? ""),
+    trigger: normalizeEnum<WorkflowHookTrigger>(raw.trigger, WORKFLOW_HOOK_TRIGGERS, "before_tool"),
+    description: String(raw.description ?? ""),
+    preset: optString(raw.preset),
+    params: asRecord(raw.params),
+    script: optString(raw.script),
+    enabled: raw.enabled !== false,
+  };
+}
+
 function mapWorkflowContract(raw: unknown): WorkflowContract {
   const value = asRecord(raw);
   if (!value) {
-    return { injection: mapWorkflowInjectionSpec(null), constraints: [], completion: mapWorkflowCompletionSpec(null) };
+    return { injection: mapWorkflowInjectionSpec(null), hook_rules: [], constraints: [], completion: mapWorkflowCompletionSpec(null) };
   }
   return {
     injection: mapWorkflowInjectionSpec(value.injection),
+    hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
     constraints: asRecordArray(value.constraints).map(mapWorkflowConstraintSpec),
     completion: mapWorkflowCompletionSpec(value.completion),
   };
@@ -564,4 +584,17 @@ export async function disableWorkflowDefinition(id: string): Promise<WorkflowDef
 
 export async function deleteWorkflowDefinition(id: string): Promise<void> {
   await api.delete(`/workflow-definitions/${id}`);
+}
+
+export async function fetchHookPresets(): Promise<HookRulePreset[]> {
+  const raw = await api.get<Record<string, unknown>>("/hook-presets");
+  const grouped = raw.presets as Record<string, Record<string, unknown>[]> | undefined;
+  if (!grouped) return [];
+  return Object.values(grouped).flat().map((item) => ({
+    key: String(item.key ?? ""),
+    trigger: normalizeEnum<WorkflowHookTrigger>(item.trigger, WORKFLOW_HOOK_TRIGGERS, "before_tool"),
+    label: String(item.label ?? ""),
+    description: String(item.description ?? ""),
+    param_schema: asRecord(item.param_schema),
+  }));
 }

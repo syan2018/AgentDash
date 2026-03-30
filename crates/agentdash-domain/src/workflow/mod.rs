@@ -16,7 +16,8 @@ pub use value_objects::{
     ValidationIssue, ValidationSeverity, WorkflowBindingKind, WorkflowBindingRole,
     WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec, WorkflowConstraintKind,
     WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContract,
-    WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowInjectionSpec,
-    WorkflowRecordArtifact, WorkflowRecordArtifactType, WorkflowSessionTerminalState,
-    validate_lifecycle_definition, validate_workflow_definition,
+    WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookRuleSpec,
+    WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowRecordArtifact,
+    WorkflowRecordArtifactType, WorkflowSessionTerminalState, validate_lifecycle_definition,
+    validate_workflow_definition,
 };

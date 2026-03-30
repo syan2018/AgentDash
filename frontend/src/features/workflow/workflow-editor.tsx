@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  WorkflowCheckKind,
-  WorkflowCheckSpec,
-  WorkflowCompletionSpec,
+  HookRulePreset,
+  WorkflowHookRuleSpec,
+  WorkflowHookTrigger,
   WorkflowInjectionSpec,
   WorkflowTargetKind,
 } from "../../types";
@@ -16,14 +16,44 @@ import { BindingEditor } from "./binding-editor";
 import { ValidationPanel } from "./ui/validation-panel";
 import { DetailSection } from "../../components/ui/detail-panel";
 
-const CHECK_KIND_LABEL: Record<WorkflowCheckKind, string> = {
-  artifact_exists: "产物已提交",
-  artifact_count_gte: "产物数量 ≥",
-  session_terminal_in: "会话终态匹配",
-  checklist_evidence_present: "检查清单已完成",
-  explicit_action_received: "显式确认操作",
-  custom: "自定义",
+const TRIGGER_LABEL: Record<WorkflowHookTrigger, string> = {
+  before_tool: "工具调用前",
+  after_tool: "工具调用后",
+  after_turn: "Turn 结束后",
+  before_stop: "Session 结束前",
+  session_terminal: "Session 终态",
+  before_subagent_dispatch: "子 Agent 派发前",
+  after_subagent_dispatch: "子 Agent 派发后",
+  subagent_result: "子 Agent 结果回流",
 };
+
+const GATE_TRIGGERS: ReadonlySet<WorkflowHookTrigger> = new Set([
+  "before_stop",
+  "session_terminal",
+]);
+
+const PROCESS_TRIGGERS: ReadonlySet<WorkflowHookTrigger> = new Set([
+  "before_tool",
+  "after_tool",
+  "after_turn",
+  "before_subagent_dispatch",
+  "after_subagent_dispatch",
+  "subagent_result",
+]);
+
+const PROCESS_TRIGGER_OPTIONS: WorkflowHookTrigger[] = [
+  "before_tool", "after_tool", "after_turn",
+  "before_subagent_dispatch", "after_subagent_dispatch", "subagent_result",
+];
+
+const GATE_TRIGGER_OPTIONS: WorkflowHookTrigger[] = [
+  "before_stop", "session_terminal",
+];
+
+const PROCESS_TRIGGER_ORDER: WorkflowHookTrigger[] = PROCESS_TRIGGER_OPTIONS;
+const GATE_TRIGGER_ORDER: WorkflowHookTrigger[] = GATE_TRIGGER_OPTIONS;
+
+// ─── Instruction list ──────────────────────────────────
 
 function InstructionListEditor({
   values,
@@ -79,38 +109,44 @@ function InstructionListEditor({
   );
 }
 
-function CheckItemEditor({
-  spec,
-  onChange,
+// ─── Committed rule (read mode) ────────────────────────
+
+function HookRuleItem({
+  rule,
+  onToggle,
   onRemove,
 }: {
-  spec: WorkflowCheckSpec;
-  index: number;
-  onChange: (patch: Partial<WorkflowCheckSpec>) => void;
+  rule: WorkflowHookRuleSpec;
+  onToggle: () => void;
   onRemove: () => void;
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-[10px] border border-border bg-background p-2.5">
-      <div className="min-w-0 flex-1 grid gap-2 sm:grid-cols-3">
-        <input
-          value={spec.key}
-          onChange={(e) => onChange({ key: e.target.value })}
-          className="agentdash-form-input text-xs"
-          placeholder="check_key"
-        />
-        <select
-          value={spec.kind}
-          onChange={(e) => onChange({ kind: e.target.value as WorkflowCheckKind })}
-          className="agentdash-form-select text-xs"
-        >
-          {Object.entries(CHECK_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <input
-          value={spec.description}
-          onChange={(e) => onChange({ description: e.target.value })}
-          className="agentdash-form-input text-xs"
-          placeholder="检查说明"
-        />
+    <div className={`flex items-center gap-3 rounded-[10px] border px-3 py-2.5 transition-colors ${rule.enabled ? "border-border bg-background" : "border-border/40 bg-secondary/30 opacity-60"}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`shrink-0 size-4 rounded-[4px] border-2 transition-colors ${rule.enabled ? "border-primary bg-primary" : "border-muted-foreground/40 bg-transparent"}`}
+        title={rule.enabled ? "点击禁用" : "点击启用"}
+      >
+        {rule.enabled && (
+          <svg viewBox="0 0 12 12" className="size-full text-primary-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M2 6l3 3 5-5" />
+          </svg>
+        )}
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-foreground">{rule.description || rule.key}</span>
+          {rule.preset && (
+            <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">{rule.preset}</span>
+          )}
+          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary/70">{TRIGGER_LABEL[rule.trigger]}</span>
+        </div>
+        {rule.params && Object.keys(rule.params).length > 0 && (
+          <p className="mt-0.5 text-[11px] text-muted-foreground font-mono truncate">
+            params: {JSON.stringify(rule.params)}
+          </p>
+        )}
       </div>
       <button
         type="button"
@@ -123,6 +159,266 @@ function CheckItemEditor({
   );
 }
 
+// ─── Inline new-rule editor (edit mode) ────────────────
+
+function NewRuleEditor({
+  triggerOptions,
+  presets,
+  existingKeys,
+  onCommit,
+  onCancel,
+}: {
+  triggerOptions: WorkflowHookTrigger[];
+  presets: HookRulePreset[];
+  existingKeys: Set<string>;
+  onCommit: (rule: WorkflowHookRuleSpec) => void;
+  onCancel: () => void;
+}) {
+  const [trigger, setTrigger] = useState<WorkflowHookTrigger>(triggerOptions[0]);
+  const [mode, setMode] = useState<"preset" | "script">("preset");
+  const [selectedPreset, setSelectedPreset] = useState<string>("");
+  const [description, setDescription] = useState("");
+  const [script, setScript] = useState("");
+
+  const presetsForTrigger = useMemo(
+    () => presets.filter((p) => p.trigger === trigger && !existingKeys.has(p.key)),
+    [presets, trigger, existingKeys],
+  );
+
+  const activePreset = presetsForTrigger.find((p) => p.key === selectedPreset);
+
+  const handleTriggerChange = (next: WorkflowHookTrigger) => {
+    setTrigger(next);
+    setSelectedPreset("");
+  };
+
+  const canCommit = mode === "preset"
+    ? selectedPreset !== ""
+    : description.trim() !== "" && script.trim() !== "";
+
+  const handleCommit = () => {
+    if (!canCommit) return;
+    if (mode === "preset" && activePreset) {
+      const defaultParams = activePreset.param_schema
+        ? buildDefaultParams(activePreset.param_schema)
+        : null;
+      onCommit({
+        key: activePreset.key,
+        trigger,
+        description: activePreset.label,
+        preset: activePreset.key,
+        params: defaultParams,
+        script: null,
+        enabled: true,
+      });
+    } else if (mode === "script") {
+      onCommit({
+        key: `custom_${Date.now()}`,
+        trigger,
+        description: description.trim(),
+        preset: null,
+        params: null,
+        script: script.trim(),
+        enabled: true,
+      });
+    }
+  };
+
+  return (
+    <div className="rounded-[10px] border-2 border-dashed border-primary/30 bg-primary/5 p-3 space-y-2.5">
+      <div className="grid gap-2 sm:grid-cols-3">
+        {/* Trigger 选择 */}
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">触发时机</label>
+          <select
+            value={trigger}
+            onChange={(e) => handleTriggerChange(e.target.value as WorkflowHookTrigger)}
+            className="agentdash-form-select mt-0.5 text-xs"
+          >
+            {triggerOptions.map((t) => (
+              <option key={t} value={t}>{TRIGGER_LABEL[t]}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* 行为类型 */}
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">行为类型</label>
+          <select
+            value={mode}
+            onChange={(e) => { setMode(e.target.value as "preset" | "script"); setSelectedPreset(""); }}
+            className="agentdash-form-select mt-0.5 text-xs"
+          >
+            <option value="preset">预设逻辑</option>
+            <option value="script">自定义脚本（预留）</option>
+          </select>
+        </div>
+
+        {/* Preset 或 script 内容 */}
+        {mode === "preset" ? (
+          <div>
+            <label className="text-[11px] font-medium text-muted-foreground">选择预设</label>
+            <select
+              value={selectedPreset}
+              onChange={(e) => setSelectedPreset(e.target.value)}
+              className="agentdash-form-select mt-0.5 text-xs"
+            >
+              <option value="">-- 选择 --</option>
+              {presetsForTrigger.map((p) => (
+                <option key={p.key} value={p.key}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div>
+            <label className="text-[11px] font-medium text-muted-foreground">描述</label>
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="agentdash-form-input mt-0.5 text-xs"
+              placeholder="这条 hook 做什么"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Preset description hint */}
+      {mode === "preset" && activePreset && (
+        <p className="text-[11px] text-muted-foreground leading-4">
+          {activePreset.description}
+        </p>
+      )}
+
+      {/* Script editor (future) */}
+      {mode === "script" && (
+        <div>
+          <label className="text-[11px] font-medium text-muted-foreground">脚本内容</label>
+          <textarea
+            value={script}
+            onChange={(e) => setScript(e.target.value)}
+            rows={3}
+            className="agentdash-form-textarea mt-0.5 font-mono text-xs"
+            placeholder="// 自定义脚本逻辑（后续版本支持解释执行）"
+          />
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex items-center justify-end gap-2">
+        <button type="button" onClick={onCancel} className="agentdash-button-secondary text-xs px-3 py-1">
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={handleCommit}
+          disabled={!canCommit}
+          className="agentdash-button-primary text-xs px-3 py-1 disabled:opacity-40"
+        >
+          确认添加
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Rule group (list + add) ───────────────────────────
+
+function HookRuleGroup({
+  rules,
+  triggerOrder,
+  triggerOptions,
+  presets,
+  existingKeys,
+  onAdd,
+  onToggle,
+  onRemove,
+}: {
+  rules: WorkflowHookRuleSpec[];
+  triggerOrder: WorkflowHookTrigger[];
+  triggerOptions: WorkflowHookTrigger[];
+  presets: HookRulePreset[];
+  existingKeys: Set<string>;
+  onAdd: (rule: WorkflowHookRuleSpec) => void;
+  onToggle: (key: string) => void;
+  onRemove: (key: string) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+
+  const grouped = useMemo(() => {
+    const map = new Map<WorkflowHookTrigger, WorkflowHookRuleSpec[]>();
+    for (const rule of rules) {
+      const list = map.get(rule.trigger) ?? [];
+      list.push(rule);
+      map.set(rule.trigger, list);
+    }
+    return map;
+  }, [rules]);
+
+  const activeTriggers = triggerOrder.filter((t) => grouped.has(t));
+
+  return (
+    <div className="space-y-2.5">
+      {rules.length === 0 && !adding && (
+        <p className="py-3 text-center text-sm text-muted-foreground">尚未配置</p>
+      )}
+
+      {activeTriggers.map((trigger) => (
+        <div key={trigger}>
+          <h4 className="mb-1.5 flex items-center gap-2 text-xs font-medium text-foreground/70">
+            <span className="inline-block size-1.5 rounded-full bg-primary/50" />
+            {TRIGGER_LABEL[trigger]}
+          </h4>
+          <div className="space-y-1.5">
+            {(grouped.get(trigger) ?? []).map((rule) => (
+              <HookRuleItem
+                key={rule.key}
+                rule={rule}
+                onToggle={() => onToggle(rule.key)}
+                onRemove={() => onRemove(rule.key)}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {adding ? (
+        <NewRuleEditor
+          triggerOptions={triggerOptions}
+          presets={presets}
+          existingKeys={existingKeys}
+          onCommit={(rule) => { onAdd(rule); setAdding(false); }}
+          onCancel={() => setAdding(false)}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="w-full rounded-[10px] border-2 border-dashed border-border/60 py-2.5 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary/70 transition-colors"
+        >
+          + 添加 Hook 行为
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Helpers ───────────────────────────────────────────
+
+function buildDefaultParams(schema: Record<string, unknown>): Record<string, unknown> | null {
+  const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
+  if (!props) return null;
+  const result: Record<string, unknown> = {};
+  for (const [key, prop] of Object.entries(props)) {
+    if (prop.type === "array") result[key] = [];
+    else if (prop.type === "string") result[key] = "";
+    else if (prop.type === "number") result[key] = 0;
+    else if (prop.type === "boolean") result[key] = false;
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+// ─── Main editor ───────────────────────────────────────
+
 export function WorkflowEditor() {
   const draft = useWorkflowStore((s) => s.wfEditor.draft);
   const originalId = useWorkflowStore((s) => s.wfEditor.originalId);
@@ -132,10 +428,15 @@ export function WorkflowEditor() {
   const isDirty = useWorkflowStore((s) => s.wfEditor.dirty);
   const error = useWorkflowStore((s) => s.wfEditor.error);
 
+  const hookPresets = useWorkflowStore((s) => s.hookPresets);
+  const fetchHookPresets = useWorkflowStore((s) => s.fetchHookPresets);
   const updateDraft = useWorkflowStore((s) => s.updateDraft);
   const updateDraftBinding = useWorkflowStore((s) => s.updateDraftBinding);
   const addDraftBinding = useWorkflowStore((s) => s.addDraftBinding);
   const removeDraftBinding = useWorkflowStore((s) => s.removeDraftBinding);
+  const addDraftHookRule = useWorkflowStore((s) => s.addDraftHookRule);
+  const removeDraftHookRule = useWorkflowStore((s) => s.removeDraftHookRule);
+  const updateDraftHookRule = useWorkflowStore((s) => s.updateDraftHookRule);
   const validateDraft = useWorkflowStore((s) => s.validateDraft);
   const saveDraft = useWorkflowStore((s) => s.saveDraft);
 
@@ -144,6 +445,10 @@ export function WorkflowEditor() {
     if (!originalId) return null;
     return definitions.find((d) => d.id === originalId) ?? null;
   }, [originalId, definitions]);
+
+  useEffect(() => {
+    if (hookPresets.length === 0) void fetchHookPresets();
+  }, [hookPresets.length, fetchHookPresets]);
 
   const handleSave = useCallback(async () => {
     const result = await validateDraft();
@@ -174,29 +479,28 @@ export function WorkflowEditor() {
   const isNew = originalId === null;
   const hasErrors = validation?.issues.some((i) => i.severity === "error") ?? false;
 
-  const updateContract = (patch: Partial<typeof draft.contract>) => {
-    updateDraft({ contract: { ...draft.contract, ...patch } });
-  };
   const updateInjection = (patch: Partial<WorkflowInjectionSpec>) => {
-    updateContract({ injection: { ...draft.contract.injection, ...patch } });
-  };
-  const updateCompletion = (patch: Partial<WorkflowCompletionSpec>) => {
-    updateContract({ completion: { ...draft.contract.completion, ...patch } });
+    updateDraft({ contract: { ...draft.contract, injection: { ...draft.contract.injection, ...patch } } });
   };
 
-  const updateCheck = (idx: number, patch: Partial<WorkflowCheckSpec>) => {
-    const next = [...draft.contract.completion.checks];
-    next[idx] = { ...next[idx], ...patch };
-    updateCompletion({ checks: next });
+  const handleToggleRule = (key: string) => {
+    const rule = draft.contract.hook_rules.find((r) => r.key === key);
+    if (rule) updateDraftHookRule(key, { enabled: !rule.enabled });
   };
-  const addCheck = () => {
-    updateCompletion({
-      checks: [...draft.contract.completion.checks, { key: "", kind: "checklist_evidence_present", description: "", payload: null }],
-    });
-  };
-  const removeCheck = (idx: number) => {
-    updateCompletion({ checks: draft.contract.completion.checks.filter((_, i) => i !== idx) });
-  };
+
+  const existingKeys = useMemo(
+    () => new Set(draft.contract.hook_rules.map((r) => r.key)),
+    [draft.contract.hook_rules],
+  );
+
+  const processRules = useMemo(
+    () => draft.contract.hook_rules.filter((r) => PROCESS_TRIGGERS.has(r.trigger)),
+    [draft.contract.hook_rules],
+  );
+  const gateRules = useMemo(
+    () => draft.contract.hook_rules.filter((r) => GATE_TRIGGERS.has(r.trigger)),
+    [draft.contract.hook_rules],
+  );
 
   return (
     <div className="space-y-4 p-5">
@@ -283,35 +587,39 @@ export function WorkflowEditor() {
         </div>
       </DetailSection>
 
-      {/* 完成条件 */}
+      {/* 过程行为 */}
       <DetailSection
-        title={`完成条件 (${draft.contract.completion.checks.length})`}
-        description="BeforeStop hook 评估的条件，全部满足后 step 才可推进。"
-        extra={<button type="button" onClick={addCheck} className="agentdash-button-secondary text-sm">+ 添加</button>}
+        title={`过程行为 (${processRules.length})`}
+        description="工具调用、Turn 结束、子 Agent 交互等过程中触发的 hook 行为。"
       >
-        <div className="space-y-2">
-          {draft.contract.completion.checks.map((c, idx) => (
-            <CheckItemEditor key={`ck-${idx}`} spec={c} index={idx} onChange={(p) => updateCheck(idx, p)} onRemove={() => removeCheck(idx)} />
-          ))}
-          {draft.contract.completion.checks.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">无完成条件（手动推进）</p>
-          )}
-        </div>
+        <HookRuleGroup
+          rules={processRules}
+          triggerOrder={PROCESS_TRIGGER_ORDER}
+          triggerOptions={PROCESS_TRIGGER_OPTIONS}
+          presets={hookPresets}
+          existingKeys={existingKeys}
+          onAdd={addDraftHookRule}
+          onToggle={handleToggleRule}
+          onRemove={removeDraftHookRule}
+        />
       </DetailSection>
 
-      {/* 既有 Constraints（只读，存在时才展示） */}
-      {draft.contract.constraints.length > 0 && (
-        <DetailSection title={`行为约束 (${draft.contract.constraints.length})`} description="由 hook 规则引擎管理，不支持手动编辑。">
-          <div className="space-y-1.5">
-            {draft.contract.constraints.map((c, idx) => (
-              <div key={`cs-${idx}`} className="flex items-center gap-2 rounded-[8px] border border-border/60 bg-secondary/20 px-3 py-2">
-                <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">{c.kind}</span>
-                <span className="text-xs text-foreground/80">{c.description || c.key}</span>
-              </div>
-            ))}
-          </div>
-        </DetailSection>
-      )}
+      {/* 结束门禁 */}
+      <DetailSection
+        title={`结束门禁 (${gateRules.length})`}
+        description="Session 结束前和终态判定时触发的 hook，控制完成条件和 step 推进。"
+      >
+        <HookRuleGroup
+          rules={gateRules}
+          triggerOrder={GATE_TRIGGER_ORDER}
+          triggerOptions={GATE_TRIGGER_OPTIONS}
+          presets={hookPresets}
+          existingKeys={existingKeys}
+          onAdd={addDraftHookRule}
+          onToggle={handleToggleRule}
+          onRemove={removeDraftHookRule}
+        />
+      </DetailSection>
     </div>
   );
 }

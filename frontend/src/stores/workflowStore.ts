@@ -1,12 +1,14 @@
 import { create } from "zustand";
 
 import type {
+  HookRulePreset,
   LifecycleDefinition,
   LifecycleStepDefinition,
   WorkflowAgentRole,
   WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
+  WorkflowHookRuleSpec,
   WorkflowRecordArtifactType,
   WorkflowRun,
   WorkflowTargetKind,
@@ -28,6 +30,7 @@ import {
   fetchLifecycleDefinitions,
   fetchWorkflowDefinitions,
   fetchWorkflowRunsByTarget,
+  fetchHookPresets,
   fetchWorkflowTemplates,
   getLifecycleDefinition,
   getWorkflowDefinition,
@@ -97,6 +100,7 @@ export function createEmptyDraft(): WorkflowEditorDraft {
     recommended_roles: ["task"],
     contract: {
       injection: { goal: null, instructions: [], context_bindings: [] },
+      hook_rules: [],
       constraints: [],
       completion: { checks: [], default_artifact_type: null, default_artifact_title: null },
     },
@@ -177,12 +181,14 @@ interface WorkflowState {
   definitions: WorkflowDefinition[];
   lifecycleDefinitions: LifecycleDefinition[];
   runsByTargetKey: Record<string, WorkflowRun[]>;
+  hookPresets: HookRulePreset[];
   isLoading: boolean;
   error: string | null;
 
   wfEditor: EditorState<WorkflowEditorDraft>;
   lcEditor: EditorState<LifecycleEditorDraft>;
 
+  fetchHookPresets: () => Promise<HookRulePreset[]>;
   fetchTemplates: () => Promise<WorkflowTemplate[]>;
   fetchDefinitions: (targetKind?: WorkflowTargetKind) => Promise<WorkflowDefinition[]>;
   fetchLifecycles: (targetKind?: WorkflowTargetKind) => Promise<LifecycleDefinition[]>;
@@ -219,6 +225,10 @@ interface WorkflowState {
   disableDefinition: (id: string) => Promise<WorkflowDefinition | null>;
   removeDefinition: (id: string) => Promise<boolean>;
 
+  addDraftHookRule: (rule: WorkflowHookRuleSpec) => void;
+  removeDraftHookRule: (ruleKey: string) => void;
+  updateDraftHookRule: (ruleKey: string, patch: Partial<WorkflowHookRuleSpec>) => void;
+
   openNewLifecycleDraft: () => void;
   openEditLifecycleDraft: (definitionId: string) => Promise<void>;
   closeLifecycleDraft: () => void;
@@ -239,6 +249,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   definitions: [],
   lifecycleDefinitions: [],
   runsByTargetKey: {},
+  hookPresets: [],
   isLoading: false,
   error: null,
 
@@ -246,6 +257,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   lcEditor: emptyEditor<LifecycleEditorDraft>(),
 
   // ── Data fetching ──
+
+  fetchHookPresets: async () => {
+    try {
+      const presets = await fetchHookPresets();
+      set({ hookPresets: presets });
+      return presets;
+    } catch (error) {
+      set({ error: (error as Error).message });
+      return [];
+    }
+  },
 
   fetchTemplates: async () => {
     try {
@@ -429,6 +451,58 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         wfEditor: {
           ...state.wfEditor,
           draft: { ...draft, contract: { ...draft.contract, injection: { ...draft.contract.injection, context_bindings: draft.contract.injection.context_bindings.filter((_, i) => i !== bindingIndex) } } },
+          dirty: true,
+        },
+      };
+    });
+  },
+
+  addDraftHookRule: (rule) => {
+    set((state) => {
+      const draft = state.wfEditor.draft;
+      if (!draft) return state;
+      const existing = draft.contract.hook_rules.some((r) => r.key === rule.key);
+      if (existing) return state;
+      return {
+        wfEditor: {
+          ...state.wfEditor,
+          draft: { ...draft, contract: { ...draft.contract, hook_rules: [...draft.contract.hook_rules, rule] } },
+          dirty: true,
+        },
+      };
+    });
+  },
+
+  removeDraftHookRule: (ruleKey) => {
+    set((state) => {
+      const draft = state.wfEditor.draft;
+      if (!draft) return state;
+      return {
+        wfEditor: {
+          ...state.wfEditor,
+          draft: { ...draft, contract: { ...draft.contract, hook_rules: draft.contract.hook_rules.filter((r) => r.key !== ruleKey) } },
+          dirty: true,
+        },
+      };
+    });
+  },
+
+  updateDraftHookRule: (ruleKey, patch) => {
+    set((state) => {
+      const draft = state.wfEditor.draft;
+      if (!draft) return state;
+      return {
+        wfEditor: {
+          ...state.wfEditor,
+          draft: {
+            ...draft,
+            contract: {
+              ...draft.contract,
+              hook_rules: draft.contract.hook_rules.map((r) =>
+                r.key === ruleKey ? { ...r, ...patch } : r,
+              ),
+            },
+          },
           dirty: true,
         },
       };

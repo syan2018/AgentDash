@@ -5,7 +5,8 @@ use uuid::Uuid;
 use super::value_objects::{
     EffectiveSessionContract, LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
     LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowBindingKind,
-    WorkflowBindingRole, WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowBindingRole, WorkflowCheckKind, WorkflowConstraintKind, WorkflowContract,
+    WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookRuleSpec, WorkflowHookTrigger,
     WorkflowRecordArtifact, validate_lifecycle_definition, validate_workflow_definition,
 };
 
@@ -360,19 +361,104 @@ pub fn build_effective_contract(
     primary_workflow: Option<&WorkflowDefinition>,
 ) -> EffectiveSessionContract {
     match primary_workflow {
-        Some(w) => EffectiveSessionContract {
-            lifecycle_key: Some(lifecycle_key.to_string()),
-            active_step_key: Some(active_step_key.to_string()),
-            injection: w.contract.injection.clone(),
-            constraints: w.contract.constraints.clone(),
-            completion: w.contract.completion.clone(),
-        },
+        Some(w) => {
+            let hook_rules = if w.contract.hook_rules.is_empty() {
+                migrate_legacy_to_hook_rules(&w.contract)
+            } else {
+                w.contract.hook_rules.clone()
+            };
+            EffectiveSessionContract {
+                lifecycle_key: Some(lifecycle_key.to_string()),
+                active_step_key: Some(active_step_key.to_string()),
+                injection: w.contract.injection.clone(),
+                hook_rules,
+                constraints: w.contract.constraints.clone(),
+                completion: w.contract.completion.clone(),
+            }
+        }
         None => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
             active_step_key: Some(active_step_key.to_string()),
             ..Default::default()
         },
     }
+}
+
+/// When a WorkflowContract has no `hook_rules` but uses legacy `constraints`/`checks`,
+/// synthesize equivalent hook_rules so the new evaluation path can handle them.
+fn migrate_legacy_to_hook_rules(contract: &WorkflowContract) -> Vec<WorkflowHookRuleSpec> {
+    let mut rules = Vec::new();
+
+    for constraint in &contract.constraints {
+        match constraint.kind {
+            WorkflowConstraintKind::BlockStopUntilChecksPass => {
+                rules.push(WorkflowHookRuleSpec {
+                    key: format!("migrated:{}", constraint.key),
+                    trigger: WorkflowHookTrigger::BeforeStop,
+                    description: constraint.description.clone(),
+                    preset: Some("stop_gate_checks_pending".to_string()),
+                    params: None,
+                    script: None,
+                    enabled: true,
+                });
+            }
+            WorkflowConstraintKind::Custom => {
+                let is_deny_artifact = constraint
+                    .payload
+                    .as_ref()
+                    .and_then(|p| p.get("policy"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("deny_record_artifact_types");
+                if is_deny_artifact {
+                    let artifact_types = constraint
+                        .payload
+                        .as_ref()
+                        .and_then(|p| p.get("artifact_types"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Array(vec![]));
+                    rules.push(WorkflowHookRuleSpec {
+                        key: format!("migrated:{}", constraint.key),
+                        trigger: WorkflowHookTrigger::BeforeTool,
+                        description: constraint.description.clone(),
+                        preset: Some("block_record_artifact".to_string()),
+                        params: Some(serde_json::json!({ "artifact_types": artifact_types })),
+                        script: None,
+                        enabled: true,
+                    });
+                }
+            }
+        }
+    }
+
+    for check in &contract.completion.checks {
+        let (preset_key, trigger) = match check.kind {
+            WorkflowCheckKind::ChecklistEvidencePresent => {
+                ("stop_gate_checks_pending", WorkflowHookTrigger::BeforeStop)
+            }
+            WorkflowCheckKind::ArtifactExists | WorkflowCheckKind::ArtifactCountGte => {
+                ("stop_gate_checks_pending", WorkflowHookTrigger::BeforeStop)
+            }
+            WorkflowCheckKind::SessionTerminalIn => {
+                ("session_terminal_advance", WorkflowHookTrigger::BeforeStop)
+            }
+            _ => continue,
+        };
+        let key = format!("migrated:{}", check.key);
+        if rules.iter().any(|r| r.key == key) {
+            continue;
+        }
+        rules.push(WorkflowHookRuleSpec {
+            key,
+            trigger,
+            description: check.description.clone(),
+            preset: Some(preset_key.to_string()),
+            params: None,
+            script: None,
+            enabled: true,
+        });
+    }
+
+    rules
 }
 
 #[cfg(test)]

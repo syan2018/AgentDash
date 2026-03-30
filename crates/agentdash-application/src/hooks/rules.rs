@@ -1,10 +1,11 @@
 use crate::workflow::{WorkflowCompletionSignalSet, evaluate_step_completion};
-use agentdash_domain::workflow::{WorkflowCheckKind, WorkflowConstraintKind};
+use agentdash_domain::workflow::{WorkflowCheckKind, WorkflowConstraintKind, WorkflowHookRuleSpec};
 use agentdash_spi::{
     HookApprovalRequest, HookCompletionStatus, HookDiagnosticEntry, HookEvaluationQuery,
     HookInjection, HookResolution, HookTrigger, SessionHookSnapshot,
 };
 
+use super::presets::domain_trigger_to_spi;
 use super::snapshot_helpers::*;
 use super::{
     SubagentResult, build_subagent_result_context, extract_payload_str,
@@ -17,7 +18,7 @@ pub(crate) struct HookEvaluationContext<'a> {
     pub(crate) query: &'a HookEvaluationQuery,
 }
 
-pub(crate) struct NormalizedHookRule {
+struct NormalizedHookRule {
     key: &'static str,
     trigger: HookTrigger,
     matches: fn(&HookEvaluationContext<'_>) -> bool,
@@ -25,7 +26,8 @@ pub(crate) struct NormalizedHookRule {
 }
 
 pub(crate) fn apply_hook_rules(ctx: HookEvaluationContext<'_>, resolution: &mut HookResolution) {
-    for rule in hook_rule_registry() {
+    // Phase 1: global infrastructure rules (always run)
+    for rule in global_hook_rule_registry() {
         if rule.trigger != ctx.query.trigger {
             continue;
         }
@@ -36,24 +38,153 @@ pub(crate) fn apply_hook_rules(ctx: HookEvaluationContext<'_>, resolution: &mut 
         (rule.apply)(&ctx, resolution);
         if resolution.block_reason.is_some() && matches!(ctx.query.trigger, HookTrigger::BeforeTool)
         {
+            return;
+        }
+    }
+
+    // Phase 2: contract-driven hook_rules OR legacy static rules
+    let contract_rules = active_workflow_hook_rules(ctx.snapshot);
+    if contract_rules.is_empty() {
+        apply_legacy_workflow_rules(&ctx, resolution);
+    } else {
+        apply_contract_hook_rules(&ctx, contract_rules, resolution);
+    }
+}
+
+fn apply_legacy_workflow_rules(ctx: &HookEvaluationContext<'_>, resolution: &mut HookResolution) {
+    for rule in legacy_workflow_hook_rule_registry() {
+        if rule.trigger != ctx.query.trigger {
+            continue;
+        }
+        if !(rule.matches)(ctx) {
+            continue;
+        }
+        resolution.matched_rule_keys.push(rule.key.to_string());
+        (rule.apply)(ctx, resolution);
+        if resolution.block_reason.is_some() && matches!(ctx.query.trigger, HookTrigger::BeforeTool)
+        {
             break;
         }
     }
 }
 
-pub(crate) fn hook_rule_registry() -> &'static [NormalizedHookRule] {
+fn apply_contract_hook_rules(
+    ctx: &HookEvaluationContext<'_>,
+    rules: &[WorkflowHookRuleSpec],
+    resolution: &mut HookResolution,
+) {
+    for rule in rules {
+        if !rule.enabled {
+            continue;
+        }
+        if domain_trigger_to_spi(rule.trigger) != ctx.query.trigger {
+            continue;
+        }
+        if let Some(preset_key) = rule.preset.as_deref() {
+            if apply_preset_rule(ctx, preset_key, rule.params.as_ref(), resolution) {
+                resolution
+                    .matched_rule_keys
+                    .push(format!("hook_rule:{}:{}", rule.key, preset_key));
+                if resolution.block_reason.is_some()
+                    && matches!(ctx.query.trigger, HookTrigger::BeforeTool)
+                {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Dispatch a contract hook_rule to the corresponding preset implementation.
+/// Returns true if the preset matched and was applied.
+fn apply_preset_rule(
+    ctx: &HookEvaluationContext<'_>,
+    preset_key: &str,
+    params: Option<&serde_json::Value>,
+    resolution: &mut HookResolution,
+) -> bool {
+    match preset_key {
+        "block_record_artifact" => {
+            let blocked_types: Vec<String> = params
+                .and_then(|p| p.get("artifact_types"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            if blocked_types.is_empty() {
+                return false;
+            }
+            let Some(tool_name) = ctx.query.tool_name.as_deref() else {
+                return false;
+            };
+            if !is_report_workflow_artifact_tool(tool_name) {
+                return false;
+            }
+            let artifact_type = extract_tool_arg(ctx.query.payload.as_ref(), "artifact_type");
+            if artifact_type.is_some_and(|at| blocked_types.iter().any(|bt| bt == at)) {
+                rule_apply_implement_record_artifact_block(ctx, resolution);
+                true
+            } else {
+                false
+            }
+        }
+        "session_terminal_advance" => {
+            if rule_matches_session_ended_notice(ctx) {
+                rule_apply_session_ended_notice(ctx, resolution);
+                true
+            } else {
+                false
+            }
+        }
+        "stop_gate_checks_pending" => {
+            if rule_matches_checklist_pending_gate(ctx) {
+                rule_apply_checklist_pending_gate(ctx, resolution);
+                true
+            } else {
+                false
+            }
+        }
+        "manual_step_notice" => {
+            if rule_matches_manual_notice(ctx) {
+                rule_apply_manual_notice(ctx, resolution);
+                true
+            } else {
+                false
+            }
+        }
+        "subagent_inherit_context" => {
+            if rule_matches_subagent_dispatch(ctx) {
+                rule_apply_subagent_dispatch(ctx, resolution);
+                true
+            } else {
+                false
+            }
+        }
+        "subagent_record_result" => {
+            if rule_matches_subagent_dispatch_result(ctx) {
+                rule_apply_subagent_dispatch_result(ctx, resolution);
+                true
+            } else {
+                false
+            }
+        }
+        "subagent_result_channel" => {
+            if rule_matches_subagent_result(ctx) {
+                rule_apply_subagent_result(ctx, resolution);
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn global_hook_rule_registry() -> &'static [NormalizedHookRule] {
     &[
         NormalizedHookRule {
             key: "tool:shell_exec:rewrite_absolute_cwd",
             trigger: HookTrigger::BeforeTool,
             matches: rule_matches_shell_exec_absolute_cwd_rewrite,
             apply: rule_apply_shell_exec_absolute_cwd_rewrite,
-        },
-        NormalizedHookRule {
-            key: "workflow_step:implement:block_record_artifact",
-            trigger: HookTrigger::BeforeTool,
-            matches: rule_matches_implement_record_artifact_block,
-            apply: rule_apply_implement_record_artifact_block,
         },
         NormalizedHookRule {
             key: "global_builtin:supervised:ask_tool_approval",
@@ -66,6 +197,17 @@ pub(crate) fn hook_rule_registry() -> &'static [NormalizedHookRule] {
             trigger: HookTrigger::AfterTool,
             matches: rule_matches_after_tool_refresh,
             apply: rule_apply_after_tool_refresh,
+        },
+    ]
+}
+
+fn legacy_workflow_hook_rule_registry() -> &'static [NormalizedHookRule] {
+    &[
+        NormalizedHookRule {
+            key: "workflow_step:implement:block_record_artifact",
+            trigger: HookTrigger::BeforeTool,
+            matches: rule_matches_implement_record_artifact_block,
+            apply: rule_apply_implement_record_artifact_block,
         },
         NormalizedHookRule {
             key: "workflow_completion:session_ended:notice",
@@ -470,8 +612,6 @@ mod tests {
         use agentdash_domain::workflow::{
             EffectiveSessionContract, WorkflowConstraintKind, WorkflowConstraintSpec,
         };
-        use agentdash_spi::{ActiveWorkflowMeta, SessionSnapshotMetadata};
-
         let snapshot = {
             let mut s = snapshot_with_workflow("implement", "session_ended");
             if let Some(meta) = s.metadata.as_mut() {

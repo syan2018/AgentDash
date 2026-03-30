@@ -380,7 +380,7 @@ mod tests {
     use super::*;
     use crate::workflow::value_objects::{
         WorkflowCompletionSpec, WorkflowConstraintKind, WorkflowConstraintSpec,
-        WorkflowContextBinding, WorkflowContextBindingKind, WorkflowInjectionSpec,
+        WorkflowContextBinding, WorkflowInjectionSpec,
     };
 
     fn contract() -> WorkflowContract {
@@ -388,7 +388,6 @@ mod tests {
             injection: WorkflowInjectionSpec {
                 instructions: vec!["follow the workflow".to_string()],
                 context_bindings: vec![WorkflowContextBinding {
-                    kind: WorkflowContextBindingKind::DocumentPath,
                     locator: ".trellis/workflow.md".to_string(),
                     reason: "workflow".to_string(),
                     required: true,

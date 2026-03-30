@@ -4,7 +4,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::workflow::{
@@ -15,7 +15,7 @@ use agentdash_application::workflow::{
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowContextBindingKind, WorkflowContract,
+    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
     WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
     WorkflowRecordArtifactType,
 };
@@ -807,145 +807,6 @@ pub async fn delete_lifecycle_definition(
     let id = parse_uuid(&id, "lifecycle_id")?;
     state.repos.lifecycle_definition_repo.delete(id).await?;
     Ok(Json(serde_json::json!({ "deleted": true })))
-}
-
-pub async fn list_binding_metadata() -> Result<Json<Vec<BindingKindMetadata>>, ApiError> {
-    Ok(Json(build_binding_metadata()))
-}
-
-#[derive(Debug, Serialize)]
-pub struct BindingKindMetadata {
-    pub kind: WorkflowContextBindingKind,
-    pub label: String,
-    pub description: String,
-    pub locator_options: Vec<BindingLocatorOption>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct BindingLocatorOption {
-    pub locator: String,
-    pub label: String,
-    pub description: String,
-    pub applicable_binding_kinds: Vec<WorkflowBindingKind>,
-}
-
-fn build_binding_metadata() -> Vec<BindingKindMetadata> {
-    vec![
-        BindingKindMetadata {
-            kind: WorkflowContextBindingKind::DocumentPath,
-            label: "文档路径".to_string(),
-            description: "从工作空间读取指定相对路径的文件内容".to_string(),
-            locator_options: vec![BindingLocatorOption {
-                locator: ".trellis/workflow.md".to_string(),
-                label: "Workflow 文档".to_string(),
-                description: "Trellis 开发工作流文档".to_string(),
-                applicable_binding_kinds: vec![
-                    WorkflowBindingKind::Task,
-                    WorkflowBindingKind::Story,
-                ],
-            }],
-        },
-        BindingKindMetadata {
-            kind: WorkflowContextBindingKind::RuntimeContext,
-            label: "运行时上下文".to_string(),
-            description: "注入运行时动态上下文信息".to_string(),
-            locator_options: vec![
-                BindingLocatorOption {
-                    locator: "project_session_context".to_string(),
-                    label: "项目会话上下文".to_string(),
-                    description: "项目级上下文配置快照".to_string(),
-                    applicable_binding_kinds: vec![
-                        WorkflowBindingKind::Project,
-                        WorkflowBindingKind::Story,
-                        WorkflowBindingKind::Task,
-                    ],
-                },
-                BindingLocatorOption {
-                    locator: "story_prd".to_string(),
-                    label: "Story PRD".to_string(),
-                    description: "Story 的产品需求文档".to_string(),
-                    applicable_binding_kinds: vec![
-                        WorkflowBindingKind::Story,
-                        WorkflowBindingKind::Task,
-                    ],
-                },
-                BindingLocatorOption {
-                    locator: "story_context_snapshot".to_string(),
-                    label: "Story 上下文快照".to_string(),
-                    description: "Story 的结构化上下文".to_string(),
-                    applicable_binding_kinds: vec![
-                        WorkflowBindingKind::Story,
-                        WorkflowBindingKind::Task,
-                    ],
-                },
-                BindingLocatorOption {
-                    locator: "task_execution_context".to_string(),
-                    label: "Task 执行上下文".to_string(),
-                    description: "Task 的执行配置快照".to_string(),
-                    applicable_binding_kinds: vec![WorkflowBindingKind::Task],
-                },
-            ],
-        },
-        BindingKindMetadata {
-            kind: WorkflowContextBindingKind::Checklist,
-            label: "检查清单".to_string(),
-            description: "结构化检查清单，用于 lifecycle checks".to_string(),
-            locator_options: vec![
-                BindingLocatorOption {
-                    locator: "task_review_checklist".to_string(),
-                    label: "Task Review Checklist".to_string(),
-                    description: "Task 级检查清单".to_string(),
-                    applicable_binding_kinds: vec![WorkflowBindingKind::Task],
-                },
-                BindingLocatorOption {
-                    locator: "story_review_checklist".to_string(),
-                    label: "Story Review Checklist".to_string(),
-                    description: "Story 级检查清单".to_string(),
-                    applicable_binding_kinds: vec![WorkflowBindingKind::Story],
-                },
-            ],
-        },
-        BindingKindMetadata {
-            kind: WorkflowContextBindingKind::JournalTarget,
-            label: "日志目标".to_string(),
-            description: "指定记录沉淀目录".to_string(),
-            locator_options: vec![BindingLocatorOption {
-                locator: "workspace_journal".to_string(),
-                label: "工作区日志".to_string(),
-                description: "Trellis 工作区日志目录".to_string(),
-                applicable_binding_kinds: vec![
-                    WorkflowBindingKind::Task,
-                    WorkflowBindingKind::Story,
-                    WorkflowBindingKind::Project,
-                ],
-            }],
-        },
-        BindingKindMetadata {
-            kind: WorkflowContextBindingKind::ActionRef,
-            label: "动作引用".to_string(),
-            description: "引用可执行动作或建议动作".to_string(),
-            locator_options: vec![BindingLocatorOption {
-                locator: "workflow_archive_action".to_string(),
-                label: "归档动作".to_string(),
-                description: "触发 workflow 任务归档".to_string(),
-                applicable_binding_kinds: vec![WorkflowBindingKind::Task],
-            }],
-        },
-        BindingKindMetadata {
-            kind: WorkflowContextBindingKind::ArtifactRef,
-            label: "产物引用".to_string(),
-            description: "引用上游已生成的记录产物".to_string(),
-            locator_options: vec![BindingLocatorOption {
-                locator: "latest_checklist_evidence".to_string(),
-                label: "最新检查证据".to_string(),
-                description: "最近一次 checklist evidence".to_string(),
-                applicable_binding_kinds: vec![
-                    WorkflowBindingKind::Task,
-                    WorkflowBindingKind::Story,
-                ],
-            }],
-        },
-    ]
 }
 
 impl From<WorkflowRecordArtifactDraftRequest> for WorkflowRecordArtifactDraft {

@@ -1,7 +1,6 @@
 import { create } from "zustand";
 
 import type {
-  BindingKindMetadata,
   LifecycleDefinition,
   LifecycleStepDefinition,
   WorkflowAgentRole,
@@ -26,7 +25,6 @@ import {
   disableWorkflowDefinition,
   enableLifecycleDefinition,
   enableWorkflowDefinition,
-  fetchBindingMetadata,
   fetchLifecycleDefinitions,
   fetchWorkflowDefinitions,
   fetchWorkflowRunsByTarget,
@@ -157,9 +155,6 @@ interface WorkflowState {
   lifecycleEditorIsLoading: boolean;
   lifecycleEditorError: string | null;
 
-  bindingMetadata: BindingKindMetadata[];
-  bindingMetadataLoaded: boolean;
-
   fetchTemplates: () => Promise<WorkflowTemplate[]>;
   fetchDefinitions: (targetKind?: WorkflowTargetKind) => Promise<WorkflowDefinition[]>;
   fetchLifecycles: (targetKind?: WorkflowTargetKind) => Promise<LifecycleDefinition[]>;
@@ -211,7 +206,6 @@ interface WorkflowState {
   enableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
   disableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
   removeLifecycle: (id: string) => Promise<boolean>;
-  loadBindingMetadata: () => Promise<BindingKindMetadata[]>;
 }
 
 function upsertDefinition(definitions: WorkflowDefinition[], next: WorkflowDefinition): WorkflowDefinition[] {
@@ -282,9 +276,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   lifecycleEditorDirty: false,
   lifecycleEditorIsLoading: false,
   lifecycleEditorError: null,
-
-  bindingMetadata: [],
-  bindingMetadataLoaded: false,
 
   fetchTemplates: async () => {
     try {
@@ -490,7 +481,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set((state) => {
       if (!state.editorDraft) return state;
       const newBinding: WorkflowContextBinding = {
-        kind: "document_path",
         locator: "",
         reason: "",
         required: true,
@@ -836,23 +826,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     } catch (error) {
       set({ error: (error as Error).message });
       return false;
-    }
-  },
-
-  loadBindingMetadata: async () => {
-    if (get().bindingMetadataLoaded) {
-      return get().bindingMetadata;
-    }
-    try {
-      const metadata = await fetchBindingMetadata();
-      set({
-        bindingMetadata: metadata,
-        bindingMetadataLoaded: true,
-      });
-      return metadata;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return [];
     }
   },
 }));

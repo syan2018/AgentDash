@@ -203,7 +203,6 @@ export function WorkflowEditor() {
   const isValidating = useWorkflowStore((s) => s.editorIsValidating);
   const isDirty = useWorkflowStore((s) => s.editorDirty);
   const error = useWorkflowStore((s) => s.editorError);
-  const bindingMetadata = useWorkflowStore((s) => s.bindingMetadata);
 
   const updateDraft = useWorkflowStore((s) => s.updateDraft);
   const updateDraftBinding = useWorkflowStore((s) => s.updateDraftBinding);
@@ -211,15 +210,12 @@ export function WorkflowEditor() {
   const removeDraftBinding = useWorkflowStore((s) => s.removeDraftBinding);
   const validateDraft = useWorkflowStore((s) => s.validateDraft);
   const saveDraft = useWorkflowStore((s) => s.saveDraft);
-  const loadBindingMetadata = useWorkflowStore((s) => s.loadBindingMetadata);
 
   const definitions = useWorkflowStore((s) => s.definitions);
   const currentDefinition = useMemo(() => {
     if (!originalId) return null;
     return definitions.find((d) => d.id === originalId) ?? null;
   }, [originalId, definitions]);
-
-  useEffect(() => { void loadBindingMetadata(); }, [loadBindingMetadata]);
 
   const handleSave = useCallback(async () => {
     const result = await validateDraft();
@@ -384,11 +380,9 @@ export function WorkflowEditor() {
         <div className="space-y-2">
           {draft.contract.injection.context_bindings.map((binding, idx) => (
             <BindingEditor
-              key={`${binding.kind}:${binding.locator}:${idx}`}
+              key={`${binding.locator}:${idx}`}
               binding={binding}
               index={idx}
-              targetKind={draft.target_kind}
-              bindingMetadata={bindingMetadata}
               onChange={(patch) => updateDraftBinding(idx, patch)}
               onRemove={() => removeDraftBinding(idx)}
             />

@@ -255,14 +255,6 @@ export type WorkflowTargetKind = "project" | "story" | "task";
 
 export type WorkflowAgentRole = "project" | "story" | "task";
 
-export type WorkflowContextBindingKind =
-  | "document_path"
-  | "runtime_context"
-  | "checklist"
-  | "journal_target"
-  | "action_ref"
-  | "artifact_ref";
-
 export type WorkflowRunStatus =
   | "draft"
   | "ready"
@@ -310,7 +302,6 @@ export type WorkflowRecordArtifactType =
   | "context_snapshot";
 
 export interface WorkflowContextBinding {
-  kind: WorkflowContextBindingKind;
   locator: string;
   reason: string;
   required: boolean;
@@ -371,20 +362,6 @@ export interface ValidationIssue {
 export interface WorkflowValidationResult {
   valid: boolean;
   issues: ValidationIssue[];
-}
-
-export interface BindingLocatorOption {
-  locator: string;
-  label: string;
-  description: string;
-  applicable_target_kinds: WorkflowTargetKind[];
-}
-
-export interface BindingKindMetadata {
-  kind: WorkflowContextBindingKind;
-  label: string;
-  description: string;
-  locator_options: BindingLocatorOption[];
 }
 
 export interface WorkflowTemplateWorkflow {

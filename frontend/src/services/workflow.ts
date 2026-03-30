@@ -1,6 +1,5 @@
 import { api } from "../api/client";
 import type {
-  BindingKindMetadata,
   LifecycleDefinition,
   LifecycleStepDefinition,
   WorkflowAgentRole,
@@ -11,7 +10,6 @@ import type {
   WorkflowConstraintKind,
   WorkflowConstraintSpec,
   WorkflowContextBinding,
-  WorkflowContextBindingKind,
   WorkflowContract,
   WorkflowDefinition,
   WorkflowDefinitionSource,
@@ -41,20 +39,6 @@ function normalizeWorkflowAgentRole(value: string): WorkflowAgentRole {
       return value;
     default:
       return "task";
-  }
-}
-
-function normalizeWorkflowContextBindingKind(value: string): WorkflowContextBindingKind {
-  switch (value) {
-    case "document_path":
-    case "runtime_context":
-    case "checklist":
-    case "journal_target":
-    case "action_ref":
-    case "artifact_ref":
-      return value;
-    default:
-      return "document_path";
   }
 }
 
@@ -150,7 +134,6 @@ function normalizeWorkflowDefinitionStatus(value: string): WorkflowDefinitionSta
 
 function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContextBinding {
   return {
-    kind: normalizeWorkflowContextBindingKind(String(raw.kind ?? "document_path")),
     locator: String(raw.locator ?? ""),
     reason: String(raw.reason ?? ""),
     required: raw.required !== false,
@@ -641,23 +624,4 @@ export async function disableWorkflowDefinition(id: string): Promise<WorkflowDef
 
 export async function deleteWorkflowDefinition(id: string): Promise<void> {
   await api.delete(`/workflow-definitions/${id}`);
-}
-
-export async function fetchBindingMetadata(): Promise<BindingKindMetadata[]> {
-  const raw = await api.get<Record<string, unknown>[]>("/workflow-definitions/binding-metadata");
-  return raw.map((item) => ({
-    kind: normalizeWorkflowContextBindingKind(String(item.kind ?? "document_path")),
-    label: String(item.label ?? ""),
-    description: String(item.description ?? ""),
-    locator_options: Array.isArray(item.locator_options)
-      ? item.locator_options.map((opt: Record<string, unknown>) => ({
-          locator: String(opt.locator ?? ""),
-          label: String(opt.label ?? ""),
-          description: String(opt.description ?? ""),
-          applicable_target_kinds: Array.isArray(opt.applicable_target_kinds)
-            ? opt.applicable_target_kinds.map((tk: string) => normalizeWorkflowTargetKind(tk))
-            : [],
-        }))
-      : [],
-  }));
 }

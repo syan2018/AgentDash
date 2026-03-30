@@ -138,20 +138,8 @@ impl ValidationIssue {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowContextBindingKind {
-    DocumentPath,
-    RuntimeContext,
-    Checklist,
-    JournalTarget,
-    ActionRef,
-    ArtifactRef,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct WorkflowContextBinding {
-    pub kind: WorkflowContextBindingKind,
     pub locator: String,
     pub reason: String,
     #[serde(default = "bool_true")]
@@ -486,7 +474,6 @@ mod tests {
             injection: WorkflowInjectionSpec {
                 instructions: vec!["read spec first".to_string()],
                 context_bindings: vec![WorkflowContextBinding {
-                    kind: WorkflowContextBindingKind::DocumentPath,
                     locator: ".trellis/workflow.md".to_string(),
                     reason: "workflow".to_string(),
                     required: true,

@@ -10,7 +10,7 @@ use agentdash_domain::workflow::{
     LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowAssignment,
     WorkflowBindingKind, WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec,
     WorkflowCompletionSpec, WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding,
-    WorkflowContextBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
     WorkflowDefinitionStatus, WorkflowInjectionSpec, WorkflowRecordArtifact,
     WorkflowRecordArtifactType,
 };
@@ -101,7 +101,6 @@ pub struct WorkflowInjectionResponse {
 
 #[derive(Debug, Serialize)]
 pub struct WorkflowContextBindingResponse {
-    pub kind: WorkflowContextBindingKind,
     pub locator: String,
     pub reason: String,
     pub required: bool,
@@ -284,7 +283,6 @@ impl From<WorkflowInjectionSpec> for WorkflowInjectionResponse {
 impl From<WorkflowContextBinding> for WorkflowContextBindingResponse {
     fn from(value: WorkflowContextBinding) -> Self {
         Self {
-            kind: value.kind,
             locator: value.locator,
             reason: value.reason,
             required: value.required,

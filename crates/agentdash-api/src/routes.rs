@@ -192,10 +192,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(workflows::validate_lifecycle_definition),
         )
         .route(
-            "/workflow-definitions/binding-metadata",
-            get(workflows::list_binding_metadata),
-        )
-        .route(
             "/workflow-definitions/{id}",
             get(workflows::get_workflow_definition)
                 .put(workflows::update_workflow_definition)

@@ -1,7 +1,6 @@
 import type {
   LifecycleExecutionEventKind,
   WorkflowAgentRole,
-  WorkflowContextBindingKind,
   WorkflowDefinitionSource,
   WorkflowDefinitionStatus,
   WorkflowRecordArtifactType,
@@ -28,15 +27,6 @@ export const DEFAULT_ROLE_BY_TARGET: Record<WorkflowTargetKind, WorkflowAgentRol
   project: "project",
   story: "story",
   task: "task",
-};
-
-export const BINDING_KIND_LABEL: Record<WorkflowContextBindingKind, string> = {
-  document_path: "Document Path",
-  runtime_context: "Runtime Context",
-  checklist: "Checklist",
-  journal_target: "Journal Target",
-  action_ref: "Action Ref",
-  artifact_ref: "Artifact Ref",
 };
 
 export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {

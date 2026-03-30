@@ -305,6 +305,18 @@ pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
         metadata: serde_json::json!({
             "run_id": run_id.to_string(),
             "lifecycle_key": lifecycle_key,
+            "directory_hint": {
+                "description": "Lifecycle 执行记录，包含当前 run 的步骤状态和产物",
+                "index": [
+                    { "path": "active", "description": "当前活跃 run 的概览（JSON）" },
+                    { "path": "active/steps", "description": "各步骤执行状态，子路径为 step_key" },
+                    { "path": "active/steps/{step_key}", "description": "单步骤详情（JSON）" },
+                    { "path": "active/artifacts", "description": "产物列表，子路径为 artifact UUID" },
+                    { "path": "active/artifacts/{id}", "description": "产物内容（纯文本）" },
+                    { "path": "active/log", "description": "执行日志（JSON 数组）" },
+                    { "path": "runs", "description": "历史 run 列表" }
+                ]
+            }
         }),
     }
 }

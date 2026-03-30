@@ -353,6 +353,8 @@ export interface HookRulePreset {
   label: string;
   description: string;
   param_schema?: Record<string, unknown> | null;
+  script?: string;
+  source?: "builtin" | "user_defined";
 }
 
 export interface WorkflowContract {

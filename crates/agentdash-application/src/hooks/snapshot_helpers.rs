@@ -120,6 +120,7 @@ pub(crate) fn active_workflow_constraints(
         .unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub(crate) fn active_workflow_checks(
     snapshot: &SessionHookSnapshot,
 ) -> Vec<agentdash_domain::workflow::WorkflowCheckSpec> {

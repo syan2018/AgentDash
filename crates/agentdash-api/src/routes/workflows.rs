@@ -912,8 +912,51 @@ fn group_presets_by_trigger(
                 "label": preset.label,
                 "description": preset.description,
                 "param_schema": preset.param_schema,
+                "script": preset.script,
+                "source": preset.source,
             }),
         );
     }
     serde_json::to_value(groups).unwrap_or_default()
+}
+
+#[derive(Deserialize)]
+pub struct ValidateScriptRequest {
+    pub script: String,
+}
+
+pub async fn validate_hook_script(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ValidateScriptRequest>,
+) -> Json<serde_json::Value> {
+    match state.services.hook_provider.validate_script(&req.script) {
+        Ok(()) => Json(serde_json::json!({ "valid": true })),
+        Err(errors) => Json(serde_json::json!({ "valid": false, "errors": errors })),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RegisterPresetRequest {
+    pub key: String,
+    pub script: String,
+}
+
+pub async fn register_hook_preset(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RegisterPresetRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .services
+        .hook_provider
+        .register_preset(&req.key, &req.script)
+        .map_err(|e| ApiError::BadRequest(format!("脚本编译失败: {e}")))?;
+    Ok(Json(serde_json::json!({ "registered": true, "key": req.key })))
+}
+
+pub async fn delete_hook_preset(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+) -> Json<serde_json::Value> {
+    let removed = state.services.hook_provider.remove_preset(&key);
+    Json(serde_json::json!({ "removed": removed, "key": key }))
 }

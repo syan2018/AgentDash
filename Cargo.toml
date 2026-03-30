@@ -56,6 +56,9 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 futures = "0.3"
 
+# 嵌入式脚本引擎
+rhai = { version = "1.24", features = ["serde", "sync"] }
+
 # 工作区内部 crate 互相引用
 agentdash-domain = { path = "crates/agentdash-domain" }
 agentdash-application = { path = "crates/agentdash-application" }

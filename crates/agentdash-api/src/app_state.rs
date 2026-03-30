@@ -60,6 +60,8 @@ pub struct ServiceSet {
     pub mount_provider_registry: Arc<MountProviderRegistry>,
     /// Task 生命周期服务 — Application 层直接编排 task start/continue/cancel
     pub task_lifecycle_service: Arc<TaskLifecycleService>,
+    /// Hook 提供者 — 供 API 层验证脚本等管理接口使用
+    pub hook_provider: Arc<AppExecutionHookProvider>,
 }
 
 /// Task 执行运行时状态 — 并发锁与重试控制
@@ -229,8 +231,11 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
         ));
-        let session_hub =
-            SessionHub::new_with_hooks(workspace_root, connector.clone(), Some(hook_provider));
+        let session_hub = SessionHub::new_with_hooks(
+            workspace_root,
+            connector.clone(),
+            Some(hook_provider.clone()),
+        );
         session_hub_handle.set(session_hub.clone()).await;
 
         // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
@@ -321,6 +326,7 @@ impl AppState {
                 address_space_registry,
                 mount_provider_registry,
                 task_lifecycle_service,
+                hook_provider,
             },
             task_runtime: TaskRuntime {
                 lock_map,

@@ -8,12 +8,13 @@ mod owner_resolver;
 pub mod presets;
 mod provider;
 mod rules;
+pub(crate) mod script_engine;
 mod snapshot_helpers;
 mod workflow_contribution;
 mod workflow_snapshot;
 
 pub use owner_resolver::SessionOwnerResolver;
-pub use presets::{HookRulePreset, hook_rule_preset_registry};
+pub use presets::{HookRulePreset, PresetSource, hook_rule_preset_registry};
 pub use provider::AppExecutionHookProvider;
 pub use workflow_snapshot::WorkflowSnapshotBuilder;
 

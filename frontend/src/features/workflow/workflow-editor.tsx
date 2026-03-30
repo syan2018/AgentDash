@@ -140,6 +140,9 @@ function HookRuleItem({
           {rule.preset && (
             <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">{rule.preset}</span>
           )}
+          {!rule.preset && rule.script && (
+            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono text-amber-600">rhai</span>
+          )}
           <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary/70">{TRIGGER_LABEL[rule.trigger]}</span>
         </div>
         {rule.params && Object.keys(rule.params).length > 0 && (
@@ -179,6 +182,7 @@ function NewRuleEditor({
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [description, setDescription] = useState("");
   const [script, setScript] = useState("");
+  const [showPresetScript, setShowPresetScript] = useState(false);
 
   const presetsForTrigger = useMemo(
     () => presets.filter((p) => p.trigger === trigger && !existingKeys.has(p.key)),
@@ -250,7 +254,7 @@ function NewRuleEditor({
             className="agentdash-form-select mt-0.5 text-xs"
           >
             <option value="preset">预设逻辑</option>
-            <option value="script">自定义脚本（预留）</option>
+            <option value="script">自定义脚本 (Rhai)</option>
           </select>
         </div>
 
@@ -282,24 +286,63 @@ function NewRuleEditor({
         )}
       </div>
 
-      {/* Preset description hint */}
+      {/* Preset description + script preview */}
       {mode === "preset" && activePreset && (
-        <p className="text-[11px] text-muted-foreground leading-4">
-          {activePreset.description}
-        </p>
+        <div className="space-y-1.5">
+          <p className="text-[11px] text-muted-foreground leading-4">
+            {activePreset.description}
+          </p>
+          <div className="flex items-center gap-2">
+            {activePreset.script && (
+              <button
+                type="button"
+                onClick={() => setShowPresetScript(!showPresetScript)}
+                className="text-[11px] text-primary/70 hover:text-primary underline"
+              >
+                {showPresetScript ? "隐藏脚本" : "查看脚本"}
+              </button>
+            )}
+            {activePreset.script && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("script");
+                  setScript(activePreset.script || "");
+                  setDescription(activePreset.label);
+                  setSelectedPreset("");
+                  setShowPresetScript(false);
+                }}
+                className="text-[11px] text-primary/70 hover:text-primary underline"
+              >
+                Clone 为自定义
+              </button>
+            )}
+          </div>
+          {showPresetScript && activePreset.script && (
+            <pre className="max-h-48 overflow-auto rounded-md border bg-secondary/30 p-2 text-[11px] font-mono text-foreground/80 leading-[1.6]">
+              {activePreset.script}
+            </pre>
+          )}
+        </div>
       )}
 
-      {/* Script editor (future) */}
+      {/* Rhai script editor */}
       {mode === "script" && (
         <div>
-          <label className="text-[11px] font-medium text-muted-foreground">脚本内容</label>
+          <label className="text-[11px] font-medium text-muted-foreground">Rhai 脚本</label>
           <textarea
             value={script}
             onChange={(e) => setScript(e.target.value)}
-            rows={3}
-            className="agentdash-form-textarea mt-0.5 font-mono text-xs"
-            placeholder="// 自定义脚本逻辑（后续版本支持解释执行）"
+            rows={8}
+            className="agentdash-form-textarea mt-0.5 font-mono text-xs leading-[1.6]"
+            placeholder={`// 返回一个 map 表达决策效果\n// 空 map #{} 表示无操作\n\nif ctx.tool_name == "shell_exec" {\n    #{ block: "禁止执行 shell" }\n} else {\n    #{}\n}`}
+            spellCheck={false}
           />
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            使用 Rhai 语法。可用 <code className="bg-secondary/50 px-1 rounded">ctx</code> 访问触发上下文，
+            <code className="bg-secondary/50 px-1 rounded">make_injection()</code>、
+            <code className="bg-secondary/50 px-1 rounded">make_diagnostic()</code> 等辅助函数。
+          </p>
         </div>
       )}
 

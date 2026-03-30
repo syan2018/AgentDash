@@ -12,6 +12,7 @@ pub(super) fn extract_tool_arg<'a>(
         .and_then(serde_json::Value::as_str)
 }
 
+#[allow(dead_code)]
 pub(super) fn extract_payload_str<'a>(
     payload: Option<&'a serde_json::Value>,
     key: &str,
@@ -21,6 +22,7 @@ pub(super) fn extract_payload_str<'a>(
         .and_then(serde_json::Value::as_str)
 }
 
+#[allow(dead_code)]
 pub(super) fn extract_payload_string_list(
     payload: Option<&serde_json::Value>,
     key: &str,
@@ -37,6 +39,7 @@ pub(super) fn extract_payload_string_list(
         .collect()
 }
 
+#[allow(dead_code)]
 pub(super) struct SubagentResult<'a> {
     pub subagent_type: &'a str,
     pub summary: &'a str,
@@ -49,6 +52,7 @@ pub(super) struct SubagentResult<'a> {
     pub is_blocking: bool,
 }
 
+#[allow(dead_code)]
 pub(super) fn build_subagent_result_context(r: &SubagentResult<'_>) -> String {
     let mut sections = vec![if r.is_blocking {
         "## Companion Blocking Review".to_string()

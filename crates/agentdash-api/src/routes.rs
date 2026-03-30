@@ -224,6 +224,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_hook_presets),
         )
         .route(
+            "/hook-scripts/validate",
+            post(workflows::validate_hook_script),
+        )
+        .route(
+            "/hook-presets/custom",
+            post(workflows::register_hook_preset),
+        )
+        .route(
+            "/hook-presets/custom/{key}",
+            delete(workflows::delete_hook_preset),
+        )
+        .route(
             "/workflow-templates",
             get(workflows::list_workflow_templates),
         )

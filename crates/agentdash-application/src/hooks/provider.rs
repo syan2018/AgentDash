@@ -21,7 +21,9 @@ use crate::workflow::WorkflowCompletionSignalSet;
 
 use super::completion::active_workflow_checklist_evidence_summary;
 use super::owner_resolver::SessionOwnerResolver;
+use super::presets::builtin_preset_scripts;
 use super::rules::*;
+use super::script_engine::HookScriptEngine;
 use super::snapshot_helpers::*;
 use super::workflow_contribution::build_workflow_step_fragments;
 use super::workflow_snapshot::WorkflowSnapshotBuilder;
@@ -30,12 +32,13 @@ use super::{
     workflow_scope_key, workflow_source,
 };
 
-/// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder，
+/// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder + HookScriptEngine，
 /// 对外仍实现 ExecutionHookProvider trait。
 pub struct AppExecutionHookProvider {
     pub(super) session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub(super) owner_resolver: SessionOwnerResolver,
     pub(super) workflow_builder: WorkflowSnapshotBuilder,
+    pub(super) script_engine: HookScriptEngine,
 }
 
 impl AppExecutionHookProvider {
@@ -48,6 +51,7 @@ impl AppExecutionHookProvider {
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
+        let preset_scripts = builtin_preset_scripts();
         Self {
             session_binding_repo,
             owner_resolver: SessionOwnerResolver::new(project_repo, story_repo, task_repo),
@@ -56,7 +60,28 @@ impl AppExecutionHookProvider {
                 lifecycle_definition_repo,
                 lifecycle_run_repo,
             ),
+            script_engine: HookScriptEngine::new(&preset_scripts),
         }
+    }
+
+    /// 验证 Rhai 脚本语法是否合法，不执行脚本。
+    pub fn validate_script(&self, script: &str) -> Result<(), Vec<String>> {
+        self.script_engine.validate_script(script)
+    }
+
+    /// 运行时注册/更新一个自定义 preset。
+    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), String> {
+        self.script_engine.register_preset(key, script)
+    }
+
+    /// 移除一个自定义 preset。
+    pub fn remove_preset(&self, key: &str) -> bool {
+        self.script_engine.remove_preset(key)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn script_engine(&self) -> &HookScriptEngine {
+        &self.script_engine
     }
 }
 
@@ -278,6 +303,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         query: &query,
                     },
                     &mut resolution,
+                    &self.script_engine,
                 );
             }
             HookTrigger::BeforeStop => {
@@ -287,6 +313,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         query: &query,
                     },
                     &mut resolution,
+                    &self.script_engine,
                 );
                 if let Some(decision) = completion_decision_for_active_workflow_snapshot(
                     &snapshot,
@@ -338,6 +365,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         query: &query,
                     },
                     &mut resolution,
+                    &self.script_engine,
                 );
             }
         }
@@ -377,12 +405,24 @@ mod tests {
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
+    use super::super::presets::builtin_preset_scripts;
     use super::super::rules::{HookEvaluationContext, apply_hook_rules};
+    use super::super::script_engine::HookScriptEngine;
     use super::super::test_fixtures::snapshot_with_workflow;
 
-    #[derive(Clone)]
     struct RuleEngineTestProvider {
         snapshot: SessionHookSnapshot,
+        engine: HookScriptEngine,
+    }
+
+    impl RuleEngineTestProvider {
+        fn new(snapshot: SessionHookSnapshot) -> Self {
+            let scripts = builtin_preset_scripts();
+            Self {
+                snapshot,
+                engine: HookScriptEngine::new(&scripts),
+            }
+        }
     }
 
     #[async_trait]
@@ -416,6 +456,7 @@ mod tests {
                     query: &query,
                 },
                 &mut resolution,
+                &self.engine,
             );
             Ok(resolution)
         }
@@ -426,9 +467,7 @@ mod tests {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
         let hook_session = Arc::new(HookSessionRuntime::new(
             snapshot.session_id.clone(),
-            Arc::new(RuleEngineTestProvider {
-                snapshot: snapshot.clone(),
-            }),
+            Arc::new(RuleEngineTestProvider::new(snapshot.clone())),
             snapshot,
         ));
         let delegate = HookRuntimeDelegate::new(hook_session.clone());

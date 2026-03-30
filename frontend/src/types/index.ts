@@ -859,50 +859,15 @@ export interface HookOwnerSummary {
   task_id?: string | null;
 }
 
-export type HookSourceLayer =
-  | "global_builtin"
-  | "workflow"
-  | "project"
-  | "story"
-  | "task"
-  | "session";
-
-export interface HookSourceRef {
-  layer: HookSourceLayer;
-  key: string;
-  label: string;
-  priority: number;
-}
-
-export interface HookContextFragment {
+export interface HookInjection {
   slot: string;
-  label: string;
   content: string;
-  source_summary: string[];
-  source_refs: HookSourceRef[];
-}
-
-export interface HookConstraint {
-  key: string;
-  description: string;
-  source_summary: string[];
-  source_refs: HookSourceRef[];
-}
-
-export interface HookPolicyView {
-  key: string;
-  description: string;
-  source_summary: string[];
-  source_refs: HookSourceRef[];
-  payload?: Record<string, unknown> | null;
+  source: string;
 }
 
 export interface HookDiagnosticEntry {
   code: string;
-  summary: string;
-  detail?: string | null;
-  source_summary: string[];
-  source_refs: HookSourceRef[];
+  message: string;
 }
 
 export interface HookCompletionStatus {
@@ -936,14 +901,13 @@ export interface HookPendingAction {
   action_type: string;
   turn_id?: string | null;
   source_trigger: string;
-  status: "pending" | "injected" | "resolved" | "dismissed";
+  status: "pending" | "resolved";
   last_injected_at_ms?: number | null;
   resolved_at_ms?: number | null;
-  resolution_kind?: "adopted" | "rejected" | "completed" | "superseded" | "user_dismissed" | null;
+  resolution_kind?: "adopted" | "dismissed" | null;
   resolution_note?: string | null;
   resolution_turn_id?: string | null;
-  context_fragments: HookContextFragment[];
-  constraints: HookConstraint[];
+  injections: HookInjection[];
 }
 
 export type SessionExecutionStatus = "idle" | "running" | "completed" | "failed" | "interrupted";
@@ -978,11 +942,9 @@ export interface HookRuntimeMetadata {
 export interface SessionHookSnapshot {
   session_id: string;
   owners: HookOwnerSummary[];
-  sources: HookSourceRef[];
+  sources: string[];
   tags: string[];
-  context_fragments: HookContextFragment[];
-  constraints: HookConstraint[];
-  policies: HookPolicyView[];
+  injections: HookInjection[];
   diagnostics: HookDiagnosticEntry[];
   metadata?: HookRuntimeMetadata | null;
 }

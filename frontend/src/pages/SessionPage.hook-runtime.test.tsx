@@ -15,18 +15,8 @@ const hookRuntime: HookSessionRuntimeInfo = {
   snapshot: {
     session_id: "sess-hook-test",
     sources: [
-      {
-        layer: "global_builtin",
-        key: "runtime_trace_observability",
-        label: "Global Builtin / Runtime Trace",
-        priority: 100,
-      },
-      {
-        layer: "workflow",
-        key: "trellis_dev_task:check",
-        label: "Workflow / Trellis Dev Workflow / Check",
-        priority: 300,
-      },
+      "builtin:global",
+      "workflow:trellis_dev_task:check",
     ],
     owners: [
       {
@@ -36,50 +26,21 @@ const hookRuntime: HookSessionRuntimeInfo = {
       },
     ],
     tags: ["workflow:trellis_dev_task", "workflow_step:check"],
-    context_fragments: [
+    injections: [
+      {
+        slot: "context",
+        content: "当前在 Check phase",
+        source: "workflow:trellis_dev_task:check",
+      },
+      {
+        slot: "constraint",
+        content: "先给出验证结论，再结束 session。",
+        source: "workflow:trellis_dev_task:check",
+      },
       {
         slot: "workflow",
-        label: "active_workflow_step",
-        content: "当前在 Check phase",
-        source_summary: ["workflow:trellis_dev_task"],
-        source_refs: [
-          {
-            layer: "workflow",
-            key: "trellis_dev_task:check",
-            label: "Workflow / Trellis Dev Workflow / Check",
-            priority: 300,
-          },
-        ],
-      },
-    ],
-    constraints: [
-      {
-        key: "before_stop:checklist_pending",
-        description: "先给出验证结论，再结束 session。",
-        source_summary: ["workflow_step:check"],
-        source_refs: [
-          {
-            layer: "workflow",
-            key: "trellis_dev_task:check",
-            label: "Workflow / Trellis Dev Workflow / Check",
-            priority: 300,
-          },
-        ],
-      },
-    ],
-    policies: [
-      {
-        key: "workflow:*:*:task_status_gate",
-        description: "Check phase 需要先更新 Task 状态。",
-        source_summary: ["workflow:trellis_dev_task", "workflow:trellis_dev_task:check"],
-        source_refs: [
-          {
-            layer: "workflow",
-            key: "trellis_dev_task:check",
-            label: "Workflow / Trellis Dev Workflow / Check",
-            priority: 300,
-          },
-        ],
+        content: "Check phase 需要先更新 Task 状态。",
+        source: "workflow:trellis_dev_task:check",
       },
     ],
     diagnostics: [],
@@ -101,17 +62,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
   diagnostics: [
     {
       code: "before_stop_checklist_pending",
-      summary: "当前 workflow phase 尚未满足 checklist completion 条件。",
-      detail: "current_task_status=running",
-      source_summary: ["workflow_step:check"],
-      source_refs: [
-        {
-          layer: "workflow",
-          key: "trellis_dev_task:check",
-          label: "Workflow / Trellis Dev Workflow / Check",
-          priority: 300,
-        },
-      ],
+      message: "当前 workflow phase 尚未满足 checklist completion 条件。",
     },
   ],
   trace: [
@@ -127,17 +78,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
       diagnostics: [
         {
           code: "before_stop_checklist_pending",
-          summary: "Hook 阻止当前 session 结束，要求先补齐验证。",
-          detail: null,
-          source_summary: ["workflow_step:check"],
-          source_refs: [
-            {
-              layer: "workflow",
-              key: "trellis_dev_task:check",
-              label: "Workflow / Trellis Dev Workflow / Check",
-              priority: 300,
-            },
-          ],
+          message: "Hook 阻止当前 session 结束，要求先补齐验证。",
         },
       ],
       completion: {
@@ -157,27 +98,22 @@ const hookRuntime: HookSessionRuntimeInfo = {
       action_type: "blocking_review",
       turn_id: "turn-parent-1",
       source_trigger: "subagent_result",
-      status: "injected",
+      status: "pending",
       last_injected_at_ms: 1_710_000_120_000,
       resolved_at_ms: null,
       resolution_kind: null,
       resolution_note: null,
       resolution_turn_id: null,
-      context_fragments: [
+      injections: [
         {
           slot: "workflow",
-          label: "subagent_blocking_review",
           content: "请先处理 companion review 结论。",
-          source_summary: ["workflow_step:check"],
-          source_refs: [],
+          source: "workflow:trellis_dev_task:check",
         },
-      ],
-      constraints: [
         {
-          key: "subagent_result:blocking_review",
-          description: "主 session 必须先处理这份 companion review。",
-          source_summary: ["workflow_step:check"],
-          source_refs: [],
+          slot: "constraint",
+          content: "主 session 必须先处理这份 companion review。",
+          source: "workflow:trellis_dev_task:check",
         },
       ],
     },
@@ -195,8 +131,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
       resolution_kind: "adopted",
       resolution_note: "主 session 已吸收并继续推进",
       resolution_turn_id: "turn-parent-2",
-      context_fragments: [],
-      constraints: [],
+      injections: [],
     },
   ],
 };
@@ -207,13 +142,13 @@ describe("SessionPage hook runtime cards", () => {
 
     expect(html).toContain("运行中 Hook Runtime");
     expect(html).toContain("sources: 2");
-    expect(html).toContain("policies: 1");
+    expect(html).toContain("injections: 3");
     expect(html).toContain("actions: 2");
     expect(html).toContain("open: 1");
     expect(html).toContain("resolved: 1");
-    expect(html).toContain("workflow:*:*:task_status_gate");
     expect(html).toContain("Trellis Dev Lifecycle / Task / Check");
-    expect(html).toContain("Workflow / Trellis Dev Workflow / Check");
+    expect(html).toContain("builtin:global");
+    expect(html).toContain("workflow:trellis_dev_task:check");
     expect(html).toContain("step: check");
     expect(html).toContain("workflow: trellis_dev_task_check");
   });
@@ -226,7 +161,6 @@ describe("SessionPage hook runtime cards", () => {
 
     expect(diagnosticsHtml).toContain("before_stop_checklist_pending");
     expect(diagnosticsHtml).toContain("当前 workflow phase 尚未满足 checklist completion 条件");
-    expect(diagnosticsHtml).toContain("Workflow / Trellis Dev Workflow / Check");
     expect(traceHtml).toContain("workflow_completion:checklist_pending:stop_gate");
     expect(traceHtml).toContain("subagent: companion");
     expect(traceHtml).toContain("completion: checklist_passed");
@@ -238,7 +172,7 @@ describe("SessionPage hook runtime cards", () => {
 
     expect(html).toContain("干预项状态");
     expect(html).toContain("blocking_review");
-    expect(html).toContain("injected");
+    expect(html).toContain("pending");
     expect(html).toContain("Companion `reviewer` 结果需要阻塞式 review");
     expect(html).toContain("主 session 必须先处理这份 companion review");
     expect(html).toContain("resolved");

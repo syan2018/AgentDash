@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { applyPatch } from "fast-json-patch";
 import type { Operation } from "fast-json-patch";
 import { buildApiPath } from "../../../api/origin";
+import { authenticatedFetch } from "../../../api/client";
 import type {
   ExecutorDiscoveryStreamState,
   ExecutorDiscoveredOptions,
@@ -74,7 +75,7 @@ export function useExecutorDiscoveredOptions(
 
     void (async () => {
       try {
-        const response = await fetch(url.toString(), {
+        const response = await authenticatedFetch(url.toString(), {
           method: "GET",
           headers: { Accept: "application/x-ndjson", "Cache-Control": "no-cache" },
           signal: controller.signal,

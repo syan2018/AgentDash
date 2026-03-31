@@ -1,5 +1,6 @@
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { resolveApiUrl } from "../../../api/origin";
+import { getStoredToken, authenticatedFetch } from "../../../api/client";
 import { registerStreamConnection } from "../../../api/streamRegistry";
 
 const RETRY_BASE_MS = 800;
@@ -73,7 +74,12 @@ class EventSourceTransport implements AcpStreamTransport {
 
   private connect(): void {
     if (this.closed) return;
-    const url = resolveApiUrl(buildSseEndpoint(this.options.sessionId, this.options.endpoint));
+    let url = resolveApiUrl(buildSseEndpoint(this.options.sessionId, this.options.endpoint));
+    const token = getStoredToken();
+    if (token) {
+      const sep = url.includes("?") ? "&" : "?";
+      url = `${url}${sep}token=${encodeURIComponent(token)}`;
+    }
     this.options.onLifecycleChange("connecting");
 
     const source = new EventSource(url);
@@ -146,7 +152,7 @@ class FetchNdjsonTransport implements AcpStreamTransport {
     };
 
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         resolveApiUrl(buildNdjsonEndpoint(this.options.sessionId, this.options.endpoint)),
         {
           method: "GET",

@@ -1,4 +1,5 @@
 import { buildApiPath } from "../api/origin";
+import { authenticatedFetch } from "../api/client";
 
 // ─── Descriptor（能力发现） ─────────────────────────────
 
@@ -108,7 +109,7 @@ function applyQueryParams(searchParams: URLSearchParams, params?: AddressSpaceQu
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authenticatedFetch(url, init);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     let message = `HTTP ${res.status}`;

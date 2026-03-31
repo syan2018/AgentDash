@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildApiPath } from "../../../api/origin";
+import { authenticatedFetch } from "../../../api/client";
 import type {
   ConnectorInfo,
   DiscoveryResponse,
@@ -30,7 +31,7 @@ export function useExecutorDiscovery(): UseExecutorDiscoveryResult {
     setError(null);
 
     try {
-      const res = await fetch(buildApiPath("/agents/discovery"), {
+      const res = await authenticatedFetch(buildApiPath("/agents/discovery"), {
         signal: controller.signal,
       });
 

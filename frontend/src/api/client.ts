@@ -58,3 +58,20 @@ export const api = {
     request<T>(path, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
+
+/**
+ * 带认证的 fetch 包装 — 自动注入 Bearer token。
+ *
+ * 用于不经 `api.*` 而直接调用 `fetch()` 的场景（如 services 层、EventSource 等）。
+ * 与原生 fetch 签名兼容，仅在 headers 中缺少 Authorization 时自动补充。
+ */
+export function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string>),
+  };
+  const token = getStoredToken();
+  if (token && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return fetch(input, { ...init, headers });
+}

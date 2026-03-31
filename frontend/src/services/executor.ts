@@ -1,4 +1,5 @@
 import { buildApiPath } from "../api/origin";
+import { authenticatedFetch } from "../api/client";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import type { ThinkingLevel } from "../types";
 import type { PermissionPolicy } from "../features/executor-selector/model/types";
@@ -28,7 +29,7 @@ export interface PromptSessionRequest {
 }
 
 export async function promptSession(sessionId: string, req: PromptSessionRequest): Promise<void> {
-  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/prompt`), {
+  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/prompt`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -41,7 +42,7 @@ export async function promptSession(sessionId: string, req: PromptSessionRequest
 }
 
 export async function approveToolCall(sessionId: string, toolCallId: string): Promise<void> {
-  const res = await fetch(
+  const res = await authenticatedFetch(
     buildApiPath(
       `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/approve`,
     ),
@@ -62,7 +63,7 @@ export async function rejectToolCall(
   toolCallId: string,
   reason?: string,
 ): Promise<void> {
-  const res = await fetch(
+  const res = await authenticatedFetch(
     buildApiPath(
       `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/reject`,
     ),

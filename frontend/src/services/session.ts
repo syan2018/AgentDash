@@ -1,4 +1,5 @@
 import { buildApiPath } from "../api/origin";
+import { authenticatedFetch } from "../api/client";
 import type {
   AgentBinding,
   ContextSourceRef,
@@ -55,13 +56,13 @@ export async function fetchSessions(options?: FetchSessionsOptions): Promise<Ses
   }
   const query = params.toString();
   const url = query ? `${buildApiPath("/sessions")}?${query}` : buildApiPath("/sessions");
-  const res = await fetch(url);
+  const res = await authenticatedFetch(url);
   if (!res.ok) throw new Error(`获取会话列表失败: HTTP ${res.status}`);
   return res.json();
 }
 
 export async function createSession(title?: string): Promise<SessionMeta> {
-  const res = await fetch(buildApiPath("/sessions"), {
+  const res = await authenticatedFetch(buildApiPath("/sessions"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
@@ -71,13 +72,13 @@ export async function createSession(title?: string): Promise<SessionMeta> {
 }
 
 export async function fetchSessionMeta(id: string): Promise<SessionMeta> {
-  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}`));
+  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}`));
   if (!res.ok) throw new Error(`获取会话详情失败: HTTP ${res.status}`);
   return res.json();
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}`), {
+  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}`), {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`删除会话失败: HTTP ${res.status}`);
@@ -111,7 +112,7 @@ export interface SessionContextPayload {
 /** GET /sessions/{id}/context — 与旧版 task/story/project 分端点行为对齐（由后端按绑定解析） */
 export async function fetchSessionContext(sessionId: string): Promise<SessionContextPayload | null> {
   try {
-    const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/context`));
+    const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/context`));
     if (!res.ok) return null;
     const raw = (await res.json()) as Record<string, unknown>;
     return {
@@ -126,14 +127,14 @@ export async function fetchSessionContext(sessionId: string): Promise<SessionCon
 }
 
 export async function fetchSessionBindings(id: string): Promise<SessionBindingOwner[]> {
-  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/bindings`));
+  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/bindings`));
   if (!res.ok) throw new Error(`获取会话绑定失败: HTTP ${res.status}`);
   const raw = await res.json() as Record<string, unknown>[];
   return raw.map(mapSessionBindingOwner);
 }
 
 export async function fetchSessionHookRuntime(id: string): Promise<HookSessionRuntimeInfo | null> {
-  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/hook-runtime`));
+  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/hook-runtime`));
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`获取 Hook Runtime 失败: HTTP ${res.status}`);
   return res.json();
@@ -162,14 +163,14 @@ function mapSessionExecutionState(raw: Record<string, unknown>): SessionExecutio
 }
 
 export async function fetchSessionExecutionState(id: string): Promise<SessionExecutionState> {
-  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/state`));
+  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/state`));
   if (!res.ok) throw new Error(`获取会话运行状态失败: HTTP ${res.status}`);
   const raw = await res.json() as Record<string, unknown>;
   return mapSessionExecutionState(raw);
 }
 
 export async function cancelSession(id: string): Promise<void> {
-  const res = await fetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/cancel`), {
+  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/cancel`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -224,7 +225,7 @@ function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEnt
 
 export async function fetchProjectSessions(projectId: string): Promise<ProjectSessionEntry[]> {
   // TODO: 后端 API 可能尚未部署，调用失败时 fallback 为空数组
-  const res = await fetch(buildApiPath(`/projects/${encodeURIComponent(projectId)}/sessions`));
+  const res = await authenticatedFetch(buildApiPath(`/projects/${encodeURIComponent(projectId)}/sessions`));
   if (!res.ok) throw new Error(`获取项目会话列表失败: HTTP ${res.status}`);
   const raw = (await res.json()) as Record<string, unknown>[];
   return raw.map(mapProjectSessionEntry);

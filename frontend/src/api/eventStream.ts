@@ -1,5 +1,6 @@
 import type { StreamEvent } from '../types';
 import { buildApiPath } from './origin';
+import { getStoredToken, authenticatedFetch } from './client';
 
 /**
  * 连接 SSE 事件流，支持 Resume（断连重连）
@@ -14,6 +15,8 @@ export function connectEventStream(
   onError?: (error: Event) => void,
 ): EventSource {
   const params = new URLSearchParams({ project_id: projectId });
+  const token = getStoredToken();
+  if (token) params.set("token", token);
   const source = new EventSource(buildApiPath(`/events/stream?${params.toString()}`));
 
   source.onopen = () => {
@@ -41,7 +44,7 @@ export function connectEventStream(
  */
 export async function fetchEventsSince(projectId: string, sinceId: number) {
   const params = new URLSearchParams({ project_id: projectId });
-  const res = await fetch(buildApiPath(`/events/since/${sinceId}?${params.toString()}`));
+  const res = await authenticatedFetch(buildApiPath(`/events/since/${sinceId}?${params.toString()}`));
   if (!res.ok) throw new Error(`Resume 失败: HTTP ${res.status}`);
   return res.json();
 }

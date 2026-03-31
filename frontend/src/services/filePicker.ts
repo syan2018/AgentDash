@@ -1,4 +1,5 @@
 import { buildApiPath } from "../api/origin";
+import { authenticatedFetch } from "../api/client";
 
 export interface FileEntry {
   relPath: string;
@@ -42,7 +43,7 @@ export async function listFiles(
   if (pattern) params.set("pattern", pattern);
 
   const url = buildApiPath(`/file-picker${params.toString() ? `?${params}` : ""}`);
-  const res = await fetch(url);
+  const res = await authenticatedFetch(url);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -57,7 +58,7 @@ export async function batchReadFiles(
   paths: string[],
 ): Promise<BatchReadFilesResponse> {
   const url = buildApiPath("/file-picker/batch-read");
-  const res = await fetch(url, {
+  const res = await authenticatedFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ workspace_id: workspaceId, paths }),

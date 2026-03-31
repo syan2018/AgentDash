@@ -83,6 +83,10 @@ impl AuthSessionRepository for SqliteAuthSessionRepository {
             return Ok(None);
         };
 
+        let revoked_at = row
+            .try_get::<Option<i64>, _>("revoked_at")
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
         Ok(Some(AuthSession {
             token_hash: row
                 .try_get("token_hash")
@@ -91,7 +95,7 @@ impl AuthSessionRepository for SqliteAuthSessionRepository {
                 .try_get("identity_json")
                 .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
             expires_at: row.try_get("expires_at").ok(),
-            revoked_at: row.try_get("revoked_at").ok(),
+            revoked_at,
             created_at: row
                 .try_get("created_at")
                 .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,

@@ -356,7 +356,8 @@ async function killProcessByName(name) {
       ],
       {
         cwd: root,
-        label: `kill-${name}`
+        label: `kill-${name}`,
+        allowNonZeroExit: true
       }
     );
     console.log(`  [run] 已尝试清理进程名 ${name}`);

@@ -1,0 +1,456 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import ts from "typescript";
+import type { CanvasRuntimeFile, CanvasRuntimeSnapshot } from "../../types";
+
+export interface CanvasRuntimePreviewProps {
+  snapshot: CanvasRuntimeSnapshot | null;
+}
+
+type PreviewStatus = "idle" | "building" | "ready" | "error";
+
+interface PreviewEnvelope {
+  kind: "canvas-preview-ready" | "canvas-preview-error";
+  frame_id: string;
+  message?: string;
+}
+
+interface BuiltPreviewDocument {
+  srcDoc: string;
+  dispose: () => void;
+}
+
+interface FailedPreviewDocument {
+  srcDoc: string;
+  dispose: () => void;
+  buildError: string;
+}
+
+type PreviewDocumentState = BuiltPreviewDocument | FailedPreviewDocument | null;
+
+const DEFAULT_IMPORTS: Record<string, string> = {
+  react: "https://esm.sh/react@18?dev",
+  "react/jsx-runtime": "https://esm.sh/react@18/jsx-runtime?dev",
+  "react/jsx-dev-runtime": "https://esm.sh/react@18/jsx-dev-runtime?dev",
+  "react-dom": "https://esm.sh/react-dom@18?dev",
+  "react-dom/client": "https://esm.sh/react-dom@18/client?dev",
+};
+
+const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".json", ".css"];
+
+export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const frameIdRef = useRef(`canvas-preview-${Math.random().toString(36).slice(2)}`);
+  const [runtimeStatus, setRuntimeStatus] = useState<PreviewStatus>("idle");
+  const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
+
+  const builtPreview = useMemo<PreviewDocumentState>(() => {
+    if (!snapshot) {
+      return null;
+    }
+
+    try {
+      return buildPreviewDocument(snapshot, frameIdRef.current);
+    } catch (error) {
+      return {
+        srcDoc: "",
+        dispose: () => undefined,
+        buildError: error instanceof Error ? error.message : "Canvas 预览构建失败",
+      };
+    }
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (!snapshot || !builtPreview) {
+      setRuntimeStatus("idle");
+      setRuntimeMessage(null);
+      return;
+    }
+
+    if ("buildError" in builtPreview) {
+      setRuntimeStatus("error");
+      setRuntimeMessage(builtPreview.buildError);
+      return;
+    }
+
+    setRuntimeStatus("building");
+    setRuntimeMessage("正在装载 Canvas 运行时...");
+
+    return () => {
+      builtPreview.dispose();
+    };
+  }, [builtPreview, snapshot]);
+
+  useEffect(() => {
+    const iframeWindow = iframeRef.current?.contentWindow ?? null;
+    if (!iframeWindow) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent<unknown>) => {
+      if (event.source !== iframeWindow) {
+        return;
+      }
+      const payload = event.data;
+      if (!isPreviewEnvelope(payload) || payload.frame_id !== frameIdRef.current) {
+        return;
+      }
+
+      if (payload.kind === "canvas-preview-ready") {
+        setRuntimeStatus("ready");
+        setRuntimeMessage("Canvas 预览已启动");
+      } else {
+        setRuntimeStatus("error");
+        setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [builtPreview]);
+
+  const activePreview = builtPreview && !("buildError" in builtPreview) ? builtPreview : null;
+  const buildErrorMessage = builtPreview && "buildError" in builtPreview
+    ? builtPreview.buildError
+    : "未知构建错误";
+
+  if (!snapshot) {
+    return (
+      <div className="flex min-h-[260px] items-center justify-center rounded-[12px] border border-dashed border-border bg-secondary/10 px-4 text-sm text-muted-foreground">
+        当前还没有可运行的 Canvas 快照。
+      </div>
+    );
+  }
+
+  if (!activePreview) {
+    return (
+      <div className="space-y-3 rounded-[12px] border border-destructive/30 bg-destructive/10 p-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.12em] text-destructive/80">Preview</p>
+          <h4 className="mt-1 text-sm font-semibold text-destructive">运行时预览构建失败</h4>
+        </div>
+        <pre className="overflow-x-auto whitespace-pre-wrap rounded-[10px] border border-destructive/20 bg-background px-3 py-2 text-xs text-destructive">
+          {buildErrorMessage}
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Preview</p>
+          <h4 className="mt-1 text-sm font-semibold text-foreground">沙箱运行时</h4>
+        </div>
+        <span className={statusClassName(runtimeStatus)}>
+          {statusLabel(runtimeStatus)}
+        </span>
+      </div>
+
+      <div className="overflow-hidden rounded-[14px] border border-border bg-white shadow-sm">
+        <iframe
+          ref={iframeRef}
+          title={`canvas-preview-${snapshot.canvas_id}`}
+          sandbox="allow-scripts"
+          srcDoc={activePreview.srcDoc}
+          className="h-[320px] w-full bg-white"
+        />
+      </div>
+
+      <div className="rounded-[10px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
+        {runtimeMessage ?? "等待 Canvas 运行时启动"}
+      </div>
+    </section>
+  );
+}
+
+function buildPreviewDocument(
+  snapshot: CanvasRuntimeSnapshot,
+  frameId: string,
+): BuiltPreviewDocument {
+  const fileMap = new Map(snapshot.files.map((file) => [normalizePath(file.path), file]));
+  const objectUrls = new Set<string>();
+  const moduleUrlCache = new Map<string, string>();
+
+  const importMap = {
+    imports: {
+      ...DEFAULT_IMPORTS,
+      ...snapshot.import_map.imports,
+    },
+  };
+  const cssContent = snapshot.files
+    .filter((file) => isCssFile(file.path))
+    .map((file) => file.content)
+    .join("\n\n");
+
+  const dispose = () => {
+    for (const url of objectUrls) {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const createObjectUrl = (content: string, mimeType: string) => {
+    const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
+    objectUrls.add(url);
+    return url;
+  };
+
+  const getModuleUrl = (requestPath: string): string => {
+    const normalizedPath = resolveExistingModulePath(fileMap, requestPath);
+    const cached = moduleUrlCache.get(normalizedPath);
+    if (cached) {
+      return cached;
+    }
+
+    const file = fileMap.get(normalizedPath);
+    if (!file) {
+      throw new Error(`Canvas 预览缺少文件: ${normalizedPath}`);
+    }
+
+    const moduleCode = buildModuleCode(file, normalizedPath, fileMap, getModuleUrl);
+    const url = createObjectUrl(moduleCode, "text/javascript");
+    moduleUrlCache.set(normalizedPath, url);
+    return url;
+  };
+
+  const entryUrl = getModuleUrl(snapshot.entry);
+  const escapedImportMap = JSON.stringify(importMap, null, 2);
+  const escapedCss = escapeHtml(cssContent);
+  const bootScript = `
+    const frameId = ${JSON.stringify(frameId)};
+    const send = (kind, message) => {
+      window.parent.postMessage({ kind, frame_id: frameId, message }, "*");
+    };
+
+    window.addEventListener("error", (event) => {
+      send("canvas-preview-error", event.message || "Canvas 运行时发生未捕获异常");
+    });
+
+    window.addEventListener("unhandledrejection", (event) => {
+      const reason = event.reason instanceof Error ? event.reason.message : String(event.reason ?? "unknown");
+      send("canvas-preview-error", reason);
+    });
+
+    import(${JSON.stringify(entryUrl)})
+      .then(() => send("canvas-preview-ready"))
+      .catch((error) => {
+        const message = error instanceof Error ? error.stack || error.message : String(error ?? "unknown");
+        send("canvas-preview-error", message);
+      });
+  `;
+
+  return {
+    srcDoc: `<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Canvas Preview</title>
+    <script type="importmap">${escapedImportMap}</script>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: #ffffff;
+        color: #0f172a;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+
+      body {
+        min-height: 100vh;
+      }
+
+      #root {
+        min-height: 100vh;
+      }
+
+${escapedCss}
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+${bootScript}
+    </script>
+  </body>
+</html>`,
+    dispose,
+  };
+}
+
+function buildModuleCode(
+  file: CanvasRuntimeFile,
+  normalizedPath: string,
+  fileMap: Map<string, CanvasRuntimeFile>,
+  getModuleUrl: (requestPath: string) => string,
+): string {
+  if (normalizedPath.endsWith(".json")) {
+    return `export default ${file.content.trim() || "null"};`;
+  }
+
+  if (normalizedPath.endsWith(".css")) {
+    return `export default ${JSON.stringify(normalizedPath)};`;
+  }
+
+  if (!isScriptFile(normalizedPath)) {
+    return `export default ${JSON.stringify(file.content)};`;
+  }
+
+  const transpiled = ts.transpileModule(file.content, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+      jsxImportSource: "react",
+      verbatimModuleSyntax: true,
+      isolatedModules: true,
+      allowJs: true,
+    },
+    fileName: normalizedPath,
+    reportDiagnostics: true,
+  });
+
+  const diagnostics = transpiled.diagnostics ?? [];
+  const seriousDiagnostics = diagnostics.filter(
+    (item) => item.category === ts.DiagnosticCategory.Error,
+  );
+  if (seriousDiagnostics.length > 0) {
+    throw new Error(formatDiagnostics(seriousDiagnostics));
+  }
+
+  return rewriteModuleSpecifiers(transpiled.outputText, normalizedPath, fileMap, getModuleUrl);
+}
+
+function rewriteModuleSpecifiers(
+  code: string,
+  currentPath: string,
+  fileMap: Map<string, CanvasRuntimeFile>,
+  getModuleUrl: (requestPath: string) => string,
+): string {
+  const replaceSpecifier = (specifier: string) => {
+    if (!isLocalSpecifier(specifier)) {
+      return specifier;
+    }
+
+    const resolvedPath = resolveImportPath(currentPath, specifier);
+    const existingPath = resolveExistingModulePath(fileMap, resolvedPath);
+    return getModuleUrl(existingPath);
+  };
+
+  return code
+    .replace(/(\bfrom\s*["'])([^"']+)(["'])/g, (_, prefix: string, specifier: string, suffix: string) =>
+      `${prefix}${replaceSpecifier(specifier)}${suffix}`)
+    .replace(/(\bimport\s*["'])([^"']+)(["'])/g, (_, prefix: string, specifier: string, suffix: string) =>
+      `${prefix}${replaceSpecifier(specifier)}${suffix}`)
+    .replace(/(\bimport\(\s*["'])([^"']+)(["']\s*\))/g, (_, prefix: string, specifier: string, suffix: string) =>
+      `${prefix}${replaceSpecifier(specifier)}${suffix}`);
+}
+
+function resolveExistingModulePath(
+  fileMap: Map<string, CanvasRuntimeFile>,
+  requestPath: string,
+): string {
+  const normalizedRequest = normalizePath(requestPath);
+  const candidates = [
+    normalizedRequest,
+    ...MODULE_EXTENSIONS.map((extension) => `${normalizedRequest}${extension}`),
+    ...MODULE_EXTENSIONS.map((extension) => `${normalizedRequest}/index${extension}`),
+  ];
+
+  const matched = candidates.find((candidate) => fileMap.has(candidate));
+  if (!matched) {
+    throw new Error(`无法解析 Canvas 模块: ${requestPath}`);
+  }
+
+  return matched;
+}
+
+function resolveImportPath(currentPath: string, specifier: string): string {
+  if (specifier.startsWith("/")) {
+    return normalizePath(specifier);
+  }
+
+  const baseUrl = new URL(`canvas://preview/${normalizePath(currentPath)}`);
+  return normalizePath(new URL(specifier, baseUrl).pathname);
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function isLocalSpecifier(specifier: string): boolean {
+  return specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/");
+}
+
+function isScriptFile(path: string): boolean {
+  return [".ts", ".tsx", ".js", ".jsx", ".mjs"].some((extension) => path.endsWith(extension));
+}
+
+function isCssFile(path: string): boolean {
+  return path.endsWith(".css");
+}
+
+function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
+  return diagnostics
+    .map((item) => {
+      const message = ts.flattenDiagnosticMessageText(item.messageText, "\n");
+      const line = item.file && item.start != null
+        ? item.file.getLineAndCharacterOfPosition(item.start).line + 1
+        : null;
+      return line ? `第 ${line} 行: ${message}` : message;
+    })
+    .join("\n");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function isPreviewEnvelope(value: unknown): value is PreviewEnvelope {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    (record.kind === "canvas-preview-ready" || record.kind === "canvas-preview-error")
+    && typeof record.frame_id === "string"
+    && (record.message == null || typeof record.message === "string")
+  );
+}
+
+function statusLabel(status: PreviewStatus): string {
+  switch (status) {
+    case "building":
+      return "启动中";
+    case "ready":
+      return "运行中";
+    case "error":
+      return "异常";
+    default:
+      return "待命";
+  }
+}
+
+function statusClassName(status: PreviewStatus): string {
+  const baseClassName = "rounded-full border px-2.5 py-1 text-[11px] font-medium";
+  switch (status) {
+    case "building":
+      return `${baseClassName} border-amber-200 bg-amber-50 text-amber-700`;
+    case "ready":
+      return `${baseClassName} border-emerald-200 bg-emerald-50 text-emerald-700`;
+    case "error":
+      return `${baseClassName} border-destructive/30 bg-destructive/10 text-destructive`;
+    default:
+      return `${baseClassName} border-border bg-secondary/20 text-muted-foreground`;
+  }
+}

@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { fetchCanvas, fetchCanvasRuntimeSnapshot } from "../../services/canvas";
-import type { Canvas, CanvasRuntimeSnapshot } from "../../types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  fetchCanvas,
+  fetchCanvasRuntimeSnapshot,
+  updateCanvas,
+} from "../../services/canvas";
+import type { Canvas, CanvasDataBinding, CanvasRuntimeSnapshot } from "../../types";
+import { CanvasBindingsEditor } from "./CanvasBindingsEditor";
+import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 
 export interface CanvasSessionPanelProps {
   canvasId: string | null;
@@ -13,12 +19,17 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
   const [snapshot, setSnapshot] = useState<CanvasRuntimeSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [isSavingBindings, setIsSavingBindings] = useState(false);
+  const [bindingsError, setBindingsError] = useState<string | null>(null);
 
   const loadCanvasData = useCallback(async () => {
     if (!canvasId) {
       setCanvas(null);
       setSnapshot(null);
       setError(null);
+      setBindingsError(null);
+      setSelectedFilePath(null);
       return;
     }
 
@@ -35,6 +46,7 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
       setError(err instanceof Error ? err.message : "Canvas 加载失败");
       setCanvas(null);
       setSnapshot(null);
+      setBindingsError(null);
     } finally {
       setIsLoading(false);
     }
@@ -43,6 +55,45 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
   useEffect(() => {
     void loadCanvasData();
   }, [loadCanvasData]);
+
+  useEffect(() => {
+    const nextFilePath = snapshot?.entry ?? snapshot?.files[0]?.path ?? null;
+    setSelectedFilePath((current) => {
+      if (!snapshot) {
+        return null;
+      }
+      if (current && snapshot.files.some((file) => file.path === current)) {
+        return current;
+      }
+      return nextFilePath;
+    });
+  }, [snapshot]);
+
+  const selectedFile = useMemo(() => {
+    if (!snapshot || !selectedFilePath) {
+      return null;
+    }
+    return snapshot.files.find((file) => file.path === selectedFilePath) ?? null;
+  }, [selectedFilePath, snapshot]);
+
+  const handleBindingsSave = useCallback(async (bindings: CanvasDataBinding[]) => {
+    if (!canvasId) {
+      return;
+    }
+
+    setIsSavingBindings(true);
+    setBindingsError(null);
+    try {
+      const nextCanvas = await updateCanvas(canvasId, { bindings });
+      setCanvas(nextCanvas);
+      const nextSnapshot = await fetchCanvasRuntimeSnapshot(canvasId, sessionId);
+      setSnapshot(nextSnapshot);
+    } catch (err) {
+      setBindingsError(err instanceof Error ? err.message : "保存绑定失败");
+    } finally {
+      setIsSavingBindings(false);
+    }
+  }, [canvasId, sessionId]);
 
   if (!canvasId) {
     return null;
@@ -90,13 +141,16 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
               <p className="text-xs text-foreground/85">入口文件: {snapshot.entry || "-"}</p>
               <p className="text-xs text-foreground/85">文件数: {snapshot.files.length}</p>
               <p className="text-xs text-foreground/85">绑定数: {snapshot.bindings.length}</p>
+              <p className="text-xs text-foreground/85">库依赖: {snapshot.libraries.join(", ") || "-"}</p>
               <p className="text-xs text-foreground/85">
                 会话: {snapshot.session_id || sessionId || "未指定"}
               </p>
             </section>
 
+            <CanvasRuntimePreview snapshot={snapshot} />
+
             <section className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3">
-              <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">数据绑定</p>
+              <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">绑定状态</p>
               {snapshot.bindings.length === 0 && (
                 <p className="text-xs text-muted-foreground">当前没有数据绑定。</p>
               )}
@@ -110,18 +164,63 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
               ))}
             </section>
 
-            <section className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3">
-              <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">文件摘要</p>
+            <CanvasBindingsEditor
+              value={canvas?.bindings ?? []}
+              isSaving={isSavingBindings}
+              error={bindingsError}
+              onSave={handleBindingsSave}
+            />
+
+            <section className="space-y-3 rounded-[10px] border border-border bg-secondary/20 p-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">文件浏览</p>
+                <h4 className="mt-1 text-sm font-semibold text-foreground">运行时文件快照</h4>
+              </div>
+
               {snapshot.files.length === 0 && (
                 <p className="text-xs text-muted-foreground">当前没有可运行文件。</p>
               )}
-              {snapshot.files.map((file) => (
-                <div key={file.path} className="rounded-[8px] border border-border bg-background px-2 py-2 text-xs">
-                  <p className="break-all font-medium text-foreground">{file.path}</p>
-                  <p className="text-muted-foreground">type: {file.file_type}</p>
-                  <p className="text-muted-foreground">size: {file.content.length} chars</p>
+
+              {snapshot.files.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {snapshot.files.map((file) => {
+                      const isSelected = file.path === selectedFilePath;
+                      return (
+                        <button
+                          key={file.path}
+                          type="button"
+                          onClick={() => setSelectedFilePath(file.path)}
+                          className={[
+                            "rounded-[8px] border px-2.5 py-1 text-xs transition-colors",
+                            isSelected
+                              ? "border-foreground bg-foreground text-background"
+                              : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground",
+                          ].join(" ")}
+                        >
+                          {file.path}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {selectedFile && (
+                    <div className="space-y-2 rounded-[10px] border border-border bg-background p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="min-w-0 truncate text-xs font-medium text-foreground">
+                          {selectedFile.path}
+                        </p>
+                        <span className="shrink-0 text-[11px] text-muted-foreground">
+                          {selectedFile.file_type}
+                        </span>
+                      </div>
+                      <pre className="max-h-[260px] overflow-auto rounded-[8px] border border-border bg-slate-950 px-3 py-2 text-[11px] leading-5 text-slate-100">
+                        <code>{selectedFile.content}</code>
+                      </pre>
+                    </div>
+                  )}
                 </div>
-              ))}
+              )}
             </section>
           </>
         )}

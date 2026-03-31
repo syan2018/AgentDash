@@ -18,6 +18,7 @@ use crate::rpc::ApiError;
 use agentdash_application::address_space::selected_workspace_binding;
 use agentdash_application::address_space::{
     ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, SessionMountTarget,
+    append_canvas_mounts,
     inline_files_from_mount, normalize_mount_relative_path,
 };
 
@@ -507,7 +508,13 @@ pub async fn apply_mount_patch(
         let result = state
             .services
             .address_space_service
-            .apply_patch(&address_space, &req.mount_id, &req.patch, Some(&overlay), None)
+            .apply_patch(
+                &address_space,
+                &req.mount_id,
+                &req.patch,
+                Some(&overlay),
+                None,
+            )
             .await
             .map_err(ApiError::Internal)?;
 
@@ -610,6 +617,13 @@ pub async fn preview_address_space(
         .address_space_service
         .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
+    let canvases = state
+        .repos
+        .canvas_repo
+        .list_by_project(project.id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    append_canvas_mounts(&mut address_space, &canvases);
 
     if let Some((binding_kind, binding_id)) = parsed_owner {
         inject_lifecycle_mount(&state, binding_kind, binding_id, &mut address_space).await;
@@ -711,6 +725,13 @@ async fn resolve_address_space(
         .address_space_service
         .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
+    let canvases = state
+        .repos
+        .canvas_repo
+        .list_by_project(project.id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    append_canvas_mounts(&mut address_space, &canvases);
 
     if let Some((binding_kind, binding_id)) = parsed_owner {
         inject_lifecycle_mount(state, binding_kind, binding_id, &mut address_space).await;

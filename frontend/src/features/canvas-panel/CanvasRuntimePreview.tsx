@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ts from "typescript";
 import type { CanvasRuntimeFile, CanvasRuntimeSnapshot } from "../../types";
 
@@ -19,14 +19,6 @@ interface BuiltPreviewDocument {
   dispose: () => void;
 }
 
-interface FailedPreviewDocument {
-  srcDoc: string;
-  dispose: () => void;
-  buildError: string;
-}
-
-type PreviewDocumentState = BuiltPreviewDocument | FailedPreviewDocument | null;
-
 const DEFAULT_IMPORTS: Record<string, string> = {
   react: "https://esm.sh/react@18?dev",
   "react/jsx-runtime": "https://esm.sh/react@18/jsx-runtime?dev",
@@ -37,83 +29,86 @@ const DEFAULT_IMPORTS: Record<string, string> = {
 
 const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".json", ".css"];
 
+/**
+ * Blob URL revoke 的安全延迟（ms）。
+ * iframe srcDoc 更新后浏览器异步解析新文档并 fetch blob URL，
+ * 需要给它足够的时间完成所有模块加载后再 revoke。
+ */
+const BLOB_REVOKE_DELAY_MS = 8_000;
+
 export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const frameIdRef = useRef(`canvas-preview-${Math.random().toString(36).slice(2)}`);
   const [runtimeStatus, setRuntimeStatus] = useState<PreviewStatus>("idle");
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
-  const builtPreview = useMemo<PreviewDocumentState>(() => {
-    if (!snapshot) {
-      return null;
-    }
+  const [activeSrcDoc, setActiveSrcDoc] = useState<string | null>(null);
+  const [buildError, setBuildError] = useState<string | null>(null);
 
-    try {
-      return buildPreviewDocument(snapshot, frameIdRef.current);
-    } catch (error) {
-      return {
-        srcDoc: "",
-        dispose: () => undefined,
-        buildError: error instanceof Error ? error.message : "Canvas 预览构建失败",
-      };
-    }
-  }, [snapshot]);
-
+  // 把 buildPreviewDocument（有 blob URL 副作用）放在 useEffect 里执行，
+  // 让 cleanup 能可靠地控制 dispose 时序。
   useEffect(() => {
-    if (!snapshot || !builtPreview) {
+    if (!snapshot) {
+      setActiveSrcDoc(null);
+      setBuildError(null);
       setRuntimeStatus("idle");
       setRuntimeMessage(null);
       return;
     }
 
-    if ("buildError" in builtPreview) {
+    let built: BuiltPreviewDocument | null = null;
+    try {
+      built = buildPreviewDocument(snapshot, frameIdRef.current);
+      setActiveSrcDoc(built.srcDoc);
+      setBuildError(null);
+      setRuntimeStatus("building");
+      setRuntimeMessage("正在装载 Canvas 运行时...");
+    } catch (error) {
+      setActiveSrcDoc(null);
+      setBuildError(error instanceof Error ? error.message : "Canvas 预览构建失败");
       setRuntimeStatus("error");
-      setRuntimeMessage(builtPreview.buildError);
+      setRuntimeMessage(error instanceof Error ? error.message : "Canvas 预览构建失败");
+    }
+
+    const capturedBuilt = built;
+    return () => {
+      if (!capturedBuilt) return;
+
+      const iframe = iframeRef.current;
+      if (iframe) {
+        iframe.srcdoc = "";
+      }
+
+      // 延迟 revoke，等浏览器完成对旧 blob URL 的 fetch 后再释放
+      setTimeout(() => capturedBuilt.dispose(), BLOB_REVOKE_DELAY_MS);
+    };
+  }, [snapshot]);
+
+  const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
+    const iframe = iframeRef.current;
+    if (!iframe || event.source !== iframe.contentWindow) {
+      return;
+    }
+    const payload = event.data;
+    if (!isPreviewEnvelope(payload) || payload.frame_id !== frameIdRef.current) {
       return;
     }
 
-    setRuntimeStatus("building");
-    setRuntimeMessage("正在装载 Canvas 运行时...");
-
-    return () => {
-      builtPreview.dispose();
-    };
-  }, [builtPreview, snapshot]);
+    if (payload.kind === "canvas-preview-ready") {
+      setRuntimeStatus("ready");
+      setRuntimeMessage("Canvas 预览已启动");
+    } else {
+      setRuntimeStatus("error");
+      setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
+    }
+  }, []);
 
   useEffect(() => {
-    const iframeWindow = iframeRef.current?.contentWindow ?? null;
-    if (!iframeWindow) {
-      return;
-    }
-
-    const handleMessage = (event: MessageEvent<unknown>) => {
-      if (event.source !== iframeWindow) {
-        return;
-      }
-      const payload = event.data;
-      if (!isPreviewEnvelope(payload) || payload.frame_id !== frameIdRef.current) {
-        return;
-      }
-
-      if (payload.kind === "canvas-preview-ready") {
-        setRuntimeStatus("ready");
-        setRuntimeMessage("Canvas 预览已启动");
-      } else {
-        setRuntimeStatus("error");
-        setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
+    window.addEventListener("message", handleIframeMessage);
     return () => {
-      window.removeEventListener("message", handleMessage);
+      window.removeEventListener("message", handleIframeMessage);
     };
-  }, [builtPreview]);
-
-  const activePreview = builtPreview && !("buildError" in builtPreview) ? builtPreview : null;
-  const buildErrorMessage = builtPreview && "buildError" in builtPreview
-    ? builtPreview.buildError
-    : "未知构建错误";
+  }, [handleIframeMessage]);
 
   if (!snapshot) {
     return (
@@ -123,7 +118,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     );
   }
 
-  if (!activePreview) {
+  if (buildError) {
     return (
       <div className="space-y-3 rounded-[12px] border border-destructive/30 bg-destructive/10 p-4">
         <div>
@@ -131,8 +126,16 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
           <h4 className="mt-1 text-sm font-semibold text-destructive">运行时预览构建失败</h4>
         </div>
         <pre className="overflow-x-auto whitespace-pre-wrap rounded-[10px] border border-destructive/20 bg-background px-3 py-2 text-xs text-destructive">
-          {buildErrorMessage}
+          {buildError}
         </pre>
+      </div>
+    );
+  }
+
+  if (!activeSrcDoc) {
+    return (
+      <div className="flex min-h-[260px] items-center justify-center rounded-[12px] border border-dashed border-border bg-secondary/10 px-4 text-sm text-muted-foreground">
+        正在构建 Canvas 预览...
       </div>
     );
   }
@@ -154,7 +157,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
           ref={iframeRef}
           title={`canvas-preview-${snapshot.canvas_id}`}
           sandbox="allow-scripts allow-same-origin"
-          srcDoc={activePreview.srcDoc}
+          srcDoc={activeSrcDoc}
           className="h-[320px] w-full bg-white"
         />
       </div>

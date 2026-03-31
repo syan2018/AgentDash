@@ -95,6 +95,7 @@ pub async fn start_task(
             task_id,
             override_prompt: req.override_prompt,
             executor_config: req.executor_config,
+            identity: Some(current_user),
         })
         .await
         .map_err(map_task_execution_error)?;
@@ -130,6 +131,7 @@ pub async fn continue_task(
             task_id,
             additional_prompt: req.additional_prompt,
             executor_config: req.executor_config,
+            identity: Some(current_user),
         })
         .await
         .map_err(map_task_execution_error)?;

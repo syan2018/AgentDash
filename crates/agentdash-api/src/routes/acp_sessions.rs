@@ -577,12 +577,13 @@ pub async fn prompt_session(
         ProjectPermission::Edit,
     )
     .await?;
-    let req = augment_prompt_request_for_owner(
+    let mut req = augment_prompt_request_for_owner(
         &state,
         &session_id,
         PromptSessionRequest::from_user_input(user_input),
     )
     .await?;
+    req.identity = Some(current_user);
     let turn_id = state
         .services
         .session_hub

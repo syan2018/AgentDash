@@ -27,6 +27,7 @@ pub struct StartTaskCommand {
     pub task_id: Uuid,
     pub override_prompt: Option<String>,
     pub executor_config: Option<AgentConfig>,
+    pub identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,7 @@ pub struct ContinueTaskCommand {
     pub task_id: Uuid,
     pub additional_prompt: Option<String>,
     pub executor_config: Option<AgentConfig>,
+    pub identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 
 #[derive(Debug, Clone)]

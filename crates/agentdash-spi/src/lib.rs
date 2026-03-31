@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod connector;
 pub mod hooks;
 pub mod lifecycle;

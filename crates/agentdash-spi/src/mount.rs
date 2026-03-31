@@ -137,12 +137,16 @@ pub struct ExecResult {
 
 /// Runtime context passed to every `MountProvider` operation.
 ///
-/// Currently empty — providers that need infrastructure references
-/// (e.g. `BackendRegistry`, overlay) hold them via constructor injection.
-/// Kept as a named struct so future cross-cutting concerns (tracing,
-/// cancellation) can be added without changing every call site.
+/// Providers that need infrastructure references (e.g. `BackendRegistry`,
+/// overlay) hold them via constructor injection. This struct carries
+/// cross-cutting per-request concerns like the authenticated user.
 #[derive(Debug, Default)]
-pub struct MountOperationContext;
+pub struct MountOperationContext {
+    /// The authenticated identity of the user who initiated this operation.
+    /// Injected by the framework from the HTTP session; providers consume
+    /// it on demand (e.g. KM plugin maps `user_id` to a Wave `owner_id`).
+    pub identity: Option<crate::auth::AuthIdentity>,
+}
 
 // ============================================================================
 // MountProvider trait

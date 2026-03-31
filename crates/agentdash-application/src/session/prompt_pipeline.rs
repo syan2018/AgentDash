@@ -128,6 +128,7 @@ impl SessionHub {
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
             system_context: req.system_context,
             runtime_delegate,
+            identity: req.identity,
         };
 
         session_meta.updated_at = now;

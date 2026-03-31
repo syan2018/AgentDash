@@ -32,6 +32,8 @@ pub struct PreparedTurnContext {
     pub resolved_config: Option<AgentConfig>,
     pub use_cloud_native_agent: bool,
     pub workspace: Option<agentdash_domain::workspace::Workspace>,
+    /// 发起本次 task 执行的用户身份（由 HTTP handler 注入）。
+    pub identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 
 /// 从 Task / Story / Project / Workspace 等上下文中构建 turn 执行所需的完整信息
@@ -137,5 +139,6 @@ pub async fn prepare_task_turn_context(
         resolved_config,
         use_cloud_native_agent,
         workspace,
+        identity: None,
     })
 }

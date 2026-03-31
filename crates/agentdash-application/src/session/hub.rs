@@ -484,6 +484,7 @@ mod tests {
             address_space: None,
             flow_capabilities: None,
             system_context: None,
+            identity: None,
         }
     }
 
@@ -807,6 +808,7 @@ mod tests {
                 address_space: None,
                 flow_capabilities: None,
                 system_context: None,
+                identity: None,
             },
         )
         .await

@@ -58,6 +58,8 @@ pub struct ExecutionContext {
     /// 预构建的 Agent Runtime Delegate（由 Application 层基于 hook_session 创建）。
     /// Connector 可直接使用，无需自行构造具体 delegate 类型。
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+    /// 发起本次执行的用户身份（由 HTTP 层注入）。
+    pub identity: Option<crate::auth::AuthIdentity>,
 }
 
 impl std::fmt::Debug for ExecutionContext {

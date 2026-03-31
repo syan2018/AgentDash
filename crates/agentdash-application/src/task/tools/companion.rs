@@ -326,6 +326,7 @@ impl AgentTool for CompanionDispatchTool {
                     address_space: execution_slice.address_space.clone(),
                     flow_capabilities: None,
                     system_context: self.system_context.clone(),
+                    identity: None,
                 },
             )
             .await

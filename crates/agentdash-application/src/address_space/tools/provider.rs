@@ -85,6 +85,8 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             .as_ref()
             .map(|p| Arc::new(InlineContentOverlay::new(p.clone())));
 
+        let identity = context.identity.clone();
+
         let mut tools: Vec<DynAgentTool> = vec![
             Arc::new(MountsListTool::new(
                 self.service.clone(),
@@ -94,26 +96,31 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 self.service.clone(),
                 address_space.clone(),
                 overlay.clone(),
+                identity.clone(),
             )),
             Arc::new(FsWriteTool::new(
                 self.service.clone(),
                 address_space.clone(),
                 overlay.clone(),
+                identity.clone(),
             )),
             Arc::new(FsApplyPatchTool::new(
                 self.service.clone(),
                 address_space.clone(),
                 overlay.clone(),
+                identity.clone(),
             )),
             Arc::new(FsListTool::new(
                 self.service.clone(),
                 address_space.clone(),
                 overlay.clone(),
+                identity.clone(),
             )),
             Arc::new(FsSearchTool::new(
                 self.service.clone(),
                 address_space.clone(),
                 overlay.clone(),
+                identity,
             )),
             Arc::new(ShellExecTool::new(self.service.clone(), address_space)),
         ];

@@ -171,6 +171,7 @@ async fn dispatch_cloud_native(
             resolve_hook_action: true,
         }),
         system_context: ctx.built.system_context.clone(),
+        identity: ctx.identity,
     };
 
     let turn_id = dispatcher
@@ -359,6 +360,7 @@ async fn schedule_auto_retry(
             task_id,
             additional_prompt: Some(retry_prompt),
             executor_config: None,
+            identity: None,
         })
         .await
     {

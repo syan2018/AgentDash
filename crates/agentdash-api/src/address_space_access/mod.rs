@@ -262,6 +262,7 @@ mod tests {
                     path: "brief.md".to_string(),
                 },
                 None,
+                None,
             )
             .await
             .expect("inline read");
@@ -356,6 +357,7 @@ mod tests {
                     path: "docs/brief.md".to_string(),
                 },
                 Some(&overlay),
+                None,
             )
             .await
             .expect("read moved file");
@@ -444,6 +446,7 @@ mod tests {
                             mount_id: "main".to_string(),
                             path: "src/main.rs".to_string(),
                         },
+                        None,
                         None,
                     )
                     .await

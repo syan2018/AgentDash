@@ -301,6 +301,7 @@ async fn relay_list_files(
                 recursive: true,
             },
             None,
+            None,
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -343,6 +344,7 @@ async fn relay_read_file(
                 mount_id: "main".to_string(),
                 path: rel_path.to_string(),
             },
+            None,
             None,
         )
         .await
@@ -395,6 +397,7 @@ async fn relay_batch_read_files(
                     mount_id: "main".to_string(),
                     path: rel.clone(),
                 },
+                None,
                 None,
             )
             .await

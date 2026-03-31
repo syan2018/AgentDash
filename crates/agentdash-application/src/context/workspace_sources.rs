@@ -151,6 +151,7 @@ async fn resolve_workspace_file_source(
                 path: path.clone(),
             },
             None,
+            None,
         )
         .await
         .map_err(|e| format!("工作空间文件读取失败: {e}"))?;
@@ -187,6 +188,7 @@ async fn resolve_workspace_snapshot_source(
                 pattern: None,
                 recursive: true,
             },
+            None,
             None,
         )
         .await

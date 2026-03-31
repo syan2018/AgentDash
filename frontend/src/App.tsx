@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { useProjectStore } from "./stores/projectStore";
@@ -106,6 +106,14 @@ function SessionRouteWrapper() {
 }
 
 // ─── 认证守卫 ──────────────────────────────────────────
+//
+// 职责链：
+//   1. 拉 LoginMetadata → 判断是否需要登录
+//   2. 需要登录 + 无 token → 展示 LoginPage（登录成功后 authStore 设 token + currentUser）
+//   3. 有 token（或不需要登录）→ 调 /api/me 获取当前用户
+//   4. currentUser 就绪后放行 children
+//
+// 原则：fetchCurrentUser 只在此处触发一次；AppContent 不再重复调用。
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { metadata, isMetadataLoading, fetchMetadata } = useAuthStore();
@@ -117,30 +125,36 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     fetchCurrentUser,
   } = useCurrentUserStore();
 
+  // Step 1: 获取 metadata
   useEffect(() => {
     if (!metadata && !isMetadataLoading) {
       fetchMetadata();
     }
   }, [metadata, isMetadataLoading, fetchMetadata]);
 
+  // Step 2: metadata 就绪 + token 可用（或无需登录）→ 获取用户身份
+  const needsLogin = metadata?.requires_login ?? false;
+  const hasToken = !!getStoredToken();
+
   useEffect(() => {
     if (!metadata || isMetadataLoading) return;
-    if (metadata.requires_login && !getStoredToken()) return;
+    if (needsLogin && !hasToken) return;
+    if (hasLoadedCurrentUser || isLoadingCurrentUser) return;
 
-    if (!hasLoadedCurrentUser && !isLoadingCurrentUser) {
-      fetchCurrentUser().catch((err: unknown) => {
-        if ((err as ApiHttpError).status === 401) {
-          clearStoredToken();
-        }
-      });
-    }
-  }, [metadata, isMetadataLoading, hasLoadedCurrentUser, isLoadingCurrentUser, fetchCurrentUser]);
+    fetchCurrentUser().catch((err: unknown) => {
+      if ((err as ApiHttpError).status === 401 && needsLogin) {
+        clearStoredToken();
+      }
+    });
+  }, [metadata, isMetadataLoading, needsLogin, hasToken, hasLoadedCurrentUser, isLoadingCurrentUser, fetchCurrentUser]);
+
+  // ── 渲染状态机 ──
 
   if (isMetadataLoading || !metadata) {
     return <RouteFallback />;
   }
 
-  if (metadata.requires_login && !getStoredToken() && !currentUser) {
+  if (needsLogin && !hasToken && !currentUser) {
     return <LoginPage />;
   }
 
@@ -150,16 +164,14 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!currentUser && hasLoadedCurrentUser && currentUserError) {
     const is401 = currentUserError.includes("401") || currentUserError.includes("认证");
-    if (metadata.requires_login && is401) {
+    if (needsLogin && is401) {
       clearStoredToken();
       return <LoginPage />;
     }
     return (
       <BootstrapErrorState
         message={currentUserError}
-        onRetry={() => {
-          void fetchCurrentUser();
-        }}
+        onRetry={() => void fetchCurrentUser()}
       />
     );
   }
@@ -168,9 +180,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <BootstrapErrorState
         message={currentUserError ?? "当前服务未返回有效用户身份"}
-        onRetry={() => {
-          void fetchCurrentUser();
-        }}
+        onRetry={() => void fetchCurrentUser()}
       />
     );
   }
@@ -184,47 +194,18 @@ function AppContent() {
   const { fetchProjects, currentProjectId } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect, disconnect } = useEventStore();
-  const {
-    currentUser,
-    isLoading: isLoadingCurrentUser,
-    hasLoaded: hasLoadedCurrentUser,
-    fetchCurrentUser,
-  } = useCurrentUserStore();
-
-  const initializeApp = useCallback(async (signal?: { cancelled: boolean }) => {
-    let user = currentUser;
-    if (!user) {
-      user = await fetchCurrentUser();
-    }
-    if (!user || signal?.cancelled) return;
-
-    await Promise.allSettled([
-      fetchBackends(),
-      fetchProjects(),
-    ]);
-
-  }, [currentUser, fetchBackends, fetchProjects, fetchCurrentUser]);
 
   useEffect(() => {
-    const signal = { cancelled: false };
-    void initializeApp(signal);
-    return () => {
-      signal.cancelled = true;
-    };
-  }, [initializeApp]);
+    void Promise.allSettled([fetchBackends(), fetchProjects()]);
+  }, [fetchBackends, fetchProjects]);
 
   useEffect(() => {
-    if (!hasLoadedCurrentUser || isLoadingCurrentUser) return;
     if (!currentProjectId) {
       disconnect();
       return;
     }
     connect(currentProjectId);
-  }, [connect, currentProjectId, disconnect, hasLoadedCurrentUser, isLoadingCurrentUser]);
-
-  if (!hasLoadedCurrentUser || isLoadingCurrentUser) {
-    return <RouteFallback />;
-  }
+  }, [connect, currentProjectId, disconnect]);
 
   return (
     <Suspense fallback={<RouteFallback />}>

@@ -33,6 +33,8 @@ pub struct PromptSessionRequest {
     pub address_space: Option<AddressSpace>,
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
     pub system_context: Option<String>,
+    /// 发起本次 prompt 的用户身份（由 HTTP handler 从 session 注入）。
+    pub identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 
 impl PromptSessionRequest {
@@ -45,6 +47,7 @@ impl PromptSessionRequest {
             address_space: None,
             flow_capabilities: None,
             system_context: None,
+            identity: None,
         }
     }
 }

@@ -98,17 +98,20 @@ pub struct FsReadTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
+    identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsReadTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
         address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             address_space,
             overlay,
+            identity,
         }
     }
 }
@@ -149,6 +152,7 @@ impl AgentTool for FsReadTool {
                 &self.address_space,
                 &target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -181,17 +185,20 @@ pub struct FsWriteTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
+    identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsWriteTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
         address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             address_space,
             overlay,
+            identity,
         }
     }
 }
@@ -230,7 +237,7 @@ impl AgentTool for FsWriteTool {
         let final_content = if params.append.unwrap_or(false) {
             match self
                 .service
-                .read_text(&self.address_space, &target, overlay_ref)
+                .read_text(&self.address_space, &target, overlay_ref, self.identity.as_ref())
                 .await
             {
                 Ok(existing) => format!("{}{}", existing.content, params.content),
@@ -240,7 +247,7 @@ impl AgentTool for FsWriteTool {
             params.content
         };
         self.service
-            .write_text(&self.address_space, &target, &final_content, overlay_ref)
+            .write_text(&self.address_space, &target, &final_content, overlay_ref, self.identity.as_ref())
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
         Ok(ok_text(format!("已写入文件: {}", target.path)))
@@ -252,17 +259,20 @@ pub struct FsApplyPatchTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
+    identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsApplyPatchTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
         address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             address_space,
             overlay,
+            identity,
         }
     }
 }
@@ -311,6 +321,7 @@ impl AgentTool for FsApplyPatchTool {
                 &mount_id,
                 &params.patch,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -334,17 +345,20 @@ pub struct FsListTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: AddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
+    identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsListTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
         address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
             address_space,
             overlay,
+            identity,
         }
     }
 }
@@ -394,6 +408,7 @@ impl AgentTool for FsListTool {
                     recursive: params.recursive.unwrap_or(false),
                 },
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
+                self.identity.as_ref(),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -425,6 +440,7 @@ impl FsSearchTool {
         service: Arc<RelayAddressSpaceService>,
         address_space: AddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
+        _identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,

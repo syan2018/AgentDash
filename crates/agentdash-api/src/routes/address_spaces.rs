@@ -136,6 +136,7 @@ pub async fn list_address_entries(
                         recursive,
                     },
                     None,
+                    None,
                 )
                 .await
                 .map_err(ApiError::Internal)?;
@@ -236,6 +237,7 @@ pub async fn list_mount_entries(
                 recursive,
             },
             None,
+            None,
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -312,6 +314,7 @@ pub async fn read_mount_file(
                 mount_id: req.mount_id.clone(),
                 path: req.path.clone(),
             },
+            None,
             None,
         )
         .await
@@ -422,6 +425,7 @@ pub async fn write_mount_file(
             },
             &req.content,
             None,
+            None,
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -503,7 +507,7 @@ pub async fn apply_mount_patch(
         let result = state
             .services
             .address_space_service
-            .apply_patch(&address_space, &req.mount_id, &req.patch, Some(&overlay))
+            .apply_patch(&address_space, &req.mount_id, &req.patch, Some(&overlay), None)
             .await
             .map_err(ApiError::Internal)?;
 
@@ -520,7 +524,7 @@ pub async fn apply_mount_patch(
     let result = state
         .services
         .address_space_service
-        .apply_patch(&address_space, &req.mount_id, &req.patch, None)
+        .apply_patch(&address_space, &req.mount_id, &req.patch, None, None)
         .await
         .map_err(ApiError::Internal)?;
 

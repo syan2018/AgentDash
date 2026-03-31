@@ -221,6 +221,7 @@ impl TaskLifecycleService {
                 cmd.override_prompt.as_deref(),
                 None,
                 cmd.executor_config.as_ref(),
+                cmd.identity,
             )
             .await
         {
@@ -302,6 +303,7 @@ impl TaskLifecycleService {
                 None,
                 cmd.additional_prompt.as_deref(),
                 cmd.executor_config.as_ref(),
+                cmd.identity,
             )
             .await?;
 
@@ -414,6 +416,7 @@ impl TaskLifecycleService {
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
         executor_config: Option<&AgentConfig>,
+        identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Result<StartedTurn, TaskExecutionError> {
         let session_id = task
             .session_id
@@ -427,7 +430,7 @@ impl TaskLifecycleService {
             contributor_registry: &self.contributor_registry,
             mcp_base_url: self.mcp_base_url.as_deref(),
         };
-        let ctx = prepare_task_turn_context(
+        let mut ctx = prepare_task_turn_context(
             &svc,
             task,
             phase,
@@ -436,6 +439,7 @@ impl TaskLifecycleService {
             executor_config,
         )
         .await?;
+        ctx.identity = identity;
 
         self.dispatcher.dispatch_turn(session_id, ctx).await
     }

@@ -59,6 +59,7 @@ impl RelayAddressSpaceService {
         address_space: &AddressSpace,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::auth::AuthIdentity>,
     ) -> Result<ReadResult, String> {
         let runtime_address_space = address_space.clone();
         let mount = resolve_mount(
@@ -78,7 +79,9 @@ impl RelayAddressSpaceService {
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext;
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
             return provider
                 .read_text(mount, &path, &ctx)
                 .await
@@ -94,6 +97,7 @@ impl RelayAddressSpaceService {
         target: &ResourceRef,
         content: &str,
         overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::auth::AuthIdentity>,
     ) -> Result<(), String> {
         let runtime_address_space = address_space.clone();
         let mount = resolve_mount(
@@ -116,7 +120,9 @@ impl RelayAddressSpaceService {
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext;
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
             return provider
                 .write_text(mount, &path, content, &ctx)
                 .await
@@ -132,6 +138,7 @@ impl RelayAddressSpaceService {
         mount_id: &str,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::auth::AuthIdentity>,
     ) -> Result<ApplyPatchResult, String> {
         let runtime_address_space = address_space.clone();
         let mount = resolve_mount(&runtime_address_space, mount_id, MountCapability::Write)?;
@@ -159,7 +166,9 @@ impl RelayAddressSpaceService {
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext;
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
             let target = ProviderPatchTarget {
                 provider: provider.as_ref(),
                 mount,
@@ -199,6 +208,7 @@ impl RelayAddressSpaceService {
         mount_id: &str,
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::auth::AuthIdentity>,
     ) -> Result<ListResult, String> {
         let runtime_address_space = address_space.clone();
         let mount = resolve_mount(&runtime_address_space, mount_id, MountCapability::List)?;
@@ -220,7 +230,9 @@ impl RelayAddressSpaceService {
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext;
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
             let opts = ListOptions {
                 path,
                 pattern: options.pattern,
@@ -249,7 +261,7 @@ impl RelayAddressSpaceService {
         let cwd = normalize_mount_relative_path(&request.cwd, true)?;
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext;
+            let ctx = MountOperationContext::default();
             let req = ExecRequest {
                 mount_id: request.mount_id.clone(),
                 cwd,
@@ -309,7 +321,7 @@ impl RelayAddressSpaceService {
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext;
+            let ctx = MountOperationContext::default();
             let sq = SearchQuery {
                 path: if base_path.is_empty() {
                     None

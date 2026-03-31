@@ -166,21 +166,9 @@ pub fn validate_context_container(container: &ContextContainerDefinition) -> Res
             if container
                 .capabilities
                 .iter()
-                .any(|item| matches!(item, ContextContainerCapability::Write))
-            {
-                return Err(
-                    "external_service 首轮仅支持只读访问，不允许声明 write capability".to_string(),
-                );
-            }
-            if container
-                .capabilities
-                .iter()
                 .any(|item| matches!(item, ContextContainerCapability::Exec))
             {
-                return Err("external_service 首轮不支持 exec capability".to_string());
-            }
-            if container.default_write {
-                return Err("external_service 首轮不支持 default_write=true".to_string());
+                return Err("external_service 不支持 exec capability".to_string());
             }
         }
     }
@@ -315,25 +303,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_context_containers_rejects_write_on_external_service() {
+    fn validate_context_containers_allows_write_on_external_service() {
         let container = ContextContainerDefinition {
             id: "km".to_string(),
             mount_id: "km".to_string(),
             display_name: "KM".to_string(),
             provider: ContextContainerProvider::ExternalService {
-                service_id: "svc".to_string(),
-                root_ref: "/docs".to_string(),
+                service_id: "km_bridge".to_string(),
+                root_ref: "18724/doc123".to_string(),
             },
             capabilities: vec![
                 ContextContainerCapability::Read,
                 ContextContainerCapability::Write,
+                ContextContainerCapability::List,
             ],
             default_write: false,
             exposure: ContextContainerExposure::default(),
         };
 
-        let error = validate_context_containers(&[container]).expect_err("should fail");
-        assert!(error.contains("只读访问"));
+        validate_context_containers(&[container]).expect("write on external_service should be allowed");
     }
 
     #[test]

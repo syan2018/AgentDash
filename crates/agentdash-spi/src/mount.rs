@@ -128,6 +128,31 @@ pub struct MountOperationContext;
 pub trait MountProvider: Send + Sync {
     fn provider_id(&self) -> &str;
 
+    // ---- 服务协商元信息 ----
+    // 内置 provider (relay_fs, inline_fs, lifecycle_vfs) 不需要覆盖这些方法。
+    // 插件 provider 覆盖后，前端通过 /api/mount-providers 自动发现可配置的服务。
+
+    /// 用户可见的显示名称。默认返回 provider_id。
+    fn display_name(&self) -> &str {
+        self.provider_id()
+    }
+
+    /// root_ref 的格式提示，前端作为 placeholder 展示。
+    fn root_ref_hint(&self) -> &str {
+        ""
+    }
+
+    /// 该 provider 支持的 capability 列表（用于前端预填）。
+    fn supported_capabilities(&self) -> Vec<&str> {
+        vec!["read", "list"]
+    }
+
+    /// 是否允许用户在 Context Container 编辑器中直接配置。
+    /// 内置 provider 返回 false，插件 provider 按需返回 true。
+    fn is_user_configurable(&self) -> bool {
+        false
+    }
+
     async fn read_text(
         &self,
         mount: &Mount,

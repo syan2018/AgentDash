@@ -20,8 +20,8 @@ pub use path::{
     parse_mount_uri, resolve_mount, resolve_mount_id,
 };
 pub use provider::{
-    MountError, MountOperationContext, MountProvider, MountProviderRegistry,
-    MountProviderRegistryBuilder, SearchMatch, SearchQuery, SearchResult,
+    ConfigurableProviderInfo, MountError, MountOperationContext, MountProvider,
+    MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch, SearchQuery, SearchResult,
 };
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;

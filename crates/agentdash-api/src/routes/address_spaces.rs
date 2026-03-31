@@ -794,3 +794,15 @@ async fn require_backend_online(
     }
     Ok(())
 }
+
+// ─── Mount Provider 发现 ──────────────────────────────────
+
+/// `GET /api/mount-providers` — 返回所有可由用户配置的 mount provider。
+///
+/// 前端用于构建 ExternalService 容器的 provider 选择列表。
+/// 数据直接来自 MountProviderRegistry 中各 provider 自身声明的元信息。
+pub async fn list_configurable_mount_providers(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<agentdash_application::address_space::ConfigurableProviderInfo>> {
+    Json(state.services.mount_provider_registry.user_configurable_providers())
+}

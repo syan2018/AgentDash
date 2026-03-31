@@ -326,6 +326,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/events/stream", get(stream::event_stream))
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .route("/events/since/{since_id}", get(stream::get_events_since))
+        // Mount Provider 发现（返回可由用户配置的外部服务 provider 列表）
+        .route("/mount-providers", get(address_spaces::list_configurable_mount_providers))
         // Address Spaces（统一寻址空间能力发现与条目检索）
         .route("/address-spaces", get(address_spaces::list_address_spaces))
         .route(

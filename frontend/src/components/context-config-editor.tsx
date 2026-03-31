@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   ContextContainerCapability,
   ContextContainerDefinition,
@@ -6,7 +6,23 @@ import type {
   SessionComposition,
   SessionRequiredContextBlock,
 } from "../types";
+import { api } from "../api/client";
 import { CONTEXT_CAPABILITY_OPTIONS } from "./context-config-defaults";
+
+interface ConfigurableProviderInfo {
+  service_id: string;
+  display_name: string;
+  root_ref_hint: string;
+  supported_capabilities: string[];
+}
+
+function useMountProviders() {
+  const [providers, setProviders] = useState<ConfigurableProviderInfo[]>([]);
+  useEffect(() => {
+    api.get<ConfigurableProviderInfo[]>("/mount-providers").then(setProviders).catch(() => {});
+  }, []);
+  return providers;
+}
 
 function cloneContainer(
   container: ContextContainerDefinition,
@@ -130,8 +146,17 @@ function parseWorkflowSteps(value: string): string[] {
 function containerSupportsCapability(
   container: ContextContainerDefinition,
   capability: ContextContainerCapability,
+  mountProviders: ConfigurableProviderInfo[],
 ): boolean {
   if (capability === "exec") return false;
+  if (container.provider.kind === "external_service") {
+    const matched = mountProviders.find(
+      (p) => p.service_id === container.provider.service_id,
+    );
+    if (matched) {
+      return matched.supported_capabilities.includes(capability);
+    }
+  }
   return true;
 }
 
@@ -189,6 +214,7 @@ function ContextContainersEditorForm({
   onSave,
 }: ContextContainersEditorProps) {
   const [draft, setDraft] = useState<ContextContainerDefinition[]>(() => value.map(cloneContainer));
+  const mountProviders = useMountProviders();
 
   const isDirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(value),
@@ -218,6 +244,7 @@ function ContextContainersEditorForm({
           container={container}
           index={index}
           isSaving={isSaving}
+          mountProviders={mountProviders}
           onUpdate={(updater) => updateContainerAt(index, updater)}
           onRemove={() => setDraft((current) => current.filter((_, i) => i !== index))}
         />
@@ -262,12 +289,14 @@ function ContainerEditorItem({
   container,
   index,
   isSaving,
+  mountProviders,
   onUpdate,
   onRemove,
 }: {
   container: ContextContainerDefinition;
   index: number;
   isSaving: boolean;
+  mountProviders: ConfigurableProviderInfo[];
   onUpdate: (updater: (c: ContextContainerDefinition) => ContextContainerDefinition) => void;
   onRemove: () => void;
 }) {
@@ -334,41 +363,66 @@ function ContainerEditorItem({
           <div className="space-y-2">
             <label className="text-[10px] text-muted-foreground">Provider</label>
             <select
-              value={container.provider.kind}
+              value={
+                container.provider.kind === "inline_files"
+                  ? "inline_files"
+                  : container.provider.service_id || "__external_select__"
+              }
               onChange={(e) => {
-                const kind = e.target.value as "inline_files" | "external_service";
-                if (kind === container.provider.kind) return;
+                const val = e.target.value;
+                if (val === "inline_files") {
+                  if (container.provider.kind === "inline_files") return;
+                  onUpdate((c) => ({
+                    ...c,
+                    provider: { kind: "inline_files", files: [{ path: "context.md", content: "" }] },
+                  }));
+                  return;
+                }
+                if (val === "__external_select__") return;
+                const matched = mountProviders.find((p) => p.service_id === val);
                 onUpdate((c) => ({
                   ...c,
-                  provider:
-                    kind === "inline_files"
-                      ? { kind: "inline_files", files: [{ path: "context.md", content: "" }] }
-                      : { kind: "external_service", service_id: "", root_ref: "" },
+                  provider: {
+                    kind: "external_service",
+                    service_id: val,
+                    root_ref: c.provider.kind === "external_service" ? c.provider.root_ref : "",
+                  },
+                  capabilities: matched
+                    ? (matched.supported_capabilities as ContextContainerCapability[])
+                    : c.capabilities,
                 }));
               }}
               disabled={isSaving}
               className="agentdash-form-input text-[11px]"
             >
               <option value="inline_files">inline_files</option>
-              <option value="external_service">external_service</option>
+              {mountProviders.map((p) => (
+                <option key={p.service_id} value={p.service_id}>
+                  {p.display_name}
+                </option>
+              ))}
+              {/* 已保存的 external_service 但 provider 列表中不存在时，保留原值防止竞态覆盖 */}
+              {container.provider.kind === "external_service" &&
+                container.provider.service_id &&
+                !mountProviders.some((p) => p.service_id === container.provider.service_id) && (
+                  <option value={container.provider.service_id}>
+                    {container.provider.service_id}
+                    {mountProviders.length === 0 ? " (加载中…)" : ""}
+                  </option>
+                )}
+              {mountProviders.length === 0 &&
+                container.provider.kind !== "external_service" && (
+                  <option value="__external_select__" disabled>
+                    （未检测到可用的外部服务）
+                  </option>
+                )}
             </select>
 
-            {container.provider.kind === "external_service" && (
-              <div className="grid gap-2 md:grid-cols-2">
-                <div>
-                  <label className="text-[10px] text-muted-foreground">Service ID</label>
-                  <input
-                    value={container.provider.service_id}
-                    onChange={(e) =>
-                      onUpdate((c) => ({
-                        ...c,
-                        provider: { ...c.provider, kind: "external_service" as const, service_id: e.target.value, root_ref: (c.provider as { root_ref: string }).root_ref },
-                      }))
-                    }
-                    placeholder="例如：km_bridge"
-                    className="agentdash-form-input text-[11px]"
-                  />
-                </div>
+            {container.provider.kind === "external_service" && (() => {
+              const selectedProvider = mountProviders.find(
+                (p) => p.service_id === container.provider.service_id,
+              );
+              return (
                 <div>
                   <label className="text-[10px] text-muted-foreground">Root Ref</label>
                   <input
@@ -376,15 +430,19 @@ function ContainerEditorItem({
                     onChange={(e) =>
                       onUpdate((c) => ({
                         ...c,
-                        provider: { ...c.provider, kind: "external_service" as const, root_ref: e.target.value, service_id: (c.provider as { service_id: string }).service_id },
+                        provider: {
+                          kind: "external_service" as const,
+                          service_id: (c.provider as { service_id: string }).service_id,
+                          root_ref: e.target.value,
+                        },
                       }))
                     }
-                    placeholder="知识库ID 或 知识库ID/父文档ID"
+                    placeholder={selectedProvider?.root_ref_hint || "请填写引用路径"}
                     className="agentdash-form-input text-[11px]"
                   />
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {container.provider.kind === "inline_files" && (
               <p className="mt-0.5 rounded-[6px] bg-muted/40 px-2 py-1 font-mono text-[11px] text-foreground">
@@ -396,7 +454,7 @@ function ContainerEditorItem({
           {/* 能力 */}
           <div className="flex flex-wrap gap-2">
             {CONTEXT_CAPABILITY_OPTIONS.map((option) => {
-              const supported = containerSupportsCapability(container, option.value);
+              const supported = containerSupportsCapability(container, option.value, mountProviders);
               return (
                 <label
                   key={option.value}

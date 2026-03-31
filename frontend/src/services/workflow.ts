@@ -596,5 +596,7 @@ export async function fetchHookPresets(): Promise<HookRulePreset[]> {
     label: String(item.label ?? ""),
     description: String(item.description ?? ""),
     param_schema: asRecord(item.param_schema),
+    script: typeof item.script === "string" ? item.script : undefined,
+    source: item.source === "builtin" || item.source === "user_defined" ? item.source : undefined,
   }));
 }

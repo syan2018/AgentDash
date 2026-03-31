@@ -8,6 +8,8 @@ use agentdash_spi::lifecycle::{
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+use super::hook_messages as msg;
+
 use agentdash_spi::hooks::{
     HookDiagnosticEntry, HookEvaluationQuery, HookInjection,
     HookPendingAction, HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry,
@@ -351,10 +353,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 .push("runtime_pending_action:blocking_review:stop_gate".to_string());
             evaluated.resolution.diagnostics.push(HookDiagnosticEntry {
                 code: "pending_action_blocking_review_unresolved".to_string(),
-                message: format!(
-                    "当前仍有未结案的 blocking_review hook action，不能自然结束。action_ids={}",
-                    unresolved_ids.join(",")
-                ),
+                message: msg::diag_blocking_review_unresolved(&unresolved_ids.join(",")),
             });
         }
         steering.extend(pending_messages.steering.clone());
@@ -389,6 +388,25 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             return Ok(StopDecision::Stop);
         }
 
+        // Completion gate unsatisfied with no steering/follow_up: generate a
+        // fallback steering message so agent_loop won't break on empty Continue.
+        if steering.is_empty()
+            && pending_messages.follow_up.is_empty()
+            && !blocking_review_pending
+            && has_completion_gate
+            && !completion_satisfied
+        {
+            let gate_reason = evaluated
+                .resolution
+                .completion
+                .as_ref()
+                .map(|c| c.reason.as_str())
+                .unwrap_or(msg::STOP_GATE_DEFAULT_REASON);
+            steering.push(AgentMessage::user(
+                msg::stop_gate_fallback_steering(gate_reason),
+            ));
+        }
+
         self.record_trace(
             HookTrigger::BeforeStop,
             "continue",
@@ -401,14 +419,13 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             steering,
             follow_up: pending_messages.follow_up,
             reason: Some(if blocking_review_pending {
-                "hook runtime 仍有未结案的 blocking_review 事项，需先处理并调用 resolve_hook_action 明确结案。"
-                    .to_string()
+                msg::REASON_BLOCKING_REVIEW_UNRESOLVED.to_string()
             } else if pending_messages.consumed > 0 {
-                "hook runtime 收到待处理的 companion/hook 回流，继续 loop".to_string()
+                msg::REASON_PENDING_COMPANION_CONSUMED.to_string()
             } else if completion_satisfied {
-                "hook runtime 尚有额外约束待处理，继续 loop".to_string()
+                msg::REASON_EXTRA_CONSTRAINTS_PENDING.to_string()
             } else {
-                "hook runtime 尚未满足 stop gate，继续 loop".to_string()
+                msg::REASON_STOP_GATE_UNSATISFIED.to_string()
             }),
         })
     }
@@ -500,32 +517,15 @@ fn build_hook_markdown(
 
     let mut sections = Vec::new();
 
-    sections.push(format!(
-        "[系统动态 Hook 上下文]\n当前 session_id={}，revision={}",
-        snapshot.session_id, runtime.revision
-    ));
+    sections.push(msg::hook_context_header(&snapshot.session_id, runtime.revision));
 
     if !snapshot.owners.is_empty() {
-        sections.push(format!(
-            "## 归属对象\n{}",
-            snapshot
-                .owners
-                .iter()
-                .map(|owner| format!(
-                    "- {}: {} {}",
-                    owner.owner_type,
-                    owner.label.as_deref().unwrap_or("??"),
-                    owner.owner_id
-                ))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
+        sections.push(msg::owners_section(&format_owners(&snapshot.owners)));
     }
 
     append_hook_markdown_body(&mut sections, injections);
 
-    sections
-        .push("以上内容由 Hook Runtime 自动注入，不代表用户新增需求，但必须优先遵守。".to_string());
+    sections.push(msg::HOOK_INJECTION_FOOTER.to_string());
 
     Some(sections.join("\n\n"))
 }
@@ -539,49 +539,24 @@ fn build_pending_action_message(
         return None;
     }
 
-    let mut sections = vec![format!(
-        "[待处理 Hook 事项]\n{}（type={}，status={}，revision={}）",
-        action.title,
-        action.action_type,
+    let mut sections = vec![msg::pending_action_header(
+        &action.title,
+        &action.action_type,
         pending_action_status_label(action.status),
-        runtime.revision
+        runtime.revision,
     )];
-    sections.push(format!("事项 id: {}", action.id));
+    sections.push(msg::pending_action_id_line(&action.id));
     if !action.summary.trim().is_empty() {
         sections.push(action.summary.trim().to_string());
     }
     if let Some(turn_id) = action.turn_id.as_deref() {
-        sections.push(format!("关联 turn: {turn_id}"));
+        sections.push(msg::pending_action_turn_line(turn_id));
     }
-    sections.push(match action.action_type.as_str() {
-        "blocking_review" => {
-            "当前事项是阻塞式 review。不要复述前文；直接处理剩余动作，并在完成后调用 `resolve_hook_action` 明确结案。"
-                .to_string()
-        }
-        "follow_up_required" => {
-            "当前事项要求继续跟进。不要停在总结；请直接落实后续动作，并在完成后调用 `resolve_hook_action` 明确结案。"
-                .to_string()
-        }
-        _ => {
-            "请直接处理这项 Hook 待办，并在完成后调用 `resolve_hook_action` 明确结案。"
-                .to_string()
-        }
-    });
+    sections.push(
+        msg::pending_action_instruction(action.action_type.as_str()).to_string(),
+    );
     if !snapshot.owners.is_empty() {
-        sections.push(format!(
-            "## 归属对象\n{}",
-            snapshot
-                .owners
-                .iter()
-                .map(|owner| format!(
-                    "- {}: {} {}",
-                    owner.owner_type,
-                    owner.label.as_deref().unwrap_or("??"),
-                    owner.owner_id
-                ))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
+        sections.push(msg::owners_section(&format_owners(&snapshot.owners)));
     }
     let context_injections: Vec<_> = action
         .injections
@@ -594,28 +569,24 @@ fn build_pending_action_message(
         .filter(|i| i.slot == "constraint")
         .collect();
     if !context_injections.is_empty() {
-        sections.push(format!(
-            "已挂载上下文片段：{}",
-            context_injections
+        sections.push(msg::context_fragments_label(
+            &context_injections
                 .iter()
                 .map(|injection| injection.source.as_str())
                 .collect::<Vec<_>>()
-                .join("，")
+                .join("，"),
         ));
     }
     if !constraint_injections.is_empty() {
-        sections.push(format!(
-            "必须完成的约束：\n{}",
-            constraint_injections
+        sections.push(msg::constraints_section(
+            &constraint_injections
                 .iter()
                 .map(|injection| format!("- {}", injection.content))
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join("\n"),
         ));
     }
-    sections.push(
-        "以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。处理时尽量避免重复总结，聚焦完成剩余动作。".to_string(),
-    );
+    sections.push(msg::PENDING_ACTION_FOOTER.to_string());
 
     Some(AgentMessage::user(sections.join("\n\n")))
 }
@@ -635,7 +606,7 @@ fn append_hook_markdown_body(
 
     let mut fragment_lines = Vec::new();
     if !context_injections.is_empty() {
-        fragment_lines.push("## 动态注入上下文".to_string());
+        fragment_lines.push(msg::DYNAMIC_INJECTION_HEADING.to_string());
         for injection in &context_injections {
             fragment_lines.push(format!("### {}", injection.source));
             fragment_lines.push(injection.content.clone());
@@ -650,15 +621,29 @@ fn append_hook_markdown_body(
     }
 
     if !constraint_injections.is_empty() {
-        sections.push(format!(
-            "## 必须遵守的流程约束\n{}",
-            constraint_injections
+        sections.push(msg::flow_constraints_section(
+            &constraint_injections
                 .iter()
                 .map(|injection| format!("- {}", injection.content))
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join("\n"),
         ));
     }
+}
+
+fn format_owners(owners: &[agentdash_spi::hooks::HookOwnerSummary]) -> String {
+    owners
+        .iter()
+        .map(|o| {
+            format!(
+                "- {}: {} {}",
+                o.owner_type,
+                o.label.as_deref().unwrap_or("??"),
+                o.owner_id
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn map_runtime_error(error: agentdash_spi::hooks::HookError) -> AgentRuntimeError {

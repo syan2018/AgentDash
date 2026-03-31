@@ -347,7 +347,7 @@ impl SessionHub {
                 let _ = store.write_meta(&meta).await;
             }
 
-            if let Some(hook_session) = hook_session_for_spawn {
+            if let Some(hook_session) = hook_session_for_spawn.as_ref() {
                 hub.emit_session_hook_trigger(
                     hook_session.as_ref(),
                     &HookTriggerInput {
@@ -366,11 +366,44 @@ impl SessionHub {
                 .await;
             }
 
-            let mut guard = sessions.lock().await;
-            if let Some(runtime) = guard.get_mut(&session_id) {
-                runtime.running = false;
-                runtime.current_turn_id = None;
-                runtime.cancel_requested = false;
+            // Hook auto-resume: when agent loop exits with an unsatisfied stop
+            // gate, automatically schedule a follow-up prompt to keep the session alive.
+            const MAX_HOOK_AUTO_RESUMES: u32 = 2;
+            let should_auto_resume = matches!(terminal_kind, TurnTerminalKind::Completed)
+                && hook_session_for_spawn.as_ref().is_some_and(|hs| {
+                    let trace = hs.trace();
+                    trace
+                        .iter()
+                        .rev()
+                        .find(|t| matches!(t.trigger, HookTrigger::BeforeStop))
+                        .is_some_and(|t| t.decision == "continue")
+                });
+
+            let can_auto_resume = should_auto_resume && {
+                let guard = sessions.lock().await;
+                guard
+                    .get(&session_id)
+                    .is_some_and(|rt| rt.hook_auto_resume_count < MAX_HOOK_AUTO_RESUMES)
+            };
+
+            {
+                let mut guard = sessions.lock().await;
+                if let Some(runtime) = guard.get_mut(&session_id) {
+                    runtime.running = false;
+                    runtime.current_turn_id = None;
+                    runtime.cancel_requested = false;
+                    if can_auto_resume {
+                        runtime.hook_auto_resume_count += 1;
+                    }
+                }
+            }
+
+            if can_auto_resume {
+                tracing::info!(
+                    session_id = %session_id,
+                    "Hook auto-resume: stop gate unsatisfied, scheduling retry"
+                );
+                hub.schedule_hook_auto_resume(session_id);
             }
         });
 

@@ -1,6 +1,7 @@
 mod event_bridge;
 pub mod hook_delegate;
 pub mod hook_events;
+mod hook_messages;
 pub mod hook_runtime;
 pub mod hub;
 mod hub_support;

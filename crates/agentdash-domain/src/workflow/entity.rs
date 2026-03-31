@@ -386,58 +386,42 @@ pub fn build_effective_contract(
 
 /// When a WorkflowContract has no `hook_rules` but uses legacy `constraints`/`checks`,
 /// synthesize equivalent hook_rules so the new evaluation path can handle them.
+///
+/// NOTE: `stop_gate_checks_pending` 不再自动迁移。该 hook 必须由 workflow
+/// 定义方在 `hook_rules` 中显式声明，而不是从 constraint/check 隐式派生。
 fn migrate_legacy_to_hook_rules(contract: &WorkflowContract) -> Vec<WorkflowHookRuleSpec> {
     let mut rules = Vec::new();
 
     for constraint in &contract.constraints {
-        match constraint.kind {
-            WorkflowConstraintKind::BlockStopUntilChecksPass => {
+        if let WorkflowConstraintKind::Custom = constraint.kind {
+            let is_deny_artifact = constraint
+                .payload
+                .as_ref()
+                .and_then(|p| p.get("policy"))
+                .and_then(serde_json::Value::as_str)
+                == Some("deny_record_artifact_types");
+            if is_deny_artifact {
+                let artifact_types = constraint
+                    .payload
+                    .as_ref()
+                    .and_then(|p| p.get("artifact_types"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![]));
                 rules.push(WorkflowHookRuleSpec {
                     key: format!("migrated:{}", constraint.key),
-                    trigger: WorkflowHookTrigger::BeforeStop,
+                    trigger: WorkflowHookTrigger::BeforeTool,
                     description: constraint.description.clone(),
-                    preset: Some("stop_gate_checks_pending".to_string()),
-                    params: None,
+                    preset: Some("block_record_artifact".to_string()),
+                    params: Some(serde_json::json!({ "artifact_types": artifact_types })),
                     script: None,
                     enabled: true,
                 });
-            }
-            WorkflowConstraintKind::Custom => {
-                let is_deny_artifact = constraint
-                    .payload
-                    .as_ref()
-                    .and_then(|p| p.get("policy"))
-                    .and_then(serde_json::Value::as_str)
-                    == Some("deny_record_artifact_types");
-                if is_deny_artifact {
-                    let artifact_types = constraint
-                        .payload
-                        .as_ref()
-                        .and_then(|p| p.get("artifact_types"))
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Array(vec![]));
-                    rules.push(WorkflowHookRuleSpec {
-                        key: format!("migrated:{}", constraint.key),
-                        trigger: WorkflowHookTrigger::BeforeTool,
-                        description: constraint.description.clone(),
-                        preset: Some("block_record_artifact".to_string()),
-                        params: Some(serde_json::json!({ "artifact_types": artifact_types })),
-                        script: None,
-                        enabled: true,
-                    });
-                }
             }
         }
     }
 
     for check in &contract.completion.checks {
         let (preset_key, trigger) = match check.kind {
-            WorkflowCheckKind::ChecklistEvidencePresent => {
-                ("stop_gate_checks_pending", WorkflowHookTrigger::BeforeStop)
-            }
-            WorkflowCheckKind::ArtifactExists | WorkflowCheckKind::ArtifactCountGte => {
-                ("stop_gate_checks_pending", WorkflowHookTrigger::BeforeStop)
-            }
             WorkflowCheckKind::SessionTerminalIn => {
                 ("session_terminal_advance", WorkflowHookTrigger::BeforeStop)
             }

@@ -149,6 +149,7 @@ pub(super) fn build_session_runtime(tx: broadcast::Sender<SessionNotification>) 
         current_turn_id: None,
         cancel_requested: false,
         hook_session: None,
+        hook_auto_resume_count: 0,
     }
 }
 
@@ -158,6 +159,8 @@ pub(super) struct SessionRuntime {
     pub current_turn_id: Option<String>,
     pub cancel_requested: bool,
     pub hook_session: Option<SharedHookSessionRuntime>,
+    /// Counter for hook-driven auto-resumes (prevents infinite loops).
+    pub hook_auto_resume_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

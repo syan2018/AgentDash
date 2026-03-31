@@ -7,6 +7,7 @@ use std::{
 use agent_client_protocol::{SessionNotification, SessionUpdate};
 use tokio::sync::{Mutex, broadcast};
 
+use super::hook_messages as msg;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub_support::*;
 use super::session_store::SessionStore;
@@ -406,6 +407,30 @@ impl SessionHub {
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
         let _ = tx.send(interrupted);
         Ok(())
+    }
+
+    /// Hook auto-resume: schedule a delayed follow-up prompt in a separate task.
+    /// Uses fire-and-forget to avoid awaiting `start_prompt` directly inside
+    /// the stream-processing spawn block (whose Future is not Send).
+    pub(super) fn schedule_hook_auto_resume(&self, session_id: String) {
+        let hub = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let resume_req = PromptSessionRequest::from_user_input(UserPromptInput {
+                prompt: Some(msg::AUTO_RESUME_PROMPT.to_string()),
+                prompt_blocks: None,
+                working_dir: None,
+                env: std::collections::HashMap::new(),
+                executor_config: None,
+            });
+            if let Err(e) = hub.start_prompt(&session_id, resume_req).await {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %e,
+                    "Hook auto-resume failed"
+                );
+            }
+        });
     }
 
     pub async fn approve_tool_call(

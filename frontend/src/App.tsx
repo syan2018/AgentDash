@@ -51,6 +51,11 @@ const WorkflowTabView = lazy(async () => {
   return { default: m.WorkflowTabView };
 });
 
+const CanvasTabView = lazy(async () => {
+  const m = await import("./features/canvas-panel/CanvasTabView");
+  return { default: m.CanvasTabView };
+});
+
 const WorkflowEditorPage = lazy(async () => {
   const m = await import("./pages/WorkflowEditorPage");
   return { default: m.WorkflowEditorPage };
@@ -217,6 +222,7 @@ function AppContent() {
             <Route index element={<Navigate to="agent" replace />} />
             <Route path="agent" element={<AgentTabView />} />
             <Route path="story" element={<StoryTabView />} />
+            <Route path="canvas" element={<CanvasTabView />} />
             <Route path="workflow" element={<WorkflowTabView />} />
           </Route>
 

@@ -17,7 +17,7 @@ mod tests {
 
     use agentdash_application::address_space::tools::fs::{
         FsApplyPatchTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool,
-        ShellExecTool,
+        SharedRuntimeAddressSpace, ShellExecTool,
     };
 
     use agentdash_domain::context_container::{
@@ -504,17 +504,21 @@ mod tests {
             ..Default::default()
         };
 
+        let shared_address_space = SharedRuntimeAddressSpace::new(address_space);
+
         let schemas = vec![
-            MountsListTool::new(service.clone(), address_space.clone()).parameters_schema(),
-            FsReadTool::new(service.clone(), address_space.clone(), None, None).parameters_schema(),
-            FsWriteTool::new(service.clone(), address_space.clone(), None, None)
+            MountsListTool::new(service.clone(), shared_address_space.clone()).parameters_schema(),
+            FsReadTool::new(service.clone(), shared_address_space.clone(), None, None)
                 .parameters_schema(),
-            FsApplyPatchTool::new(service.clone(), address_space.clone(), None, None)
+            FsWriteTool::new(service.clone(), shared_address_space.clone(), None, None)
                 .parameters_schema(),
-            FsListTool::new(service.clone(), address_space.clone(), None, None).parameters_schema(),
-            FsSearchTool::new(service.clone(), address_space.clone(), None, None)
+            FsApplyPatchTool::new(service.clone(), shared_address_space.clone(), None, None)
                 .parameters_schema(),
-            ShellExecTool::new(service, address_space).parameters_schema(),
+            FsListTool::new(service.clone(), shared_address_space.clone(), None, None)
+                .parameters_schema(),
+            FsSearchTool::new(service.clone(), shared_address_space.clone(), None, None)
+                .parameters_schema(),
+            ShellExecTool::new(service, shared_address_space).parameters_schema(),
         ];
 
         for schema in schemas {

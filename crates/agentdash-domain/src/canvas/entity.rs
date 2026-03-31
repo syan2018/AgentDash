@@ -9,6 +9,7 @@ use super::value_objects::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 pub struct Canvas {
     pub id: Uuid,
     pub project_id: Uuid,
+    pub mount_id: String,
     pub title: String,
     pub description: String,
     pub entry_file: String,
@@ -20,11 +21,12 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    pub fn new(project_id: Uuid, title: String, description: String) -> Self {
+    pub fn new(project_id: Uuid, mount_id: String, title: String, description: String) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
+            mount_id,
             title,
             description,
             entry_file: "src/main.tsx".to_string(),

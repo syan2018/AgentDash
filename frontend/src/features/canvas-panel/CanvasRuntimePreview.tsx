@@ -153,7 +153,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
         <iframe
           ref={iframeRef}
           title={`canvas-preview-${snapshot.canvas_id}`}
-          sandbox="allow-scripts"
+          sandbox="allow-scripts allow-same-origin"
           srcDoc={activePreview.srcDoc}
           className="h-[320px] w-full bg-white"
         />

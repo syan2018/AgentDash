@@ -22,6 +22,7 @@ impl SqliteCanvasRepository {
             CREATE TABLE IF NOT EXISTS canvases (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
+                mount_id TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 entry_file TEXT NOT NULL,
@@ -34,6 +35,8 @@ impl SqliteCanvasRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        self.ensure_mount_id_column().await?;
 
         sqlx::query(
             r#"
@@ -70,7 +73,33 @@ impl SqliteCanvasRepository {
             .execute(&self.pool)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_canvases_project_mount_id ON canvases(project_id, mount_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        Ok(())
+    }
+
+    async fn ensure_mount_id_column(&self) -> Result<(), DomainError> {
+        let columns = sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('canvases')")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        if columns.iter().any(|column| column == "mount_id") {
+            return Ok(());
+        }
+
+        sqlx::query("ALTER TABLE canvases ADD COLUMN mount_id TEXT NOT NULL DEFAULT ''")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        sqlx::query("UPDATE canvases SET mount_id = id WHERE mount_id = ''")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(())
     }
 
@@ -202,12 +231,13 @@ impl CanvasRepository for SqliteCanvasRepository {
         sqlx::query(
             r#"
             INSERT INTO canvases (
-                id, project_id, title, description, entry_file, sandbox_config, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, project_id, mount_id, title, description, entry_file, sandbox_config, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(canvas.id.to_string())
         .bind(canvas.project_id.to_string())
+        .bind(&canvas.mount_id)
         .bind(&canvas.title)
         .bind(&canvas.description)
         .bind(&canvas.entry_file)
@@ -231,7 +261,7 @@ impl CanvasRepository for SqliteCanvasRepository {
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Canvas>, DomainError> {
         let row = sqlx::query_as::<_, CanvasRow>(
             r#"
-            SELECT id, project_id, title, description, entry_file, sandbox_config, created_at, updated_at
+            SELECT id, project_id, mount_id, title, description, entry_file, sandbox_config, created_at, updated_at
             FROM canvases
             WHERE id = ?
             "#,
@@ -251,10 +281,38 @@ impl CanvasRepository for SqliteCanvasRepository {
         Ok(Some(row.try_into_canvas(files, bindings)?))
     }
 
+    async fn get_by_mount_id(
+        &self,
+        project_id: uuid::Uuid,
+        mount_id: &str,
+    ) -> Result<Option<Canvas>, DomainError> {
+        let row = sqlx::query_as::<_, CanvasRow>(
+            r#"
+            SELECT id, project_id, mount_id, title, description, entry_file, sandbox_config, created_at, updated_at
+            FROM canvases
+            WHERE project_id = ? AND mount_id = ?
+            "#,
+        )
+        .bind(project_id.to_string())
+        .bind(mount_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let canvas_id = row.id.clone();
+        let files = self.load_files(std::slice::from_ref(&canvas_id)).await?;
+        let bindings = self.load_bindings(std::slice::from_ref(&canvas_id)).await?;
+        Ok(Some(row.try_into_canvas(files, bindings)?))
+    }
+
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Canvas>, DomainError> {
         let rows = sqlx::query_as::<_, CanvasRow>(
             r#"
-            SELECT id, project_id, title, description, entry_file, sandbox_config, created_at, updated_at
+            SELECT id, project_id, mount_id, title, description, entry_file, sandbox_config, created_at, updated_at
             FROM canvases
             WHERE project_id = ?
             ORDER BY created_at DESC
@@ -284,10 +342,11 @@ impl CanvasRepository for SqliteCanvasRepository {
         let result = sqlx::query(
             r#"
             UPDATE canvases
-            SET title = ?, description = ?, entry_file = ?, sandbox_config = ?, updated_at = ?
+            SET mount_id = ?, title = ?, description = ?, entry_file = ?, sandbox_config = ?, updated_at = ?
             WHERE id = ?
             "#,
         )
+        .bind(&canvas.mount_id)
         .bind(&canvas.title)
         .bind(&canvas.description)
         .bind(&canvas.entry_file)
@@ -337,6 +396,7 @@ impl CanvasRepository for SqliteCanvasRepository {
 struct CanvasRow {
     id: String,
     project_id: String,
+    mount_id: String,
     title: String,
     description: String,
     entry_file: String,
@@ -379,6 +439,7 @@ impl CanvasRow {
                 .project_id
                 .parse()
                 .map_err(|_| DomainError::InvalidConfig("无效的 canvas project_id".to_string()))?,
+            mount_id: self.mount_id,
             title: self.title,
             description: self.description,
             entry_file: self.entry_file,
@@ -415,7 +476,12 @@ mod tests {
     async fn create_and_get_canvas_roundtrip() {
         let repo = new_repo().await;
         let project_id = Uuid::new_v4();
-        let mut canvas = Canvas::new(project_id, "Demo".to_string(), "desc".to_string());
+        let mut canvas = Canvas::new(
+            project_id,
+            "demo".to_string(),
+            "Demo".to_string(),
+            "desc".to_string(),
+        );
         canvas.bindings = vec![CanvasDataBinding::new(
             "stats".to_string(),
             "lifecycle://active/artifacts/1".to_string(),
@@ -438,7 +504,12 @@ mod tests {
     #[tokio::test]
     async fn update_canvas_replaces_files_and_bindings() {
         let repo = new_repo().await;
-        let mut canvas = Canvas::new(Uuid::new_v4(), "Demo".to_string(), String::new());
+        let mut canvas = Canvas::new(
+            Uuid::new_v4(),
+            "demo".to_string(),
+            "Demo".to_string(),
+            String::new(),
+        );
         CanvasRepository::create(&repo, &canvas)
             .await
             .expect("应能创建 canvas");

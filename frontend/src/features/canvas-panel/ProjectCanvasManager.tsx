@@ -243,6 +243,9 @@ export function ProjectCanvasManager({
 
                     <div className="mt-3 flex flex-wrap gap-2">
                       <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                        mount: {canvas.mount_id}
+                      </span>
+                      <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                         files: {canvas.files.length}
                       </span>
                       <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
@@ -284,6 +287,9 @@ export function ProjectCanvasManager({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                    mount: {selectedCanvas.mount_id}
+                  </span>
                   <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                     files: {selectedCanvas.files.length}
                   </span>

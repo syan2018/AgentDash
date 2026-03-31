@@ -24,6 +24,7 @@ pub struct ListProjectCanvasesPath {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCanvasRequest {
+    pub mount_id: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub entry_file: Option<String>,
@@ -89,6 +90,7 @@ pub async fn create_canvas(
 
     let canvas = build_canvas(
         project_id,
+        req.mount_id,
         title.to_string(),
         req.description.unwrap_or_default(),
         CanvasMutationInput {

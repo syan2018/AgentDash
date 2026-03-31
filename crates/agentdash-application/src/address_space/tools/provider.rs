@@ -16,7 +16,7 @@ use crate::address_space::inline_persistence::{InlineContentOverlay, InlineConte
 use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::tools::fs::{
     FsApplyPatchTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool,
-    ShellExecTool,
+    ShellExecTool, SharedRuntimeAddressSpace,
 };
 use crate::canvas::{CreateCanvasTool, InjectCanvasDataTool, PresentCanvasTool};
 use crate::task::tools::companion::{CompanionCompleteTool, CompanionDispatchTool};
@@ -85,6 +85,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let address_space = context.address_space.clone().ok_or_else(|| {
             ConnectorError::InvalidConfig("缺少 address_space，无法构建统一访问工具".to_string())
         })?;
+        let shared_address_space = SharedRuntimeAddressSpace::new(address_space);
 
         let overlay: Option<Arc<InlineContentOverlay>> = self
             .inline_persister
@@ -96,39 +97,42 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let mut tools: Vec<DynAgentTool> = vec![
             Arc::new(MountsListTool::new(
                 self.service.clone(),
-                address_space.clone(),
+                shared_address_space.clone(),
             )),
             Arc::new(FsReadTool::new(
                 self.service.clone(),
-                address_space.clone(),
+                shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
             )),
             Arc::new(FsWriteTool::new(
                 self.service.clone(),
-                address_space.clone(),
+                shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
             )),
             Arc::new(FsApplyPatchTool::new(
                 self.service.clone(),
-                address_space.clone(),
+                shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
             )),
             Arc::new(FsListTool::new(
                 self.service.clone(),
-                address_space.clone(),
+                shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
             )),
             Arc::new(FsSearchTool::new(
                 self.service.clone(),
-                address_space.clone(),
+                shared_address_space.clone(),
                 overlay.clone(),
                 identity,
             )),
-            Arc::new(ShellExecTool::new(self.service.clone(), address_space)),
+            Arc::new(ShellExecTool::new(
+                self.service.clone(),
+                shared_address_space.clone(),
+            )),
         ];
 
         let caps = &context.flow_capabilities;
@@ -164,6 +168,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 tools.push(Arc::new(CreateCanvasTool::new(
                     self.canvas_repo.clone(),
                     project_id,
+                    shared_address_space.clone(),
                 )));
                 tools.push(Arc::new(InjectCanvasDataTool::new(
                     self.canvas_repo.clone(),

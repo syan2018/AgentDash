@@ -17,11 +17,16 @@ pub struct CanvasMutationInput {
 
 pub fn build_canvas(
     project_id: Uuid,
+    mount_id: Option<String>,
     title: String,
     description: String,
     input: CanvasMutationInput,
 ) -> Result<Canvas, DomainError> {
-    let mut canvas = Canvas::new(project_id, title, description);
+    let mount_id = match mount_id {
+        Some(value) => normalize_canvas_mount_id(&value)?,
+        None => derive_canvas_mount_id(&title),
+    };
+    let mut canvas = Canvas::new(project_id, mount_id, title, description);
     canvas.sandbox_config = CanvasSandboxConfig::react_default();
     apply_canvas_mutation(&mut canvas, input)?;
     validate_canvas_contract(&canvas)?;
@@ -58,6 +63,11 @@ pub fn apply_canvas_mutation(
 }
 
 pub fn validate_canvas_contract(canvas: &Canvas) -> Result<(), DomainError> {
+    if canvas.mount_id.trim().is_empty() {
+        return Err(DomainError::InvalidConfig(
+            "Canvas mount_id 不能为空".to_string(),
+        ));
+    }
     if canvas.title.trim().is_empty() {
         return Err(DomainError::InvalidConfig(
             "Canvas 标题不能为空".to_string(),
@@ -156,6 +166,7 @@ pub fn upsert_canvas_binding(
 }
 
 fn normalize_canvas(canvas: &mut Canvas) -> Result<(), DomainError> {
+    canvas.mount_id = normalize_canvas_mount_id(&canvas.mount_id)?;
     canvas.title = canvas.title.trim().to_string();
     canvas.description = canvas.description.trim().to_string();
     canvas.entry_file = normalize_path(&canvas.entry_file)?;
@@ -186,6 +197,70 @@ fn normalize_path(path: &str) -> Result<String, DomainError> {
     Ok(normalized)
 }
 
+pub fn derive_canvas_mount_id(title: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_sep = false;
+    for ch in title.trim().chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else if matches!(ch, '-' | '_') {
+            Some(ch)
+        } else if ch.is_whitespace() {
+            Some('-')
+        } else {
+            None
+        };
+
+        let Some(next) = mapped else {
+            continue;
+        };
+
+        if matches!(next, '-' | '_') {
+            if out.is_empty() || last_was_sep {
+                continue;
+            }
+            last_was_sep = true;
+            out.push(next);
+            continue;
+        }
+
+        last_was_sep = false;
+        out.push(next);
+    }
+
+    let normalized = out.trim_matches(['-', '_']).to_string();
+    if normalized.is_empty() {
+        "canvas".to_string()
+    } else {
+        normalized
+    }
+}
+
+pub fn normalize_canvas_mount_id(raw: &str) -> Result<String, DomainError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(DomainError::InvalidConfig(
+            "Canvas mount_id 不能为空".to_string(),
+        ));
+    }
+    if trimmed.eq_ignore_ascii_case("main") {
+        return Err(DomainError::InvalidConfig(
+            "Canvas mount_id `main` 为保留字".to_string(),
+        ));
+    }
+    if trimmed.chars().any(char::is_whitespace) {
+        return Err(DomainError::InvalidConfig(
+            "Canvas mount_id 不能包含空白字符".to_string(),
+        ));
+    }
+    if trimmed.chars().any(|ch| matches!(ch, '/' | '\\' | ':')) {
+        return Err(DomainError::InvalidConfig(
+            "Canvas mount_id 不能包含 `/`、`\\` 或 `:`".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +269,7 @@ mod tests {
     fn build_canvas_uses_react_default_and_seed_file() {
         let canvas = build_canvas(
             Uuid::new_v4(),
+            Some("demo".to_string()),
             "Demo".to_string(),
             String::new(),
             CanvasMutationInput::default(),
@@ -212,7 +288,12 @@ mod tests {
 
     #[test]
     fn validate_canvas_contract_rejects_missing_entry_file() {
-        let mut canvas = Canvas::new(Uuid::new_v4(), "Demo".to_string(), String::new());
+        let mut canvas = Canvas::new(
+            Uuid::new_v4(),
+            "demo".to_string(),
+            "Demo".to_string(),
+            String::new(),
+        );
         canvas.entry_file = "src/missing.tsx".to_string();
 
         let err = validate_canvas_contract(&canvas).expect_err("应拒绝缺失 entry");

@@ -8,6 +8,7 @@ use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasFile, CanvasSand
 pub struct CanvasResponse {
     pub id: Uuid,
     pub project_id: Uuid,
+    pub mount_id: String,
     pub title: String,
     pub description: String,
     pub entry_file: String,
@@ -23,6 +24,7 @@ impl From<Canvas> for CanvasResponse {
         Self {
             id: canvas.id,
             project_id: canvas.project_id,
+            mount_id: canvas.mount_id,
             title: canvas.title,
             description: canvas.description,
             entry_file: canvas.entry_file,

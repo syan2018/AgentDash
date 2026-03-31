@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::address_space::build_canvas_mount_id;
+use crate::address_space::tools::fs::SharedRuntimeAddressSpace;
 use crate::address_space::tools::provider::SharedSessionHubHandle;
 use crate::canvas::{build_canvas, upsert_canvas_binding};
 
@@ -21,19 +22,26 @@ use crate::canvas::{build_canvas, upsert_canvas_binding};
 pub struct CreateCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
+    address_space: SharedRuntimeAddressSpace,
 }
 
 impl CreateCanvasTool {
-    pub fn new(canvas_repo: Arc<dyn CanvasRepository>, project_id: Uuid) -> Self {
+    pub fn new(
+        canvas_repo: Arc<dyn CanvasRepository>,
+        project_id: Uuid,
+        address_space: SharedRuntimeAddressSpace,
+    ) -> Self {
         Self {
             canvas_repo,
             project_id,
+            address_space,
         }
     }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateCanvasParams {
+    pub id: Option<String>,
     pub title: String,
     pub description: Option<String>,
 }
@@ -108,7 +116,7 @@ impl AgentTool for CreateCanvasTool {
     }
 
     fn description(&self) -> &str {
-        "在当前 Project 下创建一个新的 Canvas 资产，并返回对应的 mount 标识"
+        "在当前 Project 下创建一个新的 Canvas 资产。可选传入稳定 id，返回的 canvas_id 可直接作为 mount id 使用"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -133,19 +141,33 @@ impl AgentTool for CreateCanvasTool {
 
         let canvas = build_canvas(
             self.project_id,
+            params.id,
             title.to_string(),
             params.description.unwrap_or_default(),
             Default::default(),
         )
         .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        if self
+            .canvas_repo
+            .get_by_mount_id(self.project_id, &canvas.mount_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+            .is_some()
+        {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "Canvas id 已存在: {}",
+                canvas.mount_id
+            )));
+        }
         self.canvas_repo
             .create(&canvas)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        self.address_space.append_canvas_mount(&canvas).await;
 
         let result = CanvasToolResult {
-            canvas_id: canvas.id.to_string(),
-            mount_id: build_canvas_mount_id(canvas.id),
+            canvas_id: canvas.mount_id.clone(),
+            mount_id: build_canvas_mount_id(&canvas),
             entry_file: canvas.entry_file.clone(),
         };
 
@@ -167,7 +189,7 @@ impl AgentTool for InjectCanvasDataTool {
     }
 
     fn description(&self) -> &str {
-        "为 Canvas 绑定一个外部数据文件引用，在运行时映射为 bindings/<alias>.json"
+        "为 Canvas 绑定一个外部数据文件引用，在运行时映射为 bindings/<alias>.json。canvas_id 支持稳定 id 或内部 UUID"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -183,14 +205,8 @@ impl AgentTool for InjectCanvasDataTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: InjectCanvasDataParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let canvas_id = parse_canvas_uuid(&params.canvas_id)?;
-        let mut canvas = self
-            .canvas_repo
-            .get_by_id(canvas_id)
-            .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-            .ok_or_else(|| AgentToolError::ExecutionFailed(format!("Canvas 不存在: {canvas_id}")))?;
-        ensure_canvas_project(canvas.project_id, self.project_id)?;
+        let mut canvas = load_canvas_by_ref(self.canvas_repo.as_ref(), self.project_id, &params.canvas_id)
+            .await?;
 
         let binding = CanvasDataBinding {
             alias: params.alias,
@@ -211,11 +227,12 @@ impl AgentTool for InjectCanvasDataTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "已更新 Canvas 数据绑定。\n- canvas_id: {}\n- alias: {}\n- source_uri: {}",
-                canvas.id, alias, source_uri
+                canvas.mount_id, alias, source_uri
             ))],
             is_error: false,
             details: Some(serde_json::json!({
-                "canvas_id": canvas.id,
+                "canvas_id": canvas.mount_id,
+                "mount_id": canvas.mount_id,
                 "bindings": canvas.bindings,
             })),
         })
@@ -229,7 +246,7 @@ impl AgentTool for PresentCanvasTool {
     }
 
     fn description(&self) -> &str {
-        "通过 ACP 系统事件请求前端打开指定 Canvas 面板"
+        "通过 ACP 系统事件请求前端打开指定 Canvas 面板。canvas_id 支持稳定 id 或内部 UUID"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -245,14 +262,8 @@ impl AgentTool for PresentCanvasTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: PresentCanvasParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let canvas_id = parse_canvas_uuid(&params.canvas_id)?;
-        let canvas = self
-            .canvas_repo
-            .get_by_id(canvas_id)
-            .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-            .ok_or_else(|| AgentToolError::ExecutionFailed(format!("Canvas 不存在: {canvas_id}")))?;
-        ensure_canvas_project(canvas.project_id, self.project_id)?;
+        let canvas = load_canvas_by_ref(self.canvas_repo.as_ref(), self.project_id, &params.canvas_id)
+            .await?;
 
         let notification =
             build_canvas_presented_notification(&self.current_session_id, &self.current_turn_id, &canvas);
@@ -267,23 +278,47 @@ impl AgentTool for PresentCanvasTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "已请求前端展示 Canvas。\n- canvas_id: {}\n- mount: {}://",
-                canvas.id,
-                build_canvas_mount_id(canvas.id),
+                canvas.mount_id,
+                build_canvas_mount_id(&canvas),
             ))],
             is_error: false,
             details: Some(serde_json::json!({
-                "canvas_id": canvas.id,
+                "canvas_id": canvas.mount_id,
                 "title": canvas.title,
-                "mount_id": build_canvas_mount_id(canvas.id),
+                "mount_id": build_canvas_mount_id(&canvas),
             })),
         })
     }
 }
 
-fn parse_canvas_uuid(raw_canvas_id: &str) -> Result<Uuid, AgentToolError> {
-    Uuid::parse_str(raw_canvas_id.trim()).map_err(|_| {
-        AgentToolError::InvalidArguments(format!("无效的 canvas_id: {raw_canvas_id}"))
-    })
+async fn load_canvas_by_ref(
+    canvas_repo: &dyn CanvasRepository,
+    expected_project_id: Uuid,
+    raw_canvas_id: &str,
+) -> Result<agentdash_domain::canvas::Canvas, AgentToolError> {
+    let trimmed = raw_canvas_id.trim();
+    if trimmed.is_empty() {
+        return Err(AgentToolError::InvalidArguments(
+            "canvas_id 不能为空".to_string(),
+        ));
+    }
+
+    let canvas = if let Ok(canvas_uuid) = Uuid::parse_str(trimmed) {
+        canvas_repo
+            .get_by_id(canvas_uuid)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+    } else {
+        canvas_repo
+            .get_by_mount_id(expected_project_id, trimmed)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+    };
+    let canvas = canvas.ok_or_else(|| {
+        AgentToolError::ExecutionFailed(format!("Canvas 不存在: {trimmed}"))
+    })?;
+    ensure_canvas_project(canvas.project_id, expected_project_id)?;
+    Ok(canvas)
 }
 
 fn ensure_canvas_project(
@@ -313,7 +348,7 @@ fn build_canvas_presented_notification(
     event.data = Some(serde_json::json!({
         "canvas_id": canvas.id.to_string(),
         "title": canvas.title,
-        "mount_id": build_canvas_mount_id(canvas.id),
+        "mount_id": build_canvas_mount_id(canvas),
         "entry_file": canvas.entry_file,
     }));
 
@@ -330,4 +365,148 @@ fn build_canvas_presented_notification(
                 .meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use agentdash_domain::DomainError;
+    use agentdash_spi::AddressSpace;
+    use async_trait::async_trait;
+    use tokio::sync::RwLock;
+
+    use crate::address_space::tools::fs::FsWriteTool;
+    use crate::address_space::{CanvasFsMountProvider, MountProviderRegistry, RelayAddressSpaceService};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct MemoryCanvasRepository {
+        canvases: RwLock<HashMap<Uuid, agentdash_domain::canvas::Canvas>>,
+    }
+
+    #[async_trait]
+    impl CanvasRepository for MemoryCanvasRepository {
+        async fn create(&self, canvas: &agentdash_domain::canvas::Canvas) -> Result<(), DomainError> {
+            self.canvases.write().await.insert(canvas.id, canvas.clone());
+            Ok(())
+        }
+
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<agentdash_domain::canvas::Canvas>, DomainError> {
+            Ok(self.canvases.read().await.get(&id).cloned())
+        }
+
+        async fn get_by_mount_id(
+            &self,
+            project_id: Uuid,
+            mount_id: &str,
+        ) -> Result<Option<agentdash_domain::canvas::Canvas>, DomainError> {
+            Ok(self
+                .canvases
+                .read()
+                .await
+                .values()
+                .find(|canvas| canvas.project_id == project_id && canvas.mount_id == mount_id)
+                .cloned())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<agentdash_domain::canvas::Canvas>, DomainError> {
+            Ok(self
+                .canvases
+                .read()
+                .await
+                .values()
+                .filter(|canvas| canvas.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, canvas: &agentdash_domain::canvas::Canvas) -> Result<(), DomainError> {
+            self.canvases.write().await.insert(canvas.id, canvas.clone());
+            Ok(())
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.canvases.write().await.remove(&id);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn create_canvas_updates_shared_mounts_for_followup_fs_write() {
+        let project_id = Uuid::new_v4();
+        let canvas_repo = Arc::new(MemoryCanvasRepository::default());
+
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
+        let service = Arc::new(RelayAddressSpaceService::new(Arc::new(registry)));
+        let shared_address_space = SharedRuntimeAddressSpace::new(AddressSpace::default());
+
+        let create_tool =
+            CreateCanvasTool::new(canvas_repo.clone(), project_id, shared_address_space.clone());
+        let write_tool = FsWriteTool::new(
+            service,
+            shared_address_space.clone(),
+            None,
+            None,
+        );
+
+        let create_result = create_tool
+            .execute(
+                "tool-create",
+                serde_json::json!({
+                    "title": "agent mounted kpi runtime test",
+                    "description": "runtime mount visibility regression test"
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("create_canvas 应成功");
+        let create_details = create_result
+            .details
+            .as_ref()
+            .expect("create_canvas 应返回 details");
+        let mount_id = create_details
+            .get("mount_id")
+            .and_then(serde_json::Value::as_str)
+            .expect("mount_id 应存在");
+
+        let address_space = shared_address_space.snapshot().await;
+        assert!(
+            address_space.mounts.iter().any(|mount| mount.id == mount_id),
+            "create_canvas 后共享 address space 应包含新 mount"
+        );
+
+        write_tool
+            .execute(
+                "tool-write",
+                serde_json::json!({
+                    "path": format!("{mount_id}://src/main.tsx"),
+                    "content": "export const value = 'ok';",
+                    "append": false
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("fs_write 应能在同一轮写入新建 canvas mount");
+
+        let saved = canvas_repo
+            .get_by_mount_id(project_id, mount_id)
+            .await
+            .expect("repo 查询应成功")
+            .expect("canvas 应存在");
+        let main_file = saved
+            .files
+            .iter()
+            .find(|file| file.path == "src/main.tsx")
+            .expect("应存在 src/main.tsx");
+        assert_eq!(main_file.content, "export const value = 'ok';");
+    }
 }

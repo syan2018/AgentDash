@@ -145,7 +145,12 @@ mod tests {
 
     #[test]
     fn build_runtime_snapshot_marks_binding_unresolved_until_session_wiring_exists() {
-        let mut canvas = Canvas::new(Uuid::new_v4(), "Demo".to_string(), String::new());
+        let mut canvas = Canvas::new(
+            Uuid::new_v4(),
+            "demo".to_string(),
+            "Demo".to_string(),
+            String::new(),
+        );
         canvas.files = vec![CanvasFile::new(
             "src/main.tsx".to_string(),
             "console.log('ok')".to_string(),

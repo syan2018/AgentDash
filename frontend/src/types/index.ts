@@ -563,6 +563,7 @@ export interface CanvasDataBinding {
 export interface Canvas {
   id: string;
   project_id: string;
+  mount_id: string;
   title: string;
   description: string;
   entry_file: string;

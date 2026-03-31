@@ -80,6 +80,7 @@ function mapCanvas(raw: Record<string, unknown>): Canvas {
   return {
     id: String(raw.id ?? ""),
     project_id: String(raw.project_id ?? ""),
+    mount_id: String(raw.mount_id ?? ""),
     title: String(raw.title ?? ""),
     description: String(raw.description ?? ""),
     entry_file: String(raw.entry_file ?? ""),
@@ -104,6 +105,7 @@ function mapCanvasRuntimeSnapshot(raw: Record<string, unknown>): CanvasRuntimeSn
 }
 
 export interface CreateCanvasInput {
+  mount_id?: string;
   title: string;
   description?: string;
   entry_file?: string;

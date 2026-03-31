@@ -11,7 +11,6 @@ use agentdash_domain::{
     workspace::{Workspace, WorkspaceBinding},
 };
 use uuid::Uuid;
-
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 
@@ -323,13 +322,13 @@ pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
     }
 }
 
-pub fn build_canvas_mount_id(canvas_id: Uuid) -> String {
-    format!("canvas-{canvas_id}")
+pub fn build_canvas_mount_id(canvas: &Canvas) -> String {
+    canvas.mount_id.clone()
 }
 
 pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
     Mount {
-        id: build_canvas_mount_id(canvas.id),
+        id: build_canvas_mount_id(canvas),
         provider: PROVIDER_CANVAS_FS.to_string(),
         backend_id: String::new(),
         root_ref: format!("canvas://{}", canvas.id),
@@ -347,6 +346,7 @@ pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
         },
         metadata: serde_json::json!({
             "canvas_id": canvas.id.to_string(),
+            "mount_id": canvas.mount_id,
             "project_id": canvas.project_id.to_string(),
             "entry_file": canvas.entry_file,
         }),

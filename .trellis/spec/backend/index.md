@@ -130,6 +130,7 @@ Workspace (1) → (*) WorkspaceBinding
 | [Address Space Access](./address-space-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
 | [LLM Model Config](./llm-model-config.md) | ThinkingLevel / ModelInfo / Provider Registry 架构 | ✅ 已创建 |
 | [Execution Hook Runtime](./execution-hook-runtime.md) | Hook Runtime / Workflow Policy / Session Surface 跨层契约 | ✅ 已更新 |
+| [Hook Script Engine](./hook-script-engine.md) | Rhai 脚本引擎、preset 编写指南、沙箱契约 | ✅ 已创建 |
 | [Pi Agent 流式合并](./pi-agent-streaming.md) | Pi Agent streaming chunk 合并协议 | ✅ 已拆分 |
 | [领域类型化标准](./domain-payload-typing.md) | `serde_json::Value` 类型化盘点和迁移路线 | ✅ 已创建 |
 | [Plugin API](./plugin-api.md) | 开源核心 + 企业扩展插件架构 | ✅ 已创建 |

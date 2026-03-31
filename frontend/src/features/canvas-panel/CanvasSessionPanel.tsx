@@ -4,8 +4,9 @@ import {
   fetchCanvasRuntimeSnapshot,
   updateCanvas,
 } from "../../services/canvas";
-import type { Canvas, CanvasDataBinding, CanvasRuntimeSnapshot } from "../../types";
+import type { Canvas, CanvasDataBinding, CanvasFile, CanvasRuntimeSnapshot } from "../../types";
 import { CanvasBindingsEditor } from "./CanvasBindingsEditor";
+import { CanvasFilesEditor } from "./CanvasFilesEditor";
 import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 
 export interface CanvasSessionPanelProps {
@@ -22,6 +23,8 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [isSavingBindings, setIsSavingBindings] = useState(false);
   const [bindingsError, setBindingsError] = useState<string | null>(null);
+  const [isSavingFiles, setIsSavingFiles] = useState(false);
+  const [filesError, setFilesError] = useState<string | null>(null);
 
   const loadCanvasData = useCallback(async () => {
     if (!canvasId) {
@@ -47,6 +50,7 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
       setCanvas(null);
       setSnapshot(null);
       setBindingsError(null);
+      setFilesError(null);
     } finally {
       setIsLoading(false);
     }
@@ -88,10 +92,38 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
       setCanvas(nextCanvas);
       const nextSnapshot = await fetchCanvasRuntimeSnapshot(canvasId, sessionId);
       setSnapshot(nextSnapshot);
+      setFilesError(null);
     } catch (err) {
       setBindingsError(err instanceof Error ? err.message : "保存绑定失败");
+      throw err;
     } finally {
       setIsSavingBindings(false);
+    }
+  }, [canvasId, sessionId]);
+
+  const handleFilesSave = useCallback(async (input: {
+    entryFile: string;
+    files: CanvasFile[];
+  }) => {
+    if (!canvasId) {
+      return;
+    }
+
+    setIsSavingFiles(true);
+    setFilesError(null);
+    try {
+      const nextCanvas = await updateCanvas(canvasId, {
+        entry_file: input.entryFile,
+        files: input.files,
+      });
+      setCanvas(nextCanvas);
+      const nextSnapshot = await fetchCanvasRuntimeSnapshot(canvasId, sessionId);
+      setSnapshot(nextSnapshot);
+    } catch (err) {
+      setFilesError(err instanceof Error ? err.message : "保存文件失败");
+      throw err;
+    } finally {
+      setIsSavingFiles(false);
     }
   }, [canvasId, sessionId]);
 
@@ -171,10 +203,18 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
               onSave={handleBindingsSave}
             />
 
+            <CanvasFilesEditor
+              value={canvas?.files ?? []}
+              entryFile={canvas?.entry_file ?? ""}
+              isSaving={isSavingFiles}
+              error={filesError}
+              onSave={handleFilesSave}
+            />
+
             <section className="space-y-3 rounded-[10px] border border-border bg-secondary/20 p-3">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">文件浏览</p>
-                <h4 className="mt-1 text-sm font-semibold text-foreground">运行时文件快照</h4>
+                <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">运行时文件快照</p>
+                <h4 className="mt-1 text-sm font-semibold text-foreground">当前快照展开结果</h4>
               </div>
 
               {snapshot.files.length === 0 && (

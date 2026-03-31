@@ -122,8 +122,12 @@ export function CanvasBindingsEditor({
       return;
     }
     const normalized = draftBindings.map(normalizeBinding);
-    await onSave(normalized);
-    setIsDirty(false);
+    try {
+      await onSave(normalized);
+      setIsDirty(false);
+    } catch {
+      // 保存失败时保留 dirty 状态，方便用户修正后重试。
+    }
   };
 
   return (

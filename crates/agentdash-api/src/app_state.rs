@@ -35,10 +35,10 @@ use agentdash_domain::workflow::{
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
-    SqliteAgentRepository, SqliteAuthSessionRepository, SqliteBackendRepository, SqliteProjectRepository,
-    SqliteSessionBindingRepository, SqliteSettingsRepository, SqliteStoryRepository,
-    SqliteTaskRepository, SqliteUserDirectoryRepository, SqliteWorkflowRepository,
-    SqliteWorkspaceRepository,
+    SqliteAgentRepository, SqliteAuthSessionRepository, SqliteBackendRepository,
+    SqliteCanvasRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
+    SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
+    SqliteUserDirectoryRepository, SqliteWorkflowRepository, SqliteWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceDiscoveryRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
@@ -118,6 +118,12 @@ impl AppState {
         // 按依赖顺序初始化：projects → workspaces → stories → tasks
         let project_repo = Arc::new(SqliteProjectRepository::new(pool.clone()));
         project_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let canvas_repo = Arc::new(SqliteCanvasRepository::new(pool.clone()));
+        canvas_repo
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -294,6 +300,7 @@ impl AppState {
 
         let repos = RepositorySet {
             project_repo,
+            canvas_repo,
             workspace_repo,
             story_repo,
             task_repo,
@@ -363,8 +370,7 @@ impl AppState {
         {
             let auth_session_service = state.services.auth_session_service.clone();
             tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(10 * 60));
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
                 loop {
                     interval.tick().await;
                     match auth_session_service.cleanup_expired_sessions().await {

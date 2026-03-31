@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod auth_session;
 pub mod backend;
+pub mod canvas;
 pub mod common;
 pub mod context_container;
 pub mod context_source;

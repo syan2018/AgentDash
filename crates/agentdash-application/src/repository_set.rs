@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::BackendRepository;
+use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
@@ -22,6 +23,7 @@ use agentdash_domain::workspace::WorkspaceRepository;
 #[derive(Clone)]
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
+    pub canvas_repo: Arc<dyn CanvasRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,

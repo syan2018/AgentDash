@@ -1,7 +1,8 @@
-pub mod auth;
 pub mod address_space;
+pub mod auth;
 pub mod backend_transport;
 pub mod bootstrap_plan;
+pub mod canvas;
 pub mod context;
 pub mod hooks;
 pub mod project;

@@ -1,6 +1,7 @@
 pub mod persistence;
 
 pub use persistence::sqlite::SqliteAgentRepository;
+pub use persistence::sqlite::SqliteAuthSessionRepository;
 pub use persistence::sqlite::SqliteBackendRepository;
 pub use persistence::sqlite::SqliteProjectRepository;
 pub use persistence::sqlite::SqliteSessionBindingRepository;

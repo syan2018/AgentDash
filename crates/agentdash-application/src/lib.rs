@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod address_space;
 pub mod backend_transport;
 pub mod bootstrap_plan;

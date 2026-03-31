@@ -45,6 +45,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     let secured_api = Router::new()
         .route("/me", get(me::get_current_user))
+        .route("/auth/logout", post(auth_routes::logout))
+        .route("/auth/revoke", post(auth_routes::revoke_token))
         .route(
             "/directory/users",
             get(identity_directory::list_directory_users),

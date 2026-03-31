@@ -114,10 +114,48 @@ pub async fn authenticate_request(
     };
 
     let auth_request = build_auth_request(&request);
-    let identity = provider.authenticate(&auth_request).await.map_err(|err| {
-        log_auth_failure(&auth_request, &err);
-        map_auth_error(err)
-    })?;
+    let identity = match provider.authenticate(&auth_request).await {
+        Ok(identity) => identity,
+        Err(err) => {
+            let token = extract_token(&auth_request);
+            if let (Some(raw_token), AuthError::InvalidCredentials) = (token, &err) {
+                match state
+                    .services
+                    .auth_session_service
+                    .resolve_identity_by_token(raw_token)
+                    .await
+                {
+                    Ok(Some(identity)) => {
+                        tracing::debug!(
+                            method = %auth_request.method,
+                            path = %auth_request.path,
+                            user_id = %identity.user_id,
+                            "认证 provider 失败，已通过数据库会话回源恢复身份"
+                        );
+                        identity
+                    }
+                    Ok(None) => {
+                        log_auth_failure(&auth_request, &err);
+                        return Err(map_auth_error(err));
+                    }
+                    Err(store_err) => {
+                        tracing::error!(
+                            method = %auth_request.method,
+                            path = %auth_request.path,
+                            error = %store_err,
+                            "认证 provider 失败且数据库回源异常"
+                        );
+                        return Err(ApiError::ServiceUnavailable(
+                            "认证会话服务不可用".to_string(),
+                        ));
+                    }
+                }
+            } else {
+                log_auth_failure(&auth_request, &err);
+                return Err(map_auth_error(err));
+            }
+        }
+    };
 
     project_identity_snapshot(state.as_ref(), &identity)
         .await
@@ -142,6 +180,12 @@ fn build_auth_request(request: &Request) -> AuthRequest {
         path: request.uri().path().to_string(),
         method: request.method().as_str().to_string(),
     }
+}
+
+fn extract_token(req: &AuthRequest) -> Option<&str> {
+    req.header("authorization")
+        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .or_else(|| req.query_param("token"))
 }
 
 fn normalize_headers(headers: &HeaderMap) -> HashMap<String, String> {

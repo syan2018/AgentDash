@@ -16,6 +16,7 @@ use agentdash_application::address_space::tools::provider::{
     RelayRuntimeToolProvider, SharedSessionHubHandle,
 };
 use agentdash_application::address_space::{MountProviderRegistry, MountProviderRegistryBuilder};
+use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::ContextContributorRegistry;
 use agentdash_application::hooks::AppExecutionHookProvider;
 pub use agentdash_application::repository_set::RepositorySet;
@@ -34,7 +35,7 @@ use agentdash_domain::workflow::{
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
-    SqliteAgentRepository, SqliteBackendRepository, SqliteProjectRepository,
+    SqliteAgentRepository, SqliteAuthSessionRepository, SqliteBackendRepository, SqliteProjectRepository,
     SqliteSessionBindingRepository, SqliteSettingsRepository, SqliteStoryRepository,
     SqliteTaskRepository, SqliteUserDirectoryRepository, SqliteWorkflowRepository,
     SqliteWorkspaceRepository,
@@ -62,6 +63,8 @@ pub struct ServiceSet {
     pub task_lifecycle_service: Arc<TaskLifecycleService>,
     /// Hook 提供者 — 供 API 层验证脚本等管理接口使用
     pub hook_provider: Arc<AppExecutionHookProvider>,
+    /// 统一认证会话服务（application 层）
+    pub auth_session_service: Arc<AuthSessionService>,
 }
 
 /// Task 执行运行时状态 — 并发锁与重试控制
@@ -165,6 +168,13 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let auth_session_repo = Arc::new(SqliteAuthSessionRepository::new(pool.clone()));
+        auth_session_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
 
         let workflow_repo = Arc::new(SqliteWorkflowRepository::new(pool));
         workflow_repo
@@ -289,6 +299,7 @@ impl AppState {
             task_repo,
             session_binding_repo,
             backend_repo,
+            auth_session_repo,
             user_directory_repo,
             settings_repo,
             agent_repo: agent_repo.clone(),
@@ -331,6 +342,7 @@ impl AppState {
                 mount_provider_registry,
                 task_lifecycle_service,
                 hook_provider,
+                auth_session_service,
             },
             task_runtime: TaskRuntime {
                 lock_map,
@@ -346,6 +358,27 @@ impl AppState {
 
         let state = Arc::new(state);
         dispatcher.set_retry_service(state.services.task_lifecycle_service.clone());
+
+        // 后台定时清理过期认证会话，避免 auth_sessions 无限增长。
+        {
+            let auth_session_service = state.services.auth_session_service.clone();
+            tokio::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(10 * 60));
+                loop {
+                    interval.tick().await;
+                    match auth_session_service.cleanup_expired_sessions().await {
+                        Ok(count) if count > 0 => {
+                            tracing::info!(deleted = count, "已清理过期认证会话")
+                        }
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::warn!(error = %err, "清理过期认证会话失败")
+                        }
+                    }
+                }
+            });
+        }
 
         Ok(state)
     }

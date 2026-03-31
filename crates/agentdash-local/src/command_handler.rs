@@ -192,6 +192,7 @@ impl CommandHandler {
             address_space: None,
             flow_capabilities: None,
             system_context: None,
+            identity: None,
         };
 
         tracing::info!(

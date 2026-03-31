@@ -177,7 +177,7 @@ fn parse_query_params(raw_query: Option<&str>) -> HashMap<String, String> {
     params
 }
 
-fn map_auth_error(err: AuthError) -> ApiError {
+pub(crate) fn map_auth_error(err: AuthError) -> ApiError {
     match err {
         AuthError::InvalidCredentials => ApiError::Unauthorized("认证失败或凭证已过期".to_string()),
         AuthError::Forbidden(message) => ApiError::Forbidden(message),

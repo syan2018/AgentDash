@@ -28,7 +28,10 @@ pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_injection::{AddressSpaceDiscoveryProvider, SourceResolver};
 pub use agentdash_spi::AgentConnector;
 
-pub use auth::{AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest};
+pub use auth::{
+    AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest, LoginCredentials,
+    LoginFieldDescriptor, LoginMetadata, LoginResponse,
+};
 pub use external::{
     ExternalServiceClient, ListOptions, ProviderCapabilities, ProviderError, ResourceContent,
     ResourceEntry, ResourceStat, SearchHit, SearchScope,

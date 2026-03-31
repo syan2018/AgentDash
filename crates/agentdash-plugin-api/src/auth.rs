@@ -95,6 +95,68 @@ pub struct AuthGroup {
     pub display_name: Option<String>,
 }
 
+/// 登录凭证 — 用户向 AuthProvider 提交的认证信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LoginCredentials {
+    pub username: String,
+    pub password: String,
+    /// 扩展字段（如 MFA code、client_ip 等）
+    #[serde(default)]
+    pub extra: serde_json::Value,
+}
+
+/// 登录成功的响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LoginResponse {
+    /// 用于后续请求认证的 token
+    pub access_token: String,
+    /// 已认证的身份信息
+    pub identity: AuthIdentity,
+}
+
+/// 登录表单字段描述 — 供前端渲染
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LoginFieldDescriptor {
+    /// 字段名（如 "username"、"password"）
+    pub name: String,
+    /// 显示标签（如 "域账号"、"密码"）
+    pub label: String,
+    /// 输入类型（"text" / "password" / "email"）
+    #[serde(default = "default_field_type")]
+    pub field_type: String,
+    /// 占位文本
+    pub placeholder: Option<String>,
+    /// 是否必填
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+fn default_field_type() -> String {
+    "text".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+
+/// 登录元数据 — 描述认证方式，供前端渲染登录页面
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LoginMetadata {
+    /// 认证方式标识（如 "ldap"、"oauth2"、"personal"）
+    pub provider_type: String,
+    /// 显示名称（如 "LDAP 域账号登录"）
+    pub display_name: String,
+    /// 描述文字
+    pub description: Option<String>,
+    /// 登录表单需要的字段列表
+    pub fields: Vec<LoginFieldDescriptor>,
+    /// 是否需要交互式登录（false = 无需登录页，如 personal 模式）
+    pub requires_login: bool,
+}
+
 /// 认证后的用户身份
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,6 +209,30 @@ pub trait AuthProvider: Send + Sync {
         resource: &str,
         action: &str,
     ) -> Result<bool, AuthError>;
+
+    /// 执行交互式登录（用户提交凭证换取 token + 身份信息）
+    ///
+    /// 对于不需要交互式登录的 provider（如 personal 模式），
+    /// 默认实现返回 `BadRequest`。宿主根据 `login_metadata().requires_login`
+    /// 判断是否挂载登录路由。
+    async fn login(&self, _credentials: &LoginCredentials) -> Result<LoginResponse, AuthError> {
+        Err(AuthError::BadRequest(
+            "该认证模式不支持交互式登录".to_string(),
+        ))
+    }
+
+    /// 返回登录方式元数据，供前端渲染登录表单
+    ///
+    /// 默认实现返回 personal 模式描述（不需要登录页）。
+    fn login_metadata(&self) -> LoginMetadata {
+        LoginMetadata {
+            provider_type: "none".to_string(),
+            display_name: "个人模式".to_string(),
+            description: Some("无需登录，使用固定本地身份".to_string()),
+            fields: vec![],
+            requires_login: false,
+        }
+    }
 }
 
 #[cfg(test)]

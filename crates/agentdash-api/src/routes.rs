@@ -1,6 +1,7 @@
 pub mod acp_sessions;
 pub mod address_spaces;
 pub mod agents;
+pub mod auth_routes;
 pub mod backends;
 pub mod discovered_options;
 pub mod discovery;
@@ -374,6 +375,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     let api = Router::new()
         .route("/health", get(health::health_check))
+        .route("/auth/login", post(auth_routes::login))
+        .route("/auth/metadata", get(auth_routes::metadata))
         .merge(secured_api)
         .with_state(state.clone());
 

@@ -5,6 +5,9 @@ import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
 import { useEventStore } from "./stores/eventStore";
 import { useCurrentUserStore } from "./stores/currentUserStore";
+import { useAuthStore } from "./stores/authStore";
+import { getStoredToken, clearStoredToken, type ApiHttpError } from "./api/client";
+import { LoginPage } from "./pages/LoginPage";
 
 // ─── 懒加载页面组件 ────────────────────────────────────
 
@@ -102,6 +105,79 @@ function SessionRouteWrapper() {
   return <SessionPage sessionId={sessionId} />;
 }
 
+// ─── 认证守卫 ──────────────────────────────────────────
+
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { metadata, isMetadataLoading, fetchMetadata } = useAuthStore();
+  const {
+    currentUser,
+    isLoading: isLoadingCurrentUser,
+    hasLoaded: hasLoadedCurrentUser,
+    error: currentUserError,
+    fetchCurrentUser,
+  } = useCurrentUserStore();
+
+  useEffect(() => {
+    if (!metadata && !isMetadataLoading) {
+      fetchMetadata();
+    }
+  }, [metadata, isMetadataLoading, fetchMetadata]);
+
+  useEffect(() => {
+    if (!metadata || isMetadataLoading) return;
+    if (metadata.requires_login && !getStoredToken()) return;
+
+    if (!hasLoadedCurrentUser && !isLoadingCurrentUser) {
+      fetchCurrentUser().catch((err: unknown) => {
+        if ((err as ApiHttpError).status === 401) {
+          clearStoredToken();
+        }
+      });
+    }
+  }, [metadata, isMetadataLoading, hasLoadedCurrentUser, isLoadingCurrentUser, fetchCurrentUser]);
+
+  if (isMetadataLoading || !metadata) {
+    return <RouteFallback />;
+  }
+
+  if (metadata.requires_login && !getStoredToken() && !currentUser) {
+    return <LoginPage />;
+  }
+
+  if (!hasLoadedCurrentUser || isLoadingCurrentUser) {
+    return <RouteFallback />;
+  }
+
+  if (!currentUser && hasLoadedCurrentUser && currentUserError) {
+    const is401 = currentUserError.includes("401") || currentUserError.includes("认证");
+    if (metadata.requires_login && is401) {
+      clearStoredToken();
+      return <LoginPage />;
+    }
+    return (
+      <BootstrapErrorState
+        message={currentUserError}
+        onRetry={() => {
+          void fetchCurrentUser();
+        }}
+      />
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <BootstrapErrorState
+        message={currentUserError ?? "当前服务未返回有效用户身份"}
+        onRetry={() => {
+          void fetchCurrentUser();
+        }}
+      />
+    );
+  }
+
+  return <>{children}</>;
+}
+
 // ─── 应用主路由结构 ────────────────────────────────────
 
 function AppContent() {
@@ -112,12 +188,14 @@ function AppContent() {
     currentUser,
     isLoading: isLoadingCurrentUser,
     hasLoaded: hasLoadedCurrentUser,
-    error: currentUserError,
     fetchCurrentUser,
   } = useCurrentUserStore();
 
   const initializeApp = useCallback(async (signal?: { cancelled: boolean }) => {
-    const user = await fetchCurrentUser();
+    let user = currentUser;
+    if (!user) {
+      user = await fetchCurrentUser();
+    }
     if (!user || signal?.cancelled) return;
 
     await Promise.allSettled([
@@ -125,7 +203,7 @@ function AppContent() {
       fetchProjects(),
     ]);
 
-  }, [fetchBackends, fetchProjects, fetchCurrentUser]);
+  }, [currentUser, fetchBackends, fetchProjects, fetchCurrentUser]);
 
   useEffect(() => {
     const signal = { cancelled: false };
@@ -148,26 +226,12 @@ function AppContent() {
     return <RouteFallback />;
   }
 
-  if (!currentUser) {
-    return (
-      <BootstrapErrorState
-        message={currentUserError ?? "当前服务未返回有效用户身份"}
-        onRetry={() => {
-          void initializeApp();
-        }}
-      />
-    );
-  }
-
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
-        {/* WorkspaceLayout 作为所有主要页面的 Layout Route */}
         <Route element={<WorkspaceLayout />}>
-          {/* 根路径重定向到 Agent Tab */}
           <Route index element={<Navigate to="/dashboard/agent" replace />} />
 
-          {/* Dashboard 容器路由，包含 Agent / Story / Workflow 子 Tab */}
           <Route path="/dashboard" element={<DashboardPage />}>
             <Route index element={<Navigate to="agent" replace />} />
             <Route path="agent" element={<AgentTabView />} />
@@ -175,21 +239,16 @@ function AppContent() {
             <Route path="workflow" element={<WorkflowTabView />} />
           </Route>
 
-          {/* Story 详情页 */}
           <Route path="/story/:storyId" element={<StoryPage />} />
 
-          {/* Workflow 编辑器独立页 */}
           <Route path="/workflow-editor/:definitionId" element={<WorkflowEditorPage />} />
           <Route path="/lifecycle-editor/:definitionId" element={<LifecycleEditorPage />} />
 
-          {/* Session 独立全屏页 */}
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
 
-          {/* 设置页 */}
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/projects/:projectId/settings" element={<ProjectSettingsPage />} />
 
-          {/* 未匹配路由重定向到默认 Tab */}
           <Route path="*" element={<Navigate to="/dashboard/agent" replace />} />
         </Route>
       </Routes>
@@ -200,7 +259,9 @@ function AppContent() {
 function App() {
   return (
     <BrowserRouter>
-      <AppContent />
+      <AuthGate>
+        <AppContent />
+      </AuthGate>
     </BrowserRouter>
   );
 }

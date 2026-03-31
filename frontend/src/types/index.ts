@@ -54,6 +54,35 @@ export function isAuthMode(value: unknown): value is AuthMode {
   return value === "personal" || value === "enterprise";
 }
 
+// ─── 登录 / 认证 ──────────────────────────────────────
+
+export interface LoginFieldDescriptor {
+  name: string;
+  label: string;
+  field_type: string;
+  placeholder?: string | null;
+  required: boolean;
+}
+
+export interface LoginMetadata {
+  provider_type: string;
+  display_name: string;
+  description?: string | null;
+  fields: LoginFieldDescriptor[];
+  requires_login: boolean;
+}
+
+export interface LoginCredentials {
+  username: string;
+  password: string;
+  extra?: unknown;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  identity: CurrentUser;
+}
+
 // ─── 当前用户 / 身份 ─────────────────────────────────
 
 export interface AuthGroup {

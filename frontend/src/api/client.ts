@@ -1,24 +1,51 @@
 import { buildApiPath } from './origin';
 
+const TOKEN_KEY = 'agentdash_access_token';
+
+export function getStoredToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setStoredToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearStoredToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
   const url = buildApiPath(path);
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers as Record<string, string> },
-    ...options,
-  });
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...options.headers as Record<string, string>,
+  };
+
+  const token = getStoredToken();
+  if (token && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url, { ...options, headers });
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    const error = new Error(body.error || `HTTP ${res.status}`);
+    (error as ApiHttpError).status = res.status;
+    throw error;
   }
 
   if (res.status === 204) {
     return undefined as unknown as T;
   }
   return res.json();
+}
+
+export interface ApiHttpError extends Error {
+  status?: number;
 }
 
 export const api = {

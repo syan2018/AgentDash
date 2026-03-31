@@ -1,17 +1,25 @@
 import { buildApiPath } from './origin';
 
 const TOKEN_KEY = 'agentdash_access_token';
+const TOKEN_COOKIE = 'agentdash_access_token';
+const TOKEN_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 天
 
 export function getStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  const local = localStorage.getItem(TOKEN_KEY);
+  if (local) {
+    return local;
+  }
+  return readCookieToken();
 }
 
 export function setStoredToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token);
+  writeCookieToken(token);
 }
 
 export function clearStoredToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  clearCookieToken();
 }
 
 async function request<T>(
@@ -74,4 +82,38 @@ export function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit)
     headers['Authorization'] = `Bearer ${token}`;
   }
   return fetch(input, { ...init, headers });
+}
+
+function readCookieToken(): string | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  const encodedName = `${TOKEN_COOKIE}=`;
+  const chunks = document.cookie.split(';');
+  for (const chunk of chunks) {
+    const item = chunk.trim();
+    if (item.startsWith(encodedName)) {
+      const raw = item.slice(encodedName.length);
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw || null;
+      }
+    }
+  }
+  return null;
+}
+
+function writeCookieToken(token: string): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  document.cookie = `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${TOKEN_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax`;
+}
+
+function clearCookieToken(): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  document.cookie = `${TOKEN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
 }

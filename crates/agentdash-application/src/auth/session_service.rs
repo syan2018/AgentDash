@@ -70,7 +70,10 @@ impl AuthSessionService {
         if session.revoked_at.is_some() {
             return Ok(None);
         }
-        if session.expires_at.is_some_and(|exp| exp <= now_epoch_secs()) {
+        if session
+            .expires_at
+            .is_some_and(|exp| exp <= now_epoch_secs())
+        {
             return Ok(None);
         }
 

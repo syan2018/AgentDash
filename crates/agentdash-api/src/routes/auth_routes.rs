@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 use serde::Deserialize;
 
 use agentdash_plugin_api::{LoginCredentials, LoginMetadata, LoginResponse};
@@ -31,10 +31,7 @@ pub async fn login(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("认证提供者未初始化".to_string()))?;
 
-    let response = provider
-        .login(&credentials)
-        .await
-        .map_err(map_auth_error)?;
+    let response = provider.login(&credentials).await.map_err(map_auth_error)?;
 
     state
         .services
@@ -47,9 +44,7 @@ pub async fn login(
 }
 
 /// GET /api/auth/metadata — 返回登录方式描述（不需要认证）
-pub async fn metadata(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<LoginMetadata>, ApiError> {
+pub async fn metadata(State(state): State<Arc<AppState>>) -> Result<Json<LoginMetadata>, ApiError> {
     let provider = state
         .auth_provider
         .as_ref()
@@ -101,6 +96,9 @@ fn extract_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) -> Op
     headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
         .or(query_token)
 }

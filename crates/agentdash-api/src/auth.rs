@@ -184,7 +184,10 @@ fn build_auth_request(request: &Request) -> AuthRequest {
 
 fn extract_token(req: &AuthRequest) -> Option<&str> {
     req.header("authorization")
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
         .or_else(|| req.query_param("token"))
 }
 

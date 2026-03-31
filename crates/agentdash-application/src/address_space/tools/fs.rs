@@ -237,7 +237,12 @@ impl AgentTool for FsWriteTool {
         let final_content = if params.append.unwrap_or(false) {
             match self
                 .service
-                .read_text(&self.address_space, &target, overlay_ref, self.identity.as_ref())
+                .read_text(
+                    &self.address_space,
+                    &target,
+                    overlay_ref,
+                    self.identity.as_ref(),
+                )
                 .await
             {
                 Ok(existing) => format!("{}{}", existing.content, params.content),
@@ -247,7 +252,13 @@ impl AgentTool for FsWriteTool {
             params.content
         };
         self.service
-            .write_text(&self.address_space, &target, &final_content, overlay_ref, self.identity.as_ref())
+            .write_text(
+                &self.address_space,
+                &target,
+                &final_content,
+                overlay_ref,
+                self.identity.as_ref(),
+            )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
         Ok(ok_text(format!("已写入文件: {}", target.path)))

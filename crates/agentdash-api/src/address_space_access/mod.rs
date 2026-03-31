@@ -278,6 +278,7 @@ mod tests {
                     recursive: true,
                 },
                 None,
+                None,
             )
             .await
             .expect("inline list");
@@ -342,7 +343,7 @@ mod tests {
 *** End Patch"#;
 
         let result = service
-            .apply_patch(&runtime_address_space, "brief", patch, Some(&overlay))
+            .apply_patch(&runtime_address_space, "brief", patch, Some(&overlay), None)
             .await
             .expect("inline patch");
         assert_eq!(result.modified, vec!["docs/brief.md".to_string()]);
@@ -373,6 +374,7 @@ mod tests {
                     recursive: true,
                 },
                 Some(&overlay),
+                None,
             )
             .await
             .expect("inline list after patch");
@@ -504,11 +506,14 @@ mod tests {
 
         let schemas = vec![
             MountsListTool::new(service.clone(), address_space.clone()).parameters_schema(),
-            FsReadTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
-            FsWriteTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
-            FsApplyPatchTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
-            FsListTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
-            FsSearchTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
+            FsReadTool::new(service.clone(), address_space.clone(), None, None).parameters_schema(),
+            FsWriteTool::new(service.clone(), address_space.clone(), None, None)
+                .parameters_schema(),
+            FsApplyPatchTool::new(service.clone(), address_space.clone(), None, None)
+                .parameters_schema(),
+            FsListTool::new(service.clone(), address_space.clone(), None, None).parameters_schema(),
+            FsSearchTool::new(service.clone(), address_space.clone(), None, None)
+                .parameters_schema(),
             ShellExecTool::new(service, address_space).parameters_schema(),
         ];
 

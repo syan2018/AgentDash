@@ -69,7 +69,10 @@ impl AuthSessionRepository for SqliteAuthSessionRepository {
         Ok(())
     }
 
-    async fn get_by_token_hash(&self, token_hash: &str) -> Result<Option<AuthSession>, DomainError> {
+    async fn get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<AuthSession>, DomainError> {
         let row_opt = sqlx::query(
             "SELECT token_hash, identity_json, expires_at, revoked_at, created_at, updated_at
              FROM auth_sessions WHERE token_hash = ?",

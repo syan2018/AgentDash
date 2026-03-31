@@ -175,10 +175,4 @@ impl RuntimeMcpBinding {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeFileEntry {
-    pub path: String,
-    pub size: Option<u64>,
-    pub modified_at: Option<i64>,
-    pub is_dir: bool,
-}
+pub use agentdash_spi::mount::RuntimeFileEntry;

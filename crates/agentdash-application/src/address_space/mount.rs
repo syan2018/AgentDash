@@ -229,7 +229,7 @@ pub fn build_context_container_mount(
             service_id,
             root_ref,
         } => (
-            "external_service".to_string(),
+            service_id.trim().to_string(),
             root_ref.trim().to_string(),
             serde_json::json!({
                 "service_id": service_id.trim(),

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use agentdash_injection::AddressSpaceDiscoveryProvider;
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
+use agentdash_spi::mount::MountProvider;
 use agentdash_spi::AgentConnector;
 use thiserror::Error;
 
@@ -18,6 +19,7 @@ pub(crate) struct PluginHostRegistration {
     pub address_space_providers: Vec<Box<dyn AddressSpaceDiscoveryProvider>>,
     pub connectors: Vec<Arc<dyn AgentConnector>>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
+    pub mount_providers: Vec<Arc<dyn MountProvider>>,
 }
 
 #[derive(Debug, Error)]
@@ -52,6 +54,7 @@ pub(crate) fn collect_plugin_registration(
     let mut auth_provider: Option<Arc<dyn AuthProvider>> = None;
     let mut auth_provider_plugin: Option<String> = None;
     let mut executor_owners: HashMap<String, String> = HashMap::new();
+    let mut mount_providers = Vec::new();
 
     for plugin in plugins {
         let plugin_name = plugin.name().to_string();
@@ -65,6 +68,16 @@ pub(crate) fn collect_plugin_registration(
             })?;
 
         address_space_providers.extend(plugin.address_space_providers());
+
+        let mp = plugin.mount_providers();
+        if !mp.is_empty() {
+            tracing::info!(
+                "  插件 `{}` 注册了 {} 个 MountProvider",
+                plugin_name,
+                mp.len()
+            );
+            mount_providers.extend(mp);
+        }
 
         for connector in plugin.agent_connectors() {
             for executor in connector.list_executors() {
@@ -97,6 +110,7 @@ pub(crate) fn collect_plugin_registration(
         address_space_providers,
         connectors,
         auth_provider,
+        mount_providers,
     })
 }
 

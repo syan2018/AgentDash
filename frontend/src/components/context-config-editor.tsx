@@ -132,7 +132,6 @@ function containerSupportsCapability(
   capability: ContextContainerCapability,
 ): boolean {
   if (capability === "exec") return false;
-  if (capability === "write" && container.provider.kind === "external_service") return false;
   return true;
 }
 
@@ -331,14 +330,67 @@ function ContainerEditorItem({
             </div>
           </div>
 
-          {/* Provider 类型（只读展示） */}
-          <div>
+          {/* Provider 类型 */}
+          <div className="space-y-2">
             <label className="text-[10px] text-muted-foreground">Provider</label>
-            <p className="mt-0.5 rounded-[6px] bg-muted/40 px-2 py-1 font-mono text-[11px] text-foreground">
-              {container.provider.kind === "inline_files"
-                ? `inline_files（${container.provider.files.length} 个文件）`
-                : `external_service — ${container.provider.service_id}`}
-            </p>
+            <select
+              value={container.provider.kind}
+              onChange={(e) => {
+                const kind = e.target.value as "inline_files" | "external_service";
+                if (kind === container.provider.kind) return;
+                onUpdate((c) => ({
+                  ...c,
+                  provider:
+                    kind === "inline_files"
+                      ? { kind: "inline_files", files: [{ path: "context.md", content: "" }] }
+                      : { kind: "external_service", service_id: "", root_ref: "" },
+                }));
+              }}
+              disabled={isSaving}
+              className="agentdash-form-input text-[11px]"
+            >
+              <option value="inline_files">inline_files</option>
+              <option value="external_service">external_service</option>
+            </select>
+
+            {container.provider.kind === "external_service" && (
+              <div className="grid gap-2 md:grid-cols-2">
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Service ID</label>
+                  <input
+                    value={container.provider.service_id}
+                    onChange={(e) =>
+                      onUpdate((c) => ({
+                        ...c,
+                        provider: { ...c.provider, kind: "external_service" as const, service_id: e.target.value, root_ref: (c.provider as { root_ref: string }).root_ref },
+                      }))
+                    }
+                    placeholder="例如：km_bridge"
+                    className="agentdash-form-input text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Root Ref</label>
+                  <input
+                    value={container.provider.root_ref}
+                    onChange={(e) =>
+                      onUpdate((c) => ({
+                        ...c,
+                        provider: { ...c.provider, kind: "external_service" as const, root_ref: e.target.value, service_id: (c.provider as { service_id: string }).service_id },
+                      }))
+                    }
+                    placeholder="知识库ID 或 知识库ID/父文档ID"
+                    className="agentdash-form-input text-[11px]"
+                  />
+                </div>
+              </div>
+            )}
+
+            {container.provider.kind === "inline_files" && (
+              <p className="mt-0.5 rounded-[6px] bg-muted/40 px-2 py-1 font-mono text-[11px] text-foreground">
+                {container.provider.files.length} 个文件
+              </p>
+            )}
           </div>
 
           {/* 能力 */}

@@ -34,3 +34,8 @@ pub use external::{
     ResourceEntry, ResourceStat, SearchHit, SearchScope,
 };
 pub use plugin::{AgentDashPlugin, PluginError};
+
+/// Mount I/O SPI — 供插件实现文件系统级操作。
+///
+/// 用法：`use agentdash_plugin_api::mount::{MountProvider, ReadResult, ...};`
+pub use agentdash_spi::mount;

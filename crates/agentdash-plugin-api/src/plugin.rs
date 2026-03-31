@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_injection::{AddressSpaceDiscoveryProvider, SourceResolver};
+use agentdash_spi::mount::MountProvider;
 use agentdash_spi::AgentConnector;
 
 use crate::auth::AuthProvider;
@@ -80,6 +81,15 @@ pub trait AgentDashPlugin: Send + Sync {
     ///
     /// 当前该扩展点仍处于实验阶段，尚未接入稳定宿主链路。
     fn external_service_clients(&self) -> Vec<Box<dyn ExternalServiceClient>> {
+        vec![]
+    }
+
+    /// 注册 mount I/O provider（如 KM 桥接、云存储等）。
+    ///
+    /// 宿主会将返回的 provider 注册到 `MountProviderRegistry`，
+    /// 使 `ExternalService` 类型的 context container 能通过标准 mount 链路
+    /// 完成 read / write / list / search 操作。
+    fn mount_providers(&self) -> Vec<Arc<dyn MountProvider>> {
         vec![]
     }
 

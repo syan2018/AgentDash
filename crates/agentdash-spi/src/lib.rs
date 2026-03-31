@@ -1,6 +1,7 @@
 pub mod connector;
 pub mod hooks;
 pub mod lifecycle;
+pub mod mount;
 pub mod schema;
 pub mod tool;
 

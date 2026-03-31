@@ -175,14 +175,21 @@ impl AppState {
         let workspace_root = std::env::current_dir()?;
         let backend_registry = BackendRegistry::new();
 
-        let mount_provider_registry = Arc::new(
-            MountProviderRegistryBuilder::new()
-                .with_builtins(workflow_repo.clone())
-                .register(Arc::new(RelayFsMountProvider::new(
-                    backend_registry.clone(),
-                )))
-                .build(),
-        );
+        let mut mount_registry_builder = MountProviderRegistryBuilder::new()
+            .with_builtins(workflow_repo.clone())
+            .register(Arc::new(RelayFsMountProvider::new(
+                backend_registry.clone(),
+            )));
+
+        for provider in plugin_registration.mount_providers {
+            tracing::info!(
+                "注册插件 MountProvider: {}",
+                provider.provider_id()
+            );
+            mount_registry_builder = mount_registry_builder.register(provider);
+        }
+
+        let mount_provider_registry = Arc::new(mount_registry_builder.build());
 
         let address_space_service = Arc::new(RelayAddressSpaceService::new(
             mount_provider_registry.clone(),

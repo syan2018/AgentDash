@@ -25,6 +25,7 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "companion_dispatch_registered",
   "companion_result_available",
   "companion_result_returned",
+  "canvas_presented",
 ]);
 
 const VISIBLE_SYSTEM_EVENT_SEVERITIES = new Set<string>([

@@ -22,7 +22,7 @@ use crate::{
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
-use agentdash_application::address_space::SessionMountTarget;
+use agentdash_application::address_space::{SessionMountTarget, append_canvas_mounts};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
 
@@ -375,7 +375,7 @@ pub(crate) async fn build_story_session_context_response(
         .is_some_and(|c| c.is_cloud_native())
         || (resolved_config.is_none() && default_agent_type.is_some());
     let address_space = if use_address_space {
-        state
+        let mut address_space = state
             .services
             .address_space_service
             .build_address_space(
@@ -385,7 +385,15 @@ pub(crate) async fn build_story_session_context_response(
                 SessionMountTarget::Story,
                 effective_agent_type.as_deref(),
             )
-            .ok()
+            .ok()?;
+        let canvases = state
+            .repos
+            .canvas_repo
+            .list_by_project(project.id)
+            .await
+            .ok()?;
+        append_canvas_mounts(&mut address_space, &canvases);
+        Some(address_space)
     } else {
         None
     };

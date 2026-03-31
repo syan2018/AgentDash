@@ -7,7 +7,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::address_space::SessionMountTarget;
+use agentdash_application::address_space::{SessionMountTarget, append_canvas_mounts};
 use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
@@ -135,7 +135,7 @@ pub(crate) async fn build_project_session_context_response(
         .as_ref()
         .is_some_and(|c| c.is_cloud_native());
     let address_space = if use_address_space {
-        state
+        let mut address_space = state
             .services
             .address_space_service
             .build_address_space(
@@ -145,7 +145,15 @@ pub(crate) async fn build_project_session_context_response(
                 SessionMountTarget::Project,
                 resolved_config.as_ref().map(|c| c.executor.as_str()),
             )
-            .ok()
+            .ok()?;
+        let canvases = state
+            .repos
+            .canvas_repo
+            .list_by_project(project.id)
+            .await
+            .ok()?;
+        append_canvas_mounts(&mut address_space, &canvases);
+        Some(address_space)
     } else {
         None
     };

@@ -89,6 +89,8 @@ pub struct FlowCapabilities {
     pub companion_complete: bool,
     /// 是否允许解析 hook pending action
     pub resolve_hook_action: bool,
+    /// 是否允许使用 Canvas 资产工具
+    pub canvas: bool,
 }
 
 #[derive(Debug, Clone)]

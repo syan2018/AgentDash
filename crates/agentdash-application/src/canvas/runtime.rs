@@ -3,6 +3,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::canvas::{Canvas, CanvasImportMap};
+use agentdash_spi::AddressSpace;
+
+use crate::address_space::{RelayAddressSpaceService, parse_mount_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanvasRuntimeSnapshot {
@@ -82,6 +85,42 @@ pub fn build_runtime_snapshot(
         import_map: canvas.sandbox_config.import_map.clone(),
         libraries: canvas.sandbox_config.libraries.clone(),
     }
+}
+
+pub async fn build_runtime_snapshot_with_bindings(
+    canvas: &Canvas,
+    session_id: Option<String>,
+    address_space: Option<&AddressSpace>,
+    address_space_service: &RelayAddressSpaceService,
+) -> CanvasRuntimeSnapshot {
+    let mut snapshot = build_runtime_snapshot(canvas, session_id);
+    let Some(address_space) = address_space else {
+        return snapshot;
+    };
+
+    for binding in &mut snapshot.bindings {
+        let Ok(resource_ref) = parse_mount_uri(&binding.source_uri, address_space) else {
+            continue;
+        };
+        let Ok(result) = address_space_service
+            .read_text(address_space, &resource_ref, None, None)
+            .await
+        else {
+            continue;
+        };
+
+        if let Some(file) = snapshot
+            .files
+            .iter_mut()
+            .find(|file| file.path == binding.data_path)
+        {
+            file.content = result.content;
+            file.file_type = "data".to_string();
+            binding.resolved = true;
+        }
+    }
+
+    snapshot
 }
 
 fn infer_file_type(path: &str) -> &'static str {

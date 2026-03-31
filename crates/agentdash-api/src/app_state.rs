@@ -192,7 +192,7 @@ impl AppState {
         let backend_registry = BackendRegistry::new();
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
-            .with_builtins(workflow_repo.clone())
+            .with_builtins(workflow_repo.clone(), canvas_repo.clone())
             .register(Arc::new(RelayFsMountProvider::new(
                 backend_registry.clone(),
             )));
@@ -225,6 +225,7 @@ impl AppState {
             PiAgentConnectorDeps {
                 settings_repo: settings_repo.clone(),
                 address_space_service: address_space_service.clone(),
+                canvas_repo: canvas_repo.clone(),
                 session_binding_repo: session_binding_repo.clone(),
                 workflow_definition_repo: workflow_repo.clone(),
                 lifecycle_definition_repo: workflow_repo.clone(),
@@ -403,6 +404,7 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
 struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     address_space_service: Arc<RelayAddressSpaceService>,
+    canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
@@ -425,6 +427,7 @@ async fn build_pi_agent_connector(
     connector.set_settings_repository(deps.settings_repo);
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         deps.address_space_service,
+        deps.canvas_repo,
         deps.session_binding_repo,
         deps.workflow_definition_repo,
         deps.lifecycle_definition_repo,

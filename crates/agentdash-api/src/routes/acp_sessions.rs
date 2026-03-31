@@ -16,7 +16,7 @@ use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::address_space::SessionMountTarget;
+use agentdash_application::address_space::{SessionMountTarget, append_canvas_mounts};
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
 };
@@ -689,7 +689,7 @@ async fn build_story_owner_prompt_request(
     project: &Project,
     workspace: Option<&Workspace>,
 ) -> Result<PromptSessionRequest, ApiError> {
-    let address_space = match req.address_space.clone() {
+    let mut address_space = match req.address_space.clone() {
         Some(address_space) => Some(address_space),
         None => {
             let agent_type = req
@@ -713,6 +713,15 @@ async fn build_story_owner_prompt_request(
             )
         }
     };
+    if let Some(space) = address_space.as_mut() {
+        let canvases = state
+            .repos
+            .canvas_repo
+            .list_by_project(project.id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        append_canvas_mounts(space, &canvases);
+    }
     let effective_agent_type = req
         .user_input
         .executor_config
@@ -764,6 +773,7 @@ async fn build_story_owner_prompt_request(
             companion_dispatch: true,
             companion_complete: true,
             resolve_hook_action: true,
+            canvas: true,
         },
     );
 
@@ -791,7 +801,7 @@ async fn build_project_owner_prompt_request(
         .clone()
         .unwrap_or_else(|| project_agent.executor_config.clone());
     let effective_agent_type = Some(effective_executor_config.executor.as_str());
-    let address_space = match req.address_space.clone() {
+    let mut address_space = match req.address_space.clone() {
         Some(address_space) => Some(address_space),
         None => Some(
             state
@@ -807,6 +817,15 @@ async fn build_project_owner_prompt_request(
                 .map_err(ApiError::BadRequest)?,
         ),
     };
+    if let Some(space) = address_space.as_mut() {
+        let canvases = state
+            .repos
+            .canvas_repo
+            .list_by_project(project.id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        append_canvas_mounts(space, &canvases);
+    }
 
     let mut effective_mcp_servers = req.mcp_servers.clone();
     let base_url = state
@@ -860,6 +879,7 @@ async fn build_project_owner_prompt_request(
             companion_dispatch: false,
             companion_complete: false,
             resolve_hook_action: true,
+            canvas: true,
         },
     );
 

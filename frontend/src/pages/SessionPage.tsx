@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { SessionChatView } from "../features/acp-session";
+import { extractAgentDashMetaFromUpdate, isRecord } from "../features/acp-session/model/agentdashMeta";
+import { CanvasSessionPanel } from "../features/canvas-panel";
 import { hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";
 import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
@@ -51,6 +54,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     story: Story | null;
   } | null>(null);
   const [isContextPanelOpen, setIsContextPanelOpen] = useState(false);
+  const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
+  const [isCanvasPanelOpen, setIsCanvasPanelOpen] = useState(false);
 
   const routeState = useMemo(
     () => (location.state as SessionNavigationState | null) ?? null,
@@ -300,7 +305,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     scheduleHookRuntimeRefresh("turn_end", true);
   }, [scheduleHookRuntimeRefresh]);
 
-  const handleSystemEvent = useCallback((eventType: string) => {
+  const handleSystemEvent = useCallback((eventType: string, update: SessionUpdate) => {
     switch (eventType) {
       case "hook_event":
       case "hook_action_resolved":
@@ -309,6 +314,19 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       case "companion_result_returned":
         scheduleHookRuntimeRefresh(eventType);
         break;
+      case "canvas_presented": {
+        const event = extractAgentDashMetaFromUpdate(update)?.event;
+        const data = isRecord(event?.data) ? event.data : null;
+        const nextCanvasIdRaw = data?.canvas_id ?? data?.canvasId ?? data?.id;
+        const nextCanvasId = typeof nextCanvasIdRaw === "string"
+          ? nextCanvasIdRaw.trim()
+          : "";
+        if (nextCanvasId) {
+          setActiveCanvasId(nextCanvasId);
+          setIsCanvasPanelOpen(true);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -409,6 +427,15 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           <button type="button" onClick={handleNewSession} className="rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
             新会话
           </button>
+          {activeCanvasId && !isCanvasPanelOpen && (
+            <button
+              type="button"
+              onClick={() => setIsCanvasPanelOpen(true)}
+              className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              打开 Canvas
+            </button>
+          )}
         </div>
       </header>
 
@@ -444,19 +471,30 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         />
       )}
 
-      {/* 复用的聊天视图 */}
-      <div className="flex-1 overflow-hidden">
-        <SessionChatView
-          sessionId={currentSessionId}
-          workspaceId={chatWorkspaceId}
-          onCreateSession={handleCreateSession}
-          onSessionIdChange={handleSessionIdChange}
-          onMessageSent={handleMessageSent}
-          onTurnEnd={handleTurnEnd}
-          onSystemEvent={handleSystemEvent}
-          executorHint={executorHint}
-          inputPrefix={ownerBindingBar}
-        />
+      {/* 复用的聊天视图 + Canvas 侧栏 */}
+      <div className="flex flex-1 overflow-hidden">
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <SessionChatView
+            sessionId={currentSessionId}
+            workspaceId={chatWorkspaceId}
+            onCreateSession={handleCreateSession}
+            onSessionIdChange={handleSessionIdChange}
+            onMessageSent={handleMessageSent}
+            onTurnEnd={handleTurnEnd}
+            onSystemEvent={handleSystemEvent}
+            executorHint={executorHint}
+            inputPrefix={ownerBindingBar}
+          />
+        </div>
+        {isCanvasPanelOpen && activeCanvasId && (
+          <div className="w-[420px] shrink-0 border-l border-border">
+            <CanvasSessionPanel
+              canvasId={activeCanvasId}
+              sessionId={currentSessionId}
+              onClose={() => setIsCanvasPanelOpen(false)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

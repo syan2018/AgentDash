@@ -136,6 +136,25 @@ pub fn validate_canvas_contract(canvas: &Canvas) -> Result<(), DomainError> {
     Ok(())
 }
 
+pub fn upsert_canvas_binding(
+    canvas: &mut Canvas,
+    binding: CanvasDataBinding,
+) -> Result<(), DomainError> {
+    if let Some(existing) = canvas
+        .bindings
+        .iter_mut()
+        .find(|item| item.alias == binding.alias)
+    {
+        *existing = binding;
+    } else {
+        canvas.bindings.push(binding);
+    }
+    normalize_canvas(canvas)?;
+    validate_canvas_contract(canvas)?;
+    canvas.touch();
+    Ok(())
+}
+
 fn normalize_canvas(canvas: &mut Canvas) -> Result<(), DomainError> {
     canvas.title = canvas.title.trim().to_string();
     canvas.description = canvas.description.trim().to_string();

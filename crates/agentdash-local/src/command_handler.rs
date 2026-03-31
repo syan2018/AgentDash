@@ -88,6 +88,18 @@ impl CommandHandler {
                 vec![self.handle_tool_file_write(id, payload).await]
             }
 
+            RelayMessage::CommandToolFileDelete { id, payload } => {
+                vec![self.handle_tool_file_delete(id, payload).await]
+            }
+
+            RelayMessage::CommandToolFileRename { id, payload } => {
+                vec![self.handle_tool_file_rename(id, payload).await]
+            }
+
+            RelayMessage::CommandToolApplyPatch { id, payload } => {
+                vec![self.handle_tool_apply_patch(id, payload).await]
+            }
+
             RelayMessage::CommandToolShellExec { id, payload } => {
                 vec![self.handle_tool_shell_exec(id, payload).await]
             }
@@ -327,6 +339,91 @@ impl CommandHandler {
                 error: None,
             },
             Err(e) => RelayMessage::ResponseToolFileWrite {
+                id,
+                payload: None,
+                error: Some(RelayError::io_error(e.to_string())),
+            },
+        }
+    }
+
+    async fn handle_tool_file_delete(
+        &self,
+        id: String,
+        payload: ToolFileDeletePayload,
+    ) -> RelayMessage {
+        match self
+            .tool_executor
+            .file_delete(&payload.path, &payload.workspace_root)
+            .await
+        {
+            Ok(()) => RelayMessage::ResponseToolFileDelete {
+                id,
+                payload: Some(ToolFileDeleteResponse {
+                    call_id: payload.call_id,
+                    status: "ok".to_string(),
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseToolFileDelete {
+                id,
+                payload: None,
+                error: Some(RelayError::io_error(e.to_string())),
+            },
+        }
+    }
+
+    async fn handle_tool_file_rename(
+        &self,
+        id: String,
+        payload: ToolFileRenamePayload,
+    ) -> RelayMessage {
+        match self
+            .tool_executor
+            .file_rename(
+                &payload.from_path,
+                &payload.to_path,
+                &payload.workspace_root,
+            )
+            .await
+        {
+            Ok(()) => RelayMessage::ResponseToolFileRename {
+                id,
+                payload: Some(ToolFileRenameResponse {
+                    call_id: payload.call_id,
+                    status: "ok".to_string(),
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseToolFileRename {
+                id,
+                payload: None,
+                error: Some(RelayError::io_error(e.to_string())),
+            },
+        }
+    }
+
+    async fn handle_tool_apply_patch(
+        &self,
+        id: String,
+        payload: ToolApplyPatchPayload,
+    ) -> RelayMessage {
+        match self
+            .tool_executor
+            .apply_patch(&payload.patch, &payload.workspace_root)
+            .await
+        {
+            Ok(affected) => RelayMessage::ResponseToolApplyPatch {
+                id,
+                payload: Some(ToolApplyPatchResponse {
+                    call_id: payload.call_id,
+                    status: "ok".to_string(),
+                    added: affected.added,
+                    modified: affected.modified,
+                    deleted: affected.deleted,
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseToolApplyPatch {
                 id,
                 payload: None,
                 error: Some(RelayError::io_error(e.to_string())),

@@ -321,7 +321,8 @@ mod tests {
             exposure: ContextContainerExposure::default(),
         };
 
-        validate_context_containers(&[container]).expect("write on external_service should be allowed");
+        validate_context_containers(&[container])
+            .expect("write on external_service should be allowed");
     }
 
     #[test]

@@ -443,10 +443,7 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
 
     let mut seen_rule_keys = std::collections::BTreeSet::new();
     for (index, rule) in contract.hook_rules.iter().enumerate() {
-        validate_identity(
-            &format!("{field_path}.hook_rules[{index}].key"),
-            &rule.key,
-        )?;
+        validate_identity(&format!("{field_path}.hook_rules[{index}].key"), &rule.key)?;
         if rule.preset.is_none() && rule.script.is_none() {
             return Err(format!(
                 "{field_path}.hook_rules[{index}] 必须指定 preset 或 script"

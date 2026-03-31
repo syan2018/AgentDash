@@ -207,6 +207,9 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         | RelayMessage::ResponseWorkspaceDetectGit { .. }
         | RelayMessage::ResponseToolFileRead { .. }
         | RelayMessage::ResponseToolFileWrite { .. }
+        | RelayMessage::ResponseToolFileDelete { .. }
+        | RelayMessage::ResponseToolFileRename { .. }
+        | RelayMessage::ResponseToolApplyPatch { .. }
         | RelayMessage::ResponseToolShellExec { .. }
         | RelayMessage::ResponseToolFileList { .. }
         | RelayMessage::ResponseToolSearch { .. }

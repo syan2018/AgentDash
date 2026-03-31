@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::RwLock;
 
-use rhai::{Dynamic, Engine, Scope, AST};
+use rhai::{AST, Dynamic, Engine, Scope};
 
 use agentdash_domain::workflow::WorkflowConstraintKind;
 use agentdash_spi::{
@@ -199,9 +199,10 @@ impl HookScriptEngine {
     /// 仅编译，不执行——用于验证 API (R11)
     #[allow(dead_code)]
     pub fn validate_script(&self, script: &str) -> Result<(), Vec<String>> {
-        self.engine.compile(script).map(|_| ()).map_err(|e| {
-            vec![e.to_string()]
-        })
+        self.engine
+            .compile(script)
+            .map(|_| ())
+            .map_err(|e| vec![e.to_string()])
     }
 
     /// 获取已注册的 preset key 列表 (R10)
@@ -240,7 +241,11 @@ impl HookScriptEngine {
         ctx: &HookEvaluationContext<'_>,
         params: Option<&serde_json::Value>,
     ) -> serde_json::Value {
-        let aw = ctx.snapshot.metadata.as_ref().and_then(|m| m.active_workflow.as_ref());
+        let aw = ctx
+            .snapshot
+            .metadata
+            .as_ref()
+            .and_then(|m| m.active_workflow.as_ref());
         let contract = aw.and_then(|a| a.effective_contract.as_ref());
 
         let auto_completion = workflow_auto_completion_snapshot(ctx.snapshot);
@@ -271,10 +276,8 @@ impl HookScriptEngine {
         };
 
         let tool_name = ctx.query.tool_name.as_deref().unwrap_or("");
-        let tool_failed =
-            super::helpers::tool_call_failed(ctx.query.payload.as_ref());
-        let is_artifact_tool =
-            super::helpers::is_report_workflow_artifact_tool(tool_name);
+        let tool_failed = super::helpers::tool_call_failed(ctx.query.payload.as_ref());
+        let is_artifact_tool = super::helpers::is_report_workflow_artifact_tool(tool_name);
         let denied_types = active_workflow_denied_record_artifact_types(ctx.snapshot);
 
         let trigger_str = match ctx.query.trigger {
@@ -451,10 +454,9 @@ impl HookScriptEngine {
     }
 
     fn register_helpers(engine: &mut Engine) {
-        engine.register_fn(
-            "is_workflow_artifact_tool",
-            |name: &str| -> bool { name.ends_with("report_workflow_artifact") },
-        );
+        engine.register_fn("is_workflow_artifact_tool", |name: &str| -> bool {
+            name.ends_with("report_workflow_artifact")
+        });
 
         engine.register_fn("requires_supervised_approval", |name: &str| -> bool {
             let normalized = name.to_ascii_lowercase();
@@ -462,6 +464,7 @@ impl HookScriptEngine {
                 || normalized.ends_with("shell")
                 || normalized.ends_with("write_file")
                 || normalized.ends_with("fs_write")
+                || normalized.ends_with("fs_apply_patch")
                 || normalized.contains("delete")
                 || normalized.contains("remove")
                 || normalized.contains("move")
@@ -479,12 +482,15 @@ impl HookScriptEngine {
             },
         );
 
-        engine.register_fn("make_diagnostic", |code: &str, message: &str| -> rhai::Map {
-            let mut m = rhai::Map::new();
-            m.insert("code".into(), Dynamic::from(code.to_string()));
-            m.insert("message".into(), Dynamic::from(message.to_string()));
-            m
-        });
+        engine.register_fn(
+            "make_diagnostic",
+            |code: &str, message: &str| -> rhai::Map {
+                let mut m = rhai::Map::new();
+                m.insert("code".into(), Dynamic::from(code.to_string()));
+                m.insert("message".into(), Dynamic::from(message.to_string()));
+                m
+            },
+        );
 
         engine.register_fn("block", |reason: &str| -> rhai::Map {
             let mut m = rhai::Map::new();
@@ -694,10 +700,7 @@ mod tests {
 
     #[test]
     fn preset_registration_and_eval() {
-        let engine = HookScriptEngine::new(&[(
-            "test_preset",
-            r#"#{ block: "from preset" }"#,
-        )]);
+        let engine = HookScriptEngine::new(&[("test_preset", r#"#{ block: "from preset" }"#)]);
         let (snapshot, query) = base_ctx();
         let ctx = HookEvaluationContext {
             snapshot: &snapshot,

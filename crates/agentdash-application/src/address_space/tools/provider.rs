@@ -14,7 +14,8 @@ use tokio::sync::RwLock;
 use crate::address_space::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::tools::fs::{
-    FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool, ShellExecTool,
+    FsApplyPatchTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool,
+    ShellExecTool,
 };
 use crate::task::tools::companion::{CompanionCompleteTool, CompanionDispatchTool};
 use crate::task::tools::hook_action::ResolveHookActionTool;
@@ -95,6 +96,11 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 overlay.clone(),
             )),
             Arc::new(FsWriteTool::new(
+                self.service.clone(),
+                address_space.clone(),
+                overlay.clone(),
+            )),
+            Arc::new(FsApplyPatchTool::new(
                 self.service.clone(),
                 address_space.clone(),
                 overlay.clone(),

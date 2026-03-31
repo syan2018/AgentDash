@@ -238,9 +238,7 @@ pub(super) fn session_hook_trace_decision(
         HookTrigger::SessionStart => {
             if resolution.refresh_snapshot {
                 "baseline_refreshed"
-            } else if !resolution.injections.is_empty()
-                || !resolution.diagnostics.is_empty()
-            {
+            } else if !resolution.injections.is_empty() || !resolution.diagnostics.is_empty() {
                 "baseline_initialized"
             } else {
                 "noop"

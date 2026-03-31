@@ -15,8 +15,7 @@ pub(super) const REASON_PENDING_COMPANION_CONSUMED: &str =
 pub(super) const REASON_EXTRA_CONSTRAINTS_PENDING: &str =
     "completion satisfied but additional constraints pending, continue loop";
 
-pub(super) const REASON_STOP_GATE_UNSATISFIED: &str =
-    "stop gate not satisfied, continue loop";
+pub(super) const REASON_STOP_GATE_UNSATISFIED: &str = "stop gate not satisfied, continue loop";
 
 // ── Diagnostic messages ─────────────────────────────────────────────────
 
@@ -44,9 +43,7 @@ pub(super) fn stop_gate_fallback_steering(gate_reason: &str) -> String {
 // ── Hook injection markdown ─────────────────────────────────────────────
 
 pub(super) fn hook_context_header(session_id: &str, revision: u64) -> String {
-    format!(
-        "[系统动态 Hook 上下文]\n当前 session_id={session_id}，revision={revision}"
-    )
+    format!("[系统动态 Hook 上下文]\n当前 session_id={session_id}，revision={revision}")
 }
 
 pub(super) fn owners_section(owners_md: &str) -> String {
@@ -80,12 +77,16 @@ pub(super) fn pending_action_turn_line(turn_id: &str) -> String {
 
 pub(super) fn pending_action_instruction(action_type: &str) -> &'static str {
     match action_type {
-        "blocking_review" => "\
+        "blocking_review" => {
+            "\
             当前事项是阻塞式 review。不要复述前文；\
-            直接处理剩余动作，并在完成后调用 `resolve_hook_action` 明确结案。",
-        "follow_up_required" => "\
+            直接处理剩余动作，并在完成后调用 `resolve_hook_action` 明确结案。"
+        }
+        "follow_up_required" => {
+            "\
             当前事项要求继续跟进。不要停在总结；\
-            请直接落实后续动作，并在完成后调用 `resolve_hook_action` 明确结案。",
+            请直接落实后续动作，并在完成后调用 `resolve_hook_action` 明确结案。"
+        }
         _ => "请直接处理这项 Hook 待办，并在完成后调用 `resolve_hook_action` 明确结案。",
     }
 }
@@ -98,8 +99,7 @@ pub(super) fn constraints_section(items_md: &str) -> String {
     format!("必须完成的约束：\n{items_md}")
 }
 
-pub(super) const PENDING_ACTION_FOOTER: &str =
-    "以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。\
+pub(super) const PENDING_ACTION_FOOTER: &str = "以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。\
      处理时尽量避免重复总结，聚焦完成剩余动作。";
 
 // ── Dynamic injection section headings ──────────────────────────────────
@@ -112,6 +112,5 @@ pub(super) fn flow_constraints_section(items_md: &str) -> String {
 
 // ── Auto-resume prompt ──────────────────────────────────────────────────
 
-pub(super) const AUTO_RESUME_PROMPT: &str =
-    "[系统自动续跑] 上一轮执行结束但 workflow stop gate 仍未满足。\
+pub(super) const AUTO_RESUME_PROMPT: &str = "[系统自动续跑] 上一轮执行结束但 workflow stop gate 仍未满足。\
      请继续完成未尽事项：补齐验证结论、提交必要产物，或推动状态流转。";

@@ -206,7 +206,8 @@ pub async fn create_lifecycle_definition(
     Ok(Json(saved.into()))
 }
 
-pub async fn list_workflow_templates() -> Result<Json<Vec<BuiltinWorkflowTemplateBundle>>, ApiError> {
+pub async fn list_workflow_templates() -> Result<Json<Vec<BuiltinWorkflowTemplateBundle>>, ApiError>
+{
     Ok(Json(
         list_builtin_workflow_templates()
             .map_err(ApiError::BadRequest)?
@@ -905,8 +906,10 @@ fn group_presets_by_trigger(
             .ok()
             .and_then(|v| v.as_str().map(String::from))
             .unwrap_or_default();
-        groups.entry(trigger_key).or_default().push(
-            serde_json::json!({
+        groups
+            .entry(trigger_key)
+            .or_default()
+            .push(serde_json::json!({
                 "key": preset.key,
                 "trigger": preset.trigger,
                 "label": preset.label,
@@ -914,8 +917,7 @@ fn group_presets_by_trigger(
                 "param_schema": preset.param_schema,
                 "script": preset.script,
                 "source": preset.source,
-            }),
-        );
+            }));
     }
     serde_json::to_value(groups).unwrap_or_default()
 }
@@ -950,7 +952,9 @@ pub async fn register_hook_preset(
         .hook_provider
         .register_preset(&req.key, &req.script)
         .map_err(|e| ApiError::BadRequest(format!("脚本编译失败: {e}")))?;
-    Ok(Json(serde_json::json!({ "registered": true, "key": req.key })))
+    Ok(Json(
+        serde_json::json!({ "registered": true, "key": req.key }),
+    ))
 }
 
 pub async fn delete_hook_preset(

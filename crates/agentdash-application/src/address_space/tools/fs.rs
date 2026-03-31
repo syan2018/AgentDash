@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::address_space::inline_persistence::InlineContentOverlay;
 use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::{
-    ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri,
+    ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri, resolve_mount_id,
 };
 
 pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<ResourceRef, String> {
@@ -25,6 +25,12 @@ pub fn ok_text(text: String) -> AgentToolResult {
         details: None,
     }
 }
+
+const FS_APPLY_PATCH_DESCRIPTION: &str = "使用 Codex apply_patch 语法在指定 mount 下进行局部或多文件修改。\n\
+补丁必须以 `*** Begin Patch` 开始、以 `*** End Patch` 结束。\n\
+文件操作头只能是 `*** Add File: path`、`*** Update File: path`、`*** Delete File: path`，重命名时可在 `Update File` 后追加 `*** Move to: new/path`。\n\
+每个更新块以 `@@` 开始；块内每行必须以前缀空格 / `-` / `+` 表示上下文、删除、新增。\n\
+新增文件内容每行都必须以 `+` 开头；所有路径都必须相对 mount 根目录，不能使用绝对路径。";
 
 #[derive(Clone)]
 pub struct MountsListTool {
@@ -238,6 +244,88 @@ impl AgentTool for FsWriteTool {
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
         Ok(ok_text(format!("已写入文件: {}", target.path)))
+    }
+}
+
+#[derive(Clone)]
+pub struct FsApplyPatchTool {
+    service: Arc<RelayAddressSpaceService>,
+    address_space: AddressSpace,
+    overlay: Option<Arc<InlineContentOverlay>>,
+}
+impl FsApplyPatchTool {
+    pub fn new(
+        service: Arc<RelayAddressSpaceService>,
+        address_space: AddressSpace,
+        overlay: Option<Arc<InlineContentOverlay>>,
+    ) -> Self {
+        Self {
+            service,
+            address_space,
+            overlay,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FsApplyPatchParams {
+    /// 目标 mount；省略时使用默认 mount。patch 中所有路径都必须相对该 mount 根目录。
+    pub mount: Option<String>,
+    /// Codex apply_patch 自由格式补丁文本。
+    /// 语法骨架：
+    /// `*** Begin Patch`
+    /// `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`
+    /// `*** Move to: new/path`（仅可跟在 `Update File` 后）
+    /// `@@`
+    /// hunk 行以前缀空格 / `-` / `+` 表示上下文、删除、新增
+    /// `*** End Patch`
+    pub patch: String,
+}
+
+#[async_trait]
+impl AgentTool for FsApplyPatchTool {
+    fn name(&self) -> &str {
+        "fs_apply_patch"
+    }
+    fn description(&self) -> &str {
+        FS_APPLY_PATCH_DESCRIPTION
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        schema_value::<FsApplyPatchParams>()
+    }
+    async fn execute(
+        &self,
+        _: &str,
+        args: serde_json::Value,
+        _: CancellationToken,
+        _: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        let params: FsApplyPatchParams = serde_json::from_value(args)
+            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+        let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
+            .map_err(AgentToolError::ExecutionFailed)?;
+        let result = self
+            .service
+            .apply_patch(
+                &self.address_space,
+                &mount_id,
+                &params.patch,
+                self.overlay.as_ref().map(|arc| arc.as_ref()),
+            )
+            .await
+            .map_err(AgentToolError::ExecutionFailed)?;
+
+        let mut lines = vec![format!("已对 mount `{mount_id}` 应用 patch。")];
+        if !result.added.is_empty() {
+            lines.push(format!("新增: {}", result.added.join(", ")));
+        }
+        if !result.modified.is_empty() {
+            lines.push(format!("修改: {}", result.modified.join(", ")));
+        }
+        if !result.deleted.is_empty() {
+            lines.push(format!("删除: {}", result.deleted.join(", ")));
+        }
+        Ok(ok_text(lines.join("\n")))
     }
 }
 

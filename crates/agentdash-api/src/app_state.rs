@@ -182,10 +182,7 @@ impl AppState {
             )));
 
         for provider in plugin_registration.mount_providers {
-            tracing::info!(
-                "注册插件 MountProvider: {}",
-                provider.provider_id()
-            );
+            tracing::info!("注册插件 MountProvider: {}", provider.provider_id());
             mount_registry_builder = mount_registry_builder.register(provider);
         }
 

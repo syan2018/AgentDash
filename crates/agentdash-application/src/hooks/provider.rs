@@ -116,9 +116,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         };
 
         // Add global builtin source and tags
-        snapshot
-            .sources
-            .push(global_builtin_source().to_string());
+        snapshot.sources.push(global_builtin_source().to_string());
         snapshot.tags.extend([
             "hook_source:global_builtin".to_string(),
             "hook_builtin:runtime_trace".to_string(),
@@ -182,10 +180,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         step_title: Some(step_title),
                         workflow_key: workflow.active_step.workflow_key.clone(),
                         transition_policy: Some(transition_policy.to_string()),
-                        primary_workflow_id: workflow
-                            .primary_workflow
-                            .as_ref()
-                            .map(|w| w.id),
+                        primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),
                         primary_workflow_key: workflow
                             .primary_workflow
                             .as_ref()
@@ -207,7 +202,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         checklist_evidence_artifact_type: Some(checklist_evidence.artifact_type),
                         checklist_evidence_present: Some(checklist_evidence.count > 0),
                         checklist_evidence_count: Some(checklist_evidence.count as u32),
-                        checklist_evidence_artifact_ids: Some(checklist_evidence.artifact_ids.clone()),
+                        checklist_evidence_artifact_ids: Some(
+                            checklist_evidence.artifact_ids.clone(),
+                        ),
                         checklist_evidence_titles: Some(checklist_evidence.titles.clone()),
                     });
                 }
@@ -231,17 +228,19 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     .extend(build_workflow_step_fragments(&workflow, &wf_source));
 
                 // Add workflow constraint injections
-                snapshot.injections.extend(
-                    workflow
-                        .effective_contract
-                        .constraints
-                        .iter()
-                        .map(|constraint| HookInjection {
-                            slot: "constraint".to_string(),
-                            content: constraint.description.clone(),
-                            source: wf_source.clone(),
-                        }),
-                );
+                snapshot
+                    .injections
+                    .extend(
+                        workflow
+                            .effective_contract
+                            .constraints
+                            .iter()
+                            .map(|constraint| HookInjection {
+                                slot: "constraint".to_string(),
+                                content: constraint.description.clone(),
+                                source: wf_source.clone(),
+                            }),
+                    );
             }
 
             snapshot.owners.push(owner);
@@ -396,11 +395,11 @@ mod tests {
     use agentdash_spi::hooks::HookSessionRuntimeAccess;
     use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use agentdash_spi::{
-        ExecutionHookProvider, HookError, HookTrigger, SessionHookRefreshQuery,
-        SessionHookSnapshotQuery,
+        AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
     };
     use agentdash_spi::{
-        AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
+        ExecutionHookProvider, HookError, HookTrigger, SessionHookRefreshQuery,
+        SessionHookSnapshotQuery,
     };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;

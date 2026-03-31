@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use agentdash_application::address_space::{
-    ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
-    MountProvider, PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,
-    join_root_ref, normalize_mount_relative_path,
+    ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
+    MountEditCapabilities, MountError, MountOperationContext, MountProvider, PROVIDER_RELAY_FS,
+    ReadResult, SearchMatch, SearchQuery, SearchResult, join_root_ref,
+    normalize_mount_relative_path,
 };
 use agentdash_application::runtime::Mount;
 use agentdash_relay::{
-    RelayMessage, ToolFileListPayload, ToolFileReadPayload, ToolFileWritePayload,
-    ToolSearchPayload, ToolShellExecPayload,
+    RelayMessage, ToolApplyPatchPayload, ToolFileDeletePayload, ToolFileListPayload,
+    ToolFileReadPayload, ToolFileRenamePayload, ToolFileWritePayload, ToolSearchPayload,
+    ToolShellExecPayload,
 };
 use async_trait::async_trait;
 
@@ -34,6 +36,14 @@ impl RelayFsMountProvider {
 impl MountProvider for RelayFsMountProvider {
     fn provider_id(&self) -> &str {
         PROVIDER_RELAY_FS
+    }
+
+    fn edit_capabilities(&self, _mount: &Mount) -> MountEditCapabilities {
+        MountEditCapabilities {
+            create: true,
+            delete: true,
+            rename: true,
+        }
     }
 
     async fn is_available(&self, mount: &Mount) -> bool {
@@ -119,6 +129,124 @@ impl MountProvider for RelayFsMountProvider {
             } => Err(MountError::OperationFailed(error.message)),
             other => Err(MountError::OperationFailed(format!(
                 "file_write 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn delete_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        _ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        let path =
+            normalize_mount_relative_path(path, false).map_err(MountError::OperationFailed)?;
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolFileDelete {
+                    id: RelayMessage::new_id("mp-delete"),
+                    payload: ToolFileDeletePayload {
+                        call_id: RelayMessage::new_id("call"),
+                        path,
+                        workspace_root: mount.root_ref.clone(),
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolFileDelete { error: None, .. } => Ok(()),
+            RelayMessage::ResponseToolFileDelete {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "file_delete 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn rename_text(
+        &self,
+        mount: &Mount,
+        from_path: &str,
+        to_path: &str,
+        _ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        let from_path =
+            normalize_mount_relative_path(from_path, false).map_err(MountError::OperationFailed)?;
+        let to_path =
+            normalize_mount_relative_path(to_path, false).map_err(MountError::OperationFailed)?;
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolFileRename {
+                    id: RelayMessage::new_id("mp-rename"),
+                    payload: ToolFileRenamePayload {
+                        call_id: RelayMessage::new_id("call"),
+                        from_path,
+                        to_path,
+                        workspace_root: mount.root_ref.clone(),
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolFileRename { error: None, .. } => Ok(()),
+            RelayMessage::ResponseToolFileRename {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "file_rename 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn apply_patch(
+        &self,
+        mount: &Mount,
+        request: &ApplyPatchRequest,
+        _ctx: &MountOperationContext,
+    ) -> Result<ApplyPatchResult, MountError> {
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolApplyPatch {
+                    id: RelayMessage::new_id("mp-apply-patch"),
+                    payload: ToolApplyPatchPayload {
+                        call_id: RelayMessage::new_id("call"),
+                        patch: request.patch.clone(),
+                        workspace_root: mount.root_ref.clone(),
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolApplyPatch {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(ApplyPatchResult {
+                added: payload.added,
+                modified: payload.modified,
+                deleted: payload.deleted,
+            }),
+            RelayMessage::ResponseToolApplyPatch {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "apply_patch 返回意外响应: {}",
                 other.id()
             ))),
         }

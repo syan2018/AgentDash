@@ -1281,8 +1281,16 @@ mod companion_tests {
             1,
         );
 
-        let context_count = slice.injections.iter().filter(|i| i.slot != "constraint").count();
-        let constraint_count = slice.injections.iter().filter(|i| i.slot == "constraint").count();
+        let context_count = slice
+            .injections
+            .iter()
+            .filter(|i| i.slot != "constraint")
+            .count();
+        let constraint_count = slice
+            .injections
+            .iter()
+            .filter(|i| i.slot == "constraint")
+            .count();
         assert_eq!(context_count, 2);
         assert_eq!(constraint_count, 1);
         assert_eq!(slice.omitted_fragment_count, 1);

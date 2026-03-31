@@ -124,10 +124,7 @@ pub fn hook_rule_preset_registry() -> &'static [HookRulePreset] {
 
 /// 返回 preset key → script 源码的映射，用于初始化 HookScriptEngine
 pub fn builtin_preset_scripts() -> Vec<(&'static str, &'static str)> {
-    PRESET_REGISTRY
-        .iter()
-        .map(|p| (p.key, p.script))
-        .collect()
+    PRESET_REGISTRY.iter().map(|p| (p.key, p.script)).collect()
 }
 
 pub fn domain_trigger_to_spi(trigger: WorkflowHookTrigger) -> HookTrigger {

@@ -435,6 +435,103 @@ pub async fn write_mount_file(
     }))
 }
 
+// ─── Mount 级 apply_patch ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ApplyMountPatchRequest {
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub story_id: Option<String>,
+    #[serde(default)]
+    pub owner_type: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    pub mount_id: String,
+    pub patch: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApplyMountPatchResponse {
+    pub mount_id: String,
+    pub added: Vec<String>,
+    pub modified: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
+/// `POST /api/address-spaces/apply-patch`
+///
+/// 在指定 mount 上应用 Codex 风格的 apply_patch 文本。
+pub async fn apply_mount_patch(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<ApplyMountPatchRequest>,
+) -> Result<Json<ApplyMountPatchResponse>, ApiError> {
+    let address_space = resolve_address_space(
+        &state,
+        &current_user,
+        &req.project_id,
+        &req.story_id,
+        &req.owner_type,
+        &req.owner_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let mount = address_space
+        .mounts
+        .iter()
+        .find(|m| m.id == req.mount_id)
+        .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
+
+    if !mount.supports(agentdash_spi::MountCapability::Write) {
+        return Err(ApiError::BadRequest(format!(
+            "挂载点 \"{}\" 没有 write 能力",
+            mount.display_name,
+        )));
+    }
+
+    if mount.provider == PROVIDER_INLINE_FS {
+        let persister =
+            agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
+                state.repos.project_repo.clone(),
+                state.repos.story_repo.clone(),
+            );
+        let overlay =
+            agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(
+                std::sync::Arc::new(persister),
+            );
+        let result = state
+            .services
+            .address_space_service
+            .apply_patch(&address_space, &req.mount_id, &req.patch, Some(&overlay))
+            .await
+            .map_err(ApiError::Internal)?;
+
+        return Ok(Json(ApplyMountPatchResponse {
+            mount_id: req.mount_id,
+            added: result.added,
+            modified: result.modified,
+            deleted: result.deleted,
+        }));
+    }
+
+    check_mount_available(&state, &address_space, &req.mount_id).await?;
+
+    let result = state
+        .services
+        .address_space_service
+        .apply_patch(&address_space, &req.mount_id, &req.patch, None)
+        .await
+        .map_err(ApiError::Internal)?;
+
+    Ok(Json(ApplyMountPatchResponse {
+        mount_id: req.mount_id,
+        added: result.added,
+        modified: result.modified,
+        deleted: result.deleted,
+    }))
+}
+
 // ─── Address Space 预览 ────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -804,5 +901,10 @@ async fn require_backend_online(
 pub async fn list_configurable_mount_providers(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<agentdash_application::address_space::ConfigurableProviderInfo>> {
-    Json(state.services.mount_provider_registry.user_configurable_providers())
+    Json(
+        state
+            .services
+            .mount_provider_registry
+            .user_configurable_providers(),
+    )
 }

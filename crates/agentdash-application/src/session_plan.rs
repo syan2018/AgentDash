@@ -545,6 +545,7 @@ fn runtime_address_space_tools(address_space: &AddressSpace) -> Vec<String> {
         .any(|mount| mount.supports(MountCapability::Write))
     {
         tools.push("fs_write".to_string());
+        tools.push("fs_apply_patch".to_string());
     }
     if address_space
         .mounts
@@ -675,6 +676,7 @@ mod tests {
         assert!(summary.resolved);
         assert!(summary.tool_names.contains(&"mounts_list".to_string()));
         assert!(summary.tool_names.contains(&"fs_write".to_string()));
+        assert!(summary.tool_names.contains(&"fs_apply_patch".to_string()));
         assert!(summary.tool_names.contains(&"shell_exec".to_string()));
         assert!(
             summary

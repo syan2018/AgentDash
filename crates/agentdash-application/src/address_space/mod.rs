@@ -1,3 +1,4 @@
+pub mod apply_patch;
 pub mod inline_persistence;
 pub mod mount;
 pub mod path;
@@ -8,6 +9,11 @@ pub mod relay_service;
 pub mod tools;
 pub mod types;
 
+pub use apply_patch::{
+    AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget,
+    ParseError as ApplyPatchParseError, apply_patch_to_fs, apply_patch_to_inline_files,
+    apply_patch_to_target,
+};
 pub use mount::{
     PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS, SessionMountTarget,
     build_context_container_mount, build_derived_address_space, build_lifecycle_mount,
@@ -20,10 +26,14 @@ pub use path::{
     parse_mount_uri, resolve_mount, resolve_mount_id,
 };
 pub use provider::{
-    ConfigurableProviderInfo, MountError, MountOperationContext, MountProvider,
-    MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch, SearchQuery, SearchResult,
+    ConfigurableProviderInfo, MountEditCapabilities, MountError, MountOperationContext,
+    MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch, SearchQuery,
+    SearchResult,
 };
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
 pub use relay_service::{RelayAddressSpaceService, TextSearchParams};
-pub use types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult, ResourceRef};
+pub use types::{
+    ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
+    ReadResult, ResourceRef,
+};

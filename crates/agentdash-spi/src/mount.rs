@@ -42,6 +42,35 @@ pub struct ReadResult {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MountEditCapabilities {
+    #[serde(default)]
+    pub create: bool,
+    #[serde(default)]
+    pub delete: bool,
+    #[serde(default)]
+    pub rename: bool,
+}
+
+impl MountEditCapabilities {
+    pub fn supports_move(self) -> bool {
+        self.rename || (self.create && self.delete)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ApplyPatchRequest {
+    /// apply_patch 自由格式文本；其中路径必须相对 mount 根目录。
+    pub patch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ApplyPatchResult {
+    pub added: Vec<String>,
+    pub modified: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ListOptions {
     pub path: String,
@@ -167,6 +196,51 @@ pub trait MountProvider: Send + Sync {
         content: &str,
         ctx: &MountOperationContext,
     ) -> Result<(), MountError>;
+
+    fn edit_capabilities(&self, mount: &Mount) -> MountEditCapabilities {
+        let _ = mount;
+        MountEditCapabilities::default()
+    }
+
+    async fn delete_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        let _ = (mount, path, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support delete_text",
+            self.provider_id()
+        )))
+    }
+
+    async fn rename_text(
+        &self,
+        mount: &Mount,
+        from_path: &str,
+        to_path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        let _ = (mount, from_path, to_path, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support rename_text",
+            self.provider_id()
+        )))
+    }
+
+    async fn apply_patch(
+        &self,
+        mount: &Mount,
+        request: &ApplyPatchRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ApplyPatchResult, MountError> {
+        let _ = (mount, request, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support apply_patch",
+            self.provider_id()
+        )))
+    }
 
     async fn list(
         &self,

@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agentdash_application::address_space::ApplyPatchAffectedPaths;
 use agentdash_relay::{FileEntryRelay, SearchHit};
 
 pub(crate) struct SearchParams<'a> {
@@ -43,6 +44,9 @@ pub enum ToolError {
 
     #[error("路径解析失败: {0}")]
     InvalidPath(String),
+
+    #[error("Patch 应用失败: {0}")]
+    PatchApply(String),
 }
 
 impl ToolExecutor {
@@ -110,6 +114,53 @@ impl ToolExecutor {
         }
         tokio::fs::write(&full_path, content).await?;
         Ok(())
+    }
+
+    pub async fn file_delete(&self, path: &str, workspace_root: &str) -> Result<(), ToolError> {
+        let full_path = self.resolve_existing_path(path, workspace_root)?;
+        tracing::debug!(path = %full_path.display(), "file_delete");
+        tokio::fs::remove_file(&full_path).await?;
+        Ok(())
+    }
+
+    pub async fn file_rename(
+        &self,
+        from_path: &str,
+        to_path: &str,
+        workspace_root: &str,
+    ) -> Result<(), ToolError> {
+        let source = self.resolve_existing_path(from_path, workspace_root)?;
+        let destination = self.resolve_path_for_write(to_path, workspace_root)?;
+        tracing::debug!(
+            from = %source.display(),
+            to = %destination.display(),
+            "file_rename"
+        );
+        if destination.exists() && source != destination {
+            return Err(ToolError::InvalidPath(format!("目标文件已存在: {to_path}")));
+        }
+        if let Some(parent) = destination.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::rename(&source, &destination).await?;
+        Ok(())
+    }
+
+    pub async fn apply_patch(
+        &self,
+        patch: &str,
+        workspace_root: &str,
+    ) -> Result<ApplyPatchAffectedPaths, ToolError> {
+        let ws = self.validate_workspace_root(workspace_root)?;
+        tracing::debug!(workspace_root = %ws.display(), "apply_patch");
+        let patch_owned = patch.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            agentdash_application::address_space::apply_patch_to_fs(&ws, &patch_owned)
+        })
+        .await
+        .map_err(|e| ToolError::PatchApply(format!("patch 任务失败: {e}")))?
+        .map_err(|e| ToolError::PatchApply(e.to_string()))
     }
 
     pub fn resolve_shell_cwd(
@@ -657,6 +708,43 @@ mod tests {
             .resolve_existing_path(file.to_string_lossy().as_ref(), &root)
             .expect_err("absolute path should be rejected");
         assert!(matches!(error, ToolError::InvalidPath(_)));
+    }
+
+    #[tokio::test]
+    async fn file_delete_removes_existing_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file = temp.path().join("demo.txt");
+        std::fs::write(&file, "ok").expect("write");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        executor
+            .file_delete("demo.txt", &root)
+            .await
+            .expect("delete should succeed");
+
+        assert!(!file.exists());
+    }
+
+    #[tokio::test]
+    async fn file_rename_moves_file_inside_workspace() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("demo.txt");
+        std::fs::write(&source, "ok").expect("write");
+        let destination = temp.path().join("nested").join("renamed.txt");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        executor
+            .file_rename("demo.txt", "nested/renamed.txt", &root)
+            .await
+            .expect("rename should succeed");
+
+        assert!(!source.exists());
+        assert_eq!(
+            std::fs::read_to_string(destination).expect("read renamed file"),
+            "ok"
+        );
     }
 
     #[test]

@@ -3,16 +3,21 @@
 mod tests {
     use std::sync::Arc;
 
+    use agentdash_application::address_space::inline_persistence::{
+        InlineContentOverlay, InlineContentPersister,
+    };
     use agentdash_application::address_space::*;
     use agentdash_spi::{AddressSpace, MountCapability};
 
     use agentdash_agent::AgentTool;
     use agentdash_relay::RelayMessage;
+    use async_trait::async_trait;
     use chrono::Utc;
     use tokio::sync::mpsc;
 
     use agentdash_application::address_space::tools::fs::{
-        FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool, ShellExecTool,
+        FsApplyPatchTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool,
+        ShellExecTool,
     };
 
     use agentdash_domain::context_container::{
@@ -84,6 +89,33 @@ mod tests {
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(InlineFsMountProvider));
         Arc::new(registry)
+    }
+
+    #[derive(Default)]
+    struct MemoryInlinePersister;
+
+    #[async_trait]
+    impl InlineContentPersister for MemoryInlinePersister {
+        async fn persist_write(
+            &self,
+            _source_project_id: &str,
+            _source_story_id: Option<&str>,
+            _container_id: &str,
+            _path: &str,
+            _content: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn persist_delete(
+            &self,
+            _source_project_id: &str,
+            _source_story_id: Option<&str>,
+            _container_id: &str,
+            _path: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -260,6 +292,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inline_mount_supports_apply_patch_via_overlay() {
+        let service = RelayAddressSpaceService::new(mount_registry_with_inline_fs());
+        let runtime_address_space = AddressSpace {
+            mounts: vec![
+                build_context_container_mount(&ContextContainerDefinition {
+                    id: "story-brief".to_string(),
+                    mount_id: "brief".to_string(),
+                    display_name: "brief".to_string(),
+                    provider: ContextContainerProvider::InlineFiles {
+                        files: vec![
+                            ContextContainerFile {
+                                path: "brief.md".to_string(),
+                                content: "hello inline mount\n".to_string(),
+                            },
+                            ContextContainerFile {
+                                path: "obsolete.md".to_string(),
+                                content: "remove me\n".to_string(),
+                            },
+                        ],
+                    },
+                    capabilities: vec![
+                        ContextContainerCapability::Read,
+                        ContextContainerCapability::Write,
+                        ContextContainerCapability::List,
+                        ContextContainerCapability::Search,
+                    ],
+                    default_write: true,
+                    exposure: ContextContainerExposure::default(),
+                })
+                .expect("mount should build"),
+            ],
+            default_mount_id: Some("brief".to_string()),
+            source_project_id: Some(uuid::Uuid::new_v4().to_string()),
+            source_story_id: None,
+        };
+        let overlay = InlineContentOverlay::new(Arc::new(MemoryInlinePersister));
+
+        let patch = r#"*** Begin Patch
+*** Update File: brief.md
+*** Move to: docs/brief.md
+@@
+-hello inline mount
++hello patched inline mount
+*** Delete File: obsolete.md
+*** Add File: new.md
++new inline file
+*** End Patch"#;
+
+        let result = service
+            .apply_patch(&runtime_address_space, "brief", patch, Some(&overlay))
+            .await
+            .expect("inline patch");
+        assert_eq!(result.modified, vec!["docs/brief.md".to_string()]);
+        assert_eq!(result.deleted, vec!["obsolete.md".to_string()]);
+        assert_eq!(result.added, vec!["new.md".to_string()]);
+
+        let moved = service
+            .read_text(
+                &runtime_address_space,
+                &ResourceRef {
+                    mount_id: "brief".to_string(),
+                    path: "docs/brief.md".to_string(),
+                },
+                Some(&overlay),
+            )
+            .await
+            .expect("read moved file");
+        assert_eq!(moved.content, "hello patched inline mount\n");
+
+        let listed = service
+            .list(
+                &runtime_address_space,
+                "brief",
+                ListOptions {
+                    path: ".".to_string(),
+                    pattern: None,
+                    recursive: true,
+                },
+                Some(&overlay),
+            )
+            .await
+            .expect("inline list after patch");
+        assert!(
+            listed
+                .entries
+                .iter()
+                .any(|entry| entry.path == "docs/brief.md")
+        );
+        assert!(listed.entries.iter().any(|entry| entry.path == "new.md"));
+        assert!(
+            !listed
+                .entries
+                .iter()
+                .any(|entry| entry.path == "obsolete.md")
+        );
+
+        let hits = service
+            .search_text(
+                &runtime_address_space,
+                "brief",
+                ".",
+                "patched inline",
+                10,
+                Some(&overlay),
+            )
+            .await
+            .expect("search patched inline");
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].contains("docs/brief.md:1"));
+    }
+
+    #[tokio::test]
     async fn read_text_routes_via_tool_transport() {
         let registry = crate::relay::registry::BackendRegistry::new();
         let (sender, mut receiver) = mpsc::unbounded_channel();
@@ -359,6 +503,7 @@ mod tests {
             MountsListTool::new(service.clone(), address_space.clone()).parameters_schema(),
             FsReadTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
             FsWriteTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
+            FsApplyPatchTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
             FsListTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
             FsSearchTool::new(service.clone(), address_space.clone(), None).parameters_schema(),
             ShellExecTool::new(service, address_space).parameters_schema(),

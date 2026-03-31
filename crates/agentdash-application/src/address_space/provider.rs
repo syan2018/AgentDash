@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use agentdash_spi::mount::{
-    MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
+    MountEditCapabilities, MountError, MountOperationContext, MountProvider, SearchMatch,
+    SearchQuery, SearchResult,
 };
 
 /// Registry holding all available `MountProvider` implementations.
@@ -40,7 +41,11 @@ impl MountProviderRegistry {
                 service_id: p.provider_id().to_string(),
                 display_name: p.display_name().to_string(),
                 root_ref_hint: p.root_ref_hint().to_string(),
-                supported_capabilities: p.supported_capabilities().iter().map(|s| s.to_string()).collect(),
+                supported_capabilities: p
+                    .supported_capabilities()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             })
             .collect()
     }

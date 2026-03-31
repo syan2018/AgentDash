@@ -97,6 +97,27 @@ pub enum RelayMessage {
         payload: ToolFileWritePayload,
     },
 
+    /// 删除文件
+    #[serde(rename = "command.tool.file_delete")]
+    CommandToolFileDelete {
+        id: String,
+        payload: ToolFileDeletePayload,
+    },
+
+    /// 重命名文件
+    #[serde(rename = "command.tool.file_rename")]
+    CommandToolFileRename {
+        id: String,
+        payload: ToolFileRenamePayload,
+    },
+
+    /// 以 apply_patch 语法批量修改文件
+    #[serde(rename = "command.tool.apply_patch")]
+    CommandToolApplyPatch {
+        id: String,
+        payload: ToolApplyPatchPayload,
+    },
+
     /// 执行 Shell 命令
     #[serde(rename = "command.tool.shell_exec")]
     CommandToolShellExec {
@@ -183,6 +204,33 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
+    #[serde(rename = "response.tool.file_delete")]
+    ResponseToolFileDelete {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolFileDeleteResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.file_rename")]
+    ResponseToolFileRename {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolFileRenameResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.apply_patch")]
+    ResponseToolApplyPatch {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolApplyPatchResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
     #[serde(rename = "response.tool.shell_exec")]
     ResponseToolShellExec {
         id: String,
@@ -260,6 +308,9 @@ impl RelayMessage {
             | Self::CommandBrowseDirectory { id, .. }
             | Self::CommandToolFileRead { id, .. }
             | Self::CommandToolFileWrite { id, .. }
+            | Self::CommandToolFileDelete { id, .. }
+            | Self::CommandToolFileRename { id, .. }
+            | Self::CommandToolApplyPatch { id, .. }
             | Self::CommandToolShellExec { id, .. }
             | Self::CommandToolFileList { id, .. }
             | Self::CommandToolSearch { id, .. }
@@ -270,6 +321,9 @@ impl RelayMessage {
             | Self::ResponseBrowseDirectory { id, .. }
             | Self::ResponseToolFileRead { id, .. }
             | Self::ResponseToolFileWrite { id, .. }
+            | Self::ResponseToolFileDelete { id, .. }
+            | Self::ResponseToolFileRename { id, .. }
+            | Self::ResponseToolApplyPatch { id, .. }
             | Self::ResponseToolShellExec { id, .. }
             | Self::ResponseToolFileList { id, .. }
             | Self::ResponseToolSearch { id, .. }
@@ -446,6 +500,28 @@ pub struct ToolFileWritePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFileDeletePayload {
+    pub call_id: String,
+    pub path: String,
+    pub workspace_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFileRenamePayload {
+    pub call_id: String,
+    pub from_path: String,
+    pub to_path: String,
+    pub workspace_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolApplyPatchPayload {
+    pub call_id: String,
+    pub patch: String,
+    pub workspace_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolShellExecPayload {
     pub call_id: String,
     pub command: String,
@@ -570,6 +646,30 @@ pub struct ToolFileReadResponse {
 pub struct ToolFileWriteResponse {
     pub call_id: String,
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFileDeleteResponse {
+    pub call_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFileRenameResponse {
+    pub call_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolApplyPatchResponse {
+    pub call_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modified: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,0 +1,82 @@
+{
+  "id": "mount-apply-patch-capability",
+  "name": "mount-apply-patch-capability",
+  "title": "统一 Mount Patch 能力：基于 Provider Primitive 的组合式 Apply Patch",
+  "description": "将 apply_patch 从特定 provider 实现演进为共享编辑引擎 + provider primitive/capability 组合方案，覆盖 relay_fs、inline_fs 与后续可写 mount。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "address-space",
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-03-31",
+  "completedAt": "2026-03-31",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "id": "survey-current-state",
+      "title": "盘点当前 apply_patch 调用面与 provider 边界",
+      "status": "done"
+    },
+    {
+      "id": "design-primitives",
+      "title": "设计 primitive 与 capability 模型",
+      "status": "done"
+    },
+    {
+      "id": "provider-primitives",
+      "title": "为 relay_fs 与 inline_fs 补齐 delete/rename 等 primitive",
+      "status": "done"
+    },
+    {
+      "id": "default-composed-apply-patch",
+      "title": "实现共享层默认组合式 apply_patch",
+      "status": "done"
+    },
+    {
+      "id": "tooling-and-docs",
+      "title": "同步工具提示、API 和规范文档",
+      "status": "done"
+    },
+    {
+      "id": "tests",
+      "title": "补齐 capability / fallback / 多 provider 测试",
+      "status": "done"
+    }
+  ],
+  "relatedFiles": [
+    ".trellis/tasks/03-31-mount-apply-patch-capability/prd.md",
+    ".trellis/spec/backend/address-space-access.md",
+    "crates/agentdash-spi/src/mount.rs",
+    "crates/agentdash-application/src/address_space/apply_patch.rs",
+    "crates/agentdash-application/src/address_space/relay_service.rs",
+    "crates/agentdash-application/src/address_space/inline_persistence.rs",
+    "crates/agentdash-application/src/address_space/tools/fs.rs",
+    "crates/agentdash-api/src/routes/address_spaces.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent.rs"
+  ],
+  "notes": "已完成共享 patch 引擎恢复、MountEditCapabilities 引入、relay_fs delete/rename primitive、inline/relay 统一组合式 apply_patch，以及对应测试与文档同步。"
+}

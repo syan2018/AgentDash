@@ -11,9 +11,9 @@ use tokio_util::sync::CancellationToken;
 use super::hook_messages as msg;
 
 use agentdash_spi::hooks::{
-    HookDiagnosticEntry, HookEvaluationQuery, HookInjection,
-    HookPendingAction, HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry,
-    HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
+    HookDiagnosticEntry, HookEvaluationQuery, HookInjection, HookPendingAction,
+    HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry, HookTrigger,
+    SessionHookRefreshQuery, SharedHookSessionRuntime,
 };
 
 pub struct HookRuntimeDelegate {
@@ -121,9 +121,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         );
         self.record_trace(
             HookTrigger::UserPromptSubmit,
-            if evaluated.resolution.injections.is_empty()
-                && pending_messages.consumed == 0
-            {
+            if evaluated.resolution.injections.is_empty() && pending_messages.consumed == 0 {
                 "noop"
             } else {
                 "context_injected"
@@ -285,8 +283,8 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             &evaluated.snapshot,
             &self.hook_session.runtime_snapshot(),
         );
-        let has_runtime_output = !evaluated.resolution.injections.is_empty()
-            || pending_messages.consumed > 0;
+        let has_runtime_output =
+            !evaluated.resolution.injections.is_empty() || pending_messages.consumed > 0;
         self.record_trace(
             HookTrigger::AfterTurn,
             if has_runtime_output {
@@ -402,9 +400,9 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 .as_ref()
                 .map(|c| c.reason.as_str())
                 .unwrap_or(msg::STOP_GATE_DEFAULT_REASON);
-            steering.push(AgentMessage::user(
-                msg::stop_gate_fallback_steering(gate_reason),
-            ));
+            steering.push(AgentMessage::user(msg::stop_gate_fallback_steering(
+                gate_reason,
+            )));
         }
 
         self.record_trace(
@@ -488,11 +486,7 @@ fn build_hook_injection_message(
     resolution: &agentdash_spi::hooks::HookResolution,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
-    let content = build_hook_markdown(
-        snapshot,
-        &resolution.injections,
-        runtime,
-    )?;
+    let content = build_hook_markdown(snapshot, &resolution.injections, runtime)?;
     Some(AgentMessage::user(content))
 }
 
@@ -517,7 +511,10 @@ fn build_hook_markdown(
 
     let mut sections = Vec::new();
 
-    sections.push(msg::hook_context_header(&snapshot.session_id, runtime.revision));
+    sections.push(msg::hook_context_header(
+        &snapshot.session_id,
+        runtime.revision,
+    ));
 
     if !snapshot.owners.is_empty() {
         sections.push(msg::owners_section(&format_owners(&snapshot.owners)));
@@ -552,9 +549,7 @@ fn build_pending_action_message(
     if let Some(turn_id) = action.turn_id.as_deref() {
         sections.push(msg::pending_action_turn_line(turn_id));
     }
-    sections.push(
-        msg::pending_action_instruction(action.action_type.as_str()).to_string(),
-    );
+    sections.push(msg::pending_action_instruction(action.action_type.as_str()).to_string());
     if !snapshot.owners.is_empty() {
         sections.push(msg::owners_section(&format_owners(&snapshot.owners)));
     }
@@ -591,10 +586,7 @@ fn build_pending_action_message(
     Some(AgentMessage::user(sections.join("\n\n")))
 }
 
-fn append_hook_markdown_body(
-    sections: &mut Vec<String>,
-    injections: &[HookInjection],
-) {
+fn append_hook_markdown_body(sections: &mut Vec<String>, injections: &[HookInjection]) {
     let context_injections: Vec<_> = injections
         .iter()
         .filter(|i| i.slot != "constraint")
@@ -668,10 +660,10 @@ mod tests {
     use super::HookRuntimeDelegate;
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
-        ExecutionHookProvider, HookCompletionStatus, HookError,
-        HookEvaluationQuery, HookInjection, HookPendingAction, HookPendingActionResolutionKind,
-        HookResolution, HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider,
-        SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+        ExecutionHookProvider, HookCompletionStatus, HookError, HookEvaluationQuery, HookInjection,
+        HookPendingAction, HookPendingActionResolutionKind, HookResolution,
+        HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
+        SessionHookSnapshot, SessionHookSnapshotQuery,
     };
 
     #[derive(Clone)]

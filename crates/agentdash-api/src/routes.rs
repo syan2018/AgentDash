@@ -219,10 +219,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/lifecycle-definitions/{id}/disable",
             post(workflows::disable_lifecycle_definition),
         )
-        .route(
-            "/hook-presets",
-            get(workflows::list_hook_presets),
-        )
+        .route("/hook-presets", get(workflows::list_hook_presets))
         .route(
             "/hook-scripts/validate",
             post(workflows::validate_hook_script),
@@ -327,7 +324,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .route("/events/since/{since_id}", get(stream::get_events_since))
         // Mount Provider 发现（返回可由用户配置的外部服务 provider 列表）
-        .route("/mount-providers", get(address_spaces::list_configurable_mount_providers))
+        .route(
+            "/mount-providers",
+            get(address_spaces::list_configurable_mount_providers),
+        )
         // Address Spaces（统一寻址空间能力发现与条目检索）
         .route("/address-spaces", get(address_spaces::list_address_spaces))
         .route(
@@ -345,6 +345,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/address-spaces/write-file",
             post(address_spaces::write_mount_file),
+        )
+        .route(
+            "/address-spaces/apply-patch",
+            post(address_spaces::apply_mount_patch),
         )
         .route(
             "/address-spaces/preview",

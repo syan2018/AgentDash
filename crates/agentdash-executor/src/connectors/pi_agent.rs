@@ -235,11 +235,14 @@ impl PiAgentConnector {
         if !tool_names.is_empty() {
             if context.address_space.is_some() {
                 sections.push(format!(
-                    "你当前可调用的统一访问工具有：{}。优先使用 mounts_list / fs_read / fs_list / fs_search / fs_write / shell_exec，不要臆测文件内容。",
+                    "你当前可调用的统一访问工具有：{}。优先使用 mounts_list / fs_read / fs_list / fs_search / fs_write / fs_apply_patch / shell_exec，不要臆测文件内容。",
                     tool_names.join("、")
                 ));
                 sections.push(
                     "调用这些工具时，优先使用 `mount + 相对路径`。除非确有多个 mount，否则默认优先用 `main`。不要把 backend_id 或绝对路径直接写进工具参数。执行 shell 时，`cwd` 也必须是相对 mount 根目录的路径；当前目录就传 `.`。".to_string(),
+                );
+                sections.push(
+                    "`fs_apply_patch` 必须传 Codex apply_patch 文本：以 `*** Begin Patch` 开始、以 `*** End Patch` 结束；文件头只能用 `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`，需要重命名时在 `Update File` 后跟 `*** Move to: new/path`；每个 hunk 以 `@@` 开始，内部行以前缀空格 / `-` / `+` 表示上下文、删除、新增；所有路径都必须相对 mount 根目录。".to_string(),
                 );
             } else {
                 sections.push(format!(

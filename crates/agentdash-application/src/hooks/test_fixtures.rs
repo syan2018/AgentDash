@@ -81,7 +81,9 @@ pub fn snapshot_with_workflow_and_evidence(
                 step_key: Some(step_key.to_string()),
                 transition_policy: Some(transition_policy.to_string()),
                 workflow_key: workflow_key.map(str::to_string),
-                run_id: Some(uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000aa").unwrap()),
+                run_id: Some(
+                    uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000aa").unwrap(),
+                ),
                 effective_contract: Some(effective_contract),
                 checklist_evidence_present: Some(checklist_evidence_present),
                 ..Default::default()

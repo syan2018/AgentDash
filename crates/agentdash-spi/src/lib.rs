@@ -28,6 +28,7 @@ pub use lifecycle::{
     ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
     TransformContextOutput, TurnControlDecision, now_millis,
 };
+pub use mount::MountEditCapabilities;
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
     ToolUpdateCallback,

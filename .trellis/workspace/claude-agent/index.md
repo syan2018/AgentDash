@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
-- **Last Active**: 2026-03-26
+- **Total Sessions**: 26
+- **Last Active**: 2026-03-31
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1144 | Active |
+| `journal-1.md` | ~1187 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 26 | 2026-03-31 | 统一 Mount Patch 能力推进到组合式 Apply Patch | - |
 | 25 | 2026-03-26 | Agent Entity + Lifecycle Binding: Full Migration | `0a3c401` |
 | 24 | 2026-03-25 | Workflow/Lifecycle 运行时重构收口 | `06e6163371cb029e0251cf8437aa5dd0e7fc1d78` |
 | 23 | 2026-03-25 | Workflow Editor 全栈实现 + 独立视图/编辑器页面 | `851055b`, `300107f` |

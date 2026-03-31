@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_injection::{AddressSpaceDiscoveryProvider, SourceResolver};
-use agentdash_spi::mount::MountProvider;
 use agentdash_spi::AgentConnector;
+use agentdash_spi::mount::MountProvider;
 
 use crate::auth::AuthProvider;
 use crate::external::ExternalServiceClient;

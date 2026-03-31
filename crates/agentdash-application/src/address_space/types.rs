@@ -1,5 +1,6 @@
 pub use agentdash_spi::mount::{
-    ExecRequest, ExecResult, ListOptions, ListResult, ReadResult, RuntimeFileEntry,
+    ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
+    ReadResult, RuntimeFileEntry,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

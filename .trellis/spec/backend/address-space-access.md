@@ -57,6 +57,7 @@ trait AddressSpaceProvider {
 - `mounts.list`
 - `fs.read`
 - `fs.write`
+- `fs.apply_patch`
 - `fs.list`
 - `fs.search`
 - `shell.exec`
@@ -111,8 +112,17 @@ trait AddressSpaceProvider {
   - `relay_fs`：通过 relay 访问本机物理工作空间（实现位于 `application::address_space::relay_service`）
   - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器（实现位于 `application::address_space::inline_persistence`）
 - `inline_fs` 的首轮目标是让内置数据结构也能走统一 mount 模型，而不是继续散落在 prompt 拼接逻辑中。
-- 运行时工具实现（`fs.read/write/list/search`、`shell.exec`、`mounts.list`）位于 `application::address_space::tools`，API 层通过 re-export 引用。
+- 运行时工具实现（`fs.read/write/apply_patch/list/search`、`shell.exec`、`mounts.list`）位于 `application::address_space::tools`，API 层通过 re-export 引用。
 - `RuntimeToolProvider`（为 relay session 提供 tool 注册）位于 `application::address_space::tools::provider`。
+- 针对编辑类操作，provider 还可以额外声明 `MountEditCapabilities`：
+  - `create`
+  - `delete`
+  - `rename`
+- `apply_patch` 的默认方向不是要求每个 provider 自己实现 patch 引擎，而是：
+  - 共享层解析 patch
+  - 根据 patch 内容推导所需编辑 primitive
+  - 结合 `MountEditCapabilities` 选择组合执行或拒绝
+  - provider 只在需要原生优化时覆盖自己的 `apply_patch`
 
 #### 3.4 relay 契约
 - relay 是访问本机 provider 的 transport，不是 mount 模型本身。
@@ -155,6 +165,30 @@ trait AddressSpaceProvider {
 补充规则：
 - `shell.exec` 只允许在声明了 `exec` 能力的 mount 上执行。
 - `fs.write` 默认只允许写入 `default_write = true` 的 mount，除非上层显式授权。
+- `fs.apply_patch` 同样受 `write` 能力约束；patch 内所有路径都必须是相对 mount 根目录的路径。
+- `fs.write` 适合新建文件、整文件覆盖或明确 append；涉及局部修改、多文件修改时应优先使用 `fs.apply_patch`。
+- `fs.apply_patch` 在运行前还应按 patch 内容推导需要的编辑 primitive：
+  - `Add File` 需要 `create`
+  - `Delete File` 需要 `delete`
+  - `Move to` 需要 `rename`，或回退到 `create + delete`
+- 若共享层组合执行缺失必要 primitive，可以回退到 provider 原生 `apply_patch`；若 provider 也不支持，应返回明确的 capability 缺失错误，而不是笼统报 write 失败。
+- `fs.apply_patch` 的补丁语法固定为：
+
+```text
+*** Begin Patch
+*** Add File: path
++new line
+*** Update File: path
+*** Move to: new/path
+@@
+ context line
+-old line
++new line
+*** Delete File: path
+*** End Patch
+```
+
+- `*** Move to:` 只能跟在 `*** Update File:` 后面；新增文件内容每一行都必须以前缀 `+` 开头；更新块中的行必须以前缀空格 / `-` / `+` 表示上下文、删除、新增。
 
 ---
 
@@ -210,6 +244,7 @@ trait AddressSpaceProvider {
 #### runtime tools
 - `mounts.list` 返回当前会话可访问的 mount 清单。
 - `fs.read/write/list/search` 使用统一的 `mount + path` 参数模型。
+- `fs.apply_patch` 使用统一的 `mount + patch` 参数模型，patch 内文件路径相对 mount 根目录解析。
 - `Project / Story` 派生出的容器能和 `main` 一起进入最终 session mount table。
 
 ---

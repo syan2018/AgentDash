@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::address_space::*;
 use crate::runtime::Mount;
 use agentdash_spi::{AddressSpace, MountCapability};
+use async_trait::async_trait;
 
 use super::inline_persistence::InlineContentOverlay;
 
@@ -68,9 +69,12 @@ impl RelayAddressSpaceService {
         let path = normalize_mount_relative_path(&target.path, false)?;
 
         if let Some(ov) = overlay
-            && let Some(content) = ov.read(&mount.id, &path).await
+            && let Some(override_state) = ov.read_override(&mount.id, &path).await
         {
-            return Ok(ReadResult { path, content });
+            return match override_state {
+                Some(content) => Ok(ReadResult { path, content }),
+                None => Err(format!("文件不存在: {}", target.path)),
+            };
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
@@ -122,6 +126,73 @@ impl RelayAddressSpaceService {
         Err(format!("未注册的 mount provider: {}", mount.provider))
     }
 
+    pub async fn apply_patch(
+        &self,
+        address_space: &AddressSpace,
+        mount_id: &str,
+        patch: &str,
+        overlay: Option<&InlineContentOverlay>,
+    ) -> Result<ApplyPatchResult, String> {
+        let runtime_address_space = address_space.clone();
+        let mount = resolve_mount(&runtime_address_space, mount_id, MountCapability::Write)?;
+
+        if mount.provider == PROVIDER_INLINE_FS {
+            let ov = overlay.ok_or_else(|| {
+                format!(
+                    "mount `{}` 是内联容器，需要 InlineContentOverlay 才能应用 patch",
+                    mount.id
+                )
+            })?;
+            let target = InlineOverlayPatchTarget {
+                address_space: &runtime_address_space,
+                mount,
+                overlay: ov,
+            };
+            let result = crate::address_space::apply_patch_to_target(&target, patch)
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(ApplyPatchResult {
+                added: result.added,
+                modified: result.modified,
+                deleted: result.deleted,
+            });
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext;
+            let target = ProviderPatchTarget {
+                provider: provider.as_ref(),
+                mount,
+                ctx: &ctx,
+            };
+            match crate::address_space::apply_patch_to_target(&target, patch).await {
+                Ok(result) => {
+                    return Ok(ApplyPatchResult {
+                        added: result.added,
+                        modified: result.modified,
+                        deleted: result.deleted,
+                    });
+                }
+                Err(crate::address_space::ApplyPatchError::Capabilities(cap_error)) => {
+                    let request = ApplyPatchRequest {
+                        patch: patch.to_string(),
+                    };
+                    return provider
+                        .apply_patch(mount, &request, &ctx)
+                        .await
+                        .map_err(|native_err| {
+                            format!(
+                                "patch 组合执行不可用（{cap_error}），且 provider 原生 apply_patch 失败: {native_err}"
+                            )
+                        });
+                }
+                Err(other) => return Err(other.to_string()),
+            }
+        }
+
+        Err(format!("未注册的 mount provider: {}", mount.provider))
+    }
+
     pub async fn list(
         &self,
         address_space: &AddressSpace,
@@ -136,9 +207,7 @@ impl RelayAddressSpaceService {
         if mount.provider == PROVIDER_INLINE_FS {
             let mut files = inline_files_from_mount(mount)?;
             if let Some(ov) = overlay {
-                for (p, c) in ov.overridden_files(&mount.id).await {
-                    files.insert(p, c);
-                }
+                ov.apply_to_files(&mount.id, &mut files).await;
             }
             return Ok(ListResult {
                 entries: list_inline_entries(
@@ -280,9 +349,7 @@ impl RelayAddressSpaceService {
     ) -> Result<(Vec<String>, bool), String> {
         let mut files = inline_files_from_mount(mount)?;
         if let Some(ov) = params.overlay {
-            for (p, c) in ov.overridden_files(&mount.id).await {
-                files.insert(p, c);
-            }
+            ov.apply_to_files(&mount.id, &mut files).await;
         }
 
         let re = if params.is_regex {
@@ -335,5 +402,110 @@ impl RelayAddressSpaceService {
         }
 
         Ok((hits, truncated))
+    }
+}
+
+struct ProviderPatchTarget<'a> {
+    provider: &'a dyn MountProvider,
+    mount: &'a Mount,
+    ctx: &'a MountOperationContext,
+}
+
+#[async_trait]
+impl ApplyPatchTarget for ProviderPatchTarget<'_> {
+    fn edit_capabilities(&self) -> MountEditCapabilities {
+        self.provider.edit_capabilities(self.mount)
+    }
+
+    async fn read_text(&self, path: &str) -> Result<String, ApplyPatchError> {
+        self.provider
+            .read_text(self.mount, path, self.ctx)
+            .await
+            .map(|result| result.content)
+            .map_err(|e| ApplyPatchError::Apply(e.to_string()))
+    }
+
+    async fn write_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
+        self.provider
+            .write_text(self.mount, path, content, self.ctx)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(e.to_string()))
+    }
+
+    async fn delete_text(&self, path: &str) -> Result<(), ApplyPatchError> {
+        self.provider
+            .delete_text(self.mount, path, self.ctx)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(e.to_string()))
+    }
+
+    async fn rename_text(&self, from_path: &str, to_path: &str) -> Result<(), ApplyPatchError> {
+        self.provider
+            .rename_text(self.mount, from_path, to_path, self.ctx)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(e.to_string()))
+    }
+}
+
+struct InlineOverlayPatchTarget<'a> {
+    address_space: &'a AddressSpace,
+    mount: &'a Mount,
+    overlay: &'a InlineContentOverlay,
+}
+
+#[async_trait]
+impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
+    fn edit_capabilities(&self) -> MountEditCapabilities {
+        MountEditCapabilities {
+            create: true,
+            delete: true,
+            rename: true,
+        }
+    }
+
+    async fn read_text(&self, path: &str) -> Result<String, ApplyPatchError> {
+        let normalized =
+            normalize_mount_relative_path(path, false).map_err(ApplyPatchError::InvalidPath)?;
+        if let Some(override_state) = self
+            .overlay
+            .read_override(&self.mount.id, &normalized)
+            .await
+        {
+            return match override_state {
+                Some(content) => Ok(content),
+                None => Err(ApplyPatchError::Apply(format!(
+                    "目标文件不存在: {normalized}"
+                ))),
+            };
+        }
+        let files = inline_files_from_mount(self.mount).map_err(ApplyPatchError::Apply)?;
+        files
+            .get(&normalized)
+            .cloned()
+            .ok_or_else(|| ApplyPatchError::Apply(format!("目标文件不存在: {normalized}")))
+    }
+
+    async fn write_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
+        let normalized =
+            normalize_mount_relative_path(path, false).map_err(ApplyPatchError::InvalidPath)?;
+        self.overlay
+            .write(self.address_space, self.mount, &normalized, content)
+            .await
+            .map_err(ApplyPatchError::Apply)
+    }
+
+    async fn delete_text(&self, path: &str) -> Result<(), ApplyPatchError> {
+        let normalized =
+            normalize_mount_relative_path(path, false).map_err(ApplyPatchError::InvalidPath)?;
+        self.overlay
+            .delete(self.address_space, self.mount, &normalized)
+            .await
+            .map_err(ApplyPatchError::Apply)
+    }
+
+    async fn rename_text(&self, from_path: &str, to_path: &str) -> Result<(), ApplyPatchError> {
+        let source = self.read_text(from_path).await?;
+        self.write_text(to_path, &source).await?;
+        self.delete_text(from_path).await
     }
 }

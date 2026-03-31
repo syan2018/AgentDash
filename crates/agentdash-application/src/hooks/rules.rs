@@ -88,10 +88,7 @@ fn apply_contract_hook_rules(
             Err(err) => {
                 resolution.diagnostics.push(HookDiagnosticEntry {
                     code: "hook_script_error".to_string(),
-                    message: format!(
-                        "Hook 规则 `{}` 脚本执行失败: {}",
-                        rule.key, err
-                    ),
+                    message: format!("Hook 规则 `{}` 脚本执行失败: {}", rule.key, err),
                 });
             }
             _ => {}
@@ -144,7 +141,6 @@ fn global_hook_rule_registry() -> &'static [NormalizedHookRule] {
         },
     ]
 }
-
 
 pub(crate) fn rule_matches_shell_exec_absolute_cwd_rewrite(
     ctx: &HookEvaluationContext<'_>,
@@ -225,7 +221,6 @@ pub(crate) fn rule_apply_after_tool_refresh(
         message: format!("工具 `{tool_name}` 可能改变 workflow/hook 观察面，已请求刷新 snapshot"),
     });
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -708,7 +703,17 @@ mod tests {
             resolution.diagnostics,
         );
         assert!(resolution.injections.len() >= 2);
-        assert!(resolution.injections.iter().any(|inj| inj.slot == "workflow"));
-        assert!(resolution.injections.iter().any(|inj| inj.slot == "constraint"));
+        assert!(
+            resolution
+                .injections
+                .iter()
+                .any(|inj| inj.slot == "workflow")
+        );
+        assert!(
+            resolution
+                .injections
+                .iter()
+                .any(|inj| inj.slot == "constraint")
+        );
     }
 }

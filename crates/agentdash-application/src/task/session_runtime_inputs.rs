@@ -2,9 +2,7 @@ use agentdash_domain::{
     project::Project, story::Story, task::Task, workflow::WorkflowBindingKind, workspace::Workspace,
 };
 
-use crate::address_space::{
-    RelayAddressSpaceService, SessionMountTarget, build_lifecycle_mount,
-};
+use crate::address_space::{RelayAddressSpaceService, SessionMountTarget, build_lifecycle_mount};
 use crate::repository_set::RepositorySet;
 use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
 use crate::task::config::resolve_task_executor_config;

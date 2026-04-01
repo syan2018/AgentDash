@@ -264,7 +264,12 @@ impl SessionHub {
             }
         }
 
-        if self.persistence.get_session_meta(session_id).await?.is_none() {
+        if self
+            .persistence
+            .get_session_meta(session_id)
+            .await?
+            .is_none()
+        {
             return Ok(None);
         }
 
@@ -434,7 +439,10 @@ impl SessionHub {
         session_id: &str,
         notification: SessionNotification,
     ) -> io::Result<super::persistence::PersistedSessionEvent> {
-        let persisted = self.persistence.append_event(session_id, &notification).await?;
+        let persisted = self
+            .persistence
+            .append_event(session_id, &notification)
+            .await?;
         let tx = {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {

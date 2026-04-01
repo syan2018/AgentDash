@@ -228,8 +228,12 @@ impl AgentTool for InjectCanvasDataTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: InjectCanvasDataParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let mut canvas = load_canvas_by_ref(self.canvas_repo.as_ref(), self.project_id, &params.canvas_id)
-            .await?;
+        let mut canvas = load_canvas_by_ref(
+            self.canvas_repo.as_ref(),
+            self.project_id,
+            &params.canvas_id,
+        )
+        .await?;
 
         let binding = CanvasDataBinding {
             alias: params.alias,
@@ -285,11 +289,18 @@ impl AgentTool for PresentCanvasTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: PresentCanvasParams = serde_json::from_value(args)
             .map_err(|error| AgentToolError::InvalidArguments(format!("参数解析失败: {error}")))?;
-        let canvas = load_canvas_by_ref(self.canvas_repo.as_ref(), self.project_id, &params.canvas_id)
-            .await?;
+        let canvas = load_canvas_by_ref(
+            self.canvas_repo.as_ref(),
+            self.project_id,
+            &params.canvas_id,
+        )
+        .await?;
 
-        let notification =
-            build_canvas_presented_notification(&self.current_session_id, &self.current_turn_id, &canvas);
+        let notification = build_canvas_presented_notification(
+            &self.current_session_id,
+            &self.current_turn_id,
+            &canvas,
+        );
         let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed("SessionHub 尚未完成初始化".to_string())
         })?;
@@ -337,9 +348,8 @@ async fn load_canvas_by_ref(
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
     };
-    let canvas = canvas.ok_or_else(|| {
-        AgentToolError::ExecutionFailed(format!("Canvas 不存在: {trimmed}"))
-    })?;
+    let canvas = canvas
+        .ok_or_else(|| AgentToolError::ExecutionFailed(format!("Canvas 不存在: {trimmed}")))?;
     ensure_canvas_project(canvas.project_id, expected_project_id)?;
     Ok(canvas)
 }
@@ -401,7 +411,9 @@ mod tests {
     use tokio::sync::RwLock;
 
     use crate::address_space::tools::fs::FsWriteTool;
-    use crate::address_space::{CanvasFsMountProvider, MountProviderRegistry, RelayAddressSpaceService};
+    use crate::address_space::{
+        CanvasFsMountProvider, MountProviderRegistry, RelayAddressSpaceService,
+    };
 
     use super::*;
 
@@ -412,12 +424,21 @@ mod tests {
 
     #[async_trait]
     impl CanvasRepository for MemoryCanvasRepository {
-        async fn create(&self, canvas: &agentdash_domain::canvas::Canvas) -> Result<(), DomainError> {
-            self.canvases.write().await.insert(canvas.id, canvas.clone());
+        async fn create(
+            &self,
+            canvas: &agentdash_domain::canvas::Canvas,
+        ) -> Result<(), DomainError> {
+            self.canvases
+                .write()
+                .await
+                .insert(canvas.id, canvas.clone());
             Ok(())
         }
 
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<agentdash_domain::canvas::Canvas>, DomainError> {
+        async fn get_by_id(
+            &self,
+            id: Uuid,
+        ) -> Result<Option<agentdash_domain::canvas::Canvas>, DomainError> {
             Ok(self.canvases.read().await.get(&id).cloned())
         }
 
@@ -449,8 +470,14 @@ mod tests {
                 .collect())
         }
 
-        async fn update(&self, canvas: &agentdash_domain::canvas::Canvas) -> Result<(), DomainError> {
-            self.canvases.write().await.insert(canvas.id, canvas.clone());
+        async fn update(
+            &self,
+            canvas: &agentdash_domain::canvas::Canvas,
+        ) -> Result<(), DomainError> {
+            self.canvases
+                .write()
+                .await
+                .insert(canvas.id, canvas.clone());
             Ok(())
         }
 
@@ -470,20 +497,14 @@ mod tests {
         let service = Arc::new(RelayAddressSpaceService::new(Arc::new(registry)));
         let shared_address_space = SharedRuntimeAddressSpace::new(AddressSpace::default());
 
-        let create_tool =
-            CreateCanvasTool::new(
-                canvas_repo.clone(),
-                project_id,
-                shared_address_space.clone(),
-                SharedSessionHubHandle::default(),
-                Some("sess-test".to_string()),
-            );
-        let write_tool = FsWriteTool::new(
-            service,
+        let create_tool = CreateCanvasTool::new(
+            canvas_repo.clone(),
+            project_id,
             shared_address_space.clone(),
-            None,
-            None,
+            SharedSessionHubHandle::default(),
+            Some("sess-test".to_string()),
         );
+        let write_tool = FsWriteTool::new(service, shared_address_space.clone(), None, None);
 
         let create_result = create_tool
             .execute(
@@ -508,7 +529,10 @@ mod tests {
 
         let address_space = shared_address_space.snapshot().await;
         assert!(
-            address_space.mounts.iter().any(|mount| mount.id == mount_id),
+            address_space
+                .mounts
+                .iter()
+                .any(|mount| mount.id == mount_id),
             "create_canvas 后共享 address space 应包含新 mount"
         );
 

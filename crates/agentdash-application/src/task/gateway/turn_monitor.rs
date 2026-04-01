@@ -69,9 +69,13 @@ pub async fn run_turn_monitor(
                 "订阅会话事件失败: {}",
                 err
             );
-            return resolve_failure_outcome(&ctx, "turn_monitor_subscribe_failed", Some(err.to_string()))
-                .await
-                .unwrap_or(TurnOutcome::Failed);
+            return resolve_failure_outcome(
+                &ctx,
+                "turn_monitor_subscribe_failed",
+                Some(err.to_string()),
+            )
+            .await
+            .unwrap_or(TurnOutcome::Failed);
         }
     };
     let mut rx = subscription.rx;

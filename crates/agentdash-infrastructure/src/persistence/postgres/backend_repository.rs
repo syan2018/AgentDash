@@ -186,10 +186,10 @@ impl BackendRepository for SqliteBackendRepository {
             "INSERT INTO user_preferences (key, value) VALUES ('prefs', $1)
              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         )
-            .bind(serde_json::to_string(prefs)?)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .bind(serde_json::to_string(prefs)?)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(())
     }

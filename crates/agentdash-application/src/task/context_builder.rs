@@ -63,9 +63,14 @@ pub async fn build_task_session_context(
         let visible_canvas_mount_ids = session_meta
             .map(|meta| meta.visible_canvas_mount_ids.as_slice())
             .unwrap_or(&[]);
-        if append_visible_canvas_mounts(repos.canvas_repo.as_ref(), task.project_id, space, visible_canvas_mount_ids)
-            .await
-            .is_err()
+        if append_visible_canvas_mounts(
+            repos.canvas_repo.as_ref(),
+            task.project_id,
+            space,
+            visible_canvas_mount_ids,
+        )
+        .await
+        .is_err()
         {
             return None;
         }

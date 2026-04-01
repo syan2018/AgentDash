@@ -84,10 +84,11 @@ impl SqliteCanvasRepository {
     }
 
     async fn ensure_mount_id_column(&self) -> Result<(), DomainError> {
-        let columns = sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('canvases')")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let columns =
+            sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('canvases')")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         if columns.iter().any(|column| column == "mount_id") {
             return Ok(());
         }

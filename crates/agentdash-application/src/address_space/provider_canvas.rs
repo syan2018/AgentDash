@@ -227,7 +227,8 @@ fn parse_canvas_id(mount: &Mount) -> Result<Uuid, MountError> {
         .get("canvas_id")
         .and_then(|value| value.as_str())
         .ok_or_else(|| MountError::OperationFailed("mount metadata 缺少 canvas_id".to_string()))?;
-    Uuid::parse_str(raw).map_err(|error| MountError::OperationFailed(format!("canvas_id 无效: {error}")))
+    Uuid::parse_str(raw)
+        .map_err(|error| MountError::OperationFailed(format!("canvas_id 无效: {error}")))
 }
 
 fn canvas_files_map(canvas: &Canvas) -> BTreeMap<String, String> {

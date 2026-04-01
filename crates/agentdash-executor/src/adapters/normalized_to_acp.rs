@@ -96,7 +96,11 @@ impl NormalizedToAcpConverter {
                 self.emitted_agent.clear();
                 self.emitted_thought.clear();
                 let meta = self.base_meta(Some(entry_index));
-                let message_id = ensure_message_id(&mut self.message_id_user, &self.turn_prefix, "user_message_chunk");
+                let message_id = ensure_message_id(
+                    &mut self.message_id_user,
+                    &self.turn_prefix,
+                    "user_message_chunk",
+                );
                 emit_deduped(
                     &self.session_id,
                     &mut self.emitted_user,

@@ -255,7 +255,8 @@ impl SessionHub {
                                 != Some(executor_session_id.as_str())
                         {
                             last_executor_session_id = Some(executor_session_id.clone());
-                            if let Ok(Some(mut meta)) = persistence.get_session_meta(&session_id).await
+                            if let Ok(Some(mut meta)) =
+                                persistence.get_session_meta(&session_id).await
                                 && meta.executor_session_id.as_deref()
                                     != Some(executor_session_id.as_str())
                             {

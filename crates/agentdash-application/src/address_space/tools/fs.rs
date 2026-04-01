@@ -9,12 +9,12 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use crate::address_space::build_canvas_mount;
 use crate::address_space::inline_persistence::InlineContentOverlay;
 use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::{
     ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri, resolve_mount_id,
 };
-use crate::address_space::build_canvas_mount;
 
 pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<ResourceRef, String> {
     parse_mount_uri(path, address_space)
@@ -36,10 +36,7 @@ impl SharedRuntimeAddressSpace {
         self.inner.read().await.clone()
     }
 
-    pub async fn append_canvas_mount(
-        &self,
-        canvas: &agentdash_domain::canvas::Canvas,
-    ) {
+    pub async fn append_canvas_mount(&self, canvas: &agentdash_domain::canvas::Canvas) {
         let mut guard = self.inner.write().await;
         let mount = build_canvas_mount(canvas);
         guard.mounts.retain(|existing| existing.id != mount.id);
@@ -279,12 +276,7 @@ impl AgentTool for FsWriteTool {
         let final_content = if params.append.unwrap_or(false) {
             match self
                 .service
-                .read_text(
-                    &address_space,
-                    &target,
-                    overlay_ref,
-                    self.identity.as_ref(),
-                )
+                .read_text(&address_space, &target, overlay_ref, self.identity.as_ref())
                 .await
             {
                 Ok(existing) => format!("{}{}", existing.content, params.content),

@@ -32,8 +32,8 @@ pub use provider::{
     MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch, SearchQuery,
     SearchResult,
 };
-pub use provider_inline::InlineFsMountProvider;
 pub use provider_canvas::CanvasFsMountProvider;
+pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
 pub use relay_service::{RelayAddressSpaceService, TextSearchParams};
 pub use types::{

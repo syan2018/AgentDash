@@ -8,14 +8,14 @@ use uuid::Uuid;
 use agentdash_application::canvas::{
     CanvasMutationInput, apply_canvas_mutation, build_canvas, build_runtime_snapshot_with_bindings,
 };
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
+use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::CanvasResponse;
-use crate::rpc::ApiError;
 use crate::routes::{project_sessions, story_sessions};
+use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]
 pub struct ListProjectCanvasesPath {
@@ -216,7 +216,11 @@ async fn resolve_canvas_runtime_address_space(
         return Ok(None);
     };
 
-    let bindings = state.repos.session_binding_repo.list_by_session(session_id).await?;
+    let bindings = state
+        .repos
+        .session_binding_repo
+        .list_by_session(session_id)
+        .await?;
     if bindings.is_empty() {
         return Err(ApiError::NotFound(format!("Session {session_id} 不存在")));
     }
@@ -241,14 +245,15 @@ async fn resolve_canvas_runtime_address_space(
 
     match binding.owner_type {
         SessionOwnerType::Task => {
-            let built_context = agentdash_application::task::context_builder::build_task_session_context(
-                &state.repos,
-                &state.services.address_space_service,
-                state.config.mcp_base_url.as_deref(),
-                binding.owner_id,
-                session_meta.as_ref(),
-            )
-            .await;
+            let built_context =
+                agentdash_application::task::context_builder::build_task_session_context(
+                    &state.repos,
+                    &state.services.address_space_service,
+                    state.config.mcp_base_url.as_deref(),
+                    binding.owner_id,
+                    session_meta.as_ref(),
+                )
+                .await;
             Ok(built_context.and_then(|context| context.address_space))
         }
         SessionOwnerType::Story => {
@@ -304,5 +309,9 @@ fn pick_primary_binding_for_project(
                 .filter(|binding| binding.project_id == project_id)
                 .find(|binding| binding.owner_type == SessionOwnerType::Task)
         })
-        .or_else(|| bindings.iter().find(|binding| binding.project_id == project_id))
+        .or_else(|| {
+            bindings
+                .iter()
+                .find(|binding| binding.project_id == project_id)
+        })
 }

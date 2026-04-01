@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::path::normalize_mount_relative_path;
+use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 use agentdash_domain::context_container::{
     ContextContainerCapability, ContextContainerDefinition, ContextContainerProvider,
     MountDerivationPolicy,
@@ -11,8 +13,6 @@ use agentdash_domain::{
     workspace::{Workspace, WorkspaceBinding},
 };
 use uuid::Uuid;
-use super::path::normalize_mount_relative_path;
-use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 
 pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
@@ -356,7 +356,9 @@ pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
 pub fn append_canvas_mounts(address_space: &mut AddressSpace, canvases: &[Canvas]) {
     for canvas in canvases {
         let mount = build_canvas_mount(canvas);
-        address_space.mounts.retain(|existing| existing.id != mount.id);
+        address_space
+            .mounts
+            .retain(|existing| existing.id != mount.id);
         address_space.mounts.push(mount);
     }
 }

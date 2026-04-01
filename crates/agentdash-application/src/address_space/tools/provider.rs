@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_domain::canvas::CanvasRepository;
 use crate::session::SessionHub;
+use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
@@ -16,7 +16,7 @@ use crate::address_space::inline_persistence::{InlineContentOverlay, InlineConte
 use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::tools::fs::{
     FsApplyPatchTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool,
-    ShellExecTool, SharedRuntimeAddressSpace,
+    SharedRuntimeAddressSpace, ShellExecTool,
 };
 use crate::canvas::{CreateCanvasTool, InjectCanvasDataTool, PresentCanvasTool};
 use crate::task::tools::companion::{CompanionCompleteTool, CompanionDispatchTool};

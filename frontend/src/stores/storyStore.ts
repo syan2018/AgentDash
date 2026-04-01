@@ -123,6 +123,25 @@ interface StoryState {
   handleStateChange: (change: StateChange) => void;
 }
 
+const requireStringField = (raw: Record<string, unknown>, field: string): string => {
+  const value = raw[field];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`缺少或非法的字段 ${field}`);
+  }
+  return value;
+};
+
+const readNullableStringField = (raw: Record<string, unknown>, field: string): string | null => {
+  const value = raw[field];
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  throw new Error(`字段 ${field} 必须是字符串或 null`);
+};
+
 const normalizeStoryStatus = (value: string): Story['status'] => {
   switch (value) {
     case 'created':
@@ -146,7 +165,7 @@ const normalizeStoryStatus = (value: string): Story['status'] => {
     case 'canceled':
       return 'cancelled';
     default:
-      return 'draft';
+      throw new Error(`未知 Story 状态: ${value}`);
   }
 };
 
@@ -177,10 +196,6 @@ const normalizeTaskExecutionMode = (value: unknown): Task['execution_mode'] => {
       return 'auto_retry';
     case 'one_shot':
       return 'one_shot';
-    case undefined:
-    case null:
-    case '':
-      return 'standard';
     default:
       throw new Error(`未知 Task execution_mode: ${String(value)}`);
   }
@@ -203,7 +218,7 @@ const toBackendStoryStatus = (status: Story["status"]): string => {
     case "cancelled":
       return "cancelled";
     default:
-      return "created";
+      throw new Error(`未知 Story 状态: ${String(status)}`);
   }
 };
 
@@ -222,7 +237,7 @@ const toBackendTaskStatus = (status: Task["status"]): string => {
     case "failed":
       return "failed";
     default:
-      return "pending";
+      throw new Error(`未知 Task 状态: ${String(status)}`);
   }
 };
 
@@ -252,7 +267,7 @@ const normalizeStoryPriority = (value: string): Story['priority'] => {
     case 'low':
       return 'p3';
     default:
-      return 'p2';
+      throw new Error(`未知 Story priority: ${value}`);
   }
 };
 
@@ -271,46 +286,66 @@ const normalizeStoryType = (value: string): Story['story_type'] => {
     case 'test':
       return 'test';
     default:
-      return 'other';
+      throw new Error(`未知 Story story_type: ${value}`);
   }
 };
 
 const mapStory = (raw: Record<string, unknown>): Story => {
   let context: StoryContext = defaultContext;
-  if (raw.context && typeof raw.context === 'object') {
-    const ctx = raw.context as Record<string, unknown>;
-    if ('spec_refs' in ctx || 'prd_doc' in ctx || 'resource_list' in ctx) {
-      context = {
-        prd_doc: (ctx.prd_doc as string) ?? null,
-        spec_refs: Array.isArray(ctx.spec_refs) ? ctx.spec_refs as string[] : [],
-        resource_list: Array.isArray(ctx.resource_list) ? ctx.resource_list as StoryContext['resource_list'] : [],
-        source_refs: Array.isArray(ctx.source_refs) ? ctx.source_refs as ContextSourceRef[] : [],
-        context_containers: Array.isArray(ctx.context_containers)
-          ? ctx.context_containers as ContextContainerDefinition[]
-          : [],
-        disabled_container_ids: Array.isArray(ctx.disabled_container_ids)
-          ? ctx.disabled_container_ids as string[]
-          : [],
-        mount_policy_override: (ctx.mount_policy_override as MountDerivationPolicy) ?? null,
-        session_composition: (ctx.session_composition as SessionComposition) ?? null,
-      };
+  if (raw.context != null) {
+    if (typeof raw.context !== 'object') {
+      throw new Error('Story context 必须是对象');
     }
+    const ctx = raw.context as Record<string, unknown>;
+    if (ctx.spec_refs != null && !Array.isArray(ctx.spec_refs)) {
+      throw new Error('Story context.spec_refs 必须是数组');
+    }
+    if (ctx.resource_list != null && !Array.isArray(ctx.resource_list)) {
+      throw new Error('Story context.resource_list 必须是数组');
+    }
+    if (ctx.source_refs != null && !Array.isArray(ctx.source_refs)) {
+      throw new Error('Story context.source_refs 必须是数组');
+    }
+    if (ctx.context_containers != null && !Array.isArray(ctx.context_containers)) {
+      throw new Error('Story context.context_containers 必须是数组');
+    }
+    if (ctx.disabled_container_ids != null && !Array.isArray(ctx.disabled_container_ids)) {
+      throw new Error('Story context.disabled_container_ids 必须是数组');
+    }
+    context = {
+      prd_doc: ctx.prd_doc == null ? null : requireStringField({ prd_doc: ctx.prd_doc }, 'prd_doc'),
+      spec_refs: ctx.spec_refs == null ? [] : ctx.spec_refs as string[],
+      resource_list: ctx.resource_list == null ? [] : ctx.resource_list as StoryContext['resource_list'],
+      source_refs: ctx.source_refs == null ? [] : ctx.source_refs as ContextSourceRef[],
+      context_containers: ctx.context_containers == null
+        ? []
+        : ctx.context_containers as ContextContainerDefinition[],
+      disabled_container_ids: ctx.disabled_container_ids == null
+        ? []
+        : ctx.disabled_container_ids as string[],
+      mount_policy_override: ctx.mount_policy_override == null
+        ? null
+        : ctx.mount_policy_override as MountDerivationPolicy,
+      session_composition: ctx.session_composition == null
+        ? null
+        : ctx.session_composition as SessionComposition,
+    };
   }
 
   return {
-    id: String(raw.id ?? ''),
-    project_id: String(raw.project_id ?? ''),
+    id: requireStringField(raw, 'id'),
+    project_id: requireStringField(raw, 'project_id'),
     default_workspace_id: raw.default_workspace_id != null ? String(raw.default_workspace_id) : null,
-    title: String(raw.title ?? '未命名 Story'),
+    title: requireStringField(raw, 'title'),
     description: raw.description ? String(raw.description) : '',
-    status: normalizeStoryStatus(String(raw.status ?? 'draft')),
-    priority: normalizeStoryPriority(String(raw.priority ?? 'p2')),
-    story_type: normalizeStoryType(String(raw.story_type ?? 'feature')),
+    status: normalizeStoryStatus(requireStringField(raw, 'status')),
+    priority: normalizeStoryPriority(requireStringField(raw, 'priority')),
+    story_type: normalizeStoryType(requireStringField(raw, 'story_type')),
     tags: Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === 'string') : [],
     task_count: Number.isFinite(Number(raw.task_count ?? 0)) ? Number(raw.task_count ?? 0) : 0,
     context,
-    created_at: String(raw.created_at ?? new Date().toISOString()),
-    updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
+    created_at: requireStringField(raw, 'created_at'),
+    updated_at: requireStringField(raw, 'updated_at'),
   };
 };
 
@@ -326,7 +361,7 @@ const defaultBinding: AgentBinding = {
 
 const mapAgentBinding = (raw: unknown): AgentBinding => {
   if (!raw || typeof raw !== 'object') {
-    return { ...defaultBinding };
+    throw new Error('Task 缺少 agent_binding');
   }
 
   const binding = raw as Record<string, unknown>;
@@ -336,10 +371,14 @@ const mapAgentBinding = (raw: unknown): AgentBinding => {
     preset_name: binding.preset_name ? String(binding.preset_name) : null,
     prompt_template: binding.prompt_template ? String(binding.prompt_template) : null,
     initial_context: binding.initial_context ? String(binding.initial_context) : null,
-    thinking_level: isThinkingLevel(binding.thinking_level) ? binding.thinking_level : null,
+    thinking_level: binding.thinking_level == null
+      ? null
+      : isThinkingLevel(binding.thinking_level)
+        ? binding.thinking_level
+        : (() => { throw new Error(`未知 thinking_level: ${String(binding.thinking_level)}`); })(),
     context_sources: Array.isArray(binding.context_sources)
       ? binding.context_sources as ContextSourceRef[]
-      : [],
+      : (() => { throw new Error('agent_binding.context_sources 必须是数组'); })(),
   };
 };
 
@@ -352,16 +391,16 @@ const normalizeArtifactType = (value: string): Task['artifacts'][number]['artifa
     case 'tool_execution':
       return value;
     default:
-      return 'log_output';
+      throw new Error(`未知 artifact_type: ${value}`);
   }
 };
 
 const mapArtifact = (raw: Record<string, unknown>): Task['artifacts'][number] => {
   return {
-    id: String(raw.id ?? ''),
-    artifact_type: normalizeArtifactType(String(raw.artifact_type ?? 'log_output')),
+    id: requireStringField(raw, 'id'),
+    artifact_type: normalizeArtifactType(requireStringField(raw, 'artifact_type')),
     content: raw.content ?? null,
-    created_at: String(raw.created_at ?? new Date().toISOString()),
+    created_at: requireStringField(raw, 'created_at'),
   };
 };
 
@@ -443,13 +482,13 @@ export const findStoryById = (
 };
 
 const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
-  id: String(raw.id ?? ''),
-  project_id: String(raw.project_id ?? ''),
-  session_id: String(raw.session_id ?? ''),
-  owner_type: (raw.owner_type ?? 'story') as SessionBinding['owner_type'],
-  owner_id: String(raw.owner_id ?? ''),
-  label: String(raw.label ?? ''),
-  created_at: String(raw.created_at ?? new Date().toISOString()),
+  id: requireStringField(raw, 'id'),
+  project_id: requireStringField(raw, 'project_id'),
+  session_id: requireStringField(raw, 'session_id'),
+  owner_type: requireStringField(raw, 'owner_type') as SessionBinding['owner_type'],
+  owner_id: requireStringField(raw, 'owner_id'),
+  label: requireStringField(raw, 'label'),
+  created_at: requireStringField(raw, 'created_at'),
   session_title: raw.session_title != null
     ? String(raw.session_title)
     : undefined,
@@ -471,24 +510,29 @@ const taskRefreshInFlight = new Set<string>();
 
 const mapTask = (raw: Record<string, unknown>): Task => {
   return {
-    id: String(raw.id ?? ''),
-    project_id: String(raw.project_id ?? ''),
-    story_id: String(raw.story_id ?? ''),
+    id: requireStringField(raw, 'id'),
+    project_id: requireStringField(raw, 'project_id'),
+    story_id: requireStringField(raw, 'story_id'),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
     session_id: raw.session_id ? String(raw.session_id) : null,
     executor_session_id: raw.executor_session_id ? String(raw.executor_session_id) : null,
-    title: String(raw.title ?? raw.name ?? '未命名 Task'),
+    title: requireStringField(raw, 'title'),
     description: raw.description ? String(raw.description) : '',
-    status: normalizeTaskStatus(String(raw.status ?? 'pending')),
+    status: normalizeTaskStatus(requireStringField(raw, 'status')),
     execution_mode: normalizeTaskExecutionMode(raw.execution_mode),
     agent_binding: mapAgentBinding(raw.agent_binding),
-    artifacts: Array.isArray(raw.artifacts)
-      ? raw.artifacts
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
-          .map((item) => mapArtifact(item))
-      : [],
-    created_at: String(raw.created_at ?? new Date().toISOString()),
-    updated_at: String(raw.updated_at ?? raw.created_at ?? new Date().toISOString()),
+    artifacts: raw.artifacts == null
+      ? []
+      : Array.isArray(raw.artifacts)
+        ? raw.artifacts.map((item, index) => {
+            if (!item || typeof item !== 'object') {
+              throw new Error(`Task artifact[${index}] 必须是对象`);
+            }
+            return mapArtifact(item as Record<string, unknown>);
+          })
+        : (() => { throw new Error('Task artifacts 必须是数组'); })(),
+    created_at: requireStringField(raw, 'created_at'),
+    updated_at: requireStringField(raw, 'updated_at'),
   };
 };
 
@@ -655,7 +699,7 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       const requestPayload = {
         ...payload,
-        workspace_id: payload.workspace_id === null ? "" : payload.workspace_id,
+        workspace_id: payload.workspace_id,
         status: payload.status ? toBackendTaskStatus(payload.status) : undefined,
       };
       const raw = await api.put<Record<string, unknown>>(`/tasks/${taskId}`, requestPayload);
@@ -724,13 +768,13 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       const raw = await api.get<Record<string, unknown>>(`/tasks/${taskId}/session`);
       return {
-        task_id: String(raw.task_id ?? taskId),
-        workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
-        session_id: raw.session_id ? String(raw.session_id) : null,
-        executor_session_id: raw.executor_session_id ? String(raw.executor_session_id) : null,
-        task_status: normalizeTaskStatus(String(raw.task_status ?? 'pending')),
+        task_id: requireStringField(raw, 'task_id'),
+        workspace_id: readNullableStringField(raw, 'workspace_id'),
+        session_id: readNullableStringField(raw, 'session_id'),
+        executor_session_id: readNullableStringField(raw, 'executor_session_id'),
+        task_status: normalizeTaskStatus(requireStringField(raw, 'task_status')),
         agent_binding: mapAgentBinding(raw.agent_binding),
-        session_title: raw.session_title ? String(raw.session_title) : null,
+        session_title: readNullableStringField(raw, 'session_title'),
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
         address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
         context_snapshot: (raw.context_snapshot as SessionContextSnapshot) ?? null,
@@ -746,8 +790,8 @@ export const useStoryStore = create<StoryState>((set) => ({
       const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}/sessions/${bindingId}`);
       return {
         binding_id: requireStorySessionField(raw, 'binding_id'),
-        session_id: String(raw.session_id ?? ''),
-        session_title: raw.session_title ? String(raw.session_title) : null,
+        session_id: requireStorySessionField(raw, 'session_id'),
+        session_title: readNullableStringField(raw, 'session_title'),
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
         address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
         context_snapshot: (raw.context_snapshot as StorySessionInfo['context_snapshot']) ?? null,

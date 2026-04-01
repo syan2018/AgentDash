@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { SessionChatView } from "../acp-session";
 import { promptSession, type ExecutorConfig } from "../../services/executor";
+import { buildPromptBlocks } from "../file-reference";
 import type { Artifact, ContextSourceRef, SessionNavigationState, Task } from "../../types";
 import { useStoryStore } from "../../stores/storyStore";
 
@@ -175,7 +176,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     } else {
       if (!prompt) return;
       await promptSession(sid, {
-        prompt,
+        promptBlocks: buildPromptBlocks(prompt, []),
         ...(execConfig && { executorConfig: execConfig }),
       });
     }

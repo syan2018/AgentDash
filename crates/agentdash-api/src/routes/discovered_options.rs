@@ -35,11 +35,24 @@ pub async fn discovered_options_stream(
             yield Ok::<Bytes, std::convert::Infallible>(line);
         }
 
-        let working_dir = q
+        let working_dir = match q
             .working_dir
             .as_deref()
             .filter(|s| !s.trim().is_empty())
-            .map(|rel| std::env::current_dir().unwrap_or_default().join(rel));
+        {
+            Some(rel) => match std::env::current_dir() {
+                Ok(current_dir) => Some(current_dir.join(rel)),
+                Err(err) => {
+                    if let Some(line) = to_ndjson_line(&serde_json::json!({
+                        "Error": format!("读取当前工作目录失败: {err}")
+                    })) {
+                        yield Ok(line);
+                    }
+                    return;
+                }
+            },
+            None => None,
+        };
 
         match connector.discover_options_stream(&q.executor, q.variant.as_deref(), working_dir).await {
             Ok(mut patches) => {

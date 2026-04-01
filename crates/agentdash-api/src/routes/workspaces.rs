@@ -359,7 +359,9 @@ async fn derive_workspace_shape(
         .collect::<Result<Vec<_>, _>>()?;
 
     if let Some(identity_kind) = identity_kind {
-        let identity_payload = identity_payload.unwrap_or_else(|| json!({}));
+        let identity_payload = identity_payload.ok_or_else(|| {
+            ApiError::BadRequest("显式提供 identity_kind 时，identity_payload 不能为空".into())
+        })?;
         return Ok((identity_kind, identity_payload, parsed_bindings));
     }
 

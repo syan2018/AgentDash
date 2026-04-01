@@ -138,13 +138,12 @@ impl TryFrom<SettingRow> for Setting {
 
     fn try_from(row: SettingRow) -> Result<Self, Self::Error> {
         let value: serde_json::Value = serde_json::from_str(&row.value)?;
-
-        let updated_at = super::parse_pg_timestamp(&row.updated_at);
-        let scope_kind = parse_scope_kind(&row.scope_kind);
+        let updated_at = super::parse_pg_timestamp_checked(&row.updated_at, "settings.updated_at")?;
+        let scope_kind = parse_scope_kind(&row.scope_kind)?;
 
         Ok(Setting {
             scope_kind,
-            scope_id: normalize_scope_id(scope_kind, row.scope_id),
+            scope_id: normalize_scope_id(scope_kind, row.scope_id)?,
             key: row.key,
             value,
             updated_at,
@@ -152,23 +151,31 @@ impl TryFrom<SettingRow> for Setting {
     }
 }
 
-fn parse_scope_kind(value: &str) -> SettingScopeKind {
+fn parse_scope_kind(value: &str) -> Result<SettingScopeKind, DomainError> {
     match value {
-        "user" => SettingScopeKind::User,
-        "project" => SettingScopeKind::Project,
-        _ => SettingScopeKind::System,
+        "system" => Ok(SettingScopeKind::System),
+        "user" => Ok(SettingScopeKind::User),
+        "project" => Ok(SettingScopeKind::Project),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "settings.scope_kind: 未知值 `{value}`"
+        ))),
     }
 }
 
-fn normalize_scope_id(kind: SettingScopeKind, scope_id: String) -> Option<String> {
+fn normalize_scope_id(
+    kind: SettingScopeKind,
+    scope_id: String,
+) -> Result<Option<String>, DomainError> {
     match kind {
-        SettingScopeKind::System => None,
+        SettingScopeKind::System => Ok(None),
         SettingScopeKind::User | SettingScopeKind::Project => {
             let trimmed = scope_id.trim();
             if trimmed.is_empty() {
-                None
+                Err(DomainError::InvalidConfig(
+                    "settings.scope_id: user/project scope 不允许空值".to_string(),
+                ))
             } else {
-                Some(trimmed.to_string())
+                Ok(Some(trimmed.to_string()))
             }
         }
     }

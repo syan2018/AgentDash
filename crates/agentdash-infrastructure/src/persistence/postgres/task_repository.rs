@@ -280,7 +280,7 @@ impl TaskAggregateCommandRepository for PostgresTaskRepository {
             task.project_id,
             task.id,
             ChangeKind::TaskCreated,
-            build_task_created_payload(task),
+            build_task_created_payload(task)?,
             None,
         )
         .await?;
@@ -289,7 +289,7 @@ impl TaskAggregateCommandRepository for PostgresTaskRepository {
             task.project_id,
             task.story_id,
             ChangeKind::StoryUpdated,
-            story.to_payload("task_created_by_user"),
+            story.to_payload("task_created_by_user")?,
             None,
         )
         .await?;
@@ -375,7 +375,7 @@ impl TaskAggregateCommandRepository for PostgresTaskRepository {
             task.project_id,
             task.story_id,
             ChangeKind::StoryUpdated,
-            story.to_payload("task_deleted_by_user"),
+            story.to_payload("task_deleted_by_user")?,
             None,
         )
         .await?;
@@ -464,28 +464,29 @@ impl TryFrom<TaskRow> for Task {
             execution_mode: parse_task_execution_mode(&row.execution_mode)?,
             agent_binding,
             artifacts,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(&row.created_at, "tasks.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "tasks.updated_at")?,
         })
     }
 }
 
-fn build_task_created_payload(task: &Task) -> serde_json::Value {
-    let mut payload = serde_json::to_value(task).unwrap_or_default();
+fn build_task_created_payload(task: &Task) -> Result<serde_json::Value, DomainError> {
+    let mut payload = serde_json::to_value(task)
+        .map_err(|error| DomainError::InvalidConfig(format!("tasks.state_payload: {error}")))?;
     if let Some(obj) = payload.as_object_mut() {
         obj.insert(
             "reason".to_string(),
             serde_json::Value::String("task_created_by_user".to_string()),
         );
-        return payload;
+        return Ok(payload);
     }
 
-    serde_json::json!({
+    Ok(serde_json::json!({
         "task_id": task.id,
         "project_id": task.project_id,
         "story_id": task.story_id,
         "reason": "task_created_by_user"
-    })
+    }))
 }
 
 fn parse_json_column<T: serde::de::DeserializeOwned>(
@@ -522,13 +523,11 @@ fn parse_task_execution_mode(raw: &str) -> Result<TaskExecutionMode, DomainError
 }
 
 impl StorySnapshotRow {
-    fn to_payload(&self, reason: &str) -> serde_json::Value {
-        let tags: serde_json::Value =
-            serde_json::from_str(&self.tags).unwrap_or_else(|_| serde_json::json!([]));
-        let context: serde_json::Value =
-            serde_json::from_str(&self.context).unwrap_or_else(|_| serde_json::json!({}));
+    fn to_payload(&self, reason: &str) -> Result<serde_json::Value, DomainError> {
+        let tags: serde_json::Value = parse_json_column(&self.tags, "stories.tags")?;
+        let context: serde_json::Value = parse_json_column(&self.context, "stories.context")?;
 
-        serde_json::json!({
+        Ok(serde_json::json!({
             "id": self.id.clone(),
             "project_id": self.project_id.clone(),
             "title": self.title.clone(),
@@ -542,6 +541,6 @@ impl StorySnapshotRow {
             "created_at": self.created_at.clone(),
             "updated_at": self.updated_at.clone(),
             "reason": reason
-        })
+        }))
     }
 }

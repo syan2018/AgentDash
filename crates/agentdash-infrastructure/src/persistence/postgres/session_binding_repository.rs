@@ -276,9 +276,22 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
                         id: row.owner_id.clone(),
                     })?,
                     label: row.label,
-                    created_at: super::parse_pg_timestamp(&row.created_at),
+                    created_at: super::parse_pg_timestamp_checked(
+                        &row.created_at,
+                        "session_bindings.created_at",
+                    )?,
                 };
-                let story_id = row.story_id.as_deref().and_then(|s| s.parse::<Uuid>().ok());
+                let story_id = row
+                    .story_id
+                    .as_deref()
+                    .map(|value| {
+                        value.parse::<Uuid>().map_err(|error| {
+                            DomainError::InvalidConfig(format!(
+                                "session_bindings.story_id: {error}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
                 Ok(ProjectSessionBinding {
                     binding,
                     story_title: row.story_title,
@@ -328,7 +341,10 @@ impl TryFrom<BindingRow> for SessionBinding {
                 id: row.owner_id.clone(),
             })?,
             label: row.label,
-            created_at: super::parse_pg_timestamp(&row.created_at),
+            created_at: super::parse_pg_timestamp_checked(
+                &row.created_at,
+                "session_bindings.created_at",
+            )?,
         })
     }
 }

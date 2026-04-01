@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -321,47 +321,49 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
         "project",
     )?;
-    let identity_payload = parse_json_value(
-        row.try_get::<Option<String>, _>("identity_payload")
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
-            .unwrap_or_else(|| "{}".to_string()),
-    );
+    let name = row
+        .try_get::<String, _>("name")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.name: {e}")))?;
+    let identity_kind = row
+        .try_get::<String, _>("identity_kind")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.identity_kind: {e}")))?;
+    let identity_payload_raw = row
+        .try_get::<String, _>("identity_payload")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.identity_payload: {e}")))?;
+    let resolution_policy = row
+        .try_get::<String, _>("resolution_policy")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.resolution_policy: {e}")))?;
+    let status = row
+        .try_get::<String, _>("status")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.status: {e}")))?;
+    let created_at = row
+        .try_get::<String, _>("created_at")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.created_at: {e}")))?;
+    let updated_at = row
+        .try_get::<String, _>("updated_at")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.updated_at: {e}")))?;
+    let default_binding_id = row
+        .try_get::<Option<String>, _>("default_binding_id")
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.default_binding_id: {e}")))?
+        .map(|value| {
+            Uuid::parse_str(&value).map_err(|error| {
+                DomainError::InvalidConfig(format!("workspaces.default_binding_id: {error}"))
+            })
+        })
+        .transpose()?;
 
     Ok(Workspace {
         id,
         project_id,
-        name: row
-            .try_get::<String, _>("name")
-            .unwrap_or_else(|_| "未命名工作空间".to_string()),
-        identity_kind: str_to_identity_kind(
-            &row.try_get::<String, _>("identity_kind")
-                .unwrap_or_else(|_| "local_dir".to_string()),
-        ),
-        identity_payload,
-        resolution_policy: str_to_resolution_policy(
-            &row.try_get::<String, _>("resolution_policy")
-                .unwrap_or_else(|_| "prefer_online".to_string()),
-        ),
-        default_binding_id: row
-            .try_get::<Option<String>, _>("default_binding_id")
-            .ok()
-            .flatten()
-            .and_then(|value| Uuid::parse_str(&value).ok()),
-        status: str_to_workspace_status(
-            &row.try_get::<String, _>("status")
-                .unwrap_or_else(|_| "pending".to_string()),
-        ),
+        name,
+        identity_kind: str_to_identity_kind(&identity_kind)?,
+        identity_payload: parse_json_value(&identity_payload_raw, "workspaces.identity_payload")?,
+        resolution_policy: str_to_resolution_policy(&resolution_policy)?,
+        default_binding_id,
+        status: str_to_workspace_status(&status)?,
         bindings: Vec::new(),
-        created_at: parse_datetime(
-            row.try_get::<Option<String>, _>("created_at")
-                .ok()
-                .flatten(),
-        ),
-        updated_at: parse_datetime(
-            row.try_get::<Option<String>, _>("updated_at")
-                .ok()
-                .flatten(),
-        ),
+        created_at: parse_datetime(&created_at, "workspaces.created_at")?,
+        updated_at: parse_datetime(&updated_at, "workspaces.updated_at")?,
     })
 }
 
@@ -379,34 +381,45 @@ fn workspace_binding_from_row(
                 .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
             "workspace",
         )?,
-        backend_id: row.try_get::<String, _>("backend_id").unwrap_or_default(),
-        root_ref: row.try_get::<String, _>("root_ref").unwrap_or_default(),
+        backend_id: row.try_get::<String, _>("backend_id").map_err(|e| {
+            DomainError::InvalidConfig(format!("workspace_bindings.backend_id: {e}"))
+        })?,
+        root_ref: row
+            .try_get::<String, _>("root_ref")
+            .map_err(|e| DomainError::InvalidConfig(format!("workspace_bindings.root_ref: {e}")))?,
         status: str_to_binding_status(
-            &row.try_get::<String, _>("status")
-                .unwrap_or_else(|_| "pending".to_string()),
-        ),
+            &row.try_get::<String, _>("status").map_err(|e| {
+                DomainError::InvalidConfig(format!("workspace_bindings.status: {e}"))
+            })?,
+        )?,
         detected_facts: parse_json_value(
-            row.try_get::<Option<String>, _>("detected_facts")
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "{}".to_string()),
-        ),
+            &row.try_get::<String, _>("detected_facts").map_err(|e| {
+                DomainError::InvalidConfig(format!("workspace_bindings.detected_facts: {e}"))
+            })?,
+            "workspace_bindings.detected_facts",
+        )?,
         last_verified_at: row
             .try_get::<Option<String>, _>("last_verified_at")
-            .ok()
-            .flatten()
-            .map(|value| parse_datetime(Some(value))),
-        priority: row.try_get::<i32, _>("priority").unwrap_or_default(),
+            .map_err(|e| {
+                DomainError::InvalidConfig(format!("workspace_bindings.last_verified_at: {e}"))
+            })?
+            .map(|value| parse_datetime(&value, "workspace_bindings.last_verified_at"))
+            .transpose()?,
+        priority: row
+            .try_get::<i32, _>("priority")
+            .map_err(|e| DomainError::InvalidConfig(format!("workspace_bindings.priority: {e}")))?,
         created_at: parse_datetime(
-            row.try_get::<Option<String>, _>("created_at")
-                .ok()
-                .flatten(),
-        ),
+            &row.try_get::<String, _>("created_at").map_err(|e| {
+                DomainError::InvalidConfig(format!("workspace_bindings.created_at: {e}"))
+            })?,
+            "workspace_bindings.created_at",
+        )?,
         updated_at: parse_datetime(
-            row.try_get::<Option<String>, _>("updated_at")
-                .ok()
-                .flatten(),
-        ),
+            &row.try_get::<String, _>("updated_at").map_err(|e| {
+                DomainError::InvalidConfig(format!("workspace_bindings.updated_at: {e}"))
+            })?,
+            "workspace_bindings.updated_at",
+        )?,
     })
 }
 
@@ -414,15 +427,13 @@ fn parse_uuid(value: String, entity: &'static str) -> Result<Uuid, DomainError> 
     Uuid::parse_str(&value).map_err(move |_| DomainError::NotFound { entity, id: value })
 }
 
-fn parse_datetime(value: Option<String>) -> DateTime<Utc> {
-    match value.as_deref() {
-        Some(raw) => super::parse_pg_timestamp(raw),
-        None => Utc::now(),
-    }
+fn parse_datetime(value: &str, field: &str) -> Result<DateTime<Utc>, DomainError> {
+    super::parse_pg_timestamp_checked(value, field)
 }
 
-fn parse_json_value(raw: String) -> Value {
-    serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!({}))
+fn parse_json_value(raw: &str, field: &str) -> Result<Value, DomainError> {
+    serde_json::from_str::<Value>(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 fn identity_kind_to_str(value: &WorkspaceIdentityKind) -> &'static str {
@@ -433,11 +444,14 @@ fn identity_kind_to_str(value: &WorkspaceIdentityKind) -> &'static str {
     }
 }
 
-fn str_to_identity_kind(value: &str) -> WorkspaceIdentityKind {
+fn str_to_identity_kind(value: &str) -> Result<WorkspaceIdentityKind, DomainError> {
     match value {
-        "git_repo" => WorkspaceIdentityKind::GitRepo,
-        "p4_workspace" => WorkspaceIdentityKind::P4Workspace,
-        _ => WorkspaceIdentityKind::LocalDir,
+        "git_repo" => Ok(WorkspaceIdentityKind::GitRepo),
+        "p4_workspace" => Ok(WorkspaceIdentityKind::P4Workspace),
+        "local_dir" => Ok(WorkspaceIdentityKind::LocalDir),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "workspaces.identity_kind: 未知值 `{value}`"
+        ))),
     }
 }
 
@@ -450,12 +464,15 @@ fn binding_status_to_str(value: &WorkspaceBindingStatus) -> &'static str {
     }
 }
 
-fn str_to_binding_status(value: &str) -> WorkspaceBindingStatus {
+fn str_to_binding_status(value: &str) -> Result<WorkspaceBindingStatus, DomainError> {
     match value {
-        "ready" => WorkspaceBindingStatus::Ready,
-        "offline" => WorkspaceBindingStatus::Offline,
-        "error" => WorkspaceBindingStatus::Error,
-        _ => WorkspaceBindingStatus::Pending,
+        "pending" => Ok(WorkspaceBindingStatus::Pending),
+        "ready" => Ok(WorkspaceBindingStatus::Ready),
+        "offline" => Ok(WorkspaceBindingStatus::Offline),
+        "error" => Ok(WorkspaceBindingStatus::Error),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "workspace_bindings.status: 未知值 `{value}`"
+        ))),
     }
 }
 
@@ -466,10 +483,13 @@ fn resolution_policy_to_str(value: &WorkspaceResolutionPolicy) -> &'static str {
     }
 }
 
-fn str_to_resolution_policy(value: &str) -> WorkspaceResolutionPolicy {
+fn str_to_resolution_policy(value: &str) -> Result<WorkspaceResolutionPolicy, DomainError> {
     match value {
-        "prefer_default_binding" => WorkspaceResolutionPolicy::PreferDefaultBinding,
-        _ => WorkspaceResolutionPolicy::PreferOnline,
+        "prefer_default_binding" => Ok(WorkspaceResolutionPolicy::PreferDefaultBinding),
+        "prefer_online" => Ok(WorkspaceResolutionPolicy::PreferOnline),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "workspaces.resolution_policy: 未知值 `{value}`"
+        ))),
     }
 }
 
@@ -483,12 +503,15 @@ fn workspace_status_to_str(value: &WorkspaceStatus) -> &'static str {
     }
 }
 
-fn str_to_workspace_status(value: &str) -> WorkspaceStatus {
+fn str_to_workspace_status(value: &str) -> Result<WorkspaceStatus, DomainError> {
     match value {
-        "ready" => WorkspaceStatus::Ready,
-        "active" => WorkspaceStatus::Active,
-        "archived" => WorkspaceStatus::Archived,
-        "error" => WorkspaceStatus::Error,
-        _ => WorkspaceStatus::Pending,
+        "pending" => Ok(WorkspaceStatus::Pending),
+        "ready" => Ok(WorkspaceStatus::Ready),
+        "active" => Ok(WorkspaceStatus::Active),
+        "archived" => Ok(WorkspaceStatus::Archived),
+        "error" => Ok(WorkspaceStatus::Error),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "workspaces.status: 未知值 `{value}`"
+        ))),
     }
 }

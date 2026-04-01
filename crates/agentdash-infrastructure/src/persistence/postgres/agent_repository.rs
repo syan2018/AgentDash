@@ -72,8 +72,8 @@ impl TryFrom<AgentRow> for Agent {
             name: row.name,
             agent_type: row.agent_type,
             base_config: parse_json_column(&row.base_config, "agents.base_config")?,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(&row.created_at, "agents.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "agents.updated_at")?,
         })
     }
 }
@@ -179,8 +179,14 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
             default_lifecycle_key: row.default_lifecycle_key,
             is_default_for_story: row.is_default_for_story,
             is_default_for_task: row.is_default_for_task,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(
+                &row.created_at,
+                "project_agent_links.created_at",
+            )?,
+            updated_at: super::parse_pg_timestamp_checked(
+                &row.updated_at,
+                "project_agent_links.updated_at",
+            )?,
         })
     }
 }

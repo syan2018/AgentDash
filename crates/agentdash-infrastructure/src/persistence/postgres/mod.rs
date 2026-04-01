@@ -14,6 +14,8 @@ mod user_directory_repository;
 mod workflow_repository;
 mod workspace_repository;
 
+use agentdash_domain::common::error::DomainError;
+
 #[cfg(test)]
 pub(crate) fn test_database_url() -> Option<String> {
     use std::sync::OnceLock;
@@ -95,6 +97,48 @@ fn parse_pg_timestamp(raw: &str) -> chrono::DateTime<chrono::Utc> {
         return DateTime::from_naive_utc_and_offset(v, chrono::Utc);
     }
     chrono::Utc::now()
+}
+
+pub(crate) fn parse_pg_timestamp_checked(
+    raw: &str,
+    field: &str,
+) -> Result<chrono::DateTime<chrono::Utc>, DomainError> {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+
+    if let Ok(v) = DateTime::parse_from_rfc3339(raw) {
+        return Ok(v.with_timezone(&Utc));
+    }
+    if let Ok(v) = DateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f%:z") {
+        return Ok(v.with_timezone(&Utc));
+    }
+    if let Ok(v) = DateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f%z") {
+        return Ok(v.with_timezone(&Utc));
+    }
+    {
+        let trimmed = raw.trim();
+        if let Some(idx) = trimmed.rfind('+').or_else(|| {
+            let bytes = trimmed.as_bytes();
+            (10..trimmed.len()).rev().find(|&i| bytes[i] == b'-')
+        }) {
+            let tz_part = &trimmed[idx..];
+            if tz_part.len() == 3 {
+                let patched = format!("{}:00", trimmed);
+                if let Ok(v) = DateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S%.f%:z") {
+                    return Ok(v.with_timezone(&Utc));
+                }
+            }
+        }
+    }
+    if let Ok(v) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f") {
+        return Ok(DateTime::from_naive_utc_and_offset(v, chrono::Utc));
+    }
+    if let Ok(v) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S") {
+        return Ok(DateTime::from_naive_utc_and_offset(v, chrono::Utc));
+    }
+
+    Err(DomainError::InvalidConfig(format!(
+        "{field}: 无法解析 PostgreSQL 时间戳 `{raw}`"
+    )))
 }
 
 pub use agent_repository::PostgresAgentRepository;

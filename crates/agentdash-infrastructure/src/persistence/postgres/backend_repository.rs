@@ -84,7 +84,7 @@ impl BackendRepository for PostgresBackendRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        Ok(rows.into_iter().map(|r| r.into()).collect())
+        rows.into_iter().map(TryInto::try_into).collect()
     }
 
     async fn get_backend(&self, id: &str) -> Result<BackendConfig, DomainError> {
@@ -97,7 +97,7 @@ impl BackendRepository for PostgresBackendRepository {
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
         .ok_or_else(|| DomainError::NotFound { entity: "backend", id: id.to_string() })?;
 
-        Ok(row.into())
+        row.try_into()
     }
 
     async fn get_backend_by_auth_token(&self, token: &str) -> Result<BackendConfig, DomainError> {
@@ -118,7 +118,7 @@ impl BackendRepository for PostgresBackendRepository {
                 .into_iter()
                 .next()
                 .expect("rows.len() == 1 时必须存在")
-                .into()),
+                .try_into()?),
             _ => Err(DomainError::InvalidConfig(
                 "检测到重复 backend auth_token 配置".to_string(),
             )),
@@ -142,7 +142,7 @@ impl BackendRepository for PostgresBackendRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        Ok(rows.into_iter().map(|r| r.into()).collect())
+        rows.into_iter().map(TryInto::try_into).collect()
     }
 
     async fn save_view(&self, view: &ViewConfig) -> Result<(), DomainError> {
@@ -207,19 +207,18 @@ struct BackendRow {
     backend_type: String,
 }
 
-impl From<BackendRow> for BackendConfig {
-    fn from(row: BackendRow) -> Self {
-        Self {
+impl TryFrom<BackendRow> for BackendConfig {
+    type Error = DomainError;
+
+    fn try_from(row: BackendRow) -> Result<Self, Self::Error> {
+        Ok(Self {
             id: row.id,
             name: row.name,
             endpoint: row.endpoint,
             auth_token: row.auth_token,
             enabled: row.enabled,
-            backend_type: match row.backend_type.as_str() {
-                "remote" => BackendType::Remote,
-                _ => BackendType::Local,
-            },
-        }
+            backend_type: parse_backend_type(&row.backend_type)?,
+        })
     }
 }
 
@@ -232,16 +231,36 @@ struct ViewRow {
     sort_by: Option<String>,
 }
 
-impl From<ViewRow> for ViewConfig {
-    fn from(row: ViewRow) -> Self {
-        Self {
+impl TryFrom<ViewRow> for ViewConfig {
+    type Error = DomainError;
+
+    fn try_from(row: ViewRow) -> Result<Self, Self::Error> {
+        Ok(Self {
             id: row.id,
             name: row.name,
-            backend_ids: serde_json::from_str(&row.backend_ids).unwrap_or_default(),
-            filters: serde_json::from_str(&row.filters).unwrap_or_default(),
+            backend_ids: parse_json_column(&row.backend_ids, "views.backend_ids")?,
+            filters: parse_json_column(&row.filters, "views.filters")?,
             sort_by: row.sort_by,
-        }
+        })
     }
+}
+
+fn parse_backend_type(raw: &str) -> Result<BackendType, DomainError> {
+    match raw {
+        "local" => Ok(BackendType::Local),
+        "remote" => Ok(BackendType::Remote),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "backends.backend_type: 未知值 `{raw}`"
+        ))),
+    }
+}
+
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 #[cfg(test)]

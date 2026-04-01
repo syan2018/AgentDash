@@ -296,8 +296,8 @@ impl TryFrom<UserRow> for User {
             email: row.email,
             is_admin: row.is_admin,
             provider: row.provider,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(&row.created_at, "users.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "users.updated_at")?,
         })
     }
 }
@@ -309,8 +309,8 @@ impl TryFrom<GroupRow> for Group {
         Ok(Group {
             group_id: row.group_id,
             display_name: row.display_name,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(&row.created_at, "groups.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "groups.updated_at")?,
         })
     }
 }

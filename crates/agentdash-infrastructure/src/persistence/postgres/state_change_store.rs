@@ -169,21 +169,35 @@ impl TryFrom<StateChangeRow> for StateChange {
                 entity: "state_change",
                 id: row.entity_id.clone(),
             })?,
-            kind: match row.kind.as_str() {
-                "story_created" => ChangeKind::StoryCreated,
-                "story_updated" => ChangeKind::StoryUpdated,
-                "story_status_changed" => ChangeKind::StoryStatusChanged,
-                "story_deleted" => ChangeKind::StoryDeleted,
-                "task_created" => ChangeKind::TaskCreated,
-                "task_updated" => ChangeKind::TaskUpdated,
-                "task_status_changed" => ChangeKind::TaskStatusChanged,
-                "task_deleted" => ChangeKind::TaskDeleted,
-                "task_artifact_added" => ChangeKind::TaskArtifactAdded,
-                _ => ChangeKind::StoryUpdated,
-            },
-            payload: serde_json::from_str(&row.payload).unwrap_or_default(),
+            kind: parse_change_kind(&row.kind)?,
+            payload: parse_json_payload(&row.payload)?,
             backend_id: row.backend_id.unwrap_or_default(),
-            created_at: super::parse_pg_timestamp(&row.created_at),
+            created_at: super::parse_pg_timestamp_checked(
+                &row.created_at,
+                "state_changes.created_at",
+            )?,
         })
     }
+}
+
+fn parse_change_kind(raw: &str) -> Result<ChangeKind, DomainError> {
+    match raw {
+        "story_created" => Ok(ChangeKind::StoryCreated),
+        "story_updated" => Ok(ChangeKind::StoryUpdated),
+        "story_status_changed" => Ok(ChangeKind::StoryStatusChanged),
+        "story_deleted" => Ok(ChangeKind::StoryDeleted),
+        "task_created" => Ok(ChangeKind::TaskCreated),
+        "task_updated" => Ok(ChangeKind::TaskUpdated),
+        "task_status_changed" => Ok(ChangeKind::TaskStatusChanged),
+        "task_deleted" => Ok(ChangeKind::TaskDeleted),
+        "task_artifact_added" => Ok(ChangeKind::TaskArtifactAdded),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "state_changes.kind: 未知值 `{raw}`"
+        ))),
+    }
+}
+
+fn parse_json_payload(raw: &str) -> Result<serde_json::Value, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("state_changes.payload: {error}")))
 }

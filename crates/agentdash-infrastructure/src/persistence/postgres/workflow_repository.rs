@@ -452,14 +452,16 @@ impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
             name: row.name,
             description: row.description,
             binding_kind: serde_json::from_str(&row.binding_kind)?,
-            recommended_binding_roles: serde_json::from_str(&row.recommended_binding_roles)
-                .unwrap_or_default(),
+            recommended_binding_roles: parse_json_column(
+                &row.recommended_binding_roles,
+                "workflow_definitions.recommended_binding_roles",
+            )?,
             source: serde_json::from_str(&row.source)?,
             status: serde_json::from_str(&row.status)?,
             version: row.version,
             contract: serde_json::from_str(&row.contract)?,
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
         })
     }
 }
@@ -490,15 +492,17 @@ impl TryFrom<LifecycleDefinitionRow> for LifecycleDefinition {
             name: row.name,
             description: row.description,
             binding_kind: serde_json::from_str(&row.binding_kind)?,
-            recommended_binding_roles: serde_json::from_str(&row.recommended_binding_roles)
-                .unwrap_or_default(),
+            recommended_binding_roles: parse_json_column(
+                &row.recommended_binding_roles,
+                "lifecycle_definitions.recommended_binding_roles",
+            )?,
             source: serde_json::from_str(&row.source)?,
             status: serde_json::from_str(&row.status)?,
             version: row.version,
             entry_step_key: row.entry_step_key,
             steps: serde_json::from_str(&row.steps)?,
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
         })
     }
 }
@@ -525,8 +529,8 @@ impl TryFrom<WorkflowAssignmentRow> for WorkflowAssignment {
             role: serde_json::from_str(&row.role)?,
             enabled: row.enabled,
             is_default: row.is_default,
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
         })
     }
 }
@@ -561,10 +565,10 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             current_step_key: row.current_step_key,
             step_states: serde_json::from_str(&row.step_states)?,
             record_artifacts: serde_json::from_str(&row.record_artifacts)?,
-            execution_log: serde_json::from_str(&row.execution_log).unwrap_or_default(),
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
-            last_activity_at: parse_time(&row.last_activity_at),
+            execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
+            last_activity_at: parse_time(&row.last_activity_at)?,
         })
     }
 }
@@ -576,6 +580,14 @@ fn parse_uuid(raw: &str, entity: &'static str) -> Result<uuid::Uuid, DomainError
     })
 }
 
-fn parse_time(raw: &str) -> chrono::DateTime<chrono::Utc> {
-    super::parse_pg_timestamp(raw)
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn parse_time(raw: &str) -> Result<chrono::DateTime<chrono::Utc>, DomainError> {
+    super::parse_pg_timestamp_checked(raw, "workflow.timestamp")
 }

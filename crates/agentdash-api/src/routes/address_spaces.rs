@@ -600,7 +600,7 @@ pub async fn preview_address_space(
     .await?;
 
     let parsed_owner = parse_lifecycle_owner(&req.owner_type, &req.owner_id);
-    let workspace = resolve_workspace_for_owner(&state, &project, parsed_owner).await;
+    let workspace = resolve_workspace_for_owner(&state, &project, parsed_owner).await?;
 
     let target = match parsed_owner {
         Some((WorkflowBindingKind::Task, _)) => SessionMountTarget::Task,
@@ -703,7 +703,7 @@ async fn resolve_address_space(
         load_project_and_optional_story(state, current_user, pid, story_id, permission).await?;
 
     let parsed_owner = parse_lifecycle_owner(owner_type, owner_id);
-    let workspace = resolve_workspace_for_owner(state, &project, parsed_owner).await;
+    let workspace = resolve_workspace_for_owner(state, &project, parsed_owner).await?;
 
     let target = match parsed_owner {
         Some((WorkflowBindingKind::Task, _)) => SessionMountTarget::Task,
@@ -741,53 +741,74 @@ async fn resolve_workspace_for_owner(
     state: &Arc<AppState>,
     project: &agentdash_domain::project::Project,
     owner: Option<(WorkflowBindingKind, Uuid)>,
-) -> Option<agentdash_domain::workspace::Workspace> {
+) -> Result<Option<agentdash_domain::workspace::Workspace>, ApiError> {
     if let Some((kind, id)) = owner {
         match kind {
             WorkflowBindingKind::Task => {
-                if let Some(ws) = resolve_task_workspace(state, id).await {
-                    return Some(ws);
-                }
+                return resolve_task_workspace(state, id).await.map(Some);
             }
             WorkflowBindingKind::Story => {
-                if let Some(story) = state.repos.story_repo.get_by_id(id).await.ok().flatten()
-                    && let Some(ws_id) = story.default_workspace_id
-                    && let Some(ws) = state
-                        .repos
-                        .workspace_repo
-                        .get_by_id(ws_id)
-                        .await
-                        .ok()
-                        .flatten()
-                {
-                    return Some(ws);
-                }
+                let story = state
+                    .repos
+                    .story_repo
+                    .get_by_id(id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .ok_or_else(|| ApiError::NotFound(format!("Story {id} 不存在")))?;
+                let ws_id = story.default_workspace_id.ok_or_else(|| {
+                    ApiError::BadRequest(format!("Story {id} 未配置 default_workspace_id"))
+                })?;
+                let workspace = state
+                    .repos
+                    .workspace_repo
+                    .get_by_id(ws_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .ok_or_else(|| {
+                        ApiError::NotFound(format!("Story {id} 绑定的 Workspace {ws_id} 不存在"))
+                    })?;
+                return Ok(Some(workspace));
             }
-            WorkflowBindingKind::Project => {}
+            WorkflowBindingKind::Project => {
+                return super::project_agents::resolve_project_workspace(state, project)
+                    .await?
+                    .ok_or_else(|| {
+                        ApiError::BadRequest(format!(
+                            "Project {} 未配置 default_workspace_id",
+                            project.id
+                        ))
+                    })
+                    .map(Some);
+            }
         }
     }
 
-    if let Ok(Some(ws)) = super::project_agents::resolve_project_workspace(state, project).await {
-        return Some(ws);
-    }
-
-    let workspaces = state
-        .repos
-        .workspace_repo
-        .list_by_project(project.id)
-        .await
-        .ok()
-        .unwrap_or_default();
-    workspaces.into_iter().next()
+    super::project_agents::resolve_project_workspace(state, project).await
 }
 
 async fn resolve_task_workspace(
     state: &Arc<AppState>,
     task_id: Uuid,
-) -> Option<agentdash_domain::workspace::Workspace> {
-    let task = state.repos.task_repo.get_by_id(task_id).await.ok()??;
-    let ws_id = task.workspace_id?;
-    state.repos.workspace_repo.get_by_id(ws_id).await.ok()?
+) -> Result<agentdash_domain::workspace::Workspace, ApiError> {
+    let task = state
+        .repos
+        .task_repo
+        .get_by_id(task_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+    let ws_id = task
+        .workspace_id
+        .ok_or_else(|| ApiError::BadRequest(format!("Task {task_id} 未绑定 workspace_id")))?;
+    state
+        .repos
+        .workspace_repo
+        .get_by_id(ws_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("Task {task_id} 绑定的 Workspace {ws_id} 不存在"))
+        })
 }
 
 async fn inject_lifecycle_mount(

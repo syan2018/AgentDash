@@ -18,6 +18,24 @@ pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
 pub const PROVIDER_LIFECYCLE_VFS: &str = "lifecycle_vfs";
 pub const PROVIDER_CANVAS_FS: &str = "canvas_fs";
+pub(crate) const CONTEXT_OWNER_SCOPE_METADATA_KEY: &str = "agentdash_context_owner_scope";
+pub(crate) const CONTEXT_OWNER_SCOPE_PROJECT: &str = "project";
+pub(crate) const CONTEXT_OWNER_SCOPE_STORY: &str = "story";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextContainerOwnerScope {
+    Project,
+    Story,
+}
+
+impl ContextContainerOwnerScope {
+    fn as_metadata_value(self) -> &'static str {
+        match self {
+            Self::Project => CONTEXT_OWNER_SCOPE_PROJECT,
+            Self::Story => CONTEXT_OWNER_SCOPE_STORY,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMountTarget {
@@ -55,11 +73,13 @@ pub fn build_derived_address_space(
         mounts.push(workspace_mount_from_policy(workspace, &mount_policy)?);
     }
 
-    for container in effective_context_containers(project, story) {
+    for (container, owner_scope) in effective_context_containers_with_origin(project, story) {
         if !container_visible_for_target(&container, target, agent_type) {
             continue;
         }
-        mounts.push(build_context_container_mount(&container)?);
+        let mut mount = build_context_container_mount(&container)?;
+        annotate_context_mount_owner_scope(&mut mount, owner_scope);
+        mounts.push(mount);
     }
 
     let default_mount_id = if mounts.iter().any(|mount| mount.id == "main") {
@@ -147,7 +167,21 @@ pub fn effective_context_containers(
     project: &Project,
     story: Option<&Story>,
 ) -> Vec<ContextContainerDefinition> {
+    effective_context_containers_with_origin(project, story)
+        .into_iter()
+        .map(|(container, _)| container)
+        .collect()
+}
+
+fn effective_context_containers_with_origin(
+    project: &Project,
+    story: Option<&Story>,
+) -> Vec<(ContextContainerDefinition, ContextContainerOwnerScope)> {
     let mut containers = project.config.context_containers.clone();
+    let mut owned = containers
+        .drain(..)
+        .map(|container| (container, ContextContainerOwnerScope::Project))
+        .collect::<Vec<_>>();
     if let Some(story) = story {
         let disabled = story
             .context
@@ -158,18 +192,18 @@ pub fn effective_context_containers(
             .map(|item| item.to_string())
             .collect::<BTreeSet<_>>();
         if !disabled.is_empty() {
-            containers.retain(|container| !disabled.contains(container.id.trim()));
+            owned.retain(|(container, _)| !disabled.contains(container.id.trim()));
         }
 
         for container in &story.context.context_containers {
-            containers.retain(|item| {
+            owned.retain(|(item, _)| {
                 item.id.trim() != container.id.trim()
                     && item.mount_id.trim() != container.mount_id.trim()
             });
-            containers.push(container.clone());
+            owned.push((container.clone(), ContextContainerOwnerScope::Story));
         }
     }
-    containers
+    owned
 }
 
 pub fn container_visible_for_target(
@@ -251,6 +285,23 @@ pub fn build_context_container_mount(
     })
 }
 
+fn annotate_context_mount_owner_scope(mount: &mut Mount, owner_scope: ContextContainerOwnerScope) {
+    let mut metadata = match std::mem::take(&mut mount.metadata) {
+        serde_json::Value::Object(object) => object,
+        serde_json::Value::Null => serde_json::Map::new(),
+        other => {
+            let mut object = serde_json::Map::new();
+            object.insert("raw_metadata".to_string(), other);
+            object
+        }
+    };
+    metadata.insert(
+        CONTEXT_OWNER_SCOPE_METADATA_KEY.to_string(),
+        serde_json::Value::String(owner_scope.as_metadata_value().to_string()),
+    );
+    mount.metadata = serde_json::Value::Object(metadata);
+}
+
 pub fn map_container_capabilities(
     capabilities: &[ContextContainerCapability],
 ) -> Vec<MountCapability> {
@@ -276,6 +327,98 @@ fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, St
         Err(format!("{field_name} 不能为空"))
     } else {
         Ok(trimmed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::context_container::{
+        ContextContainerDefinition, ContextContainerExposure, ContextContainerFile,
+        ContextContainerProvider,
+    };
+
+    fn inline_container(id: &str, mount_id: &str, path: &str) -> ContextContainerDefinition {
+        ContextContainerDefinition {
+            id: id.to_string(),
+            mount_id: mount_id.to_string(),
+            display_name: id.to_string(),
+            provider: ContextContainerProvider::InlineFiles {
+                files: vec![ContextContainerFile {
+                    path: path.to_string(),
+                    content: "content".to_string(),
+                }],
+            },
+            capabilities: vec![],
+            default_write: false,
+            exposure: ContextContainerExposure::default(),
+        }
+    }
+
+    #[test]
+    fn story_override_container_is_marked_as_story_owned() {
+        let mut project = Project::new("proj".to_string(), "desc".to_string());
+        project.config.context_containers = vec![inline_container("brief", "brief", "project.md")];
+
+        let mut story = Story::new(project.id, "story".to_string(), "desc".to_string());
+        story.context.context_containers = vec![inline_container("brief", "brief", "story.md")];
+
+        let address_space = build_derived_address_space(
+            &project,
+            Some(&story),
+            None,
+            None,
+            SessionMountTarget::Story,
+        )
+        .expect("address space should build");
+
+        let mount = address_space
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "brief")
+            .expect("brief mount should exist");
+        assert_eq!(
+            mount.metadata.get(CONTEXT_OWNER_SCOPE_METADATA_KEY),
+            Some(&serde_json::Value::String(
+                CONTEXT_OWNER_SCOPE_STORY.to_string()
+            ))
+        );
+        let files = mount
+            .metadata
+            .get("files")
+            .and_then(serde_json::Value::as_object)
+            .expect("inline files metadata should exist");
+        assert!(files.contains_key("story.md"));
+        assert!(!files.contains_key("project.md"));
+    }
+
+    #[test]
+    fn inherited_project_container_is_marked_as_project_owned() {
+        let mut project = Project::new("proj".to_string(), "desc".to_string());
+        project.config.context_containers = vec![inline_container("spec", "spec", "project.md")];
+
+        let story = Story::new(project.id, "story".to_string(), "desc".to_string());
+
+        let address_space = build_derived_address_space(
+            &project,
+            Some(&story),
+            None,
+            None,
+            SessionMountTarget::Story,
+        )
+        .expect("address space should build");
+
+        let mount = address_space
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "spec")
+            .expect("spec mount should exist");
+        assert_eq!(
+            mount.metadata.get(CONTEXT_OWNER_SCOPE_METADATA_KEY),
+            Some(&serde_json::Value::String(
+                CONTEXT_OWNER_SCOPE_PROJECT.to_string()
+            ))
+        );
     }
 }
 

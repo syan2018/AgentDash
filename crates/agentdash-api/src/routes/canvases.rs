@@ -283,8 +283,8 @@ async fn resolve_canvas_runtime_address_space(
                 session_id,
                 &binding.label,
             )
-            .await;
-            Ok(built_context.and_then(|context| context.address_space))
+            .await?;
+            Ok(built_context.address_space)
         }
     }
 }

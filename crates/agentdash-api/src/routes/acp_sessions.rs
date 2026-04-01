@@ -36,7 +36,10 @@ use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
 use serde::Serialize;
 
-use super::project_agents::{resolve_project_agent_bridge_async, resolve_project_workspace};
+use super::project_agents::{
+    parse_project_agent_session_label, resolve_project_agent_bridge_async,
+    resolve_project_workspace,
+};
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
@@ -533,14 +536,12 @@ pub async fn get_session_context(
                 &session_id,
                 &primary.label,
             )
-            .await;
+            .await?;
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
-                address_space: built_context
-                    .as_ref()
-                    .and_then(|context| context.address_space.clone()),
-                context_snapshot: built_context.and_then(|context| context.context_snapshot),
+                address_space: built_context.address_space.clone(),
+                context_snapshot: built_context.context_snapshot,
             }))
         }
     }
@@ -862,11 +863,7 @@ async fn build_story_owner_prompt_request(
         .map(|config| config.executor.as_str())
         .or(project.config.default_agent_type.as_deref());
     let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = state
-        .config
-        .mcp_base_url
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    let base_url = required_mcp_base_url(state.as_ref())?;
     effective_mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
     let runtime_address_space = address_space.clone();
@@ -913,6 +910,14 @@ async fn build_story_owner_prompt_request(
     Ok(req)
 }
 
+fn required_mcp_base_url(state: &AppState) -> Result<String, ApiError> {
+    state
+        .config
+        .mcp_base_url
+        .clone()
+        .ok_or_else(|| ApiError::Internal("服务端未配置 MCP relay base_url".to_string()))
+}
+
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     mut req: PromptSessionRequest,
@@ -920,10 +925,9 @@ async fn build_project_owner_prompt_request(
     binding_label: &str,
     visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
-    let agent_key = binding_label
-        .trim()
-        .strip_prefix("project_agent:")
-        .unwrap_or_default();
+    let agent_key = parse_project_agent_session_label(binding_label).ok_or_else(|| {
+        ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
+    })?;
     let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
         .await
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
@@ -962,11 +966,7 @@ async fn build_project_owner_prompt_request(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
     let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = state
-        .config
-        .mcp_base_url
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    let base_url = required_mcp_base_url(state.as_ref())?;
     effective_mcp_servers
         .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
     // Inject Http/SSE MCP servers from the preset config

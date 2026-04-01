@@ -74,8 +74,8 @@ impl SqliteSessionRepository {
         Ok(())
     }
 
-    fn map_meta_row(row: &sqlx::sqlite::SqliteRow) -> SessionMeta {
-        SessionMeta {
+    fn map_meta_row(row: &sqlx::sqlite::SqliteRow) -> io::Result<SessionMeta> {
+        Ok(SessionMeta {
             id: row.get::<String, _>("id"),
             title: row.get::<String, _>("title"),
             created_at: row.get::<i64, _>("created_at"),
@@ -84,18 +84,21 @@ impl SqliteSessionRepository {
             last_execution_status: row.get::<String, _>("last_execution_status"),
             last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
             last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
-            executor_config: row
-                .get::<Option<String>, _>("executor_config_json")
-                .and_then(|value| serde_json::from_str(&value).ok()),
+            executor_config: parse_optional_json_column(
+                row.get::<Option<String>, _>("executor_config_json"),
+                "executor_config_json",
+            )?,
             executor_session_id: row.get::<Option<String>, _>("executor_session_id"),
-            companion_context: row
-                .get::<Option<String>, _>("companion_context_json")
-                .and_then(|value| serde_json::from_str(&value).ok()),
-            visible_canvas_mount_ids: row
-                .get::<Option<String>, _>("visible_canvas_mount_ids_json")
-                .and_then(|value| serde_json::from_str(&value).ok())
-                .unwrap_or_default(),
-        }
+            companion_context: parse_optional_json_column(
+                row.get::<Option<String>, _>("companion_context_json"),
+                "companion_context_json",
+            )?,
+            visible_canvas_mount_ids: parse_optional_json_column(
+                row.get::<Option<String>, _>("visible_canvas_mount_ids_json"),
+                "visible_canvas_mount_ids_json",
+            )?
+            .unwrap_or_default(),
+        })
     }
 
     fn persisted_event_from_row(
@@ -164,7 +167,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
-        Ok(row.as_ref().map(Self::map_meta_row))
+        row.as_ref().map(Self::map_meta_row).transpose()
     }
 
     async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
@@ -180,7 +183,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
-        Ok(rows.iter().map(Self::map_meta_row).collect())
+        rows.iter().map(Self::map_meta_row).collect()
     }
 
     async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()> {
@@ -464,6 +467,21 @@ impl SessionPersistence for SqliteSessionRepository {
 
 fn json_string<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+fn parse_optional_json_column<T: serde::de::DeserializeOwned>(
+    raw: Option<String>,
+    column: &str,
+) -> io::Result<Option<T>> {
+    match raw {
+        Some(value) => serde_json::from_str(&value).map(Some).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("解析 {column} 失败: {error}"),
+            )
+        }),
+        None => Ok(None),
+    }
 }
 
 fn sqlx_to_io(error: sqlx::Error) -> io::Error {

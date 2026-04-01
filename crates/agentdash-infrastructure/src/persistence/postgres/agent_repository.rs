@@ -6,11 +6,11 @@ use agentdash_domain::agent::{
 };
 use agentdash_domain::common::error::DomainError;
 
-pub struct SqliteAgentRepository {
+pub struct PostgresAgentRepository {
     pool: PgPool,
 }
 
-impl SqliteAgentRepository {
+impl PostgresAgentRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -79,7 +79,7 @@ impl TryFrom<AgentRow> for Agent {
 }
 
 #[async_trait::async_trait]
-impl AgentRepository for SqliteAgentRepository {
+impl AgentRepository for PostgresAgentRepository {
     async fn create(&self, agent: &Agent) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO agents (id, name, agent_type, base_config, created_at, updated_at)
@@ -185,7 +185,7 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
 const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, created_at, updated_at";
 
 #[async_trait::async_trait]
-impl ProjectAgentLinkRepository for SqliteAgentRepository {
+impl ProjectAgentLinkRepository for PostgresAgentRepository {
     async fn create(&self, link: &ProjectAgentLink) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, created_at, updated_at)

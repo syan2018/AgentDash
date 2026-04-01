@@ -4,7 +4,7 @@ use uuid::Uuid;
 use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
 use agentdash_domain::project::{Project, ProjectConfig, ProjectVisibility};
 use agentdash_domain::story::StoryRepository;
-use agentdash_domain::task::TaskRepository;
+use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
 use agentdash_domain::workflow::{WorkflowAssignment, WorkflowAssignmentRepository};
 use agentdash_domain::workspace::WorkspaceRepository;
 
@@ -113,6 +113,7 @@ pub async fn delete_project_aggregate(
     project_repo: &dyn ProjectRepository,
     story_repo: &dyn StoryRepository,
     task_repo: &dyn TaskRepository,
+    task_command_repo: &dyn TaskAggregateCommandRepository,
     workspace_repo: &dyn WorkspaceRepository,
     project_id: Uuid,
 ) -> Result<(), agentdash_domain::DomainError> {
@@ -120,7 +121,7 @@ pub async fn delete_project_aggregate(
     for story in stories {
         let tasks = task_repo.list_by_story(story.id).await?;
         for task in tasks {
-            task_repo.delete_task_with_story_update(task.id).await?;
+            task_command_repo.delete_for_story(task.id).await?;
         }
         story_repo.delete(story.id).await?;
     }

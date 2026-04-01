@@ -3,14 +3,17 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::ChangeKind;
 use agentdash_domain::task::{
-    AgentBinding, Artifact, Task, TaskExecutionMode, TaskRepository, TaskStatus,
+    AgentBinding, Artifact, Task, TaskAggregateCommandRepository, TaskExecutionMode,
+    TaskRepository, TaskStatus,
 };
 
-pub struct SqliteTaskRepository {
+use super::state_change_store::{append_state_change_in_tx, initialize_state_changes_schema};
+
+pub struct PostgresTaskRepository {
     pool: PgPool,
 }
 
-impl SqliteTaskRepository {
+impl PostgresTaskRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -46,6 +49,8 @@ impl SqliteTaskRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        initialize_state_changes_schema(&self.pool).await?;
+
         Ok(())
     }
 
@@ -69,38 +74,34 @@ impl SqliteTaskRepository {
 
         Ok(story)
     }
+}
 
-    async fn insert_state_change(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        project_id: uuid::Uuid,
-        entity_id: uuid::Uuid,
-        kind: ChangeKind,
-        payload: serde_json::Value,
-        backend_id: Option<&str>,
-    ) -> Result<(), DomainError> {
+#[async_trait::async_trait]
+impl TaskRepository for PostgresTaskRepository {
+    async fn create(&self, task: &Task) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO tasks (id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
-        .bind(project_id.to_string())
-        .bind(entity_id.to_string())
-        .bind(serde_json::to_string(&kind)?.trim_matches('"'))
-        .bind(payload.to_string())
-        .bind(backend_id)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(&mut **tx)
+        .bind(task.id.to_string())
+        .bind(task.project_id.to_string())
+        .bind(task.story_id.to_string())
+        .bind(task.workspace_id.map(|id| id.to_string()))
+        .bind(&task.title)
+        .bind(&task.description)
+        .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
+        .bind(task.session_id.as_deref())
+        .bind(task.executor_session_id.as_deref())
+        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
+        .bind(serde_json::to_string(&task.agent_binding)?)
+        .bind(serde_json::to_string(&task.artifacts)?)
+        .bind(task.created_at.to_rfc3339())
+        .bind(task.updated_at.to_rfc3339())
+        .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl TaskRepository for SqliteTaskRepository {
-    async fn create(&self, task: &Task) -> Result<(), DomainError> {
-        self.create_task_with_story_update(task).await
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Task>, DomainError> {
@@ -205,11 +206,26 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
-        self.delete_task_with_story_update(id).await?;
+        let result = sqlx::query("DELETE FROM tasks WHERE id = $1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound {
+                entity: "task",
+                id: id.to_string(),
+            });
+        }
+
         Ok(())
     }
+}
 
-    async fn create_task_with_story_update(&self, task: &Task) -> Result<(), DomainError> {
+#[async_trait::async_trait]
+impl TaskAggregateCommandRepository for PostgresTaskRepository {
+    async fn create_for_story(&self, task: &Task) -> Result<(), DomainError> {
         let mut tx = self
             .pool
             .begin()
@@ -259,7 +275,7 @@ impl TaskRepository for SqliteTaskRepository {
         story.task_count += 1;
         story.updated_at = now;
 
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task.id,
@@ -268,7 +284,7 @@ impl TaskRepository for SqliteTaskRepository {
             None,
         )
         .await?;
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task.story_id,
@@ -284,10 +300,7 @@ impl TaskRepository for SqliteTaskRepository {
         Ok(())
     }
 
-    async fn delete_task_with_story_update(
-        &self,
-        task_id: uuid::Uuid,
-    ) -> Result<Task, DomainError> {
+    async fn delete_for_story(&self, task_id: uuid::Uuid) -> Result<Task, DomainError> {
         let mut tx = self
             .pool
             .begin()
@@ -343,7 +356,7 @@ impl TaskRepository for SqliteTaskRepository {
         story.task_count = (story.task_count - 1).max(0);
         story.updated_at = now;
 
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task_id,
@@ -357,7 +370,7 @@ impl TaskRepository for SqliteTaskRepository {
             None,
         )
         .await?;
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task.story_id,

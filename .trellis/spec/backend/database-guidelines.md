@@ -1,6 +1,6 @@
 # 数据库规范
 
-> AgentDashboard 数据库使用规范。当前使用 SQLite + SQLx。
+> AgentDashboard 当前云端业务数据以 PostgreSQL + SQLx 持久化；本机端会话元数据仍使用 sqlite。
 
 ---
 
@@ -8,187 +8,167 @@
 
 | 项目 | 说明 |
 |------|------|
-| 数据库 | SQLite（预研阶段） |
-| ORM | SQLx（编译期 SQL 检查） |
+| 云端业务数据库 | PostgreSQL |
+| ORM / 访问层 | SQLx |
 | 数据归属 | 业务数据归云端，执行状态归本机 |
-| 迁移方式 | 应用启动时 `initialize()` 自动建表 |
-| Session 存储 | JSONL 文件（每个 session 一个 `.jsonl`） |
+| 建表方式 | 应用启动时 `initialize()` 自动建表 |
+| 本机会话存储 | `SqliteSessionRepository` |
 
 ---
 
 ## 存储分层
 
-### 云端（SQLite 关系数据库）
+### 云端（PostgreSQL）
 
-业务数据使用 SQLite 持久化，通过 Repository 模式访问：
+业务数据统一通过 PostgreSQL Repository / Command Port 访问：
+
+```rust
+// agentdash-infrastructure/src/persistence/postgres/
+project_repository.rs
+workspace_repository.rs
+story_repository.rs
+state_change_repository.rs
+state_change_store.rs
+task_repository.rs
+...
+```
+
+说明：
+
+- `StoryRepository` 只负责 Story 聚合
+- `StateChangeRepository` 独立负责事件日志
+- `TaskAggregateCommandRepository` 对应 `PostgresTaskRepository` 中的显式事务方法
+- `WorkspaceRepository` 负责 `workspaces` + `workspace_bindings` 的原子提交
+
+### 本机（SQLite）
+
+sqlite 不再承担云端业务仓储职责，仅保留本机会话持久化：
 
 ```rust
 // agentdash-infrastructure/src/persistence/sqlite/
-├── project_repository.rs
-├── workspace_repository.rs
-├── story_repository.rs
-├── task_repository.rs
-├── backend_repository.rs
-├── session_binding_repository.rs
-└── settings_repository.rs
+session_repository.rs
 ```
-
-### 本机（JSONL 文件）
-
-Session 执行历史使用 JSONL 格式追加写入：
-
-- **位置**: `{workspace_root}/.agentdash/sessions/{session_id}.jsonl`
-- **格式**: 每行一个 `SessionNotification` JSON 对象
-- **元数据**: `{session_id}.meta.json` 存储 `SessionMeta`
 
 ---
 
 ## SQLx 使用约定
 
-### Repository 实现模板
+### Repository / Command Port 实现模板
 
 ```rust
-use sqlx::SqlitePool;
-use agentdash_domain::story::{Story, StoryRepository};
-use agentdash_domain::common::error::DomainError;
-
-pub struct SqliteStoryRepository {
-    pool: SqlitePool,
+pub struct PostgresStoryRepository {
+    pool: PgPool,
 }
 
-impl SqliteStoryRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+impl PostgresStoryRepository {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS stories (
+            r#"
+            CREATE TABLE IF NOT EXISTS stories (
                 id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
+                project_id TEXT NOT NULL REFERENCES projects(id),
                 title TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'draft',
-                context TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            )"
+            )
+            "#,
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::Storage(e.to_string()))?;
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(())
     }
-}
-
-#[async_trait]
-impl StoryRepository for SqliteStoryRepository {
-    async fn create(&self, story: &Story) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT INTO stories (id, project_id, title, status, context, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(story.id.to_string())
-        .bind(story.project_id.to_string())
-        .bind(&story.title)
-        .bind(serde_json::to_string(&story.status).unwrap_or_default())
-        .bind(serde_json::to_string(&story.context).unwrap_or_default())
-        .bind(&story.created_at)
-        .bind(&story.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::Storage(e.to_string()))?;
-        Ok(())
-    }
-    // ...
 }
 ```
 
 ### 错误转换
 
-基础设施层错误必须转为领域错误：
+基础设施层错误必须转换为领域错误：
 
 ```rust
-// ✅ 正确：统一转为 DomainError
-.map_err(|e| DomainError::Storage(e.to_string()))
-
-// ❌ 错误：直接暴露 sqlx::Error 给上层
-.map_err(|e| e)?  // sqlx::Error 不应泄露到领域层
+.map_err(|e| DomainError::InvalidConfig(e.to_string()))
 ```
+
+不要把 `sqlx::Error` 直接泄露到上层。
 
 ---
 
-## JSON 序列化约定
+## 事务规则
 
-### 结构化字段存储
+### 单一聚合
 
-复杂值对象以 JSON 文本存入 SQLite TEXT 列：
+当聚合只涉及单表或明确的 root + children 持久化时，事务边界由对应 Repository 负责。
 
-```rust
-// 写入
-.bind(serde_json::to_string(&story.context).unwrap_or_default())
+例子：
 
-// 读取
-let context: StoryContext = serde_json::from_str(&row_context)
-    .unwrap_or_default();
-```
+- `WorkspaceRepository::create/update/delete`
+- `WorkspaceRepository` 内部在同一事务中写 `workspaces` 与 `workspace_bindings`
 
-### 字段命名
+### 跨聚合一致性
 
-- **数据库列名**：`snake_case`（如 `project_id`、`created_at`）
-- **JSON 序列化**：`snake_case`（与 HTTP DTO 一致）
-- **SQLite 不区分大小写**，但建议统一小写
+当一个用例需要同时更新多个聚合或事件日志时：
 
----
+- 不要把行为硬塞进单一聚合 Repository trait
+- 使用显式 Command Port 或 Unit of Work
 
-## JSONL Session 存储
+当前例子：
 
-### 追加写入
+- `TaskAggregateCommandRepository::create_for_story`
+- `TaskAggregateCommandRepository::delete_for_story`
 
-```rust
-pub async fn append(
-    &self,
-    session_id: &str,
-    notification: &SessionNotification,
-) -> std::io::Result<()> {
-    tokio::fs::create_dir_all(&self.base_dir).await?;
-    let path = self.file_path(session_id);
-    let line = serde_json::to_string(notification)?;
+它们在一个事务中协调：
 
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await?;
-
-    file.write_all(line.as_bytes()).await?;
-    file.write_all(b"\n").await?;
-    Ok(())
-}
-```
-
-### Meta 持久化
-
-`SessionMeta` 包含 `last_execution_status` 等运行时状态，必须在 turn 开始/结束时写入，不允许靠扫 JSONL 历史推断。
-
-参考：`backend/quality-guidelines.md` 中的"Session 执行状态持久化规范"。
+- `tasks`
+- `stories.task_count`
+- `state_changes`
 
 ---
 
-## 迁移策略
+## Shared Helper 约定
 
-### 当前阶段
+如果多个 PostgreSQL 仓储共享事件日志写入/查询逻辑，应抽到明确的 shared helper，而不是复制粘贴。
 
-- 使用 `initialize()` 方法在应用启动时自动建表
-- `CREATE TABLE IF NOT EXISTS` 确保幂等
-- 数据库文件位于 `{data_dir}/agentdash.db`
+当前 shared 位置：
 
-### 未来演进
+```rust
+// agentdash-infrastructure/src/persistence/postgres/state_change_store.rs
+initialize_state_changes_schema(...)
+append_state_change(...)
+append_state_change_in_tx(...)
+get_state_changes_since(...)
+latest_state_change_id(...)
+```
 
-当 schema 变更频繁时，迁移到 SQLx 正式迁移系统：
+适合抽 shared 的内容：
 
-1. 在 `migrations/` 目录存放 SQL 文件
-2. 使用 `sqlx::migrate!()` 自动运行
-3. 保留版本追踪
+- 行数据 -> 领域对象映射
+- payload 构造辅助
+- 事务内追加事件日志
+- 枚举 / 状态字符串转换
+
+不适合抽 shared 的内容：
+
+- 混杂多个聚合规则的“大一统基础仓储”
+- 需要大量泛型才能表达的过度抽象
+
+---
+
+## 字段与序列化约定
+
+- 数据库列名统一 `snake_case`
+- JSON 序列化统一 `snake_case`
+- 复杂值对象以 JSON 文本存入 `TEXT`
+- 时间字段统一存 `TEXT`，读取时做健壮解析
+
+示例：
+
+```rust
+.bind(serde_json::to_string(&story.context)?)
+```
 
 ---
 
@@ -196,20 +176,20 @@ pub async fn append(
 
 | 错误 | 正确 |
 |------|------|
-| 不处理文件不存在的情况 | `ErrorKind::NotFound` 时返回空列表或 `None` |
-| 一次性读取大 JSONL 文件 | 考虑流式读取 / 分页 |
-| 不创建父目录 | 写入前先调用 `create_dir_all` |
-| 在领域层直接使用 `sqlx` | 领域层只定义 Repository trait |
-| JSON 字段用 `camelCase` | 统一使用 `snake_case` |
+| 在 `StoryRepository` 中读写 `state_changes` | 拆到 `StateChangeRepository` |
+| 在 `TaskRepository` 中暴露跨聚合事务 API | 拆到 `TaskAggregateCommandRepository` |
+| `Workspace` root 与 bindings 分开提交 | 同事务提交 |
+| `postgres/` 目录仍保留 `Sqlite*Repository` 命名 | 统一改为 `Postgres*Repository` |
+| 为兼容旧结构保留整套 sqlite 业务仓储 | 预研阶段直接收敛到正确实现 |
 
 ---
 
 ## 相关规范
 
-- [Repository Pattern](./repository-pattern.md) — Repository 接口定义和依赖注入
-- [Quality Guidelines](./quality-guidelines.md) — Session 执行状态持久化规范
-- [Error Handling](./error-handling.md) — 错误处理约定
+- [Repository Pattern](./repository-pattern.md)
+- [Quality Guidelines](./quality-guidelines.md)
+- [Error Handling](./error-handling.md)
 
 ---
 
-*更新：2026-03-29 — 对齐 SQLite + SQLx + JSONL 实际存储架构*
+*更新：2026-04-01 — 对齐 PostgreSQL 主业务仓储、独立 StateChange port 与显式事务型 command port*

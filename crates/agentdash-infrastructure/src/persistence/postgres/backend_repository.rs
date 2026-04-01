@@ -5,11 +5,11 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::common::error::DomainError;
 
-pub struct SqliteBackendRepository {
+pub struct PostgresBackendRepository {
     pool: PgPool,
 }
 
-impl SqliteBackendRepository {
+impl PostgresBackendRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -51,7 +51,7 @@ impl SqliteBackendRepository {
 }
 
 #[async_trait::async_trait]
-impl BackendRepository for SqliteBackendRepository {
+impl BackendRepository for PostgresBackendRepository {
     async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO backends (id, name, endpoint, auth_token, enabled, backend_type)
@@ -260,13 +260,13 @@ mod tests {
         }
     }
 
-    async fn new_repo() -> SqliteBackendRepository {
+    async fn new_repo() -> PostgresBackendRepository {
         let database_url =
             std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
         let pool = PgPool::connect(&database_url)
             .await
             .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteBackendRepository::new(pool);
+        let repo = PostgresBackendRepository::new(pool);
         repo.initialize().await.expect("应能初始化 schema");
         repo
     }

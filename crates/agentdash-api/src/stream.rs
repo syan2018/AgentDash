@@ -57,7 +57,7 @@ pub async fn event_stream(
             Some(value) => value,
             None => state
                 .repos
-                .story_repo
+                .state_change_repo
                 .latest_event_id_by_project(project.id)
                 .await
                 .unwrap_or(0),
@@ -85,7 +85,7 @@ pub async fn event_stream(
 
         let latest_event_id = state
             .repos
-            .story_repo
+            .state_change_repo
             .latest_event_id_by_project(project.id)
             .await
             .unwrap_or(cursor);
@@ -172,7 +172,7 @@ pub async fn event_stream_ndjson(
             Some(value) => value,
             None => state
                 .repos
-                .story_repo
+                .state_change_repo
                 .latest_event_id_by_project(project.id)
                 .await
                 .unwrap_or(0),
@@ -198,7 +198,7 @@ pub async fn event_stream_ndjson(
 
         let latest_event_id = state
             .repos
-            .story_repo
+            .state_change_repo
             .latest_event_id_by_project(project.id)
             .await
             .unwrap_or(cursor);
@@ -275,7 +275,7 @@ pub async fn get_events_since(
     .await?;
     let changes = state
         .repos
-        .story_repo
+        .state_change_repo
         .get_changes_since_by_project(project.id, since_id, 1000)
         .await?;
     Ok(Json(changes))
@@ -337,7 +337,7 @@ async fn load_state_changes_since(
     loop {
         let batch = state
             .repos
-            .story_repo
+            .state_change_repo
             .get_changes_since_by_project(project_id, cursor, STREAM_BATCH_LIMIT)
             .await?;
         if batch.is_empty() {

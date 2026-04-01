@@ -3,11 +3,11 @@ use sqlx::{PgPool, Row};
 use agentdash_domain::auth_session::{AuthSession, AuthSessionRepository};
 use agentdash_domain::common::error::DomainError;
 
-pub struct SqliteAuthSessionRepository {
+pub struct PostgresAuthSessionRepository {
     pool: PgPool,
 }
 
-impl SqliteAuthSessionRepository {
+impl PostgresAuthSessionRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -40,7 +40,7 @@ impl SqliteAuthSessionRepository {
 }
 
 #[async_trait::async_trait]
-impl AuthSessionRepository for SqliteAuthSessionRepository {
+impl AuthSessionRepository for PostgresAuthSessionRepository {
     async fn upsert_session(&self, session: &AuthSession) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO auth_sessions (

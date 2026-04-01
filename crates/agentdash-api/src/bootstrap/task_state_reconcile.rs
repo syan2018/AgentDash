@@ -10,7 +10,7 @@ use agentdash_application::task_state_reconciler::{
     TaskSessionState, TaskSessionStateReader, reconcile_running_tasks_on_boot,
 };
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::story::StoryRepository;
+use agentdash_domain::story::StateChangeRepository;
 use agentdash_domain::task::TaskRepository;
 
 struct HubSessionStateReader<'a> {
@@ -47,7 +47,7 @@ impl TaskSessionStateReader for HubSessionStateReader<'_> {
 
 pub async fn reconcile_task_states_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
-    story_repo: &Arc<dyn StoryRepository>,
+    state_change_repo: &Arc<dyn StateChangeRepository>,
     task_repo: &Arc<dyn TaskRepository>,
     session_hub: &SessionHub,
     restart_tracker: &RestartTracker,
@@ -56,7 +56,7 @@ pub async fn reconcile_task_states_on_boot(
 
     reconcile_running_tasks_on_boot(
         project_repo,
-        story_repo,
+        state_change_repo,
         task_repo,
         &session_state_reader,
         Some(restart_tracker),

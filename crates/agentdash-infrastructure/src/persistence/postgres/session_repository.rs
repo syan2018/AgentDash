@@ -7,11 +7,11 @@ use agentdash_application::session::{
 };
 use sqlx::{PgPool, Row};
 
-pub struct SqliteSessionRepository {
+pub struct PostgresSessionRepository {
     pool: PgPool,
 }
 
-impl SqliteSessionRepository {
+impl PostgresSessionRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -136,7 +136,7 @@ impl SqliteSessionRepository {
 }
 
 #[async_trait::async_trait]
-impl SessionPersistence for SqliteSessionRepository {
+impl SessionPersistence for PostgresSessionRepository {
     async fn create_session(&self, meta: &SessionMeta) -> io::Result<()> {
         sqlx::query(
             r#"
@@ -645,7 +645,7 @@ mod tests {
         let pool = PgPool::connect(&database_url)
             .await
             .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteSessionRepository::new(pool);
+        let repo = PostgresSessionRepository::new(pool);
         repo.initialize().await.expect("应能初始化 session 表");
 
         let meta = SessionMeta {
@@ -696,7 +696,7 @@ mod tests {
         let pool = PgPool::connect(&database_url)
             .await
             .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteSessionRepository::new(pool);
+        let repo = PostgresSessionRepository::new(pool);
         repo.initialize().await.expect("应能初始化 session 表");
         let session_id = format!(
             "sess-stale-{}",

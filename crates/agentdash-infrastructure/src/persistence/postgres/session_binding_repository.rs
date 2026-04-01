@@ -6,11 +6,11 @@ use agentdash_domain::session_binding::{
     ProjectSessionBinding, SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 
-pub struct SqliteSessionBindingRepository {
+pub struct PostgresSessionBindingRepository {
     pool: PgPool,
 }
 
-impl SqliteSessionBindingRepository {
+impl PostgresSessionBindingRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -47,7 +47,7 @@ impl SqliteSessionBindingRepository {
 }
 
 #[async_trait::async_trait]
-impl SessionBindingRepository for SqliteSessionBindingRepository {
+impl SessionBindingRepository for PostgresSessionBindingRepository {
     async fn create(&self, binding: &SessionBinding) -> Result<(), DomainError> {
         let existing_project_ids: Vec<(String,)> = sqlx::query_as(
             "SELECT DISTINCT project_id FROM session_bindings WHERE session_id = $1",
@@ -339,7 +339,7 @@ mod tests {
 
     use super::*;
 
-    async fn new_repo() -> SqliteSessionBindingRepository {
+    async fn new_repo() -> PostgresSessionBindingRepository {
         let database_url =
             std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
         let pool = PgPool::connect(&database_url)
@@ -364,7 +364,7 @@ mod tests {
         .await
         .expect("应能创建 session_binding 初始化依赖表");
 
-        let repo = SqliteSessionBindingRepository::new(pool);
+        let repo = PostgresSessionBindingRepository::new(pool);
         repo.initialize()
             .await
             .expect("应能初始化 session_binding schema");

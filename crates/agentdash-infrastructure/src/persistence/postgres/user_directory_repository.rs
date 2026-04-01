@@ -3,11 +3,11 @@ use agentdash_domain::identity::{Group, User, UserDirectoryRepository};
 use chrono::Utc;
 use sqlx::PgPool;
 
-pub struct SqliteUserDirectoryRepository {
+pub struct PostgresUserDirectoryRepository {
     pool: PgPool,
 }
 
-impl SqliteUserDirectoryRepository {
+impl PostgresUserDirectoryRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -89,7 +89,7 @@ impl SqliteUserDirectoryRepository {
 }
 
 #[async_trait::async_trait]
-impl UserDirectoryRepository for SqliteUserDirectoryRepository {
+impl UserDirectoryRepository for PostgresUserDirectoryRepository {
     async fn upsert_user(&self, user: &User) -> Result<(), DomainError> {
         sqlx::query(
             r#"

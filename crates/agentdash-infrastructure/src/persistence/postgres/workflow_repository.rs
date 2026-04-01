@@ -7,11 +7,11 @@ use agentdash_domain::workflow::{
     WorkflowDefinition, WorkflowDefinitionRepository, WorkflowDefinitionStatus,
 };
 
-pub struct SqliteWorkflowRepository {
+pub struct PostgresWorkflowRepository {
     pool: PgPool,
 }
 
-impl SqliteWorkflowRepository {
+impl PostgresWorkflowRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -89,7 +89,7 @@ impl SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
+impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO workflow_definitions (id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,contract,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
             .bind(workflow.id.to_string()).bind(&workflow.key).bind(&workflow.name).bind(&workflow.description)
@@ -161,7 +161,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl LifecycleDefinitionRepository for SqliteWorkflowRepository {
+impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO lifecycle_definitions (id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
             .bind(lifecycle.id.to_string()).bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
@@ -237,7 +237,7 @@ impl LifecycleDefinitionRepository for SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl WorkflowAssignmentRepository for SqliteWorkflowRepository {
+impl WorkflowAssignmentRepository for PostgresWorkflowRepository {
     async fn create(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO workflow_assignments (id,project_id,lifecycle_id,role,enabled,is_default,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
             .bind(assignment.id.to_string()).bind(assignment.project_id.to_string()).bind(assignment.lifecycle_id.to_string())
@@ -296,7 +296,7 @@ impl WorkflowAssignmentRepository for SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl LifecycleRunRepository for SqliteWorkflowRepository {
+impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO lifecycle_runs (id,project_id,lifecycle_id,binding_kind,binding_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
             .bind(run.id.to_string()).bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())

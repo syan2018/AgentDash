@@ -3,11 +3,11 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingScopeKind, SettingsRepository};
 
-pub struct SqliteSettingsRepository {
+pub struct PostgresSettingsRepository {
     pool: PgPool,
 }
 
-impl SqliteSettingsRepository {
+impl PostgresSettingsRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -19,7 +19,7 @@ impl SqliteSettingsRepository {
 }
 
 #[async_trait::async_trait]
-impl SettingsRepository for SqliteSettingsRepository {
+impl SettingsRepository for PostgresSettingsRepository {
     async fn list(
         &self,
         scope: &SettingScope,
@@ -206,13 +206,13 @@ mod tests {
     use super::*;
     use agentdash_domain::settings::SettingScope;
 
-    async fn new_repo() -> SqliteSettingsRepository {
+    async fn new_repo() -> PostgresSettingsRepository {
         let database_url =
             std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
         let pool = PgPool::connect(&database_url)
             .await
             .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteSettingsRepository::new(pool);
+        let repo = PostgresSettingsRepository::new(pool);
         repo.initialize().await.expect("应能初始化 settings schema");
         repo
     }

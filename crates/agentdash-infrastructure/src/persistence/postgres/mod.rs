@@ -6,6 +6,8 @@ mod project_repository;
 mod session_binding_repository;
 mod session_repository;
 mod settings_repository;
+mod state_change_repository;
+mod state_change_store;
 mod story_repository;
 mod task_repository;
 mod user_directory_repository;
@@ -62,30 +64,17 @@ fn parse_pg_timestamp(raw: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::Utc::now()
 }
 
-pub use agent_repository::SqliteAgentRepository;
-pub use auth_session_repository::SqliteAuthSessionRepository;
-pub use backend_repository::SqliteBackendRepository;
-pub use canvas_repository::SqliteCanvasRepository;
-pub use project_repository::SqliteProjectRepository;
-pub use session_binding_repository::SqliteSessionBindingRepository;
-pub use session_repository::SqliteSessionRepository;
-pub use settings_repository::SqliteSettingsRepository;
-pub use story_repository::SqliteStoryRepository;
-pub use task_repository::SqliteTaskRepository;
-pub use user_directory_repository::SqliteUserDirectoryRepository;
-pub use workflow_repository::SqliteWorkflowRepository;
-pub use workspace_repository::SqliteWorkspaceRepository;
-
-pub use agent_repository::SqliteAgentRepository as PostgresAgentRepository;
-pub use auth_session_repository::SqliteAuthSessionRepository as PostgresAuthSessionRepository;
-pub use backend_repository::SqliteBackendRepository as PostgresBackendRepository;
-pub use canvas_repository::SqliteCanvasRepository as PostgresCanvasRepository;
-pub use project_repository::SqliteProjectRepository as PostgresProjectRepository;
-pub use session_binding_repository::SqliteSessionBindingRepository as PostgresSessionBindingRepository;
-pub use session_repository::SqliteSessionRepository as PostgresSessionRepository;
-pub use settings_repository::SqliteSettingsRepository as PostgresSettingsRepository;
-pub use story_repository::SqliteStoryRepository as PostgresStoryRepository;
-pub use task_repository::SqliteTaskRepository as PostgresTaskRepository;
-pub use user_directory_repository::SqliteUserDirectoryRepository as PostgresUserDirectoryRepository;
-pub use workflow_repository::SqliteWorkflowRepository as PostgresWorkflowRepository;
-pub use workspace_repository::SqliteWorkspaceRepository as PostgresWorkspaceRepository;
+pub use agent_repository::PostgresAgentRepository;
+pub use auth_session_repository::PostgresAuthSessionRepository;
+pub use backend_repository::PostgresBackendRepository;
+pub use canvas_repository::PostgresCanvasRepository;
+pub use project_repository::PostgresProjectRepository;
+pub use session_binding_repository::PostgresSessionBindingRepository;
+pub use session_repository::PostgresSessionRepository;
+pub use settings_repository::PostgresSettingsRepository;
+pub use state_change_repository::PostgresStateChangeRepository;
+pub use story_repository::PostgresStoryRepository;
+pub use task_repository::PostgresTaskRepository;
+pub use user_directory_repository::PostgresUserDirectoryRepository;
+pub use workflow_repository::PostgresWorkflowRepository;
+pub use workspace_repository::PostgresWorkspaceRepository;

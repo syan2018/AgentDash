@@ -40,6 +40,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         project_repo: state.repos.project_repo.clone(),
         story_repo: state.repos.story_repo.clone(),
         task_repo: state.repos.task_repo.clone(),
+        task_command_repo: state.repos.task_command_repo.clone(),
         workspace_repo: state.repos.workspace_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services).build();
@@ -95,21 +96,20 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .post(project_agents::create_project_agent_link),
         )
         .route(
+            "/projects/{id}/agent-links/summary",
+            get(project_agents::list_project_agents),
+        )
+        .route(
             "/projects/{id}/agent-links/{agent_id}",
             put(project_agents::update_project_agent_link)
                 .delete(project_agents::delete_project_agent_link),
         )
-        // 兼容旧路径（project agents / sessions）
         .route(
-            "/projects/{id}/agents",
-            get(project_agents::list_project_agents),
-        )
-        .route(
-            "/projects/{id}/agents/{agent_key}/session",
+            "/projects/{id}/agent-links/{agent_id}/session",
             post(project_agents::open_project_agent_session),
         )
         .route(
-            "/projects/{id}/agents/{agent_key}/sessions",
+            "/projects/{id}/agent-links/{agent_id}/sessions",
             get(project_agents::list_project_agent_sessions),
         )
         .route(

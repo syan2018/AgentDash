@@ -9,11 +9,11 @@ use agentdash_domain::workspace::{
     WorkspaceRepository, WorkspaceResolutionPolicy, WorkspaceStatus,
 };
 
-pub struct SqliteWorkspaceRepository {
+pub struct PostgresWorkspaceRepository {
     pool: PgPool,
 }
 
-impl SqliteWorkspaceRepository {
+impl PostgresWorkspaceRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -106,14 +106,14 @@ impl SqliteWorkspaceRepository {
         Ok(())
     }
 
-    async fn save_bindings(
-        &self,
+    async fn save_bindings_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         workspace_id: Uuid,
         bindings: &[WorkspaceBinding],
     ) -> Result<(), DomainError> {
         sqlx::query("DELETE FROM workspace_bindings WHERE workspace_id = $1")
             .bind(workspace_id.to_string())
-            .execute(&self.pool)
+            .execute(&mut **tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
@@ -136,7 +136,7 @@ impl SqliteWorkspaceRepository {
             .bind(binding.priority)
             .bind(binding.created_at.to_rfc3339())
             .bind(binding.updated_at.to_rfc3339())
-            .execute(&self.pool)
+            .execute(&mut **tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         }
@@ -164,10 +164,15 @@ impl SqliteWorkspaceRepository {
 }
 
 #[async_trait::async_trait]
-impl WorkspaceRepository for SqliteWorkspaceRepository {
+impl WorkspaceRepository for PostgresWorkspaceRepository {
     async fn create(&self, workspace: &Workspace) -> Result<(), DomainError> {
         let payload = serde_json::to_string(&workspace.identity_payload)
             .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         sqlx::query(
             "INSERT INTO workspaces (id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, created_at, updated_at)
@@ -183,11 +188,15 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         .bind(workspace_status_to_str(&workspace.status))
         .bind(workspace.created_at.to_rfc3339())
         .bind(workspace.updated_at.to_rfc3339())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        self.save_bindings(workspace.id, &workspace.bindings).await
+        Self::save_bindings_in_tx(&mut tx, workspace.id, &workspace.bindings).await?;
+        tx.commit()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        Ok(())
     }
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Workspace>, DomainError> {
@@ -233,6 +242,11 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     async fn update(&self, workspace: &Workspace) -> Result<(), DomainError> {
         let payload = serde_json::to_string(&workspace.identity_payload)
             .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let result = sqlx::query(
             "UPDATE workspaces
@@ -247,7 +261,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         .bind(workspace_status_to_str(&workspace.status))
         .bind(Utc::now().to_rfc3339())
         .bind(workspace.id.to_string())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
@@ -258,19 +272,28 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             });
         }
 
-        self.save_bindings(workspace.id, &workspace.bindings).await
+        Self::save_bindings_in_tx(&mut tx, workspace.id, &workspace.bindings).await?;
+        tx.commit()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        Ok(())
     }
 
     async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         sqlx::query("DELETE FROM workspace_bindings WHERE workspace_id = $1")
             .bind(id.to_string())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let result = sqlx::query("DELETE FROM workspaces WHERE id = $1")
             .bind(id.to_string())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
@@ -280,6 +303,9 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
                 id: id.to_string(),
             });
         }
+        tx.commit()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(())
     }
 }

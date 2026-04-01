@@ -6,11 +6,11 @@ use agentdash_domain::project::{
     ProjectSubjectType, ProjectVisibility,
 };
 
-pub struct SqliteProjectRepository {
+pub struct PostgresProjectRepository {
     pool: PgPool,
 }
 
-impl SqliteProjectRepository {
+impl PostgresProjectRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -68,7 +68,7 @@ impl SqliteProjectRepository {
 }
 
 #[async_trait::async_trait]
-impl ProjectRepository for SqliteProjectRepository {
+impl ProjectRepository for PostgresProjectRepository {
     async fn create(&self, project: &Project) -> Result<(), DomainError> {
         let mut tx = self
             .pool
@@ -253,7 +253,7 @@ impl ProjectRepository for SqliteProjectRepository {
     }
 }
 
-impl SqliteProjectRepository {
+impl PostgresProjectRepository {
     async fn upsert_subject_grant_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -382,13 +382,13 @@ mod tests {
 
     use super::*;
 
-    async fn new_repo() -> SqliteProjectRepository {
+    async fn new_repo() -> PostgresProjectRepository {
         let database_url =
             std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
         let pool = PgPool::connect(&database_url)
             .await
             .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteProjectRepository::new(pool);
+        let repo = PostgresProjectRepository::new(pool);
         repo.initialize().await.expect("应能初始化 project schema");
         repo
     }

@@ -1,0 +1,4 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "分层边界与 crate 职责"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "仓储 port 语义与依赖注入规范"}

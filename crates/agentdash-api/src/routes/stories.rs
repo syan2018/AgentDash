@@ -4,6 +4,7 @@ use agentdash_application::story::{
     AgentBindingInput, StoryMutationInput, TaskMutationInput, apply_story_mutation,
     apply_task_mutation, build_agent_binding, build_story, build_task, delete_story_aggregate,
 };
+use agentdash_application::task::management::{create_task_aggregate, delete_task_aggregate};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
@@ -26,7 +27,7 @@ use crate::auth::{
 };
 use crate::dto::{StoryResponse, TaskResponse};
 use crate::rpc::ApiError;
-use agentdash_domain::story::StoryRepository;
+use agentdash_domain::story::StateChangeRepository;
 
 #[derive(Deserialize)]
 pub struct ListStoriesQuery {
@@ -269,7 +270,9 @@ pub async fn delete_story(
 
     delete_story_aggregate(
         state.repos.story_repo.as_ref(),
+        state.repos.state_change_repo.as_ref(),
         state.repos.task_repo.as_ref(),
+        state.repos.task_command_repo.as_ref(),
         &story,
     )
     .await?;
@@ -381,11 +384,7 @@ pub async fn create_task(
         agent_binding,
     );
 
-    state
-        .repos
-        .task_repo
-        .create_task_with_story_update(&task)
-        .await?;
+    create_task_aggregate(state.repos.task_command_repo.as_ref(), &task).await?;
 
     Ok(Json(TaskResponse::from(task)))
 }
@@ -490,7 +489,7 @@ pub async fn update_task(
     let payload = serde_json::to_value(&task)
         .map_err(|err| ApiError::Internal(format!("序列化 Task 状态变更失败: {err}")))?;
     append_required_story_change(
-        state.repos.story_repo.as_ref(),
+        state.repos.state_change_repo.as_ref(),
         task.project_id,
         task.id,
         change_kind,
@@ -517,11 +516,7 @@ pub async fn delete_task(
     )
     .await?;
 
-    state
-        .repos
-        .task_repo
-        .delete_task_with_story_update(task_id)
-        .await?;
+    delete_task_aggregate(state.repos.task_command_repo.as_ref(), task_id).await?;
 
     state.task_runtime.restart_tracker.clear(task_id);
 
@@ -550,7 +545,7 @@ fn classify_task_change_kind(old_status: &TaskStatus, new_status: &TaskStatus) -
 }
 
 async fn append_required_story_change(
-    repo: &dyn StoryRepository,
+    repo: &dyn StateChangeRepository,
     project_id: Uuid,
     entity_id: Uuid,
     kind: ChangeKind,
@@ -576,27 +571,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl StoryRepository for RecordingStoryRepo {
-        async fn create(&self, _story: &Story) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn get_by_id(&self, _id: Uuid) -> Result<Option<Story>, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn list_by_project(&self, _project_id: Uuid) -> Result<Vec<Story>, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn update(&self, _story: &Story) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
+    impl StateChangeRepository for RecordingStoryRepo {
         async fn get_changes_since(
             &self,
             _since_id: i64,

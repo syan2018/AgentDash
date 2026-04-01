@@ -7,11 +7,11 @@ use agentdash_domain::canvas::{
     Canvas, CanvasDataBinding, CanvasFile, CanvasImportMap, CanvasRepository, CanvasSandboxConfig,
 };
 
-pub struct SqliteCanvasRepository {
+pub struct PostgresCanvasRepository {
     pool: PgPool,
 }
 
-impl SqliteCanvasRepository {
+impl PostgresCanvasRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -224,7 +224,7 @@ impl SqliteCanvasRepository {
 }
 
 #[async_trait::async_trait]
-impl CanvasRepository for SqliteCanvasRepository {
+impl CanvasRepository for PostgresCanvasRepository {
     async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
         let mut tx = self
             .pool
@@ -463,13 +463,13 @@ mod tests {
 
     use super::*;
 
-    async fn new_repo() -> SqliteCanvasRepository {
+    async fn new_repo() -> PostgresCanvasRepository {
         let database_url =
             std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
         let pool = PgPool::connect(&database_url)
             .await
             .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteCanvasRepository::new(pool);
+        let repo = PostgresCanvasRepository::new(pool);
         repo.initialize().await.expect("应能初始化 canvas schema");
         repo
     }

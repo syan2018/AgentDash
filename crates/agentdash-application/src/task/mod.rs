@@ -4,6 +4,7 @@ pub mod context_builder;
 pub mod execution;
 pub mod gateway;
 pub mod lock;
+pub mod management;
 pub mod meta;
 pub mod restart_tracker;
 pub mod service;

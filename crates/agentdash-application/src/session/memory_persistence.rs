@@ -8,7 +8,7 @@ use agent_client_protocol::{
 use tokio::sync::Mutex;
 
 use super::hub_support::{
-    parse_executor_session_bound, parse_turn_id, parse_turn_terminal_event, TurnTerminalKind,
+    TurnTerminalKind, parse_executor_session_bound, parse_turn_id, parse_turn_terminal_event,
 };
 use super::persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
@@ -49,7 +49,12 @@ impl SessionPersistence for MemorySessionPersistence {
 
     async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()> {
         let mut guard = self.inner.lock().await;
-        guard.metas.insert(meta.id.clone(), meta.clone());
+        match guard.metas.get_mut(&meta.id) {
+            Some(current) => merge_session_meta(current, meta),
+            None => {
+                guard.metas.insert(meta.id.clone(), meta.clone());
+            }
+        }
         guard.events.entry(meta.id.clone()).or_default();
         Ok(())
     }
@@ -140,7 +145,10 @@ impl SessionPersistence for MemorySessionPersistence {
         } else {
             events
         };
-        let next_after_seq = page_events.last().map(|event| event.event_seq).unwrap_or(after_seq);
+        let next_after_seq = page_events
+            .last()
+            .map(|event| event.event_seq)
+            .unwrap_or(after_seq);
         Ok(SessionEventPage {
             snapshot_seq,
             events: page_events,
@@ -174,7 +182,46 @@ fn build_persisted_event(
     }
 }
 
-pub(super) fn apply_notification_projection(meta: &mut SessionMeta, notification: &SessionNotification) {
+fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
+    let current_event_seq = current.last_event_seq;
+    let incoming_event_seq = incoming.last_event_seq;
+
+    current.title = incoming.title.clone();
+    current.created_at = incoming.created_at;
+    current.updated_at = current.updated_at.max(incoming.updated_at);
+    current.last_event_seq = current.last_event_seq.max(incoming.last_event_seq);
+
+    if incoming_event_seq >= current_event_seq {
+        current.last_execution_status = incoming.last_execution_status.clone();
+        current.last_turn_id = incoming.last_turn_id.clone();
+        current.last_terminal_message = incoming.last_terminal_message.clone();
+    }
+
+    if let Some(executor_config) = incoming.executor_config.clone() {
+        current.executor_config = Some(executor_config);
+    }
+    if let Some(executor_session_id) = incoming.executor_session_id.clone() {
+        current.executor_session_id = Some(executor_session_id);
+    }
+    if let Some(companion_context) = incoming.companion_context.clone() {
+        current.companion_context = Some(companion_context);
+    }
+
+    for mount_id in &incoming.visible_canvas_mount_ids {
+        if !current
+            .visible_canvas_mount_ids
+            .iter()
+            .any(|item| item == mount_id)
+        {
+            current.visible_canvas_mount_ids.push(mount_id.clone());
+        }
+    }
+}
+
+pub(super) fn apply_notification_projection(
+    meta: &mut SessionMeta,
+    notification: &SessionNotification,
+) {
     match &notification.update {
         SessionUpdate::SessionInfoUpdate(info) => apply_info_projection(meta, info),
         SessionUpdate::UserMessageChunk(chunk)
@@ -195,6 +242,94 @@ pub(super) fn apply_notification_projection(meta: &mut SessionMeta, notification
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_client_protocol::{SessionId, SessionInfoUpdate};
+    use agentdash_acp_meta::{
+        AgentDashEventV1, AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta,
+    };
+
+    fn turn_terminal_notification(
+        session_id: &str,
+        turn_id: &str,
+        terminal_type: &str,
+        message: &str,
+    ) -> SessionNotification {
+        let meta = merge_agentdash_meta(
+            None,
+            &AgentDashMetaV1::new()
+                .event(AgentDashEventV1::new(terminal_type).message(Some(message.to_string())))
+                .trace(AgentDashTraceV1 {
+                    turn_id: Some(turn_id.to_string()),
+                    ..AgentDashTraceV1::new()
+                }),
+        );
+        SessionNotification::new(
+            SessionId::new(session_id),
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
+        )
+    }
+
+    #[tokio::test]
+    async fn save_session_meta_keeps_newer_event_projection() {
+        let persistence = MemorySessionPersistence::default();
+        let meta = SessionMeta {
+            id: "sess-memory".to_string(),
+            title: "测试".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: "idle".to_string(),
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            visible_canvas_mount_ids: Vec::new(),
+        };
+        persistence
+            .create_session(&meta)
+            .await
+            .expect("应能创建 session");
+
+        let mut stale = persistence
+            .get_session_meta("sess-memory")
+            .await
+            .expect("应能读取 meta")
+            .expect("session 应存在");
+        stale.updated_at = 10;
+        stale.last_execution_status = "running".to_string();
+        stale.last_turn_id = Some("t-old".to_string());
+        stale.executor_session_id = Some("exec-1".to_string());
+        stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
+
+        persistence
+            .append_event(
+                "sess-memory",
+                &turn_terminal_notification("sess-memory", "t-new", "turn_completed", "done"),
+            )
+            .await
+            .expect("应能写入终态事件");
+        persistence
+            .save_session_meta(&stale)
+            .await
+            .expect("旧快照回写仍应成功");
+
+        let merged = persistence
+            .get_session_meta("sess-memory")
+            .await
+            .expect("应能再次读取 meta")
+            .expect("session 应存在");
+        assert_eq!(merged.last_event_seq, 1);
+        assert_eq!(merged.last_execution_status, "completed");
+        assert_eq!(merged.last_turn_id.as_deref(), Some("t-new"));
+        assert_eq!(merged.last_terminal_message.as_deref(), Some("done"));
+        assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
+        assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 }
 
@@ -226,9 +361,10 @@ fn apply_info_projection(meta: &mut SessionMeta, info: &SessionInfoUpdate) {
         }
     }
 
-    if let Some(executor_session_id) =
-        parse_executor_session_bound(info.meta.as_ref(), meta.last_turn_id.as_deref().unwrap_or_default())
-    {
+    if let Some(executor_session_id) = parse_executor_session_bound(
+        info.meta.as_ref(),
+        meta.last_turn_id.as_deref().unwrap_or_default(),
+    ) {
         meta.executor_session_id = Some(executor_session_id);
     }
 }

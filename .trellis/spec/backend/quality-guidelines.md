@@ -210,6 +210,15 @@ meta.last_execution_status = terminal_kind.state_tag().to_string(); // completed
 store.write_meta(&meta).await?;
 ```
 
+### SessionMeta 写回约束
+
+- `SessionMeta.last_event_seq`、`last_execution_status`、`last_turn_id`、`last_terminal_message` 属于**事件投影字段**，只能随事件追加单调前进，不能被旧快照整块写回覆盖。
+- `save_session_meta()` 若用于更新 `executor_session_id`、`companion_context`、`visible_canvas_mount_ids` 等普通元信息，底层持久化层必须按“合并”语义处理，至少保证：
+  - `last_event_seq` 不回退
+  - 已落库的 terminal 状态不被旧的 `running` / `idle` 覆盖
+  - 不相关的普通字段不会因为旧快照缺值被清空
+- 如果需要更新事件投影字段，优先通过 `append_event()` 产生对应事件，而不是手工改 meta。
+
 ### 启动恢复
 
 进程重启时必须调用 `executor_hub.recover_interrupted_sessions()`，将残留的 `running` 状态修正为 `interrupted`。云端和本机两个 binary 的启动流程都必须调用。

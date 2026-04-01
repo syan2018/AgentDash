@@ -194,15 +194,32 @@ impl SessionPersistence for SqliteSessionRepository {
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 created_at = excluded.created_at,
-                updated_at = excluded.updated_at,
-                last_event_seq = excluded.last_event_seq,
-                last_execution_status = excluded.last_execution_status,
-                last_turn_id = excluded.last_turn_id,
-                last_terminal_message = excluded.last_terminal_message,
-                executor_config_json = excluded.executor_config_json,
-                executor_session_id = excluded.executor_session_id,
-                companion_context_json = excluded.companion_context_json,
-                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json
+                updated_at = MAX(sessions.updated_at, excluded.updated_at),
+                last_event_seq = MAX(sessions.last_event_seq, excluded.last_event_seq),
+                last_execution_status = CASE
+                    WHEN excluded.last_event_seq >= sessions.last_event_seq
+                        THEN excluded.last_execution_status
+                    ELSE sessions.last_execution_status
+                END,
+                last_turn_id = CASE
+                    WHEN excluded.last_event_seq >= sessions.last_event_seq
+                        THEN excluded.last_turn_id
+                    ELSE sessions.last_turn_id
+                END,
+                last_terminal_message = CASE
+                    WHEN excluded.last_event_seq >= sessions.last_event_seq
+                        THEN excluded.last_terminal_message
+                    ELSE sessions.last_terminal_message
+                END,
+                executor_config_json = COALESCE(excluded.executor_config_json, sessions.executor_config_json),
+                executor_session_id = COALESCE(excluded.executor_session_id, sessions.executor_session_id),
+                companion_context_json = COALESCE(excluded.companion_context_json, sessions.companion_context_json),
+                visible_canvas_mount_ids_json = CASE
+                    WHEN excluded.visible_canvas_mount_ids_json IS NULL
+                        OR excluded.visible_canvas_mount_ids_json = '[]'
+                        THEN sessions.visible_canvas_mount_ids_json
+                    ELSE excluded.visible_canvas_mount_ids_json
+                END
             "#,
         )
         .bind(&meta.id)
@@ -268,9 +285,7 @@ impl SessionPersistence for SqliteSessionRepository {
             .await
             .map_err(sqlx_to_io)?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
-        let event_seq_i64: i64 = seq_row
-            .try_get("last_event_seq")
-            .map_err(sqlx_to_io)?;
+        let event_seq_i64: i64 = seq_row.try_get("last_event_seq").map_err(sqlx_to_io)?;
         let event_seq = u64::try_from(event_seq_i64).unwrap_or(0);
         let projection = projection_from_notification(notification);
         let persisted = PersistedSessionEvent {
@@ -586,6 +601,30 @@ fn executor_session_from_info(info: &agent_client_protocol::SessionInfoUpdate) -
 mod tests {
     use super::*;
     use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
+    use agentdash_acp_meta::{
+        AgentDashEventV1, AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta,
+    };
+
+    fn turn_terminal_notification(
+        session_id: &str,
+        turn_id: &str,
+        terminal_type: &str,
+        message: &str,
+    ) -> SessionNotification {
+        let meta = merge_agentdash_meta(
+            None,
+            &AgentDashMetaV1::new()
+                .event(AgentDashEventV1::new(terminal_type).message(Some(message.to_string())))
+                .trace(AgentDashTraceV1 {
+                    turn_id: Some(turn_id.to_string()),
+                    ..AgentDashTraceV1::new()
+                }),
+        );
+        SessionNotification::new(
+            SessionId::new(session_id),
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
+        )
+    }
 
     #[tokio::test]
     async fn append_event_assigns_monotonic_event_seq() {
@@ -634,5 +673,63 @@ mod tests {
                 .last_event_seq,
             2
         );
+    }
+
+    #[tokio::test]
+    async fn stale_save_session_meta_does_not_roll_back_event_projection() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteSessionRepository::new(pool);
+        repo.initialize().await.expect("应能初始化 session 表");
+
+        let meta = SessionMeta {
+            id: "sess-stale".to_string(),
+            title: "测试".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: "idle".to_string(),
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            visible_canvas_mount_ids: Vec::new(),
+        };
+        repo.create_session(&meta).await.expect("应能创建 session");
+
+        let mut stale = repo
+            .get_session_meta("sess-stale")
+            .await
+            .expect("应能读取 session meta")
+            .expect("session 应存在");
+        stale.updated_at = 10;
+        stale.last_execution_status = "running".to_string();
+        stale.last_turn_id = Some("t-old".to_string());
+        stale.executor_session_id = Some("exec-1".to_string());
+        stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
+
+        let terminal = turn_terminal_notification("sess-stale", "t-new", "turn_completed", "done");
+        repo.append_event("sess-stale", &terminal)
+            .await
+            .expect("应能写入终态事件");
+
+        repo.save_session_meta(&stale)
+            .await
+            .expect("旧快照回写仍应成功");
+
+        let merged = repo
+            .get_session_meta("sess-stale")
+            .await
+            .expect("应能再次读取 session meta")
+            .expect("session 应存在");
+
+        assert_eq!(merged.last_event_seq, 1);
+        assert_eq!(merged.last_execution_status, "completed");
+        assert_eq!(merged.last_turn_id.as_deref(), Some("t-new"));
+        assert_eq!(merged.last_terminal_message.as_deref(), Some("done"));
+        assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
+        assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 }

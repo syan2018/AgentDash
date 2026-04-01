@@ -26,20 +26,6 @@ pub(super) fn diag_blocking_review_unresolved(action_ids: &str) -> String {
     )
 }
 
-// ── Stop gate fallback steering ─────────────────────────────────────────
-
-pub(super) const STOP_GATE_DEFAULT_REASON: &str = "completion checks not satisfied";
-
-pub(super) fn stop_gate_fallback_steering(gate_reason: &str) -> String {
-    format!(
-        "[系统 Hook 上下文 — Stop Gate]\n\n\
-         当前 workflow step 的 completion checks 尚未满足：{gate_reason}\n\n\
-         请继续完成未尽事项，补齐必要的验证结论和证据，\
-         或使用 `report_workflow_artifact` 工具提交产物以推动状态流转。\
-         不要直接结束本轮 session。"
-    )
-}
-
 // ── Hook injection markdown ─────────────────────────────────────────────
 
 pub(super) fn hook_context_header(session_id: &str, revision: u64) -> String {

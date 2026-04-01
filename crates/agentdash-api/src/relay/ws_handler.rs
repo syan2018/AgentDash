@@ -49,9 +49,13 @@ async fn handle_backend_connection(
     )
     .await
     {
-        Ok(Some(msg)) => msg,
-        Ok(None) => {
+        Ok(Ok(Some(msg))) => msg,
+        Ok(Ok(None)) => {
             tracing::error!("等待注册消息时连接关闭");
+            return;
+        }
+        Ok(Err(error)) => {
+            tracing::error!(authorized_backend_id = %authorized_backend.id, error = %error, "等待注册消息时收到非法 relay 消息");
             return;
         }
         Err(_) => {
@@ -157,8 +161,12 @@ async fn handle_backend_connection(
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(relay_msg) = serde_json::from_str::<RelayMessage>(text.as_ref()) {
-                            handle_backend_message(&state, &bid, relay_msg).await;
+                        match parse_relay_message_text(text.as_ref()) {
+                            Ok(relay_msg) => handle_backend_message(&state, &bid, relay_msg).await,
+                            Err(error) => {
+                                tracing::error!(backend_id = %bid, error = %error, "收到非法 relay 消息，关闭连接");
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {
@@ -275,18 +283,25 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
     }
 }
 
-async fn read_next_relay(rx: &mut futures::stream::SplitStream<WebSocket>) -> Option<RelayMessage> {
+async fn read_next_relay(
+    rx: &mut futures::stream::SplitStream<WebSocket>,
+) -> Result<Option<RelayMessage>, String> {
     while let Some(msg) = rx.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                return serde_json::from_str::<RelayMessage>(text.as_ref()).ok();
+                return parse_relay_message_text(text.as_ref()).map(Some);
             }
-            Ok(Message::Close(_)) => return None,
-            Err(_) => return None,
+            Ok(Message::Close(_)) => return Ok(None),
+            Err(error) => return Err(error.to_string()),
             _ => continue,
         }
     }
-    None
+    Ok(None)
+}
+
+fn parse_relay_message_text(text: &str) -> Result<RelayMessage, String> {
+    serde_json::from_str::<RelayMessage>(text)
+        .map_err(|error| format!("relay 消息不是合法 JSON 协议包: {error}"))
 }
 
 async fn send_relay<S>(tx: &mut S, msg: &RelayMessage) -> Result<(), ()>

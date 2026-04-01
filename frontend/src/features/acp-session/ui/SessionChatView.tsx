@@ -550,7 +550,10 @@ export function SessionChatView({
           await promptSession(sid, { promptBlocks: blocks, executorConfig });
           fileRef.clearReferences();
         } else {
-          await promptSession(sid, { prompt: trimmed, executorConfig });
+          await promptSession(sid, {
+            promptBlocks: buildPromptBlocks(trimmed, []),
+            executorConfig,
+          });
         }
       }
 

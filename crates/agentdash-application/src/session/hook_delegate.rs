@@ -386,24 +386,11 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             return Ok(StopDecision::Stop);
         }
 
-        // Completion gate unsatisfied with no steering/follow_up: generate a
-        // fallback steering message so agent_loop won't break on empty Continue.
-        if steering.is_empty()
+        let allow_empty_continue = steering.is_empty()
             && pending_messages.follow_up.is_empty()
             && !blocking_review_pending
             && has_completion_gate
-            && !completion_satisfied
-        {
-            let gate_reason = evaluated
-                .resolution
-                .completion
-                .as_ref()
-                .map(|c| c.reason.as_str())
-                .unwrap_or(msg::STOP_GATE_DEFAULT_REASON);
-            steering.push(AgentMessage::user(msg::stop_gate_fallback_steering(
-                gate_reason,
-            )));
-        }
+            && !completion_satisfied;
 
         self.record_trace(
             HookTrigger::BeforeStop,
@@ -425,6 +412,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             } else {
                 msg::REASON_STOP_GATE_UNSATISFIED.to_string()
             }),
+            allow_empty: allow_empty_continue,
         })
     }
 }
@@ -669,6 +657,9 @@ mod tests {
     #[derive(Clone)]
     struct CompletionSatisfiedProvider;
 
+    #[derive(Clone)]
+    struct CompletionBlockedProvider;
+
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
         async fn load_session_snapshot(
@@ -702,6 +693,46 @@ mod tests {
                         satisfied: true,
                         advanced: false,
                         reason: "已满足基础 completion 条件".to_string(),
+                    },
+                ),
+                ..HookResolution::default()
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ExecutionHookProvider for CompletionBlockedProvider {
+        async fn load_session_snapshot(
+            &self,
+            query: SessionHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                ..SessionHookSnapshot::default()
+            })
+        }
+
+        async fn refresh_session_snapshot(
+            &self,
+            query: SessionHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                ..SessionHookSnapshot::default()
+            })
+        }
+
+        async fn evaluate_hook(
+            &self,
+            query: HookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            Ok(HookResolution {
+                completion: matches!(query.trigger, HookTrigger::BeforeStop).then_some(
+                    HookCompletionStatus {
+                        mode: "test_completion".to_string(),
+                        satisfied: false,
+                        advanced: false,
+                        reason: "还有校验未完成".to_string(),
                     },
                 ),
                 ..HookResolution::default()
@@ -794,6 +825,51 @@ mod tests {
             .expect("resolve 后应允许 stop");
 
         assert!(matches!(second, StopDecision::Stop));
+    }
+
+    #[tokio::test]
+    async fn before_stop_can_continue_without_fake_steering_when_only_stop_gate_blocks() {
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(CompletionBlockedProvider),
+            SessionHookSnapshot {
+                session_id: "sess-hook".to_string(),
+                ..SessionHookSnapshot::default()
+            },
+        ));
+        let delegate = HookRuntimeDelegate::new(hook_session);
+
+        let result = delegate
+            .before_stop(
+                agentdash_spi::lifecycle::BeforeStopInput {
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![],
+                        tools: vec![],
+                    },
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("before_stop 应返回 continue");
+
+        match result {
+            StopDecision::Continue {
+                steering,
+                follow_up,
+                reason,
+                allow_empty,
+            } => {
+                assert!(steering.is_empty(), "不应再伪造 stop gate steering");
+                assert!(follow_up.is_empty(), "不应附带 follow_up");
+                assert!(allow_empty, "stop gate 未满足时应允许空 continue");
+                assert_eq!(
+                    reason.as_deref(),
+                    Some(super::msg::REASON_STOP_GATE_UNSATISFIED)
+                );
+            }
+            StopDecision::Stop => panic!("completion 未满足时不应允许 stop"),
+        }
     }
 
     #[test]

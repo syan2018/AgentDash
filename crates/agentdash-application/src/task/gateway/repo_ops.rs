@@ -80,7 +80,7 @@ pub async fn append_task_change(
         Some(backend_id)
     };
     repos
-        .story_repo
+        .state_change_repo
         .append_change(task.project_id, task_id, kind, payload, backend_id_opt)
         .await
 }
@@ -152,7 +152,7 @@ pub async fn persist_tool_call_artifact(
         input.turn_id,
         input.tool_call_id,
         input.patch,
-    );
+    )?;
     if !changed {
         return Ok(());
     }
@@ -284,7 +284,7 @@ pub async fn clear_task_session_binding(
 
         repos.task_repo.update(&task).await?;
         repos
-            .story_repo
+            .state_change_repo
             .append_change(
                 task.project_id,
                 task.id,

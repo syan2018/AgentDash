@@ -36,7 +36,10 @@ use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
 use serde::Serialize;
 
-use super::project_agents::{resolve_project_agent_bridge_async, resolve_project_workspace};
+use super::project_agents::{
+    parse_project_agent_session_label, resolve_project_agent_bridge_async,
+    resolve_project_workspace,
+};
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
@@ -73,8 +76,9 @@ pub async fn list_sessions(
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
     if let (Some(owner_type_str), Some(owner_id_str)) = (&query.owner_type, &query.owner_id) {
-        let owner_type = SessionOwnerType::from_str_loose(owner_type_str)
-            .ok_or_else(|| ApiError::BadRequest(format!("无效的 owner_type: {owner_type_str}")))?;
+        let owner_type = owner_type_str
+            .parse::<SessionOwnerType>()
+            .map_err(|_| ApiError::BadRequest(format!("无效的 owner_type: {owner_type_str}")))?;
         let owner_id: uuid::Uuid = owner_id_str
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id_str}")))?;
@@ -508,7 +512,7 @@ pub async fn get_session_context(
             .await?;
             let built_context =
                 story_sessions::build_story_session_context_response(&state, &story, &session_id)
-                    .await;
+                    .await?;
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
@@ -533,14 +537,12 @@ pub async fn get_session_context(
                 &session_id,
                 &primary.label,
             )
-            .await;
+            .await?;
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
-                address_space: built_context
-                    .as_ref()
-                    .and_then(|context| context.address_space.clone()),
-                context_snapshot: built_context.and_then(|context| context.context_snapshot),
+                address_space: built_context.address_space.clone(),
+                context_snapshot: built_context.context_snapshot,
             }))
         }
     }
@@ -797,7 +799,6 @@ fn finalize_augmented_request(
     effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
     flow_capabilities: agentdash_spi::FlowCapabilities,
 ) {
-    req.user_input.prompt = None;
     req.user_input.prompt_blocks = Some(prompt_blocks);
     req.system_context = Some(context_markdown);
 
@@ -821,29 +822,40 @@ async fn build_story_owner_prompt_request(
     workspace: Option<&Workspace>,
     visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
+    let effective_executor_config = req
+        .user_input
+        .executor_config
+        .clone()
+        .or_else(|| {
+            project
+                .config
+                .default_agent_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(agentdash_spi::AgentConfig::new)
+        })
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "Story owner prompt 缺少 executor_config，且 project 没有 default_agent_type"
+                    .to_string(),
+            )
+        })?;
     let mut address_space = match req.address_space.clone() {
         Some(address_space) => Some(address_space),
-        None => {
-            let agent_type = req
-                .user_input
-                .executor_config
-                .as_ref()
-                .map(|config| config.executor.as_str())
-                .or(project.config.default_agent_type.as_deref());
-            Some(
-                state
-                    .services
-                    .address_space_service
-                    .build_address_space(
-                        project,
-                        Some(story),
-                        workspace,
-                        SessionMountTarget::Story,
-                        agent_type,
-                    )
-                    .map_err(ApiError::BadRequest)?,
-            )
-        }
+        None => Some(
+            state
+                .services
+                .address_space_service
+                .build_address_space(
+                    project,
+                    Some(story),
+                    workspace,
+                    SessionMountTarget::Story,
+                    Some(effective_executor_config.executor.as_str()),
+                )
+                .map_err(ApiError::BadRequest)?,
+        ),
     };
     if let Some(space) = address_space.as_mut() {
         append_visible_canvas_mounts(
@@ -855,18 +867,9 @@ async fn build_story_owner_prompt_request(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
-    let effective_agent_type = req
-        .user_input
-        .executor_config
-        .as_ref()
-        .map(|config| config.executor.as_str())
-        .or(project.config.default_agent_type.as_deref());
+    let effective_agent_type = Some(effective_executor_config.executor.as_str());
     let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = state
-        .config
-        .mcp_base_url
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    let base_url = required_mcp_base_url(state.as_ref())?;
     effective_mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
     let runtime_address_space = address_space.clone();
@@ -887,12 +890,14 @@ async fn build_story_owner_prompt_request(
         workspace_source_fragments: resolved_workspace_sources.fragments,
         workspace_source_warnings: resolved_workspace_sources.warnings,
     });
-    let prompt_blocks = build_story_owner_prompt_blocks(
-        story.id,
-        context_markdown.clone(),
-        req.user_input.prompt.take(),
-        req.user_input.prompt_blocks.take(),
-    );
+    let user_prompt_blocks = req
+        .user_input
+        .prompt_blocks
+        .take()
+        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
+    let prompt_blocks =
+        build_story_owner_prompt_blocks(story.id, context_markdown.clone(), user_prompt_blocks);
+    req.user_input.executor_config = Some(effective_executor_config);
 
     finalize_augmented_request(
         &mut req,
@@ -913,6 +918,14 @@ async fn build_story_owner_prompt_request(
     Ok(req)
 }
 
+fn required_mcp_base_url(state: &AppState) -> Result<String, ApiError> {
+    state
+        .config
+        .mcp_base_url
+        .clone()
+        .ok_or_else(|| ApiError::Internal("服务端未配置 MCP relay base_url".to_string()))
+}
+
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     mut req: PromptSessionRequest,
@@ -920,12 +933,11 @@ async fn build_project_owner_prompt_request(
     binding_label: &str,
     visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
-    let agent_key = binding_label
-        .trim()
-        .strip_prefix("project_agent:")
-        .unwrap_or_default();
+    let agent_key = parse_project_agent_session_label(binding_label).ok_or_else(|| {
+        ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
+    })?;
     let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
-        .await
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let workspace = resolve_project_workspace(state, project).await?;
 
@@ -962,22 +974,10 @@ async fn build_project_owner_prompt_request(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
     let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = state
-        .config
-        .mcp_base_url
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    let base_url = required_mcp_base_url(state.as_ref())?;
     effective_mcp_servers
         .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
-    // Inject Http/SSE MCP servers from the preset config
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
-    // Inject Stdio MCP servers (deserialized from relay JSON decls)
-    for decl in &project_agent.preset_stdio_mcp_decls {
-        if let Ok(server) = serde_json::from_value::<agent_client_protocol::McpServer>(decl.clone())
-        {
-            effective_mcp_servers.push(server);
-        }
-    }
     let runtime_address_space = address_space.clone();
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
@@ -990,16 +990,15 @@ async fn build_project_owner_prompt_request(
         preset_name: project_agent.preset_name.as_deref(),
         agent_display_name: project_agent.display_name.as_str(),
     });
-    let prompt_blocks = build_project_owner_prompt_blocks(
-        project.id,
-        context_markdown.clone(),
-        req.user_input.prompt.take(),
-        req.user_input.prompt_blocks.take(),
-    );
+    let user_prompt_blocks = req
+        .user_input
+        .prompt_blocks
+        .take()
+        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
+    let prompt_blocks =
+        build_project_owner_prompt_blocks(project.id, context_markdown.clone(), user_prompt_blocks);
 
-    if req.user_input.executor_config.is_none() {
-        req.user_input.executor_config = Some(effective_executor_config);
-    }
+    req.user_input.executor_config = Some(effective_executor_config);
 
     finalize_augmented_request(
         &mut req,
@@ -1143,10 +1142,7 @@ pub async fn acp_session_stream_sse(
         ProjectPermission::View,
     )
     .await?;
-    let last_event_id = headers
-        .get("last-event-id")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
+    let last_event_id = parse_resume_from_header(&headers, "last-event-id")?
         .or(query.since_id)
         .unwrap_or(0);
 
@@ -1230,7 +1226,9 @@ pub async fn acp_session_stream_ndjson(
         ProjectPermission::View,
     )
     .await?;
-    let resume_from = parse_ndjson_resume_from(&headers, query.since_id);
+    let resume_from = parse_resume_from_header(&headers, "x-stream-since-id")?
+        .or(query.since_id)
+        .unwrap_or(0);
     tracing::info!(
         session_id = %session_id,
         resume_from = resume_from,
@@ -1328,13 +1326,23 @@ pub async fn acp_session_stream_ndjson(
     ))
 }
 
-fn parse_ndjson_resume_from(headers: &HeaderMap, query_since_id: Option<u64>) -> u64 {
-    headers
-        .get("x-stream-since-id")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        .or(query_since_id)
-        .unwrap_or(0)
+fn parse_resume_from_header(
+    headers: &HeaderMap,
+    header_name: &'static str,
+) -> Result<Option<u64>, ApiError> {
+    let Some(value) = headers.get(header_name) else {
+        return Ok(None);
+    };
+    let raw = value
+        .to_str()
+        .map_err(|_| ApiError::BadRequest(format!("{header_name} 不是有效 UTF-8")))?;
+    let parsed = raw
+        .parse::<i64>()
+        .map_err(|_| ApiError::BadRequest(format!("{header_name} 不是有效整数")))?;
+    if parsed < 0 {
+        return Err(ApiError::BadRequest(format!("{header_name} 不能为负数")));
+    }
+    Ok(Some(parsed as u64))
 }
 
 fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {

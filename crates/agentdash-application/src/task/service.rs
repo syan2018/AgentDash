@@ -375,6 +375,9 @@ impl TaskLifecycleService {
         self.dispatcher.cancel_session(&session_id).await?;
 
         if session_was_running {
+            let backend_id =
+                resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task)
+                    .await?;
             let previous_status = task.status.clone();
             task.status = TaskStatus::Failed;
             self.repos
@@ -382,11 +385,6 @@ impl TaskLifecycleService {
                 .update(&task)
                 .await
                 .map_err(map_domain_error)?;
-
-            let backend_id =
-                resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task)
-                    .await
-                    .unwrap_or_else(|_| "unknown".to_string());
 
             gw_append_task_change(
                 &self.repos,
@@ -465,7 +463,7 @@ impl TaskLifecycleService {
         owner_id: Uuid,
         label: &str,
     ) -> Result<(), TaskExecutionError> {
-        let owner_type = SessionOwnerType::from_str_loose(owner_type).ok_or_else(|| {
+        let owner_type = owner_type.parse::<SessionOwnerType>().map_err(|_| {
             TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
         })?;
         let project_id = resolve_project_scope_for_owner(&self.repos, owner_type, owner_id).await?;

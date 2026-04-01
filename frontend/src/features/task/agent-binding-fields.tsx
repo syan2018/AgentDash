@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import type { AgentBinding, ProjectConfig, ThinkingLevel } from "../../types";
 import { THINKING_LEVEL_OPTIONS } from "../../types";
 import { useExecutorDiscovery } from "../executor-selector";
@@ -15,8 +15,6 @@ interface AgentTypeOption {
 }
 
 function buildAgentTypeOptions(
-  binding: AgentBinding,
-  projectConfig: ProjectConfig | undefined,
   discovered: Array<{ id: string; name: string; available: boolean; backend_ids?: string[] }>,
 ): AgentTypeOption[] {
   const options = new Map<string, AgentTypeOption>();
@@ -34,51 +32,28 @@ function buildAgentTypeOptions(
     });
   }
 
-  const appendRawOption = (raw: string | null | undefined, labelPrefix?: string) => {
-    const value = raw?.trim() ?? "";
-    if (!value || options.has(value)) return;
-    const label = labelPrefix ? `${labelPrefix}: ${value}` : value;
-    options.set(value, { value, label });
-  };
-
-  appendRawOption(projectConfig?.default_agent_type, "项目默认");
-  for (const preset of projectConfig?.agent_presets ?? []) {
-    appendRawOption(preset.agent_type, `预设 ${preset.name}`);
-  }
-  appendRawOption(binding.agent_type, "当前值");
-
   return Array.from(options.values());
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export function AgentBindingFields({ value, projectConfig, onChange }: AgentBindingFieldsProps) {
   const { executors, isLoading, error } = useExecutorDiscovery();
 
   const agentTypeOptions = useMemo(
-    () => buildAgentTypeOptions(value, projectConfig, executors),
-    [value, projectConfig, executors],
+    () => buildAgentTypeOptions(executors),
+    [executors],
   );
   const presets = projectConfig?.agent_presets ?? [];
+  const projectDefaultAgentType = normalizeOptionalText(projectConfig?.default_agent_type);
+  const hasSelectedAgentType = agentTypeOptions.some((option) => option.value === value.agent_type);
 
   const updateBinding = (patch: Partial<AgentBinding>) => {
     onChange({ ...value, ...patch });
   };
-
-  const fallbackExecutorId = useMemo(() => {
-    return executors.find((item) => item.available)?.id ?? executors[0]?.id ?? "";
-  }, [executors]);
-
-  useEffect(() => {
-    const hasBindingSelection = Boolean(
-      (value.agent_type ?? "").trim() ||
-      (value.preset_name ?? "").trim() ||
-      (projectConfig?.default_agent_type ?? "").trim(),
-    );
-    if (hasBindingSelection || !fallbackExecutorId) return;
-    onChange({
-      ...value,
-      agent_type: fallbackExecutorId,
-    });
-  }, [fallbackExecutorId, onChange, projectConfig?.default_agent_type, value]);
 
   const handlePresetChange = (presetName: string) => {
     if (!presetName) {
@@ -88,7 +63,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
     const preset = presets.find((item) => item.name === presetName);
     updateBinding({
       preset_name: presetName,
-      agent_type: preset?.agent_type ?? value.agent_type ?? null,
+      agent_type: normalizeOptionalText(preset?.agent_type),
     });
   };
 
@@ -103,7 +78,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
             className="agentdash-form-select"
           >
             <option value="">
-              {isLoading ? "加载 Agent 类型中..." : "使用项目默认 / 预设推导"}
+              {isLoading ? "加载 Agent 类型中..." : "请选择显式 Agent 类型"}
             </option>
             {agentTypeOptions.map((option) => (
               <option key={option.value} value={option.value}>
@@ -129,6 +104,18 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
           </select>
         </div>
       </div>
+
+      {projectDefaultAgentType && (
+        <p className="text-xs text-muted-foreground">
+          Project 默认 Agent 为 <span className="font-mono">{projectDefaultAgentType}</span>，但这里不会再自动代填；如需绑定，请显式选择。
+        </p>
+      )}
+
+      {value.agent_type && !hasSelectedAgentType && (
+        <p className="text-xs text-amber-600">
+          当前绑定的 Agent 类型 <span className="font-mono">{value.agent_type}</span> 不在执行器发现结果中，请修正配置。
+        </p>
+      )}
 
       <div>
         <label className="agentdash-form-label">Prompt 模板</label>

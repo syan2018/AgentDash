@@ -38,15 +38,19 @@ pub fn resolve_task_agent_config(
             .ok_or_else(|| {
                 TaskExecutionError::BadRequest(format!("Project 中不存在预设: {preset_name}"))
             })?;
-        return Ok(executor_config_from_preset(preset));
+        return executor_config_from_preset(preset).map(Some);
     }
 
     Ok(normalize_option_string(project.config.default_agent_type.clone()).map(AgentConfig::new))
 }
 
-pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<AgentConfig> {
+pub fn executor_config_from_preset(
+    preset: &AgentPreset,
+) -> Result<AgentConfig, TaskExecutionError> {
     let agent_type = normalize_option_string(Some(preset.agent_type.clone()));
-    let agent_type = agent_type?;
+    let agent_type = agent_type.ok_or_else(|| {
+        TaskExecutionError::BadRequest(format!("Preset `{}` 缺少有效 agent_type", preset.name))
+    })?;
 
     let mut config = AgentConfig::new(agent_type);
     if let Some(obj) = preset.config.as_object() {
@@ -63,19 +67,22 @@ pub fn executor_config_from_preset(preset: &AgentPreset) -> Option<AgentConfig> 
             config.agent_id = normalize_option_string(Some(v.to_string()));
         }
         if let Some(v) = obj.get("thinking_level").and_then(|v| v.as_str()) {
-            // Parse thinking_level from JSON string using serde
-            if let Ok(level) =
+            let level =
                 serde_json::from_value::<ThinkingLevel>(serde_json::Value::String(v.to_string()))
-            {
-                config.thinking_level = Some(level);
-            }
+                    .map_err(|error| {
+                    TaskExecutionError::BadRequest(format!(
+                        "Preset `{}` 的 thinking_level 非法: {error}",
+                        preset.name
+                    ))
+                })?;
+            config.thinking_level = Some(level);
         }
         if let Some(v) = obj.get("permission_policy").and_then(|v| v.as_str()) {
             config.permission_policy = normalize_option_string(Some(v.to_string()));
         }
     }
 
-    Some(config)
+    Ok(config)
 }
 
 pub fn normalize_option_string(value: Option<String>) -> Option<String> {

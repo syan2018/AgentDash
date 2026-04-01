@@ -435,7 +435,7 @@ pub async fn append_workflow_step_artifacts(
     .await?;
     let artifacts = req
         .record_artifacts
-        .unwrap_or_default()
+        .ok_or_else(|| ApiError::BadRequest("record_artifacts 不能为空".to_string()))?
         .into_iter()
         .map(Into::into)
         .collect::<Vec<_>>();
@@ -890,22 +890,33 @@ fn parse_binding_kind(raw: &str) -> Result<WorkflowBindingKind, ApiError> {
         .ok_or_else(|| ApiError::BadRequest(format!("无效的 binding_kind: {raw}")))
 }
 
-pub async fn list_hook_presets() -> Json<serde_json::Value> {
+pub async fn list_hook_presets() -> Result<Json<serde_json::Value>, ApiError> {
     let presets = hook_rule_preset_registry();
-    let grouped = group_presets_by_trigger(presets);
-    Json(serde_json::json!({ "presets": grouped }))
+    let grouped = group_presets_by_trigger(presets)?;
+    Ok(Json(serde_json::json!({ "presets": grouped })))
 }
 
 fn group_presets_by_trigger(
     presets: &[agentdash_application::hooks::HookRulePreset],
-) -> serde_json::Value {
+) -> Result<serde_json::Value, ApiError> {
     use std::collections::BTreeMap;
     let mut groups: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
     for preset in presets {
         let trigger_key = serde_json::to_value(&preset.trigger)
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-            .unwrap_or_default();
+            .map_err(|error| {
+                ApiError::Internal(format!(
+                    "序列化 hook preset trigger 失败: key={}, error={error}",
+                    preset.key
+                ))
+            })?
+            .as_str()
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "hook preset trigger 不是字符串: key={}",
+                    preset.key
+                ))
+            })?;
         groups
             .entry(trigger_key)
             .or_default()
@@ -919,7 +930,8 @@ fn group_presets_by_trigger(
                 "source": preset.source,
             }));
     }
-    serde_json::to_value(groups).unwrap_or_default()
+    serde_json::to_value(groups)
+        .map_err(|error| ApiError::Internal(format!("序列化 hook preset 分组失败: {error}")))
 }
 
 #[derive(Deserialize)]

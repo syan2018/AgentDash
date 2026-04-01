@@ -439,8 +439,8 @@ impl StoryMcpServer {
         };
 
         self.services
-            .task_repo
-            .create_task_with_story_update(&task)
+            .task_command_repo
+            .create_for_story(&task)
             .await
             .map_err(McpError::from)?;
 
@@ -496,8 +496,8 @@ impl StoryMcpServer {
             };
 
             self.services
-                .task_repo
-                .create_task_with_story_update(&task)
+                .task_command_repo
+                .create_for_story(&task)
                 .await
                 .map_err(McpError::from)?;
 

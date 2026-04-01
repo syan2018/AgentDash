@@ -172,10 +172,9 @@ pub fn build_hook_action_resolved_notification(
 
     SessionNotification::new(
         SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(
-            SessionInfoUpdate::new()
-                .meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
-        ),
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
+            merge_agentdash_meta(None, &agentdash).expect("构造 hook action ACP Meta 不应失败"),
+        )),
     )
 }
 

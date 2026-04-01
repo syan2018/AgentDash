@@ -31,7 +31,7 @@ impl SqliteSessionRepository {
                 executor_config_json TEXT,
                 executor_session_id TEXT,
                 companion_context_json TEXT,
-                visible_canvas_mount_ids_json TEXT
+                visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]'
             );
 
             CREATE TABLE IF NOT EXISTS session_events (
@@ -60,10 +60,11 @@ impl SqliteSessionRepository {
         .await
         .map_err(sqlx_to_io)?;
 
-        let alter_result =
-            sqlx::query("ALTER TABLE sessions ADD COLUMN visible_canvas_mount_ids_json TEXT")
-                .execute(&self.pool)
-                .await;
+        let alter_result = sqlx::query(
+            "ALTER TABLE sessions ADD COLUMN visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]'",
+        )
+        .execute(&self.pool)
+        .await;
         if let Err(error) = alter_result {
             let message = error.to_string().to_ascii_lowercase();
             if !message.contains("duplicate column name") {
@@ -74,28 +75,39 @@ impl SqliteSessionRepository {
         Ok(())
     }
 
-    fn map_meta_row(row: &sqlx::sqlite::SqliteRow) -> SessionMeta {
-        SessionMeta {
+    fn map_meta_row(row: &sqlx::sqlite::SqliteRow) -> io::Result<SessionMeta> {
+        Ok(SessionMeta {
             id: row.get::<String, _>("id"),
             title: row.get::<String, _>("title"),
             created_at: row.get::<i64, _>("created_at"),
             updated_at: row.get::<i64, _>("updated_at"),
-            last_event_seq: row.get::<i64, _>("last_event_seq").max(0) as u64,
+            last_event_seq: parse_non_negative_u64(
+                row.get::<i64, _>("last_event_seq"),
+                "sessions.last_event_seq",
+            )?,
             last_execution_status: row.get::<String, _>("last_execution_status"),
             last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
             last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
-            executor_config: row
-                .get::<Option<String>, _>("executor_config_json")
-                .and_then(|value| serde_json::from_str(&value).ok()),
+            executor_config: parse_optional_json_column(
+                row.get::<Option<String>, _>("executor_config_json"),
+                "executor_config_json",
+            )?,
             executor_session_id: row.get::<Option<String>, _>("executor_session_id"),
-            companion_context: row
-                .get::<Option<String>, _>("companion_context_json")
-                .and_then(|value| serde_json::from_str(&value).ok()),
-            visible_canvas_mount_ids: row
-                .get::<Option<String>, _>("visible_canvas_mount_ids_json")
-                .and_then(|value| serde_json::from_str(&value).ok())
-                .unwrap_or_default(),
-        }
+            companion_context: parse_optional_json_column(
+                row.get::<Option<String>, _>("companion_context_json"),
+                "companion_context_json",
+            )?,
+            visible_canvas_mount_ids: parse_optional_json_column(
+                row.get::<Option<String>, _>("visible_canvas_mount_ids_json"),
+                "visible_canvas_mount_ids_json",
+            )?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "缺少 visible_canvas_mount_ids_json",
+                )
+            })?,
+        })
     }
 
     fn persisted_event_from_row(
@@ -104,25 +116,50 @@ impl SqliteSessionRepository {
         let notification_json = row.get::<String, _>("notification_json");
         let notification = serde_json::from_str::<SessionNotification>(&notification_json)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        let event_seq_i64 = row.get::<i64, _>("event_seq");
+        let event_seq = parse_non_negative_u64(event_seq_i64, "session_events.event_seq")?;
+        let entry_index = row
+            .get::<Option<i64>, _>("entry_index")
+            .map(|value| parse_non_negative_u32(value, "session_events.entry_index"))
+            .transpose()?;
         Ok(PersistedSessionEvent {
             session_id: row.get::<String, _>("session_id"),
-            event_seq: row.get::<i64, _>("event_seq").max(0) as u64,
+            event_seq,
             occurred_at_ms: row.get::<i64, _>("occurred_at_ms"),
             committed_at_ms: row.get::<i64, _>("committed_at_ms"),
             session_update_type: row.get::<String, _>("session_update_type"),
             turn_id: row.get::<Option<String>, _>("turn_id"),
-            entry_index: row
-                .get::<Option<i64>, _>("entry_index")
-                .map(|value| value.max(0) as u32),
+            entry_index,
             tool_call_id: row.get::<Option<String>, _>("tool_call_id"),
             notification,
         })
+    }
+
+    async fn require_snapshot_seq(&self, session_id: &str) -> io::Result<u64> {
+        self.get_session_meta(session_id)
+            .await?
+            .map(|meta| meta.last_event_seq)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("session {session_id} 不存在"),
+                )
+            })
     }
 }
 
 #[async_trait::async_trait]
 impl SessionPersistence for SqliteSessionRepository {
     async fn create_session(&self, meta: &SessionMeta) -> io::Result<()> {
+        let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
+        let executor_config_json =
+            optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
+        let companion_context_json =
+            optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
+        let visible_canvas_mount_ids_json = json_string(
+            &meta.visible_canvas_mount_ids,
+            "visible_canvas_mount_ids_json",
+        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
@@ -136,14 +173,14 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(&meta.title)
         .bind(meta.created_at)
         .bind(meta.updated_at)
-        .bind(i64::try_from(meta.last_event_seq).unwrap_or(i64::MAX))
+        .bind(last_event_seq)
         .bind(&meta.last_execution_status)
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
-        .bind(meta.executor_config.as_ref().map(json_string))
+        .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(meta.companion_context.as_ref().map(json_string))
-        .bind(Some(json_string(&meta.visible_canvas_mount_ids)))
+        .bind(companion_context_json)
+        .bind(visible_canvas_mount_ids_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -164,7 +201,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
-        Ok(row.as_ref().map(Self::map_meta_row))
+        row.as_ref().map(Self::map_meta_row).transpose()
     }
 
     async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
@@ -180,10 +217,19 @@ impl SessionPersistence for SqliteSessionRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
-        Ok(rows.iter().map(Self::map_meta_row).collect())
+        rows.iter().map(Self::map_meta_row).collect()
     }
 
     async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()> {
+        let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
+        let executor_config_json =
+            optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
+        let companion_context_json =
+            optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
+        let visible_canvas_mount_ids_json = json_string(
+            &meta.visible_canvas_mount_ids,
+            "visible_canvas_mount_ids_json",
+        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
@@ -211,29 +257,24 @@ impl SessionPersistence for SqliteSessionRepository {
                         THEN excluded.last_terminal_message
                     ELSE sessions.last_terminal_message
                 END,
-                executor_config_json = COALESCE(excluded.executor_config_json, sessions.executor_config_json),
-                executor_session_id = COALESCE(excluded.executor_session_id, sessions.executor_session_id),
-                companion_context_json = COALESCE(excluded.companion_context_json, sessions.companion_context_json),
-                visible_canvas_mount_ids_json = CASE
-                    WHEN excluded.visible_canvas_mount_ids_json IS NULL
-                        OR excluded.visible_canvas_mount_ids_json = '[]'
-                        THEN sessions.visible_canvas_mount_ids_json
-                    ELSE excluded.visible_canvas_mount_ids_json
-                END
+                executor_config_json = excluded.executor_config_json,
+                executor_session_id = excluded.executor_session_id,
+                companion_context_json = excluded.companion_context_json,
+                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json
             "#,
         )
         .bind(&meta.id)
         .bind(&meta.title)
         .bind(meta.created_at)
         .bind(meta.updated_at)
-        .bind(i64::try_from(meta.last_event_seq).unwrap_or(i64::MAX))
+        .bind(last_event_seq)
         .bind(&meta.last_execution_status)
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
-        .bind(meta.executor_config.as_ref().map(json_string))
+        .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(meta.companion_context.as_ref().map(json_string))
-        .bind(Some(json_string(&meta.visible_canvas_mount_ids)))
+        .bind(companion_context_json)
+        .bind(visible_canvas_mount_ids_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -286,7 +327,7 @@ impl SessionPersistence for SqliteSessionRepository {
             .map_err(sqlx_to_io)?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
         let event_seq_i64: i64 = seq_row.try_get("last_event_seq").map_err(sqlx_to_io)?;
-        let event_seq = u64::try_from(event_seq_i64).unwrap_or(0);
+        let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
         let projection = projection_from_notification(notification);
         let persisted = PersistedSessionEvent {
             session_id: session_id.to_string(),
@@ -299,6 +340,8 @@ impl SessionPersistence for SqliteSessionRepository {
             tool_call_id: projection.tool_call_id.clone(),
             notification: notification.clone(),
         };
+        let notification_json = json_string(&persisted.notification, "notification_json")?;
+        let event_seq_db = encode_u64_as_i64(event_seq, "session_events.event_seq")?;
 
         sqlx::query(
             r#"
@@ -309,14 +352,14 @@ impl SessionPersistence for SqliteSessionRepository {
             "#,
         )
         .bind(session_id)
-        .bind(i64::try_from(event_seq).unwrap_or(i64::MAX))
+        .bind(event_seq_db)
         .bind(persisted.occurred_at_ms)
         .bind(persisted.committed_at_ms)
         .bind(&persisted.session_update_type)
         .bind(&persisted.turn_id)
         .bind(persisted.entry_index.map(i64::from))
         .bind(&persisted.tool_call_id)
-        .bind(json_string(&persisted.notification))
+        .bind(notification_json)
         .execute(&mut *tx)
         .await
         .map_err(sqlx_to_io)?;
@@ -358,11 +401,9 @@ impl SessionPersistence for SqliteSessionRepository {
         session_id: &str,
         after_seq: u64,
     ) -> io::Result<SessionEventBacklog> {
-        let snapshot_seq = self
-            .get_session_meta(session_id)
-            .await?
-            .map(|meta| meta.last_event_seq)
-            .unwrap_or(0);
+        let snapshot_seq = self.require_snapshot_seq(session_id).await?;
+        let after_seq_db = encode_u64_as_i64(after_seq, "session_events.after_seq")?;
+        let snapshot_seq_db = encode_u64_as_i64(snapshot_seq, "sessions.last_event_seq")?;
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
@@ -373,8 +414,8 @@ impl SessionPersistence for SqliteSessionRepository {
             "#,
         )
         .bind(session_id)
-        .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
-        .bind(i64::try_from(snapshot_seq).unwrap_or(i64::MAX))
+        .bind(after_seq_db)
+        .bind(snapshot_seq_db)
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -396,12 +437,11 @@ impl SessionPersistence for SqliteSessionRepository {
         after_seq: u64,
         limit: u32,
     ) -> io::Result<SessionEventPage> {
-        let snapshot_seq = self
-            .get_session_meta(session_id)
-            .await?
-            .map(|meta| meta.last_event_seq)
-            .unwrap_or(0);
+        let snapshot_seq = self.require_snapshot_seq(session_id).await?;
         let take = limit.max(1);
+        let after_seq_db = encode_u64_as_i64(after_seq, "session_events.after_seq")?;
+        let take_usize = usize::try_from(take)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
@@ -413,18 +453,15 @@ impl SessionPersistence for SqliteSessionRepository {
             "#,
         )
         .bind(session_id)
-        .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
+        .bind(after_seq_db)
         .bind(i64::from(take) + 1)
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
 
-        let has_more = rows.len() > usize::try_from(take).unwrap_or(usize::MAX);
+        let has_more = rows.len() > take_usize;
         let mut events = Vec::new();
-        for row in rows
-            .into_iter()
-            .take(usize::try_from(take).unwrap_or(usize::MAX))
-        {
+        for row in rows.into_iter().take(take_usize) {
             events.push(Self::persisted_event_from_row(&row)?);
         }
         let next_after_seq = events
@@ -462,8 +499,62 @@ impl SessionPersistence for SqliteSessionRepository {
     }
 }
 
-fn json_string<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+fn json_string<T: serde::Serialize>(value: &T, column: &str) -> io::Result<String> {
+    serde_json::to_string(value).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("序列化 {column} 失败: {error}"),
+        )
+    })
+}
+
+fn optional_json_string<T: serde::Serialize>(
+    value: Option<&T>,
+    column: &str,
+) -> io::Result<Option<String>> {
+    value.map(|inner| json_string(inner, column)).transpose()
+}
+
+fn encode_u64_as_i64(value: u64, field: &str) -> io::Result<i64> {
+    i64::try_from(value).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{field} 超出 i64 可表示范围: {value}"),
+        )
+    })
+}
+
+fn parse_non_negative_u64(value: i64, field: &str) -> io::Result<u64> {
+    u64::try_from(value).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{field} 不能为负数: {value}"),
+        )
+    })
+}
+
+fn parse_non_negative_u32(value: i64, field: &str) -> io::Result<u32> {
+    u32::try_from(value).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{field} 超出 u32 范围: {value}"),
+        )
+    })
+}
+
+fn parse_optional_json_column<T: serde::de::DeserializeOwned>(
+    raw: Option<String>,
+    column: &str,
+) -> io::Result<Option<T>> {
+    match raw {
+        Some(value) => serde_json::from_str(&value).map(Some).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("解析 {column} 失败: {error}"),
+            )
+        }),
+        None => Ok(None),
+    }
 }
 
 fn sqlx_to_io(error: sqlx::Error) -> io::Error {

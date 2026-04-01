@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_domain::{
-    project::ProjectRepository, story::StoryRepository, task::TaskRepository,
+    project::ProjectRepository,
+    story::StoryRepository,
+    task::{TaskAggregateCommandRepository, TaskRepository},
     workspace::WorkspaceRepository,
 };
 
@@ -19,5 +21,6 @@ pub struct McpServices {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
+    pub task_command_repo: Arc<dyn TaskAggregateCommandRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
 }

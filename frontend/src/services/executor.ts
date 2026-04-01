@@ -21,8 +21,7 @@ export interface ExecutorConfig {
 }
 
 export interface PromptSessionRequest {
-  prompt?: string;
-  promptBlocks?: ContentBlock[];
+  promptBlocks: ContentBlock[];
   workingDir?: string;
   env?: Record<string, string>;
   executorConfig?: ExecutorConfig;

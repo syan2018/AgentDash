@@ -272,24 +272,6 @@ describe("reduceStreamState", () => {
     expect((completed.entries[0]?.update as { status?: string }).status).toBe("completed");
   });
 
-  it("累计 chunk 异常重复时不会把同一段文本拼两次", () => {
-    const initial = {
-      entries: [],
-      rawEvents: [],
-      tokenUsage: null,
-      lastAppliedSeq: 0,
-    };
-
-    const first = reduceStreamState(initial, [buildTextEvent(1, "hello")]);
-    const second = reduceStreamState(first, [buildTextEvent(2, "hellohello")]);
-
-    expect(second.entries).toHaveLength(1);
-    const update = second.entries[0]?.update as {
-      content?: { type?: string; text?: string };
-    };
-    expect(update.content?.text).toBe("hello");
-  });
-
   it("incoming 等于 previous 尾部时仍按增量拼接，不会误吞字", () => {
     const initial = {
       entries: [],

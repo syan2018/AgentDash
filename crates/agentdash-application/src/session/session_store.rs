@@ -25,7 +25,12 @@ impl SessionStore {
     pub async fn write_meta(&self, meta: &SessionMeta) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.base_dir).await?;
         let path = self.meta_path(&meta.id);
-        let json = serde_json::to_string_pretty(meta).unwrap_or_else(|_| "{}".into());
+        let json = serde_json::to_string_pretty(meta).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("序列化 session meta 失败: {error}"),
+            )
+        })?;
         tokio::fs::write(path, json).await
     }
 
@@ -57,9 +62,13 @@ impl SessionStore {
                 continue;
             }
             let content = tokio::fs::read_to_string(entry.path()).await?;
-            if let Ok(meta) = serde_json::from_str::<SessionMeta>(&content) {
-                sessions.push(meta);
-            }
+            let meta = serde_json::from_str::<SessionMeta>(&content).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("解析 session meta 失败: {error}"),
+                )
+            })?;
+            sessions.push(meta);
         }
 
         sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
@@ -82,7 +91,12 @@ impl SessionStore {
             .append(true)
             .open(path)
             .await?;
-        let line = serde_json::to_string(n).unwrap_or_else(|_| "{}".to_string());
+        let line = serde_json::to_string(n).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("序列化 session notification 失败: {error}"),
+            )
+        })?;
         use tokio::io::AsyncWriteExt as _;
         file.write_all(line.as_bytes()).await?;
         file.write_all(b"\n").await?;
@@ -98,14 +112,18 @@ impl SessionStore {
         };
 
         let mut out = Vec::new();
-        for line in content.lines() {
+        for (index, line) in content.lines().enumerate() {
             let t = line.trim();
             if t.is_empty() {
                 continue;
             }
-            if let Ok(n) = serde_json::from_str::<SessionNotification>(t) {
-                out.push(n);
-            }
+            let notification = serde_json::from_str::<SessionNotification>(t).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("解析 session notification 第 {} 行失败: {error}", index + 1),
+                )
+            })?;
+            out.push(notification);
         }
         Ok(out)
     }

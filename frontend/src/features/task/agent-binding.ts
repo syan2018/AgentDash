@@ -6,30 +6,6 @@ function normalizeText(value: string | null | undefined): string | null {
 }
 
 export function createDefaultAgentBinding(projectConfig?: ProjectConfig): AgentBinding {
-  const defaultAgentType = normalizeText(projectConfig?.default_agent_type);
-  if (defaultAgentType) {
-    return {
-      agent_type: defaultAgentType,
-      agent_pid: null,
-      preset_name: null,
-      prompt_template: null,
-      initial_context: null,
-      context_sources: [],
-    };
-  }
-
-  const fallbackPreset = projectConfig?.agent_presets?.[0];
-  if (fallbackPreset) {
-    return {
-      agent_type: normalizeText(fallbackPreset.agent_type),
-      agent_pid: null,
-      preset_name: normalizeText(fallbackPreset.name),
-      prompt_template: null,
-      initial_context: null,
-      context_sources: [],
-    };
-  }
-
   return {
     agent_type: null,
     agent_pid: null,
@@ -48,7 +24,7 @@ export function resolveDefaultWorkspaceId(
   if (projectDefault && workspaces.some((item) => item.id === projectDefault)) {
     return projectDefault;
   }
-  return workspaces[0]?.id ?? "";
+  return "";
 }
 
 export function normalizeAgentBinding(binding: AgentBinding): AgentBinding {
@@ -64,8 +40,8 @@ export function normalizeAgentBinding(binding: AgentBinding): AgentBinding {
 
 export function hasAgentBindingSelection(
   binding: AgentBinding,
-  projectConfig?: ProjectConfig,
+  _projectConfig?: ProjectConfig,
 ): boolean {
   const normalized = normalizeAgentBinding(binding);
-  return Boolean(normalized.agent_type || normalized.preset_name || normalizeText(projectConfig?.default_agent_type));
+  return Boolean(normalized.agent_type || normalized.preset_name);
 }

@@ -370,9 +370,10 @@ async fn run_loop(
                 StopDecision::Continue {
                     mut steering,
                     mut follow_up,
+                    allow_empty,
                     ..
                 } => {
-                    if steering.is_empty() && follow_up.is_empty() {
+                    if steering.is_empty() && follow_up.is_empty() && !allow_empty {
                         break;
                     }
                     pending_messages.append(&mut steering);

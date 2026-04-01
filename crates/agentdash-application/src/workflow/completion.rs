@@ -172,10 +172,10 @@ fn evaluate_check(
 ) -> CheckEvaluationResult {
     match check.kind {
         WorkflowCheckKind::ArtifactExists => {
-            let artifact_type = read_string(check.payload.as_ref(), "artifact_type");
-            let count = artifact_type
-                .as_deref()
-                .and_then(|key| signals.artifact_counts.get(key))
+            let artifact_type = require_string(check, "artifact_type");
+            let count = signals
+                .artifact_counts
+                .get(&artifact_type)
                 .copied()
                 .unwrap_or_default();
             let satisfied = count > 0;
@@ -190,16 +190,16 @@ fn evaluate_check(
                 } else {
                     "尚未检测到要求的记录产物".to_string()
                 },
-                detail: artifact_type.map(|artifact_type| format!("artifact_type={artifact_type}")),
+                detail: Some(format!("artifact_type={artifact_type}")),
                 satisfied,
             }
         }
         WorkflowCheckKind::ArtifactCountGte => {
-            let artifact_type = read_string(check.payload.as_ref(), "artifact_type");
-            let min_count = read_u64(check.payload.as_ref(), "min_count").unwrap_or(1) as usize;
-            let count = artifact_type
-                .as_deref()
-                .and_then(|key| signals.artifact_counts.get(key))
+            let artifact_type = require_string(check, "artifact_type");
+            let min_count = require_u64(check, "min_count") as usize;
+            let count = signals
+                .artifact_counts
+                .get(&artifact_type)
                 .copied()
                 .unwrap_or_default();
             let satisfied = count >= min_count;
@@ -214,14 +214,14 @@ fn evaluate_check(
                 } else {
                     "记录产物数量尚未满足 workflow check".to_string()
                 },
-                detail: artifact_type.map(|artifact_type| {
-                    format!("artifact_type={artifact_type}, count={count}, min={min_count}")
-                }),
+                detail: Some(format!(
+                    "artifact_type={artifact_type}, count={count}, min={min_count}"
+                )),
                 satisfied,
             }
         }
         WorkflowCheckKind::SessionTerminalIn => {
-            let accepted = read_string_list(check.payload.as_ref(), "states");
+            let accepted = require_string_list(check, "states");
             let terminal_state = signals.session_terminal_state;
             let satisfied = terminal_state
                 .map(session_terminal_state_tag)
@@ -258,16 +258,11 @@ fn evaluate_check(
             satisfied: signals.checklist_evidence_present,
         },
         WorkflowCheckKind::ExplicitActionReceived => {
-            let action_key = read_string(check.payload.as_ref(), "action_key");
-            let satisfied = action_key
-                .as_deref()
-                .map(|action_key| {
-                    signals
-                        .explicit_actions
-                        .iter()
-                        .any(|candidate| candidate == action_key)
-                })
-                .unwrap_or(false);
+            let action_key = require_string(check, "action_key");
+            let satisfied = signals
+                .explicit_actions
+                .iter()
+                .any(|candidate| candidate == &action_key);
             CheckEvaluationResult {
                 code: if satisfied {
                     "explicit_action_received".to_string()
@@ -279,7 +274,7 @@ fn evaluate_check(
                 } else {
                     "尚未收到显式动作".to_string()
                 },
-                detail: action_key,
+                detail: Some(action_key),
                 satisfied,
             }
         }
@@ -339,9 +334,38 @@ fn read_u64(payload: Option<&serde_json::Value>, key: &str) -> Option<u64> {
         .and_then(serde_json::Value::as_u64)
 }
 
+fn require_string(check: &agentdash_domain::workflow::WorkflowCheckSpec, key: &str) -> String {
+    read_string(check.payload.as_ref(), key).unwrap_or_else(|| {
+        panic!(
+            "workflow check `{}` 缺少必填字符串字段 `{}`",
+            check.key, key
+        )
+    })
+}
+
+fn require_string_list(
+    check: &agentdash_domain::workflow::WorkflowCheckSpec,
+    key: &str,
+) -> Vec<String> {
+    let items = read_string_list(check.payload.as_ref(), key);
+    if items.is_empty() {
+        panic!(
+            "workflow check `{}` 缺少必填字符串列表 `{}`",
+            check.key, key
+        );
+    }
+    items
+}
+
+fn require_u64(check: &agentdash_domain::workflow::WorkflowCheckSpec, key: &str) -> u64 {
+    read_u64(check.payload.as_ref(), key)
+        .unwrap_or_else(|| panic!("workflow check `{}` 缺少必填整数 `{}`", check.key, key))
+}
+
 #[cfg(test)]
 mod tests {
     use agentdash_domain::workflow::WorkflowCheckSpec;
+    use std::panic;
 
     use super::*;
 
@@ -431,6 +455,27 @@ mod tests {
         assert_eq!(
             workflow_artifact_type_tag(WorkflowRecordArtifactType::ChecklistEvidence),
             "checklist_evidence"
+        );
+    }
+
+    #[test]
+    fn malformed_artifact_count_check_panics_instead_of_silently_pending() {
+        let spec = WorkflowCompletionSpec {
+            checks: vec![WorkflowCheckSpec {
+                key: "artifact-count".to_string(),
+                kind: WorkflowCheckKind::ArtifactCountGte,
+                description: "artifact count".to_string(),
+                payload: Some(serde_json::json!({ "artifact_type": "phase_note" })),
+            }],
+            ..WorkflowCompletionSpec::default()
+        };
+
+        assert!(
+            panic::catch_unwind(|| {
+                let _ =
+                    evaluate_step_completion(Some(&spec), &WorkflowCompletionSignalSet::default());
+            })
+            .is_err()
         );
     }
 }

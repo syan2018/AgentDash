@@ -2,15 +2,16 @@ use sqlx::{PgPool, Row};
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::{
-    ChangeKind, StateChange, Story, StoryContext, StoryPriority, StoryRepository, StoryStatus,
-    StoryType,
+    ChangeKind, Story, StoryContext, StoryPriority, StoryRepository, StoryStatus, StoryType,
 };
 
-pub struct SqliteStoryRepository {
+use super::state_change_store::{append_state_change_in_tx, initialize_state_changes_schema};
+
+pub struct PostgresStoryRepository {
     pool: PgPool,
 }
 
-impl SqliteStoryRepository {
+impl PostgresStoryRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -35,19 +36,6 @@ impl SqliteStoryRepository {
             );
 
             CREATE INDEX IF NOT EXISTS idx_stories_project ON stories(project_id);
-
-            CREATE TABLE IF NOT EXISTS state_changes (
-                id BIGSERIAL PRIMARY KEY,
-                project_id TEXT NOT NULL DEFAULT '',
-                entity_id TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                payload TEXT NOT NULL DEFAULT '{}',
-                backend_id TEXT,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_state_changes_entity ON state_changes(entity_id);
-            CREATE INDEX IF NOT EXISTS idx_state_changes_backend ON state_changes(backend_id);
             "#,
         )
         .execute(&self.pool)
@@ -57,12 +45,7 @@ impl SqliteStoryRepository {
         self.ensure_story_column("default_workspace_id", "TEXT")
             .await?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_state_changes_project ON state_changes(project_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        initialize_state_changes_schema(&self.pool).await?;
 
         Ok(())
     }
@@ -81,11 +64,14 @@ impl SqliteStoryRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        let column_exists = rows.iter().any(|row| {
-            row.try_get::<String, _>("name")
-                .map(|name| name == column_name)
-                .unwrap_or(false)
-        });
+        let column_names = rows
+            .iter()
+            .map(|row| {
+                row.try_get::<String, _>("name")
+                    .map_err(|e| DomainError::InvalidConfig(e.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let column_exists = column_names.iter().any(|name| name == column_name);
 
         if !column_exists {
             sqlx::query(&format!(
@@ -98,36 +84,10 @@ impl SqliteStoryRepository {
 
         Ok(())
     }
-
-    async fn record_change(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        project_id: uuid::Uuid,
-        entity_id: uuid::Uuid,
-        kind: ChangeKind,
-        payload: serde_json::Value,
-        backend_id: Option<&str>,
-    ) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
-        )
-        .bind(project_id.to_string())
-        .bind(entity_id.to_string())
-        .bind(serde_json::to_string(&kind)?.trim_matches('"'))
-        .bind(payload.to_string())
-        .bind(backend_id)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
-impl StoryRepository for SqliteStoryRepository {
+impl StoryRepository for PostgresStoryRepository {
     async fn create(&self, story: &Story) -> Result<(), DomainError> {
         let mut tx = self
             .pool
@@ -156,12 +116,12 @@ impl StoryRepository for SqliteStoryRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        self.record_change(
+        append_state_change_in_tx(
             &mut tx,
             story.project_id,
             story.id,
             ChangeKind::StoryCreated,
-            serde_json::to_value(story).unwrap_or_default(),
+            story_payload(story)?,
             None,
         )
         .await?;
@@ -232,12 +192,12 @@ impl StoryRepository for SqliteStoryRepository {
             });
         }
 
-        self.record_change(
+        append_state_change_in_tx(
             &mut tx,
             story.project_id,
             story.id,
             ChangeKind::StoryUpdated,
-            serde_json::to_value(story).unwrap_or_default(),
+            story_payload(story)?,
             None,
         )
         .await?;
@@ -261,90 +221,6 @@ impl StoryRepository for SqliteStoryRepository {
                 id: id.to_string(),
             });
         }
-        Ok(())
-    }
-
-    async fn get_changes_since(
-        &self,
-        since_id: i64,
-        limit: i64,
-    ) -> Result<Vec<StateChange>, DomainError> {
-        let rows = sqlx::query_as::<_, StateChangeRow>(
-            "SELECT id, project_id, entity_id, kind, payload, backend_id, created_at
-             FROM state_changes WHERE id > $1 ORDER BY id ASC LIMIT $2",
-        )
-        .bind(since_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        rows.into_iter().map(|r| r.try_into()).collect()
-    }
-
-    async fn get_changes_since_by_project(
-        &self,
-        project_id: uuid::Uuid,
-        since_id: i64,
-        limit: i64,
-    ) -> Result<Vec<StateChange>, DomainError> {
-        let rows = sqlx::query_as::<_, StateChangeRow>(
-            "SELECT id, project_id, entity_id, kind, payload, backend_id, created_at
-             FROM state_changes
-             WHERE project_id = $1 AND id > $2
-             ORDER BY id ASC
-             LIMIT $3",
-        )
-        .bind(project_id.to_string())
-        .bind(since_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        rows.into_iter().map(|r| r.try_into()).collect()
-    }
-
-    async fn latest_event_id(&self) -> Result<i64, DomainError> {
-        let row: (i64,) = sqlx::query_as("SELECT COALESCE(MAX(id), 0) FROM state_changes")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        Ok(row.0)
-    }
-
-    async fn latest_event_id_by_project(&self, project_id: uuid::Uuid) -> Result<i64, DomainError> {
-        let row: (i64,) =
-            sqlx::query_as("SELECT COALESCE(MAX(id), 0) FROM state_changes WHERE project_id = $1")
-                .bind(project_id.to_string())
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        Ok(row.0)
-    }
-
-    async fn append_change(
-        &self,
-        project_id: uuid::Uuid,
-        entity_id: uuid::Uuid,
-        kind: ChangeKind,
-        payload: serde_json::Value,
-        backend_id: Option<&str>,
-    ) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
-        )
-        .bind(project_id.to_string())
-        .bind(entity_id.to_string())
-        .bind(serde_json::to_string(&kind)?.trim_matches('"'))
-        .bind(payload.to_string())
-        .bind(backend_id)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
         Ok(())
     }
 }
@@ -377,13 +253,18 @@ impl TryFrom<StoryRow> for Story {
             id: row.id.clone(),
         })?;
 
-        let context: StoryContext = serde_json::from_str(&row.context).unwrap_or_default();
-        let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
+        let context: StoryContext = parse_json_column(&row.context, "stories.context")?;
+        let tags: Vec<String> = parse_json_column(&row.tags, "stories.tags")?;
 
         let default_workspace_id = row
             .default_workspace_id
             .as_deref()
-            .and_then(|s| s.parse().ok());
+            .map(|value| {
+                value.parse().map_err(|error| {
+                    DomainError::InvalidConfig(format!("stories.default_workspace_id: {error}"))
+                })
+            })
+            .transpose()?;
 
         Ok(Story {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
@@ -394,97 +275,82 @@ impl TryFrom<StoryRow> for Story {
             default_workspace_id,
             title: row.title,
             description: row.description,
-            status: match row.status.as_str() {
-                "created" => StoryStatus::Created,
-                "context_ready" => StoryStatus::ContextReady,
-                "decomposed" => StoryStatus::Decomposed,
-                "executing" => StoryStatus::Executing,
-                "completed" => StoryStatus::Completed,
-                "failed" => StoryStatus::Failed,
-                "cancelled" => StoryStatus::Cancelled,
-                "canceled" => StoryStatus::Cancelled,
-                _ => StoryStatus::Created,
-            },
-            priority: match row.priority.as_str() {
-                "p0" => StoryPriority::P0,
-                "p1" => StoryPriority::P1,
-                "p2" => StoryPriority::P2,
-                "p3" => StoryPriority::P3,
-                _ => StoryPriority::P2,
-            },
-            story_type: match row.story_type.as_str() {
-                "feature" => StoryType::Feature,
-                "bugfix" => StoryType::Bugfix,
-                "refactor" => StoryType::Refactor,
-                "docs" => StoryType::Docs,
-                "test" => StoryType::Test,
-                "other" => StoryType::Other,
-                _ => StoryType::Feature,
-            },
+            status: parse_story_status(&row.status)?,
+            priority: parse_story_priority(&row.priority)?,
+            story_type: parse_story_type(&row.story_type)?,
             tags,
             task_count: row.task_count.max(0) as u32,
             context,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(&row.created_at, "stories.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "stories.updated_at")?,
         })
     }
 }
 
-#[derive(sqlx::FromRow)]
-struct StateChangeRow {
-    id: i64,
-    project_id: String,
-    entity_id: String,
-    kind: String,
-    payload: String,
-    backend_id: Option<String>,
-    created_at: String,
+fn story_payload(story: &Story) -> Result<serde_json::Value, DomainError> {
+    serde_json::to_value(story)
+        .map_err(|error| DomainError::InvalidConfig(format!("stories.state_payload: {error}")))
 }
 
-impl TryFrom<StateChangeRow> for StateChange {
-    type Error = DomainError;
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
 
-    fn try_from(row: StateChangeRow) -> Result<Self, Self::Error> {
-        Ok(StateChange {
-            id: row.id,
-            project_id: row.project_id.parse().map_err(|_| DomainError::NotFound {
-                entity: "project",
-                id: row.project_id.clone(),
-            })?,
-            entity_id: row.entity_id.parse().map_err(|_| DomainError::NotFound {
-                entity: "state_change",
-                id: row.entity_id.clone(),
-            })?,
-            kind: match row.kind.as_str() {
-                "story_created" => ChangeKind::StoryCreated,
-                "story_updated" => ChangeKind::StoryUpdated,
-                "story_status_changed" => ChangeKind::StoryStatusChanged,
-                "story_deleted" => ChangeKind::StoryDeleted,
-                "task_created" => ChangeKind::TaskCreated,
-                "task_updated" => ChangeKind::TaskUpdated,
-                "task_status_changed" => ChangeKind::TaskStatusChanged,
-                "task_deleted" => ChangeKind::TaskDeleted,
-                "task_artifact_added" => ChangeKind::TaskArtifactAdded,
-                _ => ChangeKind::StoryUpdated,
-            },
-            payload: serde_json::from_str(&row.payload).unwrap_or_default(),
-            backend_id: row.backend_id.unwrap_or_default(),
-            created_at: super::parse_pg_timestamp(&row.created_at),
-        })
+fn parse_story_status(raw: &str) -> Result<StoryStatus, DomainError> {
+    match raw {
+        "created" => Ok(StoryStatus::Created),
+        "context_ready" => Ok(StoryStatus::ContextReady),
+        "decomposed" => Ok(StoryStatus::Decomposed),
+        "executing" => Ok(StoryStatus::Executing),
+        "completed" => Ok(StoryStatus::Completed),
+        "failed" => Ok(StoryStatus::Failed),
+        "cancelled" | "canceled" => Ok(StoryStatus::Cancelled),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "stories.status: 未知状态 `{raw}`"
+        ))),
+    }
+}
+
+fn parse_story_priority(raw: &str) -> Result<StoryPriority, DomainError> {
+    match raw {
+        "p0" => Ok(StoryPriority::P0),
+        "p1" => Ok(StoryPriority::P1),
+        "p2" => Ok(StoryPriority::P2),
+        "p3" => Ok(StoryPriority::P3),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "stories.priority: 未知优先级 `{raw}`"
+        ))),
+    }
+}
+
+fn parse_story_type(raw: &str) -> Result<StoryType, DomainError> {
+    match raw {
+        "feature" => Ok(StoryType::Feature),
+        "bugfix" => Ok(StoryType::Bugfix),
+        "refactor" => Ok(StoryType::Refactor),
+        "docs" => Ok(StoryType::Docs),
+        "test" => Ok(StoryType::Test),
+        "other" => Ok(StoryType::Other),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "stories.story_type: 未知类型 `{raw}`"
+        ))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::PgPool;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo_with_legacy_story_table() -> SqliteStoryRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo_with_legacy_story_table() -> Option<PostgresStoryRepository> {
+        let pool = match test_pg_pool("story_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
 
         sqlx::query(
             r#"
@@ -512,14 +378,16 @@ mod tests {
         .await
         .expect("应能创建旧版 stories 表");
 
-        let repo = SqliteStoryRepository::new(pool);
+        let repo = PostgresStoryRepository::new(pool);
         repo.initialize().await.expect("初始化时应能自动补齐缺失列");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn initialize_adds_default_workspace_id_for_legacy_story_table() {
-        let repo = new_repo_with_legacy_story_table().await;
+        let Some(repo) = new_repo_with_legacy_story_table().await else {
+            return;
+        };
         let columns = sqlx::query(
             "SELECT column_name AS name
              FROM information_schema.columns
@@ -543,7 +411,9 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_story_table_can_read_story_after_initialize() {
-        let repo = new_repo_with_legacy_story_table().await;
+        let Some(repo) = new_repo_with_legacy_story_table().await else {
+            return;
+        };
         let project_id = uuid::Uuid::new_v4();
         let story = Story::new(project_id, "Story".to_string(), "desc".to_string());
 

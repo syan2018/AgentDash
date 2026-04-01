@@ -3,14 +3,17 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::ChangeKind;
 use agentdash_domain::task::{
-    AgentBinding, Artifact, Task, TaskExecutionMode, TaskRepository, TaskStatus,
+    AgentBinding, Artifact, Task, TaskAggregateCommandRepository, TaskExecutionMode,
+    TaskRepository, TaskStatus,
 };
 
-pub struct SqliteTaskRepository {
+use super::state_change_store::{append_state_change_in_tx, initialize_state_changes_schema};
+
+pub struct PostgresTaskRepository {
     pool: PgPool,
 }
 
-impl SqliteTaskRepository {
+impl PostgresTaskRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -46,6 +49,8 @@ impl SqliteTaskRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        initialize_state_changes_schema(&self.pool).await?;
+
         Ok(())
     }
 
@@ -69,38 +74,34 @@ impl SqliteTaskRepository {
 
         Ok(story)
     }
+}
 
-    async fn insert_state_change(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        project_id: uuid::Uuid,
-        entity_id: uuid::Uuid,
-        kind: ChangeKind,
-        payload: serde_json::Value,
-        backend_id: Option<&str>,
-    ) -> Result<(), DomainError> {
+#[async_trait::async_trait]
+impl TaskRepository for PostgresTaskRepository {
+    async fn create(&self, task: &Task) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO state_changes (project_id, entity_id, kind, payload, backend_id, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO tasks (id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
-        .bind(project_id.to_string())
-        .bind(entity_id.to_string())
-        .bind(serde_json::to_string(&kind)?.trim_matches('"'))
-        .bind(payload.to_string())
-        .bind(backend_id)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(&mut **tx)
+        .bind(task.id.to_string())
+        .bind(task.project_id.to_string())
+        .bind(task.story_id.to_string())
+        .bind(task.workspace_id.map(|id| id.to_string()))
+        .bind(&task.title)
+        .bind(&task.description)
+        .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
+        .bind(task.session_id.as_deref())
+        .bind(task.executor_session_id.as_deref())
+        .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
+        .bind(serde_json::to_string(&task.agent_binding)?)
+        .bind(serde_json::to_string(&task.artifacts)?)
+        .bind(task.created_at.to_rfc3339())
+        .bind(task.updated_at.to_rfc3339())
+        .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl TaskRepository for SqliteTaskRepository {
-    async fn create(&self, task: &Task) -> Result<(), DomainError> {
-        self.create_task_with_story_update(task).await
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Task>, DomainError> {
@@ -205,11 +206,26 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
-        self.delete_task_with_story_update(id).await?;
+        let result = sqlx::query("DELETE FROM tasks WHERE id = $1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound {
+                entity: "task",
+                id: id.to_string(),
+            });
+        }
+
         Ok(())
     }
+}
 
-    async fn create_task_with_story_update(&self, task: &Task) -> Result<(), DomainError> {
+#[async_trait::async_trait]
+impl TaskAggregateCommandRepository for PostgresTaskRepository {
+    async fn create_for_story(&self, task: &Task) -> Result<(), DomainError> {
         let mut tx = self
             .pool
             .begin()
@@ -259,21 +275,21 @@ impl TaskRepository for SqliteTaskRepository {
         story.task_count += 1;
         story.updated_at = now;
 
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task.id,
             ChangeKind::TaskCreated,
-            build_task_created_payload(task),
+            build_task_created_payload(task)?,
             None,
         )
         .await?;
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task.story_id,
             ChangeKind::StoryUpdated,
-            story.to_payload("task_created_by_user"),
+            story.to_payload("task_created_by_user")?,
             None,
         )
         .await?;
@@ -284,10 +300,7 @@ impl TaskRepository for SqliteTaskRepository {
         Ok(())
     }
 
-    async fn delete_task_with_story_update(
-        &self,
-        task_id: uuid::Uuid,
-    ) -> Result<Task, DomainError> {
+    async fn delete_for_story(&self, task_id: uuid::Uuid) -> Result<Task, DomainError> {
         let mut tx = self
             .pool
             .begin()
@@ -343,7 +356,7 @@ impl TaskRepository for SqliteTaskRepository {
         story.task_count = (story.task_count - 1).max(0);
         story.updated_at = now;
 
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task_id,
@@ -357,12 +370,12 @@ impl TaskRepository for SqliteTaskRepository {
             None,
         )
         .await?;
-        self.insert_state_change(
+        append_state_change_in_tx(
             &mut tx,
             task.project_id,
             task.story_id,
             ChangeKind::StoryUpdated,
-            story.to_payload("task_deleted_by_user"),
+            story.to_payload("task_deleted_by_user")?,
             None,
         )
         .await?;
@@ -414,12 +427,20 @@ impl TryFrom<TaskRow> for Task {
     type Error = DomainError;
 
     fn try_from(row: TaskRow) -> Result<Self, Self::Error> {
-        let workspace_id = row.workspace_id.as_deref().and_then(|s| s.parse().ok());
+        let workspace_id = row
+            .workspace_id
+            .as_deref()
+            .map(|value| {
+                value.parse().map_err(|error| {
+                    DomainError::InvalidConfig(format!("tasks.workspace_id: {error}"))
+                })
+            })
+            .transpose()?;
 
         let agent_binding: AgentBinding =
-            serde_json::from_str(&row.agent_binding).unwrap_or_default();
+            parse_json_column(&row.agent_binding, "tasks.agent_binding")?;
 
-        let artifacts: Vec<Artifact> = serde_json::from_str(&row.artifacts).unwrap_or_default();
+        let artifacts: Vec<Artifact> = parse_json_column(&row.artifacts, "tasks.artifacts")?;
 
         Ok(Task {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
@@ -437,56 +458,76 @@ impl TryFrom<TaskRow> for Task {
             workspace_id,
             title: row.title,
             description: row.description,
-            status: match row.status.as_str() {
-                "pending" => TaskStatus::Pending,
-                "assigned" => TaskStatus::Assigned,
-                "running" => TaskStatus::Running,
-                "awaiting_verification" => TaskStatus::AwaitingVerification,
-                "completed" => TaskStatus::Completed,
-                "failed" => TaskStatus::Failed,
-                _ => TaskStatus::Pending,
-            },
+            status: parse_task_status(&row.status)?,
             session_id: row.session_id,
             executor_session_id: row.executor_session_id,
-            execution_mode: match row.execution_mode.as_str() {
-                "auto_retry" => TaskExecutionMode::AutoRetry,
-                "one_shot" => TaskExecutionMode::OneShot,
-                _ => TaskExecutionMode::Standard,
-            },
+            execution_mode: parse_task_execution_mode(&row.execution_mode)?,
             agent_binding,
             artifacts,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(&row.created_at, "tasks.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "tasks.updated_at")?,
         })
     }
 }
 
-fn build_task_created_payload(task: &Task) -> serde_json::Value {
-    let mut payload = serde_json::to_value(task).unwrap_or_default();
+fn build_task_created_payload(task: &Task) -> Result<serde_json::Value, DomainError> {
+    let mut payload = serde_json::to_value(task)
+        .map_err(|error| DomainError::InvalidConfig(format!("tasks.state_payload: {error}")))?;
     if let Some(obj) = payload.as_object_mut() {
         obj.insert(
             "reason".to_string(),
             serde_json::Value::String("task_created_by_user".to_string()),
         );
-        return payload;
+        return Ok(payload);
     }
 
-    serde_json::json!({
+    Ok(serde_json::json!({
         "task_id": task.id,
         "project_id": task.project_id,
         "story_id": task.story_id,
         "reason": "task_created_by_user"
-    })
+    }))
+}
+
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn parse_task_status(raw: &str) -> Result<TaskStatus, DomainError> {
+    match raw {
+        "pending" => Ok(TaskStatus::Pending),
+        "assigned" => Ok(TaskStatus::Assigned),
+        "running" => Ok(TaskStatus::Running),
+        "awaiting_verification" => Ok(TaskStatus::AwaitingVerification),
+        "completed" => Ok(TaskStatus::Completed),
+        "failed" => Ok(TaskStatus::Failed),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "tasks.status: 未知状态 `{raw}`"
+        ))),
+    }
+}
+
+fn parse_task_execution_mode(raw: &str) -> Result<TaskExecutionMode, DomainError> {
+    match raw {
+        "standard" => Ok(TaskExecutionMode::Standard),
+        "auto_retry" => Ok(TaskExecutionMode::AutoRetry),
+        "one_shot" => Ok(TaskExecutionMode::OneShot),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "tasks.execution_mode: 未知模式 `{raw}`"
+        ))),
+    }
 }
 
 impl StorySnapshotRow {
-    fn to_payload(&self, reason: &str) -> serde_json::Value {
-        let tags: serde_json::Value =
-            serde_json::from_str(&self.tags).unwrap_or_else(|_| serde_json::json!([]));
-        let context: serde_json::Value =
-            serde_json::from_str(&self.context).unwrap_or_else(|_| serde_json::json!({}));
+    fn to_payload(&self, reason: &str) -> Result<serde_json::Value, DomainError> {
+        let tags: serde_json::Value = parse_json_column(&self.tags, "stories.tags")?;
+        let context: serde_json::Value = parse_json_column(&self.context, "stories.context")?;
 
-        serde_json::json!({
+        Ok(serde_json::json!({
             "id": self.id.clone(),
             "project_id": self.project_id.clone(),
             "title": self.title.clone(),
@@ -500,6 +541,6 @@ impl StorySnapshotRow {
             "created_at": self.created_at.clone(),
             "updated_at": self.updated_at.clone(),
             "reason": reason
-        })
+        }))
     }
 }

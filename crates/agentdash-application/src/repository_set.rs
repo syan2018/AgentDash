@@ -8,8 +8,8 @@ use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
-use agentdash_domain::story::StoryRepository;
-use agentdash_domain::task::TaskRepository;
+use agentdash_domain::story::{StateChangeRepository, StoryRepository};
+use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowAssignmentRepository,
     WorkflowDefinitionRepository,
@@ -26,7 +26,9 @@ pub struct RepositorySet {
     pub canvas_repo: Arc<dyn CanvasRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
+    pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
+    pub task_command_repo: Arc<dyn TaskAggregateCommandRepository>,
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,

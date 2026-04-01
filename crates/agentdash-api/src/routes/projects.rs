@@ -206,6 +206,7 @@ pub async fn delete_project(
         state.repos.project_repo.as_ref(),
         state.repos.story_repo.as_ref(),
         state.repos.task_repo.as_ref(),
+        state.repos.task_command_repo.as_ref(),
         state.repos.workspace_repo.as_ref(),
         project_id,
     )

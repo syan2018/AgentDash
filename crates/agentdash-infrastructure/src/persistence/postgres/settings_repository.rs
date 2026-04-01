@@ -3,11 +3,11 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingScopeKind, SettingsRepository};
 
-pub struct SqliteSettingsRepository {
+pub struct PostgresSettingsRepository {
     pool: PgPool,
 }
 
-impl SqliteSettingsRepository {
+impl PostgresSettingsRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -19,7 +19,7 @@ impl SqliteSettingsRepository {
 }
 
 #[async_trait::async_trait]
-impl SettingsRepository for SqliteSettingsRepository {
+impl SettingsRepository for PostgresSettingsRepository {
     async fn list(
         &self,
         scope: &SettingScope,
@@ -138,13 +138,12 @@ impl TryFrom<SettingRow> for Setting {
 
     fn try_from(row: SettingRow) -> Result<Self, Self::Error> {
         let value: serde_json::Value = serde_json::from_str(&row.value)?;
-
-        let updated_at = super::parse_pg_timestamp(&row.updated_at);
-        let scope_kind = parse_scope_kind(&row.scope_kind);
+        let updated_at = super::parse_pg_timestamp_checked(&row.updated_at, "settings.updated_at")?;
+        let scope_kind = parse_scope_kind(&row.scope_kind)?;
 
         Ok(Setting {
             scope_kind,
-            scope_id: normalize_scope_id(scope_kind, row.scope_id),
+            scope_id: normalize_scope_id(scope_kind, row.scope_id)?,
             key: row.key,
             value,
             updated_at,
@@ -152,23 +151,31 @@ impl TryFrom<SettingRow> for Setting {
     }
 }
 
-fn parse_scope_kind(value: &str) -> SettingScopeKind {
+fn parse_scope_kind(value: &str) -> Result<SettingScopeKind, DomainError> {
     match value {
-        "user" => SettingScopeKind::User,
-        "project" => SettingScopeKind::Project,
-        _ => SettingScopeKind::System,
+        "system" => Ok(SettingScopeKind::System),
+        "user" => Ok(SettingScopeKind::User),
+        "project" => Ok(SettingScopeKind::Project),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "settings.scope_kind: 未知值 `{value}`"
+        ))),
     }
 }
 
-fn normalize_scope_id(kind: SettingScopeKind, scope_id: String) -> Option<String> {
+fn normalize_scope_id(
+    kind: SettingScopeKind,
+    scope_id: String,
+) -> Result<Option<String>, DomainError> {
     match kind {
-        SettingScopeKind::System => None,
+        SettingScopeKind::System => Ok(None),
         SettingScopeKind::User | SettingScopeKind::Project => {
             let trimmed = scope_id.trim();
             if trimmed.is_empty() {
-                None
+                Err(DomainError::InvalidConfig(
+                    "settings.scope_id: user/project scope 不允许空值".to_string(),
+                ))
             } else {
-                Some(trimmed.to_string())
+                Ok(Some(trimmed.to_string()))
             }
         }
     }
@@ -201,25 +208,25 @@ async fn create_scoped_settings_table(pool: &PgPool, table: &str) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
-
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::settings::SettingScope;
 
-    async fn new_repo() -> SqliteSettingsRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteSettingsRepository::new(pool);
+    async fn new_repo() -> Option<PostgresSettingsRepository> {
+        let pool = match test_pg_pool("settings_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
+        let repo = PostgresSettingsRepository::new(pool);
         repo.initialize().await.expect("应能初始化 settings schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn persists_settings_by_scope() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         repo.set(
             &SettingScope::system(),
             "llm.openai.api_key",

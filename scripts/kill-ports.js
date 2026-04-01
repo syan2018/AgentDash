@@ -191,4 +191,4 @@ log(`清理完成: ${killedCount} 个已终止, ${notFoundCount} 个未占用, $
   failedCount > 0 ? 'warning' : 'success'
 );
 
-process.exit(0);
+process.exit(failedCount > 0 ? 1 : 0);

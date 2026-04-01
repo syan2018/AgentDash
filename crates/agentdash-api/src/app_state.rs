@@ -27,8 +27,8 @@ use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
-use agentdash_domain::story::StoryRepository;
-use agentdash_domain::task::TaskRepository;
+use agentdash_domain::story::StateChangeRepository;
+use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
@@ -37,9 +37,9 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
     PostgresCanvasRepository, PostgresProjectRepository, PostgresSessionBindingRepository,
-    PostgresSessionRepository, PostgresSettingsRepository, PostgresStoryRepository,
-    PostgresTaskRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
-    PostgresWorkspaceRepository,
+    PostgresSessionRepository, PostgresSettingsRepository, PostgresStateChangeRepository,
+    PostgresStoryRepository, PostgresTaskRepository, PostgresUserDirectoryRepository,
+    PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceDiscoveryRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
@@ -124,6 +124,7 @@ impl AppState {
         let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
 
         let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
+        let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
 
         let task_repo = Arc::new(PostgresTaskRepository::new(pool.clone()));
         let session_binding_repo = Arc::new(PostgresSessionBindingRepository::new(pool.clone()));
@@ -223,11 +224,12 @@ impl AppState {
         let lock_map = Arc::new(TaskLockMap::new());
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
-        let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
+        let state_change_repo_port: Arc<dyn StateChangeRepository> = state_change_repo.clone();
         let task_repo_port: Arc<dyn TaskRepository> = task_repo.clone();
+        let task_command_repo_port: Arc<dyn TaskAggregateCommandRepository> = task_repo.clone();
         reconcile_task_states_on_boot(
             &project_repo_port,
-            &story_repo_port,
+            &state_change_repo_port,
             &task_repo_port,
             &session_hub,
             &restart_tracker,
@@ -259,7 +261,9 @@ impl AppState {
             canvas_repo,
             workspace_repo,
             story_repo,
+            state_change_repo,
             task_repo,
+            task_command_repo: task_command_repo_port,
             session_binding_repo,
             backend_repo,
             auth_session_repo,

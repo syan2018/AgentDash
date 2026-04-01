@@ -24,6 +24,10 @@ if (config.help) {
   process.exit(0);
 }
 
+if (config.databaseUrl && !isPostgresUrl(config.databaseUrl)) {
+  throw new Error(`--database-url / DATABASE_URL 必须是 PostgreSQL URL，收到: ${config.databaseUrl}`);
+}
+
 const managedChildren = [];
 let shuttingDown = false;
 
@@ -75,7 +79,8 @@ async function main() {
     const serverEnv = {
       ...process.env,
       HOST: config.serverHost,
-      PORT: String(config.serverPort)
+      PORT: String(config.serverPort),
+      DATABASE_URL: undefined,
     };
     // 仅当明确提供 PostgreSQL URL 时透传，避免 sqlite 默认值误导运行时判断。
     if (isPostgresUrl(config.databaseUrl)) {
@@ -141,7 +146,7 @@ function parseArgs(args) {
     accessibleRoots: root,
     backendId: 'local-dev-1',
     backendName: 'dev-local',
-    databaseUrl: process.env.DATABASE_URL || 'embedded-postgresql(auto)',
+    databaseUrl: process.env.DATABASE_URL || null,
     frontendMode: 'dev',
     frontendHost: '127.0.0.1',
     frontendPort: 5380,
@@ -314,7 +319,7 @@ function printBanner() {
   console.log(`  roots:      ${config.accessibleRoots}`);
   console.log(`  backend_id: ${config.backendId}`);
   console.log(`  frontend:   ${config.frontendMode}`);
-  console.log(`  db:         ${isPostgresUrl(config.databaseUrl) ? config.databaseUrl : 'embedded-postgresql(auto)'}`);
+  console.log(`  db:         ${formatDatabaseMode(config.databaseUrl)}`);
   console.log('');
 }
 
@@ -324,6 +329,10 @@ function isPostgresUrl(value) {
   }
   const lower = value.toLowerCase();
   return lower.startsWith('postgres://') || lower.startsWith('postgresql://');
+}
+
+function formatDatabaseMode(value) {
+  return isPostgresUrl(value) ? value : 'embedded-postgresql';
 }
 
 async function runStep0Cleanup() {
@@ -497,7 +506,7 @@ async function waitForHttpReady(port, requestPath, timeoutSec) {
   while (Date.now() < deadline) {
     attempt += 1;
     const statusCode = await probeHttp(port, requestPath);
-    if (statusCode >= 200 && statusCode < 400) {
+    if (statusCode === 200) {
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.log(`  [ready] :${port}${requestPath} → ${statusCode} (${elapsed}s)`);
       return;

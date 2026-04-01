@@ -193,6 +193,9 @@ impl AgentTool for CreateCanvasTool {
             mount_id: build_canvas_mount_id(&canvas),
             entry_file: canvas.entry_file.clone(),
         };
+        let details = serde_json::to_value(&result).map_err(|error| {
+            AgentToolError::ExecutionFailed(format!("序列化 Canvas 结果失败: {error}"))
+        })?;
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
@@ -200,7 +203,7 @@ impl AgentTool for CreateCanvasTool {
                 result.canvas_id, result.mount_id, result.entry_file
             ))],
             is_error: false,
-            details: Some(serde_json::to_value(result).unwrap_or_default()),
+            details: Some(details),
         })
     }
 }
@@ -235,12 +238,13 @@ impl AgentTool for InjectCanvasDataTool {
         )
         .await?;
 
+        let content_type = params
+            .content_type
+            .ok_or_else(|| AgentToolError::InvalidArguments("content_type 不能为空".to_string()))?;
         let binding = CanvasDataBinding {
             alias: params.alias,
             source_uri: params.source_uri,
-            content_type: params
-                .content_type
-                .unwrap_or_else(|| "application/json".to_string()),
+            content_type,
         };
         let alias = binding.alias.clone();
         let source_uri = binding.source_uri.clone();
@@ -251,17 +255,18 @@ impl AgentTool for InjectCanvasDataTool {
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
+        let details_value = serde_json::json!({
+            "canvas_id": canvas.mount_id,
+            "mount_id": canvas.mount_id,
+            "bindings": canvas.bindings,
+        });
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "已更新 Canvas 数据绑定。\n- canvas_id: {}\n- alias: {}\n- source_uri: {}",
                 canvas.mount_id, alias, source_uri
             ))],
             is_error: false,
-            details: Some(serde_json::json!({
-                "canvas_id": canvas.mount_id,
-                "mount_id": canvas.mount_id,
-                "bindings": canvas.bindings,
-            })),
+            details: Some(details_value),
         })
     }
 }
@@ -300,7 +305,7 @@ impl AgentTool for PresentCanvasTool {
             &self.current_session_id,
             &self.current_turn_id,
             &canvas,
-        );
+        )?;
         let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed("SessionHub 尚未完成初始化".to_string())
         })?;
@@ -371,7 +376,7 @@ fn build_canvas_presented_notification(
     session_id: &str,
     turn_id: &str,
     canvas: &agentdash_domain::canvas::Canvas,
-) -> SessionNotification {
+) -> Result<SessionNotification, AgentToolError> {
     let mut trace = AgentDashTraceV1::new();
     trace.turn_id = Some(turn_id.to_string());
 
@@ -391,13 +396,12 @@ fn build_canvas_presented_notification(
         .trace(Some(trace))
         .event(Some(event));
 
-    SessionNotification::new(
+    let meta = merge_agentdash_meta(None, &agentdash)
+        .ok_or_else(|| AgentToolError::ExecutionFailed("无法构造 AgentDash meta".to_string()))?;
+    Ok(SessionNotification::new(
         SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(
-            SessionInfoUpdate::new()
-                .meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
-        ),
-    )
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
+    ))
 }
 
 #[cfg(test)]

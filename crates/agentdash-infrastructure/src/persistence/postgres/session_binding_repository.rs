@@ -6,11 +6,11 @@ use agentdash_domain::session_binding::{
     ProjectSessionBinding, SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 
-pub struct SqliteSessionBindingRepository {
+pub struct PostgresSessionBindingRepository {
     pool: PgPool,
 }
 
-impl SqliteSessionBindingRepository {
+impl PostgresSessionBindingRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -47,7 +47,7 @@ impl SqliteSessionBindingRepository {
 }
 
 #[async_trait::async_trait]
-impl SessionBindingRepository for SqliteSessionBindingRepository {
+impl SessionBindingRepository for PostgresSessionBindingRepository {
     async fn create(&self, binding: &SessionBinding) -> Result<(), DomainError> {
         let existing_project_ids: Vec<(String,)> = sqlx::query_as(
             "SELECT DISTINCT project_id FROM session_bindings WHERE session_id = $1",
@@ -256,10 +256,9 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
 
         rows.into_iter()
             .map(|row| {
-                let owner_type =
-                    SessionOwnerType::from_str_loose(&row.owner_type).ok_or_else(|| {
-                        DomainError::InvalidConfig(format!("无效的 owner_type: {}", row.owner_type))
-                    })?;
+                let owner_type = row.owner_type.parse::<SessionOwnerType>().map_err(|_| {
+                    DomainError::InvalidConfig(format!("无效的 owner_type: {}", row.owner_type))
+                })?;
                 let binding = SessionBinding {
                     id: row.id.parse().map_err(|_| DomainError::NotFound {
                         entity: "session_binding",
@@ -276,9 +275,22 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
                         id: row.owner_id.clone(),
                     })?,
                     label: row.label,
-                    created_at: super::parse_pg_timestamp(&row.created_at),
+                    created_at: super::parse_pg_timestamp_checked(
+                        &row.created_at,
+                        "session_bindings.created_at",
+                    )?,
                 };
-                let story_id = row.story_id.as_deref().and_then(|s| s.parse::<Uuid>().ok());
+                let story_id = row
+                    .story_id
+                    .as_deref()
+                    .map(|value| {
+                        value.parse::<Uuid>().map_err(|error| {
+                            DomainError::InvalidConfig(format!(
+                                "session_bindings.story_id: {error}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
                 Ok(ProjectSessionBinding {
                     binding,
                     story_title: row.story_title,
@@ -305,7 +317,7 @@ impl TryFrom<BindingRow> for SessionBinding {
     type Error = DomainError;
 
     fn try_from(row: BindingRow) -> Result<Self, Self::Error> {
-        let owner_type = SessionOwnerType::from_str_loose(&row.owner_type).ok_or_else(|| {
+        let owner_type = row.owner_type.parse::<SessionOwnerType>().map_err(|_| {
             DomainError::InvalidConfig(format!(
                 "无效的 session_binding owner_type: {}",
                 row.owner_type
@@ -328,23 +340,24 @@ impl TryFrom<BindingRow> for SessionBinding {
                 id: row.owner_id.clone(),
             })?,
             label: row.label,
-            created_at: super::parse_pg_timestamp(&row.created_at),
+            created_at: super::parse_pg_timestamp_checked(
+                &row.created_at,
+                "session_bindings.created_at",
+            )?,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
-
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo() -> SqliteSessionBindingRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo() -> Option<PostgresSessionBindingRepository> {
+        let pool = match test_pg_pool("session_binding_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
         sqlx::query(
             r#"
             CREATE TABLE tasks (
@@ -364,16 +377,18 @@ mod tests {
         .await
         .expect("应能创建 session_binding 初始化依赖表");
 
-        let repo = SqliteSessionBindingRepository::new(pool);
+        let repo = PostgresSessionBindingRepository::new(pool);
         repo.initialize()
             .await
             .expect("应能初始化 session_binding schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn allows_reusing_session_within_same_project() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
@@ -403,7 +418,9 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_cross_project_session_reuse() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let first_binding = SessionBinding::new(
             Uuid::new_v4(),
             "sess-cross-project".to_string(),

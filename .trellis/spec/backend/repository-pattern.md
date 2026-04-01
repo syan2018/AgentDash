@@ -1,62 +1,47 @@
 # Repository Pattern
 
-> 本项目使用 Repository 模式实现数据访问的抽象，遵循整洁架构的依赖倒置原则。
+> 本项目使用 Repository / Command Port 模式实现领域持久化与显式事务边界。
 
 ---
 
 ## Overview
 
-Repository 模式将数据访问逻辑从领域逻辑中分离：
-- **领域层**定义 Repository 接口（Port）
-- **基础设施层**提供具体实现（Adapter）
-- **应用层**通过 trait 对象使用，不依赖具体实现
+Repository 模式的目标不是“把所有数据库操作都塞进 trait”，而是让接口语义直接对应聚合边界：
+
+- **领域层**定义单一聚合 Repository Port
+- **领域层**对跨聚合一致性定义显式 Command Port / 事务边界 Port
+- **基础设施层**实现 PostgreSQL 持久化与事务
+- **应用层**编排多个 Port，避免在 API 层直接组织复杂持久化流程
+
+当前主链路规则：
+
+- `StoryRepository` 只负责 `Story` 聚合 CRUD / 查询
+- `StateChangeRepository` 独立承载 `state_changes` 事件日志
+- `TaskRepository` 只负责 `Task` 聚合 CRUD / 查询
+- `TaskAggregateCommandRepository` 显式承载 “Task + Story.task_count + StateChange” 的事务边界
+- `WorkspaceRepository` 负责 `Workspace` root + `bindings` 的原子提交
 
 ---
 
 ## Signatures
 
-### Repository Trait 定义（Domain Layer）
+### 单一聚合 Repository
 
 ```rust
-// agentdash-domain/src/project/repository.rs
-#[async_trait]
-pub trait ProjectRepository: Send + Sync {
-    async fn create(&self, project: &Project) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<Project>, DomainError>;
-    async fn list_all(&self) -> Result<Vec<Project>, DomainError>;
-    async fn update(&self, project: &Project) -> Result<(), DomainError>;
-    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
-}
-
-// agentdash-domain/src/workspace/repository.rs
-#[async_trait]
-pub trait WorkspaceRepository: Send + Sync {
-    async fn create(&self, workspace: &Workspace) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<Workspace>, DomainError>;
-    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Workspace>, DomainError>;
-    async fn update(&self, workspace: &Workspace) -> Result<(), DomainError>;
-    async fn update_status(&self, id: Uuid, status: WorkspaceStatus) -> Result<(), DomainError>;
-    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
-}
-
-// agentdash-domain/src/story/repository.rs
 #[async_trait]
 pub trait StoryRepository: Send + Sync {
     async fn create(&self, story: &Story) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Story>, DomainError>;
-    async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Story>, DomainError>;
     async fn update(&self, story: &Story) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
-    async fn get_changes_since(&self, since_id: i64, limit: i64) -> Result<Vec<StateChange>, DomainError>;
-    async fn latest_event_id(&self) -> Result<i64, DomainError>;
 }
 
-// agentdash-domain/src/task/repository.rs
 #[async_trait]
 pub trait TaskRepository: Send + Sync {
     async fn create(&self, task: &Task) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Task>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Task>, DomainError>;
     async fn list_by_story(&self, story_id: Uuid) -> Result<Vec<Task>, DomainError>;
     async fn list_by_workspace(&self, workspace_id: Uuid) -> Result<Vec<Task>, DomainError>;
     async fn update(&self, task: &Task) -> Result<(), DomainError>;
@@ -65,327 +50,202 @@ pub trait TaskRepository: Send + Sync {
 }
 ```
 
-### Repository 实现（Infrastructure Layer）
+### 独立事件日志 Port
 
 ```rust
-// agentdash-infrastructure/src/persistence/sqlite/story_repository.rs
-use sqlx::SqlitePool;
-use agentdash_domain::story::{Story, StoryRepository};
-use agentdash_domain::common::error::DomainError;
-
-pub struct SqliteStoryRepository {
-    pool: SqlitePool,
-}
-
-impl SqliteStoryRepository {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
-    }
-
-    pub async fn initialize(&self) -> Result<(), DomainError> {
-        // 创建表...
-    }
-}
-
 #[async_trait]
-impl StoryRepository for SqliteStoryRepository {
-    async fn create(&self, story: &Story) -> Result<(), DomainError> {
-        // SQLx 实现...
-    }
-
-    async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError> {
-        // SQLx 实现...
-    }
-
-    // ...
+pub trait StateChangeRepository: Send + Sync {
+    async fn get_changes_since(&self, since_id: i64, limit: i64)
+        -> Result<Vec<StateChange>, DomainError>;
+    async fn get_changes_since_by_project(&self, project_id: Uuid, since_id: i64, limit: i64)
+        -> Result<Vec<StateChange>, DomainError>;
+    async fn latest_event_id(&self) -> Result<i64, DomainError>;
+    async fn latest_event_id_by_project(&self, project_id: Uuid) -> Result<i64, DomainError>;
+    async fn append_change(
+        &self,
+        project_id: Uuid,
+        entity_id: Uuid,
+        kind: ChangeKind,
+        payload: serde_json::Value,
+        backend_id: Option<&str>,
+    ) -> Result<(), DomainError>;
 }
 ```
 
-### 依赖注入配置
-
-Repository 的集合通过 `RepositorySet`（定义于 `agentdash-application::repository_set`）统一管理，
-`AppState` 持有 `RepositorySet` 而非散列的 `Arc<dyn XxxRepository>` 字段。
+### 显式事务边界 Port
 
 ```rust
-// agentdash-application/src/repository_set.rs
+#[async_trait]
+pub trait TaskAggregateCommandRepository: Send + Sync {
+    async fn create_for_story(&self, task: &Task) -> Result<(), DomainError>;
+    async fn delete_for_story(&self, task_id: Uuid) -> Result<Task, DomainError>;
+}
+```
+
+这个 port 不是“纯聚合仓储”，而是一个被明确命名出来的命令型事务边界：
+
+- 允许基础设施层在一个事务里同时写 `tasks` / `stories.task_count` / `state_changes`
+- 避免把跨聚合行为伪装成 `TaskRepository` 的自然职责
+
+---
+
+## Infrastructure
+
+当前业务持久化主实现统一收敛在 PostgreSQL：
+
+```rust
+// agentdash-infrastructure/src/persistence/postgres/
+PostgresProjectRepository
+PostgresWorkspaceRepository
+PostgresStoryRepository
+PostgresStateChangeRepository
+PostgresTaskRepository
+...
+```
+
+约定：
+
+- `<技术><实体>Repository` 结构体名必须反映真实后端
+- 不允许在 `postgres/` 目录继续保留 `Sqlite*Repository` 历史残名
+- 若多个 Repository / Command Port 由同一实现体承载，可以让一个 struct 同时实现多个 trait
+
+当前例子：
+
+```rust
+pub struct PostgresTaskRepository {
+    pool: PgPool,
+}
+
+#[async_trait]
+impl TaskRepository for PostgresTaskRepository {
+    // 纯 Task CRUD
+}
+
+#[async_trait]
+impl TaskAggregateCommandRepository for PostgresTaskRepository {
+    // create_for_story / delete_for_story
+}
+```
+
+---
+
+## RepositorySet
+
+`RepositorySet` 定义在 `agentdash-application`，用于在 application / gateway / service 之间传递 Port 集合：
+
+```rust
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
+    pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
-    pub backend_repo: Arc<dyn BackendRepository>,
-    // ... 其他 repo ...
-}
-
-// agentdash-api/src/app_state.rs
-pub struct AppState {
-    pub repos: RepositorySet,       // 所有 repo 的集合
-    pub executor_hub: ExecutorHub,
-    pub connector: Arc<dyn AgentConnector>,
+    pub task_command_repo: Arc<dyn TaskAggregateCommandRepository>,
     // ...
 }
 ```
 
-`RepositorySet` 定义在 application 层而非 api 层，使得 application 层的服务
-（hooks、gateway helpers、workspace resolution 等）可以直接接收 `&RepositorySet` 参数，
-而不需要依赖 api 层的 `AppState`。
+原则：
+
+- API 层持有 `AppState { repos, services, ... }`
+- 应用层优先接收 `&RepositorySet` 或具体 trait
+- MCP / Hook / Task 生命周期入口也只依赖 trait 对象
 
 ---
 
-## Contracts
+## Rules
 
-### Repository Trait 约定
+### 1. 单一聚合 Port 不混入事件日志职责
 
-| 元素 | 约定 | 说明 |
-|------|------|------|
-| Trait 名称 | `<Entity>Repository` | 如 `StoryRepository` |
-| 父 trait | `Send + Sync` | 允许跨线程共享 |
-| 属性宏 | `#[async_trait]` | 支持异步方法 |
-| 错误类型 | `DomainError` | 统一领域错误 |
-| 参数 | `&self` 或 `&mut self` | 不可变或可变借用 |
+错误：
 
-### 实现类约定
+- 在 `StoryRepository` 中追加 `append_change`
+- 在 `TaskRepository` 中追加 `latest_event_id`
 
-| 元素 | 约定 | 说明 |
-|------|------|------|
-| 结构体名称 | `<技术><Entity>Repository` | 如 `SqliteStoryRepository` |
-| 构造函数 | `new(pool: SqlitePool)` | 接收连接池 |
-| 初始化方法 | `initialize(&self)` | 创建表、索引等 |
-| 错误转换 | 基础设施错误 → DomainError | 统一错误类型 |
+正确：
 
----
+- 事件流统一放进 `StateChangeRepository`
 
-## Validation & Error Matrix
+### 2. 单一聚合 Port 不编码跨聚合更新
 
-| 条件 | 行为 | 错误 |
-|------|------|------|
-| 数据库连接失败 | 初始化失败 | `DomainError::InvalidConfig` |
-| 实体不存在 | 返回空集合或 Option | `DomainError::NotFound` (查询单个时) |
-| 违反唯一约束 | 创建失败 | `DomainError::AlreadyExists` |
-| 序列化失败 | 操作失败 | `DomainError::InvalidData` |
+错误：
 
----
+- `TaskRepository::create_task_with_story_update`
+- `TaskRepository::delete_task_with_story_update`
 
-## Good/Base/Bad Cases
+正确：
 
-### Good: 正确的分层使用
+- 单独引入 `TaskAggregateCommandRepository`
+- 或显式引入 Unit of Work / 事务边界 Port
 
-```rust
-// agentdash-api/src/routes/stories.rs
-pub async fn list_stories(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<ListStoriesQuery>,
-) -> Result<Json<Vec<Story>>, ApiError> {
-    // 通过 trait 对象调用，不依赖具体实现
-    let stories = state.story_repo.list_by_backend(&query.backend_id).await?;
-    Ok(Json(stories))
-}
-```
+### 3. 聚合整体持久化必须原子
 
-### Base: 依赖注入配置
+错误：
 
-```rust
-// agentdash-application/src/repository_set.rs
-pub struct RepositorySet {
-    pub project_repo: Arc<dyn ProjectRepository>,
-    pub workspace_repo: Arc<dyn WorkspaceRepository>,
-    pub story_repo: Arc<dyn StoryRepository>,
-    pub task_repo: Arc<dyn TaskRepository>,
-    pub backend_repo: Arc<dyn BackendRepository>,
-    // ... 其他 repo
-}
+- `Workspace` root 先提交，再单独删除/重建 `bindings`
 
-// agentdash-api/src/app_state.rs
-pub struct AppState {
-    pub repos: RepositorySet,         // 所有 Repository 的集合
-    pub services: ServiceSet,         // executor_hub, connector 等
-    pub task_runtime: TaskRuntime,    // lock_map, restart_tracker
-    pub config: AppConfig,            // mcp_base_url 等
-}
-```
+正确：
 
-### Bad: 错误的使用方式
+- `WorkspaceRepository` 在同一事务里写 `workspaces` 与 `workspace_bindings`
 
-```rust
-// ❌ 不要这样做：路由直接依赖具体实现
-use agentdash_infrastructure::SqliteStoryRepository;
+### 4. 预研阶段优先“正确状态”，不保留虚假的双实现对等关系
 
-pub async fn list_stories(
-    State(state): State<Arc<SqliteStoryRepository>>,  // 错误：直接依赖实现
-) -> Result<Json<Vec<Story>>, ApiError> {
-    // ...
-}
+当前策略：
 
-// ❌ 不要这样做：在领域层引入基础设施依赖
-// agentdash-domain/src/story/entity.rs
-use sqlx::SqlitePool;  // 错误：领域层不应依赖 SQLx
-
-pub struct Story {
-    // ...
-}
-```
+- 云端业务仓储统一以 PostgreSQL 为主
+- sqlite 只保留本机端 `SqliteSessionRepository`
 
 ---
 
-## Tests Required
+## Good / Bad
 
-### 单元测试（领域层）
+### Good
 
 ```rust
-// agentdash-domain/src/story/entity.rs
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_story_creation() {
-        let story = Story::new(
-            "backend-1".to_string(),
-            "Test Title".to_string(),
-            "Description".to_string(),
-        );
-        assert_eq!(story.status, StoryStatus::Created);
-        assert_eq!(story.title, "Test Title");
-    }
+pub async fn create_task_aggregate(
+    task_command_repo: &dyn TaskAggregateCommandRepository,
+    task: &Task,
+) -> Result<(), DomainError> {
+    task_command_repo.create_for_story(task).await
 }
 ```
 
-### 集成测试（基础设施层）
+### Bad
 
 ```rust
-// agentdash-infrastructure/tests/story_repository_test.rs
-#[tokio::test]
-async fn test_story_repository() {
-    let pool = setup_test_db().await;
-    let repo = SqliteStoryRepository::new(pool);
-    repo.initialize().await.unwrap();
-
-    let story = Story::new("backend-1".to_string(), "Test".to_string(), "".to_string());
-    repo.create(&story).await.unwrap();
-
-    let stories = repo.list_by_backend("backend-1").await.unwrap();
-    assert_eq!(stories.len(), 1);
-}
-```
-
-### Mock 测试（应用层）
-
-```rust
-// 使用 mockall 生成 Mock
-#[mockall::automock]
 #[async_trait]
-trait StoryRepository {
-    async fn create(&self, story: &Story) -> Result<(), DomainError>;
-    async fn list_by_backend(&self, backend_id: &str) -> Result<Vec<Story>, DomainError>;
-}
-
-#[tokio::test]
-async fn test_use_case_with_mock() {
-    let mut mock = MockStoryRepository::new();
-    mock.expect_list_by_backend()
-        .returning(|_| Ok(vec![]));
-
-    // 使用 mock 测试业务逻辑...
+pub trait TaskRepository: Send + Sync {
+    async fn create(&self, task: &Task) -> Result<(), DomainError>;
+    async fn create_task_with_story_update(&self, task: &Task) -> Result<(), DomainError>;
 }
 ```
+
+问题：
+
+- 一个 Port 同时表达纯聚合持久化和跨聚合事务
+- 调用方看名字无法分辨边界
+- 后续容易继续往里塞更多 workflow 逻辑
 
 ---
 
-## Wrong vs Correct
+## Tests
 
-### Wrong: 混合分层
+至少覆盖以下层次：
 
-```rust
-// ❌ 领域层混入基础设施代码
-// agentdash-domain/src/story/entity.rs
-use sqlx::SqlitePool;
+- 领域层：实体和值对象规则
+- 基础设施层：Repository / Command Port 的 SQL 映射与事务行为
+- 应用层：调用正确 Port，错误被正确映射
 
-pub struct Story {
-    // ...
-}
+对事务型 port，重点测试：
 
-impl Story {
-    pub async fn save(&self, pool: &SqlitePool) -> Result<(), sqlx::Error> {
-        // 直接在实体中执行 SQL
-        sqlx::query("INSERT ...")
-            .execute(pool)
-            .await
-    }
-}
-```
-
-**问题**：
-- 领域层依赖 SQLx
-- 无法单元测试
-- 违反单一职责
-
-### Correct: 清晰分层
-
-```rust
-// ✅ 领域层只定义接口
-// agentdash-domain/src/story/repository.rs
-#[async_trait]
-pub trait StoryRepository: Send + Sync {
-    async fn create(&self, story: &Story) -> Result<(), DomainError>;
-}
-
-// ✅ 实体只包含业务逻辑
-// agentdash-domain/src/story/entity.rs
-pub struct Story {
-    pub id: Uuid,
-    pub title: String,
-    pub status: StoryStatus,
-}
-
-impl Story {
-    pub fn new(backend_id: String, title: String, description: String) -> Self {
-        // 业务逻辑...
-    }
-}
-
-// ✅ 基础设施层实现接口
-// agentdash-infrastructure/src/persistence/sqlite/story_repository.rs
-pub struct SqliteStoryRepository { pool: SqlitePool }
-
-#[async_trait]
-impl StoryRepository for SqliteStoryRepository {
-    async fn create(&self, story: &Story) -> Result<(), DomainError> {
-        // SQLx 实现...
-    }
-}
-```
-
-**优势**：
-- 领域层不依赖外部库
-- 可替换存储实现（SQLite ↔ PostgreSQL）
-- 易于单元测试
-
----
-
-## Design Decisions
-
-### 决策：使用 trait 对象而非泛型
-
-**背景**：Repository 依赖注入的选择
-
-**选项**：
-1. 泛型：`AppState<R: StoryRepository>`
-2. Trait 对象：`Arc<dyn StoryRepository>`
-
-**决策**：使用 trait 对象 `Arc<dyn Repository>`
-
-**原因**：
-- 简化 AppState 类型签名
-- 允许运行时切换实现（如测试 vs 生产）
-- 与 Axum 的 State extractor 配合更好
-
-**权衡**：
-- 微小的运行时开销（虚表调用）
-- 无法在编译时检查所有 Repository 实现
+- `create_for_story()` 成功时 `task_count` 与 `state_changes` 一致更新
+- 中途失败时事务整体回滚
+- `delete_for_story()` 不会留下孤儿状态
 
 ---
 
 ## Related
 
-- [Directory Structure](./directory-structure.md) - 项目目录组织
-- [Error Handling](./error-handling.md) - 错误处理约定
+- [Directory Structure](./directory-structure.md)
+- [Database Guidelines](./database-guidelines.md)
+- [Error Handling](./error-handling.md)

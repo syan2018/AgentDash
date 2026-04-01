@@ -119,7 +119,7 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
     })),
     session: rawSession
       ? {
-          binding_id: String(rawSession.binding_id ?? ''),
+          binding_id: requireStringField(rawSession, 'binding_id'),
           session_id: String(rawSession.session_id ?? ''),
           session_title: rawSession.session_title != null
             ? String(rawSession.session_title)
@@ -140,18 +140,26 @@ function mapOpenProjectAgentSessionResult(raw: Record<string, unknown>): OpenPro
   return {
     created: Boolean(raw.created),
     session_id: String(raw.session_id ?? ''),
-    binding_id: String(raw.binding_id ?? ''),
+    binding_id: requireStringField(raw, 'binding_id'),
     agent: mapProjectAgentSummary(rawAgent),
   };
 }
 
-function mapProjectSessionInfo(raw: Record<string, unknown>, fallbackBindingId: string): ProjectSessionInfo {
+function requireStringField(raw: Record<string, unknown>, field: string): string {
+  const value = raw[field];
+  if (typeof value === 'string' && value.length > 0) {
+    return value;
+  }
+  throw new Error(`ProjectSessionInfo 缺少必填字段: ${field}`);
+}
+
+function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo {
   const contextSnapshot = raw.context_snapshot && typeof raw.context_snapshot === 'object'
     ? (raw.context_snapshot as SessionContextSnapshot)
     : null;
 
   return {
-    binding_id: String(raw.binding_id ?? fallbackBindingId),
+    binding_id: requireStringField(raw, 'binding_id'),
     session_id: String(raw.session_id ?? ''),
     session_title: raw.session_title != null ? String(raw.session_title) : null,
     last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
@@ -474,7 +482,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjectAgents: async (projectId) => {
     try {
-      const response = await api.get<Record<string, unknown>[]>(`/projects/${projectId}/agents`);
+      const response = await api.get<Record<string, unknown>[]>(
+        `/projects/${projectId}/agent-links/summary`,
+      );
       const agents = response.map(mapProjectAgentSummary);
       set((state) => ({
         agentsByProjectId: {
@@ -493,7 +503,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   openProjectAgentSession: async (projectId, agentKey) => {
     try {
       const response = await api.post<Record<string, unknown>>(
-        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session`,
+        `/projects/${projectId}/agent-links/${encodeURIComponent(agentKey)}/session`,
         {},
       );
       const result = mapOpenProjectAgentSessionResult(response);
@@ -521,7 +531,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   forceNewProjectAgentSession: async (projectId, agentKey) => {
     try {
       const response = await api.post<Record<string, unknown>>(
-        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session?force_new=true`,
+        `/projects/${projectId}/agent-links/${encodeURIComponent(agentKey)}/session?force_new=true`,
         {},
       );
       const result = mapOpenProjectAgentSessionResult(response);
@@ -549,10 +559,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchProjectAgentSessions: async (projectId, agentKey) => {
     try {
       const response = await api.get<Record<string, unknown>[]>(
-        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
+        `/projects/${projectId}/agent-links/${encodeURIComponent(agentKey)}/sessions`,
       );
       return response.map((raw) => ({
-        binding_id: String(raw.binding_id ?? ''),
+        binding_id: requireStringField(raw, 'binding_id'),
         session_id: String(raw.session_id ?? ''),
         session_title: raw.session_title != null ? String(raw.session_title) : null,
         last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
@@ -566,7 +576,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchProjectSessionInfo: async (projectId, bindingId) => {
     try {
       const raw = await api.get<Record<string, unknown>>(`/projects/${projectId}/sessions/${bindingId}`);
-      return mapProjectSessionInfo(raw, bindingId);
+      return mapProjectSessionInfo(raw);
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

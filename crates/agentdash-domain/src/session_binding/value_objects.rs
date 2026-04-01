@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Session 归属实体类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,13 +21,15 @@ impl fmt::Display for SessionOwnerType {
     }
 }
 
-impl SessionOwnerType {
-    pub fn from_str_loose(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "project" => Some(Self::Project),
-            "story" => Some(Self::Story),
-            "task" => Some(Self::Task),
-            _ => None,
+impl FromStr for SessionOwnerType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "project" => Ok(Self::Project),
+            "story" => Ok(Self::Story),
+            "task" => Ok(Self::Task),
+            _ => Err(format!("无效的 SessionOwnerType: {s}")),
         }
     }
 }

@@ -23,7 +23,7 @@ const startTime = Date.now();
 function probe() {
   attempt++;
   const req = http.get({ hostname: '127.0.0.1', port, path, timeout: 2000 }, (res) => {
-    if (res.statusCode >= 200 && res.statusCode < 400) {
+    if (res.statusCode === 200) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[ready] :${port}${path} → ${res.statusCode} (${elapsed}s)`);
       process.exit(0);

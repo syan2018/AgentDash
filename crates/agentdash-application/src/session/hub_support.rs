@@ -1,3 +1,5 @@
+use std::io;
+
 use agent_client_protocol::{
     ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
     SessionUpdate,
@@ -30,7 +32,8 @@ pub(super) fn build_user_message_notifications(
             let agentdash = AgentDashMetaV1::new()
                 .source(Some(source.clone()))
                 .trace(Some(trace));
-            let meta = merge_agentdash_meta(None, &agentdash);
+            let meta =
+                merge_agentdash_meta(None, &agentdash).expect("构造用户消息 ACP Meta 不应失败");
 
             let chunk = ContentChunk::new(block.clone()).meta(meta);
             SessionNotification::new(
@@ -60,7 +63,8 @@ pub(super) fn build_turn_lifecycle_notification(
         .source(Some(source.clone()))
         .trace(Some(trace))
         .event(Some(event));
-    let meta = merge_agentdash_meta(None, &agentdash);
+    let meta =
+        merge_agentdash_meta(None, &agentdash).expect("构造 turn 生命周期 ACP Meta 不应失败");
 
     let info = SessionInfoUpdate::new().meta(meta);
     SessionNotification::new(
@@ -209,33 +213,44 @@ impl TurnTerminalKind {
 pub(super) fn meta_to_execution_state(
     meta: &SessionMeta,
     session_id: &str,
-) -> SessionExecutionState {
+) -> io::Result<SessionExecutionState> {
     match meta.last_execution_status.as_str() {
-        "idle" => SessionExecutionState::Idle,
-        "completed" => SessionExecutionState::Completed {
-            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
-        },
-        "failed" => SessionExecutionState::Failed {
-            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
+        "idle" => Ok(SessionExecutionState::Idle),
+        "completed" => Ok(SessionExecutionState::Completed {
+            turn_id: meta.last_turn_id.clone().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("session {session_id} 的 completed 状态缺少 last_turn_id"),
+                )
+            })?,
+        }),
+        "failed" => Ok(SessionExecutionState::Failed {
+            turn_id: meta.last_turn_id.clone().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("session {session_id} 的 failed 状态缺少 last_turn_id"),
+                )
+            })?,
             message: meta.last_terminal_message.clone(),
-        },
-        "interrupted" => SessionExecutionState::Interrupted {
+        }),
+        "interrupted" => Ok(SessionExecutionState::Interrupted {
             turn_id: meta.last_turn_id.clone(),
             message: meta.last_terminal_message.clone(),
-        },
+        }),
         "running" => {
             tracing::warn!(
                 session_id,
                 "meta 显示 running 但内存 map 无记录，视为 interrupted"
             );
-            SessionExecutionState::Interrupted {
+            Ok(SessionExecutionState::Interrupted {
                 turn_id: meta.last_turn_id.clone(),
                 message: None,
-            }
+            })
         }
-        other => {
-            unreachable!("last_execution_status 出现了非法值: {other:?}，这是 SessionHub 的 bug")
-        }
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("session {session_id} 的 last_execution_status 非法: {other}"),
+        )),
     }
 }
 

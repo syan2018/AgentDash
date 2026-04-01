@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::story::{ChangeKind, StoryRepository};
+use agentdash_domain::story::{ChangeKind, StateChangeRepository};
 use agentdash_domain::task::{Task, TaskExecutionMode, TaskRepository, TaskStatus};
 
 use super::restart_tracker::{RestartDecision, RestartTracker};
@@ -138,7 +138,7 @@ fn plan_for_running_task(
 }
 
 async fn apply_reconcile_update(
-    story_repo: &Arc<dyn StoryRepository>,
+    state_change_repo: &Arc<dyn StateChangeRepository>,
     task_repo: &Arc<dyn TaskRepository>,
     task: &mut Task,
     plan: StatusReconcilePlan,
@@ -151,7 +151,7 @@ async fn apply_reconcile_update(
     task.status = plan.next_status.clone();
     task_repo.update(task).await?;
 
-    story_repo
+    state_change_repo
         .append_change(
             task.project_id,
             task.id,
@@ -185,7 +185,7 @@ async fn apply_reconcile_update(
 
 pub async fn reconcile_running_tasks_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
-    story_repo: &Arc<dyn StoryRepository>,
+    state_change_repo: &Arc<dyn StateChangeRepository>,
     task_repo: &Arc<dyn TaskRepository>,
     session_state_reader: &dyn TaskSessionStateReader,
     restart_tracker: Option<&RestartTracker>,
@@ -220,7 +220,7 @@ pub async fn reconcile_running_tasks_on_boot(
             let is_retry = plan.next_status == TaskStatus::AwaitingVerification
                 && plan.reason.contains("pending_retry");
 
-            if apply_reconcile_update(story_repo, task_repo, &mut task, plan).await? {
+            if apply_reconcile_update(state_change_repo, task_repo, &mut task, plan).await? {
                 touched += 1;
                 if is_retry {
                     pending_retry += 1;

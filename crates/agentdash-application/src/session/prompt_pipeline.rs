@@ -79,7 +79,12 @@ impl SessionHub {
             .executor_config
             .clone()
             .or_else(|| session_meta.executor_config.clone())
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "当前 prompt 缺少 executor_config，且 session meta 中也没有可复用配置"
+                        .to_string(),
+                )
+            })?;
 
         let hook_session = match self
             .load_session_hook_runtime(
@@ -212,12 +217,14 @@ impl SessionHub {
         {
             Ok(stream) => stream,
             Err(error) => {
-                let mut sessions = self.sessions.lock().await;
-                if let Some(runtime) = sessions.get_mut(session_id) {
-                    runtime.running = false;
-                    runtime.current_turn_id = None;
-                    runtime.cancel_requested = false;
-                    runtime.hook_session = None;
+                {
+                    let mut sessions = self.sessions.lock().await;
+                    if let Some(runtime) = sessions.get_mut(session_id) {
+                        runtime.running = false;
+                        runtime.current_turn_id = None;
+                        runtime.cancel_requested = false;
+                        runtime.hook_session = None;
+                    }
                 }
                 let failed = build_turn_terminal_notification(
                     &sid,

@@ -4,14 +4,14 @@ use sqlx::PgPool;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
-    Canvas, CanvasDataBinding, CanvasFile, CanvasImportMap, CanvasRepository, CanvasSandboxConfig,
+    Canvas, CanvasDataBinding, CanvasFile, CanvasRepository, CanvasSandboxConfig,
 };
 
-pub struct SqliteCanvasRepository {
+pub struct PostgresCanvasRepository {
     pool: PgPool,
 }
 
-impl SqliteCanvasRepository {
+impl PostgresCanvasRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -224,7 +224,7 @@ impl SqliteCanvasRepository {
 }
 
 #[async_trait::async_trait]
-impl CanvasRepository for SqliteCanvasRepository {
+impl CanvasRepository for PostgresCanvasRepository {
     async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
         let mut tx = self
             .pool
@@ -428,11 +428,13 @@ impl CanvasRow {
         files: BTreeMap<String, Vec<CanvasFile>>,
         bindings: BTreeMap<String, Vec<CanvasDataBinding>>,
     ) -> Result<Canvas, DomainError> {
-        let sandbox_config = serde_json::from_str::<CanvasSandboxConfig>(&self.sandbox_config)
-            .unwrap_or(CanvasSandboxConfig {
-                libraries: Vec::new(),
-                import_map: CanvasImportMap::default(),
-            });
+        let sandbox_config = parse_canvas_sandbox_config(&self.sandbox_config)?;
+        let files = files.get(&self.id).cloned().ok_or_else(|| {
+            DomainError::InvalidConfig(format!("缺少 canvas_files 映射: {}", self.id))
+        })?;
+        let bindings = bindings.get(&self.id).cloned().ok_or_else(|| {
+            DomainError::InvalidConfig(format!("缺少 canvas_bindings 映射: {}", self.id))
+        })?;
 
         Ok(Canvas {
             id: self.id.parse().map_err(|_| DomainError::NotFound {
@@ -448,35 +450,41 @@ impl CanvasRow {
             description: self.description,
             entry_file: self.entry_file,
             sandbox_config,
-            files: files.get(&self.id).cloned().unwrap_or_default(),
-            bindings: bindings.get(&self.id).cloned().unwrap_or_default(),
-            created_at: super::parse_pg_timestamp(&self.created_at),
-            updated_at: super::parse_pg_timestamp(&self.updated_at),
+            files,
+            bindings,
+            created_at: super::parse_pg_timestamp_checked(&self.created_at, "canvases.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&self.updated_at, "canvases.updated_at")?,
         })
     }
 }
 
+fn parse_canvas_sandbox_config(raw: &str) -> Result<CanvasSandboxConfig, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("canvases.sandbox_config: {error}")))
+}
+
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
     use uuid::Uuid;
 
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo() -> SqliteCanvasRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteCanvasRepository::new(pool);
+    async fn new_repo() -> Option<PostgresCanvasRepository> {
+        let pool = match test_pg_pool("canvas_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
+        let repo = PostgresCanvasRepository::new(pool);
         repo.initialize().await.expect("应能初始化 canvas schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn create_and_get_canvas_roundtrip() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let project_id = Uuid::new_v4();
         let mut canvas = Canvas::new(
             project_id,
@@ -505,7 +513,9 @@ mod tests {
 
     #[tokio::test]
     async fn update_canvas_replaces_files_and_bindings() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let mut canvas = Canvas::new(
             Uuid::new_v4(),
             "demo".to_string(),

@@ -2,15 +2,15 @@ use sqlx::PgPool;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::project::{
-    Project, ProjectConfig, ProjectRepository, ProjectRole, ProjectSubjectGrant,
-    ProjectSubjectType, ProjectVisibility,
+    Project, ProjectRepository, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,
+    ProjectVisibility,
 };
 
-pub struct SqliteProjectRepository {
+pub struct PostgresProjectRepository {
     pool: PgPool,
 }
 
-impl SqliteProjectRepository {
+impl PostgresProjectRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -68,7 +68,7 @@ impl SqliteProjectRepository {
 }
 
 #[async_trait::async_trait]
-impl ProjectRepository for SqliteProjectRepository {
+impl ProjectRepository for PostgresProjectRepository {
     async fn create(&self, project: &Project) -> Result<(), DomainError> {
         let mut tx = self
             .pool
@@ -253,7 +253,7 @@ impl ProjectRepository for SqliteProjectRepository {
     }
 }
 
-impl SqliteProjectRepository {
+impl PostgresProjectRepository {
     async fn upsert_subject_grant_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -324,14 +324,23 @@ impl TryFrom<ProjectRow> for Project {
             })?,
             name: row.name,
             description: row.description,
-            config: serde_json::from_str::<ProjectConfig>(&row.config).unwrap_or_default(),
+            config: parse_json_column(&row.config, "projects.config")?,
             created_by_user_id: row.created_by_user_id,
             updated_by_user_id: row.updated_by_user_id,
-            visibility: parse_project_visibility(&row.visibility),
+            visibility: parse_project_visibility(&row.visibility)?,
             is_template: row.is_template,
-            cloned_from_project_id: row.cloned_from_project_id.and_then(|id| id.parse().ok()),
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            cloned_from_project_id: row
+                .cloned_from_project_id
+                .map(|id| {
+                    id.parse().map_err(|error| {
+                        DomainError::InvalidConfig(format!(
+                            "projects.cloned_from_project_id: {error}"
+                        ))
+                    })
+                })
+                .transpose()?,
+            created_at: super::parse_pg_timestamp_checked(&row.created_at, "projects.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "projects.updated_at")?,
         })
     }
 }
@@ -344,58 +353,81 @@ impl TryFrom<ProjectSubjectGrantRow> for ProjectSubjectGrant {
             project_id: row.project_id.parse().map_err(|_| {
                 DomainError::InvalidConfig("无效的 project grant project_id".to_string())
             })?,
-            subject_type: parse_project_subject_type(&row.subject_type),
+            subject_type: parse_project_subject_type(&row.subject_type)?,
             subject_id: row.subject_id,
-            role: parse_project_role(&row.role),
+            role: parse_project_role(&row.role)?,
             granted_by_user_id: row.granted_by_user_id,
-            created_at: super::parse_pg_timestamp(&row.created_at),
-            updated_at: super::parse_pg_timestamp(&row.updated_at),
+            created_at: super::parse_pg_timestamp_checked(
+                &row.created_at,
+                "project_subject_grants.created_at",
+            )?,
+            updated_at: super::parse_pg_timestamp_checked(
+                &row.updated_at,
+                "project_subject_grants.updated_at",
+            )?,
         })
     }
 }
 
-fn parse_project_visibility(value: &str) -> ProjectVisibility {
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn parse_project_visibility(value: &str) -> Result<ProjectVisibility, DomainError> {
     match value {
-        "template_visible" => ProjectVisibility::TemplateVisible,
-        _ => ProjectVisibility::Private,
+        "private" => Ok(ProjectVisibility::Private),
+        "template_visible" => Ok(ProjectVisibility::TemplateVisible),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "projects.visibility: 未知值 `{value}`"
+        ))),
     }
 }
 
-fn parse_project_role(value: &str) -> ProjectRole {
+fn parse_project_role(value: &str) -> Result<ProjectRole, DomainError> {
     match value {
-        "editor" => ProjectRole::Editor,
-        "viewer" => ProjectRole::Viewer,
-        _ => ProjectRole::Owner,
+        "owner" => Ok(ProjectRole::Owner),
+        "editor" => Ok(ProjectRole::Editor),
+        "viewer" => Ok(ProjectRole::Viewer),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "project_subject_grants.role: 未知值 `{value}`"
+        ))),
     }
 }
 
-fn parse_project_subject_type(value: &str) -> ProjectSubjectType {
+fn parse_project_subject_type(value: &str) -> Result<ProjectSubjectType, DomainError> {
     match value {
-        "group" => ProjectSubjectType::Group,
-        _ => ProjectSubjectType::User,
+        "user" => Ok(ProjectSubjectType::User),
+        "group" => Ok(ProjectSubjectType::Group),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "project_subject_grants.subject_type: 未知值 `{value}`"
+        ))),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
-
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo() -> SqliteProjectRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
-        let repo = SqliteProjectRepository::new(pool);
+    async fn new_repo() -> Option<PostgresProjectRepository> {
+        let pool = match test_pg_pool("project_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
+        let repo = PostgresProjectRepository::new(pool);
         repo.initialize().await.expect("应能初始化 project schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn create_project_persists_owner_grant_and_audit_fields() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let source_project_id = uuid::Uuid::new_v4();
 
         let mut project = Project::new_with_creator(
@@ -432,7 +464,9 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_subject_grant_updates_existing_role() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let project = Project::new_with_creator(
             "Enterprise Auth".to_string(),
             "project grant test".to_string(),

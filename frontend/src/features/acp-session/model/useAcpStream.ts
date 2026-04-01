@@ -93,8 +93,7 @@ function mergeStreamChunk(previous: string, incoming: string): string {
   if (incoming === previous) return previous;
 
   if (incoming.startsWith(previous)) {
-    const deduped = dedupeRepeatedCumulativeChunk(previous, incoming);
-    return deduped ?? incoming;
+    return incoming;
   }
 
   const maxOverlap = Math.min(previous.length, incoming.length);
@@ -110,31 +109,6 @@ function mergeStreamChunk(previous: string, incoming: string): string {
   }
 
   return `${previous}${incoming}`;
-}
-
-/**
- * 兼容异常流：某些执行器偶发把“累计文本”再重复一遍推送，形成
- * previous="abc", incoming="abcabc" 这类 payload。
- * 这不应被当作新内容继续拼接，否则最终会出现“整段内容重复两次”。
- */
-function dedupeRepeatedCumulativeChunk(previous: string, incoming: string): string | null {
-  if (incoming.length <= previous.length) {
-    return null;
-  }
-
-  const delta = incoming.slice(previous.length);
-  if (delta.length > 0 && previous.endsWith(delta) && incoming === `${previous}${delta}`) {
-    return previous;
-  }
-
-  if (incoming.length % previous.length !== 0) {
-    return null;
-  }
-  const repeatCount = incoming.length / previous.length;
-  if (repeatCount < 2) {
-    return null;
-  }
-  return previous.repeat(repeatCount) === incoming ? previous : null;
 }
 
 /** 从 SessionUpdate 中提取 toolCallId（tool_call 或 tool_call_update） */

@@ -3,7 +3,10 @@ import type { AuthGroup, AuthMode, CurrentUser } from "../types";
 import { isAuthMode } from "../types";
 
 function normalizeAuthMode(value: unknown): AuthMode {
-  return isAuthMode(value) ? value : "personal";
+  if (!isAuthMode(value)) {
+    throw new Error(`未知的 auth_mode: ${String(value ?? "")}`);
+  }
+  return value;
 }
 
 function mapAuthGroup(raw: Record<string, unknown>): AuthGroup {

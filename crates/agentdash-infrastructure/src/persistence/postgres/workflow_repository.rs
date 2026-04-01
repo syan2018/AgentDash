@@ -7,11 +7,11 @@ use agentdash_domain::workflow::{
     WorkflowDefinition, WorkflowDefinitionRepository, WorkflowDefinitionStatus,
 };
 
-pub struct SqliteWorkflowRepository {
+pub struct PostgresWorkflowRepository {
     pool: PgPool,
 }
 
-impl SqliteWorkflowRepository {
+impl PostgresWorkflowRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -89,7 +89,7 @@ impl SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
+impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO workflow_definitions (id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,contract,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
             .bind(workflow.id.to_string()).bind(&workflow.key).bind(&workflow.name).bind(&workflow.description)
@@ -161,7 +161,7 @@ impl WorkflowDefinitionRepository for SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl LifecycleDefinitionRepository for SqliteWorkflowRepository {
+impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO lifecycle_definitions (id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
             .bind(lifecycle.id.to_string()).bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
@@ -237,7 +237,7 @@ impl LifecycleDefinitionRepository for SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl WorkflowAssignmentRepository for SqliteWorkflowRepository {
+impl WorkflowAssignmentRepository for PostgresWorkflowRepository {
     async fn create(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO workflow_assignments (id,project_id,lifecycle_id,role,enabled,is_default,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
             .bind(assignment.id.to_string()).bind(assignment.project_id.to_string()).bind(assignment.lifecycle_id.to_string())
@@ -296,7 +296,7 @@ impl WorkflowAssignmentRepository for SqliteWorkflowRepository {
 }
 
 #[async_trait::async_trait]
-impl LifecycleRunRepository for SqliteWorkflowRepository {
+impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query("INSERT INTO lifecycle_runs (id,project_id,lifecycle_id,binding_kind,binding_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
             .bind(run.id.to_string()).bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
@@ -378,7 +378,7 @@ async fn recreate_if_column_exists(
     ))
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(db_err)?;
     if has_column > 0 {
         sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
             .execute(pool)
@@ -400,7 +400,7 @@ async fn add_column_if_missing(
     ))
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(db_err)?;
     if has_column == 0 {
         sqlx::query(&format!(
             "ALTER TABLE {table} ADD COLUMN {column} {column_def}"
@@ -452,14 +452,16 @@ impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
             name: row.name,
             description: row.description,
             binding_kind: serde_json::from_str(&row.binding_kind)?,
-            recommended_binding_roles: serde_json::from_str(&row.recommended_binding_roles)
-                .unwrap_or_default(),
+            recommended_binding_roles: parse_json_column(
+                &row.recommended_binding_roles,
+                "workflow_definitions.recommended_binding_roles",
+            )?,
             source: serde_json::from_str(&row.source)?,
             status: serde_json::from_str(&row.status)?,
             version: row.version,
             contract: serde_json::from_str(&row.contract)?,
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
         })
     }
 }
@@ -490,15 +492,17 @@ impl TryFrom<LifecycleDefinitionRow> for LifecycleDefinition {
             name: row.name,
             description: row.description,
             binding_kind: serde_json::from_str(&row.binding_kind)?,
-            recommended_binding_roles: serde_json::from_str(&row.recommended_binding_roles)
-                .unwrap_or_default(),
+            recommended_binding_roles: parse_json_column(
+                &row.recommended_binding_roles,
+                "lifecycle_definitions.recommended_binding_roles",
+            )?,
             source: serde_json::from_str(&row.source)?,
             status: serde_json::from_str(&row.status)?,
             version: row.version,
             entry_step_key: row.entry_step_key,
             steps: serde_json::from_str(&row.steps)?,
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
         })
     }
 }
@@ -525,8 +529,8 @@ impl TryFrom<WorkflowAssignmentRow> for WorkflowAssignment {
             role: serde_json::from_str(&row.role)?,
             enabled: row.enabled,
             is_default: row.is_default,
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
         })
     }
 }
@@ -561,10 +565,10 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             current_step_key: row.current_step_key,
             step_states: serde_json::from_str(&row.step_states)?,
             record_artifacts: serde_json::from_str(&row.record_artifacts)?,
-            execution_log: serde_json::from_str(&row.execution_log).unwrap_or_default(),
-            created_at: parse_time(&row.created_at),
-            updated_at: parse_time(&row.updated_at),
-            last_activity_at: parse_time(&row.last_activity_at),
+            execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
+            last_activity_at: parse_time(&row.last_activity_at)?,
         })
     }
 }
@@ -576,6 +580,14 @@ fn parse_uuid(raw: &str, entity: &'static str) -> Result<uuid::Uuid, DomainError
     })
 }
 
-fn parse_time(raw: &str) -> chrono::DateTime<chrono::Utc> {
-    super::parse_pg_timestamp(raw)
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn parse_time(raw: &str) -> Result<chrono::DateTime<chrono::Utc>, DomainError> {
+    super::parse_pg_timestamp_checked(raw, "workflow.timestamp")
 }

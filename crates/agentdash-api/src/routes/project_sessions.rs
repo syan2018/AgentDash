@@ -20,8 +20,8 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::project_agents::{
-        build_project_agent_visible_mounts, resolve_project_agent_bridge_async,
-        resolve_project_workspace,
+        build_project_agent_visible_mounts, parse_project_agent_session_label,
+        resolve_project_agent_bridge_async, resolve_project_workspace,
     },
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
@@ -90,7 +90,7 @@ pub async fn get_project_session(
         &binding.session_id,
         &binding.label,
     )
-    .await;
+    .await?;
 
     Ok(Json(ProjectSessionDetailResponse {
         binding_id,
@@ -98,10 +98,8 @@ pub async fn get_project_session(
         label: binding.label,
         session_title: meta.as_ref().map(|item| item.title.clone()),
         last_activity: meta.as_ref().map(|item| item.updated_at),
-        address_space: built_context
-            .as_ref()
-            .and_then(|context| context.address_space.clone()),
-        context_snapshot: built_context.and_then(|context| context.context_snapshot),
+        address_space: built_context.address_space.clone(),
+        context_snapshot: built_context.context_snapshot,
     }))
 }
 
@@ -110,22 +108,21 @@ pub(crate) async fn build_project_session_context_response(
     project: &agentdash_domain::project::Project,
     session_id: &str,
     binding_label: &str,
-) -> Option<BuiltProjectSessionContextResponse> {
-    let agent_key = binding_label
-        .trim()
-        .strip_prefix("project_agent:")
-        .unwrap_or_default();
-    let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key).await?;
-    let workspace = resolve_project_workspace(state, project)
-        .await
-        .ok()
-        .flatten();
+) -> Result<BuiltProjectSessionContextResponse, ApiError> {
+    let agent_key = parse_project_agent_session_label(binding_label).ok_or_else(|| {
+        ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
+    })?;
+    let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
+    let workspace = resolve_project_workspace(state, project).await?;
     let session_meta = state
         .services
         .session_hub
         .get_session_meta(session_id)
         .await
-        .ok()??;
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
 
     let connector_config = session_meta
         .executor_config
@@ -146,7 +143,7 @@ pub(crate) async fn build_project_session_context_response(
                 SessionMountTarget::Project,
                 resolved_config.as_ref().map(|c| c.executor.as_str()),
             )
-            .ok()?;
+            .map_err(ApiError::BadRequest)?;
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,
@@ -154,7 +151,7 @@ pub(crate) async fn build_project_session_context_response(
             &session_meta.visible_canvas_mount_ids,
         )
         .await
-        .ok()?;
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
         Some(address_space)
     } else {
         None
@@ -213,7 +210,7 @@ pub(crate) async fn build_project_session_context_response(
 
     let snapshot = derive_session_context_snapshot(&plan);
 
-    Some(BuiltProjectSessionContextResponse {
+    Ok(BuiltProjectSessionContextResponse {
         address_space: plan.address_space.clone(),
         context_snapshot: Some(snapshot),
     })
@@ -317,7 +314,8 @@ pub async fn list_project_sessions(
         .services
         .session_hub
         .inspect_execution_states_bulk(&session_ids)
-        .await;
+        .await
+        .map_err(|e| ApiError::Internal(format!("批量读取 session 执行状态失败: {e}")))?;
 
     // ── Step 4: 组装结果 ─────────────────────────────────────────────────────
     let limit = query.limit.unwrap_or(50).clamp(1, 500) as usize;
@@ -399,11 +397,7 @@ fn resolve_agent_info(
     meta: &agentdash_application::session::SessionMeta,
 ) -> (Option<String>, Option<String>) {
     if binding.owner_type == agentdash_domain::session_binding::SessionOwnerType::Project {
-        let agent_key = binding
-            .label
-            .trim()
-            .strip_prefix("project_agent:")
-            .map(|k| k.to_string());
+        let agent_key = parse_project_agent_session_label(&binding.label).map(str::to_string);
         // display_name 从 session title 提取更实时（session title 已包含 agent 名称）
         let agent_display_name = agent_key.as_ref().map(|_| meta.title.clone());
         return (agent_key, agent_display_name);

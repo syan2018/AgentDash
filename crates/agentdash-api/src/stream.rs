@@ -43,7 +43,12 @@ pub async fn event_stream(
         ProjectPermission::View,
     )
     .await?;
-    let resume_from = parse_last_event_id(&headers);
+    let resume_from = parse_last_event_id(&headers)?;
+    let initial_latest_event_id = state
+        .repos
+        .state_change_repo
+        .latest_event_id_by_project(project.id)
+        .await?;
 
     tracing::info!(
         project_id = %project.id,
@@ -55,12 +60,7 @@ pub async fn event_stream(
     let stream = async_stream::stream! {
         let mut cursor = match resume_from {
             Some(value) => value,
-            None => state
-                .repos
-                .story_repo
-                .latest_event_id_by_project(project.id)
-                .await
-                .unwrap_or(0),
+            None => initial_latest_event_id,
         };
         let mut replayed = 0usize;
 
@@ -83,13 +83,7 @@ pub async fn event_stream(
             }
         }
 
-        let latest_event_id = state
-            .repos
-            .story_repo
-            .latest_event_id_by_project(project.id)
-            .await
-            .unwrap_or(cursor);
-        cursor = cursor.max(latest_event_id);
+        cursor = cursor.max(initial_latest_event_id);
         if let Some(event) =
             build_sse_event(&StreamEvent::Connected { last_event_id: cursor }, Some(cursor))
         {
@@ -158,7 +152,12 @@ pub async fn event_stream_ndjson(
         ProjectPermission::View,
     )
     .await?;
-    let resume_from = parse_last_event_id(&headers);
+    let resume_from = parse_last_event_id(&headers)?;
+    let initial_latest_event_id = state
+        .repos
+        .state_change_repo
+        .latest_event_id_by_project(project.id)
+        .await?;
 
     tracing::info!(
         project_id = %project.id,
@@ -170,12 +169,7 @@ pub async fn event_stream_ndjson(
     let stream = async_stream::stream! {
         let mut cursor = match resume_from {
             Some(value) => value,
-            None => state
-                .repos
-                .story_repo
-                .latest_event_id_by_project(project.id)
-                .await
-                .unwrap_or(0),
+            None => initial_latest_event_id,
         };
         let mut replayed = 0usize;
 
@@ -196,13 +190,7 @@ pub async fn event_stream_ndjson(
             }
         }
 
-        let latest_event_id = state
-            .repos
-            .story_repo
-            .latest_event_id_by_project(project.id)
-            .await
-            .unwrap_or(cursor);
-        cursor = cursor.max(latest_event_id);
+        cursor = cursor.max(initial_latest_event_id);
         if let Some(line) = to_ndjson_line(&StreamEvent::Connected { last_event_id: cursor }) {
             yield Ok::<Bytes, std::convert::Infallible>(line);
         }
@@ -275,7 +263,7 @@ pub async fn get_events_since(
     .await?;
     let changes = state
         .repos
-        .story_repo
+        .state_change_repo
         .get_changes_since_by_project(project.id, since_id, 1000)
         .await?;
     Ok(Json(changes))
@@ -289,12 +277,20 @@ fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(trimmed).map_err(|_| ApiError::BadRequest("无效的 project_id".into()))
 }
 
-fn parse_last_event_id(headers: &HeaderMap) -> Option<i64> {
-    headers
-        .get("last-event-id")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<i64>().ok())
-        .map(|value| value.max(0))
+fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<i64>, ApiError> {
+    let Some(value) = headers.get("last-event-id") else {
+        return Ok(None);
+    };
+    let raw = value
+        .to_str()
+        .map_err(|_| ApiError::BadRequest("last-event-id 不是有效 UTF-8".into()))?;
+    let parsed = raw
+        .parse::<i64>()
+        .map_err(|_| ApiError::BadRequest("last-event-id 不是有效整数".into()))?;
+    if parsed < 0 {
+        return Err(ApiError::BadRequest("last-event-id 不能为负数".into()));
+    }
+    Ok(Some(parsed))
 }
 
 fn build_sse_event(event: &StreamEvent, id: Option<i64>) -> Option<Event> {
@@ -337,7 +333,7 @@ async fn load_state_changes_since(
     loop {
         let batch = state
             .repos
-            .story_repo
+            .state_change_repo
             .get_changes_since_by_project(project_id, cursor, STREAM_BATCH_LIMIT)
             .await?;
         if batch.is_empty() {

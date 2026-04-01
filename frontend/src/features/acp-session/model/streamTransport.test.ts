@@ -50,22 +50,4 @@ describe("parseSessionEventEnvelopePayload", () => {
       tool_call_id: "tool-1",
     });
   });
-
-  it("兼容裸 SessionNotification，并使用 fallback event seq", () => {
-    const notification = buildToolCallNotification();
-
-    const parsed = parseSessionEventEnvelopePayload(notification, 34);
-
-    expect(parsed).toEqual({
-      session_id: "sess-1",
-      event_seq: 34,
-      notification,
-      occurred_at_ms: null,
-      committed_at_ms: null,
-      session_update_type: "tool_call",
-      turn_id: null,
-      entry_index: null,
-      tool_call_id: null,
-    });
-  });
 });

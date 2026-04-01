@@ -79,7 +79,12 @@ impl SessionPersistence for MemorySessionPersistence {
             )
         })?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
-        let event_seq = meta.last_event_seq.saturating_add(1);
+        let event_seq = meta.last_event_seq.checked_add(1).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("session {session_id} 的 event_seq 已溢出"),
+            )
+        })?;
         let persisted = build_persisted_event(session_id, event_seq, committed_at_ms, notification);
         meta.last_event_seq = event_seq;
         meta.updated_at = committed_at_ms;
@@ -101,13 +106,23 @@ impl SessionPersistence for MemorySessionPersistence {
         let snapshot_seq = guard
             .metas
             .get(session_id)
-            .map(|meta| meta.last_event_seq)
-            .unwrap_or(0);
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("session {session_id} 不存在"),
+                )
+            })?
+            .last_event_seq;
         let events = guard
             .events
             .get(session_id)
-            .cloned()
-            .unwrap_or_default()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("session {session_id} 缺少事件缓存"),
+                )
+            })?
+            .clone()
             .into_iter()
             .filter(|event| event.event_seq > after_seq && event.event_seq <= snapshot_seq)
             .collect();
@@ -127,18 +142,29 @@ impl SessionPersistence for MemorySessionPersistence {
         let snapshot_seq = guard
             .metas
             .get(session_id)
-            .map(|meta| meta.last_event_seq)
-            .unwrap_or(0);
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("session {session_id} 不存在"),
+                )
+            })?
+            .last_event_seq;
         let mut events = guard
             .events
             .get(session_id)
-            .cloned()
-            .unwrap_or_default()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("session {session_id} 缺少事件缓存"),
+                )
+            })?
+            .clone()
             .into_iter()
             .filter(|event| event.event_seq > after_seq)
             .collect::<Vec<_>>();
         events.sort_by_key(|event| event.event_seq);
-        let limit = usize::try_from(limit.max(1)).unwrap_or(usize::MAX);
+        let limit = usize::try_from(limit.max(1))
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
         let has_more = events.len() > limit;
         let page_events = if has_more {
             events.into_iter().take(limit).collect::<Vec<_>>()
@@ -159,7 +185,16 @@ impl SessionPersistence for MemorySessionPersistence {
 
     async fn list_all_events(&self, session_id: &str) -> io::Result<Vec<PersistedSessionEvent>> {
         let guard = self.inner.lock().await;
-        Ok(guard.events.get(session_id).cloned().unwrap_or_default())
+        Ok(guard
+            .events
+            .get(session_id)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("session {session_id} 不存在"),
+                )
+            })?
+            .clone())
     }
 }
 
@@ -197,25 +232,10 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
         current.last_terminal_message = incoming.last_terminal_message.clone();
     }
 
-    if let Some(executor_config) = incoming.executor_config.clone() {
-        current.executor_config = Some(executor_config);
-    }
-    if let Some(executor_session_id) = incoming.executor_session_id.clone() {
-        current.executor_session_id = Some(executor_session_id);
-    }
-    if let Some(companion_context) = incoming.companion_context.clone() {
-        current.companion_context = Some(companion_context);
-    }
-
-    for mount_id in &incoming.visible_canvas_mount_ids {
-        if !current
-            .visible_canvas_mount_ids
-            .iter()
-            .any(|item| item == mount_id)
-        {
-            current.visible_canvas_mount_ids.push(mount_id.clone());
-        }
-    }
+    current.executor_config = incoming.executor_config.clone();
+    current.executor_session_id = incoming.executor_session_id.clone();
+    current.companion_context = incoming.companion_context.clone();
+    current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
 }
 
 pub(super) fn apply_notification_projection(
@@ -361,10 +381,10 @@ fn apply_info_projection(meta: &mut SessionMeta, info: &SessionInfoUpdate) {
         }
     }
 
-    if let Some(executor_session_id) = parse_executor_session_bound(
-        info.meta.as_ref(),
-        meta.last_turn_id.as_deref().unwrap_or_default(),
-    ) {
+    if let Some(expected_turn_id) = meta.last_turn_id.as_deref()
+        && let Some(executor_session_id) =
+            parse_executor_session_bound(info.meta.as_ref(), expected_turn_id)
+    {
         meta.executor_session_id = Some(executor_session_id);
     }
 }

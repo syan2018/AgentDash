@@ -417,8 +417,6 @@ pub struct CommandPromptPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub follow_up_session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_blocks: Option<serde_json::Value>,
     pub workspace_root: String,
     #[serde(skip_serializing_if = "Option::is_none")]

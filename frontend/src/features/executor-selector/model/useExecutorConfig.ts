@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { PersistedExecutorConfig, RecentExecutorEntry, UseExecutorConfigResult } from "./types";
 
-// v2 格式 key：包含 thinkingLevel 字段（旧 v1 key 包含 reasoningId，自动丢弃不迁移）
+// 当前唯一受支持的本地持久化格式。
 const STORAGE_KEY = "agentdash:executor-config-v2";
 const RECENT_KEY = "agentdash:recent-executors";
 const MAX_RECENT = 8;
@@ -21,8 +21,6 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
-    // 检测是否为 v1 格式（含 reasoningId 字段），若是则丢弃返回 null
-    if ("reasoningId" in record) return null;
     if (typeof record.executor !== "string") return null;
     if (
       !isOptionalString(record.variant)

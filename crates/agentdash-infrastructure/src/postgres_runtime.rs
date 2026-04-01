@@ -27,22 +27,18 @@ struct RunningPgInfo {
 impl PostgresRuntime {
     pub async fn resolve(service_name: &str, max_connections: u32) -> Result<Self> {
         // ── External PostgreSQL ──────────────────────────────────────────
-        if let Ok(database_url) = std::env::var("DATABASE_URL") {
-            let lower = database_url.to_ascii_lowercase();
-            if lower.starts_with("postgres://") || lower.starts_with("postgresql://") {
-                tracing::info!("检测到 DATABASE_URL，使用外部 PostgreSQL");
-                let pool = PgPoolOptions::new()
-                    .max_connections(max_connections)
-                    .connect(&database_url)
-                    .await
-                    .map_err(|e| anyhow!("连接外部 PostgreSQL 失败: {e}"))?;
-                return Ok(Self {
-                    pool,
-                    connection_url: database_url,
-                    embedded: None,
-                });
-            }
-            tracing::warn!("DATABASE_URL 不是 PostgreSQL 协议，回退到 embedded 模式");
+        if let Some(database_url) = resolve_external_database_url()? {
+            tracing::info!("检测到 DATABASE_URL，使用外部 PostgreSQL");
+            let pool = PgPoolOptions::new()
+                .max_connections(max_connections)
+                .connect(&database_url)
+                .await
+                .map_err(|e| anyhow!("连接外部 PostgreSQL 失败: {e}"))?;
+            return Ok(Self {
+                pool,
+                connection_url: database_url,
+                embedded: None,
+            });
         }
 
         // ── Embedded PostgreSQL ──────────────────────────────────────────
@@ -128,6 +124,23 @@ impl PostgresRuntime {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
+
+fn resolve_external_database_url() -> Result<Option<String>> {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        return Ok(None);
+    };
+    let trimmed = database_url.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("postgres://") || lower.starts_with("postgresql://") {
+        return Ok(Some(trimmed.to_string()));
+    }
+    Err(anyhow!(
+        "DATABASE_URL 必须使用 PostgreSQL 协议（postgres:// 或 postgresql://），当前值不合法: {trimmed}"
+    ))
+}
 
 fn read_saved_password(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok().and_then(|s| {
@@ -238,6 +251,57 @@ impl Drop for PostgresRuntime {
                     tracing::warn!(error = %err, "停止 embedded PostgreSQL 失败");
                 }
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_external_database_url;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn resolve_external_database_url_accepts_postgres_scheme() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://localhost/test");
+        }
+        let result = resolve_external_database_url().expect("postgres 协议应通过");
+        assert_eq!(result.as_deref(), Some("postgres://localhost/test"));
+        unsafe {
+            std::env::remove_var("DATABASE_URL");
+        }
+    }
+
+    #[test]
+    fn resolve_external_database_url_accepts_postgresql_scheme() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgresql://localhost/test");
+        }
+        let result = resolve_external_database_url().expect("postgresql 协议应通过");
+        assert_eq!(result.as_deref(), Some("postgresql://localhost/test"));
+        unsafe {
+            std::env::remove_var("DATABASE_URL");
+        }
+    }
+
+    #[test]
+    fn resolve_external_database_url_rejects_non_postgres_scheme() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        unsafe {
+            std::env::set_var("DATABASE_URL", "sqlite://agentdash.db");
+        }
+        let error = resolve_external_database_url().expect_err("非 postgres 协议应直接失败");
+        assert!(
+            error
+                .to_string()
+                .contains("DATABASE_URL 必须使用 PostgreSQL 协议")
+        );
+        unsafe {
+            std::env::remove_var("DATABASE_URL");
         }
     }
 }

@@ -49,12 +49,13 @@ impl SqliteSessionBindingRepository {
 #[async_trait::async_trait]
 impl SessionBindingRepository for SqliteSessionBindingRepository {
     async fn create(&self, binding: &SessionBinding) -> Result<(), DomainError> {
-        let existing_project_ids: Vec<(String,)> =
-            sqlx::query_as("SELECT DISTINCT project_id FROM session_bindings WHERE session_id = $1")
-                .bind(&binding.session_id)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let existing_project_ids: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT project_id FROM session_bindings WHERE session_id = $1",
+        )
+        .bind(&binding.session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         if existing_project_ids
             .iter()

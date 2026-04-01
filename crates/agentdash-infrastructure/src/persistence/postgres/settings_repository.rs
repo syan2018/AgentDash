@@ -110,14 +110,15 @@ impl SettingsRepository for SqliteSettingsRepository {
     }
 
     async fn delete(&self, scope: &SettingScope, key: &str) -> Result<bool, DomainError> {
-        let result =
-            sqlx::query("DELETE FROM settings WHERE scope_kind = $1 AND scope_id = $2 AND key = $3")
-                .bind(scope.kind.as_str())
-                .bind(scope.storage_scope_id())
-                .bind(key)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let result = sqlx::query(
+            "DELETE FROM settings WHERE scope_kind = $1 AND scope_id = $2 AND key = $3",
+        )
+        .bind(scope.kind.as_str())
+        .bind(scope.storage_scope_id())
+        .bind(key)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -150,7 +151,6 @@ impl TryFrom<SettingRow> for Setting {
         })
     }
 }
-
 
 fn parse_scope_kind(value: &str) -> SettingScopeKind {
     match value {

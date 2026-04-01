@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use postgresql_embedded::{PostgreSQL, Settings};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -132,11 +132,7 @@ impl PostgresRuntime {
 fn read_saved_password(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok().and_then(|s| {
         let p = s.trim().to_string();
-        if p.is_empty() {
-            None
-        } else {
-            Some(p)
-        }
+        if p.is_empty() { None } else { Some(p) }
     })
 }
 

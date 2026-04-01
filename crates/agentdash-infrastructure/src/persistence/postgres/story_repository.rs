@@ -77,9 +77,9 @@ impl SqliteStoryRepository {
              FROM information_schema.columns
              WHERE table_schema = 'public' AND table_name = 'stories'",
         )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let column_exists = rows.iter().any(|row| {
             row.try_get::<String, _>("name")
@@ -525,9 +525,9 @@ mod tests {
              FROM information_schema.columns
              WHERE table_schema = 'public' AND table_name = 'stories'",
         )
-            .fetch_all(&repo.pool)
-            .await
-            .expect("应能读取 stories 表结构");
+        .fetch_all(&repo.pool)
+        .await
+        .expect("应能读取 stories 表结构");
 
         let has_default_workspace_id = columns.iter().any(|row| {
             row.try_get::<String, _>("name")

@@ -60,11 +60,10 @@ impl SqliteSessionRepository {
         .await
         .map_err(sqlx_to_io)?;
 
-        let alter_result = sqlx::query(
-            "ALTER TABLE sessions ADD COLUMN visible_canvas_mount_ids_json TEXT",
-        )
-        .execute(&self.pool)
-        .await;
+        let alter_result =
+            sqlx::query("ALTER TABLE sessions ADD COLUMN visible_canvas_mount_ids_json TEXT")
+                .execute(&self.pool)
+                .await;
         if let Err(error) = alter_result {
             let message = error.to_string().to_ascii_lowercase();
             if !message.contains("duplicate column name") {
@@ -99,7 +98,9 @@ impl SqliteSessionRepository {
         }
     }
 
-    fn persisted_event_from_row(row: &sqlx::sqlite::SqliteRow) -> io::Result<PersistedSessionEvent> {
+    fn persisted_event_from_row(
+        row: &sqlx::sqlite::SqliteRow,
+    ) -> io::Result<PersistedSessionEvent> {
         let notification_json = row.get::<String, _>("notification_json");
         let notification = serde_json::from_str::<SessionNotification>(&notification_json)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
@@ -244,28 +245,33 @@ impl SessionPersistence for SqliteSessionRepository {
         notification: &SessionNotification,
     ) -> io::Result<PersistedSessionEvent> {
         let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
-        let row = sqlx::query(
+        let seq_update = sqlx::query(
             r#"
-            SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
-                   last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json
-            FROM sessions
+            UPDATE sessions
+            SET last_event_seq = last_event_seq + 1
             WHERE id = ?
             "#,
         )
         .bind(session_id)
-        .fetch_optional(&mut *tx)
+        .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?
-        .ok_or_else(|| {
-            io::Error::new(
+        .map_err(sqlx_to_io)?;
+        if seq_update.rows_affected() == 0 {
+            return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("session {session_id} 不存在"),
-            )
-        })?;
-        let current_meta = Self::map_meta_row(&row);
+            ));
+        }
+        let seq_row = sqlx::query("SELECT last_event_seq FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(sqlx_to_io)?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
-        let event_seq = current_meta.last_event_seq.saturating_add(1);
+        let event_seq_i64: i64 = seq_row
+            .try_get("last_event_seq")
+            .map_err(sqlx_to_io)?;
+        let event_seq = u64::try_from(event_seq_i64).unwrap_or(0);
         let projection = projection_from_notification(notification);
         let persisted = PersistedSessionEvent {
             session_id: session_id.to_string(),
@@ -305,7 +311,6 @@ impl SessionPersistence for SqliteSessionRepository {
             UPDATE sessions
             SET
                 updated_at = ?,
-                last_event_seq = ?,
                 last_execution_status = COALESCE(?, last_execution_status),
                 last_turn_id = COALESCE(?, last_turn_id),
                 last_terminal_message = CASE
@@ -318,7 +323,6 @@ impl SessionPersistence for SqliteSessionRepository {
             "#,
         )
         .bind(committed_at_ms)
-        .bind(i64::try_from(event_seq).unwrap_or(i64::MAX))
         .bind(&projection.last_execution_status)
         .bind(&projection.turn_id)
         .bind(projection.clear_terminal_message)
@@ -402,10 +406,16 @@ impl SessionPersistence for SqliteSessionRepository {
 
         let has_more = rows.len() > usize::try_from(take).unwrap_or(usize::MAX);
         let mut events = Vec::new();
-        for row in rows.into_iter().take(usize::try_from(take).unwrap_or(usize::MAX)) {
+        for row in rows
+            .into_iter()
+            .take(usize::try_from(take).unwrap_or(usize::MAX))
+        {
             events.push(Self::persisted_event_from_row(&row)?);
         }
-        let next_after_seq = events.last().map(|event| event.event_seq).unwrap_or(after_seq);
+        let next_after_seq = events
+            .last()
+            .map(|event| event.event_seq)
+            .unwrap_or(after_seq);
         Ok(SessionEventPage {
             snapshot_seq,
             events,
@@ -554,9 +564,7 @@ fn turn_terminal_from_meta(
     }
 }
 
-fn executor_session_from_info(
-    info: &agent_client_protocol::SessionInfoUpdate,
-) -> Option<String> {
+fn executor_session_from_info(info: &agent_client_protocol::SessionInfoUpdate) -> Option<String> {
     let parsed = parse_agentdash_meta(info.meta.as_ref()?)?;
     let event = parsed.event?;
     if event.r#type != "executor_session_bound" {
@@ -577,9 +585,7 @@ fn executor_session_from_info(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::{
-        SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-    };
+    use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
 
     #[tokio::test]
     async fn append_event_assigns_monotonic_event_seq() {

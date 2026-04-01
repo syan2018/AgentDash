@@ -86,9 +86,9 @@ impl SqliteWorkspaceRepository {
              FROM information_schema.columns
              WHERE table_schema = 'public' AND table_name = 'workspaces'",
         )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         let exists = pragma.iter().any(|row| {
             row.try_get::<String, _>("name")
                 .map(|value| value == column_name)

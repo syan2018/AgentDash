@@ -89,9 +89,9 @@ impl SqliteCanvasRepository {
              FROM information_schema.columns
              WHERE table_schema = 'public' AND table_name = 'canvases'",
         )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         if columns.iter().any(|column| column == "mount_id") {
             return Ok(());
         }

@@ -1,0 +1,41 @@
+{
+  "id": "cleanup-compat-fallback-debt",
+  "name": "cleanup-compat-fallback-debt",
+  "title": "兼容层与回退逻辑清理",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "cross-layer-cleanup",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": ""
+}

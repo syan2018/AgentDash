@@ -201,14 +201,24 @@ export function useAcpStream({ initialEntries }: Options) {
 
 - `connected`：
   - 字段：`last_event_id: number`
-- `notification`：
-  - 字段：`id: number`, `notification: SessionNotification`
+- `event`：
+  - 字段：
+    - `session_id: string`
+    - `event_seq: number`
+    - `occurred_at_ms: number`
+    - `committed_at_ms: number`
+    - `session_update_type: string`
+    - `turn_id?: string | null`
+    - `entry_index?: number | null`
+    - `tool_call_id?: string | null`
+    - `notification: SessionNotification`
 - `heartbeat`：
   - 字段：`timestamp: number`
 
 前端必须：
 - 对未知 `type` 安全忽略（不抛异常中断流）
-- 仅当 `type=notification` 且 payload 满足 `SessionNotification` 结构时入队
+- 仅当 payload 能解析成带 `notification` 的会话 envelope 时入队
+- `SSE` 与 `NDJSON` 必须共享同一套 envelope 字段，不能让降级通道丢 `tool_call_id / turn_id / entry_index`
 
 ---
 
@@ -283,9 +293,11 @@ export const useStoryStore = create<StoryState>((set) => ({
 ```
 status === "completed" | "failed" | "canceled" | "rejected"
   → isPendingApproval = false（覆盖）
-status === "pending"
+rawOutput.approval_state === "pending"
   → isPendingApproval = true
 status === "in_progress"
+  → isPendingApproval = false
+status === "pending" 且未进入审批
   → isPendingApproval = false
 其他
   → 保留已有值
@@ -306,9 +318,11 @@ isPendingApproval: update.status === "pending"
 // 正确：终态覆盖 + 非终态保留
 if (isTerminalToolCallStatus(incomingStatus)) {
   nextPendingApproval = false;
-} else if (incomingStatus === "pending") {
+} else if (incomingApprovalPending) {
   nextPendingApproval = true;
 } else if (incomingStatus === "in_progress") {
+  nextPendingApproval = false;
+} else if (incomingStatus === "pending") {
   nextPendingApproval = false;
 }
 ```

@@ -58,6 +58,55 @@ function isSessionNotification(value: unknown): value is import("@agentclientpro
   return typeof record.sessionId === "string" && typeof record.update === "object";
 }
 
+function readOptionalNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function parseSessionEventEnvelopePayload(
+  payload: unknown,
+  fallbackEventSeq?: number,
+): SessionEventEnvelope | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const notification = isSessionNotification(record.notification)
+    ? record.notification
+    : isSessionNotification(record)
+      ? record
+      : null;
+
+  if (!notification) {
+    return null;
+  }
+
+  const eventSeq =
+    readOptionalNumber(record.event_seq ?? record.id ?? fallbackEventSeq) ?? 0;
+
+  return {
+    session_id: readOptionalString(record.session_id ?? record.sessionId) ?? notification.sessionId,
+    event_seq: eventSeq,
+    notification,
+    occurred_at_ms: readOptionalNumber(record.occurred_at_ms ?? record.occurredAtMs),
+    committed_at_ms: readOptionalNumber(record.committed_at_ms ?? record.committedAtMs),
+    session_update_type:
+      readOptionalString(record.session_update_type ?? record.sessionUpdateType) ??
+      notification.update.sessionUpdate,
+    turn_id: readOptionalString(record.turn_id ?? record.turnId),
+    entry_index: readOptionalNumber(record.entry_index ?? record.entryIndex),
+    tool_call_id: readOptionalString(record.tool_call_id ?? record.toolCallId),
+  };
+}
+
 class EventSourceTransport implements AcpStreamTransport {
   private source: EventSource | null = null;
   private closed = false;
@@ -102,16 +151,13 @@ class EventSourceTransport implements AcpStreamTransport {
       if (this.closed) return;
       try {
         const payload: unknown = JSON.parse(event.data);
-        if (!isSessionNotification(payload)) return;
-        const eventSeq = Number(event.lastEventId ?? 0);
-        if (Number.isFinite(eventSeq) && eventSeq > this.sinceId) {
-          this.sinceId = eventSeq;
+        const fallbackEventSeq = readOptionalNumber(event.lastEventId) ?? 0;
+        const normalizedEvent = parseSessionEventEnvelopePayload(payload, fallbackEventSeq);
+        if (!normalizedEvent) return;
+        if (normalizedEvent.event_seq > this.sinceId) {
+          this.sinceId = normalizedEvent.event_seq;
         }
-        this.options.onEvent({
-          session_id: payload.sessionId,
-          event_seq: Number.isFinite(eventSeq) ? eventSeq : 0,
-          notification: payload,
-        });
+        this.options.onEvent(normalizedEvent);
       } catch (error) {
         this.options.onError(normalizeError(error, "解析 SSE 消息失败"));
       }
@@ -258,17 +304,12 @@ class FetchNdjsonTransport implements AcpStreamTransport {
     }
 
     if (eventType === "event" || eventType === "notification") {
-      const eventSeq = Number(record.event_seq ?? record.id ?? 0);
-      if (Number.isFinite(eventSeq) && eventSeq > this.sinceId) {
-        this.sinceId = eventSeq;
-      }
-      const notification = record.notification;
-      if (isSessionNotification(notification)) {
-        this.options.onEvent({
-          session_id: notification.sessionId,
-          event_seq: Number.isFinite(eventSeq) ? eventSeq : 0,
-          notification,
-        });
+      const normalizedEvent = parseSessionEventEnvelopePayload(record);
+      if (normalizedEvent) {
+        if (normalizedEvent.event_seq > this.sinceId) {
+          this.sinceId = normalizedEvent.event_seq;
+        }
+        this.options.onEvent(normalizedEvent);
       }
       return;
     }
@@ -278,12 +319,9 @@ class FetchNdjsonTransport implements AcpStreamTransport {
     }
 
     // 兼容：若服务端直接推 SessionNotification（无 envelope）
-    if (isSessionNotification(record)) {
-      this.options.onEvent({
-        session_id: record.sessionId,
-        event_seq: 0,
-        notification: record,
-      });
+    const normalizedEvent = parseSessionEventEnvelopePayload(record);
+    if (normalizedEvent) {
+      this.options.onEvent(normalizedEvent);
     }
   }
 

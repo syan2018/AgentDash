@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type {
   SessionNotification,
   SessionUpdate,
@@ -602,13 +603,22 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     }, RECEIVING_IDLE_TIMEOUT_MS);
   }, []);
 
-  const flushPendingEvents = useCallback(() => {
+  const flushPendingEvents = useCallback((mode: "async" | "sync" = "async") => {
     if (!mountedRef.current) return;
     const pending = pendingEventsRef.current;
     if (pending.length === 0) return;
     pendingEventsRef.current = [];
 
-    setStreamState((prev) => reduceStreamState(prev, pending));
+    const applyPending = () => {
+      setStreamState((prev) => reduceStreamState(prev, pending));
+    };
+
+    // 工具生命周期事件需要先提交一次开始态，避免在同一批流里被完成态覆盖。
+    if (mode === "sync") {
+      flushSync(applyPending);
+      return;
+    }
+    applyPending();
   }, []);
 
   const enqueueEventRef = useRef<(event: SessionEventEnvelope) => void>(() => {});
@@ -626,7 +636,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
         clearTimeout(flushTimerRef.current);
         flushTimerRef.current = null;
       }
-      flushPendingEvents();
+      flushPendingEvents("sync");
       return;
     }
 

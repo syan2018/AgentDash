@@ -261,6 +261,24 @@ fn map_session_event(
     }
 }
 
+fn stream_event_payload(
+    event: agentdash_application::session::PersistedSessionEvent,
+) -> serde_json::Value {
+    let mapped = map_session_event(event);
+    serde_json::json!({
+        "type": "event",
+        "session_id": mapped.session_id,
+        "event_seq": mapped.event_seq,
+        "occurred_at_ms": mapped.occurred_at_ms,
+        "committed_at_ms": mapped.committed_at_ms,
+        "session_update_type": mapped.session_update_type,
+        "turn_id": mapped.turn_id,
+        "entry_index": mapped.entry_index,
+        "tool_call_id": mapped.tool_call_id,
+        "notification": mapped.notification,
+    })
+}
+
 pub async fn get_session_state(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -1154,8 +1172,8 @@ pub async fn acp_session_stream_sse(
 
     let stream = async_stream::stream! {
         for event in subscription.backlog {
-            if let Ok(json) = serde_json::to_string(&event.notification) {
-                let id = event.event_seq;
+            let id = event.event_seq;
+            if let Ok(json) = serde_json::to_string(&stream_event_payload(event)) {
                 yield Ok(Event::default().id(id.to_string()).data(json));
             }
         }
@@ -1168,9 +1186,10 @@ pub async fn acp_session_stream_sse(
                     if event.event_seq <= seq {
                         continue;
                     }
-                    seq = event.event_seq;
-                    if let Ok(json) = serde_json::to_string(&event.notification) {
-                        yield Ok(Event::default().id(event.event_seq.to_string()).data(json));
+                    let id = event.event_seq;
+                    seq = id;
+                    if let Ok(json) = serde_json::to_string(&stream_event_payload(event)) {
+                        yield Ok(Event::default().id(id.to_string()).data(json));
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -1236,11 +1255,7 @@ pub async fn acp_session_stream_ndjson(
         let mut seq = resume_from;
         for event in subscription.backlog {
             seq = event.event_seq;
-            if let Some(line) = to_ndjson_line(&serde_json::json!({
-                "type": "event",
-                "event_seq": event.event_seq,
-                "notification": event.notification,
-            })) {
+            if let Some(line) = to_ndjson_line(&stream_event_payload(event)) {
                 yield Ok::<Bytes, Infallible>(line);
             }
         }
@@ -1265,11 +1280,7 @@ pub async fn acp_session_stream_ndjson(
                                 continue;
                             }
                             seq = event.event_seq;
-                            if let Some(line) = to_ndjson_line(&serde_json::json!({
-                                "type": "event",
-                                "event_seq": event.event_seq,
-                                "notification": event.notification,
-                            })) {
+                            if let Some(line) = to_ndjson_line(&stream_event_payload(event)) {
                                 yield Ok::<Bytes, Infallible>(line);
                             }
                         }

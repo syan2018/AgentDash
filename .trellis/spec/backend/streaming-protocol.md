@@ -29,6 +29,7 @@
 - ACP 会话 SSE：
   - `GET /api/acp/sessions/{id}/stream`
   - Header: `Last-Event-ID: <u64>`（可选）
+  - `data`: `SessionEventEnvelope` JSON
 - ACP 会话 NDJSON：
   - `GET /api/acp/sessions/{id}/stream/ndjson`
   - Header: `x-stream-since-id: <u64>`（主方案）
@@ -43,10 +44,17 @@
 - `GET /api/events/stream/ndjson`：
   - `Content-Type: application/x-ndjson; charset=utf-8`
   - 行内容为 `StreamEvent` JSON，每行一个对象
+- `GET /api/acp/sessions/{id}/stream`（SSE）：
+  - `Event.id = event_seq`
+  - `data` 必须输出 `SessionEventEnvelope`
 - `GET /api/acp/sessions/{id}/stream/ndjson`：
   - 连接确认行：`{"type":"connected","last_event_id":<u64>}`
-  - 消息行：`{"type":"notification","id":<u64>,"notification":<SessionNotification>}`
+  - 消息行：`{"type":"event","session_id":<string>,"event_seq":<u64>,"occurred_at_ms":<i64>,"committed_at_ms":<i64>,"session_update_type":<string>,"turn_id":<string|null>,"entry_index":<u32|null>,"tool_call_id":<string|null>,"notification":<SessionNotification>}`
   - 心跳行：`{"type":"heartbeat","timestamp":<i64>}`
+- `SessionEventEnvelope` 字段语义：
+  - `session_update_type`：后端归档的更新类型，前端不应自行猜测
+  - `turn_id / entry_index`：chunk 合并与同轮归并锚点
+  - `tool_call_id`：tool start/update/end 的稳定归并锚点；不能只依赖 `notification.update.toolCallId`
 - Header/缓存契约：
   - 必须返回 `Cache-Control: no-cache, no-transform`
   - 必须返回 `X-Content-Type-Options: nosniff`
@@ -80,12 +88,13 @@
 - Backend：
   - `events/stream` 在带 `Last-Event-ID` 时，返回事件 `id` 必须单调递增
   - `events/stream/ndjson` Content-Type 必须是 `application/x-ndjson`
-  - `acp/.../stream/ndjson` 必须输出 `connected/notification/heartbeat` 三类 envelope
+  - `acp/.../stream` 与 `acp/.../stream/ndjson` 都必须输出带完整 trace/tool 锚点的 `SessionEventEnvelope`
   - `x-stream-since-id` 与 `since_id` 同时存在时，header 优先
 - Frontend：
   - NDJSON 首次连接失败时，必须自动降级到 SSE
   - 断流后状态应进入 `reconnecting`，恢复后进入 `connected`
   - HMR dispose 时，注册表中的流连接必须全部 close
+  - tool 生命周期事件连续到达时，开始态不能在同一批次里被完成态吞掉
 
 ### 7. Wrong vs Correct
 

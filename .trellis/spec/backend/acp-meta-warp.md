@@ -8,9 +8,10 @@
 
 ### 2. Signatures（API/类型/生成物）
 - **SSE**: `GET /api/acp/sessions/{id}/stream`
-  - `data`: `SessionNotification` 的 JSON
+  - `Event.id = event_seq`
+  - `data`: `SessionEventEnvelope` 的 JSON（其中 `notification` 仍为标准 ACP `SessionNotification`）
 - **NDJSON**: `GET /api/acp/sessions/{id}/stream/ndjson`
-  - `{"type":"notification","id":<u64>,"notification":<SessionNotification>}`
+  - `{"type":"event","session_id":<string>,"event_seq":<u64>,"occurred_at_ms":<i64>,"committed_at_ms":<i64>,"session_update_type":<string>,"turn_id":<string|null>,"entry_index":<u32|null>,"tool_call_id":<string|null>,"notification":<SessionNotification>}`
   - `{"type":"connected","last_event_id":<u64>}` / `{"type":"heartbeat",...}`
 - **Rust 类型（ACP）**: `agent_client_protocol::{SessionNotification, SessionUpdate, Meta}`
 - **TS 类型（ACP）**: `@agentclientprotocol/sdk` 的 `SessionNotification/SessionUpdate`

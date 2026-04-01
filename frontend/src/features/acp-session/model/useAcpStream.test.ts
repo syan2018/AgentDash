@@ -87,6 +87,32 @@ function buildPendingApprovalUpdate(seq: number): SessionEventEnvelope {
   };
 }
 
+function buildEnvelopeAnchoredToolCallUpdate(
+  seq: number,
+  status: "in_progress" | "completed",
+): SessionEventEnvelope {
+  return {
+    session_id: "sess-1",
+    event_seq: seq,
+    occurred_at_ms: seq,
+    committed_at_ms: seq,
+    session_update_type: "tool_call_update",
+    turn_id: "turn-1",
+    entry_index: 7,
+    tool_call_id: "tool-1",
+    notification: {
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        title: "执行 shell",
+        kind: "execute",
+        status,
+        content: [],
+      },
+    } as unknown as SessionNotification,
+  };
+}
+
 function buildTextEventWithoutTrace(seq: number, text: string): SessionEventEnvelope {
   return {
     session_id: "sess-1",
@@ -226,6 +252,24 @@ describe("reduceStreamState", () => {
 
     const approvalPending = reduceStreamState(started, [buildPendingApprovalUpdate(3)]);
     expect(approvalPending.entries[0]?.isPendingApproval).toBe(true);
+  });
+
+  it("实时 envelope 提供 tool_call_id 时，缺少 payload id 的 update 仍会合并回已有 tool 条目", () => {
+    const initial = {
+      entries: [],
+      rawEvents: [],
+      tokenUsage: null,
+      lastAppliedSeq: 0,
+    };
+
+    const started = reduceStreamState(initial, [buildToolCallEvent(2, "pending")]);
+    const completed = reduceStreamState(started, [
+      buildEnvelopeAnchoredToolCallUpdate(3, "completed"),
+    ]);
+
+    expect(completed.entries).toHaveLength(1);
+    expect(completed.entries[0]?.eventSeq).toBe(3);
+    expect((completed.entries[0]?.update as { status?: string }).status).toBe("completed");
   });
 
   it("累计 chunk 异常重复时不会把同一段文本拼两次", () => {

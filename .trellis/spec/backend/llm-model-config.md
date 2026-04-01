@@ -133,7 +133,27 @@ export interface ModelInfo {
 | `deepseek` | DeepSeek | `llm.deepseek.api_key` | R1 支持 reasoning |
 | `groq` | Groq | `llm.groq.api_key` | 高速推理 |
 | `xai` | xAI (Grok) | `llm.xai.api_key` | Grok Mini 支持 thinking |
-| `openai` | OpenAI / 兼容端点 | `llm.openai.api_key` | 支持自定义 base_url |
+| `openai` | OpenAI / 兼容端点 | `llm.openai.api_key` | 支持自定义 `base_url` 与 `wire_api` |
+
+### OpenAI `wire_api` 契约
+
+`openai` provider 的运行时 bridge 选择必须读取 system scope 设置 `llm.openai.wire_api`：
+
+| key | 可选值 | 作用 |
+|-----|--------|------|
+| `llm.openai.wire_api` | `responses` | 使用 Rig OpenAI Responses API 路径 |
+| `llm.openai.wire_api` | `completions` | 使用 Rig OpenAI Chat Completions 路径 |
+
+默认策略：
+
+- `base_url` 为空，或等于官方 `https://api.openai.com/v1` 时，默认 `responses`
+- `base_url` 是自定义 OpenAI-compatible 端点时，默认 `completions`
+
+原因：
+
+- 官方 OpenAI 模型优先走 Responses API，能力最完整
+- 自定义兼容端点的 tool-call delta 流普遍更接近 Chat Completions 语义
+- 若这里不区分，前端 Settings 页虽然显示了 `wire_api`，但实际 tool call streaming 行为会与配置脱节
 
 ### 注册优先级
 
@@ -184,6 +204,7 @@ llm.xai.api_key
 llm.openai.api_key
 llm.openai.base_url          # 可选，OpenAI 兼容端点
 llm.openai.default_model     # 可选，默认模型 ID
+llm.openai.wire_api          # 可选：responses / completions
 llm.ollama.base_url          # 本地 Ollama，无 api_key
 agent.pi.system_prompt       # PiAgent 系统提示词
 ```

@@ -152,6 +152,14 @@ interface ModelConfig {
   max_tokens?: number;
 }
 
+function defaultOpenAiWireApi(baseUrl: string): "responses" | "completions" {
+  const normalized = baseUrl.trim().replace(/\/+$/, "").toLowerCase();
+  if (!normalized || normalized === "https://api.openai.com/v1" || normalized === "https://api.openai.com") {
+    return "responses";
+  }
+  return "completions";
+}
+
 const LLM_PROVIDERS: LlmProviderDef[] = [
   {
     id: "anthropic",
@@ -309,7 +317,13 @@ function LlmProviderRow({
   const savedApiKey = provider.apiKeySettingKey ? readVal(settings, provider.apiKeySettingKey) : "";
   const savedBaseUrl = provider.baseUrlSettingKey ? readVal(settings, provider.baseUrlSettingKey) : "";
   const savedModel = provider.defaultModelSettingKey ? readVal(settings, provider.defaultModelSettingKey) : "";
-  const savedWireApi = provider.wireApiSettingKey ? readVal(settings, provider.wireApiSettingKey, "responses") : "";
+  const savedWireApi = provider.wireApiSettingKey
+    ? readVal(
+      settings,
+      provider.wireApiSettingKey,
+      provider.id === "openai" ? defaultOpenAiWireApi(savedBaseUrl) : "responses",
+    )
+    : "";
 
   const savedModelsRaw = provider.modelsSettingKey
     ? settings.find((s) => s.key === provider.modelsSettingKey)?.value
@@ -743,7 +757,7 @@ function LlmProviderForm({
   const [apiKeyTouched, setApiKeyTouched] = useState(false);
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [model, setModel] = useState(initialModel);
-  const [wireApi, setWireApi] = useState(initialWireApi || "responses");
+  const [wireApi, setWireApi] = useState(initialWireApi || defaultOpenAiWireApi(initialBaseUrl));
   const [models, setModels] = useState<ModelConfig[]>(initialModels);
   const [modelsTouched, setModelsTouched] = useState(false);
   const [blockedModels, setBlockedModels] = useState<string[]>(initialBlockedModels);
@@ -921,7 +935,12 @@ function LlmProviderForm({
 
       {/* Wire API（仅 OpenAI） */}
       {provider.wireApiSettingKey && (
-        <Field label="Wire API" desc="请求协议，responses 为新版 Responses API">
+        <Field
+          label="Wire API"
+          desc={provider.id === "openai"
+            ? "官方 OpenAI 默认用 responses；自定义兼容端点默认更适合 completions，可获得更稳定的 tool call delta。"
+            : "请求协议"}
+        >
           <div className="flex gap-4">
             {(["responses", "completions"] as const).map((opt) => (
               <label key={opt} className="flex items-center gap-1.5 text-sm text-foreground">

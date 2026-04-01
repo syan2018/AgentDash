@@ -86,6 +86,29 @@ enum BridgeKind {
     OpenAi,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAiWireApi {
+    Responses,
+    Completions,
+}
+
+impl OpenAiWireApi {
+    fn from_setting(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "responses" => Some(Self::Responses),
+            "completions" => Some(Self::Completions),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Responses => "responses",
+            Self::Completions => "completions",
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum DiscoveryKind {
     ConfigOnly,
@@ -331,14 +354,30 @@ async fn build_provider_entry(
         .into_iter()
         .collect::<HashSet<_>>();
 
-    let bridge_factory = build_bridge_factory(spec.bridge_kind, api_key.clone(), base_url.clone());
+    let openai_wire_api = if matches!(spec.bridge_kind, BridgeKind::OpenAi) {
+        Some(resolve_openai_wire_api(
+            read_setting_str(settings, "llm.openai.wire_api").await.as_deref(),
+            base_url.as_deref(),
+        ))
+    } else {
+        None
+    };
+    let bridge_factory = build_bridge_factory(
+        spec.bridge_kind,
+        api_key.clone(),
+        base_url.clone(),
+        openai_wire_api,
+    );
     let default_bridge = bridge_factory(&default_model);
     let list_models = build_model_lister(spec.discovery_kind, api_key, base_url);
 
     tracing::info!(
-        "PiAgentConnector: provider={} 已注册（default_model={}）",
+        "PiAgentConnector: provider={} 已注册（default_model={}{}）",
         spec.provider_id,
-        default_model
+        default_model,
+        openai_wire_api
+            .map(|wire_api| format!(", wire_api={}", wire_api.as_str()))
+            .unwrap_or_default()
     );
 
     Some(BuiltProviderEntry {
@@ -359,6 +398,7 @@ fn build_bridge_factory(
     kind: BridgeKind,
     api_key: String,
     base_url: Option<String>,
+    openai_wire_api: Option<OpenAiWireApi>,
 ) -> BridgeFactory {
     match kind {
         BridgeKind::Anthropic => {
@@ -398,11 +438,50 @@ fn build_bridge_factory(
                 builder = builder.base_url(url);
             }
             let client = builder.build();
+            let wire_api = openai_wire_api.unwrap_or(OpenAiWireApi::Responses);
             Arc::new(move |model_id: &str| {
-                Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
+                match wire_api {
+                    OpenAiWireApi::Responses => Arc::new(RigBridge::new(
+                        client.completion_model(model_id),
+                    )) as Arc<dyn LlmBridge>,
+                    OpenAiWireApi::Completions => Arc::new(RigBridge::new(
+                        client.completion_model(model_id).completions_api(),
+                    )) as Arc<dyn LlmBridge>,
+                }
             })
         }
     }
+}
+
+fn resolve_openai_wire_api(
+    configured_value: Option<&str>,
+    base_url: Option<&str>,
+) -> OpenAiWireApi {
+    if let Some(value) = configured_value {
+        if let Some(parsed) = OpenAiWireApi::from_setting(value) {
+            return parsed;
+        }
+        tracing::warn!(
+            value = value,
+            "PiAgentConnector: 无法识别 llm.openai.wire_api，已回退到默认策略"
+        );
+    }
+
+    if is_official_openai_base_url(base_url) {
+        OpenAiWireApi::Responses
+    } else {
+        // 对大多数自定义 OpenAI-compatible 端点，Chat Completions 的 tool delta
+        // 流更成熟，优先选择它以获得更早的工具参数草稿事件。
+        OpenAiWireApi::Completions
+    }
+}
+
+fn is_official_openai_base_url(base_url: Option<&str>) -> bool {
+    let Some(base_url) = base_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let normalized = base_url.trim_end_matches('/').to_ascii_lowercase();
+    normalized == "https://api.openai.com/v1" || normalized == "https://api.openai.com"
 }
 
 fn build_model_lister(
@@ -720,4 +799,41 @@ fn format_model_name(model_id: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn official_openai_base_url_defaults_to_responses() {
+        assert_eq!(
+            resolve_openai_wire_api(None, Some("https://api.openai.com/v1")),
+            OpenAiWireApi::Responses
+        );
+        assert_eq!(
+            resolve_openai_wire_api(None, None),
+            OpenAiWireApi::Responses
+        );
+    }
+
+    #[test]
+    fn custom_openai_compatible_base_url_defaults_to_completions() {
+        assert_eq!(
+            resolve_openai_wire_api(None, Some("https://right.codes/codex/v1")),
+            OpenAiWireApi::Completions
+        );
+    }
+
+    #[test]
+    fn explicit_wire_api_setting_wins_over_base_url_default() {
+        assert_eq!(
+            resolve_openai_wire_api(Some("responses"), Some("https://right.codes/codex/v1")),
+            OpenAiWireApi::Responses
+        );
+        assert_eq!(
+            resolve_openai_wire_api(Some("completions"), Some("https://api.openai.com/v1")),
+            OpenAiWireApi::Completions
+        );
+    }
 }

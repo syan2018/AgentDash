@@ -60,6 +60,53 @@ function buildToolCallEvent(seq: number, status: "pending" | "completed"): Sessi
   };
 }
 
+function buildTextEventWithoutTrace(seq: number, text: string): SessionEventEnvelope {
+  return {
+    session_id: "sess-1",
+    event_seq: seq,
+    occurred_at_ms: seq,
+    committed_at_ms: seq,
+    session_update_type: "agent_message_chunk",
+    turn_id: null,
+    entry_index: null,
+    tool_call_id: null,
+    notification: {
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text,
+        },
+      },
+    } as unknown as SessionNotification,
+  };
+}
+
+function buildMessageIdTextEvent(seq: number, text: string, messageId: string): SessionEventEnvelope {
+  return {
+    session_id: "sess-1",
+    event_seq: seq,
+    occurred_at_ms: seq,
+    committed_at_ms: seq,
+    session_update_type: "agent_message_chunk",
+    turn_id: null,
+    entry_index: null,
+    tool_call_id: null,
+    notification: {
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId,
+        content: {
+          type: "text",
+          text,
+        },
+      },
+    } as unknown as SessionNotification,
+  };
+}
+
 function buildSystemEvent(seq: number, eventType: string): SessionEventEnvelope {
   return {
     session_id: "sess-1",
@@ -147,6 +194,57 @@ describe("reduceStreamState", () => {
 
     const first = reduceStreamState(initial, [buildTextEvent(1, "hello")]);
     const second = reduceStreamState(first, [buildTextEvent(2, "hellohello")]);
+
+    expect(second.entries).toHaveLength(1);
+    const update = second.entries[0]?.update as {
+      content?: { type?: string; text?: string };
+    };
+    expect(update.content?.text).toBe("hello");
+  });
+
+  it("incoming 等于 previous 尾部时仍按增量拼接，不会误吞字", () => {
+    const initial = {
+      entries: [],
+      rawEvents: [],
+      tokenUsage: null,
+      lastAppliedSeq: 0,
+    };
+
+    const first = reduceStreamState(initial, [buildTextEvent(1, "the")]);
+    const second = reduceStreamState(first, [buildTextEvent(2, "he")]);
+
+    expect(second.entries).toHaveLength(1);
+    const update = second.entries[0]?.update as {
+      content?: { type?: string; text?: string };
+    };
+    expect(update.content?.text).toBe("thehe");
+  });
+
+  it("缺少 turn trace 时不做尾部猜测合并，避免跨 turn 误拼接", () => {
+    const initial = {
+      entries: [],
+      rawEvents: [],
+      tokenUsage: null,
+      lastAppliedSeq: 0,
+    };
+
+    const first = reduceStreamState(initial, [buildTextEventWithoutTrace(1, "hello")]);
+    const second = reduceStreamState(first, [buildTextEventWithoutTrace(2, " world")]);
+
+    expect(second.entries).toHaveLength(2);
+  });
+
+  it("缺少 turn/entry trace 但存在同 messageId 时，仍可稳定合并 chunk", () => {
+    const initial = {
+      entries: [],
+      rawEvents: [],
+      tokenUsage: null,
+      lastAppliedSeq: 0,
+    };
+
+    const messageId = "11111111-1111-4111-8111-111111111111";
+    const first = reduceStreamState(initial, [buildMessageIdTextEvent(1, "he", messageId)]);
+    const second = reduceStreamState(first, [buildMessageIdTextEvent(2, "llo", messageId)]);
 
     expect(second.entries).toHaveLength(1);
     const update = second.entries[0]?.update as {

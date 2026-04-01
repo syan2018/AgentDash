@@ -26,8 +26,8 @@ use agentdash_agent::{
 };
 use agentdash_domain::settings::SettingsRepository;
 
-use crate::connectors::pi_agent_mcp::discover_mcp_tools;
-use crate::connectors::pi_agent_provider_registry::{
+use crate::connectors::pi_agent::pi_agent_mcp::discover_mcp_tools;
+use crate::connectors::pi_agent::pi_agent_provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries,
 };
 use crate::hook_events::build_hook_trace_notification;
@@ -512,6 +512,8 @@ impl AgentConnector for PiAgentConnector {
 
         tokio::spawn(async move {
             let mut entry_index: u32 = 0;
+            let mut chunk_message_ids: HashMap<String, String> = HashMap::new();
+            let mut chunk_emit_states: HashMap<String, ChunkEmitState> = HashMap::new();
             let mut event_rx = event_rx;
             let mut hook_trace_rx = hook_trace_rx;
 
@@ -541,6 +543,8 @@ impl AgentConnector for PiAgentConnector {
                                 &source,
                                 &turn_id,
                                 &mut entry_index,
+                                &mut chunk_message_ids,
+                                &mut chunk_emit_states,
                             );
 
                             for n in notifications {
@@ -563,6 +567,8 @@ impl AgentConnector for PiAgentConnector {
                     &source,
                     &turn_id,
                     &mut entry_index,
+                    &mut chunk_message_ids,
+                    &mut chunk_emit_states,
                 );
 
                 for n in notifications {
@@ -732,12 +738,39 @@ fn make_event_notification(
     )
 }
 
+fn ensure_chunk_message_id(
+    cache: &mut HashMap<String, String>,
+    turn_id: &str,
+    entry_index: u32,
+    chunk_kind: &str,
+) -> String {
+    let key = format!("{turn_id}:{entry_index}:{chunk_kind}");
+    if let Some(existing) = cache.get(&key) {
+        return existing.clone();
+    }
+    let generated = uuid::Uuid::new_v4().to_string();
+    cache.insert(key, generated.clone());
+    generated
+}
+
+#[derive(Debug, Default, Clone)]
+struct ChunkEmitState {
+    emitted_text: String,
+    seen_delta: bool,
+}
+
+fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String {
+    format!("{turn_id}:{entry_index}:{chunk_kind}")
+}
+
 fn convert_event_to_notifications(
     event: &AgentEvent,
     session_id: &SessionId,
     source: &AgentDashSourceV1,
     turn_id: &str,
     entry_index: &mut u32,
+    chunk_message_ids: &mut HashMap<String, String>,
+    chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
 ) -> Vec<SessionNotification> {
     match event {
         AgentEvent::MessageUpdate { event, .. } => match event {
@@ -746,8 +779,20 @@ fn convert_event_to_notifications(
                     return Vec::new();
                 }
                 let meta = make_meta(source, turn_id, *entry_index);
+                let key = chunk_stream_key(turn_id, *entry_index, "agent_message_chunk");
+                let state = chunk_emit_states.entry(key).or_default();
+                state.seen_delta = true;
+                state.emitted_text.push_str(text);
+                let message_id = ensure_chunk_message_id(
+                    chunk_message_ids,
+                    turn_id,
+                    *entry_index,
+                    "agent_message_chunk",
+                );
                 let chunk =
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                        .message_id(Some(message_id))
+                        .meta(Some(meta));
                 vec![SessionNotification::new(
                     session_id.clone(),
                     SessionUpdate::AgentMessageChunk(chunk),
@@ -758,8 +803,20 @@ fn convert_event_to_notifications(
                     return Vec::new();
                 }
                 let meta = make_meta(source, turn_id, *entry_index);
+                let key = chunk_stream_key(turn_id, *entry_index, "agent_thought_chunk");
+                let state = chunk_emit_states.entry(key).or_default();
+                state.seen_delta = true;
+                state.emitted_text.push_str(text);
+                let message_id = ensure_chunk_message_id(
+                    chunk_message_ids,
+                    turn_id,
+                    *entry_index,
+                    "agent_thought_chunk",
+                );
                 let chunk =
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(Some(meta));
+                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                        .message_id(Some(message_id))
+                        .meta(Some(meta));
                 vec![SessionNotification::new(
                     session_id.clone(),
                     SessionUpdate::AgentThoughtChunk(chunk),
@@ -776,7 +833,6 @@ fn convert_event_to_notifications(
                 ..
             } = message
             {
-                let meta = make_meta(source, turn_id, *entry_index);
                 let reasoning_text = content
                     .iter()
                     .filter_map(ContentPart::extract_reasoning)
@@ -792,21 +848,87 @@ fn convert_event_to_notifications(
 
                 let mut notifications = Vec::new();
                 if !reasoning_text.is_empty() {
-                    let chunk =
-                        ContentChunk::new(ContentBlock::Text(TextContent::new(reasoning_text)))
-                            .meta(Some(meta.clone()));
-                    notifications.push(SessionNotification::new(
-                        session_id.clone(),
-                        SessionUpdate::AgentThoughtChunk(chunk),
-                    ));
+                    let key = chunk_stream_key(turn_id, *entry_index, "agent_thought_chunk");
+                    let state = chunk_emit_states.get(&key).cloned().unwrap_or_default();
+                    let message_id = ensure_chunk_message_id(
+                        chunk_message_ids,
+                        turn_id,
+                        *entry_index,
+                        "agent_thought_chunk",
+                    );
+                    let to_emit = if state.seen_delta {
+                        if reasoning_text == state.emitted_text {
+                            None
+                        } else if reasoning_text.starts_with(state.emitted_text.as_str()) {
+                            let suffix = &reasoning_text[state.emitted_text.len()..];
+                            if suffix.is_empty() {
+                                None
+                            } else {
+                                Some(suffix.to_string())
+                            }
+                        } else {
+                            // 单路径约束：流式消息已存在增量链路时，不再走 reconcile 兜底快照。
+                            tracing::warn!(
+                                turn_id = %turn_id,
+                                entry_index = *entry_index,
+                                "MessageEnd thought 与已发送增量不一致，已忽略兜底快照"
+                            );
+                            None
+                        }
+                    } else {
+                        Some(reasoning_text.clone())
+                    };
+                    if let Some(payload) = to_emit {
+                        let meta = make_meta(source, turn_id, *entry_index);
+                        let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
+                            .message_id(Some(message_id))
+                            .meta(Some(meta));
+                        notifications.push(SessionNotification::new(
+                            session_id.clone(),
+                            SessionUpdate::AgentThoughtChunk(chunk),
+                        ));
+                    }
                 }
                 if !text.is_empty() {
-                    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
-                        .meta(Some(meta));
-                    notifications.push(SessionNotification::new(
-                        session_id.clone(),
-                        SessionUpdate::AgentMessageChunk(chunk),
-                    ));
+                    let key = chunk_stream_key(turn_id, *entry_index, "agent_message_chunk");
+                    let state = chunk_emit_states.get(&key).cloned().unwrap_or_default();
+                    let message_id = ensure_chunk_message_id(
+                        chunk_message_ids,
+                        turn_id,
+                        *entry_index,
+                        "agent_message_chunk",
+                    );
+                    let to_emit = if state.seen_delta {
+                        if text == state.emitted_text {
+                            None
+                        } else if text.starts_with(state.emitted_text.as_str()) {
+                            let suffix = &text[state.emitted_text.len()..];
+                            if suffix.is_empty() {
+                                None
+                            } else {
+                                Some(suffix.to_string())
+                            }
+                        } else {
+                            tracing::warn!(
+                                turn_id = %turn_id,
+                                entry_index = *entry_index,
+                                "MessageEnd text 与已发送增量不一致，已忽略兜底快照"
+                            );
+                            None
+                        }
+                    } else {
+                        Some(text.clone())
+                    };
+                    if let Some(payload) = to_emit {
+                        let meta = make_meta(source, turn_id, *entry_index);
+                        let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
+                            .message_id(Some(message_id))
+                            .meta(Some(meta));
+                        notifications.push(SessionNotification::new(
+                            session_id.clone(),
+                            SessionUpdate::AgentMessageChunk(chunk),
+                        ));
+                    }
                 }
 
                 let has_streamable_content = content.iter().any(|part| {
@@ -1291,12 +1413,16 @@ mod tests {
         };
 
         let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
             &test_source(),
             "turn-1",
             &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
         );
 
         assert_eq!(notifications.len(), 1);
@@ -1332,12 +1458,16 @@ mod tests {
         };
 
         let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
         let update_notifications = convert_event_to_notifications(
             &update_event,
             &SessionId::new("session-1"),
             &test_source(),
             "turn-1",
             &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
         );
         let end_notifications = convert_event_to_notifications(
             &end_event,
@@ -1345,6 +1475,8 @@ mod tests {
             &test_source(),
             "turn-1",
             &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
         );
 
         match &update_notifications[0].update {
@@ -1377,12 +1509,16 @@ mod tests {
         };
 
         let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
             &test_source(),
             "turn-1",
             &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
         );
 
         assert_eq!(notifications.len(), 2);
@@ -1433,21 +1569,94 @@ mod tests {
         };
 
         let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
             &test_source(),
             "turn-1",
             &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
         );
 
         assert_eq!(notifications.len(), 1);
         assert_eq!(entry_index, 1);
         match &notifications[0].update {
-            SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-                ContentBlock::Text(text) => assert_eq!(text.text, "Agent run aborted"),
-                other => panic!("unexpected content block: {other:?}"),
+            SessionUpdate::AgentMessageChunk(chunk) => {
+                match &chunk.content {
+                    ContentBlock::Text(text) => assert_eq!(text.text, "Agent run aborted"),
+                    other => panic!("unexpected content block: {other:?}"),
+                }
+                let meta = chunk.meta.as_ref().expect("chunk should include _meta");
+                let agentdash = agentdash_acp_meta::parse_agentdash_meta(meta)
+                    .expect("agentdash meta should be parseable");
+                assert!(agentdash.event.is_none());
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn message_end_does_not_repeat_full_snapshot_after_deltas() {
+        let delta_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![ContentPart::text("he")],
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::Stop),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
             },
+            event: AssistantStreamEvent::TextDelta {
+                content_index: 0,
+                text: "he".to_string(),
+            },
+        };
+        let message_end = AgentEvent::MessageEnd {
+            message: AgentMessage::Assistant {
+                content: vec![ContentPart::text("hello")],
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::Stop),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
+        let delta_notifications = convert_event_to_notifications(
+            &delta_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+        );
+        let end_notifications = convert_event_to_notifications(
+            &message_end,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+        );
+
+        assert_eq!(delta_notifications.len(), 1);
+        assert_eq!(end_notifications.len(), 1);
+        match (&delta_notifications[0].update, &end_notifications[0].update) {
+            (SessionUpdate::AgentMessageChunk(delta_chunk), SessionUpdate::AgentMessageChunk(end_chunk)) => {
+                assert_eq!(delta_chunk.message_id, end_chunk.message_id);
+                match &end_chunk.content {
+                    ContentBlock::Text(text) => assert_eq!(text.text, "llo"),
+                    other => panic!("unexpected content block: {other:?}"),
+                }
+            }
             other => panic!("unexpected session update: {other:?}"),
         }
     }
@@ -1472,6 +1681,7 @@ mod tests {
             flow_capabilities: Default::default(),
             system_context: None,
             runtime_delegate: None,
+            identity: None,
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
@@ -1590,6 +1800,7 @@ mod tests {
                     flow_capabilities: Default::default(),
                     system_context: None,
                     runtime_delegate: None,
+                    identity: None,
                 },
             )
             .await;

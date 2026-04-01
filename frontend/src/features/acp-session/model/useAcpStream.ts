@@ -95,11 +95,15 @@ function mergeStreamChunk(previous: string, incoming: string): string {
     const deduped = dedupeRepeatedCumulativeChunk(previous, incoming);
     return deduped ?? incoming;
   }
-  if (previous.endsWith(incoming)) return previous;
 
   const maxOverlap = Math.min(previous.length, incoming.length);
   for (let size = maxOverlap; size > 0; size -= 1) {
     if (previous.slice(-size) === incoming.slice(0, size)) {
+      // 仅接受“部分重叠”；若 incoming 被完全重叠，按增量保守策略走 append，
+      // 避免把合法尾部增量误判为重复而吞字。
+      if (size >= incoming.length) {
+        break;
+      }
       return `${previous}${incoming.slice(size)}`;
     }
   }
@@ -149,6 +153,13 @@ function getEntryIndex(update: SessionUpdate): number | undefined {
   const meta = extractAgentDashMetaFromUpdate(update);
   const idx = meta?.trace?.entryIndex;
   return typeof idx === "number" ? idx : undefined;
+}
+
+function getMessageId(update: SessionUpdate): string | undefined {
+  const candidate = (update as unknown as { messageId?: unknown }).messageId;
+  if (typeof candidate !== "string") return undefined;
+  const trimmed = candidate.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function extractTextContent(update: SessionUpdate): Record<string, unknown> | null {
@@ -250,6 +261,14 @@ function buildEntryId(event: SessionEventEnvelope, update: SessionUpdate): strin
   const toolCallId = event.tool_call_id ?? getToolCallId(update);
   if (toolCallId) {
     return `tool:${toolCallId}`;
+  }
+  const messageId = getMessageId(update);
+  if (messageId && (
+    update.sessionUpdate === "agent_message_chunk" ||
+    update.sessionUpdate === "user_message_chunk" ||
+    update.sessionUpdate === "agent_thought_chunk"
+  )) {
+    return `chunk:${update.sessionUpdate}:msg:${messageId}`;
   }
   const turnId = event.turn_id ?? getTurnId(update);
   const entryIndex = event.entry_index ?? getEntryIndex(update);
@@ -372,8 +391,34 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
 
   const incomingTurnId = event.turn_id ?? getTurnId(update);
   const incomingEntryIndex = event.entry_index ?? getEntryIndex(update);
+  const incomingMessageId = getMessageId(update);
   const newUpdateAny = update as unknown as { content?: { type?: string; text?: string } };
   const incomingText = newUpdateAny.content?.type === "text" ? (newUpdateAny.content.text ?? "") : null;
+
+  if (incomingMessageId !== undefined && incomingText !== null) {
+    for (let i = prev.length - 1; i >= 0; i -= 1) {
+      const candidate = prev[i]!;
+      if (candidate.update.sessionUpdate !== update.sessionUpdate) continue;
+      if (getMessageId(candidate.update) !== incomingMessageId) continue;
+
+      const candidateContent = extractTextContent(candidate.update);
+      const previousText =
+        typeof candidateContent?.text === "string" ? candidateContent.text : "";
+      const mergedText = mergeStreamChunk(previousText, incomingText);
+      if (mergedText === previousText) {
+        return prev;
+      }
+
+      const overwrittenUpdate = replaceTextContentPreservingMeta(
+        candidate.update,
+        update,
+        mergedText,
+      );
+      const next = [...prev];
+      next[i] = { ...candidate, eventSeq: event.event_seq, update: overwrittenUpdate };
+      return next;
+    }
+  }
 
   if (incomingTurnId !== undefined && incomingEntryIndex !== undefined && incomingText !== null) {
     for (let i = prev.length - 1; i >= 0; i -= 1) {
@@ -411,7 +456,19 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
     return [...prev, makeDisplayEntry(event, update)];
   }
 
-  if (incomingTurnId && lastEntry.turnId && lastEntry.turnId !== incomingTurnId) {
+  // 缺少稳定 trace 锚点时不做“猜测式尾部合并”，避免跨 turn 误拼接。
+  if (incomingTurnId === undefined || lastEntry.turnId === undefined) {
+    return [...prev, makeDisplayEntry(event, update)];
+  }
+  if (lastEntry.turnId !== incomingTurnId) {
+    return [...prev, makeDisplayEntry(event, update)];
+  }
+  const lastEntryIndex = getEntryIndex(lastEntry.update);
+  if (
+    incomingEntryIndex !== undefined &&
+    lastEntryIndex !== undefined &&
+    lastEntryIndex !== incomingEntryIndex
+  ) {
     return [...prev, makeDisplayEntry(event, update)];
   }
 

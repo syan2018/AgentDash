@@ -71,7 +71,7 @@ impl TryFrom<AgentRow> for Agent {
                 .map_err(|e| DomainError::InvalidConfig(format!("agents.id: {e}")))?,
             name: row.name,
             agent_type: row.agent_type,
-            base_config: serde_json::from_str(&row.base_config).unwrap_or_default(),
+            base_config: parse_json_column(&row.base_config, "agents.base_config")?,
             created_at: super::parse_pg_timestamp(&row.created_at),
             updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
@@ -81,6 +81,7 @@ impl TryFrom<AgentRow> for Agent {
 #[async_trait::async_trait]
 impl AgentRepository for PostgresAgentRepository {
     async fn create(&self, agent: &Agent) -> Result<(), DomainError> {
+        let base_config_json = serialize_json_column(&agent.base_config, "agents.base_config")?;
         sqlx::query(
             "INSERT INTO agents (id, name, agent_type, base_config, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6)",
@@ -88,7 +89,7 @@ impl AgentRepository for PostgresAgentRepository {
         .bind(agent.id.to_string())
         .bind(&agent.name)
         .bind(&agent.agent_type)
-        .bind(serde_json::to_string(&agent.base_config).unwrap_or_default())
+        .bind(base_config_json)
         .bind(agent.created_at.to_rfc3339())
         .bind(agent.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -117,12 +118,13 @@ impl AgentRepository for PostgresAgentRepository {
     }
 
     async fn update(&self, agent: &Agent) -> Result<(), DomainError> {
+        let base_config_json = serialize_json_column(&agent.base_config, "agents.base_config")?;
         sqlx::query(
             "UPDATE agents SET name = $1, agent_type = $2, base_config = $3, updated_at = $4 WHERE id = $5",
         )
         .bind(&agent.name)
         .bind(&agent.agent_type)
-        .bind(serde_json::to_string(&agent.base_config).unwrap_or_default())
+        .bind(base_config_json)
         .bind(agent.updated_at.to_rfc3339())
         .bind(agent.id.to_string())
         .execute(&self.pool)
@@ -172,7 +174,8 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
             config_override: row
                 .config_override
                 .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok()),
+                .map(|value| parse_json_column(value, "project_agent_links.config_override"))
+                .transpose()?,
             default_lifecycle_key: row.default_lifecycle_key,
             is_default_for_story: row.is_default_for_story,
             is_default_for_task: row.is_default_for_task,
@@ -187,6 +190,10 @@ const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, default_l
 #[async_trait::async_trait]
 impl ProjectAgentLinkRepository for PostgresAgentRepository {
     async fn create(&self, link: &ProjectAgentLink) -> Result<(), DomainError> {
+        let config_override_json = serialize_optional_json_column(
+            link.config_override.as_ref(),
+            "project_agent_links.config_override",
+        )?;
         sqlx::query(
             "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
@@ -194,7 +201,7 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
         .bind(link.id.to_string())
         .bind(link.project_id.to_string())
         .bind(link.agent_id.to_string())
-        .bind(link.config_override.as_ref().and_then(|v| serde_json::to_string(v).ok()))
+        .bind(config_override_json)
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
@@ -261,10 +268,14 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
     }
 
     async fn update(&self, link: &ProjectAgentLink) -> Result<(), DomainError> {
+        let config_override_json = serialize_optional_json_column(
+            link.config_override.as_ref(),
+            "project_agent_links.config_override",
+        )?;
         sqlx::query(
             "UPDATE project_agent_links SET config_override = $1, default_lifecycle_key = $2, is_default_for_story = $3, is_default_for_task = $4, updated_at = $5 WHERE id = $6",
         )
-        .bind(link.config_override.as_ref().and_then(|v| serde_json::to_string(v).ok()))
+        .bind(config_override_json)
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
@@ -298,4 +309,29 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         Ok(())
     }
+}
+
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn serialize_json_column<T: serde::Serialize>(
+    value: &T,
+    field: &str,
+) -> Result<String, DomainError> {
+    serde_json::to_string(value)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn serialize_optional_json_column<T: serde::Serialize>(
+    value: Option<&T>,
+    field: &str,
+) -> Result<Option<String>, DomainError> {
+    value
+        .map(|inner| serialize_json_column(inner, field))
+        .transpose()
 }

@@ -427,12 +427,20 @@ impl TryFrom<TaskRow> for Task {
     type Error = DomainError;
 
     fn try_from(row: TaskRow) -> Result<Self, Self::Error> {
-        let workspace_id = row.workspace_id.as_deref().and_then(|s| s.parse().ok());
+        let workspace_id = row
+            .workspace_id
+            .as_deref()
+            .map(|value| {
+                value.parse().map_err(|error| {
+                    DomainError::InvalidConfig(format!("tasks.workspace_id: {error}"))
+                })
+            })
+            .transpose()?;
 
         let agent_binding: AgentBinding =
-            serde_json::from_str(&row.agent_binding).unwrap_or_default();
+            parse_json_column(&row.agent_binding, "tasks.agent_binding")?;
 
-        let artifacts: Vec<Artifact> = serde_json::from_str(&row.artifacts).unwrap_or_default();
+        let artifacts: Vec<Artifact> = parse_json_column(&row.artifacts, "tasks.artifacts")?;
 
         Ok(Task {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
@@ -450,22 +458,10 @@ impl TryFrom<TaskRow> for Task {
             workspace_id,
             title: row.title,
             description: row.description,
-            status: match row.status.as_str() {
-                "pending" => TaskStatus::Pending,
-                "assigned" => TaskStatus::Assigned,
-                "running" => TaskStatus::Running,
-                "awaiting_verification" => TaskStatus::AwaitingVerification,
-                "completed" => TaskStatus::Completed,
-                "failed" => TaskStatus::Failed,
-                _ => TaskStatus::Pending,
-            },
+            status: parse_task_status(&row.status)?,
             session_id: row.session_id,
             executor_session_id: row.executor_session_id,
-            execution_mode: match row.execution_mode.as_str() {
-                "auto_retry" => TaskExecutionMode::AutoRetry,
-                "one_shot" => TaskExecutionMode::OneShot,
-                _ => TaskExecutionMode::Standard,
-            },
+            execution_mode: parse_task_execution_mode(&row.execution_mode)?,
             agent_binding,
             artifacts,
             created_at: super::parse_pg_timestamp(&row.created_at),
@@ -490,6 +486,39 @@ fn build_task_created_payload(task: &Task) -> serde_json::Value {
         "story_id": task.story_id,
         "reason": "task_created_by_user"
     })
+}
+
+fn parse_json_column<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn parse_task_status(raw: &str) -> Result<TaskStatus, DomainError> {
+    match raw {
+        "pending" => Ok(TaskStatus::Pending),
+        "assigned" => Ok(TaskStatus::Assigned),
+        "running" => Ok(TaskStatus::Running),
+        "awaiting_verification" => Ok(TaskStatus::AwaitingVerification),
+        "completed" => Ok(TaskStatus::Completed),
+        "failed" => Ok(TaskStatus::Failed),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "tasks.status: 未知状态 `{raw}`"
+        ))),
+    }
+}
+
+fn parse_task_execution_mode(raw: &str) -> Result<TaskExecutionMode, DomainError> {
+    match raw {
+        "standard" => Ok(TaskExecutionMode::Standard),
+        "auto_retry" => Ok(TaskExecutionMode::AutoRetry),
+        "one_shot" => Ok(TaskExecutionMode::OneShot),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "tasks.execution_mode: 未知模式 `{raw}`"
+        ))),
+    }
 }
 
 impl StorySnapshotRow {

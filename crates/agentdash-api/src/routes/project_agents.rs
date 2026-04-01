@@ -143,6 +143,16 @@ mod tests {
         assert!(value.get("sharedContextMounts").is_none());
         assert!(value.get("presetName").is_none());
     }
+
+    #[test]
+    fn parse_project_agent_session_label_requires_expected_prefix() {
+        assert_eq!(
+            parse_project_agent_session_label("project_agent:agent-1"),
+            Some("agent-1")
+        );
+        assert_eq!(parse_project_agent_session_label("agent-1"), None);
+        assert_eq!(parse_project_agent_session_label("project_agent:   "), None);
+    }
 }
 
 pub async fn list_project_agents(
@@ -168,15 +178,18 @@ pub async fn list_project_agents(
 
     let mut response = Vec::with_capacity(links.len());
     for link in &links {
-        let Some(agent) = state
+        let agent = state
             .repos
             .agent_repo
             .get_by_id(link.agent_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
-        else {
-            continue;
-        };
+            .ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "Project Agent Link `{}` 指向不存在的 Agent `{}`",
+                    link.id, link.agent_id
+                ))
+            })?;
         let bridge = build_agent_bridge(&agent, link);
         let session = find_project_agent_session(&state, project.id, &bridge.key).await?;
         response.push(build_project_agent_summary(&project, &bridge, session));
@@ -242,25 +255,19 @@ pub async fn open_project_agent_session(
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?
         {
+            let session_id = binding.session_id.clone();
+            let binding_id = binding.id.to_string();
             let session = Some(ProjectAgentSessionResponse {
-                binding_id: binding.id.to_string(),
-                session_id: binding.session_id,
+                binding_id: binding_id.clone(),
+                session_id: session_id.clone(),
                 session_title: Some(meta.title),
                 last_activity: Some(meta.updated_at),
             });
             let summary = build_project_agent_summary(&project, &agent, session);
             return Ok(Json(OpenProjectAgentSessionResponse {
                 created: false,
-                session_id: summary
-                    .session
-                    .as_ref()
-                    .map(|item| item.session_id.clone())
-                    .unwrap_or_default(),
-                binding_id: summary
-                    .session
-                    .as_ref()
-                    .map(|item| item.binding_id.clone())
-                    .unwrap_or_default(),
+                session_id,
+                binding_id,
                 agent: summary,
             }));
         }
@@ -314,8 +321,7 @@ pub async fn open_project_agent_session(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     // 自动启动 Lifecycle Run（如果 Agent Link 配置了 default_lifecycle_key）
-    if let Some(lifecycle_key) =
-        resolve_agent_default_lifecycle(&state, project.id, &agent_key).await
+    if let Some(lifecycle_key) = resolve_agent_default_lifecycle(&state, project.id, agent_id).await
         && let Err(err) = auto_start_lifecycle_run(&state, project.id, &lifecycle_key).await
     {
         tracing::warn!(
@@ -375,8 +381,20 @@ pub(crate) async fn resolve_project_workspace(
     Ok(None)
 }
 
+pub(crate) const PROJECT_AGENT_SESSION_LABEL_PREFIX: &str = "project_agent:";
+
 pub(crate) fn project_agent_session_label(agent_key: &str) -> String {
-    format!("project_agent:{}", agent_key.trim())
+    format!("{PROJECT_AGENT_SESSION_LABEL_PREFIX}{}", agent_key.trim())
+}
+
+pub(crate) fn parse_project_agent_session_label(label: &str) -> Option<&str> {
+    let agent_key = label
+        .trim()
+        .strip_prefix(PROJECT_AGENT_SESSION_LABEL_PREFIX)?;
+    if agent_key.trim().is_empty() {
+        return None;
+    }
+    Some(agent_key)
 }
 
 fn build_project_agent_summary(
@@ -545,7 +563,6 @@ pub async fn list_project_agent_sessions(
 ///   Http:  { "type": "http",  "name": "...", "url": "...", "headers": [...] }
 ///   SSE:   { "type": "sse",   "name": "...", "url": "...", "headers": [...] }
 ///   Stdio: { "type": "stdio", "name": "...", "command": "...", "args": [...], "env": [...] }
-///   Backward compat: missing `type` → has `url` = Http, has `command` = Stdio
 fn parse_preset_mcp_servers(
     config: &serde_json::Value,
 ) -> (Vec<McpServer>, Vec<serde_json::Value>) {
@@ -569,25 +586,8 @@ fn parse_preset_mcp_servers(
             .unwrap_or("")
             .to_string();
 
-        // Determine transport type
-        let transport = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let has_url = obj.contains_key("url");
-        let has_command = obj.contains_key("command");
-
-        let effective_type = if transport == "http" {
-            "http"
-        } else if transport == "sse" {
-            "sse"
-        } else if transport == "stdio" {
-            "stdio"
-        } else if has_url {
-            // Backward compat: no type, has url → Http
-            "http"
-        } else if has_command {
-            // Backward compat: no type, has command → Stdio
-            "stdio"
-        } else {
-            tracing::warn!(name = %name, "MCP server entry 缺少 type/url/command，跳过");
+        let Some(effective_type) = obj.get("type").and_then(|v| v.as_str()) else {
+            tracing::warn!(name = %name, "MCP server entry 缺少 type，跳过");
             continue;
         };
 
@@ -655,7 +655,9 @@ fn parse_preset_mcp_servers(
                     "env": env,
                 }));
             }
-            _ => {}
+            other => {
+                tracing::warn!(name = %name, transport = %other, "MCP server entry type 非法，跳过");
+            }
         }
     }
 
@@ -732,15 +734,19 @@ pub async fn list_project_agent_links(
 
     let mut response = Vec::with_capacity(links.len());
     for link in &links {
-        if let Some(agent) = state
+        let agent = state
             .repos
             .agent_repo
             .get_by_id(link.agent_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
-        {
-            response.push(build_link_response(&agent, link));
-        }
+            .ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "Project Agent Link `{}` 指向不存在的 Agent `{}`",
+                    link.id, link.agent_id
+                ))
+            })?;
+        response.push(build_link_response(&agent, link));
     }
     Ok(Json(response))
 }
@@ -1051,25 +1057,19 @@ fn executor_config_from_agent_config(agent_type: &str, config: &serde_json::Valu
     ec
 }
 
-/// 从新模型的 agent link 或旧模型的 AgentPreset 查找默认 lifecycle key
 async fn resolve_agent_default_lifecycle(
     state: &Arc<AppState>,
     project_id: Uuid,
-    agent_key: &str,
+    agent_id: Uuid,
 ) -> Option<String> {
-    // 尝试按 UUID 解析 — 如果 agent_key 是 UUID 则查 agent_link
-    if let Ok(agent_id) = Uuid::parse_str(agent_key)
-        && let Ok(Some(link)) = state
-            .repos
-            .agent_link_repo
-            .find_by_project_and_agent(project_id, agent_id)
-            .await
-    {
-        return link.default_lifecycle_key;
-    }
-
-    // 旧模型 preset 不支持 lifecycle 绑定
-    None
+    state
+        .repos
+        .agent_link_repo
+        .find_by_project_and_agent(project_id, agent_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|link| link.default_lifecycle_key)
 }
 
 /// 自动启动 lifecycle run（首步含 workflow_key 时同时激活首步）

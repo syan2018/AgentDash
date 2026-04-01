@@ -181,9 +181,7 @@ pub fn enum_to_string<T: Serialize>(value: &T) -> String {
 }
 
 fn serialize_or_fail<T: Serialize>(value: &T, field: &str) -> Value {
-    serde_json::to_value(value).unwrap_or_else(|error| {
-        panic!("序列化 {field} 失败: {error}")
-    })
+    serde_json::to_value(value).unwrap_or_else(|error| panic!("序列化 {field} 失败: {error}"))
 }
 
 #[cfg(test)]
@@ -232,7 +230,10 @@ mod tests {
             tool_status_to_string(ToolCallStatus::InProgress),
             "in_progress"
         );
-        assert_eq!(tool_status_to_string(ToolCallStatus::Completed), "completed");
+        assert_eq!(
+            tool_status_to_string(ToolCallStatus::Completed),
+            "completed"
+        );
         assert_eq!(tool_status_to_string(ToolCallStatus::Failed), "failed");
     }
 
@@ -251,14 +252,9 @@ mod tests {
             created_at: chrono::Utc::now(),
         });
 
-        let error = upsert_tool_execution_artifact(
-            &mut task,
-            "sess-1",
-            "turn-1",
-            "call-1",
-            Map::new(),
-        )
-        .expect_err("非对象 artifact 应直接报错");
+        let error =
+            upsert_tool_execution_artifact(&mut task, "sess-1", "turn-1", "call-1", Map::new())
+                .expect_err("非对象 artifact 应直接报错");
 
         assert!(error.to_string().contains("内容不是对象"));
     }

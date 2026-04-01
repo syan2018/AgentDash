@@ -375,6 +375,9 @@ impl TaskLifecycleService {
         self.dispatcher.cancel_session(&session_id).await?;
 
         if session_was_running {
+            let backend_id =
+                resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task)
+                    .await?;
             let previous_status = task.status.clone();
             task.status = TaskStatus::Failed;
             self.repos
@@ -382,11 +385,6 @@ impl TaskLifecycleService {
                 .update(&task)
                 .await
                 .map_err(map_domain_error)?;
-
-            let backend_id =
-                resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task)
-                    .await
-                    .unwrap_or_else(|_| "unknown".to_string());
 
             gw_append_task_change(
                 &self.repos,

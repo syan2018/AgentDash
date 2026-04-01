@@ -152,7 +152,7 @@ pub async fn persist_tool_call_artifact(
         input.turn_id,
         input.tool_call_id,
         input.patch,
-    );
+    )?;
     if !changed {
         return Ok(());
     }

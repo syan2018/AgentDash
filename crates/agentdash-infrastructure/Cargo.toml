@@ -18,3 +18,5 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 async-trait = "0.1"
+anyhow = { workspace = true }
+postgresql_embedded = { workspace = true }

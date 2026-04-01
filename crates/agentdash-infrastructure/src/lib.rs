@@ -1,4 +1,6 @@
 pub mod persistence;
+pub mod postgres_runtime;
+pub mod migration;
 
 pub use persistence::sqlite::SqliteAgentRepository;
 pub use persistence::sqlite::SqliteAuthSessionRepository;
@@ -13,3 +15,16 @@ pub use persistence::sqlite::SqliteTaskRepository;
 pub use persistence::sqlite::SqliteUserDirectoryRepository;
 pub use persistence::sqlite::SqliteWorkflowRepository;
 pub use persistence::sqlite::SqliteWorkspaceRepository;
+pub use persistence::postgres::PostgresAgentRepository;
+pub use persistence::postgres::PostgresAuthSessionRepository;
+pub use persistence::postgres::PostgresBackendRepository;
+pub use persistence::postgres::PostgresCanvasRepository;
+pub use persistence::postgres::PostgresProjectRepository;
+pub use persistence::postgres::PostgresSessionBindingRepository;
+pub use persistence::postgres::PostgresSessionRepository;
+pub use persistence::postgres::PostgresSettingsRepository;
+pub use persistence::postgres::PostgresStoryRepository;
+pub use persistence::postgres::PostgresTaskRepository;
+pub use persistence::postgres::PostgresUserDirectoryRepository;
+pub use persistence::postgres::PostgresWorkflowRepository;
+pub use persistence::postgres::PostgresWorkspaceRepository;

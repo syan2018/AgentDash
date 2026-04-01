@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use tokio::sync::RwLock;
 
 use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
@@ -35,11 +35,11 @@ use agentdash_domain::workflow::{
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
-    SqliteAgentRepository, SqliteAuthSessionRepository, SqliteBackendRepository,
-    SqliteCanvasRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
-    SqliteSessionRepository,
-    SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
-    SqliteUserDirectoryRepository, SqliteWorkflowRepository, SqliteWorkspaceRepository,
+    PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
+    PostgresCanvasRepository, PostgresProjectRepository, PostgresSessionBindingRepository,
+    PostgresSessionRepository, PostgresSettingsRepository, PostgresStoryRepository,
+    PostgresTaskRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
+    PostgresWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceDiscoveryRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
@@ -102,7 +102,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(pool: SqlitePool) -> Result<Arc<Self>> {
+    pub async fn new(pool: PgPool) -> Result<Arc<Self>> {
         Self::new_with_plugins(pool, builtin_plugins()).await
     }
 
@@ -110,89 +110,37 @@ impl AppState {
     ///
     /// 返回 `Arc<Self>` 以支持内部 `DeferredTurnDispatcher` 的延迟绑定。
     pub async fn new_with_plugins(
-        pool: SqlitePool,
+        pool: PgPool,
         plugins: Vec<Box<dyn AgentDashPlugin>>,
     ) -> Result<Arc<Self>> {
         let plugin_registration = collect_plugin_registration(plugins)
             .map_err(|err| anyhow::anyhow!("插件注册失败: {err}"))?;
 
         // 按依赖顺序初始化：projects → workspaces → stories → tasks
-        let project_repo = Arc::new(SqliteProjectRepository::new(pool.clone()));
-        project_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
 
-        let canvas_repo = Arc::new(SqliteCanvasRepository::new(pool.clone()));
-        canvas_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
 
-        let workspace_repo = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
-        workspace_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
 
-        let story_repo = Arc::new(SqliteStoryRepository::new(pool.clone()));
-        story_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
 
-        let task_repo = Arc::new(SqliteTaskRepository::new(pool.clone()));
-        task_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let session_binding_repo = Arc::new(SqliteSessionBindingRepository::new(pool.clone()));
-        session_binding_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let session_repo = Arc::new(SqliteSessionRepository::new(pool.clone()));
-        session_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let task_repo = Arc::new(PostgresTaskRepository::new(pool.clone()));
+        let session_binding_repo = Arc::new(PostgresSessionBindingRepository::new(pool.clone()));
+        let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
 
-        let backend_repo = Arc::new(SqliteBackendRepository::new(pool.clone()));
-        backend_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
 
-        let user_directory_repo = Arc::new(SqliteUserDirectoryRepository::new(pool.clone()));
-        user_directory_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
 
-        let settings_repo = Arc::new(SqliteSettingsRepository::new(pool.clone()));
-        settings_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let settings_repo = Arc::new(PostgresSettingsRepository::new(pool.clone()));
 
-        let agent_repo = Arc::new(SqliteAgentRepository::new(pool.clone()));
-        agent_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let agent_repo = Arc::new(PostgresAgentRepository::new(pool.clone()));
 
-        let auth_session_repo = Arc::new(SqliteAuthSessionRepository::new(pool.clone()));
-        auth_session_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
         let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
 
-        let workflow_repo = Arc::new(SqliteWorkflowRepository::new(pool));
-        workflow_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool));
 
         let workspace_root = std::env::current_dir()?;
         let backend_registry = BackendRegistry::new();

@@ -15,7 +15,6 @@ pub mod task_agent_context;
 pub mod workspace_resolution;
 
 use anyhow::Result;
-use sqlx::sqlite::SqlitePoolOptions;
 
 use agentdash_plugin_api::AgentDashPlugin;
 
@@ -27,17 +26,15 @@ pub use plugins::builtin_plugins;
 /// 接受插件列表，在 DI 组装完成后启动 HTTP 服务。
 /// 开源版通常传入 `builtin_plugins()`；企业版在此基础上追加私有插件。
 pub async fn run_server(plugins: Vec<Box<dyn AgentDashPlugin>>) -> Result<()> {
-    let db_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:agentdash.db?mode=rwc".into());
+    let db_runtime =
+        agentdash_infrastructure::postgres_runtime::PostgresRuntime::resolve("agentdash_api", 5)
+            .await?;
+    tracing::info!(database_url = %db_runtime.connection_url, "数据库已就绪");
+    agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    tracing::info!("连接数据库: {}", db_url);
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect(&db_url)
-        .await?;
-
-    let state = AppState::new_with_plugins(pool, plugins).await?;
+    let state = AppState::new_with_plugins(db_runtime.pool.clone(), plugins).await?;
 
     let app = routes::create_router(state);
 

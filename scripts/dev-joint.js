@@ -72,13 +72,17 @@ async function main() {
   const serverBinary = resolveBinary('agentdash-server');
   if (!config.skipServer) {
     console.log(`[2/4] 启动 agentdash-server (:${config.serverPort})...`);
+    const serverEnv = {
+      ...process.env,
+      HOST: config.serverHost,
+      PORT: String(config.serverPort)
+    };
+    // 仅当明确提供 PostgreSQL URL 时透传，避免 sqlite 默认值误导运行时判断。
+    if (isPostgresUrl(config.databaseUrl)) {
+      serverEnv.DATABASE_URL = config.databaseUrl;
+    }
     startManagedProcess(serverBinary, [], 'agentdash-server', {
-      env: {
-        ...process.env,
-        HOST: config.serverHost,
-        PORT: String(config.serverPort),
-        DATABASE_URL: config.databaseUrl
-      }
+      env: serverEnv
     });
   } else {
     console.log(`[2/4] 跳过 agentdash-server，等待现有服务 (:${config.serverPort})...`);
@@ -137,7 +141,7 @@ function parseArgs(args) {
     accessibleRoots: root,
     backendId: 'local-dev-1',
     backendName: 'dev-local',
-    databaseUrl: process.env.DATABASE_URL || 'sqlite:agentdash.db?mode=rwc',
+    databaseUrl: process.env.DATABASE_URL || 'embedded-postgresql(auto)',
     frontendMode: 'dev',
     frontendHost: '127.0.0.1',
     frontendPort: 5380,
@@ -310,8 +314,16 @@ function printBanner() {
   console.log(`  roots:      ${config.accessibleRoots}`);
   console.log(`  backend_id: ${config.backendId}`);
   console.log(`  frontend:   ${config.frontendMode}`);
-  console.log(`  db:         ${config.databaseUrl}`);
+  console.log(`  db:         ${isPostgresUrl(config.databaseUrl) ? config.databaseUrl : 'embedded-postgresql(auto)'}`);
   console.log('');
+}
+
+function isPostgresUrl(value) {
+  if (!value || typeof value !== 'string') {
+    return false;
+  }
+  const lower = value.toLowerCase();
+  return lower.startsWith('postgres://') || lower.startsWith('postgresql://');
 }
 
 async function runStep0Cleanup() {

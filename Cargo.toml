@@ -38,7 +38,8 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 schemars = { version = "1.0", features = ["uuid1", "chrono04"] }
 
 # 数据库
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "sqlite", "chrono", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "sqlite", "chrono", "uuid"] }
+postgresql_embedded = "0.20"
 
 # 错误处理
 anyhow = "1.0"

@@ -1,4 +1,3 @@
-use agent_client_protocol::SessionNotification;
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
     HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
@@ -9,6 +8,7 @@ use tokio::sync::broadcast;
 use super::hook_events::build_hook_trace_notification;
 use super::hub::SessionHub;
 use super::hub_support::session_hook_trace_decision;
+use super::persistence::PersistedSessionEvent;
 
 pub(super) struct HookTriggerInput<'a> {
     pub session_id: &'a str,
@@ -24,7 +24,7 @@ impl SessionHub {
         &self,
         hook_session: &dyn HookSessionRuntimeAccess,
         input: &HookTriggerInput<'_>,
-        tx: &broadcast::Sender<SessionNotification>,
+        _tx: &broadcast::Sender<PersistedSessionEvent>,
     ) {
         let HookTriggerInput {
             session_id,
@@ -76,8 +76,7 @@ impl SessionHub {
                 if let Some(notification) =
                     build_hook_trace_notification(session_id, turn_id, source.clone(), &trace)
                 {
-                    let _ = self.store.append(session_id, &notification).await;
-                    let _ = tx.send(notification);
+                    let _ = self.persist_notification(session_id, notification).await;
                 }
             }
             Err(error) => {

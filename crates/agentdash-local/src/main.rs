@@ -11,7 +11,9 @@ use tracing_subscriber::EnvFilter;
 use agentdash_application::session::SessionHub;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
+use agentdash_infrastructure::SqliteSessionRepository;
 use agentdash_spi::AgentConnector;
+use sqlx::sqlite::SqliteConnectOptions;
 
 #[derive(Parser, Debug)]
 #[command(name = "agentdash-local", about = "AgentDash 本机后端")]
@@ -90,7 +92,24 @@ async fn main() -> anyhow::Result<()> {
             VibeKanbanExecutorsConnector::new(workspace_root.clone()),
         )];
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let hub = SessionHub::new(workspace_root, connector.clone());
+        let db_path = workspace_root.join(".agentdash").join("agentdash-local.db");
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let pool = sqlx::SqlitePool::connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await?;
+        let session_repo = Arc::new(SqliteSessionRepository::new(pool));
+        session_repo.initialize().await?;
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            workspace_root,
+            connector.clone(),
+            None,
+            session_repo,
+        );
 
         // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
         if let Err(e) = hub.recover_interrupted_sessions().await {

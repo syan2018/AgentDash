@@ -5,6 +5,7 @@ pub use persistence::sqlite::SqliteAuthSessionRepository;
 pub use persistence::sqlite::SqliteBackendRepository;
 pub use persistence::sqlite::SqliteCanvasRepository;
 pub use persistence::sqlite::SqliteProjectRepository;
+pub use persistence::sqlite::SqliteSessionRepository;
 pub use persistence::sqlite::SqliteSessionBindingRepository;
 pub use persistence::sqlite::SqliteSettingsRepository;
 pub use persistence::sqlite::SqliteStoryRepository;

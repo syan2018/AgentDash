@@ -1,5 +1,6 @@
 import { buildApiPath } from "../api/origin";
 import { authenticatedFetch } from "../api/client";
+import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type {
   AgentBinding,
   ContextSourceRef,
@@ -43,6 +44,26 @@ export interface SessionMeta {
   title: string;
   createdAt: number;
   updatedAt: number;
+  lastEventSeq?: number;
+}
+
+export interface PersistedSessionEvent {
+  session_id: string;
+  event_seq: number;
+  occurred_at_ms: number;
+  committed_at_ms: number;
+  session_update_type: string;
+  turn_id: string | null;
+  entry_index: number | null;
+  tool_call_id: string | null;
+  notification: SessionNotification;
+}
+
+export interface SessionEventsPage {
+  snapshot_seq: number;
+  events: PersistedSessionEvent[];
+  has_more: boolean;
+  next_after_seq: number;
 }
 
 export interface FetchSessionsOptions {
@@ -75,6 +96,42 @@ export async function fetchSessionMeta(id: string): Promise<SessionMeta> {
   const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}`));
   if (!res.ok) throw new Error(`获取会话详情失败: HTTP ${res.status}`);
   return res.json();
+}
+
+function mapPersistedSessionEvent(raw: Record<string, unknown>): PersistedSessionEvent {
+  return {
+    session_id: String(raw.session_id ?? ""),
+    event_seq: Number(raw.event_seq ?? 0),
+    occurred_at_ms: Number(raw.occurred_at_ms ?? 0),
+    committed_at_ms: Number(raw.committed_at_ms ?? 0),
+    session_update_type: String(raw.session_update_type ?? ""),
+    turn_id: raw.turn_id != null ? String(raw.turn_id) : null,
+    entry_index: raw.entry_index != null ? Number(raw.entry_index) : null,
+    tool_call_id: raw.tool_call_id != null ? String(raw.tool_call_id) : null,
+    notification: raw.notification as SessionNotification,
+  };
+}
+
+export async function fetchSessionEvents(
+  sessionId: string,
+  afterSeq = 0,
+  limit = 500,
+): Promise<SessionEventsPage> {
+  const params = new URLSearchParams();
+  params.set("after_seq", String(afterSeq));
+  params.set("limit", String(limit));
+  const res = await authenticatedFetch(
+    `${buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/events`)}?${params.toString()}`,
+  );
+  if (!res.ok) throw new Error(`获取会话事件失败: HTTP ${res.status}`);
+  const raw = await res.json() as Record<string, unknown>;
+  const eventList = Array.isArray(raw.events) ? raw.events as Record<string, unknown>[] : [];
+  return {
+    snapshot_seq: Number(raw.snapshot_seq ?? afterSeq),
+    events: eventList.map(mapPersistedSessionEvent),
+    has_more: Boolean(raw.has_more),
+    next_after_seq: Number(raw.next_after_seq ?? afterSeq),
+  };
 }
 
 export async function deleteSession(id: string): Promise<void> {

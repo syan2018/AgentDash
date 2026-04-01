@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -10,7 +11,7 @@ use tokio::sync::{Mutex, broadcast};
 use super::hook_messages as msg;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub_support::*;
-use super::session_store::SessionStore;
+use super::persistence::SessionPersistence;
 pub use super::types::*;
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
@@ -24,41 +25,49 @@ pub struct SessionHub {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
-    pub(super) store: SessionStore,
+    pub(super) persistence: Arc<dyn SessionPersistence>,
 }
 
 impl SessionHub {
-    pub fn new(workspace_root: PathBuf, connector: Arc<dyn AgentConnector>) -> Self {
-        Self::new_with_hooks(workspace_root, connector, None)
-    }
-
-    pub fn new_with_hooks(
+    pub fn new_with_hooks_and_persistence(
         workspace_root: PathBuf,
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
+        persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
-        let store = SessionStore::new(workspace_root.join(".agentdash").join("sessions"));
         Self {
             workspace_root,
             connector,
             hook_provider,
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            store,
+            persistence,
         }
     }
 
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。
     pub async fn recover_interrupted_sessions(&self) -> std::io::Result<()> {
-        let sessions = self.store.list_sessions().await?;
+        let sessions = self.persistence.list_sessions().await?;
         for mut meta in sessions {
             if meta.last_execution_status == "running" {
                 tracing::warn!(
                     session_id = %meta.id,
                     "启动恢复：session 上次未正常结束，标记为 interrupted"
                 );
+                if let Some(turn_id) = meta.last_turn_id.clone() {
+                    let source = AgentDashSourceV1::new("agentdash-server", "system");
+                    let notification = build_turn_terminal_notification(
+                        &meta.id,
+                        &source,
+                        &turn_id,
+                        TurnTerminalKind::Interrupted,
+                        Some("检测到进程重启，已将上次未完成执行标记为 interrupted".to_string()),
+                    );
+                    let _ = self.persist_notification(&meta.id, notification).await?;
+                    continue;
+                }
                 meta.last_execution_status = "interrupted".to_string();
                 meta.updated_at = chrono::Utc::now().timestamp_millis();
-                self.store.write_meta(&meta).await?;
+                self.persistence.save_session_meta(&meta).await?;
             }
         }
         Ok(())
@@ -80,6 +89,7 @@ impl SessionHub {
             title: title.to_string(),
             created_at: now,
             updated_at: now,
+            last_event_seq: 0,
             last_execution_status: "idle".to_string(),
             last_turn_id: None,
             last_terminal_message: None,
@@ -87,16 +97,16 @@ impl SessionHub {
             executor_session_id: None,
             companion_context: None,
         };
-        self.store.write_meta(&meta).await?;
+        self.persistence.create_session(&meta).await?;
         Ok(meta)
     }
 
     pub async fn list_sessions(&self) -> std::io::Result<Vec<SessionMeta>> {
-        self.store.list_sessions().await
+        self.persistence.list_sessions().await
     }
 
     pub async fn get_session_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
-        self.store.read_meta(session_id).await
+        self.persistence.get_session_meta(session_id).await
     }
 
     /// 批量获取多个 session 的 meta，并发读取。
@@ -109,10 +119,10 @@ impl SessionHub {
         let futures: Vec<_> = session_ids
             .iter()
             .map(|id| {
-                let store = self.store.clone();
+                let persistence = self.persistence.clone();
                 let id = id.clone();
                 async move {
-                    let meta = store.read_meta(&id).await?;
+                    let meta = persistence.get_session_meta(&id).await?;
                     Ok::<_, std::io::Error>((id, meta))
                 }
             })
@@ -152,8 +162,8 @@ impl SessionHub {
                 result.insert(id.clone(), SessionExecutionState::Running { turn_id: None });
             } else {
                 let status = self
-                    .store
-                    .read_meta(id)
+                    .persistence
+                    .get_session_meta(id)
                     .await
                     .ok()
                     .flatten()
@@ -173,12 +183,12 @@ impl SessionHub {
     where
         F: FnOnce(&mut SessionMeta),
     {
-        let Some(mut meta) = self.store.read_meta(session_id).await? else {
+        let Some(mut meta) = self.persistence.get_session_meta(session_id).await? else {
             return Ok(None);
         };
         updater(&mut meta);
         meta.updated_at = chrono::Utc::now().timestamp_millis();
-        self.store.write_meta(&meta).await?;
+        self.persistence.save_session_meta(&meta).await?;
         Ok(Some(meta))
     }
 
@@ -201,7 +211,7 @@ impl SessionHub {
             });
         }
 
-        let Some(meta) = self.store.read_meta(session_id).await? else {
+        let Some(meta) = self.persistence.get_session_meta(session_id).await? else {
             return Ok(SessionExecutionState::Idle);
         };
 
@@ -213,13 +223,13 @@ impl SessionHub {
             let mut sessions = self.sessions.lock().await;
             sessions.remove(session_id);
         }
-        self.store.delete(session_id).await
+        self.persistence.delete_session(session_id).await
     }
 
     pub async fn ensure_session(
         &self,
         session_id: &str,
-    ) -> broadcast::Receiver<SessionNotification> {
+    ) -> broadcast::Receiver<super::persistence::PersistedSessionEvent> {
         let mut sessions = self.sessions.lock().await;
         let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
             let (tx, _rx) = broadcast::channel(1024);
@@ -253,7 +263,7 @@ impl SessionHub {
             }
         }
 
-        if self.store.read_meta(session_id).await?.is_none() {
+        if self.persistence.get_session_meta(session_id).await?.is_none() {
             return Ok(None);
         }
 
@@ -308,13 +318,33 @@ impl SessionHub {
     pub async fn subscribe_with_history(
         &self,
         session_id: &str,
-    ) -> (
-        Vec<SessionNotification>,
-        broadcast::Receiver<SessionNotification>,
-    ) {
-        let history = self.store.read_all(session_id).await.unwrap_or_default();
+    ) -> io::Result<SessionEventSubscription> {
+        self.subscribe_after(session_id, 0).await
+    }
+
+    pub async fn subscribe_after(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+    ) -> io::Result<SessionEventSubscription> {
         let rx = self.ensure_session(session_id).await;
-        (history, rx)
+        let backlog = self.persistence.read_backlog(session_id, after_seq).await?;
+        Ok(SessionEventSubscription {
+            snapshot_seq: backlog.snapshot_seq,
+            backlog: backlog.events,
+            rx,
+        })
+    }
+
+    pub async fn list_event_page(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+        limit: u32,
+    ) -> io::Result<super::persistence::SessionEventPage> {
+        self.persistence
+            .list_event_page(session_id, after_seq, limit)
+            .await
     }
 
     /// 向指定 session 主动注入通知：先持久化，再广播。
@@ -323,18 +353,7 @@ impl SessionHub {
         session_id: &str,
         notification: SessionNotification,
     ) -> std::io::Result<()> {
-        self.store.append(session_id, &notification).await?;
-
-        let tx = {
-            let mut sessions = self.sessions.lock().await;
-            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
-                let (tx, _rx) = broadcast::channel(1024);
-                build_session_runtime(tx)
-            });
-            runtime.tx.clone()
-        };
-
-        let _ = tx.send(notification);
+        let _ = self.persist_notification(session_id, notification).await?;
         Ok(())
     }
 
@@ -361,15 +380,15 @@ impl SessionHub {
         }
 
         let history = self
-            .store
-            .read_all(session_id)
+            .persistence
+            .list_all_events(session_id)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
         let mut latest_turn_id = current_turn_id;
         let mut terminal_by_turn: HashMap<String, (TurnTerminalKind, Option<String>)> =
             HashMap::new();
-        for notification in history {
-            match &notification.update {
+        for event in history {
+            match &event.notification.update {
                 SessionUpdate::UserMessageChunk(chunk) => {
                     if let Some(turn_id) = parse_turn_id(chunk.meta.as_ref()) {
                         latest_turn_id = Some(turn_id);
@@ -401,12 +420,30 @@ impl SessionHub {
             TurnTerminalKind::Interrupted,
             Some("检测到未收尾的旧执行，已手动标记为 interrupted".to_string()),
         );
-        self.store
-            .append(session_id, &interrupted)
+        let _ = tx;
+        let _ = self
+            .persist_notification(session_id, interrupted)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let _ = tx.send(interrupted);
         Ok(())
+    }
+
+    pub(super) async fn persist_notification(
+        &self,
+        session_id: &str,
+        notification: SessionNotification,
+    ) -> io::Result<super::persistence::PersistedSessionEvent> {
+        let persisted = self.persistence.append_event(session_id, &notification).await?;
+        let tx = {
+            let mut sessions = self.sessions.lock().await;
+            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+                let (tx, _rx) = broadcast::channel(1024);
+                build_session_runtime(tx)
+            });
+            runtime.tx.clone()
+        };
+        let _ = tx.send(persisted.clone());
+        Ok(persisted)
     }
 
     /// Hook auto-resume: schedule a delayed follow-up prompt in a separate task.
@@ -458,6 +495,7 @@ impl SessionHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::MemorySessionPersistence;
     use agent_client_protocol::ContentBlock;
     use agentdash_spi::PromptPayload;
     use agentdash_spi::hooks::HookTrigger;
@@ -469,6 +507,19 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{Mutex as TokioMutex, mpsc};
     use tokio_stream::wrappers::ReceiverStream;
+
+    fn test_hub(
+        workspace_root: PathBuf,
+        connector: Arc<dyn AgentConnector>,
+        hook_provider: Option<Arc<dyn agentdash_spi::hooks::ExecutionHookProvider>>,
+    ) -> SessionHub {
+        SessionHub::new_with_hooks_and_persistence(
+            workspace_root,
+            connector,
+            hook_provider,
+            Arc::new(MemorySessionPersistence::default()),
+        )
+    }
 
     fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
         PromptSessionRequest {
@@ -705,7 +756,7 @@ mod tests {
         let hook_provider = Arc::new(RecordingHookProvider {
             queries: queries.clone(),
         });
-        let hub = SessionHub::new_with_hooks(
+        let hub = test_hub(
             base.path().to_path_buf(),
             connector.clone(),
             Some(hook_provider),
@@ -790,7 +841,7 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let workspace = tempfile::tempdir().expect("workspace");
         let connector = Arc::new(RecordingConnector::default());
-        let hub = SessionHub::new(base.path().to_path_buf(), connector.clone());
+        let hub = test_hub(base.path().to_path_buf(), connector.clone(), None);
         let session = hub.create_session("test").await.expect("create session");
 
         hub.start_prompt(
@@ -887,7 +938,7 @@ mod tests {
 
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(RecordingConnector::default());
-        let hub = SessionHub::new(base.path().to_path_buf(), connector.clone());
+        let hub = test_hub(base.path().to_path_buf(), connector.clone(), None);
 
         let session = hub
             .create_session("reuse existing executor")
@@ -968,7 +1019,7 @@ mod tests {
         }
 
         let base = tempfile::tempdir().expect("tempdir");
-        let hub = SessionHub::new(base.path().to_path_buf(), Arc::new(FailingConnector));
+        let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
         let session = hub.create_session("test").await.expect("create session");
 
         let error = hub
@@ -978,13 +1029,13 @@ mod tests {
         assert!(error.to_string().contains("connector setup failed"));
 
         let history = hub
-            .store
-            .read_all(&session.id)
+            .persistence
+            .list_all_events(&session.id)
             .await
             .expect("history should load");
         let terminal = history
             .iter()
-            .filter_map(|notification| match &notification.update {
+            .filter_map(|event| match &event.notification.update {
                 SessionUpdate::SessionInfoUpdate(info) => {
                     parse_turn_terminal_event(info.meta.as_ref())
                 }
@@ -1067,7 +1118,7 @@ mod tests {
 
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(CancelAwareConnector::default());
-        let hub = SessionHub::new(base.path().to_path_buf(), connector);
+        let hub = test_hub(base.path().to_path_buf(), connector, None);
         let session = hub.create_session("test").await.expect("create session");
 
         let turn_id = hub
@@ -1092,13 +1143,13 @@ mod tests {
         );
 
         let history = hub
-            .store
-            .read_all(&session.id)
+            .persistence
+            .list_all_events(&session.id)
             .await
             .expect("history should load");
         let terminal = history
             .iter()
-            .filter_map(|notification| match &notification.update {
+            .filter_map(|event| match &event.notification.update {
                 SessionUpdate::SessionInfoUpdate(info) => {
                     parse_turn_terminal_event(info.meta.as_ref())
                 }

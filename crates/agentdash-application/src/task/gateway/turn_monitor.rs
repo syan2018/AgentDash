@@ -59,10 +59,25 @@ pub async fn run_turn_monitor(
         execution_mode: &execution_mode,
     };
 
-    let (history, mut rx) = session_hub.subscribe_with_history(session_id).await;
+    let subscription = match session_hub.subscribe_with_history(session_id).await {
+        Ok(subscription) => subscription,
+        Err(err) => {
+            tracing::error!(
+                task_id = %task_id,
+                session_id = %session_id,
+                turn_id = %turn_id,
+                "订阅会话事件失败: {}",
+                err
+            );
+            return resolve_failure_outcome(&ctx, "turn_monitor_subscribe_failed", Some(err.to_string()))
+                .await
+                .unwrap_or(TurnOutcome::Failed);
+        }
+    };
+    let mut rx = subscription.rx;
 
-    for notification in history {
-        match handle_turn_notification(&ctx, session_hub, &notification).await {
+    for event in subscription.backlog {
+        match handle_turn_notification(&ctx, session_hub, &event.notification).await {
             Ok(TurnOutcome::Continue) => {}
             Ok(outcome) => return outcome,
             Err(err) => {
@@ -79,8 +94,8 @@ pub async fn run_turn_monitor(
 
     loop {
         match rx.recv().await {
-            Ok(notification) => {
-                match handle_turn_notification(&ctx, session_hub, &notification).await {
+            Ok(event) => {
+                match handle_turn_notification(&ctx, session_hub, &event.notification).await {
                     Ok(TurnOutcome::Continue) => {}
                     Ok(outcome) => return outcome,
                     Err(err) => {

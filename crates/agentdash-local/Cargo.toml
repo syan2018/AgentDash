@@ -16,9 +16,11 @@ agentdash-executor = { workspace = true }
 agentdash-application.workspace = true
 agentdash-domain.workspace = true
 agentdash-acp-meta.workspace = true
+agentdash-infrastructure.workspace = true
 agent-client-protocol = { workspace = true }
 
 tokio.workspace = true
+sqlx.workspace = true
 tokio-tungstenite = { version = "0.28" }
 futures.workspace = true
 

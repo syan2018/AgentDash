@@ -45,8 +45,6 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   const [activeSrcDoc, setActiveSrcDoc] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
 
-  // 把 buildPreviewDocument（有 blob URL 副作用）放在 useEffect 里执行，
-  // 让 cleanup 能可靠地控制 dispose 时序。
   useEffect(() => {
     if (!snapshot) {
       setActiveSrcDoc(null);
@@ -79,7 +77,6 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
         iframe.srcdoc = "";
       }
 
-      // 延迟 revoke，等浏览器完成对旧 blob URL 的 fetch 后再释放
       setTimeout(() => capturedBuilt.dispose(), BLOB_REVOKE_DELAY_MS);
     };
   }, [snapshot]);
@@ -112,7 +109,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
 
   if (!snapshot) {
     return (
-      <div className="flex min-h-[260px] items-center justify-center rounded-[12px] border border-dashed border-border bg-secondary/10 px-4 text-sm text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center px-4 text-sm text-muted-foreground">
         当前还没有可运行的 Canvas 快照。
       </div>
     );
@@ -120,12 +117,12 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
 
   if (buildError) {
     return (
-      <div className="space-y-3 rounded-[12px] border border-destructive/30 bg-destructive/10 p-4">
+      <div className="flex flex-1 flex-col gap-3 p-4">
         <div>
           <p className="text-[11px] uppercase tracking-[0.12em] text-destructive/80">Preview</p>
           <h4 className="mt-1 text-sm font-semibold text-destructive">运行时预览构建失败</h4>
         </div>
-        <pre className="overflow-x-auto whitespace-pre-wrap rounded-[10px] border border-destructive/20 bg-background px-3 py-2 text-xs text-destructive">
+        <pre className="overflow-auto whitespace-pre-wrap rounded-[10px] border border-destructive/20 bg-background px-3 py-2 text-xs text-destructive">
           {buildError}
         </pre>
       </div>
@@ -134,38 +131,35 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
 
   if (!activeSrcDoc) {
     return (
-      <div className="flex min-h-[260px] items-center justify-center rounded-[12px] border border-dashed border-border bg-secondary/10 px-4 text-sm text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center px-4 text-sm text-muted-foreground">
         正在构建 Canvas 预览...
       </div>
     );
   }
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Preview</p>
-          <h4 className="mt-1 text-sm font-semibold text-foreground">沙箱运行时</h4>
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 状态条 */}
+      <div className="flex shrink-0 items-center justify-between border-b border-border/50 bg-secondary/10 px-3 py-1">
+        <span className="text-[11px] text-muted-foreground">
+          {runtimeMessage ?? "等待 Canvas 运行时启动"}
+        </span>
         <span className={statusClassName(runtimeStatus)}>
           {statusLabel(runtimeStatus)}
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-[14px] border border-border bg-white shadow-sm">
+      {/* iframe 自适应填满剩余高度 */}
+      <div className="min-h-0 flex-1">
         <iframe
           ref={iframeRef}
           title={`canvas-preview-${snapshot.canvas_id}`}
           sandbox="allow-scripts allow-same-origin"
           srcDoc={activeSrcDoc}
-          className="h-[320px] w-full bg-white"
+          className="h-full w-full border-0 bg-white"
         />
       </div>
-
-      <div className="rounded-[10px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
-        {runtimeMessage ?? "等待 Canvas 运行时启动"}
-      </div>
-    </section>
+    </div>
   );
 }
 
@@ -183,6 +177,7 @@ function buildPreviewDocument(
       ...snapshot.import_map.imports,
     },
   };
+
   const cssContent = snapshot.files
     .filter((file) => isCssFile(file.path))
     .map((file) => file.content)
@@ -220,11 +215,16 @@ function buildPreviewDocument(
 
   const entryUrl = getModuleUrl(snapshot.entry);
   const escapedImportMap = JSON.stringify(importMap, null, 2);
-  const escapedCss = escapeHtml(cssContent);
+  const safeCss = sanitizeCssForStyleTag(cssContent);
   const bootScript = `
     const frameId = ${JSON.stringify(frameId)};
     const send = (kind, message) => {
       window.parent.postMessage({ kind, frame_id: frameId, message }, "*");
+    };
+    const isRootEmpty = (root) => {
+      if (!root) return false;
+      if (root.childElementCount > 0) return false;
+      return (root.textContent || "").trim().length === 0;
     };
 
     window.addEventListener("error", (event) => {
@@ -236,11 +236,49 @@ function buildPreviewDocument(
       send("canvas-preview-error", reason);
     });
 
+    const explainDependencyFailure = (message) => {
+      const lower = String(message || "").toLowerCase();
+      if (
+        lower.includes("failed to fetch dynamically imported module")
+        || lower.includes("error resolving module specifier")
+        || lower.includes("module script")
+      ) {
+        return [
+          "Canvas 运行时依赖加载失败，可能是 react/react-dom 或 importmap CDN 不可达。",
+          "请检查网络/代理能否访问 esm.sh，或改为项目内本地依赖映射。",
+          String(message || ""),
+        ].join("\\n");
+      }
+      return message;
+    };
+
     import(${JSON.stringify(entryUrl)})
-      .then(() => send("canvas-preview-ready"))
+      .then(async (entryModule) => {
+        const root = document.getElementById("root");
+        const maybeComponent = entryModule && entryModule.default;
+        if (typeof maybeComponent === "function" && isRootEmpty(root)) {
+          try {
+            const [{ createElement }, { createRoot }] = await Promise.all([
+              import("react"),
+              import("react-dom/client"),
+            ]);
+            createRoot(root).render(createElement(maybeComponent));
+          } catch (renderError) {
+            const message = renderError instanceof Error
+              ? renderError.stack || renderError.message
+              : String(renderError ?? "unknown");
+            send(
+              "canvas-preview-error",
+              "检测到默认导出 React 组件，但运行时无法完成 React 挂载。请检查 react/react-dom 依赖可用性。\\n" + message,
+            );
+            return;
+          }
+        }
+        send("canvas-preview-ready");
+      })
       .catch((error) => {
         const message = error instanceof Error ? error.stack || error.message : String(error ?? "unknown");
-        send("canvas-preview-error", message);
+        send("canvas-preview-error", explainDependencyFailure(message));
       });
   `;
 
@@ -273,7 +311,7 @@ function buildPreviewDocument(
         min-height: 100vh;
       }
 
-${escapedCss}
+${safeCss}
     </style>
   </head>
   <body>
@@ -399,6 +437,16 @@ function isCssFile(path: string): boolean {
   return path.endsWith(".css");
 }
 
+/**
+ * 在 <style> 标签内安全嵌入 CSS。
+ * <style> 的内容模型是 raw text，HTML 实体不会被解码，
+ * 所以不能用 escapeHtml（会把 > 变成 &gt; 破坏 CSS 子选择器等）。
+ * 唯一需要防范的是 CSS 中出现 </style 导致提前闭合标签。
+ */
+function sanitizeCssForStyleTag(css: string): string {
+  return css.replace(/<\/(style)/gi, "<\\/$1");
+}
+
 function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
   return diagnostics
     .map((item) => {
@@ -409,13 +457,6 @@ function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
       return line ? `第 ${line} 行: ${message}` : message;
     })
     .join("\n");
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
 }
 
 function isPreviewEnvelope(value: unknown): value is PreviewEnvelope {
@@ -445,7 +486,7 @@ function statusLabel(status: PreviewStatus): string {
 }
 
 function statusClassName(status: PreviewStatus): string {
-  const baseClassName = "rounded-full border px-2.5 py-1 text-[11px] font-medium";
+  const baseClassName = "rounded-full border px-2 py-0.5 text-[10px] font-medium";
   switch (status) {
     case "building":
       return `${baseClassName} border-amber-200 bg-amber-50 text-amber-700`;

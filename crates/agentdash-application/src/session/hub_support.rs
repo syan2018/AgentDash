@@ -10,6 +10,7 @@ use agentdash_acp_meta::{
 };
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
 
+use super::persistence::PersistedSessionEvent;
 use super::types::{SessionExecutionState, SessionMeta};
 
 pub(super) fn build_user_message_notifications(
@@ -142,7 +143,9 @@ pub(super) fn parse_turn_terminal_event(
     }
 }
 
-pub(super) fn build_session_runtime(tx: broadcast::Sender<SessionNotification>) -> SessionRuntime {
+pub(super) fn build_session_runtime(
+    tx: broadcast::Sender<PersistedSessionEvent>,
+) -> SessionRuntime {
     SessionRuntime {
         tx,
         running: false,
@@ -154,13 +157,19 @@ pub(super) fn build_session_runtime(tx: broadcast::Sender<SessionNotification>) 
 }
 
 pub(super) struct SessionRuntime {
-    pub tx: broadcast::Sender<SessionNotification>,
+    pub tx: broadcast::Sender<PersistedSessionEvent>,
     pub running: bool,
     pub current_turn_id: Option<String>,
     pub cancel_requested: bool,
     pub hook_session: Option<SharedHookSessionRuntime>,
     /// Counter for hook-driven auto-resumes (prevents infinite loops).
     pub hook_auto_resume_count: u32,
+}
+
+pub struct SessionEventSubscription {
+    pub snapshot_seq: u64,
+    pub backlog: Vec<PersistedSessionEvent>,
+    pub rx: broadcast::Receiver<PersistedSessionEvent>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

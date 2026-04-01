@@ -37,6 +37,7 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     SqliteAgentRepository, SqliteAuthSessionRepository, SqliteBackendRepository,
     SqliteCanvasRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
+    SqliteSessionRepository,
     SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
     SqliteUserDirectoryRepository, SqliteWorkflowRepository, SqliteWorkspaceRepository,
 };
@@ -150,6 +151,11 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let session_repo = Arc::new(SqliteSessionRepository::new(pool.clone()));
+        session_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let backend_repo = Arc::new(SqliteBackendRepository::new(pool.clone()));
         backend_repo
@@ -252,10 +258,11 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
         ));
-        let session_hub = SessionHub::new_with_hooks(
+        let session_hub = SessionHub::new_with_hooks_and_persistence(
             workspace_root,
             connector.clone(),
             Some(hook_provider.clone()),
+            session_repo,
         );
         session_hub_handle.set(session_hub.clone()).await;
 

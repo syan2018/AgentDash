@@ -487,7 +487,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           />
         </div>
         {isCanvasPanelOpen && activeCanvasId && (
-          <div className="w-[520px] shrink-0 border-l border-border">
+          <div className="w-[55vw] max-w-[1100px] min-w-[680px] shrink-0 border-l border-border">
             <CanvasSessionPanel
               canvasId={activeCanvasId}
               sessionId={currentSessionId}

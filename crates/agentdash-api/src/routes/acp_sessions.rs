@@ -53,6 +53,12 @@ pub struct NdjsonStreamQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SessionEventsQuery {
+    pub after_seq: Option<u64>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ListSessionsQuery {
     pub owner_type: Option<String>,
     pub owner_id: Option<String>,
@@ -212,6 +218,48 @@ pub struct SessionExecutionStateResponse {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionEventResponse {
+    pub session_id: String,
+    pub event_seq: u64,
+    pub occurred_at_ms: i64,
+    pub committed_at_ms: i64,
+    pub session_update_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    pub notification: agent_client_protocol::SessionNotification,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionEventsPageResponse {
+    pub snapshot_seq: u64,
+    pub events: Vec<SessionEventResponse>,
+    pub has_more: bool,
+    pub next_after_seq: u64,
+}
+
+fn map_session_event(
+    event: agentdash_application::session::PersistedSessionEvent,
+) -> SessionEventResponse {
+    SessionEventResponse {
+        session_id: event.session_id,
+        event_seq: event.event_seq,
+        occurred_at_ms: event.occurred_at_ms,
+        committed_at_ms: event.committed_at_ms,
+        session_update_type: event.session_update_type,
+        turn_id: event.turn_id,
+        entry_index: event.entry_index,
+        tool_call_id: event.tool_call_id,
+        notification: event.notification,
+    }
+}
+
 pub async fn get_session_state(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -273,6 +321,37 @@ pub async fn get_session_state(
     };
 
     Ok(Json(response))
+}
+
+pub async fn list_session_events(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+    Query(query): Query<SessionEventsQuery>,
+) -> Result<Json<SessionEventsPageResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let after_seq = query.after_seq.unwrap_or(0);
+    let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
+    let page = state
+        .services
+        .session_hub
+        .list_event_page(&session_id, after_seq, limit)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    Ok(Json(SessionEventsPageResponse {
+        snapshot_seq: page.snapshot_seq,
+        events: page.events.into_iter().map(map_session_event).collect(),
+        has_more: page.has_more,
+        next_after_seq: page.next_after_seq,
+    }))
 }
 
 #[derive(Debug, Serialize)]
@@ -1000,6 +1079,7 @@ pub async fn acp_session_stream_sse(
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     headers: HeaderMap,
+    Query(query): Query<NdjsonStreamQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     ensure_session_permission(
         state.as_ref(),
@@ -1012,6 +1092,7 @@ pub async fn acp_session_stream_sse(
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok())
+        .or(query.since_id)
         .unwrap_or(0);
 
     tracing::info!(
@@ -1020,35 +1101,39 @@ pub async fn acp_session_stream_sse(
         "ACP 会话流连接建立（SSE）"
     );
 
-    let (history, mut rx) = state
+    let subscription = state
         .services
         .session_hub
-        .subscribe_with_history(&session_id)
-        .await;
-    let start_index = std::cmp::min(last_event_id as usize, history.len());
-    let replayed = history.len().saturating_sub(start_index);
+        .subscribe_after(&session_id, last_event_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let replayed = subscription.backlog.len();
     tracing::info!(
         session_id = %session_id,
         replayed_count = replayed,
-        history_total = history.len(),
+        snapshot_seq = subscription.snapshot_seq,
         "ACP 会话流历史补发完成（SSE）"
     );
 
     let stream = async_stream::stream! {
-        for (i, n) in history.iter().enumerate().skip(start_index) {
-            let id = (i as u64) + 1;
-            if let Ok(json) = serde_json::to_string(n) {
+        for event in subscription.backlog {
+            if let Ok(json) = serde_json::to_string(&event.notification) {
+                let id = event.event_seq;
                 yield Ok(Event::default().id(id.to_string()).data(json));
             }
         }
 
-        let mut seq = history.len() as u64;
+        let mut seq = subscription.snapshot_seq;
+        let mut rx = subscription.rx;
         loop {
             match rx.recv().await {
-                Ok(n) => {
-                    seq += 1;
-                    if let Ok(json) = serde_json::to_string(&n) {
-                        yield Ok(Event::default().id(seq.to_string()).data(json));
+                Ok(event) => {
+                    if event.event_seq <= seq {
+                        continue;
+                    }
+                    seq = event.event_seq;
+                    if let Ok(json) = serde_json::to_string(&event.notification) {
+                        yield Ok(Event::default().id(event.event_seq.to_string()).data(json));
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -1096,22 +1181,33 @@ pub async fn acp_session_stream_ndjson(
         "ACP 会话流连接建立（NDJSON）"
     );
 
-    let (history, mut rx) = state
+    let subscription = state
         .services
         .session_hub
-        .subscribe_with_history(&session_id)
-        .await;
-    let start_index = std::cmp::min(resume_from as usize, history.len());
-    let replayed = history.len().saturating_sub(start_index);
+        .subscribe_after(&session_id, resume_from)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let replayed = subscription.backlog.len();
     tracing::info!(
         session_id = %session_id,
         replayed_count = replayed,
-        history_total = history.len(),
+        snapshot_seq = subscription.snapshot_seq,
         "ACP 会话流历史补发完成（NDJSON）"
     );
 
     let stream = async_stream::stream! {
-        let mut seq = history.len() as u64;
+        let mut seq = resume_from;
+        for event in subscription.backlog {
+            seq = event.event_seq;
+            if let Some(line) = to_ndjson_line(&serde_json::json!({
+                "type": "event",
+                "event_seq": event.event_seq,
+                "notification": event.notification,
+            })) {
+                yield Ok::<Bytes, Infallible>(line);
+            }
+        }
+
         if let Some(line) = to_ndjson_line(&serde_json::json!({
             "type": "connected",
             "last_event_id": seq,
@@ -1119,30 +1215,23 @@ pub async fn acp_session_stream_ndjson(
             yield Ok::<Bytes, Infallible>(line);
         }
 
-        for (i, n) in history.iter().enumerate().skip(start_index) {
-            let id = (i as u64) + 1;
-            if let Some(line) = to_ndjson_line(&serde_json::json!({
-                "type": "notification",
-                "id": id,
-                "notification": n,
-            })) {
-                yield Ok::<Bytes, Infallible>(line);
-            }
-        }
-
         let mut heartbeat_tick = tokio::time::interval(ACP_HEARTBEAT_INTERVAL);
         heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut rx = subscription.rx;
 
         loop {
             tokio::select! {
                 next = rx.recv() => {
                     match next {
-                        Ok(n) => {
-                            seq += 1;
+                        Ok(event) => {
+                            if event.event_seq <= subscription.snapshot_seq {
+                                continue;
+                            }
+                            seq = event.event_seq;
                             if let Some(line) = to_ndjson_line(&serde_json::json!({
-                                "type": "notification",
-                                "id": seq,
-                                "notification": n,
+                                "type": "event",
+                                "event_seq": event.event_seq,
+                                "notification": event.notification,
                             })) {
                                 yield Ok::<Bytes, Infallible>(line);
                             }

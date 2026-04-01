@@ -58,10 +58,10 @@ impl SessionHub {
             .chars()
             .take(30)
             .collect::<String>();
-        let store = self.store.clone();
+        let persistence = self.persistence.clone();
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        let mut session_meta = match store.read_meta(&sid).await {
+        let mut session_meta = match persistence.get_session_meta(&sid).await {
             Ok(Some(meta)) => meta,
             Ok(None) => {
                 return Err(ConnectorError::Runtime(format!(
@@ -139,7 +139,7 @@ impl SessionHub {
         if session_meta.title.trim().is_empty() {
             session_meta.title = title_hint;
         }
-        let _ = store.write_meta(&session_meta).await;
+        let _ = persistence.save_session_meta(&session_meta).await;
 
         let resolved_follow_up_session_id = follow_up_session_id
             .map(str::trim)
@@ -168,8 +168,7 @@ impl SessionHub {
             &resolved_payload.user_blocks,
         );
         for notification in user_notifications {
-            let _ = store.append(&sid, &notification).await;
-            let _ = tx.send(notification);
+            let _ = self.persist_notification(&sid, notification).await;
         }
 
         let started = build_turn_lifecycle_notification(
@@ -180,8 +179,7 @@ impl SessionHub {
             "info",
             Some("开始执行".to_string()),
         );
-        let _ = store.append(&sid, &started).await;
-        let _ = tx.send(started);
+        let _ = self.persist_notification(&sid, started).await;
 
         if let Some(hook_session) = hook_session.as_ref() {
             self.emit_session_hook_trigger(
@@ -228,15 +226,7 @@ impl SessionHub {
                     TurnTerminalKind::Failed,
                     Some(error.to_string()),
                 );
-                let _ = store.append(&sid, &failed).await;
-                if let Ok(Some(mut meta)) = store.read_meta(&sid).await {
-                    meta.last_execution_status = "failed".to_string();
-                    meta.last_turn_id = Some(turn_id.clone());
-                    meta.last_terminal_message = Some(error.to_string());
-                    meta.updated_at = chrono::Utc::now().timestamp_millis();
-                    let _ = store.write_meta(&meta).await;
-                }
-                let _ = tx.send(failed);
+                let _ = self.persist_notification(&sid, failed).await;
                 return Err(error);
             }
         };
@@ -244,6 +234,7 @@ impl SessionHub {
         let session_id = session_id.to_string();
         let hook_session_for_spawn = hook_session;
         let hub = self.clone();
+        let persistence = self.persistence.clone();
 
         let turn_id_for_spawn = turn_id.clone();
         tokio::spawn(async move {
@@ -264,17 +255,16 @@ impl SessionHub {
                                 != Some(executor_session_id.as_str())
                         {
                             last_executor_session_id = Some(executor_session_id.clone());
-                            if let Ok(Some(mut meta)) = store.read_meta(&session_id).await
+                            if let Ok(Some(mut meta)) = persistence.get_session_meta(&session_id).await
                                 && meta.executor_session_id.as_deref()
                                     != Some(executor_session_id.as_str())
                             {
                                 meta.executor_session_id = Some(executor_session_id);
                                 meta.updated_at = chrono::Utc::now().timestamp_millis();
-                                let _ = store.write_meta(&meta).await;
+                                let _ = persistence.save_session_meta(&meta).await;
                             }
                         }
-                        let _ = store.append(&session_id, &notification).await;
-                        let _ = tx.send(notification);
+                        let _ = hub.persist_notification(&session_id, notification).await;
                     }
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
@@ -335,17 +325,7 @@ impl SessionHub {
             }
 
             if let Some(done) = terminal_notification {
-                let _ = store.append(&session_id, &done).await;
-                let _ = tx.send(done);
-            }
-
-            let status_str = terminal_kind.state_tag().to_string();
-            if let Ok(Some(mut meta)) = store.read_meta(&session_id).await {
-                meta.last_execution_status = status_str;
-                meta.last_turn_id = Some(turn_id_for_spawn.clone());
-                meta.last_terminal_message = terminal_message.clone();
-                meta.updated_at = chrono::Utc::now().timestamp_millis();
-                let _ = store.write_meta(&meta).await;
+                let _ = hub.persist_notification(&session_id, done).await;
             }
 
             if let Some(hook_session) = hook_session_for_spawn.as_ref() {

@@ -79,6 +79,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_dispatch_registered:   "协作 Agent 已派发",
   companion_result_available:      "协作结果可用",
   companion_result_returned:       "协作结果已回传",
+  canvas_presented:                "Canvas 已展示",
   hook_event:                      "流程事件",
 };
 
@@ -97,6 +98,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_dispatch_registered:   "已注册协作 Agent 派发",
   companion_result_available:      "协作 Agent 已回传结果",
   companion_result_returned:       "协作结果已回传到当前会话",
+  canvas_presented:                "已请求打开 Canvas 面板",
   hook_event:                      "流程产生新事件",
 };
 

@@ -1,0 +1,57 @@
+{
+  "id": "session-event-log-reload",
+  "name": "session-event-log-reload",
+  "title": "Session 会话事件数据库化与可靠重放",
+  "description": "把 session 重载与 replay 改造成基于数据库事件日志、稳定 event_seq 和前端幂等消费的实现，消除重复渲染、tool call 堆积与 reconnect 丢消息问题。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "session-streaming-persistence",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-04-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/live-canvas-runtime",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "session-schema-and-repositories",
+    "session-event-appender",
+    "session-projections-turns-and-toolcalls",
+    "session-history-query-api",
+    "session-stream-protocol-rework",
+    "frontend-session-timeline-store",
+    "frontend-session-side-effect-dedupe",
+    "replay-regression-tests"
+  ],
+  "relatedFiles": [
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-application/src/session/session_store.rs",
+    "frontend/src/features/acp-session/model/useAcpStream.ts",
+    "frontend/src/features/acp-session/model/streamTransport.ts",
+    "frontend/src/features/acp-session/ui/SessionChatView.tsx"
+  ],
+  "notes": "规划结论：数据库事件日志是唯一事实源；页面重载先读库、再接增量流；所有 cursor 和副作用去重统一基于稳定 event_seq。"
+}

@@ -1,7 +1,7 @@
-import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { resolveApiUrl } from "../../../api/origin";
 import { getStoredToken, authenticatedFetch } from "../../../api/client";
 import { registerStreamConnection } from "../../../api/streamRegistry";
+import type { SessionEventEnvelope } from "./types";
 
 const RETRY_BASE_MS = 800;
 const RETRY_MAX_MS = 8000;
@@ -11,7 +11,8 @@ export type AcpStreamLifecycle = "connecting" | "connected" | "reconnecting" | "
 export interface AcpStreamTransportOptions {
   sessionId: string;
   endpoint?: string;
-  onNotification: (notification: SessionNotification) => void;
+  sinceId?: number;
+  onEvent: (event: SessionEventEnvelope) => void;
   onLifecycleChange: (lifecycle: AcpStreamLifecycle) => void;
   onError: (error: Error) => void;
 }
@@ -51,7 +52,7 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function isSessionNotification(value: unknown): value is SessionNotification {
+function isSessionNotification(value: unknown): value is import("@agentclientprotocol/sdk").SessionNotification {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return typeof record.sessionId === "string" && typeof record.update === "object";
@@ -61,11 +62,13 @@ class EventSourceTransport implements AcpStreamTransport {
   private source: EventSource | null = null;
   private closed = false;
   private hadConnected = false;
+  private sinceId: number;
   private unregister: (() => void) | null = null;
   private readonly options: AcpStreamTransportOptions;
 
   constructor(options: AcpStreamTransportOptions) {
     this.options = options;
+    this.sinceId = options.sinceId ?? 0;
     this.unregister = registerStreamConnection({
       close: () => this.close(),
     });
@@ -75,6 +78,10 @@ class EventSourceTransport implements AcpStreamTransport {
   private connect(): void {
     if (this.closed) return;
     let url = resolveApiUrl(buildSseEndpoint(this.options.sessionId, this.options.endpoint));
+    if (this.sinceId > 0) {
+      const sep = url.includes("?") ? "&" : "?";
+      url = `${url}${sep}since_id=${encodeURIComponent(String(this.sinceId))}`;
+    }
     const token = getStoredToken();
     if (token) {
       const sep = url.includes("?") ? "&" : "?";
@@ -96,7 +103,15 @@ class EventSourceTransport implements AcpStreamTransport {
       try {
         const payload: unknown = JSON.parse(event.data);
         if (!isSessionNotification(payload)) return;
-        this.options.onNotification(payload);
+        const eventSeq = Number(event.lastEventId ?? 0);
+        if (Number.isFinite(eventSeq) && eventSeq > this.sinceId) {
+          this.sinceId = eventSeq;
+        }
+        this.options.onEvent({
+          session_id: payload.sessionId,
+          event_seq: Number.isFinite(eventSeq) ? eventSeq : 0,
+          notification: payload,
+        });
       } catch (error) {
         this.options.onError(normalizeError(error, "解析 SSE 消息失败"));
       }
@@ -126,13 +141,14 @@ class FetchNdjsonTransport implements AcpStreamTransport {
   private controller: AbortController | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
-  private sinceId = 0;
+  private sinceId: number;
   private hadConnected = false;
   private unregister: (() => void) | null = null;
   private readonly options: FetchNdjsonTransportOptions;
 
   constructor(options: FetchNdjsonTransportOptions) {
     this.options = options;
+    this.sinceId = options.sinceId ?? 0;
     this.unregister = registerStreamConnection({
       close: () => this.close(),
     });
@@ -241,14 +257,18 @@ class FetchNdjsonTransport implements AcpStreamTransport {
       return;
     }
 
-    if (eventType === "notification") {
-      const id = Number(record.id ?? 0);
-      if (Number.isFinite(id) && id > this.sinceId) {
-        this.sinceId = id;
+    if (eventType === "event" || eventType === "notification") {
+      const eventSeq = Number(record.event_seq ?? record.id ?? 0);
+      if (Number.isFinite(eventSeq) && eventSeq > this.sinceId) {
+        this.sinceId = eventSeq;
       }
       const notification = record.notification;
       if (isSessionNotification(notification)) {
-        this.options.onNotification(notification);
+        this.options.onEvent({
+          session_id: notification.sessionId,
+          event_seq: Number.isFinite(eventSeq) ? eventSeq : 0,
+          notification,
+        });
       }
       return;
     }
@@ -259,7 +279,11 @@ class FetchNdjsonTransport implements AcpStreamTransport {
 
     // 兼容：若服务端直接推 SessionNotification（无 envelope）
     if (isSessionNotification(record)) {
-      this.options.onNotification(record);
+      this.options.onEvent({
+        session_id: record.sessionId,
+        event_seq: 0,
+        notification: record,
+      });
     }
   }
 

@@ -507,7 +507,13 @@ pub async fn apply_mount_patch(
         let result = state
             .services
             .address_space_service
-            .apply_patch(&address_space, &req.mount_id, &req.patch, Some(&overlay), None)
+            .apply_patch(
+                &address_space,
+                &req.mount_id,
+                &req.patch,
+                Some(&overlay),
+                None,
+            )
             .await
             .map_err(ApiError::Internal)?;
 
@@ -610,7 +616,6 @@ pub async fn preview_address_space(
         .address_space_service
         .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
-
     if let Some((binding_kind, binding_id)) = parsed_owner {
         inject_lifecycle_mount(&state, binding_kind, binding_id, &mut address_space).await;
     }
@@ -711,7 +716,6 @@ async fn resolve_address_space(
         .address_space_service
         .build_address_space(&project, story.as_ref(), workspace.as_ref(), target, None)
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
-
     if let Some((binding_kind, binding_id)) = parsed_owner {
         inject_lifecycle_mount(state, binding_kind, binding_id, &mut address_space).await;
     }

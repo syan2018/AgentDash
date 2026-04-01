@@ -169,6 +169,7 @@ async fn dispatch_cloud_native(
             companion_dispatch: false,
             companion_complete: true,
             resolve_hook_action: true,
+            canvas: true,
         }),
         system_context: ctx.built.system_context.clone(),
         identity: ctx.identity,

@@ -27,6 +27,9 @@ pub struct NormalizedToAcpConverter {
     emitted_agent: String,
     emitted_thought: String,
     emitted_user: String,
+    message_id_agent: String,
+    message_id_thought: String,
+    message_id_user: String,
 }
 
 impl NormalizedToAcpConverter {
@@ -36,14 +39,17 @@ impl NormalizedToAcpConverter {
         turn_id: impl Into<String>,
     ) -> Self {
         Self {
-            session_id: session_id.into(),
             turn_prefix: turn_id.into(),
+            session_id: session_id.into(),
             source,
             last_by_index: HashMap::new(),
             tool_call_by_id: HashMap::new(),
             emitted_agent: String::new(),
             emitted_thought: String::new(),
             emitted_user: String::new(),
+            message_id_agent: String::new(),
+            message_id_thought: String::new(),
+            message_id_user: String::new(),
         }
     }
 
@@ -83,41 +89,52 @@ impl NormalizedToAcpConverter {
         entry_index: usize,
         entry: NormalizedEntry,
     ) -> Vec<SessionNotification> {
-        let prev = self.last_by_index.insert(entry_index, entry.clone());
+        self.last_by_index.insert(entry_index, entry.clone());
 
         match &entry.entry_type {
             NormalizedEntryType::UserMessage => {
                 self.emitted_agent.clear();
                 self.emitted_thought.clear();
                 let meta = self.base_meta(Some(entry_index));
+                let message_id = ensure_message_id(&mut self.message_id_user, &self.turn_prefix, "user_message_chunk");
                 emit_deduped(
                     &self.session_id,
                     &mut self.emitted_user,
-                    prev.as_ref().map(|p| p.content.as_str()),
                     &entry.content,
                     SessionUpdate::UserMessageChunk,
+                    Some(message_id),
                     meta,
                 )
             }
             NormalizedEntryType::AssistantMessage => {
                 let meta = self.base_meta(Some(entry_index));
+                let message_id = ensure_message_id(
+                    &mut self.message_id_agent,
+                    &self.turn_prefix,
+                    "agent_message_chunk",
+                );
                 emit_deduped(
                     &self.session_id,
                     &mut self.emitted_agent,
-                    prev.as_ref().map(|p| p.content.as_str()),
                     &entry.content,
                     SessionUpdate::AgentMessageChunk,
+                    Some(message_id),
                     meta,
                 )
             }
             NormalizedEntryType::Thinking => {
                 let meta = self.base_meta(Some(entry_index));
+                let message_id = ensure_message_id(
+                    &mut self.message_id_thought,
+                    &self.turn_prefix,
+                    "agent_thought_chunk",
+                );
                 emit_deduped(
                     &self.session_id,
                     &mut self.emitted_thought,
-                    prev.as_ref().map(|p| p.content.as_str()),
                     &entry.content,
                     SessionUpdate::AgentThoughtChunk,
+                    Some(message_id),
                     meta,
                 )
             }
@@ -258,61 +275,59 @@ impl NormalizedToAcpConverter {
 /// the same accumulated text.  A naïve per-index delta would re-emit the full
 /// text for each new index.  We track `emitted` (the total text sent so far
 /// for this chunk type) and only emit the true delta.
+fn ensure_message_id(slot: &mut String, turn_id: &str, chunk_type: &str) -> String {
+    if slot.is_empty() {
+        *slot = format!("{turn_id}:{chunk_type}");
+    }
+    slot.clone()
+}
+
 fn emit_deduped(
     session_id: &SessionId,
     emitted: &mut String,
-    prev_at_index: Option<&str>,
     full_content: &str,
     ctor: fn(ContentChunk) -> SessionUpdate,
+    message_id: Option<String>,
     meta: Option<Meta>,
 ) -> Vec<SessionNotification> {
     if full_content.is_empty() {
         return Vec::new();
     }
 
-    // Fast path: per-index delta (same entry updated incrementally).
-    if let Some(prev) = prev_at_index
-        && !prev.is_empty()
-        && full_content.starts_with(prev)
-    {
-        let suffix = &full_content[prev.len()..];
-        if suffix.is_empty() {
-            return Vec::new();
-        }
-        emitted.push_str(suffix);
-        return emit_chunk(session_id, ctor, suffix, meta.clone());
-    }
-
-    // Global dedup: compute delta against total emitted text.
+    // 单路径：只接受“当前文本以前序文本为前缀”的增量。
     if full_content.starts_with(emitted.as_str()) {
         let suffix = &full_content[emitted.len()..];
         if suffix.is_empty() {
             return Vec::new();
         }
         emitted.push_str(suffix);
-        return emit_chunk(session_id, ctor, suffix, meta.clone());
+        return emit_chunk(session_id, ctor, suffix, message_id, meta.clone());
     }
 
-    // Already-emitted text covers this content — skip.
-    if emitted.contains(full_content) || *emitted == full_content {
-        return Vec::new();
+    // 若未发过任何文本，首块直接全量发送。
+    if emitted.is_empty() {
+        *emitted = full_content.to_string();
+        return emit_chunk(session_id, ctor, full_content, message_id, meta);
     }
 
-    // Truly new content (e.g. new turn after provider reset).
-    *emitted = full_content.to_string();
-    emit_chunk(session_id, ctor, full_content, meta)
+    // 已有增量链路时，不再做 contains 等猜测兜底。
+    tracing::warn!("normalized chunk not prefixed by emitted text; drop inconsistent chunk");
+    Vec::new()
 }
 
 fn emit_chunk(
     session_id: &SessionId,
     ctor: fn(ContentChunk) -> SessionUpdate,
     text: &str,
+    message_id: Option<String>,
     meta: Option<Meta>,
 ) -> Vec<SessionNotification> {
     if text.is_empty() {
         return Vec::new();
     }
-    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(meta);
+    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+        .message_id(message_id)
+        .meta(meta);
     vec![SessionNotification::new(session_id.clone(), ctor(chunk))]
 }
 
@@ -730,6 +745,37 @@ mod tests {
                 assert!(ad.source.is_some());
             }
             other => panic!("unexpected update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_message_chunk_emits_stable_message_id() {
+        let mut converter =
+            NormalizedToAcpConverter::new(SessionId::new("sess-test"), test_source(), "t-test");
+        let first = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::AssistantMessage,
+            content: "he".to_string(),
+            metadata: None,
+        };
+        let second = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::AssistantMessage,
+            content: "hello".to_string(),
+            metadata: None,
+        };
+
+        let out1 = converter.apply(0, first);
+        let out2 = converter.apply(1, second);
+        assert_eq!(out1.len(), 1);
+        assert_eq!(out2.len(), 1);
+
+        match (&out1[0].update, &out2[0].update) {
+            (SessionUpdate::AgentMessageChunk(a), SessionUpdate::AgentMessageChunk(b)) => {
+                assert_eq!(a.message_id.as_deref(), Some("t-test:agent_message_chunk"));
+                assert_eq!(a.message_id, b.message_id);
+            }
+            other => panic!("unexpected updates: {other:?}"),
         }
     }
 }

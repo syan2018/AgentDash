@@ -35,10 +35,11 @@ use agentdash_domain::workflow::{
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
-    SqliteAgentRepository, SqliteAuthSessionRepository, SqliteBackendRepository, SqliteProjectRepository,
-    SqliteSessionBindingRepository, SqliteSettingsRepository, SqliteStoryRepository,
-    SqliteTaskRepository, SqliteUserDirectoryRepository, SqliteWorkflowRepository,
-    SqliteWorkspaceRepository,
+    SqliteAgentRepository, SqliteAuthSessionRepository, SqliteBackendRepository,
+    SqliteCanvasRepository, SqliteProjectRepository, SqliteSessionBindingRepository,
+    SqliteSessionRepository,
+    SqliteSettingsRepository, SqliteStoryRepository, SqliteTaskRepository,
+    SqliteUserDirectoryRepository, SqliteWorkflowRepository, SqliteWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceDiscoveryRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
@@ -122,6 +123,12 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+        let canvas_repo = Arc::new(SqliteCanvasRepository::new(pool.clone()));
+        canvas_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let workspace_repo = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
         workspace_repo
             .initialize()
@@ -141,6 +148,11 @@ impl AppState {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let session_binding_repo = Arc::new(SqliteSessionBindingRepository::new(pool.clone()));
         session_binding_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let session_repo = Arc::new(SqliteSessionRepository::new(pool.clone()));
+        session_repo
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -186,7 +198,7 @@ impl AppState {
         let backend_registry = BackendRegistry::new();
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
-            .with_builtins(workflow_repo.clone())
+            .with_builtins(workflow_repo.clone(), canvas_repo.clone())
             .register(Arc::new(RelayFsMountProvider::new(
                 backend_registry.clone(),
             )));
@@ -219,6 +231,7 @@ impl AppState {
             PiAgentConnectorDeps {
                 settings_repo: settings_repo.clone(),
                 address_space_service: address_space_service.clone(),
+                canvas_repo: canvas_repo.clone(),
                 session_binding_repo: session_binding_repo.clone(),
                 workflow_definition_repo: workflow_repo.clone(),
                 lifecycle_definition_repo: workflow_repo.clone(),
@@ -245,10 +258,11 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
         ));
-        let session_hub = SessionHub::new_with_hooks(
+        let session_hub = SessionHub::new_with_hooks_and_persistence(
             workspace_root,
             connector.clone(),
             Some(hook_provider.clone()),
+            session_repo,
         );
         session_hub_handle.set(session_hub.clone()).await;
 
@@ -294,6 +308,7 @@ impl AppState {
 
         let repos = RepositorySet {
             project_repo,
+            canvas_repo,
             workspace_repo,
             story_repo,
             task_repo,
@@ -363,8 +378,7 @@ impl AppState {
         {
             let auth_session_service = state.services.auth_session_service.clone();
             tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(10 * 60));
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
                 loop {
                     interval.tick().await;
                     match auth_session_service.cleanup_expired_sessions().await {
@@ -397,6 +411,7 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
 struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     address_space_service: Arc<RelayAddressSpaceService>,
+    canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
@@ -419,6 +434,7 @@ async fn build_pi_agent_connector(
     connector.set_settings_repository(deps.settings_repo);
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         deps.address_space_service,
+        deps.canvas_repo,
         deps.session_binding_repo,
         deps.workflow_definition_repo,
         deps.lifecycle_definition_repo,

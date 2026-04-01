@@ -13,7 +13,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { useAcpSession } from "../model";
 import { AcpSessionEntry } from "./AcpSessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
-import type { AcpDisplayItem, TokenUsageInfo } from "../model/types";
+import type { AcpDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
 import { extractAgentDashMetaFromUpdate } from "../model/agentdashMeta";
 import { promptSession, type ExecutorConfig } from "../../../services/executor";
 import {
@@ -82,6 +82,38 @@ function resolveExecutorFromHint(
   const normalized = normalizeExecutorToken(trimmed);
   const matched = executors.find((item) => normalizeExecutorToken(item.id) === normalized);
   return matched?.id ?? trimmed;
+}
+
+export function collectNewSystemEvents(
+  rawEvents: SessionEventEnvelope[],
+  afterSeq: number,
+): {
+  items: Array<{ eventSeq: number; eventType: string; update: SessionUpdate }>;
+  lastSeenSeq: number;
+} {
+  const items: Array<{ eventSeq: number; eventType: string; update: SessionUpdate }> = [];
+  let lastSeenSeq = afterSeq;
+
+  for (const event of rawEvents) {
+    if (event.event_seq <= afterSeq) {
+      continue;
+    }
+    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+    if (event.notification.update.sessionUpdate !== "session_info_update") {
+      continue;
+    }
+    const eventType = extractAgentDashMetaFromUpdate(event.notification.update)?.event?.type;
+    if (!eventType) {
+      continue;
+    }
+    items.push({
+      eventSeq: event.event_seq,
+      eventType,
+      update: event.notification.update,
+    });
+  }
+
+  return { items, lastSeenSeq };
 }
 
 // ─── 子组件 ────────────────────────────────────────────
@@ -363,6 +395,7 @@ export function SessionChatView({
   const {
     displayItems,
     rawEntries,
+    rawEvents,
     isConnected,
     isLoading,
     error: wsError,
@@ -425,18 +458,18 @@ export function SessionChatView({
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
   const onSystemEventRef = useRef(onSystemEvent);
-  const lastSystemEventEntryIdRef = useRef<string | null>(null);
+  const lastSystemEventSeqRef = useRef(0);
   useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
   useEffect(() => {
-    lastSystemEventEntryIdRef.current = null;
+    lastSystemEventSeqRef.current = 0;
   }, [sessionId]);
 
   useEffect(() => {
-    if (!hasSession || rawEntries.length === 0) return;
-    for (let i = rawEntries.length - 1; i >= 0; i -= 1) {
-      const entry = rawEntries[i];
-      if (!entry || entry.update.sessionUpdate !== "session_info_update") continue;
-      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
+    if (!hasSession || rawEvents.length === 0) return;
+    for (let i = rawEvents.length - 1; i >= 0; i -= 1) {
+      const event = rawEvents[i];
+      if (!event || event.notification.update.sessionUpdate !== "session_info_update") continue;
+      const eventType = extractAgentDashMetaFromUpdate(event.notification.update)?.event?.type;
       if (eventType === "turn_started") {
         setOptimisticRunning(false);
         void refreshExecutionState().catch(() => {});
@@ -450,36 +483,17 @@ export function SessionChatView({
         return;
       }
     }
-  }, [hasSession, rawEntries, refreshExecutionState]);
+  }, [hasSession, rawEvents, refreshExecutionState]);
 
   useEffect(() => {
-    if (!hasSession || rawEntries.length === 0) return;
-
-    const newSystemEvents: Array<{ id: string; eventType: string; update: SessionUpdate }> = [];
-    for (let i = rawEntries.length - 1; i >= 0; i -= 1) {
-      const entry = rawEntries[i];
-      if (!entry) continue;
-      if (entry.id === lastSystemEventEntryIdRef.current) {
-        break;
-      }
-      if (entry.update.sessionUpdate !== "session_info_update") {
-        continue;
-      }
-      const eventType = extractAgentDashMetaFromUpdate(entry.update)?.event?.type;
-      if (!eventType) continue;
-      newSystemEvents.push({
-        id: entry.id,
-        eventType,
-        update: entry.update,
-      });
-    }
-
-    lastSystemEventEntryIdRef.current = rawEntries[rawEntries.length - 1]?.id ?? null;
-    if (newSystemEvents.length === 0) return;
-    for (const item of newSystemEvents.reverse()) {
+    if (!hasSession || rawEvents.length === 0) return;
+    const result = collectNewSystemEvents(rawEvents, lastSystemEventSeqRef.current);
+    lastSystemEventSeqRef.current = result.lastSeenSeq;
+    if (result.items.length === 0) return;
+    for (const item of result.items) {
       onSystemEventRef.current?.(item.eventType, item.update);
     }
-  }, [hasSession, rawEntries]);
+  }, [hasSession, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 

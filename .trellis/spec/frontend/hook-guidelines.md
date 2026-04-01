@@ -145,6 +145,52 @@ export function useAcpStream(options: UseStreamOptions): UseStreamResult {
 - [ ] HMR dispose 时统一关闭所有流连接（防止连接累积）
 - [ ] 手动重连方法（重新创建 EventSource 实例）
 
+### 流式 Hook 依赖卫生
+
+长连接 / 流式 Hook 的连接 effect 必须避免把“每次 render 都新建”的数组、对象、函数包装值直接放进依赖里。
+
+错误示例：
+
+```ts
+export function useAcpStream({ initialEntries = [] }: Options) {
+  useEffect(() => {
+    connect();
+    return disconnect;
+  }, [initialEntries]);
+}
+```
+
+上面这种写法会在每次 render 生成新的 `[]`，导致 effect 持续 teardown / reconnect。对于会话流，这会表现为：
+
+- 页面一直停在“连接中…”
+- 历史 hydrate 被重复执行
+- stream transport 被反复关闭重建
+
+正确做法：
+
+- 用模块级常量承接默认空数组 / 空对象
+- 用 `ref` 保存“仅供下次 source reset 使用”的初始值
+- 连接 effect 只依赖真正的 source key（如 `sessionId` / `endpoint` / `connectKey`）
+- 如果 props 变化不应该触发重连，就不要把它直接放进连接 effect 依赖
+
+```ts
+const EMPTY_INITIAL_ENTRIES: Entry[] = [];
+
+export function useAcpStream({ initialEntries }: Options) {
+  const normalizedInitialEntries = initialEntries ?? EMPTY_INITIAL_ENTRIES;
+  const initialEntriesRef = useRef(normalizedInitialEntries);
+
+  useEffect(() => {
+    initialEntriesRef.current = normalizedInitialEntries;
+  }, [normalizedInitialEntries]);
+
+  useEffect(() => {
+    connect();
+    return disconnect;
+  }, [sessionId, endpoint, connectKey]);
+}
+```
+
 ### 环境变量约定
 
 - `VITE_API_ORIGIN`（可选）：

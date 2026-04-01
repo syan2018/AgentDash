@@ -50,6 +50,7 @@ export function WorkspaceLayout() {
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const storyDashboardMatch = useMatch("/dashboard/story");
   const storyRouteMatch = useMatch("/story/:storyId");
+  const canvasDashboardMatch = useMatch("/dashboard/canvas");
   const workflowDashboardMatch = useMatch("/dashboard/workflow");
   const workflowEditorMatch = useMatch("/workflow-editor/:definitionId");
   const lifecycleEditorMatch = useMatch("/lifecycle-editor/:definitionId");
@@ -60,6 +61,8 @@ export function WorkspaceLayout() {
   const isStoryActive =
     !!storyDashboardMatch ||
     !!storyRouteMatch;       // Story 详情页从 Story Tab 进入，高亮 Story
+  const isCanvasActive =
+    !!canvasDashboardMatch;
   const isWorkflowActive =
     !!workflowDashboardMatch ||
     !!workflowEditorMatch ||
@@ -97,6 +100,14 @@ export function WorkspaceLayout() {
       return rememberedPath;
     }
     return "/dashboard/workflow";
+  }, [isSettingsRoute, rememberedPath]);
+
+  const canvasNavTarget = useMemo(() => {
+    if (!isSettingsRoute) return "/dashboard/canvas";
+    if (rememberedPath.startsWith("/dashboard/canvas")) {
+      return rememberedPath;
+    }
+    return "/dashboard/canvas";
   }, [isSettingsRoute, rememberedPath]);
 
   return (
@@ -162,6 +173,18 @@ export function WorkspaceLayout() {
                 }
               >
                 Workflow
+              </NavLink>
+              <NavLink
+                to={canvasNavTarget}
+                className={() =>
+                  `flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
+                    isCanvasActive
+                      ? "border-primary/20 bg-background font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:border-border hover:bg-background/80 hover:text-foreground"
+                  }`
+                }
+              >
+                Canvas
               </NavLink>
             </div>
           </div>

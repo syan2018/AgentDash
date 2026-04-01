@@ -1,46 +1,52 @@
 # Pi Agent 流式合并协议
 
-> Pi Agent 在 streaming 模式下的 chunk 合并契约。
+> Pi Agent 在 streaming 模式下的 chunk 发送与消费契约。
 > 从 `execution-hook-runtime.md` 拆分，独立维护。
 
 ---
 
-## Scenario: agent_message_chunk 合并协议（Pi Agent 流模式）
+## Scenario: chunk 发送语义与完成边界
 
-### 背景
+### 协议事实（ACP）
 
-Pi Agent 在 streaming 模式下同时产生两类 `agent_message_chunk`：
+1. `session/update` 的 `*_message_chunk`（`agent_message_chunk` / `agent_thought_chunk` / `user_message_chunk`）在 ACP stable 中只表示“片段”，不包含“这是最后一个 chunk”的原生字段。
+2. 一次 turn 的完成信号来自 `session/prompt` 响应中的 `stopReason`（如 `end_turn` / `cancelled`），而不是某个 chunk。
+3. ACP unstable 提供 `ContentChunk.messageId`，用于标识“哪些 chunk 属于同一条消息”。
 
-1. **TextDelta 增量 chunk** — `AgentEvent::MessageUpdate::TextDelta` 触发，每次只含新增文字片段
-2. **MessageEnd 全量 chunk** — `AgentEvent::MessageEnd` 触发，含完整的消息文本快照
+### 发信层契约（Pi Agent）
 
-两类 chunk 共享相同的 `_meta.agentdash.trace.entryIndex`（`entry_index` 在 `MessageEnd` 之后才递增），因此 `(turnId, entryIndex, sessionUpdate)` 三元组可以唯一标识"同一条消息"。
+`crates/agentdash-executor/src/connectors/pi_agent.rs::convert_event_to_notifications` 必须遵循：
 
-### 前端合并契约
+1. **TextDelta / ThinkingDelta**
+   - 按增量发 chunk；
+   - 为同一 `(turn_id, entry_index, chunk_kind)` 复用同一个 `messageId`；
+   - 记录已发送文本（`chunk_emit_states`）。
 
-前端 `useAcpStream.applyNotification` 在处理 chunk 时必须按以下顺序：
+2. **MessageEnd（拆分逻辑）**
+   - 若该消息此前已发过 delta：
+     - `final_text` 以已发送文本为前缀：只发送“尾差量”（suffix）；
+     - `final_text == emitted_text`：不再发送 chunk（避免重复）；
+     - 二者不兼容：记录 warning，不再发送兜底快照（保持单路径约束）。
+   - 若此前未发过 delta：发送完整文本 chunk（首发即全量，但不标记为 snapshot）。
 
-**Step 1：entryIndex upsert（优先）**
+3. **entry_index 递增**
+   - 保持原契约：本条 assistant 消息处理完成后再递增 `entry_index`。
 
-若 incoming chunk 携带 `turnId` + `entryIndex`，先向后遍历 entries 查找同 `(turnId, entryIndex, sessionUpdate)` 的已有 entry：
-- **找到** → 用 incoming 文本**直接覆盖**（全量快照覆盖增量累积版本），不拼接，不新建
-- **找不到** → 进入 Step 2
+### 消费层契约（前端）
 
-**Step 2：相邻合并（次选，正常 delta 场景）**
+前端 `useAcpStream` 合并优先级必须是：
 
-`(turnId, sessionUpdate)` 相同且相邻的 chunk → `mergeStreamChunk` 累积拼接。
+1. `messageId` 命中（优先，协议层锚点）
+2. `turn_id + entry_index + sessionUpdate`（回退锚点）
+3. 最后才走相邻增量合并
 
-**禁止行为**：不得在 entryIndex upsert 命中时走 `${previous}${incoming}` 拼接，这会导致重复渲染。
+### 为什么要这样拆
 
-### MessageEnd 行为说明
-
-`pi_agent.rs::convert_event_to_notifications` 对 `AgentEvent::MessageEnd` 的处理：
-- 正常路径：发出包含完整文本的 `AgentMessageChunk` + 递增 `entry_index`
-- 错误路径（`error_message` 非空且无实际 TextDelta content）：同上，发出错误文本 chunk
-
-**MessageEnd 发全量快照是正确且必要的行为**，不应修改。前端负责通过 entryIndex 识别并正确覆盖。
+- 避免“delta + MessageEnd 全量快照”双发导致重复内容；
+- 将“消息边界识别”前移到发信层（messageId + sender state）；
+- 保持 turn 结束语义遵循 ACP（`stopReason`）。
 
 ### 关键文件
 
-- `crates/agentdash-executor/src/connectors/pi_agent.rs` — `convert_event_to_notifications`
-- `frontend/src/features/acp-session/model/useAcpStream.ts` — `applyNotification` chunk 合并
+- `crates/agentdash-executor/src/connectors/pi_agent.rs` — 发信层拆分与 messageId
+- `frontend/src/features/acp-session/model/useAcpStream.ts` — chunk 合并消费策略

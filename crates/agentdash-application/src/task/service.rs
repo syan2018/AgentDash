@@ -12,6 +12,7 @@ use agentdash_domain::{
 };
 
 use crate::address_space::RelayAddressSpaceService;
+use crate::canvas::append_visible_canvas_mounts;
 use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionExecutionState, SessionHub};
@@ -439,6 +440,19 @@ impl TaskLifecycleService {
             executor_config,
         )
         .await?;
+        if let Some(address_space) = ctx.address_space.as_mut()
+            && let Some(session_id) = task.session_id.as_deref()
+            && let Ok(Some(meta)) = self.hub.get_session_meta(session_id).await
+        {
+            append_visible_canvas_mounts(
+                self.repos.canvas_repo.as_ref(),
+                task.project_id,
+                address_space,
+                &meta.visible_canvas_mount_ids,
+            )
+            .await
+            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
+        }
         ctx.identity = identity;
 
         self.dispatcher.dispatch_turn(session_id, ctx).await

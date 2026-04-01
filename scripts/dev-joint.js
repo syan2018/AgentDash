@@ -56,7 +56,7 @@ await main();
 async function main() {
   printBanner();
 
-  await runStep0KillPorts();
+  await runStep0Cleanup();
 
   if (!config.skipBuild) {
     console.log('[1/4] 构建二进制...');
@@ -314,7 +314,15 @@ function printBanner() {
   console.log('');
 }
 
-async function runStep0KillPorts() {
+async function runStep0Cleanup() {
+  console.log('[0/4] 启动前预清理...');
+
+  if (!config.skipLocal) {
+    await killProcessByName('agentdash-local');
+  } else {
+    console.log('  [skip] 保留现有 agentdash-local（--skip-local）');
+  }
+
   const ports = [];
   if (!config.skipServer) {
     ports.push(config.serverPort);
@@ -326,15 +334,42 @@ async function runStep0KillPorts() {
   const uniquePorts = [...new Set(ports)];
 
   if (uniquePorts.length === 0) {
-    console.log('[0/4] 跳过端口预清理（当前模式无需清理）');
+    console.log('  [skip] 当前模式无需端口清理');
     return;
   }
 
-  console.log('[0/4] 端口预清理...');
+  console.log(`  [run] 清理端口: ${uniquePorts.join(', ')}`);
   await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js'), ...uniquePorts.map(String)], {
     cwd: root,
     label: 'kill-ports'
   });
+}
+
+async function killProcessByName(name) {
+  if (isWindows) {
+    await runCommand(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `Get-Process -Name '${name}' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`
+      ],
+      {
+        cwd: root,
+        label: `kill-${name}`,
+        allowNonZeroExit: true
+      }
+    );
+    console.log(`  [run] 已尝试清理进程名 ${name}`);
+    return;
+  }
+
+  await runCommand('pkill', ['-f', name], {
+    cwd: root,
+    label: `kill-${name}`,
+    allowNonZeroExit: true
+  });
+  console.log(`  [run] 已尝试清理进程名 ${name}`);
 }
 
 function resolveBinary(name) {
@@ -384,7 +419,7 @@ function runCommand(command, args, options = {}) {
 
     child.on('error', reject);
     child.on('exit', (code, signal) => {
-      if (code === 0) {
+      if (code === 0 || (options.allowNonZeroExit && code !== null)) {
         resolve();
         return;
       }

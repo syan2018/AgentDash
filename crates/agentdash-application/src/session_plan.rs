@@ -277,21 +277,33 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
         Some(SessionOwnerType::Task) => {
             tools.push("report_workflow_artifact".to_string());
             tools.push("resolve_hook_action".to_string());
+            tools.push("create_canvas".to_string());
+            tools.push("inject_canvas_data".to_string());
+            tools.push("present_canvas".to_string());
         }
         Some(SessionOwnerType::Story) => {
             tools.push("report_workflow_artifact".to_string());
             tools.push("companion_dispatch".to_string());
             tools.push("companion_complete".to_string());
             tools.push("resolve_hook_action".to_string());
+            tools.push("create_canvas".to_string());
+            tools.push("inject_canvas_data".to_string());
+            tools.push("present_canvas".to_string());
         }
         Some(SessionOwnerType::Project) => {
             tools.push("resolve_hook_action".to_string());
+            tools.push("create_canvas".to_string());
+            tools.push("inject_canvas_data".to_string());
+            tools.push("present_canvas".to_string());
         }
         None => {
             tools.push("report_workflow_artifact".to_string());
             tools.push("companion_dispatch".to_string());
             tools.push("companion_complete".to_string());
             tools.push("resolve_hook_action".to_string());
+            tools.push("create_canvas".to_string());
+            tools.push("inject_canvas_data".to_string());
+            tools.push("present_canvas".to_string());
         }
     }
     tools

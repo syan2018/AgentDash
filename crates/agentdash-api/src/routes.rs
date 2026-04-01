@@ -3,6 +3,7 @@ pub mod address_spaces;
 pub mod agents;
 pub mod auth_routes;
 pub mod backends;
+pub mod canvases;
 pub mod discovered_options;
 pub mod discovery;
 pub mod file_picker;
@@ -124,6 +125,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_project_workflow_assignments)
                 .post(workflows::create_project_workflow_assignment),
         )
+        .route(
+            "/projects/{project_id}/canvases",
+            get(canvases::list_project_canvases).post(canvases::create_canvas),
+        )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(
             "/projects/{project_id}/workspaces",
@@ -162,6 +167,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/stories/{id}/sessions/{binding_id}",
             get(story_sessions::get_story_session).delete(story_sessions::unbind_story_session),
+        )
+        .route(
+            "/canvases/{id}",
+            get(canvases::get_canvas)
+                .put(canvases::update_canvas)
+                .delete(canvases::delete_canvas),
+        )
+        .route(
+            "/canvases/{id}/runtime-snapshot",
+            get(canvases::get_canvas_runtime_snapshot),
         )
         .route(
             "/stories/{id}/tasks",
@@ -295,6 +310,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(acp_sessions::get_session_hook_runtime),
         )
         .route("/sessions/{id}/state", get(acp_sessions::get_session_state))
+        .route("/sessions/{id}/events", get(acp_sessions::list_session_events))
         .route(
             "/sessions/{id}/bindings",
             get(acp_sessions::get_session_bindings),

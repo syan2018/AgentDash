@@ -1,0 +1,84 @@
+{
+  "id": "live-canvas-runtime",
+  "name": "live-canvas-runtime",
+  "title": "Live Canvas 动态前端运行时",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-03-31",
+  "completedAt": null,
+  "branch": "codex/live-canvas-runtime",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": "c87575e",
+  "pr_url": null,
+  "subtasks": [
+    {
+      "key": "canvas-domain-api",
+      "title": "建立 Canvas 领域实体、绑定模型与 API 基础",
+      "status": "pending"
+    },
+    {
+      "key": "canvas-address-space-tools",
+      "title": "实现 canvas_fs provider、session mount 追加与工具 capability 扩展",
+      "status": "pending"
+    },
+    {
+      "key": "canvas-runtime-contract",
+      "title": "定义 runtime snapshot API、iframe message 协议与白名单库策略",
+      "status": "pending"
+    },
+    {
+      "key": "session-page-canvas-panel",
+      "title": "在 SessionPage 接入 canvas_presented 事件与 Canvas Panel",
+      "status": "pending"
+    },
+    {
+      "key": "canvas-samples-and-authoring-docs",
+      "title": "补齐示例 Canvas、Agent 生成约定与收尾文档",
+      "status": "pending"
+    }
+  ],
+  "relatedFiles": [
+    ".trellis/tasks/03-31-live-canvas-runtime/prd.md",
+    ".trellis/tasks/03-31-live-canvas-runtime/execution-plan.md",
+    ".trellis/tasks/03-31-live-canvas-runtime/subtasks.md",
+    "crates/agentdash-application/src/address_space/mount.rs",
+    "crates/agentdash-application/src/address_space/provider.rs",
+    "crates/agentdash-application/src/address_space/relay_service.rs",
+    "crates/agentdash-application/src/address_space/tools/provider.rs",
+    "crates/agentdash-application/src/task/session_runtime_inputs.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-spi/src/connector.rs",
+    "crates/agentdash-application/src/session_plan.rs",
+    "frontend/src/pages/SessionPage.tsx",
+    "frontend/src/features/acp-session/ui/AcpSystemEventGuard.ts",
+    "frontend/src/features/acp-session/ui/AcpSystemEventCard.tsx",
+    "frontend/src/features/acp-session/ui/SessionChatView.tsx",
+    "frontend/package.json"
+  ],
+  "notes": "当前进入正式推进前的执行拆分阶段。优先并行推进 Canvas 领域/API、runtime contract、SessionPage 接入点分析，再收敛到统一实现批次。"
+}

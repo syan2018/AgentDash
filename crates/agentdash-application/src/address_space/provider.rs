@@ -90,11 +90,15 @@ impl MountProviderRegistryBuilder {
     pub fn with_builtins(
         mut self,
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
+        canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
     ) -> Self {
         self.registry
             .register(Arc::new(super::provider_inline::InlineFsMountProvider));
         self.registry.register(Arc::new(
             super::provider_lifecycle::LifecycleMountProvider::new(lifecycle_run_repo),
+        ));
+        self.registry.register(Arc::new(
+            super::provider_canvas::CanvasFsMountProvider::new(canvas_repo),
         ));
         self
     }

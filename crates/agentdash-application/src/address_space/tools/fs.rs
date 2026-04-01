@@ -6,6 +6,7 @@ use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, Too
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::address_space::inline_persistence::InlineContentOverlay;
@@ -13,9 +14,37 @@ use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::{
     ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri, resolve_mount_id,
 };
+use crate::address_space::build_canvas_mount;
 
 pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<ResourceRef, String> {
     parse_mount_uri(path, address_space)
+}
+
+#[derive(Clone)]
+pub struct SharedRuntimeAddressSpace {
+    inner: Arc<RwLock<AddressSpace>>,
+}
+
+impl SharedRuntimeAddressSpace {
+    pub fn new(address_space: AddressSpace) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(address_space)),
+        }
+    }
+
+    pub async fn snapshot(&self) -> AddressSpace {
+        self.inner.read().await.clone()
+    }
+
+    pub async fn append_canvas_mount(
+        &self,
+        canvas: &agentdash_domain::canvas::Canvas,
+    ) {
+        let mut guard = self.inner.write().await;
+        let mount = build_canvas_mount(canvas);
+        guard.mounts.retain(|existing| existing.id != mount.id);
+        guard.mounts.push(mount);
+    }
 }
 
 pub fn ok_text(text: String) -> AgentToolResult {
@@ -35,11 +64,14 @@ const FS_APPLY_PATCH_DESCRIPTION: &str = "使用 Codex apply_patch 语法在指�
 #[derive(Clone)]
 pub struct MountsListTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: AddressSpace,
+    address_space: SharedRuntimeAddressSpace,
 }
 
 impl MountsListTool {
-    pub fn new(service: Arc<RelayAddressSpaceService>, address_space: AddressSpace) -> Self {
+    pub fn new(
+        service: Arc<RelayAddressSpaceService>,
+        address_space: SharedRuntimeAddressSpace,
+    ) -> Self {
         Self {
             service,
             address_space,
@@ -65,7 +97,8 @@ impl AgentTool for MountsListTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let mounts = self.service.list_mounts(&self.address_space);
+        let address_space = self.address_space.snapshot().await;
+        let mounts = self.service.list_mounts(&address_space);
         let body = mounts
             .iter()
             .map(|mount| {
@@ -96,14 +129,14 @@ impl AgentTool for MountsListTool {
 #[derive(Clone)]
 pub struct FsReadTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: AddressSpace,
+    address_space: SharedRuntimeAddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsReadTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: AddressSpace,
+        address_space: SharedRuntimeAddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
@@ -144,12 +177,13 @@ impl AgentTool for FsReadTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsReadParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(&self.address_space, &params.path)
+        let address_space = self.address_space.snapshot().await;
+        let target = resolve_uri_path(&address_space, &params.path)
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .read_text(
-                &self.address_space,
+                &address_space,
                 &target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
@@ -183,14 +217,14 @@ impl AgentTool for FsReadTool {
 #[derive(Clone)]
 pub struct FsWriteTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: AddressSpace,
+    address_space: SharedRuntimeAddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsWriteTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: AddressSpace,
+        address_space: SharedRuntimeAddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
@@ -227,17 +261,30 @@ impl AgentTool for FsWriteTool {
         _: &str,
         args: serde_json::Value,
         _: CancellationToken,
-        _: Option<ToolUpdateCallback>,
+        on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsWriteParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(&self.address_space, &params.path)
+        let address_space = self.address_space.snapshot().await;
+        let target = resolve_uri_path(&address_space, &params.path)
             .map_err(AgentToolError::ExecutionFailed)?;
+        if let Some(callback) = on_update.as_ref() {
+            callback(AgentToolResult {
+                content: vec![ContentPart::text(format!("开始写入文件: {}", target.path))],
+                is_error: false,
+                details: None,
+            });
+        }
         let overlay_ref = self.overlay.as_ref().map(|arc| arc.as_ref());
         let final_content = if params.append.unwrap_or(false) {
             match self
                 .service
-                .read_text(&self.address_space, &target, overlay_ref, self.identity.as_ref())
+                .read_text(
+                    &address_space,
+                    &target,
+                    overlay_ref,
+                    self.identity.as_ref(),
+                )
                 .await
             {
                 Ok(existing) => format!("{}{}", existing.content, params.content),
@@ -247,7 +294,13 @@ impl AgentTool for FsWriteTool {
             params.content
         };
         self.service
-            .write_text(&self.address_space, &target, &final_content, overlay_ref, self.identity.as_ref())
+            .write_text(
+                &address_space,
+                &target,
+                &final_content,
+                overlay_ref,
+                self.identity.as_ref(),
+            )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
         Ok(ok_text(format!("已写入文件: {}", target.path)))
@@ -257,14 +310,14 @@ impl AgentTool for FsWriteTool {
 #[derive(Clone)]
 pub struct FsApplyPatchTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: AddressSpace,
+    address_space: SharedRuntimeAddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsApplyPatchTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: AddressSpace,
+        address_space: SharedRuntimeAddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
@@ -312,12 +365,13 @@ impl AgentTool for FsApplyPatchTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsApplyPatchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let mount_id = resolve_mount_id(&self.address_space, params.mount.as_deref())
+        let address_space = self.address_space.snapshot().await;
+        let mount_id = resolve_mount_id(&address_space, params.mount.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .apply_patch(
-                &self.address_space,
+                &address_space,
                 &mount_id,
                 &params.patch,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
@@ -343,14 +397,14 @@ impl AgentTool for FsApplyPatchTool {
 #[derive(Clone)]
 pub struct FsListTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: AddressSpace,
+    address_space: SharedRuntimeAddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsListTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: AddressSpace,
+        address_space: SharedRuntimeAddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
@@ -391,12 +445,13 @@ impl AgentTool for FsListTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsListParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(&self.address_space, params.path.as_deref().unwrap_or("."))
+        let address_space = self.address_space.snapshot().await;
+        let target = resolve_uri_path(&address_space, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .list(
-                &self.address_space,
+                &address_space,
                 &target.mount_id,
                 ListOptions {
                     path: if target.path.is_empty() {
@@ -432,13 +487,13 @@ impl AgentTool for FsListTool {
 #[derive(Clone)]
 pub struct FsSearchTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: AddressSpace,
+    address_space: SharedRuntimeAddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsSearchTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
-        address_space: AddressSpace,
+        address_space: SharedRuntimeAddressSpace,
         overlay: Option<Arc<InlineContentOverlay>>,
         _identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
@@ -482,7 +537,8 @@ impl AgentTool for FsSearchTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsSearchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(&self.address_space, params.path.as_deref().unwrap_or("."))
+        let address_space = self.address_space.snapshot().await;
+        let target = resolve_uri_path(&address_space, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let search_path = if target.path.is_empty() {
             ".".to_string()
@@ -492,7 +548,7 @@ impl AgentTool for FsSearchTool {
         let (hits, truncated) = self
             .service
             .search_text_extended(
-                &self.address_space,
+                &address_space,
                 &crate::address_space::TextSearchParams {
                     mount_id: &target.mount_id,
                     path: &search_path,
@@ -521,10 +577,13 @@ impl AgentTool for FsSearchTool {
 #[derive(Clone)]
 pub struct ShellExecTool {
     service: Arc<RelayAddressSpaceService>,
-    address_space: AddressSpace,
+    address_space: SharedRuntimeAddressSpace,
 }
 impl ShellExecTool {
-    pub fn new(service: Arc<RelayAddressSpaceService>, address_space: AddressSpace) -> Self {
+    pub fn new(
+        service: Arc<RelayAddressSpaceService>,
+        address_space: SharedRuntimeAddressSpace,
+    ) -> Self {
         Self {
             service,
             address_space,
@@ -560,7 +619,8 @@ impl AgentTool for ShellExecTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let target = resolve_uri_path(&self.address_space, params.cwd.as_deref().unwrap_or("."))
+        let address_space = self.address_space.snapshot().await;
+        let target = resolve_uri_path(&address_space, params.cwd.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let cwd = if target.path.is_empty() {
             ".".to_string()
@@ -570,7 +630,7 @@ impl AgentTool for ShellExecTool {
         let result = self
             .service
             .exec(
-                &self.address_space,
+                &address_space,
                 &ExecRequest {
                     mount_id: target.mount_id.clone(),
                     cwd: cwd.clone(),

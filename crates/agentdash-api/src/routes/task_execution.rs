@@ -187,12 +187,23 @@ pub async fn get_task_session(
         .get_task_session(task_id)
         .await
         .map_err(map_task_execution_error)?;
+    let session_meta = if let Some(session_id) = result.session_id.as_deref() {
+        state
+            .services
+            .session_hub
+            .get_session_meta(session_id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else {
+        None
+    };
 
     let built_context = build_task_session_context(
         &state.repos,
         &state.services.address_space_service,
         state.config.mcp_base_url.as_deref(),
         task_id,
+        session_meta.as_ref(),
     )
     .await;
 

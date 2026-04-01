@@ -11,6 +11,7 @@ use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
+use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
@@ -375,7 +376,7 @@ pub(crate) async fn build_story_session_context_response(
         .is_some_and(|c| c.is_cloud_native())
         || (resolved_config.is_none() && default_agent_type.is_some());
     let address_space = if use_address_space {
-        state
+        let mut address_space = state
             .services
             .address_space_service
             .build_address_space(
@@ -385,7 +386,16 @@ pub(crate) async fn build_story_session_context_response(
                 SessionMountTarget::Story,
                 effective_agent_type.as_deref(),
             )
-            .ok()
+            .ok()?;
+        append_visible_canvas_mounts(
+            state.repos.canvas_repo.as_ref(),
+            project.id,
+            &mut address_space,
+            &session_meta.visible_canvas_mount_ids,
+        )
+        .await
+        .ok()?;
+        Some(address_space)
     } else {
         None
     };

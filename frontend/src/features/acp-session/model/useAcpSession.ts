@@ -13,6 +13,7 @@ import type {
   AcpDisplayItem,
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
+  SessionEventEnvelope,
   ToolAggregationType,
   TokenUsageInfo,
 } from "./types";
@@ -28,6 +29,7 @@ export interface UseAcpSessionOptions {
 export interface UseAcpSessionResult {
   displayItems: AcpDisplayItem[];
   rawEntries: AcpDisplayEntry[];
+  rawEvents: SessionEventEnvelope[];
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
@@ -202,6 +204,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
 
   const {
     entries,
+    rawEvents,
     isConnected,
     isLoading,
     isReceiving,
@@ -233,6 +236,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
   return {
     displayItems,
     rawEntries: entries,
+    rawEvents,
     isConnected,
     isLoading,
     isReceiving,

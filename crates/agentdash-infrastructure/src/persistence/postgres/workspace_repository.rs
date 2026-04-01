@@ -389,11 +389,10 @@ fn parse_uuid(value: String, entity: &'static str) -> Result<Uuid, DomainError> 
 }
 
 fn parse_datetime(value: Option<String>) -> DateTime<Utc> {
-    value
-        .as_deref()
-        .and_then(|raw| DateTime::parse_from_rfc3339(raw).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now)
+    match value.as_deref() {
+        Some(raw) => super::parse_pg_timestamp(raw),
+        None => Utc::now(),
+    }
 }
 
 fn parse_json_value(raw: String) -> Value {

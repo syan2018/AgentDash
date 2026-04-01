@@ -329,6 +329,11 @@ function isPostgresUrl(value) {
 async function runStep0Cleanup() {
   console.log('[0/4] 启动前预清理...');
 
+  // 优先清理 embedded PostgreSQL 残留进程，防止数据目录锁死导致启动卡死
+  if (!config.skipServer) {
+    await killEmbeddedPostgres();
+  }
+
   if (!config.skipLocal) {
     await killProcessByName('agentdash-local');
   } else {
@@ -382,6 +387,27 @@ async function killProcessByName(name) {
     allowNonZeroExit: true
   });
   console.log(`  [run] 已尝试清理进程名 ${name}`);
+}
+
+async function killEmbeddedPostgres() {
+  if (isWindows) {
+    await runCommand(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        "Get-Process -Name 'postgres' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\\.theseus\\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
+      ],
+      { cwd: root, label: 'kill-embedded-postgres', allowNonZeroExit: true }
+    );
+  } else {
+    await runCommand('pkill', ['-f', '.theseus.*postgres'], {
+      cwd: root,
+      label: 'kill-embedded-postgres',
+      allowNonZeroExit: true
+    });
+  }
+  console.log('  [run] 已尝试清理 embedded PostgreSQL 残留进程');
 }
 
 function resolveBinary(name) {
@@ -615,6 +641,8 @@ async function shutdown(exitCode) {
   for (const { child } of [...managedChildren].reverse()) {
     await stopProcessTree(child);
   }
+  // 兜底：确保 embedded PostgreSQL 子进程不会成为僵尸
+  await killEmbeddedPostgres().catch(() => {});
   console.log('  全部已停止');
   process.exit(exitCode);
 }

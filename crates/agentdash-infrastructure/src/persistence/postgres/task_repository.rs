@@ -455,12 +455,8 @@ impl TryFrom<TaskRow> for Task {
             },
             agent_binding,
             artifacts,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
 }

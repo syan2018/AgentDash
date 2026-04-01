@@ -1,6 +1,6 @@
 use agentdash_domain::DomainError;
 use agentdash_domain::identity::{Group, User, UserDirectoryRepository};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sqlx::PgPool;
 
 pub struct SqliteUserDirectoryRepository {
@@ -296,8 +296,8 @@ impl TryFrom<UserRow> for User {
             email: row.email,
             is_admin: row.is_admin,
             provider: row.provider,
-            created_at: parse_rfc3339(&row.created_at),
-            updated_at: parse_rfc3339(&row.updated_at),
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
 }
@@ -309,14 +309,8 @@ impl TryFrom<GroupRow> for Group {
         Ok(Group {
             group_id: row.group_id,
             display_name: row.display_name,
-            created_at: parse_rfc3339(&row.created_at),
-            updated_at: parse_rfc3339(&row.updated_at),
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
-}
-
-fn parse_rfc3339(value: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now())
 }

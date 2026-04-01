@@ -424,12 +424,8 @@ impl TryFrom<StoryRow> for Story {
             tags,
             task_count: row.task_count.max(0) as u32,
             context,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
 }
@@ -473,9 +469,7 @@ impl TryFrom<StateChangeRow> for StateChange {
             },
             payload: serde_json::from_str(&row.payload).unwrap_or_default(),
             backend_id: row.backend_id.unwrap_or_default(),
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: super::parse_pg_timestamp(&row.created_at),
         })
     }
 }

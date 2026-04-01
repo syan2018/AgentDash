@@ -450,12 +450,8 @@ impl CanvasRow {
             sandbox_config,
             files: files.get(&self.id).cloned().unwrap_or_default(),
             bindings: bindings.get(&self.id).cloned().unwrap_or_default(),
-            created_at: chrono::DateTime::parse_from_rfc3339(&self.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            updated_at: chrono::DateTime::parse_from_rfc3339(&self.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: super::parse_pg_timestamp(&self.created_at),
+            updated_at: super::parse_pg_timestamp(&self.updated_at),
         })
     }
 }

@@ -1,4 +1,3 @@
-use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::PgPool;
 
 use agentdash_domain::common::error::DomainError;
@@ -139,13 +138,7 @@ impl TryFrom<SettingRow> for Setting {
     fn try_from(row: SettingRow) -> Result<Self, Self::Error> {
         let value: serde_json::Value = serde_json::from_str(&row.value)?;
 
-        let updated_at: DateTime<Utc> = DateTime::parse_from_rfc3339(&row.updated_at)
-            .map(|value| value.with_timezone(&Utc))
-            .or_else(|_| {
-                NaiveDateTime::parse_from_str(&row.updated_at, "%Y-%m-%d %H:%M:%S")
-                    .map(|naive| DateTime::from_naive_utc_and_offset(naive, Utc))
-            })
-            .map_err(|e| DomainError::InvalidConfig(format!("日期解析失败: {e}")))?;
+        let updated_at = super::parse_pg_timestamp(&row.updated_at);
         let scope_kind = parse_scope_kind(&row.scope_kind);
 
         Ok(Setting {
@@ -157,6 +150,7 @@ impl TryFrom<SettingRow> for Setting {
         })
     }
 }
+
 
 fn parse_scope_kind(value: &str) -> SettingScopeKind {
     match value {

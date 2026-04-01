@@ -1,4 +1,3 @@
-use chrono::DateTime;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -34,8 +33,8 @@ impl SqliteAgentRepository {
                 agent_id TEXT NOT NULL,
                 config_override TEXT,
                 default_lifecycle_key TEXT,
-                is_default_for_story INTEGER NOT NULL DEFAULT 0,
-                is_default_for_task INTEGER NOT NULL DEFAULT 0,
+                is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
+                is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(project_id, agent_id)
@@ -73,12 +72,8 @@ impl TryFrom<AgentRow> for Agent {
             name: row.name,
             agent_type: row.agent_type,
             base_config: serde_json::from_str(&row.base_config).unwrap_or_default(),
-            created_at: DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_default(),
-            updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_default(),
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
 }
@@ -155,8 +150,8 @@ struct LinkRow {
     agent_id: String,
     config_override: Option<String>,
     default_lifecycle_key: Option<String>,
-    is_default_for_story: i32,
-    is_default_for_task: i32,
+    is_default_for_story: bool,
+    is_default_for_task: bool,
     created_at: String,
     updated_at: String,
 }
@@ -179,14 +174,10 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
                 .as_deref()
                 .and_then(|s| serde_json::from_str(s).ok()),
             default_lifecycle_key: row.default_lifecycle_key,
-            is_default_for_story: row.is_default_for_story != 0,
-            is_default_for_task: row.is_default_for_task != 0,
-            created_at: DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_default(),
-            updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_default(),
+            is_default_for_story: row.is_default_for_story,
+            is_default_for_task: row.is_default_for_task,
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
 }
@@ -205,8 +196,8 @@ impl ProjectAgentLinkRepository for SqliteAgentRepository {
         .bind(link.agent_id.to_string())
         .bind(link.config_override.as_ref().and_then(|v| serde_json::to_string(v).ok()))
         .bind(&link.default_lifecycle_key)
-        .bind(link.is_default_for_story as i32)
-        .bind(link.is_default_for_task as i32)
+        .bind(link.is_default_for_story)
+        .bind(link.is_default_for_task)
         .bind(link.created_at.to_rfc3339())
         .bind(link.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -275,8 +266,8 @@ impl ProjectAgentLinkRepository for SqliteAgentRepository {
         )
         .bind(link.config_override.as_ref().and_then(|v| serde_json::to_string(v).ok()))
         .bind(&link.default_lifecycle_key)
-        .bind(link.is_default_for_story as i32)
-        .bind(link.is_default_for_task as i32)
+        .bind(link.is_default_for_story)
+        .bind(link.is_default_for_task)
         .bind(link.updated_at.to_rfc3339())
         .bind(link.id.to_string())
         .execute(&self.pool)

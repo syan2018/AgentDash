@@ -330,12 +330,8 @@ impl TryFrom<ProjectRow> for Project {
             visibility: parse_project_visibility(&row.visibility),
             is_template: row.is_template,
             cloned_from_project_id: row.cloned_from_project_id.and_then(|id| id.parse().ok()),
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
 }
@@ -352,12 +348,8 @@ impl TryFrom<ProjectSubjectGrantRow> for ProjectSubjectGrant {
             subject_id: row.subject_id,
             role: parse_project_role(&row.role),
             granted_by_user_id: row.granted_by_user_id,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: super::parse_pg_timestamp(&row.created_at),
+            updated_at: super::parse_pg_timestamp(&row.updated_at),
         })
     }
 }

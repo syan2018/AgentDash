@@ -275,9 +275,7 @@ impl SessionBindingRepository for SqliteSessionBindingRepository {
                         id: row.owner_id.clone(),
                     })?,
                     label: row.label,
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                        .map(|dt| dt.with_timezone(&chrono::Utc))
-                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    created_at: super::parse_pg_timestamp(&row.created_at),
                 };
                 let story_id = row.story_id.as_deref().and_then(|s| s.parse::<Uuid>().ok());
                 Ok(ProjectSessionBinding {
@@ -329,9 +327,7 @@ impl TryFrom<BindingRow> for SessionBinding {
                 id: row.owner_id.clone(),
             })?,
             label: row.label,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: super::parse_pg_timestamp(&row.created_at),
         })
     }
 }

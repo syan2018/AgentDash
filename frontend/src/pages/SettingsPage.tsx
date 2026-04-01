@@ -5,6 +5,7 @@ import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
+import type { ModelInfo } from "../features/executor-selector/model/types";
 import type { SettingEntry, SettingUpdate, SettingsScopeRequest } from "../api/settings";
 import type { BackendConfig } from "../types";
 
@@ -236,14 +237,17 @@ function LlmProvidersSection({
   saving,
   onSave,
   discoveryRefreshKey,
+  onRefreshModels,
 }: {
   settings: { key: string; value: unknown; masked: boolean }[];
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
   discoveryRefreshKey: number;
+  onRefreshModels: () => void;
 }) {
   const discovered = useExecutorDiscoveredOptions("PI_AGENT", "", discoveryRefreshKey);
   const discoveredModels = discovered.options?.model_selector.models ?? [];
+  const isLoadingModels = discovered.options?.loading_models ?? true;
   const sortedProviders = useMemo(() => (
     LLM_PROVIDERS
       .map((provider, index) => ({
@@ -272,6 +276,8 @@ function LlmProvidersSection({
             provider={provider}
             settings={settings}
             discoveredModels={discoveredModels}
+            isLoadingModels={isLoadingModels}
+            onRefreshModels={onRefreshModels}
             saving={saving}
             onSave={onSave}
           />
@@ -285,24 +291,26 @@ function LlmProviderRow({
   provider,
   settings,
   discoveredModels,
+  isLoadingModels,
+  onRefreshModels,
   saving,
   onSave,
 }: {
   provider: LlmProviderDef;
   settings: { key: string; value: unknown; masked: boolean }[];
-  discoveredModels: Array<{ id: string; name: string; provider_id?: string | null; blocked?: boolean }>;
+  discoveredModels: ModelInfo[];
+  isLoadingModels: boolean;
+  onRefreshModels: () => void;
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // 读取当前已保存的值
   const savedApiKey = provider.apiKeySettingKey ? readVal(settings, provider.apiKeySettingKey) : "";
   const savedBaseUrl = provider.baseUrlSettingKey ? readVal(settings, provider.baseUrlSettingKey) : "";
   const savedModel = provider.defaultModelSettingKey ? readVal(settings, provider.defaultModelSettingKey) : "";
   const savedWireApi = provider.wireApiSettingKey ? readVal(settings, provider.wireApiSettingKey, "responses") : "";
 
-  // 读取模型列表配置
   const savedModelsRaw = provider.modelsSettingKey
     ? settings.find((s) => s.key === provider.modelsSettingKey)?.value
     : undefined;
@@ -312,7 +320,6 @@ function LlmProviderRow({
     : undefined;
   const savedBlockedModels = parseStringList(savedBlockedModelsRaw);
 
-  // 对于有 API Key 的 provider，以 API Key 存在为判断依据；对于 noApiKey 的 provider，以 baseUrl 为判断依据
   const configured = provider.noApiKey
     ? isConfigured(savedBaseUrl)
     : isConfigured(savedApiKey);
@@ -324,7 +331,6 @@ function LlmProviderRow({
         className="flex w-full items-center gap-3 px-4 py-3 text-left"
         onClick={() => setExpanded((p) => !p)}
       >
-        {/* 配置状态指示 */}
         <span
           className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${configured ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
         />
@@ -364,10 +370,344 @@ function LlmProviderRow({
           initialModels={savedModels}
           initialBlockedModels={savedBlockedModels}
           discoveredModels={discoveredModels.filter((model) => (model.provider_id ?? "") === provider.id)}
+          isLoadingModels={isLoadingModels}
+          onRefreshModels={onRefreshModels}
           saving={saving}
           onSave={onSave}
         />
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 统一模型管理
+// ---------------------------------------------------------------------------
+
+/** 构建 discovered model 的 tooltip 文本 */
+function buildModelTooltip(model: ModelInfo): string {
+  const lines = [model.id];
+  if (model.name && model.name !== model.id) lines.push(`名称: ${model.name}`);
+  lines.push(`上下文窗口: ${(model.context_window / 1000).toFixed(0)}k tokens`);
+  lines.push(`最大输出: ${(model.max_tokens / 1000).toFixed(0)}k tokens`);
+  if (model.reasoning) lines.push("支持推理 (extended thinking)");
+  return lines.join("\n");
+}
+
+function buildCustomModelTooltip(model: ModelConfig): string {
+  const lines = [model.id, "自定义模型"];
+  if (model.name && model.name !== model.id) lines.push(`名称: ${model.name}`);
+  lines.push(`上下文窗口: ${(model.context_window / 1000).toFixed(0)}k tokens`);
+  if (model.reasoning) lines.push("支持推理");
+  return lines.join("\n");
+}
+
+function ModelManagementSection({
+  discoveredModels,
+  customModels,
+  blockedModels,
+  isLoadingModels,
+  onRefreshModels,
+  onToggleBlocked,
+  onAddModel,
+  onRemoveModel,
+  onUpdateModel,
+}: {
+  discoveredModels: ModelInfo[];
+  customModels: ModelConfig[];
+  blockedModels: string[];
+  isLoadingModels: boolean;
+  onRefreshModels: () => void;
+  onToggleBlocked: (modelId: string) => void;
+  onAddModel: (initial?: ModelConfig) => void;
+  onRemoveModel: (index: number) => void;
+  onUpdateModel: (index: number, field: keyof ModelConfig, value: string | number | boolean) => void;
+}) {
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
+  const hasAny = discoveredModels.length > 0 || customModels.length > 0;
+  const totalCount = discoveredModels.length + customModels.length;
+  const enabledCount = discoveredModels.filter((m) => !blockedModels.includes(m.id)).length + customModels.length;
+
+  return (
+    <div className="space-y-1.5">
+      {/* 标题行：标签 + 统计 + 刷新按钮 */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="space-y-0.5">
+          <span className="text-sm font-medium text-foreground">模型管理</span>
+          <p className="text-xs text-muted-foreground">
+            {hasAny
+              ? `共 ${totalCount} 个模型（${enabledCount} 个启用），点击切换启用/屏蔽`
+              : "暂无模型，请先保存 Provider 配置后刷新"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefreshModels}
+          disabled={isLoadingModels}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+          title="重新发现可用模型"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={isLoadingModels ? "animate-spin" : ""}
+          >
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+            <path d="M21 3v5h-5" />
+          </svg>
+          {isLoadingModels ? "发现中…" : "刷新"}
+        </button>
+      </div>
+
+      {/* 统一的模型列表：发现 + 自定义混排 */}
+      <div className="flex flex-wrap gap-1.5">
+        {/* 自动发现的模型 */}
+        {discoveredModels.map((model) => {
+          const enabled = !blockedModels.includes(model.id);
+          return (
+            <button
+              key={`d-${model.id}`}
+              type="button"
+              onClick={() => onToggleBlocked(model.id)}
+              title={buildModelTooltip(model)}
+              className={`group inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
+                enabled
+                  ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                  : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
+              }`}
+            >
+              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
+                enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
+              }`} />
+              <span className={enabled ? "" : "line-through opacity-60"}>
+                {model.name || model.id}
+              </span>
+            </button>
+          );
+        })}
+
+        {/* 自定义模型（追加在发现模型之后） */}
+        {customModels.map((m, index) => (
+          editingIndex === index ? (
+            <div key={`c-${index}`} className="w-full">
+              <CustomModelEditRow
+                model={m}
+                onUpdate={(field, value) => onUpdateModel(index, field, value)}
+                onDone={() => setEditingIndex(null)}
+                onRemove={() => { onRemoveModel(index); setEditingIndex(null); }}
+              />
+            </div>
+          ) : (
+            <span
+              key={`c-${index}`}
+              className="group inline-flex items-center gap-1.5 rounded-[8px] border border-blue-500/30 bg-blue-500/8 px-2.5 py-1.5 text-xs text-blue-700 dark:text-blue-300"
+              title={buildCustomModelTooltip(m)}
+            >
+              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+              {m.name || m.id || "（未命名）"}
+              <button
+                type="button"
+                onClick={() => setEditingIndex(index)}
+                className="ml-0.5 rounded p-0.5 text-blue-600/60 hover:text-blue-700 hover:bg-blue-500/10 dark:text-blue-400/60 dark:hover:text-blue-300 transition-colors"
+                title="编辑此模型"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => onRemoveModel(index)}
+                className="rounded p-0.5 text-blue-600/60 hover:text-destructive hover:bg-destructive/10 dark:text-blue-400/60 dark:hover:text-destructive transition-colors"
+                title="删除此模型"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </span>
+          )
+        ))}
+
+        {/* 添加自定义模型入口（在列表末尾） */}
+        {showAddForm ? null : (
+          <button
+            type="button"
+            onClick={() => setShowAddForm(true)}
+            className="inline-flex items-center gap-1 rounded-[8px] border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-secondary/50 hover:text-foreground"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14" /><path d="M5 12h14" />
+            </svg>
+            自定义
+          </button>
+        )}
+      </div>
+
+      {/* 添加自定义模型表单 */}
+      {showAddForm && (
+        <NewCustomModelForm
+          onAdd={(newModel) => {
+            onAddModel(newModel);
+            setShowAddForm(false);
+          }}
+          onCancel={() => setShowAddForm(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 内联编辑某个自定义模型的行 */
+function CustomModelEditRow({
+  model,
+  onUpdate,
+  onDone,
+  onRemove,
+}: {
+  model: ModelConfig;
+  onUpdate: (field: keyof ModelConfig, value: string | number | boolean) => void;
+  onDone: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-[8px] border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+      <input
+        type="text"
+        className={`${inputCls} !w-36`}
+        value={model.id}
+        placeholder="模型 ID"
+        onChange={(e) => onUpdate("id", e.target.value)}
+        autoFocus
+      />
+      <input
+        type="text"
+        className={`${inputCls} !w-28`}
+        value={model.name}
+        placeholder="显示名称"
+        onChange={(e) => onUpdate("name", e.target.value)}
+      />
+      <input
+        type="number"
+        className={`${inputCls} !w-24`}
+        value={model.context_window}
+        placeholder="Context"
+        onChange={(e) => onUpdate("context_window", parseInt(e.target.value) || 0)}
+      />
+      <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
+        <input
+          type="checkbox"
+          checked={model.reasoning}
+          onChange={(e) => onUpdate("reasoning", e.target.checked)}
+          className="accent-primary"
+        />
+        推理
+      </label>
+      <div className="flex items-center gap-1.5 ml-auto">
+        <button
+          type="button"
+          onClick={onDone}
+          className="rounded-[6px] bg-primary px-2.5 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90"
+        >
+          完成
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="rounded-[6px] border border-destructive/30 px-2.5 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10"
+        >
+          删除
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 新建自定义模型的内联表单 */
+function NewCustomModelForm({
+  onAdd,
+  onCancel,
+}: {
+  onAdd: (model: ModelConfig) => void;
+  onCancel: () => void;
+}) {
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [contextWindow, setContextWindow] = useState(128000);
+  const [reasoning, setReasoning] = useState(false);
+
+  const handleSubmit = () => {
+    const trimmedId = id.trim();
+    if (!trimmedId) return;
+    onAdd({
+      id: trimmedId,
+      name: name.trim(),
+      context_window: contextWindow,
+      reasoning,
+    });
+  };
+
+  return (
+    <div className="rounded-[8px] border border-primary/20 bg-primary/5 p-3 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          className={`${inputCls} !w-40`}
+          value={id}
+          placeholder="模型 ID（必填）"
+          onChange={(e) => setId(e.target.value)}
+          autoFocus
+        />
+        <input
+          type="text"
+          className={`${inputCls} !w-28`}
+          value={name}
+          placeholder="显示名称"
+          onChange={(e) => setName(e.target.value)}
+        />
+        <input
+          type="number"
+          className={`${inputCls} !w-24`}
+          value={contextWindow}
+          placeholder="Context"
+          onChange={(e) => setContextWindow(parseInt(e.target.value) || 128000)}
+        />
+        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
+          <input
+            type="checkbox"
+            checked={reasoning}
+            onChange={(e) => setReasoning(e.target.checked)}
+            className="accent-primary"
+          />
+          推理
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!id.trim()}
+          className="rounded-[6px] bg-primary px-3 py-1 text-xs text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-50"
+        >
+          添加
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-[6px] border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary"
+        >
+          取消
+        </button>
+      </div>
     </div>
   );
 }
@@ -381,6 +721,8 @@ function LlmProviderForm({
   initialModels,
   initialBlockedModels,
   discoveredModels,
+  isLoadingModels,
+  onRefreshModels,
   saving,
   onSave,
 }: {
@@ -391,7 +733,9 @@ function LlmProviderForm({
   initialWireApi: string;
   initialModels: ModelConfig[];
   initialBlockedModels: string[];
-  discoveredModels: Array<{ id: string; name: string; blocked?: boolean }>;
+  discoveredModels: ModelInfo[];
+  isLoadingModels: boolean;
+  onRefreshModels: () => void;
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
@@ -485,8 +829,8 @@ function LlmProviderForm({
     }
   };
 
-  const handleAddModel = () => {
-    const newModel: ModelConfig = {
+  const handleAddModel = (initial?: ModelConfig) => {
+    const newModel: ModelConfig = initial ?? {
       id: "",
       name: "",
       context_window: 128000,
@@ -595,107 +939,19 @@ function LlmProviderForm({
         </Field>
       )}
 
-      {/* 模型列表编辑器 */}
-      {provider.modelsSettingKey && (
-        <Field label="可用模型" desc="配置此 Provider 的可用模型列表（可选，留空则自动获取）">
-          <div className="space-y-2">
-            {models.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-2">未配置自定义模型，将自动从 Provider API 获取</p>
-            ) : (
-              <div className="space-y-2">
-                {models.map((m, index) => (
-                  <div key={index} className="rounded-[8px] border border-border bg-secondary/30 p-3 space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        className={inputCls}
-                        value={m.id}
-                        placeholder="模型 ID"
-                        onChange={(e) => handleUpdateModel(index, "id", e.target.value)}
-                      />
-                      <input
-                        type="text"
-                        className={inputCls}
-                        value={m.name}
-                        placeholder="显示名称"
-                        onChange={(e) => handleUpdateModel(index, "name", e.target.value)}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="number"
-                        className={inputCls}
-                        value={m.context_window}
-                        placeholder="Context Window"
-                        onChange={(e) => handleUpdateModel(index, "context_window", parseInt(e.target.value) || 0)}
-                      />
-                      <label className="flex items-center gap-2 text-sm text-foreground">
-                        <input
-                          type="checkbox"
-                          checked={m.reasoning}
-                          onChange={(e) => handleUpdateModel(index, "reasoning", e.target.checked)}
-                          className="accent-primary"
-                        />
-                        支持推理
-                      </label>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveModel(index)}
-                      className="text-xs text-destructive hover:underline"
-                    >
-                      删除此模型
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={handleAddModel}
-              className="rounded-[8px] border border-border bg-secondary px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary/80"
-            >
-              + 添加模型
-            </button>
-          </div>
-        </Field>
-      )}
-
-      {provider.blockedModelsSettingKey && (
-        <Field label="屏蔽模型" desc="点击自动发现的模型开关。关闭后，该模型会从会话选择器中隐藏。">
-          <div className="space-y-2">
-            {discoveredModels.length === 0 ? (
-              <p className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                暂无自动发现模型。请先保存 Provider 配置，然后回到这里调整可见模型。
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {discoveredModels.map((model) => {
-                  const enabled = !blockedModels.includes(model.id);
-                  return (
-                    <button
-                      key={model.id}
-                      type="button"
-                      onClick={() => toggleBlockedModel(model.id)}
-                      className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                        enabled
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                          : "border-border bg-muted/60 text-muted-foreground line-through"
-                      }`}
-                    >
-                      {model.name || model.id}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {blockedModels.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                已屏蔽：{blockedModels.join("，")}
-              </p>
-            )}
-          </div>
-        </Field>
+      {/* 统一模型管理区域 */}
+      {(provider.modelsSettingKey || provider.blockedModelsSettingKey) && (
+        <ModelManagementSection
+          discoveredModels={discoveredModels}
+          customModels={models}
+          blockedModels={blockedModels}
+          isLoadingModels={isLoadingModels}
+          onRefreshModels={onRefreshModels}
+          onToggleBlocked={toggleBlockedModel}
+          onAddModel={handleAddModel}
+          onRemoveModel={handleRemoveModel}
+          onUpdateModel={handleUpdateModel}
+        />
       )}
 
       <div className="flex justify-end pt-1">
@@ -1278,6 +1534,7 @@ export function SettingsPage() {
               saving={saving}
               onSave={handleSave}
               discoveryRefreshKey={llmDiscoveryRefreshKey}
+              onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)}
             />
             <AgentSection settings={settings} saving={saving} onSave={handleSave} />
             <ExecutorSection settings={settings} saving={saving} onSave={handleSave} />

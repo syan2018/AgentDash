@@ -7,10 +7,10 @@ import { useWorkflowStore } from "../stores/workflowStore";
 export function LifecycleEditorPage() {
   const { definitionId } = useParams<{ definitionId: string }>();
   const navigate = useNavigate();
-  const editorDraft = useWorkflowStore((state) => state.lifecycleEditorDraft);
+  const editorDraft = useWorkflowStore((state) => state.lcEditor.draft);
   const openNewDraft = useWorkflowStore((state) => state.openNewLifecycleDraft);
   const openEditDraft = useWorkflowStore((state) => state.openEditLifecycleDraft);
-  const isLoading = useWorkflowStore((state) => state.lifecycleEditorIsLoading);
+  const isLoading = useWorkflowStore((state) => state.lcEditor.isLoading);
 
   const isNew = definitionId === "new";
 

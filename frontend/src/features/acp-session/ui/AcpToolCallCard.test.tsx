@@ -48,4 +48,39 @@ describe("AcpToolCallCard", () => {
 
     expect(html).toContain("已拒绝");
   });
+
+  it("当结构化输入尚未闭合时展示草稿输入而不是空对象", () => {
+    const html = renderToStaticMarkup(
+      <AcpToolCallCard
+        update={{
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-3",
+          title: "执行 fs_write",
+          kind: "edit",
+          status: "pending",
+          content: [],
+          rawInput: {},
+          _meta: {
+            agentdash: {
+              v: 1,
+              event: {
+                type: "tool_call_draft",
+                data: {
+                  toolCallId: "tool-call-3",
+                  toolName: "fs_write",
+                  phase: "delta",
+                  draftInput: "{\"path\":\"notes.txt\",\"content\":\"hello",
+                  isParseable: false,
+                },
+              },
+            },
+          },
+        } as any}
+      />,
+    );
+
+    expect(html).toContain("草稿输入");
+    expect(html).toContain("{&quot;path&quot;:&quot;notes.txt&quot;,&quot;content&quot;:&quot;hello");
+    expect(html).not.toContain("<pre class=\"agentdash-chat-code-block\">{}</pre>");
+  });
 });

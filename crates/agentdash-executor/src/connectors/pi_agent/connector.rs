@@ -693,6 +693,7 @@ fn make_meta(
     source: &AgentDashSourceV1,
     turn_id: &str,
     entry_index: u32,
+    event: Option<AgentDashEventV1>,
 ) -> agent_client_protocol::Meta {
     let mut trace = AgentDashTraceV1::new();
     trace.turn_id = Some(turn_id.to_string());
@@ -700,9 +701,31 @@ fn make_meta(
 
     let agentdash = AgentDashMetaV1::new()
         .source(Some(source.clone()))
-        .trace(Some(trace));
+        .trace(Some(trace))
+        .event(event);
 
     merge_agentdash_meta(None, &agentdash).expect("agentdash meta 不应为空")
+}
+
+fn make_tool_call_draft_event(
+    tool_call_id: &str,
+    tool_name: &str,
+    phase: &'static str,
+    delta: Option<&str>,
+    draft_input: &str,
+    is_parseable: bool,
+) -> AgentDashEventV1 {
+    let mut event = AgentDashEventV1::new("tool_call_draft");
+    event.message = Some(format!("工具 `{tool_name}` 参数草稿更新"));
+    event.data = Some(serde_json::json!({
+        "toolCallId": tool_call_id,
+        "toolName": tool_name,
+        "phase": phase,
+        "delta": delta,
+        "draftInput": draft_input,
+        "isParseable": is_parseable,
+    }));
+    event
 }
 
 struct EventDescription {
@@ -850,7 +873,7 @@ fn convert_event_to_notifications(
         state: &ToolCallEmitState,
         status: ToolCallStatus,
     ) -> SessionNotification {
-        let meta = make_meta(source, turn_id, state.entry_index);
+        let meta = make_meta(source, turn_id, state.entry_index, None);
         let mut call = ToolCall::new(ToolCallId::new(tool_call_id.to_string()), &state.title)
             .kind(state.kind)
             .status(status)
@@ -866,9 +889,10 @@ fn convert_event_to_notifications(
         tool_call_id: &str,
         state: &ToolCallEmitState,
         fields: ToolCallUpdateFields,
+        event: Option<AgentDashEventV1>,
     ) -> SessionNotification {
         let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.to_string()), fields);
-        update.meta = Some(make_meta(source, turn_id, state.entry_index));
+        update.meta = Some(make_meta(source, turn_id, state.entry_index, event));
         SessionNotification::new(session_id.clone(), SessionUpdate::ToolCallUpdate(update))
     }
 
@@ -959,6 +983,9 @@ fn convert_event_to_notifications(
             agentdash_agent::types::AssistantStreamEvent::ToolCallDelta {
                 tool_call_id,
                 name,
+                delta,
+                draft,
+                is_parseable,
                 ..
             } => {
                 let (state, _) = upsert_state_from_message(
@@ -969,6 +996,14 @@ fn convert_event_to_notifications(
                     name,
                 );
                 let fields = seed_tool_update_fields(&state, Some(ToolCallStatus::Pending));
+                let draft_event = Some(make_tool_call_draft_event(
+                    tool_call_id,
+                    name,
+                    "delta",
+                    Some(delta),
+                    draft,
+                    *is_parseable,
+                ));
                 vec![build_tool_call_update_notification(
                     session_id,
                     source,
@@ -976,6 +1011,7 @@ fn convert_event_to_notifications(
                     tool_call_id,
                     &state,
                     fields,
+                    draft_event,
                 )]
             }
             agentdash_agent::types::AssistantStreamEvent::ToolCallEnd { tool_call, .. } => {
@@ -988,6 +1024,18 @@ fn convert_event_to_notifications(
                     Some(tool_call.arguments.clone()),
                 );
                 let fields = seed_tool_update_fields(&state, Some(ToolCallStatus::Pending));
+                let draft_event = serde_json::to_string(&tool_call.arguments)
+                    .ok()
+                    .map(|draft| {
+                        make_tool_call_draft_event(
+                            &tool_call.id,
+                            &tool_call.name,
+                            "end",
+                            None,
+                            &draft,
+                            true,
+                        )
+                    });
                 vec![build_tool_call_update_notification(
                     session_id,
                     source,
@@ -995,13 +1043,14 @@ fn convert_event_to_notifications(
                     &tool_call.id,
                     &state,
                     fields,
+                    draft_event,
                 )]
             }
             agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
                 if text.is_empty() {
                     return Vec::new();
                 }
-                let meta = make_meta(source, turn_id, *entry_index);
+                let meta = make_meta(source, turn_id, *entry_index, None);
                 let key = chunk_stream_key(turn_id, *entry_index, "agent_message_chunk");
                 let state = chunk_emit_states.entry(key).or_default();
                 state.seen_delta = true;
@@ -1024,7 +1073,7 @@ fn convert_event_to_notifications(
                 if text.is_empty() {
                     return Vec::new();
                 }
-                let meta = make_meta(source, turn_id, *entry_index);
+                let meta = make_meta(source, turn_id, *entry_index, None);
                 let key = chunk_stream_key(turn_id, *entry_index, "agent_thought_chunk");
                 let state = chunk_emit_states.entry(key).or_default();
                 state.seen_delta = true;
@@ -1100,7 +1149,7 @@ fn convert_event_to_notifications(
                         Some(reasoning_text.clone())
                     };
                     if let Some(payload) = to_emit {
-                        let meta = make_meta(source, turn_id, *entry_index);
+                        let meta = make_meta(source, turn_id, *entry_index, None);
                         let chunk =
                             ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
                                 .message_id(Some(message_id))
@@ -1142,7 +1191,7 @@ fn convert_event_to_notifications(
                         Some(text.clone())
                     };
                     if let Some(payload) = to_emit {
-                        let meta = make_meta(source, turn_id, *entry_index);
+                        let meta = make_meta(source, turn_id, *entry_index, None);
                         let chunk =
                             ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
                                 .message_id(Some(message_id))
@@ -1206,6 +1255,7 @@ fn convert_event_to_notifications(
                 tool_call_id,
                 &state,
                 fields,
+                None,
             )]
         }
 
@@ -1239,6 +1289,7 @@ fn convert_event_to_notifications(
                 tool_call_id,
                 &state,
                 fields,
+                None,
             )]
         }
 
@@ -1276,6 +1327,7 @@ fn convert_event_to_notifications(
                 tool_call_id,
                 &state,
                 fields,
+                None,
             ));
             notifications.push(make_event_notification(
                 session_id,
@@ -1349,6 +1401,7 @@ fn convert_event_to_notifications(
                 tool_call_id,
                 &state,
                 fields,
+                None,
             ));
             notifications.push(make_event_notification(
                 session_id,
@@ -1422,6 +1475,7 @@ fn convert_event_to_notifications(
                 tool_call_id,
                 &state,
                 fields,
+                None,
             )]
         }
 
@@ -1766,6 +1820,8 @@ mod tests {
                 tool_call_id: "tool-1".to_string(),
                 name: "shell_exec".to_string(),
                 delta: "\"llo\"".to_string(),
+                draft: "{\"command\":\"echo hello\"}".to_string(),
+                is_parseable: true,
             },
         };
         let end_event = AgentEvent::MessageUpdate {
@@ -1849,6 +1905,25 @@ mod tests {
                     update.fields.raw_input,
                     Some(serde_json::json!({ "command": "echo hello" }))
                 );
+                let meta = update
+                    .meta
+                    .as_ref()
+                    .expect("tool_call_update should include meta");
+                let agentdash = agentdash_acp_meta::parse_agentdash_meta(meta)
+                    .expect("tool_call_update meta should be parseable");
+                assert_eq!(
+                    agentdash.event.as_ref().map(|event| event.r#type.as_str()),
+                    Some("tool_call_draft")
+                );
+                assert_eq!(
+                    agentdash
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.data.as_ref())
+                        .and_then(|data| data.get("draftInput"))
+                        .and_then(|value| value.as_str()),
+                    Some("{\"command\":\"echo hello\"}")
+                );
             }
             other => panic!("unexpected session update: {other:?}"),
         }
@@ -1859,6 +1934,80 @@ mod tests {
                 assert_eq!(
                     update.fields.raw_input,
                     Some(serde_json::json!({ "command": "echo hello" }))
+                );
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_call_delta_preserves_unparseable_draft_in_meta() {
+        let delta_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-fs-write-1".to_string(),
+                    call_id: Some("tool-fs-write-1".to_string()),
+                    name: "fs_write".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::ToolCallDelta {
+                content_index: 0,
+                tool_call_id: "tool-fs-write-1".to_string(),
+                name: "fs_write".to_string(),
+                delta: "\"hello".to_string(),
+                draft: "{\"path\":\"notes.txt\",\"content\":\"hello".to_string(),
+                is_parseable: false,
+            },
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
+        let mut tool_call_states = HashMap::new();
+        let notifications = convert_event_to_notifications(
+            &delta_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        match &notifications[0].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.raw_input, Some(serde_json::json!({})));
+                let meta = update
+                    .meta
+                    .as_ref()
+                    .expect("tool_call_update should include meta");
+                let agentdash = agentdash_acp_meta::parse_agentdash_meta(meta)
+                    .expect("tool_call_update meta should be parseable");
+                assert_eq!(
+                    agentdash
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.data.as_ref())
+                        .and_then(|data| data.get("draftInput"))
+                        .and_then(|value| value.as_str()),
+                    Some("{\"path\":\"notes.txt\",\"content\":\"hello")
+                );
+                assert_eq!(
+                    agentdash
+                        .event
+                        .as_ref()
+                        .and_then(|event| event.data.as_ref())
+                        .and_then(|data| data.get("isParseable"))
+                        .and_then(|value| value.as_bool()),
+                    Some(false)
                 );
             }
             other => panic!("unexpected session update: {other:?}"),

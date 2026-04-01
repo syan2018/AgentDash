@@ -143,15 +143,22 @@ function parseWorkflowSteps(value: string): string[] {
     .filter(Boolean);
 }
 
+function getExternalServiceId(
+  provider: ContextContainerDefinition["provider"],
+): string | null {
+  return provider.kind === "external_service" ? provider.service_id : null;
+}
+
 function containerSupportsCapability(
   container: ContextContainerDefinition,
   capability: ContextContainerCapability,
   mountProviders: ConfigurableProviderInfo[],
 ): boolean {
   if (capability === "exec") return false;
-  if (container.provider.kind === "external_service") {
+  const serviceId = getExternalServiceId(container.provider);
+  if (serviceId) {
     const matched = mountProviders.find(
-      (p) => p.service_id === container.provider.service_id,
+      (p) => p.service_id === serviceId,
     );
     if (matched) {
       return matched.supported_capabilities.includes(capability);
@@ -402,14 +409,21 @@ function ContainerEditorItem({
                 </option>
               ))}
               {/* 已保存的 external_service 但 provider 列表中不存在时，保留原值防止竞态覆盖 */}
-              {container.provider.kind === "external_service" &&
-                container.provider.service_id &&
-                !mountProviders.some((p) => p.service_id === container.provider.service_id) && (
-                  <option value={container.provider.service_id}>
-                    {container.provider.service_id}
+              {(() => {
+                const serviceId = getExternalServiceId(container.provider);
+                if (
+                  !serviceId ||
+                  mountProviders.some((p) => p.service_id === serviceId)
+                ) {
+                  return null;
+                }
+                return (
+                  <option value={serviceId}>
+                    {serviceId}
                     {mountProviders.length === 0 ? " (加载中…)" : ""}
                   </option>
-                )}
+                );
+              })()}
               {mountProviders.length === 0 &&
                 container.provider.kind !== "external_service" && (
                   <option value="__external_select__" disabled>
@@ -419,8 +433,9 @@ function ContainerEditorItem({
             </select>
 
             {container.provider.kind === "external_service" && (() => {
+              const serviceId = getExternalServiceId(container.provider);
               const selectedProvider = mountProviders.find(
-                (p) => p.service_id === container.provider.service_id,
+                (p) => p.service_id === serviceId,
               );
               return (
                 <div>
@@ -432,7 +447,7 @@ function ContainerEditorItem({
                         ...c,
                         provider: {
                           kind: "external_service" as const,
-                          service_id: (c.provider as { service_id: string }).service_id,
+                          service_id: getExternalServiceId(c.provider) ?? "",
                           root_ref: e.target.value,
                         },
                       }))

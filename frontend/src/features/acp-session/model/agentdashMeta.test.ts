@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 
-import { extractAgentDashMetaFromUpdate, parseAgentDashMeta } from './agentdashMeta';
+import {
+  extractAgentDashMetaFromUpdate,
+  extractToolCallDraftInfo,
+  parseAgentDashMeta,
+} from './agentdashMeta';
 
 describe('agentdashMeta', () => {
   it('parses _meta.agentdash v1', () => {
@@ -38,5 +42,34 @@ describe('agentdashMeta', () => {
     } as unknown as SessionUpdate;
     expect(extractAgentDashMetaFromUpdate(update)?.trace?.turnId).toBe('t1');
   });
-});
 
+  it('extracts tool call draft info from agentdash event data', () => {
+    const update = {
+      sessionUpdate: 'tool_call_update',
+      _meta: {
+        agentdash: {
+          v: 1,
+          event: {
+            type: 'tool_call_draft',
+            data: {
+              toolCallId: 'tool-1',
+              toolName: 'fs_write',
+              phase: 'delta',
+              draftInput: '{"path":"a.txt","content":"hel',
+              isParseable: false,
+            },
+          },
+        },
+      },
+    } as unknown as SessionUpdate;
+
+    expect(extractToolCallDraftInfo(update)).toEqual({
+      toolCallId: 'tool-1',
+      toolName: 'fs_write',
+      phase: 'delta',
+      delta: undefined,
+      draftInput: '{"path":"a.txt","content":"hel',
+      isParseable: false,
+    });
+  });
+});

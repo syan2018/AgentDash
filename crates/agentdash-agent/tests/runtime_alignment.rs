@@ -501,6 +501,8 @@ fn assistant_stream_event_type_is_tool_call_delta_complete() {
         tool_call_id: "tool-1".to_string(),
         name: "echo".to_string(),
         delta: "{\"value\":\"x\"}".to_string(),
+        draft: "{\"value\":\"x\"}".to_string(),
+        is_parseable: true,
     };
     assert!(matches!(event, AssistantStreamEvent::ToolCallDelta { .. }));
 }

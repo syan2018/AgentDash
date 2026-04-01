@@ -688,20 +688,27 @@ async fn stream_assistant_response(
 
                 let tool_index = if let Some(state) = partial.tool_calls.get_mut(&id) {
                     state.partial_json.push_str(&delta);
+                    let draft = state.partial_json.clone();
                     if let Ok(arguments) =
                         serde_json::from_str::<serde_json::Value>(&state.partial_json)
                     {
-                        Some((state.index, arguments))
+                        Some((state.index, Some(arguments), draft))
                     } else {
-                        None
+                        Some((state.index, None, draft))
                     }
                 } else {
                     None
                 };
-                if let Some((tool_index, arguments)) = tool_index
-                    && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
-                {
-                    tc.arguments = arguments;
+                let mut current_draft = String::new();
+                let mut is_parseable = false;
+                if let Some((tool_index, arguments, draft)) = tool_index {
+                    current_draft = draft;
+                    if let Some(arguments) = arguments
+                        && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
+                    {
+                        is_parseable = true;
+                        tc.arguments = arguments;
+                    }
                 }
                 sync_partial(context, &partial);
                 emit_event(
@@ -713,6 +720,8 @@ async fn stream_assistant_response(
                             tool_call_id: id,
                             name: tool_name,
                             delta,
+                            draft: current_draft,
+                            is_parseable,
                         },
                     },
                 )
@@ -761,6 +770,8 @@ async fn stream_assistant_response(
                                 tool_call_id: info_id.clone(),
                                 name: tool_name,
                                 delta,
+                                draft: serde_json::to_string(&info.arguments).unwrap_or_default(),
+                                is_parseable: true,
                             },
                         },
                     )

@@ -174,6 +174,8 @@ pub enum AssistantStreamEvent {
         tool_call_id: String,
         name: String,
         delta: String,
+        draft: String,
+        is_parseable: bool,
     },
     ToolCallEnd {
         content_index: usize,

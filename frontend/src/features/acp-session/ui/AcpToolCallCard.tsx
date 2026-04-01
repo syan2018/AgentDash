@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionUpdate, ToolKind, ToolCallContent } from "@agentclientprotocol/sdk";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
+import { extractToolCallDraftInfo } from "../model/agentdashMeta";
 
 type ExtendedToolCallStatus =
   | "pending"
@@ -71,12 +72,14 @@ export function AcpToolCallCard({
     rawOutput: undefined,
   };
 
-  const [expanded, setExpanded] = useState(Boolean(isPendingApproval));
+  const { toolCallId, title, kind, status, rawInput, rawOutput, content } = resolvedToolCallInfo;
+  const draftInfo = extractToolCallDraftInfo(update);
+  const showDraftInput = shouldShowDraftInput(rawInput, draftInfo?.draftInput);
+  const showRawInput = rawInput !== undefined && !(showDraftInput && isEmptyJsonObject(rawInput));
+  const displayStatus = resolveDisplayStatus(status, rawOutput);
+  const [expanded, setExpanded] = useState(Boolean(isPendingApproval || showDraftInput));
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
-
-  const { toolCallId, title, kind, status, rawInput, rawOutput, content } = resolvedToolCallInfo;
-  const displayStatus = resolveDisplayStatus(status, rawOutput);
   const [renderStatus, setRenderStatus] = useState<ExtendedToolCallStatus>(displayStatus);
   const inProgressSinceRef = useRef<number | null>(null);
 
@@ -262,7 +265,18 @@ export function AcpToolCallCard({
           )}
 
           {/* 输入 */}
-          {rawInput !== undefined && (
+          {showDraftInput && draftInfo && (
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">
+                草稿输入
+                {draftInfo.isParseable === false ? " · 未闭合 JSON" : ""}
+              </p>
+              <pre className="agentdash-chat-code-block">{draftInfo.draftInput}</pre>
+            </div>
+          )}
+
+          {/* 输入 */}
+          {showRawInput && (
             <div>
               <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">输入</p>
               <pre className="agentdash-chat-code-block">{safeJson(rawInput)}</pre>
@@ -413,6 +427,29 @@ function getKindConfig(kind: ToolKind): { label: string; icon: string } {
 
 function safeJson(value: unknown): string {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+function shouldShowDraftInput(rawInput: unknown, draftInput?: string): boolean {
+  if (!draftInput || draftInput.trim().length === 0) {
+    return false;
+  }
+  const rawInputJson = safeCompactJson(rawInput);
+  return rawInputJson == null || rawInputJson !== draftInput;
+}
+
+function safeCompactJson(value: unknown): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function isEmptyJsonObject(value: unknown): boolean {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0;
 }
 
 export default AcpToolCallCard;

@@ -36,3 +36,32 @@ export function hasAgentDashEvent(update: SessionUpdate): boolean {
   return Boolean(meta?.event?.type);
 }
 
+export interface ToolCallDraftInfo {
+  toolCallId?: string;
+  toolName?: string;
+  phase?: string;
+  delta?: string;
+  draftInput: string;
+  isParseable?: boolean;
+}
+
+export function extractToolCallDraftInfo(update: SessionUpdate): ToolCallDraftInfo | null {
+  const event = extractAgentDashMetaFromUpdate(update)?.event;
+  if (!event || event.type !== 'tool_call_draft' || !isRecord(event.data)) {
+    return null;
+  }
+
+  const draftInput = event.data.draftInput;
+  if (typeof draftInput !== 'string' || draftInput.length === 0) {
+    return null;
+  }
+
+  return {
+    toolCallId: typeof event.data.toolCallId === 'string' ? event.data.toolCallId : undefined,
+    toolName: typeof event.data.toolName === 'string' ? event.data.toolName : undefined,
+    phase: typeof event.data.phase === 'string' ? event.data.phase : undefined,
+    delta: typeof event.data.delta === 'string' ? event.data.delta : undefined,
+    draftInput,
+    isParseable: typeof event.data.isParseable === 'boolean' ? event.data.isParseable : undefined,
+  };
+}

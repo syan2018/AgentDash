@@ -11,6 +11,7 @@
 - 为 `postgres_runtime` 增加环境变量解析测试，覆盖 `postgres://` / `postgresql://` / 非法 scheme
 - `turn_dispatcher` 中继 prompt 时不再静默丢弃序列化失败的 runtime MCP server，改为显式报错
 - relay WebSocket handler 收到非法 relay JSON 协议包时改为显式报错并断开连接
+- `story_sessions` / `acp_sessions` / `canvases` 复用 story session context 时不再把 project/workspace/session meta 读取错误降成“无上下文”
 - `dev-joint` 删除 `embedded-postgresql(auto)` 这类伪 URL 哑值，数据库模式展示改为显式 embedded 文案
 - `kill-ports.js` 端口清理失败时改为非 0 退出，不再伪装成功
 

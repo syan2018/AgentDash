@@ -512,7 +512,7 @@ pub async fn get_session_context(
             .await?;
             let built_context =
                 story_sessions::build_story_session_context_response(&state, &story, &session_id)
-                    .await;
+                    .await?;
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,

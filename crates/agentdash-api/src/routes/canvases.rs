@@ -265,7 +265,7 @@ async fn resolve_canvas_runtime_address_space(
                 .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
             let built_context =
                 story_sessions::build_story_session_context_response(state, &story, session_id)
-                    .await;
+                    .await?;
             Ok(built_context.and_then(|context| context.address_space))
         }
         SessionOwnerType::Project => {

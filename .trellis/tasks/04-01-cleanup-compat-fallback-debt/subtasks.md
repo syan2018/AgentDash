@@ -107,6 +107,7 @@
 - Postgres runtime 已禁止 `DATABASE_URL` 非 postgres 协议时静默回退 embedded
 - relay turn dispatcher 已改为对 runtime MCP server 序列化失败显式报错，不再静默丢弃 server
 - relay WebSocket handler 已改为对非法 relay JSON 协议包显式报错并断开连接
+- `story_sessions` / `acp_sessions` / `canvases` 已改为对 story session context 构建错误显式失败，不再静默降成“无上下文”
 - `dev-joint` 已删除 `embedded-postgresql(auto)` 伪 URL 哑值
 - `kill-ports.js` 已改为在端口清理失败时非 0 退出，不再伪装成功
 

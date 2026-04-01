@@ -156,7 +156,7 @@ pub async fn get_story_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let built_context =
-        build_story_session_context_response(&state, &story, &binding.session_id).await;
+        build_story_session_context_response(&state, &story, &binding.session_id).await?;
 
     Ok(Json(StorySessionDetailResponse {
         binding_id,
@@ -346,23 +346,30 @@ pub(crate) async fn build_story_session_context_response(
     state: &Arc<AppState>,
     story: &agentdash_domain::story::Story,
     session_id: &str,
-) -> Option<BuiltStorySessionContextResponse> {
+) -> Result<Option<BuiltStorySessionContextResponse>, ApiError> {
     let project = state
         .repos
         .project_repo
         .get_by_id(story.project_id)
         .await
-        .ok()??;
+        .map_err(|error| ApiError::Internal(format!("读取 story 所属 project 失败: {error}")))?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("Story 所属 Project {} 不存在", story.project_id))
+        })?;
     let workspace = resolve_project_workspace(state, &project)
         .await
-        .ok()
-        .flatten();
+        .map_err(|error| {
+            ApiError::Internal(format!("解析 story session workspace 失败: {error}"))
+        })?;
     let session_meta = state
         .services
         .session_hub
         .get_session_meta(session_id)
         .await
-        .ok()??;
+        .map_err(|error| ApiError::Internal(format!("读取 story session meta 失败: {error}")))?;
+    let Some(session_meta) = session_meta else {
+        return Ok(None);
+    };
 
     let connector_config = session_meta.executor_config.clone();
     let resolved_config = connector_config.clone();
@@ -386,7 +393,7 @@ pub(crate) async fn build_story_session_context_response(
                 SessionMountTarget::Story,
                 effective_agent_type.as_deref(),
             )
-            .ok()?;
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,
@@ -394,7 +401,7 @@ pub(crate) async fn build_story_session_context_response(
             &session_meta.visible_canvas_mount_ids,
         )
         .await
-        .ok()?;
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
         Some(address_space)
     } else {
         None
@@ -441,8 +448,8 @@ pub(crate) async fn build_story_session_context_response(
 
     let snapshot = derive_session_context_snapshot(&plan);
 
-    Some(BuiltStorySessionContextResponse {
+    Ok(Some(BuiltStorySessionContextResponse {
         address_space: plan.address_space.clone(),
         context_snapshot: Some(snapshot),
-    })
+    }))
 }

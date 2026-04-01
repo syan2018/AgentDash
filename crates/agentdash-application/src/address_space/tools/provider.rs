@@ -169,6 +169,11 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     self.canvas_repo.clone(),
                     project_id,
                     shared_address_space.clone(),
+                    self.session_hub_handle.clone(),
+                    context
+                        .hook_session
+                        .as_ref()
+                        .map(|session| session.session_id().to_string()),
                 )));
                 tools.push(Arc::new(InjectCanvasDataTool::new(
                     self.canvas_repo.clone(),

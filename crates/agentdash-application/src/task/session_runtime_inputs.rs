@@ -3,7 +3,7 @@ use agentdash_domain::{
 };
 
 use crate::address_space::{
-    RelayAddressSpaceService, SessionMountTarget, append_canvas_mounts, build_lifecycle_mount,
+    RelayAddressSpaceService, SessionMountTarget, build_lifecycle_mount,
 };
 use crate::repository_set::RepositorySet;
 use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
@@ -74,13 +74,6 @@ pub async fn build_task_session_runtime_inputs(
                 &active_workflow.lifecycle.key,
             ));
         }
-        let canvases = repos
-            .canvas_repo
-            .list_by_project(project.id)
-            .await
-            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
-        append_canvas_mounts(&mut space, &canvases);
-
         Some(space)
     } else {
         None

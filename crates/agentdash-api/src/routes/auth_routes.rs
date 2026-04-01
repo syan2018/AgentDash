@@ -8,7 +8,7 @@ use serde::Deserialize;
 use agentdash_plugin_api::{LoginCredentials, LoginMetadata, LoginResponse};
 
 use crate::app_state::AppState;
-use crate::auth::{CurrentUser, map_auth_error};
+use crate::auth::{CurrentUser, map_auth_error, persist_identity_snapshot};
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize, Default)]
@@ -39,6 +39,15 @@ pub async fn login(
         .save_login_session(&response.access_token, &response.identity)
         .await
         .map_err(|e| ApiError::ServiceUnavailable(format!("认证会话落库失败: {e}")))?;
+
+    if let Err(err) = persist_identity_snapshot(state.as_ref(), &response.identity).await {
+        tracing::warn!(
+            user_id = %response.identity.user_id,
+            auth_mode = %response.identity.auth_mode,
+            error = %err,
+            "登录成功，但写入用户身份投影失败"
+        );
+    }
 
     Ok(Json(response))
 }

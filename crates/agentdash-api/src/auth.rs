@@ -3,6 +3,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use agentdash_application::project::{ProjectAuthorizationContext, ProjectAuthorizationService};
+use agentdash_domain::DomainError;
 use agentdash_domain::identity::{Group, User};
 use agentdash_domain::project::Project;
 use agentdash_domain::session_binding::SessionBinding;
@@ -156,18 +157,6 @@ pub async fn authenticate_request(
             }
         }
     };
-
-    project_identity_snapshot(state.as_ref(), &identity)
-        .await
-        .map_err(|err| {
-            tracing::error!(
-                user_id = %identity.user_id,
-                auth_mode = %identity.auth_mode,
-                error = %err,
-                "写入用户身份投影失败"
-            );
-            ApiError::Internal("写入用户身份投影失败".to_string())
-        })?;
 
     request.extensions_mut().insert(RequestIdentity(identity));
     Ok(next.run(request).await)
@@ -380,10 +369,10 @@ fn log_auth_failure(request: &AuthRequest, err: &AuthError) {
     }
 }
 
-async fn project_identity_snapshot(
+pub async fn persist_identity_snapshot(
     state: &AppState,
     identity: &AuthIdentity,
-) -> Result<(), agentdash_domain::DomainError> {
+) -> Result<(), DomainError> {
     let user = User::new(
         identity.user_id.clone(),
         identity.subject.clone(),

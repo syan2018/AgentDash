@@ -23,6 +23,8 @@ pub struct CreateCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
     address_space: SharedRuntimeAddressSpace,
+    session_hub_handle: SharedSessionHubHandle,
+    current_session_id: Option<String>,
 }
 
 impl CreateCanvasTool {
@@ -30,11 +32,15 @@ impl CreateCanvasTool {
         canvas_repo: Arc<dyn CanvasRepository>,
         project_id: Uuid,
         address_space: SharedRuntimeAddressSpace,
+        session_hub_handle: SharedSessionHubHandle,
+        current_session_id: Option<String>,
     ) -> Self {
         Self {
             canvas_repo,
             project_id,
             address_space,
+            session_hub_handle,
+            current_session_id,
         }
     }
 }
@@ -164,6 +170,23 @@ impl AgentTool for CreateCanvasTool {
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
         self.address_space.append_canvas_mount(&canvas).await;
+        if let Some(session_hub) = self.session_hub_handle.get().await
+            && let Some(session_id) = self.current_session_id.as_deref()
+        {
+            let mount_id = canvas.mount_id.clone();
+            session_hub
+                .update_session_meta(session_id, move |meta| {
+                    if !meta
+                        .visible_canvas_mount_ids
+                        .iter()
+                        .any(|item| item == &mount_id)
+                    {
+                        meta.visible_canvas_mount_ids.push(mount_id);
+                    }
+                })
+                .await
+                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        }
 
         let result = CanvasToolResult {
             canvas_id: canvas.mount_id.clone(),
@@ -448,7 +471,13 @@ mod tests {
         let shared_address_space = SharedRuntimeAddressSpace::new(AddressSpace::default());
 
         let create_tool =
-            CreateCanvasTool::new(canvas_repo.clone(), project_id, shared_address_space.clone());
+            CreateCanvasTool::new(
+                canvas_repo.clone(),
+                project_id,
+                shared_address_space.clone(),
+                SharedSessionHubHandle::default(),
+                Some("sess-test".to_string()),
+            );
         let write_tool = FsWriteTool::new(
             service,
             shared_address_space.clone(),

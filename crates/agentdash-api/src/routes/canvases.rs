@@ -232,6 +232,12 @@ async fn resolve_canvas_runtime_address_space(
     let Some(binding) = pick_primary_binding_for_project(&bindings, expected_project_id) else {
         return Ok(None);
     };
+    let session_meta = state
+        .services
+        .session_hub
+        .get_session_meta(session_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     match binding.owner_type {
         SessionOwnerType::Task => {
@@ -240,6 +246,7 @@ async fn resolve_canvas_runtime_address_space(
                 &state.services.address_space_service,
                 state.config.mcp_base_url.as_deref(),
                 binding.owner_id,
+                session_meta.as_ref(),
             )
             .await;
             Ok(built_context.and_then(|context| context.address_space))

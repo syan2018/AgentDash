@@ -30,7 +30,8 @@ impl SqliteSessionRepository {
                 last_terminal_message TEXT,
                 executor_config_json TEXT,
                 executor_session_id TEXT,
-                companion_context_json TEXT
+                companion_context_json TEXT,
+                visible_canvas_mount_ids_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS session_events (
@@ -59,6 +60,18 @@ impl SqliteSessionRepository {
         .await
         .map_err(sqlx_to_io)?;
 
+        let alter_result = sqlx::query(
+            "ALTER TABLE sessions ADD COLUMN visible_canvas_mount_ids_json TEXT",
+        )
+        .execute(&self.pool)
+        .await;
+        if let Err(error) = alter_result {
+            let message = error.to_string().to_ascii_lowercase();
+            if !message.contains("duplicate column name") {
+                return Err(sqlx_to_io(error));
+            }
+        }
+
         Ok(())
     }
 
@@ -79,6 +92,10 @@ impl SqliteSessionRepository {
             companion_context: row
                 .get::<Option<String>, _>("companion_context_json")
                 .and_then(|value| serde_json::from_str(&value).ok()),
+            visible_canvas_mount_ids: row
+                .get::<Option<String>, _>("visible_canvas_mount_ids_json")
+                .and_then(|value| serde_json::from_str(&value).ok())
+                .unwrap_or_default(),
         }
     }
 
@@ -110,8 +127,8 @@ impl SessionPersistence for SqliteSessionRepository {
             INSERT INTO sessions (
                 id, title, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                executor_session_id, companion_context_json, visible_canvas_mount_ids_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&meta.id)
@@ -125,6 +142,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(meta.executor_config.as_ref().map(json_string))
         .bind(&meta.executor_session_id)
         .bind(meta.companion_context.as_ref().map(json_string))
+        .bind(Some(json_string(&meta.visible_canvas_mount_ids)))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -136,7 +154,7 @@ impl SessionPersistence for SqliteSessionRepository {
             r#"
             SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json
+                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json
             FROM sessions
             WHERE id = ?
             "#,
@@ -153,7 +171,7 @@ impl SessionPersistence for SqliteSessionRepository {
             r#"
             SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json
+                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -170,8 +188,8 @@ impl SessionPersistence for SqliteSessionRepository {
             INSERT INTO sessions (
                 id, title, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                executor_session_id, companion_context_json, visible_canvas_mount_ids_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 created_at = excluded.created_at,
@@ -182,7 +200,8 @@ impl SessionPersistence for SqliteSessionRepository {
                 last_terminal_message = excluded.last_terminal_message,
                 executor_config_json = excluded.executor_config_json,
                 executor_session_id = excluded.executor_session_id,
-                companion_context_json = excluded.companion_context_json
+                companion_context_json = excluded.companion_context_json,
+                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json
             "#,
         )
         .bind(&meta.id)
@@ -196,6 +215,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(meta.executor_config.as_ref().map(json_string))
         .bind(&meta.executor_session_id)
         .bind(meta.companion_context.as_ref().map(json_string))
+        .bind(Some(json_string(&meta.visible_canvas_mount_ids)))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -228,7 +248,7 @@ impl SessionPersistence for SqliteSessionRepository {
             r#"
             SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json
+                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json
             FROM sessions
             WHERE id = ?
             "#,
@@ -581,6 +601,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            visible_canvas_mount_ids: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 

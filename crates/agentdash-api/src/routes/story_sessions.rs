@@ -11,6 +11,7 @@ use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
+use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session_context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
@@ -22,7 +23,7 @@ use crate::{
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
-use agentdash_application::address_space::{SessionMountTarget, append_canvas_mounts};
+use agentdash_application::address_space::SessionMountTarget;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_mcp::injection::McpInjectionConfig;
 
@@ -386,13 +387,14 @@ pub(crate) async fn build_story_session_context_response(
                 effective_agent_type.as_deref(),
             )
             .ok()?;
-        let canvases = state
-            .repos
-            .canvas_repo
-            .list_by_project(project.id)
-            .await
-            .ok()?;
-        append_canvas_mounts(&mut address_space, &canvases);
+        append_visible_canvas_mounts(
+            state.repos.canvas_repo.as_ref(),
+            project.id,
+            &mut address_space,
+            &session_meta.visible_canvas_mount_ids,
+        )
+        .await
+        .ok()?;
         Some(address_space)
     } else {
         None

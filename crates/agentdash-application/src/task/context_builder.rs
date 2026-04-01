@@ -6,6 +6,7 @@ use crate::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
+use crate::canvas::append_visible_canvas_mounts;
 use crate::repository_set::RepositorySet;
 use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::session_context::{
@@ -27,6 +28,7 @@ pub async fn build_task_session_context(
     address_space_service: &RelayAddressSpaceService,
     mcp_base_url: Option<&str>,
     task_id: Uuid,
+    session_meta: Option<&crate::session::SessionMeta>,
 ) -> Option<BuiltTaskSessionContext> {
     let task = repos.task_repo.get_by_id(task_id).await.ok()??;
     let story = repos.story_repo.get_by_id(task.story_id).await.ok()??;
@@ -56,7 +58,18 @@ pub async fn build_task_session_context(
         runtime_mcp_servers_to_acp(&session_runtime_inputs.mcp_servers);
 
     let story_overrides = extract_story_overrides(&story);
-    let runtime_address_space = session_runtime_inputs.address_space.clone();
+    let mut runtime_address_space = session_runtime_inputs.address_space.clone();
+    if let Some(space) = runtime_address_space.as_mut() {
+        let visible_canvas_mount_ids = session_meta
+            .map(|meta| meta.visible_canvas_mount_ids.as_slice())
+            .unwrap_or(&[]);
+        if append_visible_canvas_mounts(repos.canvas_repo.as_ref(), task.project_id, space, visible_canvas_mount_ids)
+            .await
+            .is_err()
+        {
+            return None;
+        }
+    }
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,

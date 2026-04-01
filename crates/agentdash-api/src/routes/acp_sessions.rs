@@ -16,7 +16,8 @@ use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::address_space::{SessionMountTarget, append_canvas_mounts};
+use agentdash_application::address_space::SessionMountTarget;
+use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
 };
@@ -450,12 +451,23 @@ pub async fn get_session_context(
                 .get_task_session(task_id)
                 .await
                 .map_err(task_execution::map_task_execution_error)?;
+            let session_meta = if let Some(session_id) = result.session_id.as_deref() {
+                state
+                    .services
+                    .session_hub
+                    .get_session_meta(session_id)
+                    .await
+                    .map_err(|error| ApiError::Internal(error.to_string()))?
+            } else {
+                None
+            };
             let built_context =
                 agentdash_application::task::context_builder::build_task_session_context(
                     &state.repos,
                     &state.services.address_space_service,
                     state.config.mcp_base_url.as_deref(),
                     task_id,
+                    session_meta.as_ref(),
                 )
                 .await;
             Ok(Json(SessionContextResponse {
@@ -689,6 +701,14 @@ async fn augment_prompt_request_for_owner(
         .list_by_session(session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let visible_canvas_mount_ids = state
+        .services
+        .session_hub
+        .get_session_meta(session_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map(|meta| meta.visible_canvas_mount_ids)
+        .unwrap_or_default();
 
     if let Some(binding) = bindings
         .iter()
@@ -710,8 +730,15 @@ async fn augment_prompt_request_for_owner(
             .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
         let workspace = resolve_project_workspace(state, &project).await?;
 
-        return build_story_owner_prompt_request(state, req, &story, &project, workspace.as_ref())
-            .await;
+        return build_story_owner_prompt_request(
+            state,
+            req,
+            &story,
+            &project,
+            workspace.as_ref(),
+            &visible_canvas_mount_ids,
+        )
+        .await;
     }
 
     if let Some(binding) = bindings
@@ -726,7 +753,14 @@ async fn augment_prompt_request_for_owner(
             .map_err(|e| ApiError::Internal(e.to_string()))?
             .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", binding.owner_id)))?;
 
-        return build_project_owner_prompt_request(state, req, &project, &binding.label).await;
+        return build_project_owner_prompt_request(
+            state,
+            req,
+            &project,
+            &binding.label,
+            &visible_canvas_mount_ids,
+        )
+        .await;
     }
 
     Ok(req)
@@ -767,6 +801,7 @@ async fn build_story_owner_prompt_request(
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
+    visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
     let mut address_space = match req.address_space.clone() {
         Some(address_space) => Some(address_space),
@@ -793,13 +828,14 @@ async fn build_story_owner_prompt_request(
         }
     };
     if let Some(space) = address_space.as_mut() {
-        let canvases = state
-            .repos
-            .canvas_repo
-            .list_by_project(project.id)
-            .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        append_canvas_mounts(space, &canvases);
+        append_visible_canvas_mounts(
+            state.repos.canvas_repo.as_ref(),
+            project.id,
+            space,
+            visible_canvas_mount_ids,
+        )
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
     let effective_agent_type = req
         .user_input
@@ -864,6 +900,7 @@ async fn build_project_owner_prompt_request(
     mut req: PromptSessionRequest,
     project: &Project,
     binding_label: &str,
+    visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
     let agent_key = binding_label
         .trim()
@@ -897,15 +934,15 @@ async fn build_project_owner_prompt_request(
         ),
     };
     if let Some(space) = address_space.as_mut() {
-        let canvases = state
-            .repos
-            .canvas_repo
-            .list_by_project(project.id)
-            .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        append_canvas_mounts(space, &canvases);
+        append_visible_canvas_mounts(
+            state.repos.canvas_repo.as_ref(),
+            project.id,
+            space,
+            visible_canvas_mount_ids,
+        )
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
-
     let mut effective_mcp_servers = req.mcp_servers.clone();
     let base_url = state
         .config

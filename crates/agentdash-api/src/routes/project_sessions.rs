@@ -7,11 +7,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::address_space::{SessionMountTarget, append_canvas_mounts};
+use agentdash_application::address_space::SessionMountTarget;
 use agentdash_application::bootstrap_plan::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
+use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::SessionExecutionState;
 use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
 
@@ -146,13 +147,14 @@ pub(crate) async fn build_project_session_context_response(
                 resolved_config.as_ref().map(|c| c.executor.as_str()),
             )
             .ok()?;
-        let canvases = state
-            .repos
-            .canvas_repo
-            .list_by_project(project.id)
-            .await
-            .ok()?;
-        append_canvas_mounts(&mut address_space, &canvases);
+        append_visible_canvas_mounts(
+            state.repos.canvas_repo.as_ref(),
+            project.id,
+            &mut address_space,
+            &session_meta.visible_canvas_mount_ids,
+        )
+        .await
+        .ok()?;
         Some(address_space)
     } else {
         None

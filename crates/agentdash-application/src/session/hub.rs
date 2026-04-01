@@ -96,6 +96,7 @@ impl SessionHub {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            visible_canvas_mount_ids: Vec::new(),
         };
         self.persistence.create_session(&meta).await?;
         Ok(meta)

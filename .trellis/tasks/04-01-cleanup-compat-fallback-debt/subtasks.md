@@ -62,7 +62,7 @@
 
 ### ST-06 开发基础设施清理
 
-状态：`todo`
+状态：`doing`
 
 目标：
 
@@ -72,7 +72,7 @@
 
 ## 当前批次
 
-当前推进：`ST-03`
+当前推进：`ST-04` + `ST-06`
 
 已完成：
 
@@ -102,14 +102,21 @@
 - tool execution artifact 已改为对非对象 content 和序列化失败直接报错
 - 前端 `currentUser/session/workflow` mapper 已改为对未知 `auth_mode` / session status / workflow 枚举显式报错
 - relay MCP server 已改为必须显式提供 `type`，不再根据 `url/command` 猜测 transport
+- Hook Runtime `before_stop` 已删除 stop gate fake steering 注入，改为返回结构化空 continue
+- agent loop 已支持 `StopDecision::Continue.allow_empty`，不再依赖伪造消息维持循环
+- Postgres runtime 已禁止 `DATABASE_URL` 非 postgres 协议时静默回退 embedded
+- relay turn dispatcher 已改为对 runtime MCP server 序列化失败显式报错，不再静默丢弃 server
+- relay WebSocket handler 已改为对非法 relay JSON 协议包显式报错并断开连接
+- `dev-joint` 已删除 `embedded-postgresql(auto)` 伪 URL 哑值
+- `kill-ports.js` 已改为在端口清理失败时非 0 退出，不再伪装成功
 
 下一步：
 
-- 继续删除仍留在代码中的旧 project-agent 兼容痕迹
-- 继续处理后端 preset MCP / legacy 路由兼容点
-- 继续推进 ST-04：清理 provider/model/default bridge 与 structured prompt 双路径 fallback
+- 继续收紧 `story_sessions` / `project_agents` / `acp_sessions` 等路由中的吞错与“尽力解析”分支
+- 继续推进 ST-04：清理 structured prompt 双路径 fallback、executor_config 隐式默认值与 preset model config 宽松解析
 - 继续推进 ST-02：清理 project/story/workspace repository 层坏 JSON / 坏枚举 / 坏时间默认值
-- 继续推进前端服务层 strict mapper，去掉把缺字段补空串 / 时间戳补当前时间的兜底
+- 继续推进前端服务层 strict mapper，去掉 `workflow.ts` / `storyStore.ts` 里把缺字段补空串 / 当前时间 / 默认绑定的兜底
+- 继续收 dev supervisor 与 embedded PostgreSQL 生命周期，减少全局 kill 与重复 ready/retry 逻辑
 
 完成标准：
 

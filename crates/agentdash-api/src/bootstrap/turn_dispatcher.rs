@@ -258,6 +258,17 @@ async fn relay_start_prompt(
         }),
         permission_policy: c.permission_policy.clone(),
     });
+    let mcp_servers = runtime_mcp_servers_to_acp(&ctx.built.mcp_servers)
+        .into_iter()
+        .enumerate()
+        .map(|(index, server)| {
+            serde_json::to_value(server).map_err(|error| {
+                TaskExecutionError::Internal(format!(
+                    "序列化第 {index} 个 runtime MCP server 失败: {error}"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let cmd = RelayMessage::CommandPrompt {
         id: RelayMessage::new_id("prompt"),
@@ -270,10 +281,7 @@ async fn relay_start_prompt(
             working_dir: ctx.built.working_dir.clone(),
             env: Default::default(),
             executor_config: relay_config,
-            mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers)
-                .iter()
-                .filter_map(|s| serde_json::to_value(s).ok())
-                .collect(),
+            mcp_servers,
         }),
     };
 

@@ -1,5 +1,42 @@
 # 进度记录
 
+## 2026-04-02
+
+### 已完成
+
+- Hook Runtime `before_stop` 不再伪造 stop gate fallback steering 文本
+- `StopDecision::Continue` 增加显式 `allow_empty` 语义，agent loop 允许结构化空 continue
+- 增加 `runtime_alignment` / `hook_delegate` 测试，覆盖“空 continue 继续运行”与“stop gate 未满足但无假消息”场景
+- `PostgresRuntime` 在 `DATABASE_URL` 非 PostgreSQL 协议时改为直接失败，不再静默回退 embedded
+- 为 `postgres_runtime` 增加环境变量解析测试，覆盖 `postgres://` / `postgresql://` / 非法 scheme
+- `turn_dispatcher` 中继 prompt 时不再静默丢弃序列化失败的 runtime MCP server，改为显式报错
+- relay WebSocket handler 收到非法 relay JSON 协议包时改为显式报错并断开连接
+- `dev-joint` 删除 `embedded-postgresql(auto)` 这类伪 URL 哑值，数据库模式展示改为显式 embedded 文案
+- `kill-ports.js` 端口清理失败时改为非 0 退出，不再伪装成功
+
+### 进行中
+
+- ST-04 执行器 / Hook / relay 协议边界的补丁式 fallback 清理
+- ST-06 开发基础设施与 embedded PostgreSQL 生命周期清理
+- ST-02 / 前端 strict mapper 的剩余补洞清理
+
+### 下一步
+
+- 继续删除 `story_sessions` / `project_agents` / `acp_sessions` 等路由中的吞错与“尽力解析”分支
+- 继续推进前端 `workflow.ts` / `storyStore.ts` strict mapper，去掉补空串 / 当前时间 / 默认绑定的兜底
+- 继续清理 companion dispatch、session prompt、workflow legacy migration 中仍存在的 fallback 分支
+- 继续收敛 dev supervisor，减少按进程名/端口的全局清场，明确 ownership / shutdown / ready contract
+
+### 验证记录
+
+- `cargo test -p agentdash-agent --test runtime_alignment -- --nocapture` 通过
+- `cargo test -p agentdash-application session::hook_delegate -- --nocapture` 通过
+- `cargo test -p agentdash-infrastructure postgres_runtime -- --nocapture` 通过
+- `cargo check -p agentdash-agent-types -p agentdash-agent -p agentdash-application -p agentdash-infrastructure -p agentdash-api --message-format short` 通过
+- `cargo check -p agentdash-api --message-format short` 通过
+- `node --check scripts/dev-joint.js` 通过
+- `node --check scripts/kill-ports.js` 通过
+
 ## 2026-04-01
 
 ### 已完成

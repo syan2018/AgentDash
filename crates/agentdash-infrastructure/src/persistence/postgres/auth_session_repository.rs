@@ -97,7 +97,9 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
             identity_json: row
                 .try_get("identity_json")
                 .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
-            expires_at: row.try_get("expires_at").ok(),
+            expires_at: row
+                .try_get("expires_at")
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
             revoked_at,
             created_at: row
                 .try_get("created_at")

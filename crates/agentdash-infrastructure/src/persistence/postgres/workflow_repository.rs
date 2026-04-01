@@ -378,7 +378,7 @@ async fn recreate_if_column_exists(
     ))
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(db_err)?;
     if has_column > 0 {
         sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
             .execute(pool)
@@ -400,7 +400,7 @@ async fn add_column_if_missing(
     ))
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(db_err)?;
     if has_column == 0 {
         sqlx::query(&format!(
             "ALTER TABLE {table} ADD COLUMN {column} {column_def}"

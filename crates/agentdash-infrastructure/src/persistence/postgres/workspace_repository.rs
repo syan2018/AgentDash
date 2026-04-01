@@ -89,11 +89,14 @@ impl PostgresWorkspaceRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        let exists = pragma.iter().any(|row| {
-            row.try_get::<String, _>("name")
-                .map(|value| value == column_name)
-                .unwrap_or(false)
-        });
+        let column_names = pragma
+            .iter()
+            .map(|row| {
+                row.try_get::<String, _>("name")
+                    .map_err(|e| DomainError::InvalidConfig(e.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let exists = column_names.iter().any(|value| value == column_name);
         if exists {
             return Ok(());
         }

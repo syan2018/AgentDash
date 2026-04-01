@@ -64,11 +64,14 @@ impl PostgresStoryRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        let column_exists = rows.iter().any(|row| {
-            row.try_get::<String, _>("name")
-                .map(|name| name == column_name)
-                .unwrap_or(false)
-        });
+        let column_names = rows
+            .iter()
+            .map(|row| {
+                row.try_get::<String, _>("name")
+                    .map_err(|e| DomainError::InvalidConfig(e.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let column_exists = column_names.iter().any(|name| name == column_name);
 
         if !column_exists {
             sqlx::query(&format!(

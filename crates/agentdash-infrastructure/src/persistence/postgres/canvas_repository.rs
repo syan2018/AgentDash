@@ -4,7 +4,7 @@ use sqlx::PgPool;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
-    Canvas, CanvasDataBinding, CanvasFile, CanvasImportMap, CanvasRepository, CanvasSandboxConfig,
+    Canvas, CanvasDataBinding, CanvasFile, CanvasRepository, CanvasSandboxConfig,
 };
 
 pub struct PostgresCanvasRepository {
@@ -428,11 +428,13 @@ impl CanvasRow {
         files: BTreeMap<String, Vec<CanvasFile>>,
         bindings: BTreeMap<String, Vec<CanvasDataBinding>>,
     ) -> Result<Canvas, DomainError> {
-        let sandbox_config = serde_json::from_str::<CanvasSandboxConfig>(&self.sandbox_config)
-            .unwrap_or(CanvasSandboxConfig {
-                libraries: Vec::new(),
-                import_map: CanvasImportMap::default(),
-            });
+        let sandbox_config = parse_canvas_sandbox_config(&self.sandbox_config)?;
+        let files = files.get(&self.id).cloned().ok_or_else(|| {
+            DomainError::InvalidConfig(format!("缺少 canvas_files 映射: {}", self.id))
+        })?;
+        let bindings = bindings.get(&self.id).cloned().ok_or_else(|| {
+            DomainError::InvalidConfig(format!("缺少 canvas_bindings 映射: {}", self.id))
+        })?;
 
         Ok(Canvas {
             id: self.id.parse().map_err(|_| DomainError::NotFound {
@@ -448,12 +450,17 @@ impl CanvasRow {
             description: self.description,
             entry_file: self.entry_file,
             sandbox_config,
-            files: files.get(&self.id).cloned().unwrap_or_default(),
-            bindings: bindings.get(&self.id).cloned().unwrap_or_default(),
-            created_at: super::parse_pg_timestamp(&self.created_at),
-            updated_at: super::parse_pg_timestamp(&self.updated_at),
+            files,
+            bindings,
+            created_at: super::parse_pg_timestamp_checked(&self.created_at, "canvases.created_at")?,
+            updated_at: super::parse_pg_timestamp_checked(&self.updated_at, "canvases.updated_at")?,
         })
     }
+}
+
+fn parse_canvas_sandbox_config(raw: &str) -> Result<CanvasSandboxConfig, DomainError> {
+    serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("canvases.sandbox_config: {error}")))
 }
 
 #[cfg(test)]

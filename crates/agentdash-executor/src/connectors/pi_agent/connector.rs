@@ -2,7 +2,7 @@
 ///
 /// 与 `VibeKanbanExecutorsConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -508,31 +508,20 @@ impl AgentConnector for PiAgentConnector {
         let acp_session_id = SessionId::new(session_id.to_string());
 
         let (tx, rx) =
-            tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
+            tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(8192);
 
         tokio::spawn(async move {
             let mut entry_index: u32 = 0;
             let mut chunk_message_ids: HashMap<String, String> = HashMap::new();
             let mut chunk_emit_states: HashMap<String, ChunkEmitState> = HashMap::new();
+            let mut started_tool_calls: HashSet<String> = HashSet::new();
             let mut event_rx = event_rx;
             let mut hook_trace_rx = hook_trace_rx;
 
             loop {
                 if let Some(receiver) = hook_trace_rx.as_mut() {
                     tokio::select! {
-                        trace_result = receiver.recv() => {
-                            if let Ok(entry) = trace_result
-                                && let Some(notification) = build_hook_trace_notification(
-                                    acp_session_id.0.as_ref(),
-                                    Some(&turn_id),
-                                    source.clone(),
-                                    &entry,
-                                )
-                                && tx.send(Ok(notification)).await.is_err()
-                            {
-                                return;
-                            }
-                        }
+                        biased;
                         maybe_event = event_rx.next() => {
                             let Some(event) = maybe_event else {
                                 break;
@@ -545,12 +534,26 @@ impl AgentConnector for PiAgentConnector {
                                 &mut entry_index,
                                 &mut chunk_message_ids,
                                 &mut chunk_emit_states,
+                                &mut started_tool_calls,
                             );
 
                             for n in notifications {
                                 if tx.send(Ok(n)).await.is_err() {
                                     return;
                                 }
+                            }
+                        }
+                        trace_result = receiver.recv() => {
+                            if let Ok(entry) = trace_result
+                                && let Some(notification) = build_hook_trace_notification(
+                                    acp_session_id.0.as_ref(),
+                                    Some(&turn_id),
+                                    source.clone(),
+                                    &entry,
+                                )
+                                && tx.send(Ok(notification)).await.is_err()
+                            {
+                                return;
                             }
                         }
                     }
@@ -569,6 +572,7 @@ impl AgentConnector for PiAgentConnector {
                     &mut entry_index,
                     &mut chunk_message_ids,
                     &mut chunk_emit_states,
+                    &mut started_tool_calls,
                 );
 
                 for n in notifications {
@@ -771,7 +775,34 @@ fn convert_event_to_notifications(
     entry_index: &mut u32,
     chunk_message_ids: &mut HashMap<String, String>,
     chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
+    started_tool_calls: &mut HashSet<String>,
 ) -> Vec<SessionNotification> {
+    fn ensure_tool_call_started(
+        session_id: &SessionId,
+        source: &AgentDashSourceV1,
+        turn_id: &str,
+        entry_index: &mut u32,
+        started_tool_calls: &mut HashSet<String>,
+        tool_call_id: &str,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Option<SessionNotification> {
+        if !started_tool_calls.insert(tool_call_id.to_string()) {
+            return None;
+        }
+        let meta = make_meta(source, turn_id, *entry_index);
+        *entry_index += 1;
+        let mut call = ToolCall::new(ToolCallId::new(tool_call_id.to_string()), tool_name)
+            .kind(ToolKind::Other)
+            .status(ToolCallStatus::InProgress)
+            .raw_input(Some(args.clone()));
+        call.meta = Some(meta);
+        Some(SessionNotification::new(
+            session_id.clone(),
+            SessionUpdate::ToolCall(call),
+        ))
+    }
+
     match event {
         AgentEvent::MessageUpdate { event, .. } => match event {
             agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
@@ -947,26 +978,41 @@ fn convert_event_to_notifications(
             tool_name,
             args,
         } => {
-            let meta = make_meta(source, turn_id, *entry_index);
-            *entry_index += 1;
-
-            let mut call = ToolCall::new(ToolCallId::new(tool_call_id.clone()), tool_name)
-                .kind(ToolKind::Other)
-                .status(ToolCallStatus::InProgress)
-                .raw_input(Some(args.clone()));
-            call.meta = Some(meta);
-
-            vec![SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::ToolCall(call),
-            )]
+            ensure_tool_call_started(
+                session_id,
+                source,
+                turn_id,
+                entry_index,
+                started_tool_calls,
+                tool_call_id,
+                tool_name,
+                args,
+            )
+            .into_iter()
+            .collect()
         }
 
         AgentEvent::ToolExecutionUpdate {
             tool_call_id,
+            tool_name,
+            args,
             partial_result,
             ..
         } => {
+            let mut notifications = Vec::new();
+            if let Some(started) = ensure_tool_call_started(
+                session_id,
+                source,
+                turn_id,
+                entry_index,
+                started_tool_calls,
+                tool_call_id,
+                tool_name,
+                args,
+            ) {
+                notifications.push(started);
+            }
+
             let meta = make_meta(source, turn_id, *entry_index);
             let mut fields = ToolCallUpdateFields::default();
             fields.status = Some(ToolCallStatus::InProgress);
@@ -981,10 +1027,11 @@ fn convert_event_to_notifications(
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
             update.meta = Some(meta);
 
-            vec![SessionNotification::new(
+            notifications.push(SessionNotification::new(
                 session_id.clone(),
                 SessionUpdate::ToolCallUpdate(update),
-            )]
+            ));
+            notifications
         }
 
         AgentEvent::ToolExecutionPendingApproval {
@@ -995,6 +1042,20 @@ fn convert_event_to_notifications(
             details,
             ..
         } => {
+            let mut notifications = Vec::new();
+            if let Some(started) = ensure_tool_call_started(
+                session_id,
+                source,
+                turn_id,
+                entry_index,
+                started_tool_calls,
+                tool_call_id,
+                tool_name,
+                args,
+            ) {
+                notifications.push(started);
+            }
+
             let meta = make_meta(source, turn_id, *entry_index);
             let mut fields = ToolCallUpdateFields::default();
             fields.status = Some(ToolCallStatus::Pending);
@@ -1010,27 +1071,29 @@ fn convert_event_to_notifications(
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
             update.meta = Some(meta);
 
-            vec![
-                SessionNotification::new(session_id.clone(), SessionUpdate::ToolCallUpdate(update)),
-                make_event_notification(
-                    session_id,
-                    source,
-                    turn_id,
-                    *entry_index,
-                    EventDescription {
-                        event_type: "approval_requested",
-                        severity: "warning",
-                        message: format!("工具 `{tool_name}` 正等待审批"),
-                        data: serde_json::json!({
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "reason": reason,
-                            "args": args,
-                            "details": details,
-                        }),
-                    },
-                ),
-            ]
+            notifications.push(SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::ToolCallUpdate(update),
+            ));
+            notifications.push(make_event_notification(
+                session_id,
+                source,
+                turn_id,
+                *entry_index,
+                EventDescription {
+                    event_type: "approval_requested",
+                    severity: "warning",
+                    message: format!("工具 `{tool_name}` 正等待审批"),
+                    data: serde_json::json!({
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "reason": reason,
+                        "args": args,
+                        "details": details,
+                    }),
+                },
+            ));
+            notifications
         }
 
         AgentEvent::ToolExecutionApprovalResolved {
@@ -1041,6 +1104,20 @@ fn convert_event_to_notifications(
             reason,
             ..
         } => {
+            let mut notifications = Vec::new();
+            if let Some(started) = ensure_tool_call_started(
+                session_id,
+                source,
+                turn_id,
+                entry_index,
+                started_tool_calls,
+                tool_call_id,
+                tool_name,
+                args,
+            ) {
+                notifications.push(started);
+            }
+
             let meta = make_meta(source, turn_id, *entry_index);
             let mut fields = ToolCallUpdateFields::default();
             fields.status = Some(if *approved {
@@ -1066,39 +1143,54 @@ fn convert_event_to_notifications(
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
             update.meta = Some(meta);
 
-            vec![
-                SessionNotification::new(session_id.clone(), SessionUpdate::ToolCallUpdate(update)),
-                make_event_notification(
-                    session_id,
-                    source,
-                    turn_id,
-                    *entry_index,
-                    EventDescription {
-                        event_type: "approval_resolved",
-                        severity: if *approved { "info" } else { "warning" },
-                        message: if *approved {
-                            format!("工具 `{tool_name}` 已获批准并继续执行")
-                        } else {
-                            format!("工具 `{tool_name}` 已被拒绝执行")
-                        },
-                        data: serde_json::json!({
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "approved": approved,
-                            "reason": reason,
-                            "args": args,
-                        }),
+            notifications.push(SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::ToolCallUpdate(update),
+            ));
+            notifications.push(make_event_notification(
+                session_id,
+                source,
+                turn_id,
+                *entry_index,
+                EventDescription {
+                    event_type: "approval_resolved",
+                    severity: if *approved { "info" } else { "warning" },
+                    message: if *approved {
+                        format!("工具 `{tool_name}` 已获批准并继续执行")
+                    } else {
+                        format!("工具 `{tool_name}` 已被拒绝执行")
                     },
-                ),
-            ]
+                    data: serde_json::json!({
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "approved": approved,
+                        "reason": reason,
+                        "args": args,
+                    }),
+                },
+            ));
+            notifications
         }
 
         AgentEvent::ToolExecutionEnd {
             tool_call_id,
+            tool_name,
             result,
             is_error,
-            ..
         } => {
+            let mut notifications = Vec::new();
+            if let Some(started) = ensure_tool_call_started(
+                session_id,
+                source,
+                turn_id,
+                entry_index,
+                started_tool_calls,
+                tool_call_id,
+                tool_name,
+                &serde_json::Value::Null,
+            ) {
+                notifications.push(started);
+            }
             let meta = make_meta(source, turn_id, *entry_index);
             *entry_index += 1;
 
@@ -1131,10 +1223,11 @@ fn convert_event_to_notifications(
             let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
             update.meta = Some(meta);
 
-            vec![SessionNotification::new(
+            notifications.push(SessionNotification::new(
                 session_id.clone(),
                 SessionUpdate::ToolCallUpdate(update),
-            )]
+            ));
+            notifications
         }
 
         _ => Vec::new(),
@@ -1415,6 +1508,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
+        let mut started_tool_calls = HashSet::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
@@ -1423,6 +1517,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
+            &mut started_tool_calls,
         );
 
         assert_eq!(notifications.len(), 1);
@@ -1460,6 +1555,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
+        let mut started_tool_calls = HashSet::new();
         let update_notifications = convert_event_to_notifications(
             &update_event,
             &SessionId::new("session-1"),
@@ -1468,6 +1564,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
+            &mut started_tool_calls,
         );
         let end_notifications = convert_event_to_notifications(
             &end_event,
@@ -1477,15 +1574,23 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
+            &mut started_tool_calls,
         );
 
         match &update_notifications[0].update {
+            SessionUpdate::ToolCall(call) => {
+                assert_eq!(call.status, ToolCallStatus::InProgress);
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+        match &update_notifications[1].update {
             SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(ToolCallStatus::InProgress));
                 assert_eq!(update.fields.raw_output, Some(raw_result.clone()));
             }
             other => panic!("unexpected session update: {other:?}"),
         }
+        assert_eq!(update_notifications.len(), 2);
 
         match &end_notifications[0].update {
             SessionUpdate::ToolCallUpdate(update) => {
@@ -1511,6 +1616,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
+        let mut started_tool_calls = HashSet::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
@@ -1519,10 +1625,18 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
+            &mut started_tool_calls,
         );
 
-        assert_eq!(notifications.len(), 2);
+        assert_eq!(notifications.len(), 3);
         match &notifications[0].update {
+            SessionUpdate::ToolCall(call) => {
+                assert_eq!(call.status, ToolCallStatus::InProgress);
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+
+        match &notifications[1].update {
             SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
                 assert_eq!(
@@ -1538,7 +1652,7 @@ mod tests {
             other => panic!("unexpected session update: {other:?}"),
         }
 
-        match &notifications[1].update {
+        match &notifications[2].update {
             SessionUpdate::SessionInfoUpdate(info) => {
                 let value = serde_json::to_value(info).expect("serialize session info");
                 assert_eq!(
@@ -1550,6 +1664,52 @@ mod tests {
                         .and_then(serde_json::Value::as_str),
                     Some("approval_requested")
                 );
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_execution_end_without_start_emits_synthetic_start_then_terminal_update() {
+        let result = AgentToolResult {
+            content: vec![ContentPart::text("done")],
+            is_error: false,
+            details: None,
+        };
+        let raw_result = serde_json::to_value(&result).expect("tool result should serialize");
+        let end_event = AgentEvent::ToolExecutionEnd {
+            tool_call_id: "tool-end-only-1".to_string(),
+            tool_name: "present_canvas".to_string(),
+            result: raw_result,
+            is_error: false,
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
+        let mut started_tool_calls = HashSet::new();
+        let notifications = convert_event_to_notifications(
+            &end_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut started_tool_calls,
+        );
+
+        assert_eq!(notifications.len(), 2);
+        match &notifications[0].update {
+            SessionUpdate::ToolCall(call) => {
+                assert_eq!(call.status, ToolCallStatus::InProgress);
+                assert_eq!(call.title, "present_canvas");
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+        match &notifications[1].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
             }
             other => panic!("unexpected session update: {other:?}"),
         }
@@ -1571,6 +1731,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
+        let mut started_tool_calls = HashSet::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
@@ -1579,6 +1740,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
+            &mut started_tool_calls,
         );
 
         assert_eq!(notifications.len(), 1);
@@ -1628,6 +1790,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
+        let mut started_tool_calls = HashSet::new();
         let delta_notifications = convert_event_to_notifications(
             &delta_event,
             &SessionId::new("session-1"),
@@ -1636,6 +1799,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
+            &mut started_tool_calls,
         );
         let end_notifications = convert_event_to_notifications(
             &message_end,
@@ -1645,6 +1809,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
+            &mut started_tool_calls,
         );
 
         assert_eq!(delta_notifications.len(), 1);

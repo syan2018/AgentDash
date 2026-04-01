@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::BroadcastStream;
 
-const DEFAULT_CHANNEL_CAPACITY: usize = 4096;
+const DEFAULT_CHANNEL_CAPACITY: usize = 65536;
 
 /// 事件流 — 对齐 Pi 的多订阅者事件分发模型
 ///
@@ -52,7 +52,10 @@ impl<T: Clone + Send + 'static> Stream for EventReceiver<T> {
         loop {
             match Pin::new(&mut self.inner).poll_next(cx) {
                 Poll::Ready(Some(Ok(item))) => return Poll::Ready(Some(item)),
-                Poll::Ready(Some(Err(_))) => continue,
+                Poll::Ready(Some(Err(err))) => {
+                    tracing::warn!(error = ?err, "Agent 事件流消费者发生 lagged，已跳过部分旧事件");
+                    continue;
+                }
                 Poll::Ready(None) => return Poll::Ready(None),
                 Poll::Pending => return Poll::Pending,
             }

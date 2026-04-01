@@ -261,13 +261,20 @@ impl AgentTool for FsWriteTool {
         _: &str,
         args: serde_json::Value,
         _: CancellationToken,
-        _: Option<ToolUpdateCallback>,
+        on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsWriteParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
         let address_space = self.address_space.snapshot().await;
         let target = resolve_uri_path(&address_space, &params.path)
             .map_err(AgentToolError::ExecutionFailed)?;
+        if let Some(callback) = on_update.as_ref() {
+            callback(AgentToolResult {
+                content: vec![ContentPart::text(format!("开始写入文件: {}", target.path))],
+                is_error: false,
+                details: None,
+            });
+        }
         let overlay_ref = self.overlay.as_ref().map(|arc| arc.as_ref());
         let final_content = if params.append.unwrap_or(false) {
             match self

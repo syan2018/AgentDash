@@ -8,7 +8,7 @@
  * 状态色仅影响 header 行右侧的 dot + label，不影响外框。
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SessionUpdate, ToolKind, ToolCallContent } from "@agentclientprotocol/sdk";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
 
@@ -19,6 +19,8 @@ type ExtendedToolCallStatus =
   | "failed"
   | "canceled"
   | "rejected";
+
+const MIN_IN_PROGRESS_VISIBLE_MS = 600;
 
 export interface AcpToolCallCardProps {
   update: SessionUpdate;
@@ -67,7 +69,34 @@ export function AcpToolCallCard({
 
   const { toolCallId, title, kind, status, rawInput, rawOutput, content } = toolCallInfo;
   const displayStatus = resolveDisplayStatus(status, rawOutput);
-  const statusConfig = getStatusConfig(displayStatus, isPendingApproval);
+  const [renderStatus, setRenderStatus] = useState<ExtendedToolCallStatus>(displayStatus);
+  const inProgressSinceRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const isRunning = displayStatus === "in_progress" || displayStatus === "pending";
+    if (isRunning) {
+      inProgressSinceRef.current = Date.now();
+      setRenderStatus(displayStatus);
+      return;
+    }
+
+    const startedAt = inProgressSinceRef.current;
+    if (startedAt != null) {
+      const elapsed = Date.now() - startedAt;
+      const remain = MIN_IN_PROGRESS_VISIBLE_MS - elapsed;
+      if (remain > 0) {
+        const timer = setTimeout(() => {
+          inProgressSinceRef.current = null;
+          setRenderStatus(displayStatus);
+        }, remain);
+        return () => clearTimeout(timer);
+      }
+      inProgressSinceRef.current = null;
+    }
+    setRenderStatus(displayStatus);
+  }, [displayStatus]);
+
+  const statusConfig = getStatusConfig(renderStatus, isPendingApproval);
   const kindConfig = getKindConfig(kind);
 
   const handleApprove = async () => {
@@ -117,9 +146,9 @@ export function AcpToolCallCard({
   return (
     <div
       className={`rounded-[12px] border border-border bg-background transition-colors ${
-        displayStatus === "failed" ||
-        displayStatus === "canceled" ||
-        displayStatus === "rejected"
+        renderStatus === "failed" ||
+        renderStatus === "canceled" ||
+        renderStatus === "rejected"
           ? "opacity-90"
           : ""
       }`}

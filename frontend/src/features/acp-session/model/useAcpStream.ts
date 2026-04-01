@@ -341,8 +341,8 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
     }
     if (existingIndex >= 0) {
       const existingEntry = prev[existingIndex]!;
-      const merged = mergeToolCallUpdateIntoEntry(existingEntry.update, update);
       const incomingStatus = (update as Record<string, unknown>).status;
+      const merged = mergeToolCallUpdateIntoEntry(existingEntry.update, update);
       let nextPendingApproval = existingEntry.isPendingApproval;
       if (isTerminalToolCallStatus(incomingStatus)) {
         nextPendingApproval = false;
@@ -601,6 +601,19 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
     pendingEventsRef.current.push(event);
     markReceiving();
 
+    // 工具生命周期事件立即刷新，避免“开始/结束在同批次被压缩后只看到完成态”。
+    const updateType = event.notification.update.sessionUpdate;
+    const shouldFlushNow =
+      updateType === "tool_call" || updateType === "tool_call_update";
+    if (shouldFlushNow) {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      flushPendingEvents();
+      return;
+    }
+
     if (flushTimerRef.current) return;
     flushTimerRef.current = setTimeout(() => {
       flushTimerRef.current = null;
@@ -668,14 +681,16 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
           const page = await fetchSessionEvents(sessionId, afterSeq, HISTORY_PAGE_SIZE);
           nextState = reduceStreamState(nextState, page.events);
           afterSeq = page.next_after_seq;
+          if (!mountedRef.current || cancelled) return;
+          // 历史回放按页增量渲染，避免“整批回放后只看到终态”。
+          setStreamState(nextState);
+          stateRef.current = nextState;
           if (!page.has_more) {
             break;
           }
         }
 
         if (cancelled || !mountedRef.current) return;
-        setStreamState(nextState);
-        stateRef.current = nextState;
 
         transportRef.current = createAcpStreamTransport({
           sessionId,

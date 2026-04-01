@@ -9,9 +9,9 @@ use agentdash_agent::agent_loop::AgentLoopConfig;
 use agentdash_agent::types::TokenUsage;
 use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
-    AgentToolError, AgentToolResult, AssistantStreamEvent, BridgeError, BridgeRequest,
-    BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopReason, ToolApprovalOutcome,
-    ToolCallInfo, ToolDefinition, agent_loop::AgentEventSink,
+    AgentToolError, AgentToolResult, AssistantStreamEvent, BeforeStopInput, BridgeError,
+    BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopDecision, StopReason,
+    ToolApprovalOutcome, ToolCallInfo, ToolDefinition, agent_loop::AgentEventSink,
 };
 use async_trait::async_trait;
 use futures::Stream;
@@ -349,6 +349,46 @@ async fn continue_from_assistant_tail_consumes_follow_up_messages() {
         texts,
         vec!["initial", "seed", "follow up", "after follow up"]
     );
+}
+
+#[tokio::test]
+async fn empty_continue_decision_keeps_loop_running_without_fake_messages() {
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("first pass")),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("second pass")),
+        ))],
+    ]);
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        tools: vec![],
+    };
+    let tool_instances: Vec<DynAgentTool> = vec![];
+    let config = AgentLoopConfig {
+        runtime_delegate: Some(Arc::new(EmptyContinueDelegate::default())),
+        ..AgentLoopConfig::default()
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("hello")],
+        &mut context,
+        &tool_instances,
+        &config,
+        &bridge,
+        &collecting_sink(Arc::new(Mutex::new(Vec::new()))),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should succeed");
+
+    let texts = new_messages
+        .iter()
+        .filter_map(|message| message.first_text().map(ToString::to_string))
+        .collect::<Vec<_>>();
+    assert_eq!(texts, vec!["hello", "first pass", "second pass"]);
 }
 
 #[tokio::test]
@@ -703,6 +743,11 @@ async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
 #[derive(Clone)]
 struct RejectingRuntimeDelegate;
 
+#[derive(Clone, Default)]
+struct EmptyContinueDelegate {
+    before_stop_calls: Arc<AtomicUsize>,
+}
+
 #[async_trait]
 impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
     async fn transform_context(
@@ -749,5 +794,60 @@ impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
         _cancel: CancellationToken,
     ) -> Result<agentdash_agent::StopDecision, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::StopDecision::Stop)
+    }
+}
+
+#[async_trait]
+impl agentdash_agent::AgentRuntimeDelegate for EmptyContinueDelegate {
+    async fn transform_context(
+        &self,
+        input: agentdash_agent::TransformContextInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::TransformContextOutput {
+            messages: input.context.messages,
+        })
+    }
+
+    async fn before_tool_call(
+        &self,
+        _input: agentdash_agent::BeforeToolCallInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::ToolCallDecision, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::ToolCallDecision::Allow)
+    }
+
+    async fn after_tool_call(
+        &self,
+        _input: agentdash_agent::AfterToolCallInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::AfterToolCallEffects, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::AfterToolCallEffects::default())
+    }
+
+    async fn after_turn(
+        &self,
+        _input: agentdash_agent::AfterTurnInput,
+        _cancel: CancellationToken,
+    ) -> Result<agentdash_agent::TurnControlDecision, agentdash_agent::AgentRuntimeError> {
+        Ok(agentdash_agent::TurnControlDecision::default())
+    }
+
+    async fn before_stop(
+        &self,
+        _input: BeforeStopInput,
+        _cancel: CancellationToken,
+    ) -> Result<StopDecision, agentdash_agent::AgentRuntimeError> {
+        let attempt = self.before_stop_calls.fetch_add(1, Ordering::SeqCst);
+        if attempt == 0 {
+            Ok(StopDecision::Continue {
+                steering: vec![],
+                follow_up: vec![],
+                reason: Some("retry once".to_string()),
+                allow_empty: true,
+            })
+        } else {
+            Ok(StopDecision::Stop)
+        }
     }
 }

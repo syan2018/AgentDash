@@ -86,5 +86,6 @@ pub enum StopDecision {
         steering: Vec<AgentMessage>,
         follow_up: Vec<AgentMessage>,
         reason: Option<String>,
+        allow_empty: bool,
     },
 }

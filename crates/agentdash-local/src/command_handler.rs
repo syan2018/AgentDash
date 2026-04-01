@@ -760,10 +760,10 @@ fn normalize_display_path(path: &std::path::Path) -> String {
 
 /// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 ACP `McpServer` 列表。
 ///
-/// 支持三种传输类型:
+/// 仅接受三种显式传输类型:
 /// - `"type": "http"` → `McpServer::Http`
 /// - `"type": "sse"`  → `McpServer::Sse`
-/// - `"type": "stdio"` (或无 `type` 字段且有 `command` 字段) → `McpServer::Stdio`
+/// - `"type": "stdio"` → `McpServer::Stdio`
 pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
     let mut servers = Vec::new();
 
@@ -779,26 +779,21 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
             .unwrap_or("")
             .to_string();
 
-        let transport = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let has_url = obj.contains_key("url");
-        let has_command = obj.contains_key("command");
-
-        let effective_type = if transport == "http" {
-            "http"
-        } else if transport == "sse" {
-            "sse"
-        } else if transport == "stdio" {
-            "stdio"
-        } else if has_url {
-            "http"
-        } else if has_command {
-            "stdio"
-        } else {
-            tracing::debug!(name = %name, "relay MCP server 缺少 type/url/command，跳过");
-            continue;
+        let transport = match obj.get("type").and_then(|v| v.as_str()) {
+            Some("http") => "http",
+            Some("sse") => "sse",
+            Some("stdio") => "stdio",
+            Some(other) => {
+                tracing::warn!(name = %name, transport = %other, "relay MCP server type 非法，跳过");
+                continue;
+            }
+            None => {
+                tracing::warn!(name = %name, "relay MCP server 缺少显式 type，跳过");
+                continue;
+            }
         };
 
-        match effective_type {
+        match transport {
             "http" | "sse" => {
                 let url = match obj.get("url").and_then(|v| v.as_str()) {
                     Some(u) => u.to_string(),
@@ -822,7 +817,7 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
                     })
                     .unwrap_or_default();
 
-                if effective_type == "http" {
+                if transport == "http" {
                     servers.push(McpServer::Http(
                         McpServerHttp::new(name, url).headers(headers),
                     ));
@@ -872,4 +867,30 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
     }
 
     servers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_relay_mcp_servers;
+
+    #[test]
+    fn relay_mcp_servers_require_explicit_type() {
+        let servers = parse_relay_mcp_servers(&[serde_json::json!({
+            "name": "missing-type",
+            "url": "http://127.0.0.1:8080/mcp"
+        })]);
+
+        assert!(servers.is_empty(), "缺少显式 type 的 MCP server 不应被接受");
+    }
+
+    #[test]
+    fn relay_mcp_servers_reject_unknown_type() {
+        let servers = parse_relay_mcp_servers(&[serde_json::json!({
+            "name": "bad-type",
+            "type": "ws",
+            "url": "ws://127.0.0.1:8080/mcp"
+        })]);
+
+        assert!(servers.is_empty(), "未知 type 的 MCP server 不应被接受");
+    }
 }

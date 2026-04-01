@@ -34,11 +34,13 @@
 - `SessionOwnerType` 已删除 loose parse，只接受精确字符串
 - tool execution artifact 不再把坏对象内容 / 坏序列化吞成 `{}` / `[]` / `pending`
 - 前端 `currentUser/session/workflow` mapper 已改为对未知枚举显式报错，不再静默回退到默认值
+- relay MCP server 解析已要求显式 `type`，不再根据 `url/command` 猜测 transport
 
 ### 进行中
 
 - ST-03 旧协议与旧路由清理
 - ST-02 持久化层静默默认值清理
+- ST-04 执行器与 provider fallback 清理
 
 ### 下一步
 
@@ -58,3 +60,4 @@
 - `cargo test -p agentdash-infrastructure canvas_repository -- --nocapture` 通过
 - `cargo test -p agentdash-application session::memory_persistence -- --nocapture` 通过
 - `cargo test -p agentdash-application session::hub -- --nocapture` 通过
+- `cargo test -p agentdash-local -- --nocapture` 通过

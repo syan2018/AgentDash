@@ -465,7 +465,7 @@ impl TaskLifecycleService {
         owner_id: Uuid,
         label: &str,
     ) -> Result<(), TaskExecutionError> {
-        let owner_type = SessionOwnerType::from_str_loose(owner_type).ok_or_else(|| {
+        let owner_type = owner_type.parse::<SessionOwnerType>().map_err(|_| {
             TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
         })?;
         let project_id = resolve_project_scope_for_owner(&self.repos, owner_type, owner_id).await?;

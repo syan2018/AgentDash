@@ -256,10 +256,9 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
 
         rows.into_iter()
             .map(|row| {
-                let owner_type =
-                    SessionOwnerType::from_str_loose(&row.owner_type).ok_or_else(|| {
-                        DomainError::InvalidConfig(format!("无效的 owner_type: {}", row.owner_type))
-                    })?;
+                let owner_type = row.owner_type.parse::<SessionOwnerType>().map_err(|_| {
+                    DomainError::InvalidConfig(format!("无效的 owner_type: {}", row.owner_type))
+                })?;
                 let binding = SessionBinding {
                     id: row.id.parse().map_err(|_| DomainError::NotFound {
                         entity: "session_binding",
@@ -318,7 +317,7 @@ impl TryFrom<BindingRow> for SessionBinding {
     type Error = DomainError;
 
     fn try_from(row: BindingRow) -> Result<Self, Self::Error> {
-        let owner_type = SessionOwnerType::from_str_loose(&row.owner_type).ok_or_else(|| {
+        let owner_type = row.owner_type.parse::<SessionOwnerType>().map_err(|_| {
             DomainError::InvalidConfig(format!(
                 "无效的 session_binding owner_type: {}",
                 row.owner_type

@@ -76,8 +76,9 @@ pub async fn list_sessions(
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
     if let (Some(owner_type_str), Some(owner_id_str)) = (&query.owner_type, &query.owner_id) {
-        let owner_type = SessionOwnerType::from_str_loose(owner_type_str)
-            .ok_or_else(|| ApiError::BadRequest(format!("无效的 owner_type: {owner_type_str}")))?;
+        let owner_type = owner_type_str
+            .parse::<SessionOwnerType>()
+            .map_err(|_| ApiError::BadRequest(format!("无效的 owner_type: {owner_type_str}")))?;
         let owner_id: uuid::Uuid = owner_id_str
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id_str}")))?;

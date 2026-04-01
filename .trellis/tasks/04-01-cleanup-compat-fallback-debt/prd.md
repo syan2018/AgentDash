@@ -88,9 +88,9 @@
 - [ ] 后端不再通过默认值吞掉持久化层坏数据、坏枚举或坏 JSON
 - [ ] address space / inline persistence / workspace 解析不再跨 scope 猜测目标对象
 - [ ] PiAgent / 执行器不再对未知 provider/model 静默回退到默认 bridge
-- [ ] structured prompt 不再依赖长期保留的 text fallback 主路径
-- [ ] 前端主路径不再调用旧 project-agent / session 兼容 API
-- [ ] 前端不再维护旧状态映射与协议补丁式兼容
+- [x] structured prompt 不再依赖长期保留的 text fallback 主路径
+- [x] 前端主路径不再调用旧 project-agent / session 兼容 API
+- [x] 前端不再维护旧状态映射与协议补丁式兼容
 - [ ] workflow / schema 不再依赖 runtime legacy migration
 - [ ] dev 启动链路不再依赖无差别杀进程/杀端口清场
 

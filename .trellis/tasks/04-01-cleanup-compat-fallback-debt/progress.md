@@ -14,19 +14,29 @@
 - `story_sessions` / `acp_sessions` / `canvases` 复用 story session context 时不再把 project/workspace/session meta 读取错误降成“无上下文”
 - `dev-joint` 删除 `embedded-postgresql(auto)` 这类伪 URL 哑值，数据库模式展示改为显式 embedded 文案
 - `kill-ports.js` 端口清理失败时改为非 0 退出，不再伪装成功
+- session prompt 主路径已移除 `prompt` 文本字段，只保留 `promptBlocks`
+- project/story owner prompt 构建只接收结构化 blocks，不再合并 `original_prompt`
+- `SessionHub` prompt pipeline 现在要求显式 `executor_config`，不再从 request/session meta 全部缺失时静默补默认执行器
+- `acp_sessions` 构建 story/project owner prompt 时，缺失执行器配置会直接报错；project default 仅允许作为显式 `executor_config` 来源，不再隐式兜底执行路径
+- relay `CommandPromptPayload` / local command handler 已删除旧 `prompt` 协议字段
+- `project_agents` 现在严格解析 preset MCP 配置，坏 `name/type/url/command/headers/args/env` 直接报错，不再 warn + skip
+- task preset `thinking_level` 非法时直接报错，不再静默忽略
+- 前端 SessionChat / TaskAgentSessionPanel 已统一仅发送 `promptBlocks`
+- 前端 `workflow.ts` / `storyStore.ts` 已继续收紧 mapper，去掉缺字段补空串 / 当前时间 / 默认状态 / 默认绑定的主路径兜底
+- Task agent binding UI 已删除“自动选第一个 executor / 项目默认 / 第一个 preset”推断
+- ACP SSE / NDJSON resume header 已改为严格校验，坏 header 不再回退到 `0`
+- `dev-joint` 现在会显式拒绝非法 `DATABASE_URL`，并在传递 server 环境时清掉继承的脏值
+- `dev-joint` / `wait-for-ready.js` 的 ready check 已收紧为只接受 `200`
 
 ### 进行中
 
-- ST-04 执行器 / Hook / relay 协议边界的补丁式 fallback 清理
 - ST-06 开发基础设施与 embedded PostgreSQL 生命周期清理
-- ST-02 / 前端 strict mapper 的剩余补洞清理
 
 ### 下一步
 
-- 继续删除 `story_sessions` / `project_agents` / `acp_sessions` 等路由中的吞错与“尽力解析”分支
-- 继续推进前端 `workflow.ts` / `storyStore.ts` strict mapper，去掉补空串 / 当前时间 / 默认绑定的兜底
-- 继续清理 companion dispatch、session prompt、workflow legacy migration 中仍存在的 fallback 分支
-- 继续收敛 dev supervisor，减少按进程名/端口的全局清场，明确 ownership / shutdown / ready contract
+- 本轮代码层可低风险推进的兼容/回退清理已基本收尾
+- 剩余更大的尾项主要是 embedded PostgreSQL ownership / supervisor 生命周期建模，以及 workflow/schema runtime migration 的设计级收口
+- 如继续推进，建议单独立 task 处理“dev runtime ownership”与“schema/runtime migration 收敛”，避免在当前批次继续堆补丁
 
 ### 验证记录
 
@@ -37,6 +47,13 @@
 - `cargo check -p agentdash-api --message-format short` 通过
 - `node --check scripts/dev-joint.js` 通过
 - `node --check scripts/kill-ports.js` 通过
+- `cargo check -p agentdash-application -p agentdash-api -p agentdash-local -p agentdash-relay --message-format short` 通过
+- `cargo test -p agentdash-application session::hub -- --nocapture` 通过
+- `cargo test -p agentdash-api -- --nocapture` 通过
+- `cargo test -p agentdash-local -- --nocapture` 通过
+- `pnpm run frontend:check` 通过
+- `pnpm run frontend:test` 通过
+- `node --check scripts/wait-for-ready.js` 通过
 
 ## 2026-04-01
 

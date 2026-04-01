@@ -24,6 +24,10 @@ if (config.help) {
   process.exit(0);
 }
 
+if (config.databaseUrl && !isPostgresUrl(config.databaseUrl)) {
+  throw new Error(`--database-url / DATABASE_URL 必须是 PostgreSQL URL，收到: ${config.databaseUrl}`);
+}
+
 const managedChildren = [];
 let shuttingDown = false;
 
@@ -75,7 +79,8 @@ async function main() {
     const serverEnv = {
       ...process.env,
       HOST: config.serverHost,
-      PORT: String(config.serverPort)
+      PORT: String(config.serverPort),
+      DATABASE_URL: undefined,
     };
     // 仅当明确提供 PostgreSQL URL 时透传，避免 sqlite 默认值误导运行时判断。
     if (isPostgresUrl(config.databaseUrl)) {
@@ -501,7 +506,7 @@ async function waitForHttpReady(port, requestPath, timeoutSec) {
   while (Date.now() < deadline) {
     attempt += 1;
     const statusCode = await probeHttp(port, requestPath);
-    if (statusCode >= 200 && statusCode < 400) {
+    if (statusCode === 200) {
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.log(`  [ready] :${port}${requestPath} → ${statusCode} (${elapsed}s)`);
       return;

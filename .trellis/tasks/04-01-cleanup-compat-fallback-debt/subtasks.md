@@ -24,7 +24,7 @@
 
 ### ST-02 持久化层静默默认值清理
 
-状态：`doing`
+状态：`mostly-done`
 
 目标：
 
@@ -33,7 +33,7 @@
 
 ### ST-03 旧协议与旧路由清理
 
-状态：`doing`
+状态：`done`
 
 目标：
 
@@ -43,7 +43,7 @@
 
 ### ST-04 执行器与 provider fallback 清理
 
-状态：`doing`
+状态：`done`
 
 目标：
 
@@ -72,7 +72,7 @@
 
 ## 当前批次
 
-当前推进：`ST-04` + `ST-06`
+当前推进：`ST-06`
 
 已完成：
 
@@ -110,14 +110,23 @@
 - `story_sessions` / `acp_sessions` / `canvases` 已改为对 story session context 构建错误显式失败，不再静默降成“无上下文”
 - `dev-joint` 已删除 `embedded-postgresql(auto)` 伪 URL 哑值
 - `kill-ports.js` 已改为在端口清理失败时非 0 退出，不再伪装成功
+- session prompt 主路径已删除 `prompt` 文本字段，只保留 `promptBlocks`
+- project/story owner prompt 构建已只接收结构化 blocks，不再走 text shadow path
+- `SessionHub` 已要求 prompt 明确携带或继承已有 `executor_config`，不再静默 `unwrap_or_default()`
+- `project_agents` 已改为严格解析 preset MCP servers，坏配置直接失败
+- task preset `thinking_level` 已改为严格校验，不再静默忽略
+- 前端 SessionChat / TaskAgentSessionPanel 已统一仅走 `promptBlocks`
+- 前端 `workflow.ts` / `storyStore.ts` 已继续删除 mapper 层补空串 / 当前时间 / 默认绑定
+- task agent binding UI 已删除自动选第一个 executor / project default / preset 的推断
+- ACP resume header 已改为严格校验，坏 `last-event-id` / `x-stream-since-id` 不再降成 `0`
+- `dev-joint` 已拒绝非法 `DATABASE_URL`，且不再把继承环境中的脏连接串偷偷传给 server
+- `dev-joint` / `wait-for-ready.js` 已收紧为仅 `200` 才视为 ready
 
 下一步：
 
-- 继续收紧 `story_sessions` / `project_agents` / `acp_sessions` 等路由中的吞错与“尽力解析”分支
-- 继续推进 ST-04：清理 structured prompt 双路径 fallback、executor_config 隐式默认值与 preset model config 宽松解析
-- 继续推进 ST-02：清理 project/story/workspace repository 层坏 JSON / 坏枚举 / 坏时间默认值
-- 继续推进前端服务层 strict mapper，去掉 `workflow.ts` / `storyStore.ts` 里把缺字段补空串 / 当前时间 / 默认绑定的兜底
-- 继续收 dev supervisor 与 embedded PostgreSQL 生命周期，减少全局 kill 与重复 ready/retry 逻辑
+- 当前代码层可低风险清理项已基本完成
+- 若继续深入，优先单独处理 ST-05 workflow/schema runtime migration
+- ST-06 剩余重点是 embedded PostgreSQL ownership / supervisor 生命周期统一，已不适合继续靠小补丁推进
 
 完成标准：
 
@@ -125,3 +134,5 @@
 - 前端不再维护旧 task status 兼容映射
 - 前端流传输主路径不再兼容裸 `SessionNotification`
 - 默认流传输不再自动从 NDJSON 降级到 SSE
+- owner/session prompt 主路径仅保留结构化 `promptBlocks`
+- task / story / workflow / hook preset 等前端 mapper 不再把缺字段补成“看起来正常”的业务值

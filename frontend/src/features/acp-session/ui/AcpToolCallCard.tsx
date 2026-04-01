@@ -35,10 +35,6 @@ export function AcpToolCallCard({
   compact = false,
   sessionId,
 }: AcpToolCallCardProps) {
-  const [expanded, setExpanded] = useState(isPendingApproval);
-  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
-
   const toolCallInfo = (() => {
     if (update.sessionUpdate === "tool_call") {
       return {
@@ -65,9 +61,21 @@ export function AcpToolCallCard({
     return null;
   })();
 
-  if (!toolCallInfo) return null;
+  const resolvedToolCallInfo = toolCallInfo ?? {
+    toolCallId: "",
+    title: "工具调用",
+    kind: "other" as ToolKind,
+    status: "pending" as ExtendedToolCallStatus,
+    content: [] as ToolCallContent[],
+    rawInput: undefined,
+    rawOutput: undefined,
+  };
 
-  const { toolCallId, title, kind, status, rawInput, rawOutput, content } = toolCallInfo;
+  const [expanded, setExpanded] = useState(Boolean(isPendingApproval));
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  const { toolCallId, title, kind, status, rawInput, rawOutput, content } = resolvedToolCallInfo;
   const displayStatus = resolveDisplayStatus(status, rawOutput);
   const [renderStatus, setRenderStatus] = useState<ExtendedToolCallStatus>(displayStatus);
   const inProgressSinceRef = useRef<number | null>(null);
@@ -95,6 +103,14 @@ export function AcpToolCallCard({
     }
     setRenderStatus(displayStatus);
   }, [displayStatus]);
+
+  useEffect(() => {
+    if (isPendingApproval) {
+      setExpanded(true);
+    }
+  }, [isPendingApproval]);
+
+  if (!toolCallInfo) return null;
 
   const statusConfig = getStatusConfig(renderStatus, isPendingApproval);
   const kindConfig = getKindConfig(kind);

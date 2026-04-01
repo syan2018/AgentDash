@@ -60,6 +60,33 @@ function buildToolCallEvent(seq: number, status: "pending" | "completed"): Sessi
   };
 }
 
+function buildPendingApprovalUpdate(seq: number): SessionEventEnvelope {
+  return {
+    session_id: "sess-1",
+    event_seq: seq,
+    occurred_at_ms: seq,
+    committed_at_ms: seq,
+    session_update_type: "tool_call_update",
+    turn_id: "turn-1",
+    entry_index: null,
+    tool_call_id: "tool-1",
+    notification: {
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        title: "执行 shell",
+        kind: "execute",
+        status: "pending",
+        content: [],
+        rawOutput: {
+          approval_state: "pending",
+        },
+      },
+    } as unknown as SessionNotification,
+  };
+}
+
 function buildTextEventWithoutTrace(seq: number, text: string): SessionEventEnvelope {
   return {
     session_id: "sess-1",
@@ -182,6 +209,23 @@ describe("reduceStreamState", () => {
     expect(completed.entries[0]?.update.sessionUpdate).toBe("tool_call");
     expect((completed.entries[0]?.update as { status?: string }).status).toBe("completed");
     expect(completed.entries[0]?.eventSeq).toBe(4);
+  });
+
+  it("普通 pending tool_call 不会被误判成等待审批", () => {
+    const initial = {
+      entries: [],
+      rawEvents: [],
+      tokenUsage: null,
+      lastAppliedSeq: 0,
+    };
+
+    const started = reduceStreamState(initial, [buildToolCallEvent(2, "pending")]);
+
+    expect(started.entries).toHaveLength(1);
+    expect(started.entries[0]?.isPendingApproval).toBe(false);
+
+    const approvalPending = reduceStreamState(started, [buildPendingApprovalUpdate(3)]);
+    expect(approvalPending.entries[0]?.isPendingApproval).toBe(true);
   });
 
   it("累计 chunk 异常重复时不会把同一段文本拼两次", () => {

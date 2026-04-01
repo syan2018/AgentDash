@@ -2,7 +2,7 @@
 ///
 /// 与 `VibeKanbanExecutorsConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -514,7 +514,7 @@ impl AgentConnector for PiAgentConnector {
             let mut entry_index: u32 = 0;
             let mut chunk_message_ids: HashMap<String, String> = HashMap::new();
             let mut chunk_emit_states: HashMap<String, ChunkEmitState> = HashMap::new();
-            let mut started_tool_calls: HashSet<String> = HashSet::new();
+            let mut tool_call_states: HashMap<String, ToolCallEmitState> = HashMap::new();
             let mut event_rx = event_rx;
             let mut hook_trace_rx = hook_trace_rx;
 
@@ -534,7 +534,7 @@ impl AgentConnector for PiAgentConnector {
                                 &mut entry_index,
                                 &mut chunk_message_ids,
                                 &mut chunk_emit_states,
-                                &mut started_tool_calls,
+                                &mut tool_call_states,
                             );
 
                             for n in notifications {
@@ -572,7 +572,7 @@ impl AgentConnector for PiAgentConnector {
                     &mut entry_index,
                     &mut chunk_message_ids,
                     &mut chunk_emit_states,
-                    &mut started_tool_calls,
+                    &mut tool_call_states,
                 );
 
                 for n in notifications {
@@ -763,8 +763,41 @@ struct ChunkEmitState {
     seen_delta: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ToolCallEmitState {
+    entry_index: u32,
+    title: String,
+    kind: ToolKind,
+    raw_input: Option<serde_json::Value>,
+}
+
 fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String {
     format!("{turn_id}:{entry_index}:{chunk_kind}")
+}
+
+fn map_tool_kind(tool_name: &str) -> ToolKind {
+    match tool_name {
+        "read_file" | "fs_read" | "list_directory" | "fs_list" => ToolKind::Read,
+        "write_file" | "fs_write" | "fs_apply_patch" => ToolKind::Edit,
+        "search" | "fs_search" => ToolKind::Search,
+        "shell" | "shell_exec" => ToolKind::Execute,
+        "fetch" | "web_fetch" => ToolKind::Fetch,
+        "think" => ToolKind::Think,
+        "switch_mode" => ToolKind::SwitchMode,
+        _ => ToolKind::Other,
+    }
+}
+
+fn message_tool_call_info<'a>(
+    message: &'a AgentMessage,
+    tool_call_id: &str,
+) -> Option<&'a agentdash_agent::ToolCallInfo> {
+    match message {
+        AgentMessage::Assistant { tool_calls, .. } => tool_calls
+            .iter()
+            .find(|tool_call| tool_call.id == tool_call_id),
+        _ => None,
+    }
 }
 
 fn convert_event_to_notifications(
@@ -775,36 +808,195 @@ fn convert_event_to_notifications(
     entry_index: &mut u32,
     chunk_message_ids: &mut HashMap<String, String>,
     chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
-    started_tool_calls: &mut HashSet<String>,
+    tool_call_states: &mut HashMap<String, ToolCallEmitState>,
 ) -> Vec<SessionNotification> {
-    fn ensure_tool_call_started(
+    fn upsert_tool_call_state(
+        tool_call_states: &mut HashMap<String, ToolCallEmitState>,
+        entry_index: &mut u32,
+        tool_call_id: &str,
+        title: String,
+        kind: ToolKind,
+        raw_input: Option<serde_json::Value>,
+    ) -> (ToolCallEmitState, bool) {
+        if let Some(existing) = tool_call_states.get_mut(tool_call_id) {
+            if !title.trim().is_empty() {
+                existing.title = title;
+            }
+            if existing.kind == ToolKind::Other && kind != ToolKind::Other {
+                existing.kind = kind;
+            }
+            if let Some(raw_input) = raw_input {
+                existing.raw_input = Some(raw_input);
+            }
+            return (existing.clone(), false);
+        }
+
+        let state = ToolCallEmitState {
+            entry_index: *entry_index,
+            title,
+            kind,
+            raw_input,
+        };
+        *entry_index += 1;
+        tool_call_states.insert(tool_call_id.to_string(), state.clone());
+        (state, true)
+    }
+
+    fn build_tool_call_notification(
         session_id: &SessionId,
         source: &AgentDashSourceV1,
         turn_id: &str,
+        tool_call_id: &str,
+        state: &ToolCallEmitState,
+        status: ToolCallStatus,
+    ) -> SessionNotification {
+        let meta = make_meta(source, turn_id, state.entry_index);
+        let mut call = ToolCall::new(ToolCallId::new(tool_call_id.to_string()), &state.title)
+            .kind(state.kind)
+            .status(status)
+            .raw_input(state.raw_input.clone());
+        call.meta = Some(meta);
+        SessionNotification::new(session_id.clone(), SessionUpdate::ToolCall(call))
+    }
+
+    fn build_tool_call_update_notification(
+        session_id: &SessionId,
+        source: &AgentDashSourceV1,
+        turn_id: &str,
+        tool_call_id: &str,
+        state: &ToolCallEmitState,
+        fields: ToolCallUpdateFields,
+    ) -> SessionNotification {
+        let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.to_string()), fields);
+        update.meta = Some(make_meta(source, turn_id, state.entry_index));
+        SessionNotification::new(session_id.clone(), SessionUpdate::ToolCallUpdate(update))
+    }
+
+    fn seed_tool_update_fields(
+        state: &ToolCallEmitState,
+        status: Option<ToolCallStatus>,
+    ) -> ToolCallUpdateFields {
+        let mut fields = ToolCallUpdateFields::default();
+        fields.title = Some(state.title.clone());
+        fields.kind = Some(state.kind);
+        fields.status = status;
+        if let Some(raw_input) = state.raw_input.clone() {
+            fields.raw_input = Some(raw_input);
+        }
+        fields
+    }
+
+    fn upsert_state_from_tool_name(
+        tool_call_states: &mut HashMap<String, ToolCallEmitState>,
         entry_index: &mut u32,
-        started_tool_calls: &mut HashSet<String>,
         tool_call_id: &str,
         tool_name: &str,
-        args: &serde_json::Value,
-    ) -> Option<SessionNotification> {
-        if !started_tool_calls.insert(tool_call_id.to_string()) {
-            return None;
+        raw_input: Option<serde_json::Value>,
+    ) -> (ToolCallEmitState, bool) {
+        upsert_tool_call_state(
+            tool_call_states,
+            entry_index,
+            tool_call_id,
+            tool_name.to_string(),
+            map_tool_kind(tool_name),
+            raw_input,
+        )
+    }
+
+    fn upsert_state_from_message(
+        tool_call_states: &mut HashMap<String, ToolCallEmitState>,
+        entry_index: &mut u32,
+        message: &AgentMessage,
+        tool_call_id: &str,
+        fallback_name: &str,
+    ) -> (ToolCallEmitState, bool) {
+        if let Some(tool_call) = message_tool_call_info(message, tool_call_id) {
+            return upsert_tool_call_state(
+                tool_call_states,
+                entry_index,
+                tool_call_id,
+                tool_call.name.clone(),
+                map_tool_kind(&tool_call.name),
+                Some(tool_call.arguments.clone()),
+            );
         }
-        let meta = make_meta(source, turn_id, *entry_index);
-        *entry_index += 1;
-        let mut call = ToolCall::new(ToolCallId::new(tool_call_id.to_string()), tool_name)
-            .kind(ToolKind::Other)
-            .status(ToolCallStatus::InProgress)
-            .raw_input(Some(args.clone()));
-        call.meta = Some(meta);
-        Some(SessionNotification::new(
-            session_id.clone(),
-            SessionUpdate::ToolCall(call),
-        ))
+
+        upsert_state_from_tool_name(
+            tool_call_states,
+            entry_index,
+            tool_call_id,
+            fallback_name,
+            None,
+        )
     }
 
     match event {
-        AgentEvent::MessageUpdate { event, .. } => match event {
+        AgentEvent::MessageUpdate { message, event } => match event {
+            agentdash_agent::types::AssistantStreamEvent::ToolCallStart {
+                tool_call_id,
+                name,
+                ..
+            } => {
+                let (state, created) = upsert_state_from_message(
+                    tool_call_states,
+                    entry_index,
+                    message,
+                    tool_call_id,
+                    name,
+                );
+                if !created {
+                    return Vec::new();
+                }
+                vec![build_tool_call_notification(
+                    session_id,
+                    source,
+                    turn_id,
+                    tool_call_id,
+                    &state,
+                    ToolCallStatus::Pending,
+                )]
+            }
+            agentdash_agent::types::AssistantStreamEvent::ToolCallDelta {
+                tool_call_id,
+                name,
+                ..
+            } => {
+                let (state, _) = upsert_state_from_message(
+                    tool_call_states,
+                    entry_index,
+                    message,
+                    tool_call_id,
+                    name,
+                );
+                let fields = seed_tool_update_fields(&state, Some(ToolCallStatus::Pending));
+                vec![build_tool_call_update_notification(
+                    session_id,
+                    source,
+                    turn_id,
+                    tool_call_id,
+                    &state,
+                    fields,
+                )]
+            }
+            agentdash_agent::types::AssistantStreamEvent::ToolCallEnd { tool_call, .. } => {
+                let (state, _) = upsert_tool_call_state(
+                    tool_call_states,
+                    entry_index,
+                    &tool_call.id,
+                    tool_call.name.clone(),
+                    map_tool_kind(&tool_call.name),
+                    Some(tool_call.arguments.clone()),
+                );
+                let fields = seed_tool_update_fields(&state, Some(ToolCallStatus::Pending));
+                vec![build_tool_call_update_notification(
+                    session_id,
+                    source,
+                    turn_id,
+                    &tool_call.id,
+                    &state,
+                    fields,
+                )]
+            }
             agentdash_agent::types::AssistantStreamEvent::TextDelta { text, .. } => {
                 if text.is_empty() {
                     return Vec::new();
@@ -820,10 +1012,9 @@ fn convert_event_to_notifications(
                     *entry_index,
                     "agent_message_chunk",
                 );
-                let chunk =
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
-                        .message_id(Some(message_id))
-                        .meta(Some(meta));
+                let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                    .message_id(Some(message_id))
+                    .meta(Some(meta));
                 vec![SessionNotification::new(
                     session_id.clone(),
                     SessionUpdate::AgentMessageChunk(chunk),
@@ -844,10 +1035,9 @@ fn convert_event_to_notifications(
                     *entry_index,
                     "agent_thought_chunk",
                 );
-                let chunk =
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
-                        .message_id(Some(message_id))
-                        .meta(Some(meta));
+                let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                    .message_id(Some(message_id))
+                    .meta(Some(meta));
                 vec![SessionNotification::new(
                     session_id.clone(),
                     SessionUpdate::AgentThoughtChunk(chunk),
@@ -911,9 +1101,10 @@ fn convert_event_to_notifications(
                     };
                     if let Some(payload) = to_emit {
                         let meta = make_meta(source, turn_id, *entry_index);
-                        let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
-                            .message_id(Some(message_id))
-                            .meta(Some(meta));
+                        let chunk =
+                            ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
+                                .message_id(Some(message_id))
+                                .meta(Some(meta));
                         notifications.push(SessionNotification::new(
                             session_id.clone(),
                             SessionUpdate::AgentThoughtChunk(chunk),
@@ -952,12 +1143,34 @@ fn convert_event_to_notifications(
                     };
                     if let Some(payload) = to_emit {
                         let meta = make_meta(source, turn_id, *entry_index);
-                        let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
-                            .message_id(Some(message_id))
-                            .meta(Some(meta));
+                        let chunk =
+                            ContentChunk::new(ContentBlock::Text(TextContent::new(payload)))
+                                .message_id(Some(message_id))
+                                .meta(Some(meta));
                         notifications.push(SessionNotification::new(
                             session_id.clone(),
                             SessionUpdate::AgentMessageChunk(chunk),
+                        ));
+                    }
+                }
+
+                for tool_call in tool_calls {
+                    let (state, created) = upsert_tool_call_state(
+                        tool_call_states,
+                        entry_index,
+                        &tool_call.id,
+                        tool_call.name.clone(),
+                        map_tool_kind(&tool_call.name),
+                        Some(tool_call.arguments.clone()),
+                    );
+                    if created {
+                        notifications.push(build_tool_call_notification(
+                            session_id,
+                            source,
+                            turn_id,
+                            &tool_call.id,
+                            &state,
+                            ToolCallStatus::Pending,
                         ));
                     }
                 }
@@ -978,18 +1191,22 @@ fn convert_event_to_notifications(
             tool_name,
             args,
         } => {
-            ensure_tool_call_started(
+            let (state, _) = upsert_state_from_tool_name(
+                tool_call_states,
+                entry_index,
+                tool_call_id,
+                tool_name,
+                Some(args.clone()),
+            );
+            let fields = seed_tool_update_fields(&state, Some(ToolCallStatus::InProgress));
+            vec![build_tool_call_update_notification(
                 session_id,
                 source,
                 turn_id,
-                entry_index,
-                started_tool_calls,
                 tool_call_id,
-                tool_name,
-                args,
-            )
-            .into_iter()
-            .collect()
+                &state,
+                fields,
+            )]
         }
 
         AgentEvent::ToolExecutionUpdate {
@@ -999,23 +1216,14 @@ fn convert_event_to_notifications(
             partial_result,
             ..
         } => {
-            let mut notifications = Vec::new();
-            if let Some(started) = ensure_tool_call_started(
-                session_id,
-                source,
-                turn_id,
+            let (state, _) = upsert_state_from_tool_name(
+                tool_call_states,
                 entry_index,
-                started_tool_calls,
                 tool_call_id,
                 tool_name,
-                args,
-            ) {
-                notifications.push(started);
-            }
-
-            let meta = make_meta(source, turn_id, *entry_index);
-            let mut fields = ToolCallUpdateFields::default();
-            fields.status = Some(ToolCallStatus::InProgress);
+                Some(args.clone()),
+            );
+            let mut fields = seed_tool_update_fields(&state, Some(ToolCallStatus::InProgress));
             fields.raw_output = Some(partial_result.clone());
             if let Some(result) = decode_tool_result(partial_result) {
                 let content = content_parts_to_tool_call_content(&result.content);
@@ -1024,14 +1232,14 @@ fn convert_event_to_notifications(
                 }
             }
 
-            let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
-            update.meta = Some(meta);
-
-            notifications.push(SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::ToolCallUpdate(update),
-            ));
-            notifications
+            vec![build_tool_call_update_notification(
+                session_id,
+                source,
+                turn_id,
+                tool_call_id,
+                &state,
+                fields,
+            )]
         }
 
         AgentEvent::ToolExecutionPendingApproval {
@@ -1042,22 +1250,15 @@ fn convert_event_to_notifications(
             details,
             ..
         } => {
-            let mut notifications = Vec::new();
-            if let Some(started) = ensure_tool_call_started(
-                session_id,
-                source,
-                turn_id,
+            let (state, _) = upsert_state_from_tool_name(
+                tool_call_states,
                 entry_index,
-                started_tool_calls,
                 tool_call_id,
                 tool_name,
-                args,
-            ) {
-                notifications.push(started);
-            }
-
-            let meta = make_meta(source, turn_id, *entry_index);
-            let mut fields = ToolCallUpdateFields::default();
+                Some(args.clone()),
+            );
+            let mut notifications = Vec::new();
+            let mut fields = seed_tool_update_fields(&state, Some(ToolCallStatus::Pending));
             fields.status = Some(ToolCallStatus::Pending);
             fields.raw_output = Some(serde_json::json!({
                 "approval_state": "pending",
@@ -1068,18 +1269,19 @@ fn convert_event_to_notifications(
                 TextContent::new(format!("等待审批：{reason}")),
             ))]);
 
-            let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
-            update.meta = Some(meta);
-
-            notifications.push(SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::ToolCallUpdate(update),
+            notifications.push(build_tool_call_update_notification(
+                session_id,
+                source,
+                turn_id,
+                tool_call_id,
+                &state,
+                fields,
             ));
             notifications.push(make_event_notification(
                 session_id,
                 source,
                 turn_id,
-                *entry_index,
+                state.entry_index,
                 EventDescription {
                     event_type: "approval_requested",
                     severity: "warning",
@@ -1104,22 +1306,22 @@ fn convert_event_to_notifications(
             reason,
             ..
         } => {
-            let mut notifications = Vec::new();
-            if let Some(started) = ensure_tool_call_started(
-                session_id,
-                source,
-                turn_id,
+            let (state, _) = upsert_state_from_tool_name(
+                tool_call_states,
                 entry_index,
-                started_tool_calls,
                 tool_call_id,
                 tool_name,
-                args,
-            ) {
-                notifications.push(started);
-            }
-
-            let meta = make_meta(source, turn_id, *entry_index);
-            let mut fields = ToolCallUpdateFields::default();
+                Some(args.clone()),
+            );
+            let mut notifications = Vec::new();
+            let mut fields = seed_tool_update_fields(
+                &state,
+                Some(if *approved {
+                    ToolCallStatus::InProgress
+                } else {
+                    ToolCallStatus::Failed
+                }),
+            );
             fields.status = Some(if *approved {
                 ToolCallStatus::InProgress
             } else {
@@ -1140,18 +1342,19 @@ fn convert_event_to_notifications(
                 ))]);
             }
 
-            let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
-            update.meta = Some(meta);
-
-            notifications.push(SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::ToolCallUpdate(update),
+            notifications.push(build_tool_call_update_notification(
+                session_id,
+                source,
+                turn_id,
+                tool_call_id,
+                &state,
+                fields,
             ));
             notifications.push(make_event_notification(
                 session_id,
                 source,
                 turn_id,
-                *entry_index,
+                state.entry_index,
                 EventDescription {
                     event_type: "approval_resolved",
                     severity: if *approved { "info" } else { "warning" },
@@ -1178,21 +1381,13 @@ fn convert_event_to_notifications(
             result,
             is_error,
         } => {
-            let mut notifications = Vec::new();
-            if let Some(started) = ensure_tool_call_started(
-                session_id,
-                source,
-                turn_id,
+            let (state, _) = upsert_state_from_tool_name(
+                tool_call_states,
                 entry_index,
-                started_tool_calls,
                 tool_call_id,
                 tool_name,
-                &serde_json::Value::Null,
-            ) {
-                notifications.push(started);
-            }
-            let meta = make_meta(source, turn_id, *entry_index);
-            *entry_index += 1;
+                None,
+            );
 
             let result_text = result
                 .get("text")
@@ -1206,7 +1401,7 @@ fn convert_event_to_notifications(
                 ToolCallStatus::Completed
             };
 
-            let mut fields = ToolCallUpdateFields::default();
+            let mut fields = seed_tool_update_fields(&state, Some(status));
             fields.status = Some(status);
             fields.raw_output = Some(result.clone());
             if let Some(decoded) = decode_tool_result(result) {
@@ -1220,14 +1415,14 @@ fn convert_event_to_notifications(
                 ))]);
             }
 
-            let mut update = ToolCallUpdate::new(ToolCallId::new(tool_call_id.clone()), fields);
-            update.meta = Some(meta);
-
-            notifications.push(SessionNotification::new(
-                session_id.clone(),
-                SessionUpdate::ToolCallUpdate(update),
-            ));
-            notifications
+            vec![build_tool_call_update_notification(
+                session_id,
+                source,
+                turn_id,
+                tool_call_id,
+                &state,
+                fields,
+            )]
         }
 
         _ => Vec::new(),
@@ -1508,7 +1703,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
-        let mut started_tool_calls = HashSet::new();
+        let mut tool_call_states = HashMap::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
@@ -1517,7 +1712,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
 
         assert_eq!(notifications.len(), 1);
@@ -1526,6 +1721,257 @@ mod tests {
                 ContentBlock::Text(text) => assert_eq!(text.text, "plan"),
                 other => panic!("unexpected content block: {other:?}"),
             },
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_call_stream_events_map_to_pending_start_and_updates() {
+        let start_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-1".to_string(),
+                    call_id: Some("tool-1".to_string()),
+                    name: "shell_exec".to_string(),
+                    arguments: serde_json::json!({ "command": "echo he" }),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::ToolCallStart {
+                content_index: 0,
+                tool_call_id: "tool-1".to_string(),
+                name: "shell_exec".to_string(),
+            },
+        };
+        let delta_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-1".to_string(),
+                    call_id: Some("tool-1".to_string()),
+                    name: "shell_exec".to_string(),
+                    arguments: serde_json::json!({ "command": "echo hello" }),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::ToolCallDelta {
+                content_index: 0,
+                tool_call_id: "tool-1".to_string(),
+                name: "shell_exec".to_string(),
+                delta: "\"llo\"".to_string(),
+            },
+        };
+        let end_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-1".to_string(),
+                    call_id: Some("tool-1".to_string()),
+                    name: "shell_exec".to_string(),
+                    arguments: serde_json::json!({ "command": "echo hello" }),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::ToolCallEnd {
+                content_index: 0,
+                tool_call: agentdash_agent::ToolCallInfo {
+                    id: "tool-1".to_string(),
+                    call_id: Some("tool-1".to_string()),
+                    name: "shell_exec".to_string(),
+                    arguments: serde_json::json!({ "command": "echo hello" }),
+                },
+            },
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
+        let mut tool_call_states = HashMap::new();
+        let start_notifications = convert_event_to_notifications(
+            &start_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+        let delta_notifications = convert_event_to_notifications(
+            &delta_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+        let end_notifications = convert_event_to_notifications(
+            &end_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+
+        assert_eq!(start_notifications.len(), 1);
+        match &start_notifications[0].update {
+            SessionUpdate::ToolCall(call) => {
+                assert_eq!(call.status, ToolCallStatus::Pending);
+                assert_eq!(call.title, "shell_exec");
+                assert_eq!(
+                    call.raw_input,
+                    Some(serde_json::json!({ "command": "echo he" }))
+                );
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+        assert_eq!(delta_notifications.len(), 1);
+        match &delta_notifications[0].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
+                assert_eq!(update.fields.title.as_deref(), Some("shell_exec"));
+                assert_eq!(
+                    update.fields.raw_input,
+                    Some(serde_json::json!({ "command": "echo hello" }))
+                );
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+        assert_eq!(end_notifications.len(), 1);
+        match &end_notifications[0].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
+                assert_eq!(
+                    update.fields.raw_input,
+                    Some(serde_json::json!({ "command": "echo hello" }))
+                );
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
+        let event = AgentEvent::MessageEnd {
+            message: AgentMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-final-1".to_string(),
+                    call_id: Some("tool-final-1".to_string()),
+                    name: "read_file".to_string(),
+                    arguments: serde_json::json!({ "path": "README.md" }),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
+        let mut tool_call_states = HashMap::new();
+        let notifications = convert_event_to_notifications(
+            &event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        match &notifications[0].update {
+            SessionUpdate::ToolCall(call) => {
+                assert_eq!(call.status, ToolCallStatus::Pending);
+                assert_eq!(call.title, "read_file");
+                assert_eq!(call.kind, ToolKind::Read);
+                assert_eq!(
+                    call.raw_input,
+                    Some(serde_json::json!({ "path": "README.md" }))
+                );
+            }
+            other => panic!("unexpected session update: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn execution_start_after_pending_tool_call_emits_in_progress_update() {
+        let pending_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-run-1".to_string(),
+                    call_id: Some("tool-run-1".to_string()),
+                    name: "shell_exec".to_string(),
+                    arguments: serde_json::json!({ "command": "cargo test" }),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::ToolCallStart {
+                content_index: 0,
+                tool_call_id: "tool-run-1".to_string(),
+                name: "shell_exec".to_string(),
+            },
+        };
+        let execution_start = AgentEvent::ToolExecutionStart {
+            tool_call_id: "tool-run-1".to_string(),
+            tool_name: "shell_exec".to_string(),
+            args: serde_json::json!({ "command": "cargo test" }),
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
+        let mut tool_call_states = HashMap::new();
+        let _ = convert_event_to_notifications(
+            &pending_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+        let notifications = convert_event_to_notifications(
+            &execution_start,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        match &notifications[0].update {
+            SessionUpdate::ToolCallUpdate(update) => {
+                assert_eq!(update.fields.status, Some(ToolCallStatus::InProgress));
+                assert_eq!(update.fields.title.as_deref(), Some("shell_exec"));
+            }
             other => panic!("unexpected session update: {other:?}"),
         }
     }
@@ -1555,7 +2001,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
-        let mut started_tool_calls = HashSet::new();
+        let mut tool_call_states = HashMap::new();
         let update_notifications = convert_event_to_notifications(
             &update_event,
             &SessionId::new("session-1"),
@@ -1564,7 +2010,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
         let end_notifications = convert_event_to_notifications(
             &end_event,
@@ -1574,27 +2020,23 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
 
         match &update_notifications[0].update {
-            SessionUpdate::ToolCall(call) => {
-                assert_eq!(call.status, ToolCallStatus::InProgress);
-            }
-            other => panic!("unexpected session update: {other:?}"),
-        }
-        match &update_notifications[1].update {
             SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(ToolCallStatus::InProgress));
+                assert_eq!(update.fields.title.as_deref(), Some("echo"));
                 assert_eq!(update.fields.raw_output, Some(raw_result.clone()));
             }
             other => panic!("unexpected session update: {other:?}"),
         }
-        assert_eq!(update_notifications.len(), 2);
+        assert_eq!(update_notifications.len(), 1);
 
         match &end_notifications[0].update {
             SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
+                assert_eq!(update.fields.title.as_deref(), Some("echo"));
                 assert_eq!(update.fields.raw_output, Some(raw_result));
                 let content = update.fields.content.clone().expect("content should exist");
                 assert_eq!(content.len(), 1);
@@ -1616,7 +2058,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
-        let mut started_tool_calls = HashSet::new();
+        let mut tool_call_states = HashMap::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
@@ -1625,20 +2067,14 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
 
-        assert_eq!(notifications.len(), 3);
+        assert_eq!(notifications.len(), 2);
         match &notifications[0].update {
-            SessionUpdate::ToolCall(call) => {
-                assert_eq!(call.status, ToolCallStatus::InProgress);
-            }
-            other => panic!("unexpected session update: {other:?}"),
-        }
-
-        match &notifications[1].update {
             SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
+                assert_eq!(update.fields.title.as_deref(), Some("shell_exec"));
                 assert_eq!(
                     update
                         .fields
@@ -1652,7 +2088,7 @@ mod tests {
             other => panic!("unexpected session update: {other:?}"),
         }
 
-        match &notifications[2].update {
+        match &notifications[1].update {
             SessionUpdate::SessionInfoUpdate(info) => {
                 let value = serde_json::to_value(info).expect("serialize session info");
                 assert_eq!(
@@ -1670,7 +2106,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_execution_end_without_start_emits_synthetic_start_then_terminal_update() {
+    fn tool_execution_end_without_start_emits_orphan_terminal_update() {
         let result = AgentToolResult {
             content: vec![ContentPart::text("done")],
             is_error: false,
@@ -1687,7 +2123,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
-        let mut started_tool_calls = HashSet::new();
+        let mut tool_call_states = HashMap::new();
         let notifications = convert_event_to_notifications(
             &end_event,
             &SessionId::new("session-1"),
@@ -1696,20 +2132,14 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
 
-        assert_eq!(notifications.len(), 2);
+        assert_eq!(notifications.len(), 1);
         match &notifications[0].update {
-            SessionUpdate::ToolCall(call) => {
-                assert_eq!(call.status, ToolCallStatus::InProgress);
-                assert_eq!(call.title, "present_canvas");
-            }
-            other => panic!("unexpected session update: {other:?}"),
-        }
-        match &notifications[1].update {
             SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
+                assert_eq!(update.fields.title.as_deref(), Some("present_canvas"));
             }
             other => panic!("unexpected session update: {other:?}"),
         }
@@ -1731,7 +2161,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
-        let mut started_tool_calls = HashSet::new();
+        let mut tool_call_states = HashMap::new();
         let notifications = convert_event_to_notifications(
             &event,
             &SessionId::new("session-1"),
@@ -1740,7 +2170,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
 
         assert_eq!(notifications.len(), 1);
@@ -1790,7 +2220,7 @@ mod tests {
         let mut entry_index = 0;
         let mut chunk_message_ids = HashMap::new();
         let mut chunk_emit_states = HashMap::new();
-        let mut started_tool_calls = HashSet::new();
+        let mut tool_call_states = HashMap::new();
         let delta_notifications = convert_event_to_notifications(
             &delta_event,
             &SessionId::new("session-1"),
@@ -1799,7 +2229,7 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
         let end_notifications = convert_event_to_notifications(
             &message_end,
@@ -1809,13 +2239,16 @@ mod tests {
             &mut entry_index,
             &mut chunk_message_ids,
             &mut chunk_emit_states,
-            &mut started_tool_calls,
+            &mut tool_call_states,
         );
 
         assert_eq!(delta_notifications.len(), 1);
         assert_eq!(end_notifications.len(), 1);
         match (&delta_notifications[0].update, &end_notifications[0].update) {
-            (SessionUpdate::AgentMessageChunk(delta_chunk), SessionUpdate::AgentMessageChunk(end_chunk)) => {
+            (
+                SessionUpdate::AgentMessageChunk(delta_chunk),
+                SessionUpdate::AgentMessageChunk(end_chunk),
+            ) => {
                 assert_eq!(delta_chunk.message_id, end_chunk.message_id);
                 match &end_chunk.content {
                     ContentBlock::Text(text) => assert_eq!(text.text, "llo"),

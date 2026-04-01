@@ -239,6 +239,19 @@ function isTerminalToolCallStatus(status: unknown): boolean {
   return status === "completed" || status === "failed" || status === "canceled" || status === "rejected";
 }
 
+function isApprovalPendingUpdate(update: SessionUpdate): boolean {
+  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+    return false;
+  }
+  const rawOutput = (update as Record<string, unknown>).rawOutput;
+  return Boolean(
+    rawOutput &&
+    typeof rawOutput === "object" &&
+    "approval_state" in rawOutput &&
+    (rawOutput as { approval_state?: unknown }).approval_state === "pending"
+  );
+}
+
 function sessionUpdateTypeName(update: SessionUpdate): string {
   return update.sessionUpdate;
 }
@@ -309,7 +322,7 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
         }
       }
     }
-    const isPending = update.status === "pending";
+    const isPending = isApprovalPendingUpdate(update);
     if (existingIndex >= 0) {
       const next = [...prev];
       next[existingIndex] = {
@@ -343,12 +356,15 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
       const existingEntry = prev[existingIndex]!;
       const incomingStatus = (update as Record<string, unknown>).status;
       const merged = mergeToolCallUpdateIntoEntry(existingEntry.update, update);
+      const incomingApprovalPending = isApprovalPendingUpdate(update);
       let nextPendingApproval = existingEntry.isPendingApproval;
       if (isTerminalToolCallStatus(incomingStatus)) {
         nextPendingApproval = false;
-      } else if (incomingStatus === "pending") {
+      } else if (incomingApprovalPending) {
         nextPendingApproval = true;
       } else if (incomingStatus === "in_progress") {
+        nextPendingApproval = false;
+      } else if (incomingStatus === "pending") {
         nextPendingApproval = false;
       }
 
@@ -364,7 +380,7 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
     }
     return [...prev, {
       ...makeDisplayEntry(event, update),
-      isPendingApproval: (update as Record<string, unknown>).status === "pending",
+      isPendingApproval: isApprovalPendingUpdate(update),
     }];
   }
 

@@ -260,8 +260,9 @@ mod tests {
             created_at: chrono::Utc::now(),
         });
 
-        let error = upsert_tool_execution_artifact(&mut task, "sess-1", "turn-1", "call-1", Map::new())
-            .expect_err("非对象 artifact 应直接报错");
+        let error =
+            upsert_tool_execution_artifact(&mut task, "sess-1", "turn-1", "call-1", Map::new())
+                .expect_err("非对象 artifact 应直接报错");
 
         assert!(error.to_string().contains("内容不是对象"));
     }

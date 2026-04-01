@@ -28,11 +28,6 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "canvas_presented",
 ]);
 
-const VISIBLE_SYSTEM_EVENT_SEVERITIES = new Set<string>([
-  "error",
-  "warning",
-]);
-
 /**
  * 后端已在 should_emit_hook_trace_event 过滤大多数静默决策，
  * 但前端做第二道防线，防止后端逻辑松动导致噪音流入 UI。
@@ -101,6 +96,5 @@ export function isRenderableSystemEventUpdate(update: SessionUpdate): boolean {
     return true;
   }
 
-  // 未在类型白名单中的事件，按 severity 兜底（error/warning 始终可见）
-  return typeof event.severity === "string" && VISIBLE_SYSTEM_EVENT_SEVERITIES.has(event.severity);
+  return false;
 }

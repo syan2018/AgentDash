@@ -76,6 +76,26 @@ describe("AcpSystemEventCard", () => {
     expect(isRenderableSystemEventUpdate(update)).toBe(false);
   });
 
+  it("未知 system event 即使标记 warning 也不进入可见事件流", () => {
+    const update = {
+      sessionUpdate: "session_info_update",
+      _meta: {
+        agentdash: {
+          v: 1,
+          trace: { turnId: "turn-unknown-1" },
+          event: {
+            type: "unexpected_warning",
+            severity: "warning",
+            message: "后端发来了未注册事件",
+            data: null,
+          },
+        },
+      },
+    } as unknown as SessionUpdate;
+
+    expect(isRenderableSystemEventUpdate(update)).toBe(false);
+  });
+
   it("显示 turn_interrupted 并保留中断原因", () => {
     const update = {
       sessionUpdate: "session_info_update",

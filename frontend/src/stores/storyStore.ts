@@ -164,16 +164,25 @@ const normalizeTaskStatus = (value: string): Task['status'] => {
       return 'completed';
     case 'failed':
       return 'failed';
-    // 兼容旧数据
-    case 'queued':
-      return 'assigned';
-    case 'succeeded':
-    case 'skipped':
-      return 'completed';
-    case 'cancelled':
-      return 'failed';
     default:
-      return 'pending';
+      throw new Error(`未知 Task 状态: ${value}`);
+  }
+};
+
+const normalizeTaskExecutionMode = (value: unknown): Task['execution_mode'] => {
+  switch (value) {
+    case 'standard':
+      return 'standard';
+    case 'auto_retry':
+      return 'auto_retry';
+    case 'one_shot':
+      return 'one_shot';
+    case undefined:
+    case null:
+    case '':
+      return 'standard';
+    default:
+      throw new Error(`未知 Task execution_mode: ${String(value)}`);
   }
 };
 
@@ -449,6 +458,14 @@ const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
     : undefined,
 });
 
+const requireStorySessionField = (raw: Record<string, unknown>, field: string): string => {
+  const value = raw[field];
+  if (typeof value === 'string' && value.length > 0) {
+    return value;
+  }
+  throw new Error(`StorySessionInfo 缺少必填字段: ${field}`);
+};
+
 const storyRefreshInFlight = new Set<string>();
 const taskRefreshInFlight = new Set<string>();
 
@@ -463,10 +480,7 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     title: String(raw.title ?? raw.name ?? '未命名 Task'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeTaskStatus(String(raw.status ?? 'pending')),
-    execution_mode:
-      raw.execution_mode === 'auto_retry' || raw.execution_mode === 'one_shot'
-        ? raw.execution_mode
-        : 'standard',
+    execution_mode: normalizeTaskExecutionMode(raw.execution_mode),
     agent_binding: mapAgentBinding(raw.agent_binding),
     artifacts: Array.isArray(raw.artifacts)
       ? raw.artifacts
@@ -731,7 +745,7 @@ export const useStoryStore = create<StoryState>((set) => ({
     try {
       const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}/sessions/${bindingId}`);
       return {
-        binding_id: String(raw.binding_id ?? bindingId),
+        binding_id: requireStorySessionField(raw, 'binding_id'),
         session_id: String(raw.session_id ?? ''),
         session_title: raw.session_title ? String(raw.session_title) : null,
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),

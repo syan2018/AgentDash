@@ -81,9 +81,7 @@ export function parseSessionEventEnvelopePayload(
   const record = payload as Record<string, unknown>;
   const notification = isSessionNotification(record.notification)
     ? record.notification
-    : isSessionNotification(record)
-      ? record
-      : null;
+    : null;
 
   if (!notification) {
     return null;
@@ -228,6 +226,7 @@ class FetchNdjsonTransport implements AcpStreamTransport {
         const error = new Error(`NDJSON 连接失败: HTTP ${response.status}`);
         if (!this.hadConnected) {
           this.options.onInitialFailure(error);
+          this.scheduleReconnect();
           return;
         }
         this.options.onError(error);
@@ -244,6 +243,7 @@ class FetchNdjsonTransport implements AcpStreamTransport {
       const normalized = normalizeError(error, "NDJSON 连接异常");
       if (!this.hadConnected) {
         this.options.onInitialFailure(normalized);
+        this.scheduleReconnect();
         return;
       }
       this.options.onError(normalized);
@@ -317,12 +317,6 @@ class FetchNdjsonTransport implements AcpStreamTransport {
     if (eventType === "heartbeat") {
       return;
     }
-
-    // 兼容：若服务端直接推 SessionNotification（无 envelope）
-    const normalizedEvent = parseSessionEventEnvelopePayload(record);
-    if (normalizedEvent) {
-      this.options.onEvent(normalizedEvent);
-    }
   }
 
   private scheduleReconnect(): void {
@@ -359,40 +353,19 @@ class FetchNdjsonTransport implements AcpStreamTransport {
   }
 }
 
-class FallbackTransport implements AcpStreamTransport {
-  private closed = false;
-  private current: AcpStreamTransport;
-  private readonly options: AcpStreamTransportOptions;
-
-  constructor(options: AcpStreamTransportOptions) {
-    this.options = options;
-    if (this.preferSseOnly()) {
-      this.current = new EventSourceTransport(options);
-      return;
-    }
-
-    this.current = new FetchNdjsonTransport({
-      ...options,
-      onInitialFailure: (error) => {
-        if (this.closed) return;
-        this.options.onError(new Error(`NDJSON 不可用，已降级 SSE：${error.message}`));
-        this.current = new EventSourceTransport(this.options);
-      },
-    });
-  }
-
-  private preferSseOnly(): boolean {
-    const mode = String(import.meta.env.VITE_ACP_STREAM_TRANSPORT ?? "").toLowerCase();
-    return mode === "sse";
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.current.close();
-  }
+function preferSseOnly(): boolean {
+  const mode = String(import.meta.env.VITE_ACP_STREAM_TRANSPORT ?? "").toLowerCase();
+  return mode === "sse";
 }
 
 export function createAcpStreamTransport(options: AcpStreamTransportOptions): AcpStreamTransport {
-  return new FallbackTransport(options);
+  if (preferSseOnly()) {
+    return new EventSourceTransport(options);
+  }
+  return new FetchNdjsonTransport({
+    ...options,
+    onInitialFailure: (error) => {
+      options.onError(new Error(`NDJSON 不可用：${error.message}`));
+    },
+  });
 }

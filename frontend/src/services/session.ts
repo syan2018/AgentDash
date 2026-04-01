@@ -248,7 +248,7 @@ function normalizeProjectSessionEntryStatus(
     case "interrupted":
       return value;
     default:
-      return "idle";
+      throw new Error(`未知的项目会话执行状态: ${String(value ?? "")}`);
   }
 }
 
@@ -259,7 +259,7 @@ function normalizeOwnerType(value: unknown): ProjectSessionEntry["owner_type"] {
     case "task":
       return value;
     default:
-      return "project";
+      throw new Error(`未知的项目会话 owner_type: ${String(value ?? "")}`);
   }
 }
 
@@ -281,7 +281,6 @@ function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEnt
 }
 
 export async function fetchProjectSessions(projectId: string): Promise<ProjectSessionEntry[]> {
-  // TODO: 后端 API 可能尚未部署，调用失败时 fallback 为空数组
   const res = await authenticatedFetch(buildApiPath(`/projects/${encodeURIComponent(projectId)}/sessions`));
   if (!res.ok) throw new Error(`获取项目会话列表失败: HTTP ${res.status}`);
   const raw = (await res.json()) as Record<string, unknown>[];

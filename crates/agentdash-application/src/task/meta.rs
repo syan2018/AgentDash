@@ -51,5 +51,5 @@ pub fn build_task_lifecycle_meta(
         .trace(Some(trace))
         .event(Some(event));
 
-    merge_agentdash_meta(None, &agentdash).unwrap_or_default()
+    merge_agentdash_meta(None, &agentdash).expect("构造 task 生命周期 ACP Meta 不应失败")
 }

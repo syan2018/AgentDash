@@ -314,7 +314,8 @@ pub async fn list_project_sessions(
         .services
         .session_hub
         .inspect_execution_states_bulk(&session_ids)
-        .await;
+        .await
+        .map_err(|e| ApiError::Internal(format!("批量读取 session 执行状态失败: {e}")))?;
 
     // ── Step 4: 组装结果 ─────────────────────────────────────────────────────
     let limit = query.limit.unwrap_or(50).clamp(1, 500) as usize;

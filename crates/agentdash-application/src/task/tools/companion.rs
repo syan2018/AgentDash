@@ -1083,10 +1083,9 @@ fn build_companion_event_notification(
 
     SessionNotification::new(
         SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(
-            SessionInfoUpdate::new()
-                .meta(merge_agentdash_meta(None, &agentdash).unwrap_or_default()),
-        ),
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
+            merge_agentdash_meta(None, &agentdash).expect("构造 companion ACP Meta 不应失败"),
+        )),
     )
 }
 

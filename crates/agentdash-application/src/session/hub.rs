@@ -147,7 +147,7 @@ impl SessionHub {
     pub async fn inspect_execution_states_bulk(
         &self,
         session_ids: &[String],
-    ) -> std::collections::HashMap<String, SessionExecutionState> {
+    ) -> std::io::Result<std::collections::HashMap<String, SessionExecutionState>> {
         let running_set: std::collections::HashSet<String> = {
             let sessions = self.sessions.lock().await;
             session_ids
@@ -162,18 +162,18 @@ impl SessionHub {
             if running_set.contains(id) {
                 result.insert(id.clone(), SessionExecutionState::Running { turn_id: None });
             } else {
-                let status = self
+                let meta = self
                     .persistence
                     .get_session_meta(id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|meta| meta_to_execution_state(&meta, id))
-                    .unwrap_or(SessionExecutionState::Idle);
+                    .await?
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::NotFound, format!("session {id} 不存在"))
+                    })?;
+                let status = meta_to_execution_state(&meta, id)?;
                 result.insert(id.clone(), status);
             }
         }
-        result
+        Ok(result)
     }
 
     pub async fn update_session_meta<F>(
@@ -213,10 +213,13 @@ impl SessionHub {
         }
 
         let Some(meta) = self.persistence.get_session_meta(session_id).await? else {
-            return Ok(SessionExecutionState::Idle);
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {session_id} 不存在"),
+            ));
         };
 
-        Ok(meta_to_execution_state(&meta, session_id))
+        meta_to_execution_state(&meta, session_id)
     }
 
     pub async fn delete_session(&self, session_id: &str) -> std::io::Result<()> {

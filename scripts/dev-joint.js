@@ -141,7 +141,7 @@ function parseArgs(args) {
     accessibleRoots: root,
     backendId: 'local-dev-1',
     backendName: 'dev-local',
-    databaseUrl: process.env.DATABASE_URL || 'embedded-postgresql(auto)',
+    databaseUrl: process.env.DATABASE_URL || null,
     frontendMode: 'dev',
     frontendHost: '127.0.0.1',
     frontendPort: 5380,
@@ -314,7 +314,7 @@ function printBanner() {
   console.log(`  roots:      ${config.accessibleRoots}`);
   console.log(`  backend_id: ${config.backendId}`);
   console.log(`  frontend:   ${config.frontendMode}`);
-  console.log(`  db:         ${isPostgresUrl(config.databaseUrl) ? config.databaseUrl : 'embedded-postgresql(auto)'}`);
+  console.log(`  db:         ${formatDatabaseMode(config.databaseUrl)}`);
   console.log('');
 }
 
@@ -324,6 +324,10 @@ function isPostgresUrl(value) {
   }
   const lower = value.toLowerCase();
   return lower.startsWith('postgres://') || lower.startsWith('postgresql://');
+}
+
+function formatDatabaseMode(value) {
+  return isPostgresUrl(value) ? value : 'embedded-postgresql';
 }
 
 async function runStep0Cleanup() {

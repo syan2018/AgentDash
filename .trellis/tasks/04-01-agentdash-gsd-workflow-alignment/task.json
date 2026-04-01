@@ -1,0 +1,56 @@
+{
+  "id": "agentdash-gsd-workflow-alignment",
+  "name": "agentdash-gsd-workflow-alignment",
+  "title": "使用 AgentDash 复刻 GSD 工作流体验规划",
+  "description": "梳理 AgentDash 现有 project/story/task + session/hook/workflow 基础设施，与 GSD README 中的 auto workflow / lifecycle / orchestration 做能力映射，明确复刻 GSD 使用体验所需的分层设计、关键缺口与落地路径。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "references/GSD-2/README.md",
+    "references/GSD-2/docs/auto-mode.md",
+    "references/GSD-2/docs/architecture.md",
+    "references/GSD-2/src/resources/extensions/gsd/state.ts",
+    "references/GSD-2/src/resources/extensions/gsd/auto-dispatch.ts",
+    ".trellis/workflow.md",
+    ".trellis/spec/backend/execution-hook-runtime.md",
+    ".trellis/spec/backend/address-space-access.md",
+    ".trellis/tasks/04-01-agentdash-gsd-workflow-alignment/detailed-alignment.md",
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-application/src/session/hook_runtime.rs",
+    "crates/agentdash-application/src/session_plan.rs",
+    "crates/agentdash-application/src/task/session_runtime_inputs.rs",
+    "crates/agentdash-application/src/workflow/projection.rs"
+  ],
+  "notes": "本任务当前仅做规划收敛，不进入实现。重点保留三类信息：1) AgentDash 已有的 project/story/task、session runtime、workflow/lifecycle、address space、companion 基础能力；2) GSD 使用体验中的 deriveState/dispatch/post-unit/verification/git-worktree/recovery 等外围编排层；3) 两者的语义映射候选与最小可落地里程碑。"
+}

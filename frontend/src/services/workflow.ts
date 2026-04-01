@@ -62,9 +62,12 @@ const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
   "completion_evaluated", "artifact_appended", "context_injected",
 ]);
 
-function normalizeEnum<T extends string>(value: unknown, allowed: Set<string>, fallback: T): T {
+function normalizeEnum<T extends string>(value: unknown, allowed: Set<string>, field: string): T {
   const s = typeof value === "string" ? value : String(value ?? "");
-  return (allowed.has(s) ? s : fallback) as T;
+  if (!allowed.has(s)) {
+    throw new Error(`未知的 ${field}: ${s}`);
+  }
+  return s as T;
 }
 
 // ─── 子结构 mapper ──────────────────────────────────────
@@ -99,7 +102,7 @@ function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContex
 function mapWorkflowConstraintSpec(raw: Record<string, unknown>): WorkflowConstraintSpec {
   return {
     key: String(raw.key ?? ""),
-    kind: normalizeEnum<WorkflowConstraintKind>(raw.kind, WORKFLOW_CONSTRAINT_KINDS, "custom"),
+    kind: normalizeEnum<WorkflowConstraintKind>(raw.kind, WORKFLOW_CONSTRAINT_KINDS, "workflow constraint kind"),
     description: String(raw.description ?? ""),
     payload: asRecord(raw.payload),
   };
@@ -108,7 +111,7 @@ function mapWorkflowConstraintSpec(raw: Record<string, unknown>): WorkflowConstr
 function mapWorkflowCheckSpec(raw: Record<string, unknown>): WorkflowCheckSpec {
   return {
     key: String(raw.key ?? ""),
-    kind: normalizeEnum<WorkflowCheckKind>(raw.kind, WORKFLOW_CHECK_KINDS, "custom"),
+    kind: normalizeEnum<WorkflowCheckKind>(raw.kind, WORKFLOW_CHECK_KINDS, "workflow check kind"),
     description: String(raw.description ?? ""),
     payload: asRecord(raw.payload),
   };
@@ -130,7 +133,7 @@ function mapWorkflowCompletionSpec(raw: unknown): WorkflowCompletionSpec {
   return {
     checks: asRecordArray(value.checks).map(mapWorkflowCheckSpec),
     default_artifact_type: value.default_artifact_type != null
-      ? normalizeEnum<WorkflowRecordArtifactType>(value.default_artifact_type, WORKFLOW_ARTIFACT_TYPES, "phase_note")
+      ? normalizeEnum<WorkflowRecordArtifactType>(value.default_artifact_type, WORKFLOW_ARTIFACT_TYPES, "workflow default artifact type")
       : null,
     default_artifact_title: optString(value.default_artifact_title),
   };
@@ -139,7 +142,7 @@ function mapWorkflowCompletionSpec(raw: unknown): WorkflowCompletionSpec {
 function mapWorkflowHookRuleSpec(raw: Record<string, unknown>): WorkflowHookRuleSpec {
   return {
     key: String(raw.key ?? ""),
-    trigger: normalizeEnum<WorkflowHookTrigger>(raw.trigger, WORKFLOW_HOOK_TRIGGERS, "before_tool"),
+    trigger: normalizeEnum<WorkflowHookTrigger>(raw.trigger, WORKFLOW_HOOK_TRIGGERS, "workflow hook trigger"),
     description: String(raw.description ?? ""),
     preset: optString(raw.preset),
     params: asRecord(raw.params),
@@ -184,7 +187,7 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
 function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
   return {
     step_key: String(raw.step_key ?? ""),
-    status: normalizeEnum<WorkflowStepExecutionStatus>(raw.status, WORKFLOW_STEP_STATUSES, "pending"),
+    status: normalizeEnum<WorkflowStepExecutionStatus>(raw.status, WORKFLOW_STEP_STATUSES, "workflow step status"),
     started_at: optString(raw.started_at),
     completed_at: optString(raw.completed_at),
     summary: optString(raw.summary),
@@ -196,7 +199,7 @@ function mapWorkflowRecordArtifact(raw: Record<string, unknown>): WorkflowRecord
   return {
     id: String(raw.id ?? ""),
     step_key: String(raw.step_key ?? ""),
-    artifact_type: normalizeEnum<WorkflowRecordArtifactType>(raw.artifact_type, WORKFLOW_ARTIFACT_TYPES, "phase_note"),
+    artifact_type: normalizeEnum<WorkflowRecordArtifactType>(raw.artifact_type, WORKFLOW_ARTIFACT_TYPES, "workflow artifact type"),
     title: String(raw.title ?? ""),
     content: String(raw.content ?? ""),
     created_at: String(raw.created_at ?? new Date().toISOString()),
@@ -207,7 +210,7 @@ function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExec
   return {
     timestamp: String(raw.timestamp ?? new Date().toISOString()),
     step_key: String(raw.step_key ?? ""),
-    event_kind: normalizeEnum<LifecycleExecutionEventKind>(raw.event_kind, LIFECYCLE_EXECUTION_EVENT_KINDS, "step_activated"),
+    event_kind: normalizeEnum<LifecycleExecutionEventKind>(raw.event_kind, LIFECYCLE_EXECUTION_EVENT_KINDS, "lifecycle execution event kind"),
     summary: String(raw.summary ?? ""),
     detail: asRecord(raw.detail),
   };
@@ -221,11 +224,11 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
     key: String(raw.key ?? ""),
     name: String(raw.name ?? "未命名 Workflow"),
     description: String(raw.description ?? ""),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow target kind"),
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
-      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "task")),
-    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "user_authored"),
-    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "draft"),
+      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "workflow agent role")),
+    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "workflow definition source"),
+    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "workflow definition status"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     contract: mapWorkflowContract(raw.contract),
     created_at: String(raw.created_at ?? new Date().toISOString()),
@@ -239,11 +242,11 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     key: String(raw.key ?? ""),
     name: String(raw.name ?? "未命名 Lifecycle"),
     description: String(raw.description ?? ""),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "lifecycle target kind"),
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
-      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "task")),
-    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "user_authored"),
-    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "draft"),
+      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "lifecycle agent role")),
+    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "lifecycle definition source"),
+    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "lifecycle definition status"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     entry_step_key: String(raw.entry_step_key ?? ""),
     steps: Array.isArray(raw.steps) ? raw.steps.map(mapLifecycleStepDefinition) : [],
@@ -258,9 +261,9 @@ export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTempl
     key: String(raw.key ?? ""),
     name: String(raw.name ?? "未命名 Workflow Template"),
     description: String(raw.description ?? ""),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow template target kind"),
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
-      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "task")),
+      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "workflow template agent role")),
     workflows: asRecordArray(raw.workflows).map(mapWorkflowTemplateWorkflow),
     lifecycle: {
       key: String(lifecycleRaw.key ?? ""),
@@ -279,7 +282,7 @@ export function mapWorkflowAssignment(raw: Record<string, unknown>): WorkflowAss
     id: String(raw.id ?? ""),
     project_id: String(raw.project_id ?? ""),
     lifecycle_id: String(raw.lifecycle_id ?? ""),
-    role: normalizeEnum<WorkflowAgentRole>(raw.role, WORKFLOW_AGENT_ROLES, "task"),
+    role: normalizeEnum<WorkflowAgentRole>(raw.role, WORKFLOW_AGENT_ROLES, "workflow assignment role"),
     enabled: raw.enabled !== false,
     is_default: Boolean(raw.is_default),
     created_at: String(raw.created_at ?? new Date().toISOString()),
@@ -292,9 +295,9 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     id: String(raw.id ?? ""),
     project_id: String(raw.project_id ?? ""),
     lifecycle_id: String(raw.lifecycle_id ?? ""),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "task"),
+    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow run target kind"),
     target_id: String(raw.binding_id ?? raw.target_id ?? ""),
-    status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "draft"),
+    status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     current_step_key: optString(raw.current_step_key),
     step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
     record_artifacts: asRecordArray(raw.record_artifacts).map(mapWorkflowRecordArtifact),
@@ -592,7 +595,7 @@ export async function fetchHookPresets(): Promise<HookRulePreset[]> {
   if (!grouped) return [];
   return Object.values(grouped).flat().map((item) => ({
     key: String(item.key ?? ""),
-    trigger: normalizeEnum<WorkflowHookTrigger>(item.trigger, WORKFLOW_HOOK_TRIGGERS, "before_tool"),
+    trigger: normalizeEnum<WorkflowHookTrigger>(item.trigger, WORKFLOW_HOOK_TRIGGERS, "hook preset trigger"),
     label: String(item.label ?? ""),
     description: String(item.description ?? ""),
     param_schema: asRecord(item.param_schema),

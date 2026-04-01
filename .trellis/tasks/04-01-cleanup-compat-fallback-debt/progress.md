@@ -29,6 +29,11 @@
 - 后端 `resolve_agent_default_lifecycle` 删除旧 agent_key 解析分支，只接受明确的 link agent id
 - 后端 Postgres `agent_repository` 不再把坏 `base_config/config_override` JSON 静默兜底为默认对象
 - 后端 Postgres `task_repository` 不再把坏 `workspace_id/agent_binding/artifacts` 或未知 `status/execution_mode` 静默兜底为默认值
+- Postgres/sqlite `session_repository` 不再把坏序列化、负 event seq、缺失 `visible_canvas_mount_ids_json` 吞成默认值
+- session runtime / memory persistence / SessionStore 不再把缺 session、坏 JSON、坏 `last_event_id` 静默吞掉
+- `SessionOwnerType` 已删除 loose parse，只接受精确字符串
+- tool execution artifact 不再把坏对象内容 / 坏序列化吞成 `{}` / `[]` / `pending`
+- 前端 `currentUser/session/workflow` mapper 已改为对未知枚举显式报错，不再静默回退到默认值
 
 ### 进行中
 
@@ -40,6 +45,7 @@
 - 继续删除旧 project-agent 兼容入口
 - 继续清理后端 preset MCP 的 backward-compat 解析
 - 继续清理 project/task/story/workspace repository 中坏 JSON / 坏枚举 / 坏时间的静默默认值
+- 继续清理前端 mapper 中把缺字段补空串 / 当前时间的宽松映射
 
 ### 验证记录
 
@@ -47,3 +53,8 @@
 - `pnpm run frontend:test` 通过
 - `cargo check -p agentdash-api --message-format short` 通过
 - `cargo check -p agentdash-infrastructure -p agentdash-api --message-format short` 通过
+- `cargo check -p agentdash-application -p agentdash-api --message-format short` 通过
+- `cargo test -p agentdash-infrastructure session_repository -- --nocapture` 通过
+- `cargo test -p agentdash-infrastructure canvas_repository -- --nocapture` 通过
+- `cargo test -p agentdash-application session::memory_persistence -- --nocapture` 通过
+- `cargo test -p agentdash-application session::hub -- --nocapture` 通过

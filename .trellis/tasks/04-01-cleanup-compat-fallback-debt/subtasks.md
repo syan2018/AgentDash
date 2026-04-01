@@ -96,12 +96,18 @@
 - resolve_agent_default_lifecycle 已删除旧 agent_key 解析岔路，只保留按 link agent id 查询
 - Postgres `agent_repository` 已改为对 `base_config/config_override` 坏 JSON 显式报错，不再吞成默认对象
 - Postgres `task_repository` 已改为对坏 `workspace_id/agent_binding/artifacts` 和未知 `status/execution_mode` 显式报错
+- Postgres/sqlite `session_repository` 已改为对坏 JSON / 坏 event seq / 缺失 `visible_canvas_mount_ids_json` 直接失败
+- SessionStore / memory persistence / session event stream 已改为对坏 JSON、坏 `last-event-id`、缺 session 直接失败
+- `SessionOwnerType` 已删除 loose parse，API / service / repository 全链路改为严格解析
+- tool execution artifact 已改为对非对象 content 和序列化失败直接报错
+- 前端 `currentUser/session/workflow` mapper 已改为对未知 `auth_mode` / session status / workflow 枚举显式报错
 
 下一步：
 
 - 继续删除仍留在代码中的旧 project-agent 兼容痕迹
 - 继续处理后端 preset MCP / legacy 路由兼容点
 - 继续推进 ST-02：清理 project/story/workspace repository 层坏 JSON / 坏枚举 / 坏时间默认值
+- 继续推进前端服务层 strict mapper，去掉把缺字段补空串 / 时间戳补当前时间的兜底
 
 完成标准：
 

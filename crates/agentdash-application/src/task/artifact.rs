@@ -22,6 +22,15 @@ pub fn upsert_tool_execution_artifact(
     patch.insert("tool_call_id".to_string(), json!(tool_call_id));
     patch.insert("updated_at".to_string(), json!(now_str));
 
+    for artifact in &task.artifacts {
+        if artifact.artifact_type == ArtifactType::ToolExecution && !artifact.content.is_object() {
+            return Err(DomainError::InvalidConfig(format!(
+                "tool_execution artifact 内容不是对象: {}",
+                artifact.id
+            )));
+        }
+    }
+
     if let Some(index) = task
         .artifacts
         .iter()
@@ -29,12 +38,11 @@ pub fn upsert_tool_execution_artifact(
     {
         let artifact = &mut task.artifacts[index];
         let before = artifact.content.clone();
-        let mut content = artifact.content.as_object().cloned().ok_or_else(|| {
-            DomainError::InvalidConfig(format!(
-                "tool_execution artifact 内容不是对象: {}",
-                artifact.id
-            ))
-        })?;
+        let mut content = artifact
+            .content
+            .as_object()
+            .cloned()
+            .expect("tool_execution artifact 内容必须是对象");
         for (key, value) in patch {
             if key == "started_at" && content.contains_key("started_at") {
                 continue;
@@ -252,9 +260,8 @@ mod tests {
             created_at: chrono::Utc::now(),
         });
 
-        let error =
-            upsert_tool_execution_artifact(&mut task, "sess-1", "turn-1", "call-1", Map::new())
-                .expect_err("非对象 artifact 应直接报错");
+        let error = upsert_tool_execution_artifact(&mut task, "sess-1", "turn-1", "call-1", Map::new())
+            .expect_err("非对象 artifact 应直接报错");
 
         assert!(error.to_string().contains("内容不是对象"));
     }

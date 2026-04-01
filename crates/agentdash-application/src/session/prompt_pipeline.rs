@@ -79,7 +79,12 @@ impl SessionHub {
             .executor_config
             .clone()
             .or_else(|| session_meta.executor_config.clone())
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "当前 prompt 缺少 executor_config，且 session meta 中也没有可复用配置"
+                        .to_string(),
+                )
+            })?;
 
         let hook_session = match self
             .load_session_hook_runtime(

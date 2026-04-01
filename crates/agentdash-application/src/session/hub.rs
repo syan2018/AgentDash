@@ -465,13 +465,9 @@ impl SessionHub {
         let hub = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let resume_req = PromptSessionRequest::from_user_input(UserPromptInput {
-                prompt: Some(msg::AUTO_RESUME_PROMPT.to_string()),
-                prompt_blocks: None,
-                working_dir: None,
-                env: std::collections::HashMap::new(),
-                executor_config: None,
-            });
+            let resume_req = PromptSessionRequest::from_user_input(UserPromptInput::from_text(
+                msg::AUTO_RESUME_PROMPT,
+            ));
             if let Err(e) = hub.start_prompt(&session_id, resume_req).await {
                 tracing::warn!(
                     session_id = %session_id,
@@ -536,11 +532,8 @@ mod tests {
     fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
         PromptSessionRequest {
             user_input: UserPromptInput {
-                prompt: Some(prompt.to_string()),
-                prompt_blocks: None,
-                working_dir: None,
-                env: HashMap::new(),
-                executor_config: None,
+                executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+                ..UserPromptInput::from_text(prompt)
             },
             mcp_servers: vec![],
             workspace_root: None,
@@ -552,21 +545,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prompt_payload_from_text_prompt() {
-        let input = UserPromptInput {
-            prompt: Some("  hello world  ".to_string()),
-            prompt_blocks: None,
-            working_dir: None,
-            env: std::collections::HashMap::new(),
-            executor_config: None,
-        };
+    fn resolve_prompt_payload_from_text_block() {
+        let input = UserPromptInput::from_text("  hello world  ");
 
         let payload = input
             .resolve_prompt_payload()
             .expect("resolve should succeed");
         assert_eq!(payload.text_prompt, "hello world");
         assert_eq!(payload.user_blocks.len(), 1);
-        assert!(matches!(payload.prompt_payload, PromptPayload::Text(_)));
+        assert!(matches!(payload.prompt_payload, PromptPayload::Blocks(_)));
 
         let serialized =
             serde_json::to_value(&payload.user_blocks[0]).expect("serialize content block");
@@ -579,7 +566,6 @@ mod tests {
     #[test]
     fn resolve_prompt_payload_supports_multiple_block_types() {
         let input = UserPromptInput {
-            prompt: None,
             prompt_blocks: Some(vec![
                 json!({ "type": "text", "text": "请分析 @src/main.ts" }),
                 json!({ "type": "resource_link", "uri": "file:///workspace/src/main.ts", "name": "src/main.ts" }),
@@ -860,11 +846,13 @@ mod tests {
             &session.id,
             PromptSessionRequest {
                 user_input: UserPromptInput {
-                    prompt: Some("hello".to_string()),
-                    prompt_blocks: None,
+                    prompt_blocks: Some(vec![json!({
+                        "type": "text",
+                        "text": "hello",
+                    })]),
                     working_dir: Some("src".to_string()),
                     env: HashMap::new(),
-                    executor_config: None,
+                    executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
                 },
                 mcp_servers: vec![],
                 workspace_root: Some(workspace.path().to_path_buf()),

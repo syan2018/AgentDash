@@ -155,7 +155,6 @@ async fn dispatch_cloud_native(
 
     let prompt_req = PromptSessionRequest {
         user_input: UserPromptInput {
-            prompt: None,
             prompt_blocks: Some(ctx.built.prompt_blocks),
             working_dir: ctx.built.working_dir,
             env: Default::default(),
@@ -275,7 +274,6 @@ async fn relay_start_prompt(
         payload: Box::new(CommandPromptPayload {
             session_id: session_id.to_string(),
             follow_up_session_id: None,
-            prompt: None,
             prompt_blocks: Some(serde_json::Value::Array(ctx.built.prompt_blocks.clone())),
             workspace_root: binding.root_ref.clone(),
             working_dir: ctx.built.working_dir.clone(),

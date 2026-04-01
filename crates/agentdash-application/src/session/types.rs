@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use agent_client_protocol::{ContentBlock, McpServer, TextContent};
+use agent_client_protocol::{ContentBlock, McpServer};
 use serde::{Deserialize, Serialize};
 
 use agentdash_spi::{AddressSpace, PromptPayload};
@@ -10,8 +10,6 @@ use agentdash_spi::{AddressSpace, PromptPayload};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserPromptInput {
-    #[serde(default)]
-    pub prompt: Option<String>,
     #[serde(default)]
     pub prompt_blocks: Option<Vec<serde_json::Value>>,
     #[serde(default)]
@@ -61,52 +59,44 @@ pub struct ResolvedPromptPayload {
 
 impl UserPromptInput {
     /// 解析出有效的 prompt payload。
-    /// - `text_prompt`：当前本地执行器仍使用的文本 prompt（由 block 降级拼接）
+    /// - `text_prompt`：仅用于标题提示 / trace 元信息的文本摘要
     /// - `user_blocks`：注入会话流时保留的原始 ACP ContentBlock
-    ///
-    /// 优先使用 `prompt_blocks`，若不存在则回退到 `prompt` 字段。
-    /// 二者同时存在返回 Err。
     pub fn resolve_prompt_payload(&self) -> Result<ResolvedPromptPayload, String> {
-        match (&self.prompt, &self.prompt_blocks) {
-            (Some(_), Some(_)) => Err("prompt 与 promptBlocks 不能同时传入".to_string()),
-            (None, None) => Err("必须提供 prompt 或 promptBlocks".to_string()),
-            (Some(p), None) => {
-                let trimmed = p.trim();
-                if trimmed.is_empty() {
-                    Err("prompt 不能为空".to_string())
-                } else {
-                    let text_prompt = trimmed.to_string();
-                    Ok(ResolvedPromptPayload {
-                        text_prompt: text_prompt.clone(),
-                        prompt_payload: PromptPayload::Text(text_prompt),
-                        user_blocks: vec![ContentBlock::Text(TextContent::new(trimmed))],
-                    })
-                }
-            }
-            (None, Some(blocks)) => {
-                if blocks.is_empty() {
-                    return Err("promptBlocks 不能为空数组".to_string());
-                }
-                let mut user_blocks = Vec::with_capacity(blocks.len());
-                for (index, block) in blocks.iter().enumerate() {
-                    let parsed =
-                        serde_json::from_value::<ContentBlock>(block.clone()).map_err(|e| {
-                            format!("promptBlocks[{index}] 不是有效 ACP ContentBlock: {e}")
-                        })?;
-                    user_blocks.push(parsed);
-                }
-                let prompt_payload = PromptPayload::Blocks(user_blocks.clone());
-                let text_prompt = prompt_payload.to_fallback_text();
-                if text_prompt.trim().is_empty() {
-                    Err("promptBlocks 中没有有效内容".to_string())
-                } else {
-                    Ok(ResolvedPromptPayload {
-                        text_prompt,
-                        prompt_payload,
-                        user_blocks,
-                    })
-                }
-            }
+        let blocks = self
+            .prompt_blocks
+            .as_ref()
+            .ok_or_else(|| "必须提供 promptBlocks".to_string())?;
+        if blocks.is_empty() {
+            return Err("promptBlocks 不能为空数组".to_string());
+        }
+        let mut user_blocks = Vec::with_capacity(blocks.len());
+        for (index, block) in blocks.iter().enumerate() {
+            let parsed = serde_json::from_value::<ContentBlock>(block.clone())
+                .map_err(|e| format!("promptBlocks[{index}] 不是有效 ACP ContentBlock: {e}"))?;
+            user_blocks.push(parsed);
+        }
+        let prompt_payload = PromptPayload::Blocks(user_blocks.clone());
+        let text_prompt = prompt_payload.to_fallback_text();
+        if text_prompt.trim().is_empty() {
+            return Err("promptBlocks 中没有有效内容".to_string());
+        }
+        Ok(ResolvedPromptPayload {
+            text_prompt,
+            prompt_payload,
+            user_blocks,
+        })
+    }
+
+    pub fn from_text(text: impl AsRef<str>) -> Self {
+        let trimmed = text.as_ref().trim();
+        Self {
+            prompt_blocks: Some(vec![serde_json::json!({
+                "type": "text",
+                "text": trimmed,
+            })]),
+            working_dir: None,
+            env: HashMap::new(),
+            executor_config: None,
         }
     }
 }

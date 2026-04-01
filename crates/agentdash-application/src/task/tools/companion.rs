@@ -315,8 +315,10 @@ impl AgentTool for CompanionDispatchTool {
                 None,
                 PromptSessionRequest {
                     user_input: UserPromptInput {
-                        prompt: Some(final_prompt),
-                        prompt_blocks: None,
+                        prompt_blocks: Some(vec![serde_json::json!({
+                            "type": "text",
+                            "text": final_prompt,
+                        })]),
                         working_dir: Some(self.working_dir.clone()),
                         env: std::collections::HashMap::new(),
                         executor_config: Some(self.current_executor_config.clone()),

@@ -113,7 +113,7 @@ pub(crate) async fn build_project_session_context_response(
         ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
     })?;
     let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
-        .await
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let workspace = resolve_project_workspace(state, project).await?;
     let session_meta = state

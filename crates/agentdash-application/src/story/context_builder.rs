@@ -208,8 +208,7 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
 pub fn build_story_owner_prompt_blocks(
     story_id: uuid::Uuid,
     context_markdown: String,
-    original_prompt: Option<String>,
-    original_prompt_blocks: Option<Vec<serde_json::Value>>,
+    user_prompt_blocks: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
     let mut prefix_blocks = Vec::new();
     if !context_markdown.trim().is_empty() {
@@ -223,18 +222,7 @@ pub fn build_story_owner_prompt_blocks(
         }));
     }
 
-    let user_blocks = match (original_prompt, original_prompt_blocks) {
-        (Some(prompt), None) => vec![json!({ "type": "text", "text": prompt })],
-        (None, Some(blocks)) => blocks,
-        (Some(prompt), Some(mut blocks)) => {
-            let mut merged = vec![json!({ "type": "text", "text": prompt })];
-            merged.append(&mut blocks);
-            merged
-        }
-        (None, None) => Vec::new(),
-    };
-
-    prefix_blocks.extend(user_blocks);
+    prefix_blocks.extend(user_prompt_blocks);
     prefix_blocks
 }
 

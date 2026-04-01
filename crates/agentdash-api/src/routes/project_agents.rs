@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agent_client_protocol::{HttpHeader, McpServer, McpServerHttp, McpServerSse};
+use agent_client_protocol::{
+    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
+};
 use agentdash_application::address_space::{
     SessionMountTarget, container_visible_for_target, effective_context_containers,
 };
@@ -33,10 +35,8 @@ pub(crate) struct ProjectAgentBridge {
     pub executor_config: AgentConfig,
     pub preset_name: Option<String>,
     pub source: String,
-    /// Http/SSE MCP servers parsed from preset config — injected into ExecutionContext for cloud agents
+    /// MCP servers parsed from preset config — injected into ExecutionContext for project-agent sessions
     pub preset_mcp_servers: Vec<McpServer>,
-    /// Stdio MCP server JSON decls — forwarded as-is in relay CommandPromptPayload
-    pub preset_stdio_mcp_decls: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -190,7 +190,7 @@ pub async fn list_project_agents(
                     link.id, link.agent_id
                 ))
             })?;
-        let bridge = build_agent_bridge(&agent, link);
+        let bridge = build_agent_bridge(&agent, link)?;
         let session = find_project_agent_session(&state, project.id, &bridge.key).await?;
         response.push(build_project_agent_summary(&project, &bridge, session));
     }
@@ -235,7 +235,7 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("该 Agent 未关联到此项目".into()))?;
-    let agent = build_agent_bridge(&agent_entity, &link);
+    let agent = build_agent_bridge(&agent_entity, &link)?;
 
     let label = project_agent_session_label(&agent.key);
 
@@ -354,16 +354,30 @@ pub(crate) async fn resolve_project_agent_bridge_async(
     state: &Arc<AppState>,
     project_id: Uuid,
     agent_key: &str,
-) -> Option<ProjectAgentBridge> {
-    let agent_id = Uuid::parse_str(agent_key).ok()?;
-    let agent = state.repos.agent_repo.get_by_id(agent_id).await.ok()??;
+) -> Result<Option<ProjectAgentBridge>, ApiError> {
+    let agent_id = match Uuid::parse_str(agent_key) {
+        Ok(agent_id) => agent_id,
+        Err(_) => return Ok(None),
+    };
+    let agent = state
+        .repos
+        .agent_repo
+        .get_by_id(agent_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(agent) = agent else {
+        return Ok(None);
+    };
     let link = state
         .repos
         .agent_link_repo
         .find_by_project_and_agent(project_id, agent_id)
         .await
-        .ok()??;
-    Some(build_agent_bridge(&agent, &link))
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let Some(link) = link else {
+        return Ok(None);
+    };
+    Ok(Some(build_agent_bridge(&agent, &link)?))
 }
 
 pub(crate) async fn resolve_project_workspace(
@@ -563,57 +577,79 @@ pub async fn list_project_agent_sessions(
 ///   Http:  { "type": "http",  "name": "...", "url": "...", "headers": [...] }
 ///   SSE:   { "type": "sse",   "name": "...", "url": "...", "headers": [...] }
 ///   Stdio: { "type": "stdio", "name": "...", "command": "...", "args": [...], "env": [...] }
-fn parse_preset_mcp_servers(
-    config: &serde_json::Value,
-) -> (Vec<McpServer>, Vec<serde_json::Value>) {
+fn parse_preset_mcp_servers(config: &serde_json::Value) -> Result<Vec<McpServer>, String> {
     let raw_list = match config.get("mcp_servers").and_then(|v| v.as_array()) {
         Some(list) => list,
-        None => return (vec![], vec![]),
+        None => return Ok(vec![]),
     };
 
     let mut mcp_servers = Vec::new();
-    let mut stdio_decls = Vec::new();
 
-    for entry in raw_list {
-        let obj = match entry.as_object() {
-            Some(o) => o,
-            None => continue,
-        };
+    for (index, entry) in raw_list.iter().enumerate() {
+        let obj = entry
+            .as_object()
+            .ok_or_else(|| format!("mcp_servers[{index}] 必须是对象"))?;
 
         let name = obj
             .get("name")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("mcp_servers[{index}].name 缺失或为空"))?
             .to_string();
 
-        let Some(effective_type) = obj.get("type").and_then(|v| v.as_str()) else {
-            tracing::warn!(name = %name, "MCP server entry 缺少 type，跳过");
-            continue;
-        };
+        let effective_type = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("mcp_servers[{index}].type 缺失或不是字符串"))?;
 
         match effective_type {
             "http" | "sse" => {
-                let url = match obj.get("url").and_then(|v| v.as_str()) {
-                    Some(u) => u.to_string(),
-                    None => {
-                        tracing::warn!(name = %name, "MCP Http/SSE server 缺少 url，跳过");
-                        continue;
-                    }
+                let url = obj
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| format!("mcp_servers[{index}].url 缺失或为空"))?
+                    .to_string();
+                let headers = match obj.get("headers") {
+                    Some(value) => value
+                        .as_array()
+                        .ok_or_else(|| format!("mcp_servers[{index}].headers 必须是数组"))?
+                        .iter()
+                        .enumerate()
+                        .map(|(header_index, header)| {
+                            let header_obj = header.as_object().ok_or_else(|| {
+                                format!(
+                                    "mcp_servers[{index}].headers[{header_index}] 必须是对象"
+                                )
+                            })?;
+                            let header_name = header_obj
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .ok_or_else(|| {
+                                    format!(
+                                        "mcp_servers[{index}].headers[{header_index}].name 缺失或为空"
+                                    )
+                                })?;
+                            let header_value = header_obj
+                                .get("value")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| {
+                                    format!(
+                                        "mcp_servers[{index}].headers[{header_index}].value 缺失或不是字符串"
+                                    )
+                                })?;
+                            Ok::<HttpHeader, String>(HttpHeader::new(
+                                header_name.to_string(),
+                                header_value.to_string(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    None => Vec::new(),
                 };
-                let headers: Vec<HttpHeader> = obj
-                    .get("headers")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|h| {
-                                let ho = h.as_object()?;
-                                let hname = ho.get("name")?.as_str()?.to_string();
-                                let hvalue = ho.get("value")?.as_str()?.to_string();
-                                Some(HttpHeader::new(hname, hvalue))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
 
                 if effective_type == "http" {
                     mcp_servers.push(McpServer::Http(
@@ -626,42 +662,74 @@ fn parse_preset_mcp_servers(
                 }
             }
             "stdio" => {
-                // Stdio servers are forwarded as raw JSON to relay for local execution
-                // Build a normalized JSON representation
                 let command = obj
                     .get("command")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| format!("mcp_servers[{index}].command 缺失或为空"))?
                     .to_string();
-                if command.is_empty() {
-                    tracing::warn!(name = %name, "MCP Stdio server 缺少 command，跳过");
-                    continue;
-                }
-                let args: Vec<serde_json::Value> = obj
-                    .get("args")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let env: Vec<serde_json::Value> = obj
-                    .get("env")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                stdio_decls.push(serde_json::json!({
-                    "type": "stdio",
-                    "name": name,
-                    "command": command,
-                    "args": args,
-                    "env": env,
-                }));
+                let args = match obj.get("args") {
+                    Some(value) => value
+                        .as_array()
+                        .ok_or_else(|| format!("mcp_servers[{index}].args 必须是数组"))?
+                        .iter()
+                        .enumerate()
+                        .map(|(arg_index, arg)| {
+                            arg.as_str().map(String::from).ok_or_else(|| {
+                                format!("mcp_servers[{index}].args[{arg_index}] 必须是字符串")
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    None => Vec::new(),
+                };
+                let env = match obj.get("env") {
+                    Some(value) => value
+                        .as_array()
+                        .ok_or_else(|| format!("mcp_servers[{index}].env 必须是数组"))?
+                        .iter()
+                        .enumerate()
+                        .map(|(env_index, entry)| {
+                            let env_obj = entry.as_object().ok_or_else(|| {
+                                format!("mcp_servers[{index}].env[{env_index}] 必须是对象")
+                            })?;
+                            let env_name = env_obj
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .ok_or_else(|| {
+                                    format!(
+                                        "mcp_servers[{index}].env[{env_index}].name 缺失或为空"
+                                    )
+                                })?;
+                            let env_value = env_obj
+                                .get("value")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| {
+                                    format!(
+                                        "mcp_servers[{index}].env[{env_index}].value 缺失或不是字符串"
+                                    )
+                                })?;
+                            Ok::<EnvVariable, String>(EnvVariable::new(
+                                env_name.to_string(),
+                                env_value.to_string(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    None => Vec::new(),
+                };
+                mcp_servers.push(McpServer::Stdio(
+                    McpServerStdio::new(name, command).args(args).env(env),
+                ));
             }
             other => {
-                tracing::warn!(name = %name, transport = %other, "MCP server entry type 非法，跳过");
+                return Err(format!("mcp_servers[{index}].type 非法，不支持 `{other}`"));
             }
         }
     }
 
-    (mcp_servers, stdio_decls)
+    Ok(mcp_servers)
 }
 
 fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
@@ -1003,7 +1071,10 @@ async fn resolve_lifecycle_key_for_link(
 }
 
 /// 从 Agent + Link 构建 ProjectAgentBridge（新模型）
-pub(crate) fn build_agent_bridge(agent: &Agent, link: &ProjectAgentLink) -> ProjectAgentBridge {
+pub(crate) fn build_agent_bridge(
+    agent: &Agent,
+    link: &ProjectAgentLink,
+) -> Result<ProjectAgentBridge, ApiError> {
     let merged_config = link.merged_config(&agent.base_config);
     let executor_config = executor_config_from_agent_config(&agent.agent_type, &merged_config);
 
@@ -1023,9 +1094,14 @@ pub(crate) fn build_agent_bridge(agent: &Agent, link: &ProjectAgentLink) -> Proj
         .map(String::from)
         .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
 
-    let (preset_mcp_servers, preset_stdio_mcp_decls) = parse_preset_mcp_servers(&merged_config);
+    let preset_mcp_servers = parse_preset_mcp_servers(&merged_config).map_err(|error| {
+        ApiError::Internal(format!(
+            "Agent `{}` 的 mcp_servers 配置非法: {error}",
+            agent.id
+        ))
+    })?;
 
-    ProjectAgentBridge {
+    Ok(ProjectAgentBridge {
         key: agent.id.to_string(),
         display_name,
         description,
@@ -1033,8 +1109,7 @@ pub(crate) fn build_agent_bridge(agent: &Agent, link: &ProjectAgentLink) -> Proj
         preset_name: Some(agent.name.clone()),
         source: format!("agents[{}]", agent.id),
         preset_mcp_servers,
-        preset_stdio_mcp_decls,
-    }
+    })
 }
 
 fn executor_config_from_agent_config(agent_type: &str, config: &serde_json::Value) -> AgentConfig {

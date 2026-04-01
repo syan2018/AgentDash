@@ -175,7 +175,6 @@ impl CommandHandler {
 
         let req = PromptSessionRequest {
             user_input: UserPromptInput {
-                prompt: payload.prompt,
                 prompt_blocks: payload.prompt_blocks.map(|v| {
                     if let serde_json::Value::Array(arr) = v {
                         arr

@@ -335,16 +335,14 @@ impl TryFrom<BindingRow> for SessionBinding {
 
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
-
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo() -> PostgresSessionBindingRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo() -> Option<PostgresSessionBindingRepository> {
+        let pool = match test_pg_pool("session_binding_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
         sqlx::query(
             r#"
             CREATE TABLE tasks (
@@ -368,12 +366,14 @@ mod tests {
         repo.initialize()
             .await
             .expect("应能初始化 session_binding schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn allows_reusing_session_within_same_project() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
@@ -403,7 +403,9 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_cross_project_session_reuse() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let first_binding = SessionBinding::new(
             Uuid::new_v4(),
             "sess-cross-project".to_string(),

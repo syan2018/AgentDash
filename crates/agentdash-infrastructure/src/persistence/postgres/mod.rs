@@ -14,6 +14,39 @@ mod user_directory_repository;
 mod workflow_repository;
 mod workspace_repository;
 
+#[cfg(test)]
+pub(crate) fn test_database_url() -> Option<String> {
+    use std::sync::OnceLock;
+
+    static DOTENV_INIT: OnceLock<()> = OnceLock::new();
+    DOTENV_INIT.get_or_init(|| {
+        let _ = dotenvy::dotenv();
+    });
+
+    std::env::var("TEST_DATABASE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("DATABASE_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+#[cfg(test)]
+pub(crate) async fn test_pg_pool(suite: &str) -> Option<sqlx::PgPool> {
+    let Some(database_url) = test_database_url() else {
+        eprintln!("跳过 PostgreSQL {suite} 测试：未设置 TEST_DATABASE_URL / DATABASE_URL");
+        return None;
+    };
+
+    Some(
+        sqlx::PgPool::connect(&database_url)
+            .await
+            .expect("应能连接测试 PostgreSQL"),
+    )
+}
+
 /// PostgreSQL `TEXT` 时间戳 → `DateTime<Utc>` 健壮解析。
 ///
 /// PG 的 `CURRENT_TIMESTAMP` 输出格式多变，常见：

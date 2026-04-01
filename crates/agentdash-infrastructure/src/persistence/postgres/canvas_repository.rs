@@ -458,25 +458,26 @@ impl CanvasRow {
 
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
     use uuid::Uuid;
 
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo() -> PostgresCanvasRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo() -> Option<PostgresCanvasRepository> {
+        let pool = match test_pg_pool("canvas_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
         let repo = PostgresCanvasRepository::new(pool);
         repo.initialize().await.expect("应能初始化 canvas schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn create_and_get_canvas_roundtrip() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let project_id = Uuid::new_v4();
         let mut canvas = Canvas::new(
             project_id,
@@ -505,7 +506,9 @@ mod tests {
 
     #[tokio::test]
     async fn update_canvas_replaces_files_and_bindings() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let mut canvas = Canvas::new(
             Uuid::new_v4(),
             "demo".to_string(),

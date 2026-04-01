@@ -247,7 +247,7 @@ impl From<ViewRow> for ViewConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::PgPool;
+    use crate::persistence::postgres::test_pg_pool;
 
     fn backend(id: &str, token: Option<&str>) -> BackendConfig {
         BackendConfig {
@@ -260,20 +260,21 @@ mod tests {
         }
     }
 
-    async fn new_repo() -> PostgresBackendRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo() -> Option<PostgresBackendRepository> {
+        let pool = match test_pg_pool("backend_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
         let repo = PostgresBackendRepository::new(pool);
         repo.initialize().await.expect("应能初始化 schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn get_backend_by_auth_token_returns_matching_backend() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         repo.add_backend(&backend("local-a", Some("secret-a")))
             .await
             .expect("应能插入 backend");
@@ -288,7 +289,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_backend_by_auth_token_rejects_duplicate_token_binding() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         repo.add_backend(&backend("local-a", Some("shared-token")))
             .await
             .expect("应能插入首个 backend");
@@ -306,7 +309,9 @@ mod tests {
 
     #[tokio::test]
     async fn add_backend_overwrites_existing_backend_with_same_id() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         repo.add_backend(&backend("local-a", Some("secret-a")))
             .await
             .expect("应能插入 backend");

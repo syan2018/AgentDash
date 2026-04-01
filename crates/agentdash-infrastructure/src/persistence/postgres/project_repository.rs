@@ -378,24 +378,24 @@ fn parse_project_subject_type(value: &str) -> ProjectSubjectType {
 
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
-
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo() -> PostgresProjectRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo() -> Option<PostgresProjectRepository> {
+        let pool = match test_pg_pool("project_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
         let repo = PostgresProjectRepository::new(pool);
         repo.initialize().await.expect("应能初始化 project schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn create_project_persists_owner_grant_and_audit_fields() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let source_project_id = uuid::Uuid::new_v4();
 
         let mut project = Project::new_with_creator(
@@ -432,7 +432,9 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_subject_grant_updates_existing_role() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         let project = Project::new_with_creator(
             "Enterprise Auth".to_string(),
             "project grant test".to_string(),

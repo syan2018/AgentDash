@@ -1031,10 +1031,13 @@ mod tests {
         let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
         let session = hub.create_session("test").await.expect("create session");
 
-        let error = hub
-            .start_prompt(&session.id, simple_prompt_request("hello"))
-            .await
-            .expect_err("prompt should fail");
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            hub.start_prompt(&session.id, simple_prompt_request("hello")),
+        )
+        .await
+        .expect("prompt should not hang")
+        .expect_err("prompt should fail");
         assert!(error.to_string().contains("connector setup failed"));
 
         let history = hub

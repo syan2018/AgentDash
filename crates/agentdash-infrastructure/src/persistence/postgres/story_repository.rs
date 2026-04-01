@@ -306,14 +306,13 @@ impl TryFrom<StoryRow> for Story {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::PgPool;
+    use crate::persistence::postgres::test_pg_pool;
 
-    async fn new_repo_with_legacy_story_table() -> PostgresStoryRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo_with_legacy_story_table() -> Option<PostgresStoryRepository> {
+        let pool = match test_pg_pool("story_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
 
         sqlx::query(
             r#"
@@ -343,12 +342,14 @@ mod tests {
 
         let repo = PostgresStoryRepository::new(pool);
         repo.initialize().await.expect("初始化时应能自动补齐缺失列");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn initialize_adds_default_workspace_id_for_legacy_story_table() {
-        let repo = new_repo_with_legacy_story_table().await;
+        let Some(repo) = new_repo_with_legacy_story_table().await else {
+            return;
+        };
         let columns = sqlx::query(
             "SELECT column_name AS name
              FROM information_schema.columns
@@ -372,7 +373,9 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_story_table_can_read_story_after_initialize() {
-        let repo = new_repo_with_legacy_story_table().await;
+        let Some(repo) = new_repo_with_legacy_story_table().await else {
+            return;
+        };
         let project_id = uuid::Uuid::new_v4();
         let story = Story::new(project_id, "Story".to_string(), "desc".to_string());
 

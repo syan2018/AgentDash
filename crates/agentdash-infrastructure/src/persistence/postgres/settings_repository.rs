@@ -201,25 +201,25 @@ async fn create_scoped_settings_table(pool: &PgPool, table: &str) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use sqlx::PgPool;
-
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::settings::SettingScope;
 
-    async fn new_repo() -> PostgresSettingsRepository {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+    async fn new_repo() -> Option<PostgresSettingsRepository> {
+        let pool = match test_pg_pool("settings_repository").await {
+            Some(pool) => pool,
+            None => return None,
+        };
         let repo = PostgresSettingsRepository::new(pool);
         repo.initialize().await.expect("应能初始化 settings schema");
-        repo
+        Some(repo)
     }
 
     #[tokio::test]
     async fn persists_settings_by_scope() {
-        let repo = new_repo().await;
+        let Some(repo) = new_repo().await else {
+            return;
+        };
         repo.set(
             &SettingScope::system(),
             "llm.openai.api_key",

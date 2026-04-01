@@ -212,12 +212,14 @@ impl SessionHub {
         {
             Ok(stream) => stream,
             Err(error) => {
-                let mut sessions = self.sessions.lock().await;
-                if let Some(runtime) = sessions.get_mut(session_id) {
-                    runtime.running = false;
-                    runtime.current_turn_id = None;
-                    runtime.cancel_requested = false;
-                    runtime.hook_session = None;
+                {
+                    let mut sessions = self.sessions.lock().await;
+                    if let Some(runtime) = sessions.get_mut(session_id) {
+                        runtime.running = false;
+                        runtime.current_turn_id = None;
+                        runtime.cancel_requested = false;
+                        runtime.hook_session = None;
+                    }
                 }
                 let failed = build_turn_terminal_notification(
                     &sid,

@@ -91,8 +91,8 @@ impl PostgresSessionRepository {
         Ok(())
     }
 
-    fn map_meta_row(row: &sqlx::postgres::PgRow) -> SessionMeta {
-        SessionMeta {
+    fn map_meta_row(row: &sqlx::postgres::PgRow) -> io::Result<SessionMeta> {
+        Ok(SessionMeta {
             id: row.get::<String, _>("id"),
             title: row.get::<String, _>("title"),
             created_at: row.get::<i64, _>("created_at"),
@@ -101,18 +101,21 @@ impl PostgresSessionRepository {
             last_execution_status: row.get::<String, _>("last_execution_status"),
             last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
             last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
-            executor_config: row
-                .get::<Option<String>, _>("executor_config_json")
-                .and_then(|value| serde_json::from_str(&value).ok()),
+            executor_config: parse_optional_json_column(
+                row.get::<Option<String>, _>("executor_config_json"),
+                "executor_config_json",
+            )?,
             executor_session_id: row.get::<Option<String>, _>("executor_session_id"),
-            companion_context: row
-                .get::<Option<String>, _>("companion_context_json")
-                .and_then(|value| serde_json::from_str(&value).ok()),
-            visible_canvas_mount_ids: row
-                .get::<Option<String>, _>("visible_canvas_mount_ids_json")
-                .and_then(|value| serde_json::from_str(&value).ok())
-                .unwrap_or_default(),
-        }
+            companion_context: parse_optional_json_column(
+                row.get::<Option<String>, _>("companion_context_json"),
+                "companion_context_json",
+            )?,
+            visible_canvas_mount_ids: parse_optional_json_column(
+                row.get::<Option<String>, _>("visible_canvas_mount_ids_json"),
+                "visible_canvas_mount_ids_json",
+            )?
+            .unwrap_or_default(),
+        })
     }
 
     fn persisted_event_from_row(row: &sqlx::postgres::PgRow) -> io::Result<PersistedSessionEvent> {
@@ -179,7 +182,7 @@ impl SessionPersistence for PostgresSessionRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
-        Ok(row.as_ref().map(Self::map_meta_row))
+        row.as_ref().map(Self::map_meta_row).transpose()
     }
 
     async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
@@ -195,7 +198,7 @@ impl SessionPersistence for PostgresSessionRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
-        Ok(rows.iter().map(Self::map_meta_row).collect())
+        rows.iter().map(Self::map_meta_row).collect()
     }
 
     async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()> {
@@ -477,6 +480,21 @@ fn json_string<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
 }
 
+fn parse_optional_json_column<T: serde::de::DeserializeOwned>(
+    raw: Option<String>,
+    column: &str,
+) -> io::Result<Option<T>> {
+    match raw {
+        Some(value) => serde_json::from_str(&value).map(Some).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("解析 {column} 失败: {error}"),
+            )
+        }),
+        None => Ok(None),
+    }
+}
+
 fn sqlx_to_io(error: sqlx::Error) -> io::Error {
     io::Error::other(error.to_string())
 }
@@ -611,12 +629,11 @@ fn executor_session_from_info(info: &agent_client_protocol::SessionInfoUpdate) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::postgres::test_pg_pool;
     use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
     use agentdash_acp_meta::{
         AgentDashEventV1, AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta,
     };
-    use sqlx::PgPool;
-
     fn turn_terminal_notification(
         session_id: &str,
         turn_id: &str,
@@ -640,11 +657,9 @@ mod tests {
 
     #[tokio::test]
     async fn append_event_assigns_monotonic_event_seq() {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+        let Some(pool) = test_pg_pool("session_repository").await else {
+            return;
+        };
         let repo = PostgresSessionRepository::new(pool);
         repo.initialize().await.expect("应能初始化 session 表");
 
@@ -691,11 +706,9 @@ mod tests {
 
     #[tokio::test]
     async fn stale_save_session_meta_does_not_roll_back_event_projection() {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("运行测试前需设置 TEST_DATABASE_URL");
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL");
+        let Some(pool) = test_pg_pool("session_repository").await else {
+            return;
+        };
         let repo = PostgresSessionRepository::new(pool);
         repo.initialize().await.expect("应能初始化 session 表");
         let session_id = format!(

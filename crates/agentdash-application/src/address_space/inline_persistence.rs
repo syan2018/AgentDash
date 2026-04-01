@@ -243,11 +243,22 @@ impl DbInlineContentPersister {
             agentdash_domain::context_container::ContextContainerProvider::InlineFiles {
                 files,
             } => {
-                if let Some(file) = files.iter_mut().find(|f| {
-                    normalize_mount_relative_path(&f.path, false).unwrap_or_default() == path
-                }) {
-                    file.content = content.to_string();
-                } else {
+                let mut matched = false;
+                for file in files.iter_mut() {
+                    let normalized =
+                        normalize_mount_relative_path(&file.path, false).map_err(|error| {
+                            format!(
+                                "容器 {} 中存在非法路径 `{}`: {error}",
+                                container_id, file.path
+                            )
+                        })?;
+                    if normalized == path {
+                        file.content = content.to_string();
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
                     files.push(agentdash_domain::context_container::ContextContainerFile {
                         path: path.to_string(),
                         content: content.to_string(),
@@ -274,9 +285,20 @@ impl DbInlineContentPersister {
                 files,
             } => {
                 let before = files.len();
-                files.retain(|file| {
-                    normalize_mount_relative_path(&file.path, false).unwrap_or_default() != path
-                });
+                let mut retained = Vec::with_capacity(files.len());
+                for file in files.drain(..) {
+                    let normalized =
+                        normalize_mount_relative_path(&file.path, false).map_err(|error| {
+                            format!(
+                                "容器 {} 中存在非法路径 `{}`: {error}",
+                                container_id, file.path
+                            )
+                        })?;
+                    if normalized != path {
+                        retained.push(file);
+                    }
+                }
+                *files = retained;
                 if files.len() == before {
                     return Err(format!("文件 {} 不存在于容器 {}", path, container_id));
                 }
@@ -574,5 +596,24 @@ mod tests {
         let err = story_scope_for_mount(&address_space, &mount)
             .expect_err("story scope should require explicit owner metadata");
         assert!(err.contains(CONTEXT_OWNER_SCOPE_METADATA_KEY));
+    }
+
+    #[test]
+    fn inline_file_ops_reject_invalid_stored_paths() {
+        let mut containers = vec![inline_container("brief", "../escape.md")];
+
+        let write_err = DbInlineContentPersister::upsert_inline_file(
+            &mut containers,
+            "brief",
+            "brief.md",
+            "updated",
+        )
+        .expect_err("非法存量路径应直接报错");
+        assert!(write_err.contains("非法路径"));
+
+        let delete_err =
+            DbInlineContentPersister::delete_inline_file(&mut containers, "brief", "brief.md")
+                .expect_err("非法存量路径应直接报错");
+        assert!(delete_err.contains("非法路径"));
     }
 }

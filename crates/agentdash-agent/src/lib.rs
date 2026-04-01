@@ -6,7 +6,9 @@ pub mod tools;
 pub mod types;
 
 pub use agent::{Agent, AgentConfig, QueueMode, process_event};
-pub use bridge::{BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk};
+pub use bridge::{
+    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
+};
 pub use event_stream::{EventReceiver, EventSender, event_channel};
 pub use tools::{
     BuiltinToolset, ListDirectoryTool, ReadFileTool, SearchTool, ShellTool, ToolInfo, ToolRegistry,

@@ -9,10 +9,12 @@ use rig::OneOrMany;
 use rig::completion::message::{AssistantContent, Message, Reasoning, Text, UserContent};
 use rig::completion::request::GetTokenUsage;
 use rig::completion::{CompletionModel, CompletionRequest, Usage};
-use rig::streaming::StreamedAssistantContent;
+use rig::streaming::{StreamedAssistantContent, ToolCallDeltaContent as RigToolCallDeltaContent};
 use tokio_stream::wrappers::ReceiverStream;
 
-use agentdash_agent::bridge::{BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk};
+use agentdash_agent::bridge::{
+    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
+};
 use agentdash_agent::types::{AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis};
 
 // ─── RigBridge ──────────────────────────────────────────────
@@ -68,22 +70,38 @@ where
                 let sc = match chunk {
                     Ok(StreamedAssistantContent::Text(t)) => StreamChunk::TextDelta(t.text),
                     Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+                        let (text, signature) = reasoning_text_and_signature(&reasoning);
                         StreamChunk::ReasoningDelta {
                             id: reasoning.id.clone(),
-                            text: reasoning.reasoning.join(""),
-                            signature: reasoning.signature.clone(),
+                            text,
+                            signature,
                         }
                     }
-                    Ok(StreamedAssistantContent::ToolCall(tool_call)) => StreamChunk::ToolCall {
-                        info: ToolCallInfo {
-                            id: tool_call.id.clone(),
-                            call_id: tool_call.call_id.clone().or(Some(tool_call.id)),
-                            name: tool_call.function.name.clone(),
-                            arguments: tool_call.function.arguments.clone(),
-                        },
-                    },
-                    Ok(StreamedAssistantContent::ToolCallDelta { id, delta }) => {
-                        StreamChunk::ToolCallDelta { id, delta }
+                    Ok(StreamedAssistantContent::ReasoningDelta { id, reasoning }) => {
+                        StreamChunk::ReasoningDelta {
+                            id,
+                            text: reasoning,
+                            signature: None,
+                        }
+                    }
+                    Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
+                        StreamChunk::ToolCall {
+                            info: ToolCallInfo {
+                                id: tool_call.id.clone(),
+                                call_id: tool_call.call_id.clone().or(Some(tool_call.id.clone())),
+                                name: tool_call.function.name.clone(),
+                                arguments: tool_call.function.arguments.clone(),
+                            },
+                        }
+                    }
+                    Ok(StreamedAssistantContent::ToolCallDelta { id, content, .. }) => {
+                        let content = match content {
+                            RigToolCallDeltaContent::Name(name) => ToolCallDeltaContent::Name(name),
+                            RigToolCallDeltaContent::Delta(delta) => {
+                                ToolCallDeltaContent::Arguments(delta)
+                            }
+                        };
+                        StreamChunk::ToolCallDelta { id, content }
                     }
                     Ok(StreamedAssistantContent::Final(_)) => continue,
                     Err(e) => {
@@ -161,6 +179,7 @@ fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, Bridg
         .collect();
 
     Ok(CompletionRequest {
+        model: None,
         preamble: None,
         chat_history,
         documents: vec![],
@@ -169,6 +188,7 @@ fn build_rig_request(request: &BridgeRequest) -> Result<CompletionRequest, Bridg
         max_tokens: None,
         tool_choice: None,
         additional_params: None,
+        output_schema: None,
     })
 }
 
@@ -254,9 +274,7 @@ fn content_part_to_assistant(part: &ContentPart) -> Option<AssistantContent> {
             id,
             signature,
         } => Some(AssistantContent::Reasoning(
-            Reasoning::new(text)
-                .optional_id(id.clone())
-                .with_signature(signature.clone()),
+            Reasoning::new_with_signature(text, signature.clone()).optional_id(id.clone()),
         )),
     }
 }
@@ -279,13 +297,14 @@ pub fn assistant_from_llm_content(content: &[AssistantContent]) -> AgentMessage 
                 });
             }
             AssistantContent::Reasoning(reasoning) => {
-                let text = reasoning.reasoning.join("");
+                let (text, signature) = reasoning_text_and_signature(reasoning);
                 parts.push(ContentPart::reasoning(
                     text,
                     reasoning.id.clone(),
-                    reasoning.signature.clone(),
+                    signature,
                 ));
             }
+            AssistantContent::Image(_) => {}
         }
     }
 
@@ -306,14 +325,21 @@ fn extract_content_parts(content: &[AssistantContent]) -> Vec<ContentPart> {
         .iter()
         .filter_map(|item| match item {
             AssistantContent::Text(t) => Some(ContentPart::text(&t.text)),
-            AssistantContent::Reasoning(r) => Some(ContentPart::reasoning(
-                r.reasoning.join(""),
-                r.id.clone(),
-                r.signature.clone(),
-            )),
+            AssistantContent::Reasoning(r) => {
+                let (text, signature) = reasoning_text_and_signature(r);
+                Some(ContentPart::reasoning(text, r.id.clone(), signature))
+            }
+            AssistantContent::Image(_) => None,
             AssistantContent::ToolCall(_) => None,
         })
         .collect()
+}
+
+fn reasoning_text_and_signature(reasoning: &Reasoning) -> (String, Option<String>) {
+    (
+        reasoning.display_text(),
+        reasoning.first_signature().map(str::to_string),
+    )
 }
 
 fn from_rig_usage(usage: &Usage) -> TokenUsage {

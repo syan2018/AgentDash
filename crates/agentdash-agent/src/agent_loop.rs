@@ -19,7 +19,7 @@ use futures::StreamExt;
 use jsonschema::validator_for;
 use tokio_util::sync::CancellationToken;
 
-use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
+use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk, ToolCallDeltaContent};
 use crate::types::{
     AfterToolCallContext, AfterToolCallInput, AfterToolCallResult, AfterTurnInput, AgentContext,
     AgentError, AgentEvent, AgentMessage, AgentToolResult, AssistantStreamEvent, BeforeStopInput,
@@ -671,62 +671,80 @@ async fn stream_assistant_response(
                     .await;
                 }
             }
-            StreamChunk::ToolCallDelta { id, delta } if !delta.is_empty() => {
-                ensure_partial_started(context, emit, &mut partial).await;
-                end_active_text(context, emit, &mut partial).await;
-                end_active_reasoning(context, emit, &mut partial).await;
-
-                let (content_index, tool_name) = ensure_tool_call_partial(
-                    context,
-                    emit,
-                    &mut partial,
-                    &id,
-                    None,
-                    serde_json::Value::Object(Default::default()),
-                )
-                .await;
-
-                let tool_index = if let Some(state) = partial.tool_calls.get_mut(&id) {
-                    state.partial_json.push_str(&delta);
-                    let draft = state.partial_json.clone();
-                    if let Ok(arguments) =
-                        serde_json::from_str::<serde_json::Value>(&state.partial_json)
-                    {
-                        Some((state.index, Some(arguments), draft))
-                    } else {
-                        Some((state.index, None, draft))
-                    }
-                } else {
-                    None
-                };
-                let mut current_draft = String::new();
-                let mut is_parseable = false;
-                if let Some((tool_index, arguments, draft)) = tool_index {
-                    current_draft = draft;
-                    if let Some(arguments) = arguments
-                        && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
-                    {
-                        is_parseable = true;
-                        tc.arguments = arguments;
-                    }
+            StreamChunk::ToolCallDelta { id, content } => match content {
+                ToolCallDeltaContent::Name(name) => {
+                    ensure_partial_started(context, emit, &mut partial).await;
+                    end_active_text(context, emit, &mut partial).await;
+                    end_active_reasoning(context, emit, &mut partial).await;
+                    let _ = ensure_tool_call_partial(
+                        context,
+                        emit,
+                        &mut partial,
+                        &id,
+                        Some(name),
+                        serde_json::Value::Object(Default::default()),
+                    )
+                    .await;
+                    sync_partial(context, &partial);
                 }
-                sync_partial(context, &partial);
-                emit_event(
-                    emit,
-                    AgentEvent::MessageUpdate {
-                        message: partial.message.clone(),
-                        event: AssistantStreamEvent::ToolCallDelta {
-                            content_index,
-                            tool_call_id: id,
-                            name: tool_name,
-                            delta,
-                            draft: current_draft,
-                            is_parseable,
+                ToolCallDeltaContent::Arguments(delta) if !delta.is_empty() => {
+                    ensure_partial_started(context, emit, &mut partial).await;
+                    end_active_text(context, emit, &mut partial).await;
+                    end_active_reasoning(context, emit, &mut partial).await;
+
+                    let (content_index, tool_name) = ensure_tool_call_partial(
+                        context,
+                        emit,
+                        &mut partial,
+                        &id,
+                        None,
+                        serde_json::Value::Object(Default::default()),
+                    )
+                    .await;
+
+                    let tool_index = if let Some(state) = partial.tool_calls.get_mut(&id) {
+                        state.partial_json.push_str(&delta);
+                        let draft = state.partial_json.clone();
+                        if let Ok(arguments) =
+                            serde_json::from_str::<serde_json::Value>(&state.partial_json)
+                        {
+                            Some((state.index, Some(arguments), draft))
+                        } else {
+                            Some((state.index, None, draft))
+                        }
+                    } else {
+                        None
+                    };
+                    let mut current_draft = String::new();
+                    let mut is_parseable = false;
+                    if let Some((tool_index, arguments, draft)) = tool_index {
+                        current_draft = draft;
+                        if let Some(arguments) = arguments
+                            && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
+                        {
+                            is_parseable = true;
+                            tc.arguments = arguments;
+                        }
+                    }
+                    sync_partial(context, &partial);
+                    emit_event(
+                        emit,
+                        AgentEvent::MessageUpdate {
+                            message: partial.message.clone(),
+                            event: AssistantStreamEvent::ToolCallDelta {
+                                content_index,
+                                tool_call_id: id,
+                                name: tool_name,
+                                delta,
+                                draft: current_draft,
+                                is_parseable,
+                            },
                         },
-                    },
-                )
-                .await;
-            }
+                    )
+                    .await;
+                }
+                ToolCallDeltaContent::Arguments(_) => {}
+            },
             StreamChunk::ToolCall { info } => {
                 ensure_partial_started(context, emit, &mut partial).await;
                 end_active_text(context, emit, &mut partial).await;
@@ -959,6 +977,11 @@ async fn ensure_tool_call_partial(
     arguments: serde_json::Value,
 ) -> (usize, String) {
     if let Some(state) = partial.tool_calls.get(tool_call_id).cloned() {
+        if let Some(tool_name) = tool_name
+            && !tool_name.is_empty()
+        {
+            partial.tool_calls_mut()[state.index].name = tool_name;
+        }
         let name = partial.tool_calls_mut()[state.index].name.clone();
         return (state.index, name);
     }

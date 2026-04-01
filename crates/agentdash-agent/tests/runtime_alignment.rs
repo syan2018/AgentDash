@@ -418,6 +418,112 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
 }
 
 #[tokio::test]
+async fn responses_tool_name_delta_emits_start_before_arguments_finish() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let tool: DynAgentTool = Arc::new(RecordingTool {
+        executed: Arc::new(AtomicUsize::new(0)),
+    });
+    let bridge = ScriptedBridge::new(vec![
+        vec![
+            ScriptStep::Chunk(agentdash_agent::StreamChunk::ToolCallDelta {
+                id: "tool-echo-1".to_string(),
+                content: agentdash_agent::ToolCallDeltaContent::Name("echo".to_string()),
+            }),
+            ScriptStep::Chunk(agentdash_agent::StreamChunk::ToolCallDelta {
+                id: "tool-echo-1".to_string(),
+                content: agentdash_agent::ToolCallDeltaContent::Arguments(
+                    "{\"value\":\"hello".to_string(),
+                ),
+            }),
+            ScriptStep::Chunk(agentdash_agent::StreamChunk::ToolCall {
+                info: ToolCallInfo {
+                    id: "tool-echo-1".to_string(),
+                    call_id: Some("tool-echo-1".to_string()),
+                    name: "echo".to_string(),
+                    arguments: serde_json::json!({
+                        "value": "hello world"
+                    }),
+                },
+            }),
+            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+                AgentMessage::Assistant {
+                    content: vec![],
+                    tool_calls: vec![ToolCallInfo {
+                        id: "tool-echo-1".to_string(),
+                        call_id: Some("tool-echo-1".to_string()),
+                        name: "echo".to_string(),
+                        arguments: serde_json::json!({
+                            "value": "hello world"
+                        }),
+                    }],
+                    stop_reason: Some(StopReason::ToolUse),
+                    error_message: None,
+                    usage: None,
+                    timestamp: Some(agentdash_agent::types::now_millis()),
+                },
+            ))),
+        ],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("done")),
+        ))],
+    ]);
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
+    };
+    let tool_instances = vec![tool];
+
+    let result = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("write it")],
+        &mut context,
+        &tool_instances,
+        &AgentLoopConfig::default(),
+        &bridge,
+        &collecting_sink(events.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should succeed");
+
+    let collected = events.lock().await.clone();
+    let start_index = collected
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                AgentEvent::MessageUpdate {
+                    event: AssistantStreamEvent::ToolCallStart { tool_call_id, name, .. },
+                    ..
+                } if tool_call_id == "tool-echo-1" && name == "echo"
+            )
+        })
+        .expect("should emit tool_call_start from name delta");
+    let delta_index = collected
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                AgentEvent::MessageUpdate {
+                    event: AssistantStreamEvent::ToolCallDelta { tool_call_id, draft, is_parseable, .. },
+                    ..
+                } if tool_call_id == "tool-echo-1"
+                    && draft == "{\"value\":\"hello"
+                    && !is_parseable
+            )
+        })
+        .expect("should emit tool_call_delta for partial arguments");
+    assert!(start_index < delta_index);
+    assert!(result.iter().any(|message| {
+        matches!(
+            message,
+            AgentMessage::Assistant { tool_calls, .. }
+                if tool_calls.iter().any(|tool_call| tool_call.id == "tool-echo-1")
+        )
+    }));
+}
+
+#[tokio::test]
 async fn stream_errors_become_error_assistant_messages() {
     let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(
         agentdash_agent::StreamChunk::Error(BridgeError::CompletionFailed("boom".to_string())),

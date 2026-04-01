@@ -356,7 +356,9 @@ async fn build_provider_entry(
 
     let openai_wire_api = if matches!(spec.bridge_kind, BridgeKind::OpenAi) {
         Some(resolve_openai_wire_api(
-            read_setting_str(settings, "llm.openai.wire_api").await.as_deref(),
+            read_setting_str(settings, "llm.openai.wire_api")
+                .await
+                .as_deref(),
             base_url.as_deref(),
         ))
     } else {
@@ -402,52 +404,56 @@ fn build_bridge_factory(
 ) -> BridgeFactory {
     match kind {
         BridgeKind::Anthropic => {
-            let client = rig::providers::anthropic::Client::new(&api_key);
+            let client = rig::providers::anthropic::Client::new(&api_key)
+                .expect("构建 Anthropic rig client 失败");
             Arc::new(move |model_id: &str| {
                 Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
             })
         }
         BridgeKind::Gemini => {
-            let client = rig::providers::gemini::Client::new(&api_key);
+            let client =
+                rig::providers::gemini::Client::new(&api_key).expect("构建 Gemini rig client 失败");
             Arc::new(move |model_id: &str| {
                 Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
             })
         }
         BridgeKind::DeepSeek => {
-            let client = rig::providers::deepseek::Client::new(&api_key);
+            let client = rig::providers::deepseek::Client::new(&api_key)
+                .expect("构建 DeepSeek rig client 失败");
             Arc::new(move |model_id: &str| {
                 Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
             })
         }
         BridgeKind::Groq => {
-            let client = rig::providers::groq::Client::new(&api_key);
+            let client =
+                rig::providers::groq::Client::new(&api_key).expect("构建 Groq rig client 失败");
             Arc::new(move |model_id: &str| {
                 Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
             })
         }
         BridgeKind::Xai => {
-            let client = rig::providers::xai::Client::new(&api_key);
+            let client =
+                rig::providers::xai::Client::new(&api_key).expect("构建 xAI rig client 失败");
             Arc::new(move |model_id: &str| {
                 Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
             })
         }
         BridgeKind::OpenAi => {
-            let mut builder = rig::providers::openai::Client::builder(&api_key);
+            let mut builder = rig::providers::openai::Client::builder().api_key(&api_key);
             let base_url_owned = base_url;
             if let Some(ref url) = base_url_owned {
                 builder = builder.base_url(url);
             }
-            let client = builder.build();
+            let client = builder.build().expect("构建 OpenAI rig client 失败");
             let wire_api = openai_wire_api.unwrap_or(OpenAiWireApi::Responses);
-            Arc::new(move |model_id: &str| {
-                match wire_api {
-                    OpenAiWireApi::Responses => Arc::new(RigBridge::new(
-                        client.completion_model(model_id),
-                    )) as Arc<dyn LlmBridge>,
-                    OpenAiWireApi::Completions => Arc::new(RigBridge::new(
-                        client.completion_model(model_id).completions_api(),
-                    )) as Arc<dyn LlmBridge>,
+            Arc::new(move |model_id: &str| match wire_api {
+                OpenAiWireApi::Responses => {
+                    Arc::new(RigBridge::new(client.completion_model(model_id)))
+                        as Arc<dyn LlmBridge>
                 }
+                OpenAiWireApi::Completions => Arc::new(RigBridge::new(
+                    client.completion_model(model_id).completions_api(),
+                )) as Arc<dyn LlmBridge>,
             })
         }
     }

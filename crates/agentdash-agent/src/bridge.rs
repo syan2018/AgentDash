@@ -15,6 +15,12 @@ use crate::types::{AgentMessage, ContentPart, TokenUsage, ToolCallInfo, ToolDefi
 
 // ─── 流式 Chunk 类型 ────────────────────────────────────────
 
+#[derive(Debug, Clone)]
+pub enum ToolCallDeltaContent {
+    Name(String),
+    Arguments(String),
+}
+
 /// LLM 流式输出的 chunk 单元（对标 pi-mono `AssistantMessageEvent`）
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
@@ -26,7 +32,7 @@ pub enum StreamChunk {
     },
     ToolCallDelta {
         id: String,
-        delta: String,
+        content: ToolCallDeltaContent,
     },
     ToolCall {
         info: ToolCallInfo,

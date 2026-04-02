@@ -1161,8 +1161,8 @@ pub async fn respond_companion_request(
 
     Ok(Json(serde_json::json!({
         "responded": true,
-        "sessionId": session_id,
-        "requestId": request_id,
+        "session_id": session_id,
+        "request_id": request_id,
     })))
 }
 

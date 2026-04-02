@@ -150,11 +150,19 @@ impl AgentTool for CompanionRequestTool {
 
         match raw.target {
             CompanionRequestTarget::Sub => {
-                self.execute_sub_request(raw.target, raw.wait, &payload, tool_call_id, cancel, on_update)
-                    .await
+                self.execute_sub_request(
+                    raw.target,
+                    raw.wait,
+                    &payload,
+                    tool_call_id,
+                    cancel,
+                    on_update,
+                )
+                .await
             }
             CompanionRequestTarget::Parent => {
-                self.execute_parent_request(raw.wait, &payload, cancel).await
+                self.execute_parent_request(raw.wait, &payload, cancel)
+                    .await
             }
             CompanionRequestTarget::Human => {
                 self.execute_human_request(raw.wait, &payload, cancel).await
@@ -412,7 +420,12 @@ impl CompanionRequestTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "已派发到 companion session。\n- request_id: {}\n- label: {}\n- session_id: {}\n- turn_id: {}\n- slice_mode: {:?}\n- adoption_mode: {:?}\n- 当前为异步执行，可在对应会话中继续观察结果。",
-                dispatch_plan.dispatch_id, companion_label, target_binding.session_id, turn_id, slice_mode, adoption_mode
+                dispatch_plan.dispatch_id,
+                companion_label,
+                target_binding.session_id,
+                turn_id,
+                slice_mode,
+                adoption_mode
             ))],
             is_error: false,
             details: Some(serde_json::json!({
@@ -459,9 +472,7 @@ impl CompanionRequestTool {
             )
         })?;
         let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "SessionHub 尚未完成初始化，无法向上提审".to_string(),
-            )
+            AgentToolError::ExecutionFailed("SessionHub 尚未完成初始化，无法向上提审".to_string())
         })?;
 
         // 获取 companion context 以找到父 session
@@ -469,9 +480,7 @@ impl CompanionRequestTool {
             .get_session_meta(&current_session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed("当前 session 不存在".to_string())
-            })?;
+            .ok_or_else(|| AgentToolError::ExecutionFailed("当前 session 不存在".to_string()))?;
         let companion_context = session_meta.companion_context.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "当前 session 不是 companion session，无法使用 target=parent 向上提审".to_string(),
@@ -590,10 +599,7 @@ impl CompanionRequestTool {
         })?;
 
         let request_id = format!("human-{}", Uuid::new_v4().simple());
-        let payload_type = payload
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
         let options: Vec<String> = payload
             .get("options")
             .and_then(|v| v.as_array())
@@ -604,8 +610,23 @@ impl CompanionRequestTool {
             })
             .unwrap_or_default();
 
-        // 只发通知事件到前端，不创建 pending action，不碰 hook 通道
-        if let Some(session_hub) = self.session_hub_handle.get().await {
+        if wait {
+            // 工具不返回 → agent loop 卡在这个 tool call → session 挂起
+            // respond_companion_request 找到 sender 发回来 → 工具返回 → session 恢复
+            let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
+                AgentToolError::ExecutionFailed("SessionHub 尚未初始化".to_string())
+            })?;
+            let request_type = (!payload_type.is_empty()).then(|| payload_type.to_string());
+            let rx = session_hub
+                .companion_wait_registry
+                .register(
+                    &current_session_id,
+                    &request_id,
+                    &self.current_turn_id,
+                    request_type,
+                )
+                .await;
+
             let notification = build_companion_event_notification(
                 &current_session_id,
                 &self.current_turn_id,
@@ -615,25 +636,22 @@ impl CompanionRequestTool {
                     "request_id": request_id,
                     "prompt": prompt,
                     "options": options,
-                    "wait": wait,
+                    "wait": true,
                     "payload_type": payload_type,
                 }),
             );
-            let _ = session_hub
+            if let Err(error) = session_hub
                 .inject_notification(&current_session_id, notification)
-                .await;
-        }
-
-        if wait {
-            // 工具不返回 → agent loop 卡在这个 tool call → session 挂起
-            // respond_companion_request 找到 sender 发回来 → 工具返回 → session 恢复
-            let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
-                AgentToolError::ExecutionFailed("SessionHub 尚未初始化".to_string())
-            })?;
-            let rx = session_hub
-                .companion_wait_registry
-                .register(&request_id)
-                .await;
+                .await
+            {
+                session_hub
+                    .companion_wait_registry
+                    .remove(&request_id)
+                    .await;
+                return Err(AgentToolError::ExecutionFailed(format!(
+                    "发送用户协作请求失败: {error}"
+                )));
+            }
 
             let response_payload = tokio::select! {
                 _ = cancel.cancelled() => {
@@ -663,6 +681,25 @@ impl CompanionRequestTool {
                 })),
             })
         } else {
+            if let Some(session_hub) = self.session_hub_handle.get().await {
+                let notification = build_companion_event_notification(
+                    &current_session_id,
+                    &self.current_turn_id,
+                    "companion_human_request",
+                    prompt.to_string(),
+                    serde_json::json!({
+                        "request_id": request_id,
+                        "prompt": prompt,
+                        "options": options,
+                        "wait": false,
+                        "payload_type": payload_type,
+                    }),
+                );
+                let _ = session_hub
+                    .inject_notification(&current_session_id, notification)
+                    .await;
+            }
+
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
                     "已向用户发送请求。\n- request_id: {request_id}\n- 用户回应后会作为事件注入当前 session。"
@@ -982,9 +1019,8 @@ impl CompanionRespondTool {
             .unwrap_or("")
             .trim();
 
-        let status = normalize_companion_result_status(
-            payload.get("status").and_then(|v| v.as_str()),
-        )?;
+        let status =
+            normalize_companion_result_status(payload.get("status").and_then(|v| v.as_str()))?;
         let findings: Vec<String> = payload
             .get("findings")
             .and_then(|v| v.as_array())

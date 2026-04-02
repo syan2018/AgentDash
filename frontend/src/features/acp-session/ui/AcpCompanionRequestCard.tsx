@@ -59,7 +59,13 @@ export function AcpCompanionRequestCard({ update, sessionId }: AcpCompanionReque
   };
 
   const detailLines: string[] = [];
-  if (wait) detailLines.push("Agent 正在等待你的回应（session 已挂起）");
+  if (wait) {
+    detailLines.push(
+      responded
+        ? "你的回应已经提交，session 已继续执行"
+        : "Agent 正在等待你的回应（session 已挂起）",
+    );
+  }
 
   const badge = wait
     ? "border-warning/25 bg-warning/10 text-warning"

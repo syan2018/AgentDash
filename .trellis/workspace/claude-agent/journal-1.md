@@ -1184,3 +1184,79 @@ Promoted Agent to independent entity with Agent+ProjectAgentLink model. Full bac
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: Agent 创建面板配置项补全 + ToolCluster 簇化注入管线
+
+**Date**: 2026-04-02
+**Task**: Agent 创建面板配置项补全 + ToolCluster 簇化注入管线
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 概述
+
+Review Agent 创建面板后发现大量后端已支持的配置未暴露给前端，同时 FlowCapabilities 的硬编码 bool 字段模式不利于扩展。本次会话完成了两大块工作：
+
+1. **Agent 创建面板配置项补全** — 复用 PresetFormFields 组件，创建时即可配置模型、MCP 工具集、权限策略等
+2. **ToolCluster 簇化注入管线** — 将 FlowCapabilities 从固定字段改为枚举集合，工具按簇动态裁剪
+
+## Commit 1: feat — Agent 创建面板补全
+
+| 改动 | 说明 |
+|------|------|
+| CreateAgentDialog 增强 | 复用 PresetFormFields，创建时可配 display_name/description/模型/权限/thinking_level/MCP servers |
+| Agent 卡片「配置」按钮 | 打开 SinglePresetDialog 编辑已有 agent 的 base_config |
+| Story/Task 默认 toggle | is_default_for_story / is_default_for_task 从只读 badge 改为可点击 toggle |
+| thinking_level bug fix | executor_config_from_agent_config 遗漏 thinking_level 提取，已修复 |
+| 导出共享组件 | PresetFormFields / presetToForm / formToPreset / useAgentTypeOptions 从 agent-preset-editor 导出 |
+
+## Commit 2: refactor — ToolCluster 簇化注入管线
+
+| 改动 | 说明 |
+|------|------|
+| ToolCluster 枚举 | 6 个簇：Read / Write / Execute / Workflow / Collaboration / Canvas |
+| FlowCapabilities 改造 | 从 5 个 bool → BTreeSet\<ToolCluster\>，提供 all() / from_clusters() / intersect() |
+| build_tools 按簇注入 | 7 个 fs 工具拆分到 Read/Write/Execute 簇，resolve_hook_action 合并入 Collaboration |
+| agent 级 tool_clusters | AgentConfig 新增 tool_clusters 字段，provider 层做 session 默认 ∩ agent 限制 交集 |
+| 前端工具权限 UI | PresetFormFields 新增「工具权限」折叠区（checkbox 组，空 = 不限制） |
+| 死代码清理 | 删除从未实例化的 BuiltinToolset（builtins.rs / support.rs），移除 PiAgentConnector.tools |
+
+## 关键文件
+
+- `crates/agentdash-spi/src/connector.rs` — ToolCluster 枚举 + FlowCapabilities 重构
+- `crates/agentdash-application/src/address_space/tools/provider.rs` — build_tools 按簇注入
+- `crates/agentdash-domain/src/common/agent_config.rs` — tool_clusters 字段
+- `crates/agentdash-api/src/routes/project_agents.rs` — thinking_level fix + tool_clusters 提取
+- `frontend/src/features/project/project-agent-view.tsx` — 增强 CreateAgentDialog + 卡片编辑/toggle
+- `frontend/src/features/project/agent-preset-editor.tsx` — 导出 + 工具权限 UI
+- `frontend/src/types/index.ts` — ToolCluster 类型 + TOOL_CLUSTER_OPTIONS
+
+## 发现与决策
+
+- **来源 A 工具是死代码**：BuiltinToolset 从未被实例化，PiAgentConnector.tools 始终为空 Vec，安全删除
+- **Hook 合并入 Collaboration**：resolve_hook_action 唯一生产者是 companion 协作流程，单独建簇无意义
+- **簇名选择 Collaboration**：涵盖 companion dispatch/complete + hook resolve，未来 ask-user 也可纳入
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eab63d3` | (see git log) |
+| `3ccfe9b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

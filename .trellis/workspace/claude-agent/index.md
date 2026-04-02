@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
-- **Last Active**: 2026-03-31
+- **Total Sessions**: 27
+- **Last Active**: 2026-04-02
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1187 | Active |
+| `journal-1.md` | ~1263 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 27 | 2026-04-02 | Agent 创建面板配置项补全 + ToolCluster 簇化注入管线 | `eab63d3`, `3ccfe9b` |
 | 26 | 2026-03-31 | 统一 Mount Patch 能力推进到组合式 Apply Patch | - |
 | 25 | 2026-03-26 | Agent Entity + Lifecycle Binding: Full Migration | `0a3c401` |
 | 24 | 2026-03-25 | Workflow/Lifecycle 运行时重构收口 | `06e6163371cb029e0251cf8437aa5dd0e7fc1d78` |

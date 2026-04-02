@@ -19,6 +19,40 @@ use agentdash_spi::hooks::{
 };
 use agentdash_spi::{AgentConnector, ConnectorError};
 
+/// companion_request(wait=true) 的等待 registry。
+/// 工具 execute 持有 receiver 不返回，respond 侧找到 sender 发回去。
+/// 纯执行层概念，不涉及 hook 通道。
+#[derive(Clone, Default)]
+pub struct CompanionWaitRegistry {
+    inner: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>>,
+}
+
+impl CompanionWaitRegistry {
+    pub async fn register(
+        &self,
+        request_id: &str,
+    ) -> tokio::sync::oneshot::Receiver<serde_json::Value> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .lock()
+            .await
+            .insert(request_id.to_string(), tx);
+        rx
+    }
+
+    pub async fn resolve(&self, request_id: &str, payload: serde_json::Value) -> bool {
+        if let Some(tx) = self.inner.lock().await.remove(request_id) {
+            tx.send(payload).is_ok()
+        } else {
+            false
+        }
+    }
+
+    pub async fn remove(&self, request_id: &str) {
+        self.inner.lock().await.remove(request_id);
+    }
+}
+
 #[derive(Clone)]
 pub struct SessionHub {
     pub(super) workspace_root: PathBuf,
@@ -26,6 +60,7 @@ pub struct SessionHub {
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
     pub(super) persistence: Arc<dyn SessionPersistence>,
+    pub companion_wait_registry: CompanionWaitRegistry,
 }
 
 impl SessionHub {
@@ -41,6 +76,7 @@ impl SessionHub {
             hook_provider,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             persistence,
+            companion_wait_registry: CompanionWaitRegistry::default(),
         }
     }
 
@@ -499,13 +535,25 @@ impl SessionHub {
             .await
     }
 
-    /// 人通过 API 回应 companion 请求：将回应作为新 prompt 注入 session（auto-resume）
+    /// 人通过 API 回应 companion 请求。
+    /// 优先 resolve wait registry（恢复挂起的工具调用），
+    /// fallback 到 start_prompt（恢复已停的 session）。
     pub async fn respond_companion_request(
         &self,
         session_id: &str,
         request_id: &str,
         payload: serde_json::Value,
     ) -> Result<(), ConnectorError> {
+        // 尝试 resolve 挂起的工具调用（wait=true 的 companion_request）
+        if self
+            .companion_wait_registry
+            .resolve(request_id, payload.clone())
+            .await
+        {
+            return Ok(());
+        }
+
+        // fallback：session 已停，用 start_prompt 注入回应
         let summary = payload
             .get("summary")
             .or_else(|| payload.get("note"))
@@ -517,14 +565,11 @@ impl SessionHub {
             .and_then(|v| v.as_str())
             .unwrap_or("responded");
 
-        // 构造用户回应文本，作为新 prompt 注入 session
         let response_text = format!(
             "[用户回应 companion request {request_id}]\nstatus: {status}\n{summary}"
         );
-
-        let resume_req = PromptSessionRequest::from_user_input(
-            UserPromptInput::from_text(&response_text),
-        );
+        let resume_req =
+            PromptSessionRequest::from_user_input(UserPromptInput::from_text(&response_text));
         self.start_prompt(session_id, resume_req)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;

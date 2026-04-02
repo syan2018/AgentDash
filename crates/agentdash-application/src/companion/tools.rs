@@ -569,7 +569,7 @@ impl CompanionRequestTool {
         &self,
         wait: bool,
         payload: &serde_json::Value,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<AgentToolResult, AgentToolError> {
         let prompt = payload
             .get("prompt")
@@ -625,16 +625,41 @@ impl CompanionRequestTool {
         }
 
         if wait {
+            // 工具不返回 → agent loop 卡在这个 tool call → session 挂起
+            // respond_companion_request 找到 sender 发回来 → 工具返回 → session 恢复
+            let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
+                AgentToolError::ExecutionFailed("SessionHub 尚未初始化".to_string())
+            })?;
+            let rx = session_hub
+                .companion_wait_registry
+                .register(&request_id)
+                .await;
+
+            let response_payload = tokio::select! {
+                _ = cancel.cancelled() => {
+                    session_hub.companion_wait_registry.remove(&request_id).await;
+                    return Err(AgentToolError::ExecutionFailed(
+                        "等待用户回应时被取消".to_string(),
+                    ));
+                }
+                result = rx => {
+                    result.unwrap_or_else(|_| serde_json::json!({
+                        "status": "error",
+                        "summary": "用户回应通道已断开"
+                    }))
+                }
+            };
+
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
-                    "已向用户发起请求，session 将暂停等待用户回应。\n- request_id: {request_id}"
+                    "用户已回应。\n- request_id: {request_id}\n- response: {}",
+                    serde_json::to_string_pretty(&response_payload).unwrap_or_default()
                 ))],
                 is_error: false,
                 details: Some(serde_json::json!({
                     "request_id": request_id,
                     "wait": true,
-                    "prompt": prompt,
-                    "options": options,
+                    "response_payload": response_payload,
                 })),
             })
         } else {

@@ -16,8 +16,35 @@ use crate::address_space::{
     ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri, resolve_mount_id,
 };
 
+/// 将工具参数中的 path 解析为 `ResourceRef`。
+///
+/// 规则：
+/// 1. 包含 `://` → 按 URI 语法拆分 mount_id 与相对路径
+/// 2. 不含 `://` 且当前 address space 仅有**一个** mount → 隐式使用该 mount
+/// 3. 其他情况 → 报错，要求显式指定 mount 前缀
 pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<ResourceRef, String> {
-    parse_mount_uri(path, address_space)
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+
+    if trimmed.contains("://") {
+        return parse_mount_uri(trimmed, address_space);
+    }
+
+    if address_space.mounts.len() == 1 {
+        let mount_id = address_space.mounts[0].id.clone();
+        return Ok(ResourceRef {
+            mount_id,
+            path: trimmed.to_string(),
+        });
+    }
+
+    Err(format!(
+        "路径 `{trimmed}` 缺少 mount 前缀（格式: mount_id://path）。\
+        当前会话有 {} 个 mount，请先调用 mounts_list 查看可用挂载，再使用完整 URI。",
+        address_space.mounts.len(),
+    ))
 }
 
 #[derive(Clone)]
@@ -116,7 +143,7 @@ impl AgentTool for MountsListTool {
             "当前会话没有可用 mount".to_string()
         } else {
             format!(
-                "路径格式: mount_id://relative/path（省略前缀使用默认 mount）\n\n{}",
+                "路径格式: mount_id://relative/path（仅当只有一个 mount 时可省略前缀）\n\n{}",
                 body
             )
         }))
@@ -148,7 +175,7 @@ impl FsReadTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FsReadParams {
-    /// 统一路径，支持 `mount_id://relative/path` 格式（如 `lifecycle://active/steps/start`）；省略 mount 前缀时使用默认 mount
+    /// 统一路径，格式 `mount_id://relative/path`（如 `main://src/lib.rs`、`lifecycle://active/steps/start`）；仅当会话只有唯一 mount 时可省略前缀
     pub path: String,
     pub start_line: Option<usize>,
     pub end_line: Option<usize>,
@@ -236,7 +263,7 @@ impl FsWriteTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FsWriteParams {
-    /// 统一路径，支持 `mount_id://relative/path` 格式；省略 mount 前缀时使用默认 mount
+    /// 统一路径，格式 `mount_id://relative/path`（如 `main://src/lib.rs`）；仅当会话只有唯一 mount 时可省略前缀
     pub path: String,
     pub content: String,
     pub append: Option<bool>,
@@ -411,7 +438,7 @@ impl FsListTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FsListParams {
-    /// 统一路径，支持 `mount_id://relative/path` 格式；省略 mount 前缀时使用默认 mount
+    /// 统一路径，格式 `mount_id://relative/path`；仅当会话只有唯一 mount 时可省略前缀
     pub path: Option<String>,
     pub recursive: Option<bool>,
     pub pattern: Option<String>,
@@ -500,7 +527,7 @@ impl FsSearchTool {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FsSearchParams {
     pub query: String,
-    /// 搜索根路径，支持 `mount_id://relative/path` 格式；省略 mount 前缀时使用默认 mount
+    /// 搜索根路径，格式 `mount_id://relative/path`；仅当会话只有唯一 mount 时可省略前缀
     pub path: Option<String>,
     #[serde(default)]
     pub regex: bool,
@@ -585,7 +612,7 @@ impl ShellExecTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ShellExecParams {
-    /// 工作目录，支持 `mount_id://relative/path` 格式；省略时使用默认 mount 根目录
+    /// 工作目录，格式 `mount_id://relative/path`；仅当会话只有唯一 mount 时可省略前缀
     pub cwd: Option<String>,
     pub command: String,
     pub timeout_secs: Option<u64>,

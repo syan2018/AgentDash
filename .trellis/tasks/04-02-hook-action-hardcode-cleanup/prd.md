@@ -86,6 +86,19 @@ action_type 到消息路由的映射硬编码。
 - [ ] action_type → 消息路由改为 hook policy 配置
 - [ ] stop gate reason 从常量改为 hook resolution 携带的结构化信息
 
+### 关联问题：start_prompt 混入 session 初始化
+
+`SessionHub::start_prompt` 当前同时承担：
+1. session 初始化（setup executor、build tools、注入 project instruction）
+2. 注入用户 prompt 并启动 turn
+
+这导致：
+- 每次 `start_prompt` 都可能重跑 setup（重复注入 instruction）
+- companion respond fallback 调 `start_prompt` 触发完整初始化（500 报错 / 重复注入）
+- 用户输入不应该携带初始化副作用
+
+应有架构：session 初始化由 session 自身生命周期管理（首次绑定 executor 时 setup 一次），`start_prompt` 只负责"向已 ready 的 session 注入 prompt"。
+
 ### 非目标
 
 - 不改变 `blocking_review` 作为 adoption_mode 的语义（由调用方显式指定时是合理的）
@@ -98,3 +111,4 @@ action_type 到消息路由的映射硬编码。
 - [ ] `is_blocking()` 判据可配置
 - [ ] pending action 指令文本不引用具体工具名
 - [ ] action_type → 行为的映射从字符串比较改为注册表查找
+- [ ] `start_prompt` 不混入 session 初始化逻辑

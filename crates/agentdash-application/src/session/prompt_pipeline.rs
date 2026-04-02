@@ -165,7 +165,6 @@ impl SessionHub {
         };
         let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
         source.executor_id = Some(context.executor_config.executor.to_string());
-        source.variant = context.executor_config.variant.clone();
         let user_notifications = build_user_message_notifications(
             session_id,
             &source,

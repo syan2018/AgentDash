@@ -10,7 +10,6 @@ export type { PermissionPolicy };
 
 export interface ExecutorConfig {
   executor: ExecutorProfile;
-  variant?: string;
   provider_id?: string;
   // 对齐后端 ExecutorConfig（Rust 侧使用 snake_case 字段）
   model_id?: string;

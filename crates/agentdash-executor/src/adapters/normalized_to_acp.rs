@@ -664,7 +664,6 @@ mod tests {
     fn test_source() -> AgentDashSourceV1 {
         let mut s = AgentDashSourceV1::new("vibe_kanban", "local_executor");
         s.executor_id = Some("CLAUDE_CODE".to_string());
-        s.variant = Some("DEFAULT".to_string());
         s
     }
 

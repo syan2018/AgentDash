@@ -148,7 +148,7 @@ function CreateAgentDialog({
   onClose: () => void;
 }) {
   const { createAgent, createProjectAgentLink, fetchProjectAgents, fetchAgents } = useProjectStore();
-  const { agentTypeOptions, isDiscoveryLoading, executors } = useAgentTypeOptions();
+  const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
   const definitions = useWorkflowStore((s) => s.definitions);
 
@@ -214,7 +214,6 @@ function CreateAgentDialog({
                 patchForm={patchForm}
                 agentTypeOptions={agentTypeOptions}
                 isDiscoveryLoading={isDiscoveryLoading}
-                executors={executors}
               />
             </div>
 

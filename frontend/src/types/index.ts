@@ -227,7 +227,6 @@ export interface TaskSessionRuntimePolicySummary {
 
 export interface TaskSessionExecutorSummary {
   executor?: string | null;
-  variant?: string | null;
   provider_id?: string | null;
   model_id?: string | null;
   agent_id?: string | null;
@@ -704,7 +703,6 @@ export type ProjectAgentWritebackMode = "read_only" | "confirm_before_write";
 
 export interface ProjectAgentExecutor {
   executor: string;
-  variant?: string | null;
   provider_id?: string | null;
   model_id?: string | null;
   agent_id?: string | null;

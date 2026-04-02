@@ -56,7 +56,6 @@ impl AgentConnector for RemoteAcpConnector {
     async fn discover_options_stream(
         &self,
         _executor: &str,
-        _variant: Option<&str>,
         _working_dir: Option<std::path::PathBuf>,
     ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
         Err(ConnectorError::ConnectionFailed(

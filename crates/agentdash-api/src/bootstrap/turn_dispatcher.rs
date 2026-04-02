@@ -241,7 +241,6 @@ async fn relay_start_prompt(
 ) -> Result<String, TaskExecutionError> {
     let relay_config = ctx.resolved_config.as_ref().map(|c| AgentConfigRelay {
         executor: c.executor.clone(),
-        variant: c.variant.clone(),
         provider_id: c.provider_id.clone(),
         model_id: c.model_id.clone(),
         agent_id: c.agent_id.clone(),

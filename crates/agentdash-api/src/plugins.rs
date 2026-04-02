@@ -245,7 +245,6 @@ mod tests {
         async fn discover_options_stream(
             &self,
             _executor: &str,
-            _variant: Option<&str>,
             _working_dir: Option<PathBuf>,
         ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
             Ok(Box::pin(stream::empty()))

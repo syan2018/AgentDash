@@ -218,7 +218,6 @@ function AgentSummarySurfaceCard({
           </div>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             {executor.preset_name && <span>预设：{executor.preset_name}</span>}
-            {executor.variant && <span>variant：{executor.variant}</span>}
             {executor.model_id && <span>model：{executor.model_id}</span>}
             {executor.permission_policy && <span>权限：{executor.permission_policy}</span>}
           </div>
@@ -660,7 +659,6 @@ function ExecutorSummaryCard({ executor }: { executor: TaskSessionExecutorSummar
           )}
         </div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-          {executor.variant && <span>variant: <span className="font-mono text-foreground/80">{executor.variant}</span></span>}
           {executor.provider_id && <span>provider: <span className="font-mono text-foreground/80">{executor.provider_id}</span></span>}
           {executor.model_id && <span>model: <span className="font-mono text-foreground/80">{executor.model_id}</span></span>}
           {executor.agent_id && <span>agent_id: <span className="font-mono text-foreground/80">{executor.agent_id}</span></span>}

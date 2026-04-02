@@ -54,9 +54,6 @@ pub fn executor_config_from_preset(
 
     let mut config = AgentConfig::new(agent_type);
     if let Some(obj) = preset.config.as_object() {
-        if let Some(v) = obj.get("variant").and_then(|v| v.as_str()) {
-            config.variant = normalize_option_string(Some(v.to_string()));
-        }
         if let Some(v) = obj.get("provider_id").and_then(|v| v.as_str()) {
             config.provider_id = normalize_option_string(Some(v.to_string()));
         }

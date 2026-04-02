@@ -353,7 +353,6 @@ impl AgentConnector for PiAgentConnector {
     async fn discover_options_stream(
         &self,
         _executor: &str,
-        _variant: Option<&str>,
         _working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
         let provider_state = self.load_provider_runtime_state().await;
@@ -1698,7 +1697,7 @@ mod tests {
 
     async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Value {
         let patches = connector
-            .discover_options_stream("PI_AGENT", None, None)
+            .discover_options_stream("PI_AGENT", None)
             .await
             .expect("discover should succeed")
             .collect::<Vec<_>>()

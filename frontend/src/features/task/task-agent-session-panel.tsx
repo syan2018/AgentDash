@@ -161,7 +161,6 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
       if (execConfig?.executor) {
         payload.executor_config = {
           executor: execConfig.executor,
-          ...(execConfig.variant && { variant: execConfig.variant }),
           ...(execConfig.model_id && { model_id: execConfig.model_id }),
           ...(execConfig.thinking_level && { thinking_level: execConfig.thinking_level }),
           ...(execConfig.permission_policy && { permission_policy: execConfig.permission_policy }),

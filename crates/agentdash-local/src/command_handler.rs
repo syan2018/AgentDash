@@ -146,7 +146,6 @@ impl CommandHandler {
 
         let executor_config = payload.executor_config.map(|c| {
             let mut cfg = agentdash_spi::AgentConfig::new(c.executor);
-            cfg.variant = c.variant;
             cfg.provider_id = c.provider_id;
             cfg.model_id = c.model_id;
             cfg.agent_id = c.agent_id;
@@ -280,7 +279,6 @@ impl CommandHandler {
     ) -> RelayMessage {
         tracing::debug!(
             executor = %payload.executor,
-            variant = ?payload.variant,
             "收到 command.discover_options，但本机 relay 尚未实现该流式能力"
         );
         RelayMessage::Error {

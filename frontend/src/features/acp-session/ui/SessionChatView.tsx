@@ -332,7 +332,7 @@ export function SessionChatView({
 
   const discovery = useExecutorDiscovery();
   const execConfig = useExecutorConfig();
-  const discovered = useExecutorDiscoveredOptions(execConfig.executor, execConfig.variant);
+  const discovered = useExecutorDiscoveredOptions(execConfig.executor);
   const setExecutor = execConfig.setExecutor;
   const execProviderId = execConfig.providerId;
   const execModelId = execConfig.modelId;
@@ -371,7 +371,6 @@ export function SessionChatView({
     if (!trimmed) return undefined;
     return {
       executor: trimmed,
-      variant: execConfig.variant.trim() || undefined,
       provider_id: execConfig.providerId.trim() || undefined,
       model_id: execConfig.modelId.trim() || undefined,
       // 将 camelCase 的 thinkingLevel 转为 snake_case 发给后端
@@ -380,7 +379,6 @@ export function SessionChatView({
     };
   }, [
     execConfig.executor,
-    execConfig.variant,
     execConfig.providerId,
     execConfig.modelId,
     execConfig.thinkingLevel,
@@ -745,13 +743,11 @@ export function SessionChatView({
               isDiscoveredLoading={Boolean(execConfig.executor.trim()) && !discovered.isInitialized}
               onDiscoveredReconnect={discovered.reconnect}
               executor={execConfig.executor}
-              variant={execConfig.variant}
               providerId={execConfig.providerId}
               modelId={execConfig.modelId}
               thinkingLevel={execConfig.thinkingLevel}
               permissionPolicy={execConfig.permissionPolicy}
               onExecutorChange={execConfig.setExecutor}
-              onVariantChange={execConfig.setVariant}
               onProviderIdChange={execConfig.setProviderId}
               onModelIdChange={execConfig.setModelId}
               onThinkingLevelChange={execConfig.setThinkingLevel}

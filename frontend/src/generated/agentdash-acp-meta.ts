@@ -2,7 +2,7 @@
 
 export type JsonValue = unknown;
 
-export type AgentDashSourceV1 = { connectorId: string, connectorType: string, executorId: string | null, variant: string | null, };
+export type AgentDashSourceV1 = { connectorId: string, connectorType: string, executorId: string | null, };
 
 export type AgentDashEventV1 = { 
 /**

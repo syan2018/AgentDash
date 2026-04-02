@@ -17,14 +17,12 @@ pub enum ThinkingLevel {
 
 /// AgentDash 统一执行器配置。
 ///
-/// `executor` 字段使用原始字符串，既能表示 vibe-kanban 的 `BaseCodingAgent` 变体
+/// `executor` 字段使用原始字符串，既能表示 vibe-kanban 的 `BaseCodingAgent`
 /// （如 `"CLAUDE_CODE"`），也能表示 AgentDash 自有 agent（如 `"PI_AGENT"`）。
 /// 路由到具体连接器时由 adapter 层按需转换。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub executor: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,7 +46,6 @@ impl AgentConfig {
     pub fn new(executor: impl Into<String>) -> Self {
         Self {
             executor: executor.into(),
-            variant: None,
             provider_id: None,
             model_id: None,
             agent_id: None,

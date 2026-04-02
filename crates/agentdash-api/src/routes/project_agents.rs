@@ -50,7 +50,6 @@ pub enum ProjectAgentWritebackMode {
 #[serde(rename_all = "snake_case")]
 pub struct ProjectAgentExecutorResponse {
     pub executor: String,
-    pub variant: Option<String>,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
@@ -111,7 +110,6 @@ mod tests {
             description: "desc".to_string(),
             executor: ProjectAgentExecutorResponse {
                 executor: "PI_AGENT".to_string(),
-                variant: None,
                 provider_id: Some("openai".to_string()),
                 model_id: Some("gpt-5.4".to_string()),
                 agent_id: None,
@@ -430,7 +428,6 @@ fn build_project_agent_summary(
         description: agent.description.clone(),
         executor: ProjectAgentExecutorResponse {
             executor: agent.executor_config.executor.clone(),
-            variant: agent.executor_config.variant.clone(),
             provider_id: agent.executor_config.provider_id.clone(),
             model_id: agent.executor_config.model_id.clone(),
             agent_id: agent.executor_config.agent_id.clone(),
@@ -1114,9 +1111,6 @@ pub(crate) fn build_agent_bridge(
 
 fn executor_config_from_agent_config(agent_type: &str, config: &serde_json::Value) -> AgentConfig {
     let mut ec = AgentConfig::new(agent_type.to_string());
-    if let Some(v) = config.get("variant").and_then(|v| v.as_str()) {
-        ec.variant = Some(v.to_string());
-    }
     if let Some(v) = config.get("provider_id").and_then(|v| v.as_str()) {
         ec.provider_id = Some(v.to_string());
     }

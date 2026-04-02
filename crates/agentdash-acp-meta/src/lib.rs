@@ -71,8 +71,6 @@ pub struct AgentDashSourceV1 {
     pub connector_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executor_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
 }
 
 impl AgentDashSourceV1 {
@@ -82,7 +80,6 @@ impl AgentDashSourceV1 {
             connector_id: connector_id.into(),
             connector_type: connector_type.into(),
             executor_id: None,
-            variant: None,
         }
     }
 }

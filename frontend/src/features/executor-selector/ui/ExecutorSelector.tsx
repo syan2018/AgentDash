@@ -13,7 +13,6 @@ export interface ExecutorSelectorProps {
   onDiscoveredReconnect: () => void;
 
   executor: string;
-  variant: string;
   providerId: string;
   modelId: string;
   /** 推理级别，替代旧的 reasoningId */
@@ -21,7 +20,6 @@ export interface ExecutorSelectorProps {
   permissionPolicy: string;
 
   onExecutorChange: (executor: string) => void;
-  onVariantChange: (variant: string) => void;
   onProviderIdChange: (providerId: string) => void;
   onModelIdChange: (modelId: string) => void;
   /** 推理级别变更回调，替代旧的 onReasoningIdChange */
@@ -75,13 +73,11 @@ export function ExecutorSelector({
   isDiscoveredLoading,
   onDiscoveredReconnect,
   executor,
-  variant,
   providerId,
   modelId,
   thinkingLevel,
   permissionPolicy,
   onExecutorChange,
-  onVariantChange,
   onProviderIdChange,
   onModelIdChange,
   onThinkingLevelChange,
@@ -128,18 +124,11 @@ export function ExecutorSelector({
   // 只显示可用的执行器
   const availableExecutors = useMemo(() => executors.filter((e) => e.available), [executors]);
 
-  const variantOptions = useMemo(() => {
-    if (!currentExecutorInfo) return [];
-    return currentExecutorInfo.variants.filter((v) => v !== "DEFAULT");
-  }, [currentExecutorInfo]);
-
   const displayLabel = useMemo(() => {
     if (!executor) return "选择执行器…";
     const info = executors.find((e) => e.id === executor);
-    const name = info?.name ?? executor;
-    if (variant && variant !== "DEFAULT") return `${name} (${variant})`;
-    return name;
-  }, [executor, variant, executors]);
+    return info?.name ?? executor;
+  }, [executor, executors]);
 
   const modelSelector = discoveredOptions?.model_selector ?? null;
   const permissions = modelSelector?.permissions ?? [];
@@ -206,28 +195,6 @@ export function ExecutorSelector({
             <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           </div>
         </div>
-
-        {/* 变体下拉（仅当选中的执行器有多个变体时显示） */}
-        {variantOptions.length > 0 && (
-          <div className="min-w-[140px]">
-            <span className={FIELD_LABEL_CLASS}>变体</span>
-            <div className="relative">
-              <select
-                value={variant}
-                onChange={(e) => onVariantChange(e.target.value)}
-                className={SELECT_CLASS}
-              >
-                <option value="">Default</option>
-                {variantOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            </div>
-          </div>
-        )}
 
         {/* 模型选择（来自 discovered-options；无硬编码） */}
         <div className="min-w-[220px] flex-1">

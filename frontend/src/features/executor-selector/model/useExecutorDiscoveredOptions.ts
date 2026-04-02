@@ -41,7 +41,6 @@ type ServerMessage =
  */
 export function useExecutorDiscoveredOptions(
   executor: string,
-  variant: string,
   refreshKey = 0,
 ): UseExecutorDiscoveredOptionsResult {
   const [options, setOptions] = useState<ExecutorDiscoveryStreamState["options"]>(null);
@@ -70,8 +69,6 @@ export function useExecutorDiscoveredOptions(
     const base = buildApiPath("/agents/discovered-options/stream");
     const url = new URL(base, window.location.href);
     url.searchParams.set("executor", trimmed);
-    const v = variant.trim();
-    if (v) url.searchParams.set("variant", v);
 
     void (async () => {
       try {
@@ -151,7 +148,7 @@ export function useExecutorDiscoveredOptions(
     return () => {
       controller.abort();
     };
-  }, [executor, variant, reconnectNonce, refreshKey]);
+  }, [executor, reconnectNonce, refreshKey]);
 
   return {
     options,

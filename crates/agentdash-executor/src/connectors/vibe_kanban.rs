@@ -133,7 +133,6 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
     async fn discover_options_stream(
         &self,
         executor: &str,
-        variant: Option<&str>,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
         use std::str::FromStr as _;
@@ -141,15 +140,9 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         let base = executors::executors::BaseCodingAgent::from_str(executor)
             .map_err(|_| ConnectorError::InvalidConfig(format!("未知执行器: {executor}")))?;
 
-        let v = variant
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .filter(|s| !s.eq_ignore_ascii_case("DEFAULT"))
-            .map(|s| s.to_string());
-
         let profile_id = executors::profile::ExecutorProfileId {
             executor: base,
-            variant: v,
+            variant: None,
         };
 
         let agent = ExecutorConfigs::get_cached()
@@ -292,7 +285,6 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         };
         let mut source = AgentDashSourceV1::new(self.connector_id(), connector_type);
         source.executor_id = Some(context.executor_config.executor.to_string());
-        source.variant = context.executor_config.variant.clone();
         let turn_id = context.turn_id.clone();
         let mut converter = NormalizedToAcpConverter::new(
             SessionId::new(session_id.to_string()),

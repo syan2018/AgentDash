@@ -99,7 +99,6 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
     description: String(raw.description ?? ''),
     executor: {
       executor: String(rawExecutor.executor ?? ''),
-      variant: rawExecutor.variant != null ? String(rawExecutor.variant) : null,
       provider_id: rawExecutor.provider_id != null ? String(rawExecutor.provider_id) : null,
       model_id: rawExecutor.model_id != null ? String(rawExecutor.model_id) : null,
       agent_id: rawExecutor.agent_id != null ? String(rawExecutor.agent_id) : null,

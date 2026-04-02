@@ -433,8 +433,6 @@ pub struct CommandPromptPayload {
 pub struct AgentConfigRelay {
     pub executor: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
@@ -458,8 +456,6 @@ pub struct CommandCancelPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDiscoverOptionsPayload {
     pub executor: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
 }

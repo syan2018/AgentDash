@@ -111,7 +111,6 @@ export interface UseExecutorDiscoveredOptionsResult {
 /** 用户选择的执行器配置（用于持久化到 localStorage，使用 camelCase） */
 export interface PersistedExecutorConfig {
   executor: string;
-  variant?: string;
   providerId?: string;
   modelId?: string;
   /** 推理级别，替代旧的 reasoningId 字段（v2 格式） */
@@ -130,7 +129,6 @@ export interface RecentExecutorEntry {
 /** 执行器配置 Hook 返回值 */
 export interface UseExecutorConfigResult {
   executor: string;
-  variant: string;
   providerId: string;
   modelId: string;
   /** 推理级别，替代旧的 reasoningId 字段 */
@@ -138,7 +136,6 @@ export interface UseExecutorConfigResult {
   permissionPolicy: string;
   recentEntries: RecentExecutorEntry[];
   setExecutor: (executor: string) => void;
-  setVariant: (variant: string) => void;
   setProviderId: (providerId: string) => void;
   setModelId: (modelId: string) => void;
   setThinkingLevel: (thinkingLevel: string) => void;

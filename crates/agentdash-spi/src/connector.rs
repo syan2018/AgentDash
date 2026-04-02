@@ -288,7 +288,6 @@ pub trait AgentConnector: Send + Sync {
     async fn discover_options_stream(
         &self,
         executor: &str,
-        variant: Option<&str>,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError>;
 

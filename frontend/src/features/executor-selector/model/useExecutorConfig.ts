@@ -23,8 +23,7 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
     const record = parsed as Record<string, unknown>;
     if (typeof record.executor !== "string") return null;
     if (
-      !isOptionalString(record.variant)
-      || !isOptionalString(record.providerId)
+      !isOptionalString(record.providerId)
       || !isOptionalString(record.modelId)
       || !isOptionalString(record.thinkingLevel)
       || !isOptionalString(record.permissionPolicy)
@@ -34,7 +33,6 @@ function loadPersistedConfig(): PersistedExecutorConfig | null {
 
     return {
       executor: record.executor,
-      variant: record.variant,
       providerId: record.providerId,
       modelId: record.modelId,
       thinkingLevel: record.thinkingLevel,
@@ -94,13 +92,12 @@ function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
  *
  * v2 格式变更：reasoning_id 字段替换为 thinkingLevel（ThinkingLevel 枚举）。
  * 组件挂载时自动恢复上次保存的配置（通过 useState 初始化器）。
- * 切换 executor 时自动清除 variant / modelId。
+ * 切换 executor 时自动清除 modelId。
  * 支持最近使用记录追踪（LRU，最多 MAX_RECENT 条）。
  */
 export function useExecutorConfig(): UseExecutorConfigResult {
   const initialConfig = {
     executor: loadOrDefault("executor"),
-    variant: loadOrDefault("variant"),
     providerId: loadOrDefault("providerId"),
     modelId: loadOrDefault("modelId"),
     thinkingLevel: loadOrDefault("thinkingLevel"),
@@ -109,7 +106,6 @@ export function useExecutorConfig(): UseExecutorConfigResult {
   const persistedStateRef = useRef<PersistedExecutorConfig>({ ...initialConfig });
 
   const [executor, setExecutorRaw] = useState(initialConfig.executor);
-  const [variant, setVariantRaw] = useState(initialConfig.variant ?? "");
   const [providerId, setProviderIdRaw] = useState(initialConfig.providerId ?? "");
   const [modelId, setModelIdRaw] = useState(initialConfig.modelId ?? "");
   const [thinkingLevel, setThinkingLevelRaw] = useState(initialConfig.thinkingLevel ?? "");
@@ -120,7 +116,6 @@ export function useExecutorConfig(): UseExecutorConfigResult {
     (patch: Partial<PersistedExecutorConfig>) => {
       const next: PersistedExecutorConfig = {
         executor: patch.executor ?? persistedStateRef.current.executor,
-        variant: patch.variant ?? persistedStateRef.current.variant,
         providerId: patch.providerId ?? persistedStateRef.current.providerId,
         modelId: patch.modelId ?? persistedStateRef.current.modelId,
         thinkingLevel: patch.thinkingLevel ?? persistedStateRef.current.thinkingLevel,
@@ -135,27 +130,17 @@ export function useExecutorConfig(): UseExecutorConfigResult {
   const setExecutor = useCallback(
     (v: string) => {
       setExecutorRaw(v);
-      setVariantRaw("");
       setProviderIdRaw("");
       setModelIdRaw("");
       setThinkingLevelRaw(DEFAULT_THINKING_LEVEL);
       setPolicyRaw("");
       persistPatch({
         executor: v,
-        variant: "",
         providerId: "",
         modelId: "",
         thinkingLevel: DEFAULT_THINKING_LEVEL,
         permissionPolicy: "",
       });
-    },
-    [persistPatch],
-  );
-
-  const setVariant = useCallback(
-    (v: string) => {
-      setVariantRaw(v);
-      persistPatch({ variant: v });
     },
     [persistPatch],
   );
@@ -207,14 +192,12 @@ export function useExecutorConfig(): UseExecutorConfigResult {
 
   const reset = useCallback(() => {
     setExecutorRaw(DEFAULT_EXECUTOR);
-    setVariantRaw("");
     setProviderIdRaw("");
     setModelIdRaw("");
     setThinkingLevelRaw(DEFAULT_THINKING_LEVEL);
     setPolicyRaw("");
     persistedStateRef.current = {
       executor: DEFAULT_EXECUTOR,
-      variant: "",
       providerId: "",
       modelId: "",
       thinkingLevel: DEFAULT_THINKING_LEVEL,
@@ -229,14 +212,12 @@ export function useExecutorConfig(): UseExecutorConfigResult {
 
   return {
     executor,
-    variant,
     providerId,
     modelId,
     thinkingLevel,
     permissionPolicy,
     recentEntries,
     setExecutor,
-    setVariant,
     setProviderId,
     setModelId,
     setThinkingLevel,

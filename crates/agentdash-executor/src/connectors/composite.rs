@@ -93,14 +93,13 @@ impl AgentConnector for CompositeConnector {
     async fn discover_options_stream(
         &self,
         executor: &str,
-        variant: Option<&str>,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
         let connector = self
             .resolve_connector(executor)
             .ok_or_else(|| ConnectorError::InvalidConfig(format!("未知执行器: {executor}")))?;
         connector
-            .discover_options_stream(executor, variant, working_dir)
+            .discover_options_stream(executor, working_dir)
             .await
     }
 

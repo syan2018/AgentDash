@@ -12,7 +12,6 @@ use crate::app_state::AppState;
 #[derive(Debug, serde::Deserialize)]
 pub struct DiscoveredOptionsQuery {
     pub executor: String,
-    pub variant: Option<String>,
     pub working_dir: Option<String>,
 }
 
@@ -54,7 +53,7 @@ pub async fn discovered_options_stream(
             None => None,
         };
 
-        match connector.discover_options_stream(&q.executor, q.variant.as_deref(), working_dir).await {
+        match connector.discover_options_stream(&q.executor, working_dir).await {
             Ok(mut patches) => {
                 while let Some(patch) = patches.next().await {
                     if let Some(line) = to_ndjson_line(&serde_json::json!({ "JsonPatch": patch })) {

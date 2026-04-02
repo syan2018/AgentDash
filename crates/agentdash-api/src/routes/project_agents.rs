@@ -1129,6 +1129,21 @@ fn executor_config_from_agent_config(agent_type: &str, config: &serde_json::Valu
     if let Some(v) = config.get("permission_policy").and_then(|v| v.as_str()) {
         ec.permission_policy = Some(v.to_string());
     }
+    if let Some(v) = config
+        .get("thinking_level")
+        .and_then(|v| serde_json::from_value::<agentdash_spi::ThinkingLevel>(v.clone()).ok())
+    {
+        ec.thinking_level = Some(v);
+    }
+    if let Some(arr) = config.get("tool_clusters").and_then(|v| v.as_array()) {
+        let clusters: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        if !clusters.is_empty() {
+            ec.tool_clusters = Some(clusters);
+        }
+    }
     ec
 }
 

@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
-import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, ThinkingLevel } from "../../types";
-import { THINKING_LEVEL_OPTIONS, isThinkingLevel } from "../../types";
+import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, ThinkingLevel, ToolCluster } from "../../types";
+import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ExecutorInfo, ModelInfo, PermissionPolicy } from "../executor-selector";
 
@@ -10,7 +10,7 @@ export interface AgentPresetEditorProps {
   isSaving?: boolean;
 }
 
-interface PresetFormState {
+export interface PresetFormState {
   name: string;
   display_name: string;
   description: string;
@@ -22,11 +22,13 @@ interface PresetFormState {
   thinking_level: ThinkingLevel | "";
   permission_policy: string;
   mcp_servers: McpServerDecl[];
+  tool_clusters: ToolCluster[];
 }
 
-function presetToForm(preset?: AgentPreset): PresetFormState {
+export function presetToForm(preset?: AgentPreset): PresetFormState {
   const cfg = preset?.config ?? {};
   const rawMcps = Array.isArray(cfg.mcp_servers) ? (cfg.mcp_servers as McpServerDecl[]) : [];
+  const rawClusters = Array.isArray(cfg.tool_clusters) ? (cfg.tool_clusters as ToolCluster[]) : [];
   return {
     name: preset?.name ?? "",
     display_name: String(cfg.display_name ?? ""),
@@ -39,10 +41,11 @@ function presetToForm(preset?: AgentPreset): PresetFormState {
     thinking_level: isThinkingLevel(cfg.thinking_level) ? cfg.thinking_level : "",
     permission_policy: String(cfg.permission_policy ?? ""),
     mcp_servers: rawMcps,
+    tool_clusters: rawClusters,
   };
 }
 
-function formToPreset(form: PresetFormState): AgentPreset {
+export function formToPreset(form: PresetFormState): AgentPreset {
   const config: Record<string, unknown> = {};
   if (form.display_name.trim()) config.display_name = form.display_name.trim();
   if (form.description.trim()) config.description = form.description.trim();
@@ -53,6 +56,7 @@ function formToPreset(form: PresetFormState): AgentPreset {
   if (form.thinking_level) config.thinking_level = form.thinking_level;
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
+  if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
   return {
     name: form.name.trim(),
     agent_type: form.agent_type.trim(),
@@ -306,7 +310,7 @@ function McpServersEditor({
 
 // ─── Preset Form ─────────────────────────────────────────
 
-function PresetFormFields({
+export function PresetFormFields({
   form,
   patchForm,
   agentTypeOptions,
@@ -624,6 +628,34 @@ function PresetFormFields({
 
       <details className="sm:col-span-2">
         <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
+          工具权限 {form.tool_clusters.length > 0 ? `(已限制 ${form.tool_clusters.length} 簇)` : "(不限制)"}
+        </summary>
+        <div className="mt-2 space-y-1.5">
+          <p className="text-[10px] text-muted-foreground/60">
+            不勾选任何项 = 不限制（使用会话类型默认全量工具）。勾选后仅注入选中的工具簇。
+          </p>
+          {TOOL_CLUSTER_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.tool_clusters.includes(opt.value)}
+                onChange={(e) => {
+                  const next = e.target.checked
+                    ? [...form.tool_clusters, opt.value]
+                    : form.tool_clusters.filter((c) => c !== opt.value);
+                  patchForm({ tool_clusters: next });
+                }}
+                className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/30"
+              />
+              <span className="text-xs text-foreground">{opt.label}</span>
+              <span className="text-[10px] text-muted-foreground/60">{opt.description}</span>
+            </label>
+          ))}
+        </div>
+      </details>
+
+      <details className="sm:col-span-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
           MCP Servers 配置 ({form.mcp_servers.length} 个)
         </summary>
         <div className="mt-2">
@@ -637,7 +669,7 @@ function PresetFormFields({
   );
 }
 
-function useAgentTypeOptions() {
+export function useAgentTypeOptions() {
   const { executors, isLoading } = useExecutorDiscovery();
   const options = useMemo(() => {
     return executors.map((executor) => ({

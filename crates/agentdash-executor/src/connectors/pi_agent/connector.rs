@@ -454,6 +454,7 @@ impl AgentConnector for PiAgentConnector {
             agents.remove(session_id)
         };
 
+        let is_new_agent = existing_agent.is_none();
         let mut agent = if let Some(agent) = existing_agent {
             agent
         } else {
@@ -474,27 +475,32 @@ impl AgentConnector for PiAgentConnector {
             self.create_agent_with_bridge(bridge)
         };
 
-        let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
-            Ok(tools) => tools,
-            Err(error) => {
-                tracing::warn!("发现 MCP 工具失败，继续使用本地工具: {error}");
-                Vec::new()
-            }
-        };
-        let mut runtime_tools: Vec<DynAgentTool> = Vec::new();
-        let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
-            ConnectorError::InvalidConfig(
-                "PiAgentConnector 未配置 runtime tool provider".to_string(),
-            )
-        })?;
-        runtime_tools.extend(provider.build_tools(&context).await?);
-        runtime_tools.extend(mcp_tools);
-        let tool_names = runtime_tools
-            .iter()
-            .map(|tool| tool.name().to_string())
-            .collect::<Vec<_>>();
-        agent.set_tools(runtime_tools);
-        agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
+        // 只有新创建的 agent 才需要 build tools 和 system prompt。
+        // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
+        // 只更新 runtime delegate（hook session 每轮刷新）。
+        if is_new_agent {
+            let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
+                Ok(tools) => tools,
+                Err(error) => {
+                    tracing::warn!("发现 MCP 工具失败，继续使用本地工具: {error}");
+                    Vec::new()
+                }
+            };
+            let mut runtime_tools: Vec<DynAgentTool> = Vec::new();
+            let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "PiAgentConnector 未配置 runtime tool provider".to_string(),
+                )
+            })?;
+            runtime_tools.extend(provider.build_tools(&context).await?);
+            runtime_tools.extend(mcp_tools);
+            let tool_names = runtime_tools
+                .iter()
+                .map(|tool| tool.name().to_string())
+                .collect::<Vec<_>>();
+            agent.set_tools(runtime_tools);
+            agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
+        }
         let hook_trace_rx = context
             .hook_session
             .as_ref()

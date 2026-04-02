@@ -33,7 +33,7 @@
 ### 4. 修复运行时预览与联调脚本
 
 - Canvas 预览 iframe sandbox 调整为可正常加载运行时页面
-- `pnpm dev` 对应的 [scripts/dev-joint.js](/F:/Projects/AgentDash/scripts/dev-joint.js) 在启动前默认清理残留 `agentdash-local`
+- `pnpm dev` 对应的 [scripts/dev-joint.js](scripts/dev-joint.js) 在启动前默认清理残留 `agentdash-local`
 - 避免重复 `backend_id` 注册导致联调环境被自动停掉
 
 ## 验证结果

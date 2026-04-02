@@ -28,6 +28,6 @@
 
 ## References
 
-- [address_space_access.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/address_space_access.rs)
-- [execution_hooks.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/execution_hooks.rs)
-- [hub.rs](/F:/Projects/AgentDash/crates/agentdash-executor/src/hub.rs)
+- [address_space_access.rs](crates/agentdash-api/src/address_space_access.rs)
+- [execution_hooks.rs](crates/agentdash-api/src/execution_hooks.rs)
+- [hub.rs](crates/agentdash-executor/src/hub.rs)

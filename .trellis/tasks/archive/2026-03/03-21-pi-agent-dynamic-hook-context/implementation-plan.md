@@ -316,9 +316,9 @@ pub struct SessionHookSnapshot {
 
 以下逻辑后续都不应继续直接留在 route / gateway 做 prompt augment：
 
-- [task_execution_gateway.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/bootstrap/task_execution_gateway.rs)
-- [acp_sessions.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/routes/acp_sessions.rs)
-- [workflow_runtime.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/workflow_runtime.rs)
+- [task_execution_gateway.rs](crates/agentdash-api/src/bootstrap/task_execution_gateway.rs)
+- [acp_sessions.rs](crates/agentdash-api/src/routes/acp_sessions.rs)
+- [workflow_runtime.rs](crates/agentdash-api/src/workflow_runtime.rs)
 
 目标是把它们统一迁移为：
 

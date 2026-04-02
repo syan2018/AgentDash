@@ -2,8 +2,8 @@
 
 ## 背景
 
-- 请参阅 [PRD](F:/Projects/AgentDash/.trellis/tasks/03-31-live-canvas-runtime/prd.md) 中“Session 页布局”与“系统事件”两个章节，它把 `canvas_presented` 事件、SessionPage 的上下文面板、`SessionChatView` 的 `onSystemEvent` 参数都已经列出。
-- [执行计划](F:/Projects/AgentDash/.trellis/tasks/03-31-live-canvas-runtime/execution-plan.md) 明确把 `session-page-canvas-panel` 作为独立工作包，并强调 Canvas Panel 要用现成 `SessionPage` 作为主战场。
+- 请参阅 [PRD](.trellis/tasks/03-31-live-canvas-runtime/prd.md) 中“Session 页布局”与“系统事件”两个章节，它把 `canvas_presented` 事件、SessionPage 的上下文面板、`SessionChatView` 的 `onSystemEvent` 参数都已经列出。
+- [执行计划](.trellis/tasks/03-31-live-canvas-runtime/execution-plan.md) 明确把 `session-page-canvas-panel` 作为独立工作包，并强调 Canvas Panel 要用现成 `SessionPage` 作为主战场。
 - 当前 SessionPage 均使用 `SessionChatView`（`frontend/src/pages/SessionPage.tsx`、`story-session-panel.tsx`、`task-agent-session-panel.tsx`）在中间区域展示会话流；`SessionPage.tsx` 通过 `onSystemEvent` 回调收到 `SystemEvent` 并仅使用 `eventType`，而 `SessionChatView.tsx` 已把整个 `SessionUpdate` 透出。
 - `AcpSystemEventGuard.ts` 与 `AcpSystemEventCard.tsx` 已有 hooks 处理 pipeline（visible events、hook decision 过滤等），canvas 事件可复用这套 guard。
 

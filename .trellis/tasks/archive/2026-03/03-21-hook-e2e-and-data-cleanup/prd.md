@@ -41,7 +41,7 @@
 
 ## References
 
-- [execution_hooks.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/execution_hooks.rs)
-- [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx)
-- [trellis_dev_task.json](/F:/Projects/AgentDash/crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json)
-- [AGENTS.md](/F:/Projects/AgentDash/AGENTS.md)
+- [execution_hooks.rs](crates/agentdash-api/src/execution_hooks.rs)
+- [SessionPage.tsx](frontend/src/pages/SessionPage.tsx)
+- [trellis_dev_task.json](crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json)
+- [AGENTS.md](AGENTS.md)

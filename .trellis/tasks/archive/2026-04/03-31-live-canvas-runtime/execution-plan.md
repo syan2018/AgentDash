@@ -36,7 +36,7 @@
 - Canvas mount 进入 session address space 的方式，参考 lifecycle mount：**基础派生 + 运行时追加**
 - 文件编辑继续复用现有 `fs_read` / `fs_write` / `fs_apply_patch`
 - Canvas 运行时加载走 **独立 runtime snapshot API**
-- 前端首版只在独立 [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx) 落地 Canvas Panel
+- 前端首版只在独立 [SessionPage.tsx](frontend/src/pages/SessionPage.tsx) 落地 Canvas Panel
 - Runtime 首版是自研 `iframe sandbox`，不把 Sandpack 当正式内核
 
 ---
@@ -91,14 +91,14 @@
 
 ### 关键文件
 
-- [mount.rs](/F:/Projects/AgentDash/crates/agentdash-application/src/address_space/mount.rs)
-- [provider.rs](/F:/Projects/AgentDash/crates/agentdash-application/src/address_space/provider.rs)
-- [relay_service.rs](/F:/Projects/AgentDash/crates/agentdash-application/src/address_space/relay_service.rs)
-- [tools/provider.rs](/F:/Projects/AgentDash/crates/agentdash-application/src/address_space/tools/provider.rs)
-- [connector.rs](/F:/Projects/AgentDash/crates/agentdash-spi/src/connector.rs)
-- [acp_sessions.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/routes/acp_sessions.rs)
-- [session_plan.rs](/F:/Projects/AgentDash/crates/agentdash-application/src/session_plan.rs)
-- [task/session_runtime_inputs.rs](/F:/Projects/AgentDash/crates/agentdash-application/src/task/session_runtime_inputs.rs)
+- [mount.rs](crates/agentdash-application/src/address_space/mount.rs)
+- [provider.rs](crates/agentdash-application/src/address_space/provider.rs)
+- [relay_service.rs](crates/agentdash-application/src/address_space/relay_service.rs)
+- [tools/provider.rs](crates/agentdash-application/src/address_space/tools/provider.rs)
+- [connector.rs](crates/agentdash-spi/src/connector.rs)
+- [acp_sessions.rs](crates/agentdash-api/src/routes/acp_sessions.rs)
+- [session_plan.rs](crates/agentdash-application/src/session_plan.rs)
+- [task/session_runtime_inputs.rs](crates/agentdash-application/src/task/session_runtime_inputs.rs)
 
 ### 完成标准
 
@@ -129,10 +129,10 @@
 
 ### 关键文件
 
-- [prd.md](/F:/Projects/AgentDash/.trellis/tasks/03-31-live-canvas-runtime/prd.md)
-- [frontend/package.json](/F:/Projects/AgentDash/frontend/package.json)
-- [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx)
-- [agentdash-acp-meta/lib.rs](/F:/Projects/AgentDash/crates/agentdash-acp-meta/src/lib.rs)
+- [prd.md](.trellis/tasks/03-31-live-canvas-runtime/prd.md)
+- [frontend/package.json](frontend/package.json)
+- [SessionPage.tsx](frontend/src/pages/SessionPage.tsx)
+- [agentdash-acp-meta/lib.rs](crates/agentdash-acp-meta/src/lib.rs)
 
 ### 完成标准
 
@@ -162,10 +162,10 @@
 
 ### 关键文件
 
-- [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx)
-- [AcpSystemEventGuard.ts](/F:/Projects/AgentDash/frontend/src/features/acp-session/ui/AcpSystemEventGuard.ts)
-- [AcpSystemEventCard.tsx](/F:/Projects/AgentDash/frontend/src/features/acp-session/ui/AcpSystemEventCard.tsx)
-- [SessionChatView.tsx](/F:/Projects/AgentDash/frontend/src/features/acp-session/ui/SessionChatView.tsx)
+- [SessionPage.tsx](frontend/src/pages/SessionPage.tsx)
+- [AcpSystemEventGuard.ts](frontend/src/features/acp-session/ui/AcpSystemEventGuard.ts)
+- [AcpSystemEventCard.tsx](frontend/src/features/acp-session/ui/AcpSystemEventCard.tsx)
+- [SessionChatView.tsx](frontend/src/features/acp-session/ui/SessionChatView.tsx)
 
 ### 完成标准
 

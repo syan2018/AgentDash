@@ -51,8 +51,8 @@
 
 ## References
 
-- [Pi Agent 动态 Hook 上下文与伴随 Agent 机制](/F:/Projects/AgentDash/.trellis/tasks/03-21-pi-agent-dynamic-hook-context/prd.md)
-- [runtime_delegate.rs](/F:/Projects/AgentDash/crates/agentdash-executor/src/runtime_delegate.rs)
-- [types.rs](/F:/Projects/AgentDash/crates/agentdash-agent/src/types.rs)
-- [RUST_PI_HYBRID_DESIGN.md](/F:/Projects/AgentDash/crates/agentdash-agent/agent-design/RUST_PI_HYBRID_DESIGN.md)
-- [Trellis README](/F:/Projects/AgentDash/references/Trellis/README.md)
+- [Pi Agent 动态 Hook 上下文与伴随 Agent 机制](.trellis/tasks/03-21-pi-agent-dynamic-hook-context/prd.md)
+- [runtime_delegate.rs](crates/agentdash-executor/src/runtime_delegate.rs)
+- [types.rs](crates/agentdash-agent/src/types.rs)
+- [RUST_PI_HYBRID_DESIGN.md](crates/agentdash-agent/agent-design/RUST_PI_HYBRID_DESIGN.md)
+- [Trellis README](references/Trellis/README.md)

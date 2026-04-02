@@ -44,7 +44,7 @@
 
 ## References
 
-- [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx)
-- [services/session.ts](/F:/Projects/AgentDash/frontend/src/services/session.ts)
-- [execution_hooks.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/execution_hooks.rs)
-- [hooks.rs](/F:/Projects/AgentDash/crates/agentdash-executor/src/hooks.rs)
+- [SessionPage.tsx](frontend/src/pages/SessionPage.tsx)
+- [services/session.ts](frontend/src/services/session.ts)
+- [execution_hooks.rs](crates/agentdash-api/src/execution_hooks.rs)
+- [hooks.rs](crates/agentdash-executor/src/hooks.rs)

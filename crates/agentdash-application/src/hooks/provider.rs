@@ -480,12 +480,12 @@ mod tests {
                         call_id: None,
                         name: "shell_exec".to_string(),
                         arguments: serde_json::json!({
-                            "cwd": "F:\\Projects\\AgentDash\\crates\\agentdash-agent",
+                            "cwd": "/tmp/test-workspace/crates/agentdash-agent",
                             "command": "cargo test"
                         }),
                     },
                     args: serde_json::json!({
-                        "cwd": "F:\\Projects\\AgentDash\\crates\\agentdash-agent",
+                        "cwd": "/tmp/test-workspace/crates/agentdash-agent",
                         "command": "cargo test"
                     }),
                     context: AgentContext {

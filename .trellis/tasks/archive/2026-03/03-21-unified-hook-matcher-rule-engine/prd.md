@@ -42,7 +42,7 @@
 
 ## References
 
-- [execution_hooks.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/execution_hooks.rs)
-- [hooks.rs](/F:/Projects/AgentDash/crates/agentdash-executor/src/hooks.rs)
-- [workflow_runtime.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/workflow_runtime.rs)
-- [trellis_dev_task.json](/F:/Projects/AgentDash/crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json)
+- [execution_hooks.rs](crates/agentdash-api/src/execution_hooks.rs)
+- [hooks.rs](crates/agentdash-executor/src/hooks.rs)
+- [workflow_runtime.rs](crates/agentdash-api/src/workflow_runtime.rs)
+- [trellis_dev_task.json](crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json)

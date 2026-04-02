@@ -38,7 +38,7 @@
 
 ## References
 
-- [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx)
-- [execution_hooks.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/execution_hooks.rs)
-- [address_space_access.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/address_space_access.rs)
-- [hub.rs](/F:/Projects/AgentDash/crates/agentdash-executor/src/hub.rs)
+- [SessionPage.tsx](frontend/src/pages/SessionPage.tsx)
+- [execution_hooks.rs](crates/agentdash-api/src/execution_hooks.rs)
+- [address_space_access.rs](crates/agentdash-api/src/address_space_access.rs)
+- [hub.rs](crates/agentdash-executor/src/hub.rs)

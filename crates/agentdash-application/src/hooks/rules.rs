@@ -326,7 +326,7 @@ mod tests {
             snapshot: None,
             payload: Some(serde_json::json!({
                 "args": {
-                    "cwd": "F:\\Projects\\AgentDash\\crates\\agentdash-agent",
+                    "cwd": "/tmp/test-workspace/crates/agentdash-agent",
                     "command": "cargo test"
                 }
             })),

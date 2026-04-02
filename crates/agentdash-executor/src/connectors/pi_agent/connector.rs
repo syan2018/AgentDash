@@ -241,7 +241,7 @@ impl PiAgentConnector {
                     tool_names.join("、")
                 ));
                 sections.push(
-                    "调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `F:\\...` 这类绝对路径直接写进工具参数。".to_string(),
+                    format!("调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{}/...` 这类绝对路径直接写进工具参数。", context.workspace_root.display()),
                 );
             }
         }
@@ -2416,15 +2416,15 @@ mod tests {
     #[test]
     fn runtime_system_prompt_prefers_relative_workspace_paths() {
         let connector = PiAgentConnector::new(
-            PathBuf::from("F:/Projects/AgentDash"),
+            PathBuf::from("/tmp/test-workspace"),
             Arc::new(NoopBridge),
             "系统提示",
             "gpt-5.4",
         );
         let context = ExecutionContext {
             turn_id: "turn-1".to_string(),
-            workspace_root: PathBuf::from("F:/Projects/AgentDash"),
-            working_directory: PathBuf::from("F:/Projects/AgentDash/crates/agentdash-agent"),
+            workspace_root: PathBuf::from("/tmp/test-workspace"),
+            working_directory: PathBuf::from("/tmp/test-workspace/crates/agentdash-agent"),
             environment_variables: HashMap::new(),
             executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
@@ -2439,10 +2439,10 @@ mod tests {
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
         assert!(prompt.contains("工作空间路径锚点：."));
         assert!(prompt.contains("当前工作目录（相对工作空间）：crates/agentdash-agent"));
-        assert!(prompt.contains("不要把 `F:\\...` 这类绝对路径直接写进工具参数"));
+        assert!(prompt.contains("不要把 `/tmp/test-workspace/...` 这类绝对路径直接写进工具参数"));
         assert!(prompt.contains("cwd 设为 `.`"));
         assert!(!prompt.contains(
-            "当前工作目录（相对工作空间）：F:/Projects/AgentDash/crates/agentdash-agent"
+            "当前工作目录（相对工作空间）：/tmp/test-workspace/crates/agentdash-agent"
         ));
     }
 
@@ -2450,7 +2450,7 @@ mod tests {
     async fn discovery_reflects_settings_added_after_startup_without_restart() {
         let repo = Arc::new(TestSettingsRepository::default());
         let mut connector =
-            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref(), &TestLlmProviderRepository)
+            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
                 .await
                 .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo.clone());
@@ -2496,7 +2496,7 @@ mod tests {
         .expect("should store anthropic key");
 
         let mut connector =
-            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref(), &TestLlmProviderRepository)
+            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
                 .await
                 .expect("connector should initialize");
         connector.set_settings_repository(repo.clone());
@@ -2530,7 +2530,7 @@ mod tests {
     async fn prompt_without_provider_configuration_returns_clear_error() {
         let repo = Arc::new(TestSettingsRepository::default());
         let mut connector =
-            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref(), &TestLlmProviderRepository)
+            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
                 .await
                 .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo);
@@ -2542,8 +2542,8 @@ mod tests {
                 &PromptPayload::Text("hello".to_string()),
                 ExecutionContext {
                     turn_id: "turn-1".to_string(),
-                    workspace_root: PathBuf::from("F:/Projects/AgentDash"),
-                    working_directory: PathBuf::from("F:/Projects/AgentDash"),
+                    workspace_root: PathBuf::from("/tmp/test-workspace"),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
                     environment_variables: HashMap::new(),
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],

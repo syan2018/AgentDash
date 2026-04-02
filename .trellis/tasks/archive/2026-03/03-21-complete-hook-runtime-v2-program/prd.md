@@ -66,8 +66,8 @@
 
 ## References
 
-- [execution-hook-runtime.md](/F:/Projects/AgentDash/.trellis/spec/backend/execution-hook-runtime.md)
-- [execution_hooks.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/execution_hooks.rs)
-- [hub.rs](/F:/Projects/AgentDash/crates/agentdash-executor/src/hub.rs)
-- [address_space_access.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/address_space_access.rs)
-- [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx)
+- [execution-hook-runtime.md](.trellis/spec/backend/execution-hook-runtime.md)
+- [execution_hooks.rs](crates/agentdash-api/src/execution_hooks.rs)
+- [hub.rs](crates/agentdash-executor/src/hub.rs)
+- [address_space_access.rs](crates/agentdash-api/src/address_space_access.rs)
+- [SessionPage.tsx](frontend/src/pages/SessionPage.tsx)

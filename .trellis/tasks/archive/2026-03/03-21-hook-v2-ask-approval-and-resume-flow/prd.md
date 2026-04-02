@@ -28,6 +28,6 @@
 
 ## References
 
-- [types.rs](/F:/Projects/AgentDash/crates/agentdash-agent/src/types.rs)
-- [runtime_delegate.rs](/F:/Projects/AgentDash/crates/agentdash-executor/src/runtime_delegate.rs)
-- [SessionPage.tsx](/F:/Projects/AgentDash/frontend/src/pages/SessionPage.tsx)
+- [types.rs](crates/agentdash-agent/src/types.rs)
+- [runtime_delegate.rs](crates/agentdash-executor/src/runtime_delegate.rs)
+- [SessionPage.tsx](frontend/src/pages/SessionPage.tsx)

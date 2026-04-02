@@ -212,7 +212,7 @@ trait AddressSpaceProvider {
 ```json
 {
   "backend_id": "backend-a",
-  "workspace_root": "F:\\Projects\\AgentDash",
+  "workspace_root": "/home/user/my-project",
   "path": "crates/agentdash-api/src/app_state.rs"
 }
 ```

@@ -27,6 +27,6 @@
 
 ## References
 
-- [execution-hook-runtime.md](/F:/Projects/AgentDash/.trellis/spec/backend/execution-hook-runtime.md)
-- [execution_hooks.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/execution_hooks.rs)
-- [trellis_dev_task.json](/F:/Projects/AgentDash/crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json)
+- [execution-hook-runtime.md](.trellis/spec/backend/execution-hook-runtime.md)
+- [execution_hooks.rs](crates/agentdash-api/src/execution_hooks.rs)
+- [trellis_dev_task.json](crates/agentdash-application/src/workflow/builtins/trellis_dev_task.json)

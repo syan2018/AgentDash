@@ -353,7 +353,7 @@ mod tests {
         let previous = SessionSnapshotMetadata {
             turn_id: Some("turn-1".into()),
             permission_policy: Some("SUPERVISED".into()),
-            workspace_root: Some("F:/Projects/AgentDash".into()),
+            workspace_root: Some("/tmp/test-workspace".into()),
             working_directory: Some(".".into()),
             connector_id: Some("pi_agent".into()),
             executor: Some("local".into()),
@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
         assert_eq!(
             meta.workspace_root.as_deref(),
-            Some("F:/Projects/AgentDash")
+            Some("/tmp/test-workspace")
         );
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
@@ -387,7 +387,7 @@ mod tests {
         };
         let previous = SessionSnapshotMetadata {
             permission_policy: Some("SUPERVISED".into()),
-            workspace_root: Some("F:/Old/Root".into()),
+            workspace_root: Some("/old/root".into()),
             ..Default::default()
         };
 
@@ -404,7 +404,7 @@ mod tests {
             session_id: "sess-1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 permission_policy: Some("SUPERVISED".into()),
-                workspace_root: Some("F:/Projects/AgentDash".into()),
+                workspace_root: Some("/tmp/test-workspace".into()),
                 working_directory: Some(".".into()),
                 connector_id: Some("pi_agent".into()),
                 executor: Some("local".into()),
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
         assert_eq!(
             meta.workspace_root.as_deref(),
-            Some("F:/Projects/AgentDash")
+            Some("/tmp/test-workspace")
         );
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));

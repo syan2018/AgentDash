@@ -26,9 +26,9 @@
 
 当前对应实现主要在：
 
-- [workflow_runtime.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/workflow_runtime.rs)
-- [task_execution_gateway.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/bootstrap/task_execution_gateway.rs)
-- [acp_sessions.rs](/F:/Projects/AgentDash/crates/agentdash-api/src/routes/acp_sessions.rs)
+- [workflow_runtime.rs](crates/agentdash-api/src/workflow_runtime.rs)
+- [task_execution_gateway.rs](crates/agentdash-api/src/bootstrap/task_execution_gateway.rs)
+- [acp_sessions.rs](crates/agentdash-api/src/routes/acp_sessions.rs)
 
 但这仍不等于完整 Hook Runtime。它本质上还是“prompt 构建前的一次性上下文装配”，缺少真正的 lifecycle hook：
 
@@ -49,9 +49,9 @@
 
 对应位置：
 
-- [agent.rs](/F:/Projects/AgentDash/crates/agentdash-agent/src/agent.rs)
-- [agent_loop.rs](/F:/Projects/AgentDash/crates/agentdash-agent/src/agent_loop.rs)
-- [types.rs](/F:/Projects/AgentDash/crates/agentdash-agent/src/types.rs)
+- [agent.rs](crates/agentdash-agent/src/agent.rs)
+- [agent_loop.rs](crates/agentdash-agent/src/agent_loop.rs)
+- [types.rs](crates/agentdash-agent/src/types.rs)
 
 因此当前最正确的方向不是推翻 Pi runtime，而是把这些 runtime seam 升级为正式的 Hook 控制面，并在 loop 外建立统一的 Hook 信息提供链路。
 
@@ -200,11 +200,11 @@
 - [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks)
 - [Claude Code hooks guide](https://docs.anthropic.com/en/docs/claude-code/hooks-guide)
 - [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings)
-- [Trellis README](/F:/Projects/AgentDash/references/Trellis/README.md)
-- [Trellis `session-start.py`](/F:/Projects/AgentDash/references/Trellis/.claude/hooks/session-start.py)
-- [Trellis `inject-subagent-context.py`](/F:/Projects/AgentDash/references/Trellis/.claude/hooks/inject-subagent-context.py)
+- [Trellis README](references/Trellis/README.md)
+- [Trellis `session-start.py`](references/Trellis/.claude/hooks/session-start.py)
+- [Trellis `inject-subagent-context.py`](references/Trellis/.claude/hooks/inject-subagent-context.py)
 - [Trellis 架构文档](https://docs.trytrellis.app/zh/guide/ch04-architecture)
-- [Pi 设计文档](/F:/Projects/AgentDash/crates/agentdash-agent/agent-design/RUST_PI_HYBRID_DESIGN.md)
+- [Pi 设计文档](crates/agentdash-agent/agent-design/RUST_PI_HYBRID_DESIGN.md)
 
 ## Current Judgment
 

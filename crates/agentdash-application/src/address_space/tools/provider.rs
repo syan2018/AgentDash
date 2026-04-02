@@ -7,6 +7,7 @@ use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
 use agentdash_spi::DynAgentTool;
+use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
@@ -94,49 +95,73 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         let identity = context.identity.clone();
 
-        let mut tools: Vec<DynAgentTool> = vec![
-            Arc::new(MountsListTool::new(
+        // 合并 session-type 默认簇 与 agent 级 tool_clusters 限制（交集）
+        let session_clusters = &context.flow_capabilities.enabled_clusters;
+        let effective_clusters = if let Some(ref agent_clusters) = context.executor_config.tool_clusters {
+            let agent_set: std::collections::BTreeSet<ToolCluster> = agent_clusters
+                .iter()
+                .filter_map(|s| serde_json::from_value::<ToolCluster>(serde_json::Value::String(s.clone())).ok())
+                .collect();
+            session_clusters.intersection(&agent_set).copied().collect::<std::collections::BTreeSet<_>>()
+        } else {
+            session_clusters.clone()
+        };
+        let clusters = &effective_clusters;
+
+        let mut tools: Vec<DynAgentTool> = Vec::new();
+
+        // Read 簇：只读文件系统访问
+        if clusters.contains(&ToolCluster::Read) {
+            tools.push(Arc::new(MountsListTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
-            )),
-            Arc::new(FsReadTool::new(
+            )));
+            tools.push(Arc::new(FsReadTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
-            )),
-            Arc::new(FsWriteTool::new(
+            )));
+            tools.push(Arc::new(FsListTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
-            )),
-            Arc::new(FsApplyPatchTool::new(
+            )));
+            tools.push(Arc::new(FsSearchTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
-            )),
-            Arc::new(FsListTool::new(
+            )));
+        }
+
+        // Write 簇：文件写入
+        if clusters.contains(&ToolCluster::Write) {
+            tools.push(Arc::new(FsWriteTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
-            )),
-            Arc::new(FsSearchTool::new(
+            )));
+            tools.push(Arc::new(FsApplyPatchTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
                 overlay.clone(),
                 identity,
-            )),
-            Arc::new(ShellExecTool::new(
+            )));
+        }
+
+        // Execute 簇：命令执行
+        if clusters.contains(&ToolCluster::Execute) {
+            tools.push(Arc::new(ShellExecTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
-            )),
-        ];
+            )));
+        }
 
-        let caps = &context.flow_capabilities;
-        if caps.workflow_artifact {
+        // Workflow 簇：工作流产出汇报
+        if clusters.contains(&ToolCluster::Workflow) {
             tools.push(Arc::new(WorkflowArtifactReportTool::new(
                 self.workflow_definition_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
@@ -144,26 +169,26 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 context,
             )));
         }
-        if caps.companion_dispatch {
+
+        // Collaboration 簇：Companion 协作 + Hook action 解析
+        if clusters.contains(&ToolCluster::Collaboration) {
             tools.push(Arc::new(CompanionDispatchTool::new(
                 self.session_binding_repo.clone(),
                 self.session_hub_handle.clone(),
                 context,
             )));
-        }
-        if caps.companion_complete {
             tools.push(Arc::new(CompanionCompleteTool::new(
                 self.session_hub_handle.clone(),
                 context,
             )));
-        }
-        if caps.resolve_hook_action {
             tools.push(Arc::new(ResolveHookActionTool::new(
                 self.session_hub_handle.clone(),
                 context,
             )));
         }
-        if caps.canvas {
+
+        // Canvas 簇：Canvas 资产工具
+        if clusters.contains(&ToolCluster::Canvas) {
             if let Some(project_id) = project_id_from_context(context) {
                 tools.push(Arc::new(CreateCanvasTool::new(
                     self.canvas_repo.clone(),

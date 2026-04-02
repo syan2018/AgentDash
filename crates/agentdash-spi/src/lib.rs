@@ -11,7 +11,8 @@ pub use agentdash_domain::common::{
 };
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, FlowCapabilities, PromptPayload, content_block_to_text,
+    ExecutionContext, ExecutionStream, FlowCapabilities, PromptPayload, ToolCluster,
+    content_block_to_text,
 };
 pub use hooks::{
     ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus,

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
+use std::{collections::BTreeSet, collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
@@ -7,7 +7,7 @@ use agentdash_domain::common::{AddressSpace, AgentConfig};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
@@ -77,20 +77,69 @@ impl std::fmt::Debug for ExecutionContext {
     }
 }
 
+/// 工具簇标识 — 每个簇控制一组相关工具的注入。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCluster {
+    /// 只读访问：mounts_list, fs_read, fs_list, fs_search
+    Read,
+    /// 文件写入：fs_write, fs_apply_patch
+    Write,
+    /// 命令执行：shell_exec
+    Execute,
+    /// Workflow 产出汇报：report_workflow_artifact
+    Workflow,
+    /// 协作与交互：companion_dispatch, companion_complete, resolve_hook_action
+    Collaboration,
+    /// Canvas 资产：create_canvas, inject_canvas_data, present_canvas
+    Canvas,
+}
+
 /// 流程工具能力声明。
 /// 按 session 类型在 session plan 阶段填充，runtime tool provider 据此裁剪注入。
+/// 可进一步与 agent base_config 中的 tool_clusters 做交集裁剪。
 #[derive(Debug, Clone, Default)]
 pub struct FlowCapabilities {
-    /// 是否允许汇报 workflow artifact
-    pub workflow_artifact: bool,
-    /// 是否允许发起 companion dispatch（仅 Story session）
-    pub companion_dispatch: bool,
-    /// 是否允许完成 companion session
-    pub companion_complete: bool,
-    /// 是否允许解析 hook pending action
-    pub resolve_hook_action: bool,
-    /// 是否允许使用 Canvas 资产工具
-    pub canvas: bool,
+    pub enabled_clusters: BTreeSet<ToolCluster>,
+}
+
+impl FlowCapabilities {
+    /// 全量簇 — 适用于 Story session 等需要全部工具的场景。
+    pub fn all() -> Self {
+        Self {
+            enabled_clusters: BTreeSet::from([
+                ToolCluster::Read,
+                ToolCluster::Write,
+                ToolCluster::Execute,
+                ToolCluster::Workflow,
+                ToolCluster::Collaboration,
+                ToolCluster::Canvas,
+            ]),
+        }
+    }
+
+    /// 检查指定簇是否启用。
+    pub fn has(&self, cluster: ToolCluster) -> bool {
+        self.enabled_clusters.contains(&cluster)
+    }
+
+    /// 从簇数组构造。
+    pub fn from_clusters(clusters: impl IntoIterator<Item = ToolCluster>) -> Self {
+        Self {
+            enabled_clusters: clusters.into_iter().collect(),
+        }
+    }
+
+    /// 与另一个 FlowCapabilities 做交集（用于 agent 级配置裁剪）。
+    pub fn intersect(&self, other: &FlowCapabilities) -> Self {
+        Self {
+            enabled_clusters: self
+                .enabled_clusters
+                .intersection(&other.enabled_clusters)
+                .copied()
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

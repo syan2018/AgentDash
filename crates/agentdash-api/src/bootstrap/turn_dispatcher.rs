@@ -163,13 +163,14 @@ async fn dispatch_cloud_native(
         mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers),
         workspace_root,
         address_space: ctx.address_space.clone(),
-        flow_capabilities: Some(agentdash_spi::FlowCapabilities {
-            workflow_artifact: true,
-            companion_dispatch: false,
-            companion_complete: true,
-            resolve_hook_action: true,
-            canvas: true,
-        }),
+        flow_capabilities: Some(agentdash_spi::FlowCapabilities::from_clusters([
+            agentdash_spi::ToolCluster::Read,
+            agentdash_spi::ToolCluster::Write,
+            agentdash_spi::ToolCluster::Execute,
+            agentdash_spi::ToolCluster::Workflow,
+            agentdash_spi::ToolCluster::Collaboration,
+            agentdash_spi::ToolCluster::Canvas,
+        ])),
         system_context: ctx.built.system_context.clone(),
         identity: ctx.identity,
     };

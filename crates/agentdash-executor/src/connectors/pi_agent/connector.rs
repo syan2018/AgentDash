@@ -46,7 +46,6 @@ pub struct PiAgentConnector {
     bridge: Arc<dyn LlmBridge>,
     /// 已注册的 provider 列表（按注册顺序，首个命中的 provider 优先）
     providers: Vec<ProviderEntry>,
-    tools: Vec<DynAgentTool>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     system_prompt: String,
@@ -77,17 +76,12 @@ impl PiAgentConnector {
             workspace_root,
             bridge,
             providers: Vec::new(),
-            tools: Vec::new(),
             runtime_tool_provider: None,
             settings_repo: None,
             system_prompt: system_prompt.into(),
             model_id: model_id.into(),
             agents: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    pub fn add_tool(&mut self, tool: DynAgentTool) {
-        self.tools.push(tool);
     }
 
     pub fn set_runtime_tool_provider(&mut self, provider: Arc<dyn RuntimeToolProvider>) {
@@ -141,9 +135,7 @@ impl PiAgentConnector {
             system_prompt: self.system_prompt.clone(),
             ..AgentConfig::default()
         };
-        let mut agent = Agent::new(bridge, config);
-        agent.set_tools(self.tools.clone());
-        agent
+        Agent::new(bridge, config)
     }
 
     #[allow(dead_code)]
@@ -468,7 +460,7 @@ impl AgentConnector for PiAgentConnector {
                 Vec::new()
             }
         };
-        let mut runtime_tools = self.tools.clone();
+        let mut runtime_tools: Vec<DynAgentTool> = Vec::new();
         let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
             ConnectorError::InvalidConfig(
                 "PiAgentConnector 未配置 runtime tool provider".to_string(),

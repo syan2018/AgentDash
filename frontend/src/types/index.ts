@@ -54,6 +54,17 @@ export function isAuthMode(value: unknown): value is AuthMode {
   return value === "personal" || value === "enterprise";
 }
 
+export type ToolCluster = "read" | "write" | "execute" | "workflow" | "collaboration" | "canvas";
+
+export const TOOL_CLUSTER_OPTIONS: Array<{ value: ToolCluster; label: string; description: string }> = [
+  { value: "read", label: "只读访问", description: "文件读取、目录列表、搜索" },
+  { value: "write", label: "文件写入", description: "文件写入、补丁应用" },
+  { value: "execute", label: "命令执行", description: "Shell 命令执行" },
+  { value: "workflow", label: "工作流", description: "Workflow 产出汇报" },
+  { value: "collaboration", label: "协作", description: "Companion 派发、回传、Hook 审核" },
+  { value: "canvas", label: "Canvas", description: "Canvas 资产创建与展示" },
+];
+
 // ─── 登录 / 认证 ──────────────────────────────────────
 
 export interface LoginFieldDescriptor {

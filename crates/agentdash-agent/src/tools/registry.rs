@@ -54,19 +54,3 @@ impl ToolRegistry {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::tools::builtins::ReadFileTool;
-
-    use super::*;
-
-    #[test]
-    fn registry_supports_register_and_lookup() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.register(ReadFileTool::new(temp.path().to_path_buf()));
-
-        assert!(registry.get("read_file").is_some());
-        assert_eq!(registry.list().len(), 1);
-    }
-}

@@ -906,13 +906,7 @@ async fn build_story_owner_prompt_request(
         workspace,
         address_space,
         effective_mcp_servers,
-        agentdash_spi::FlowCapabilities {
-            workflow_artifact: true,
-            companion_dispatch: true,
-            companion_complete: true,
-            resolve_hook_action: true,
-            canvas: true,
-        },
+        agentdash_spi::FlowCapabilities::all(),
     );
 
     Ok(req)
@@ -1007,13 +1001,13 @@ async fn build_project_owner_prompt_request(
         workspace.as_ref(),
         address_space,
         effective_mcp_servers,
-        agentdash_spi::FlowCapabilities {
-            workflow_artifact: false,
-            companion_dispatch: false,
-            companion_complete: false,
-            resolve_hook_action: true,
-            canvas: true,
-        },
+        agentdash_spi::FlowCapabilities::from_clusters([
+            agentdash_spi::ToolCluster::Read,
+            agentdash_spi::ToolCluster::Write,
+            agentdash_spi::ToolCluster::Execute,
+            agentdash_spi::ToolCluster::Collaboration,
+            agentdash_spi::ToolCluster::Canvas,
+        ]),
     );
 
     Ok(req)

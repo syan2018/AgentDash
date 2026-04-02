@@ -35,6 +35,9 @@ pub struct AgentConfig {
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_policy: Option<String>,
+    /// Agent 级工具簇限制。None = 不限制（使用会话类型默认全量）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_clusters: Option<Vec<String>>,
 }
 
 /// 已注册的云端原生 Agent executor ID 列表。
@@ -51,6 +54,7 @@ impl AgentConfig {
             agent_id: None,
             thinking_level: None,
             permission_policy: None,
+            tool_clusters: None,
         }
     }
 

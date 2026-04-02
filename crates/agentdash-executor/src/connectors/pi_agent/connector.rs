@@ -35,7 +35,7 @@ use crate::hook_events::build_hook_trace_notification;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload,
+    ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload, SystemPromptMode,
 };
 
 // ─── PiAgentConnector ───────────────────────────────────────────
@@ -180,21 +180,46 @@ impl PiAgentConnector {
         Ok(default_bridge)
     }
 
+    /// 组装运行时 system prompt。
+    ///
+    /// 采用统一 Markdown section 格式，每段以 `## 标题` 标注来源，
+    /// 最终以 `\n\n` 拼接。顺序即优先级：人设 → 上下文 → 环境 → 工具 → 扩展。
     fn build_runtime_system_prompt(
         &self,
         context: &ExecutionContext,
         tool_names: &[String],
     ) -> String {
-        let mut sections = vec![self.system_prompt.clone()];
+        let mut sections: Vec<String> = Vec::new();
 
-        // 会话级 owner 上下文（project/story markdown 摘要）注入到 system prompt 头部
-        // 仅在第一个 section 之后立即插入，确保 Agent 能在每轮对话中感知完整上下文
+        // ── 1. Identity: 基础人设 ──
+        let agent_sp = context
+            .executor_config
+            .system_prompt
+            .as_deref()
+            .filter(|s| !s.trim().is_empty());
+        match (context.executor_config.system_prompt_mode, agent_sp) {
+            (Some(SystemPromptMode::Override), Some(sp)) => {
+                sections.push(format!("## Identity\n\n{sp}"));
+            }
+            (_, Some(sp)) => {
+                sections.push(format!(
+                    "## Identity\n\n{}\n\n{sp}",
+                    self.system_prompt
+                ));
+            }
+            _ => {
+                sections.push(format!("## Identity\n\n{}", self.system_prompt));
+            }
+        }
+
+        // ── 2. Project Context: 会话级 owner 上下文 ──
         if let Some(ref ctx) = context.system_context
             && !ctx.trim().is_empty()
         {
-            sections.push(ctx.clone());
+            sections.push(format!("## Project Context\n\n{ctx}"));
         }
 
+        // ── 3. Workspace: 地址空间 / 工作目录 ──
         if let Some(address_space) = &context.address_space {
             let mount_lines = address_space
                 .mounts
@@ -207,42 +232,45 @@ impl PiAgentConnector {
                 .map(|mount| mount.id.as_str())
                 .unwrap_or("main");
             sections.push(format!(
-                "当前会话可访问的 Address Space 挂载如下：\n{}\n默认 mount：{}",
-                mount_lines, default_mount
+                "## Workspace\n\n当前会话可访问的 Address Space 挂载如下：\n\n{mount_lines}\n\n默认 mount：`{default_mount}`"
             ));
         } else {
             let current_dir_display =
                 workspace_relative_display(&context.workspace_root, &context.working_directory);
             sections.push(format!(
-                "工作空间路径锚点：.\n工作空间绝对路径（仅供参考，不要直接写入工具参数）：{}\n当前工作目录（相对工作空间）：{}",
+                "## Workspace\n\n- 工作空间路径锚点：`.`\n- 工作空间绝对路径（仅供参考，不要直接写入工具参数）：`{}`\n- 当前工作目录（相对工作空间）：`{current_dir_display}`",
                 context.workspace_root.display(),
-                current_dir_display
             ));
         }
 
+        // ── 4. Tools: 可用工具及使用规范 ──
         if !tool_names.is_empty() {
+            let mut tool_section = String::from("## Tools\n\n");
             if context.address_space.is_some() {
-                sections.push(format!(
-                    "你当前可调用的统一访问工具有：{}。优先使用 mounts_list / fs_read / fs_list / fs_search / fs_write / fs_apply_patch / shell_exec，不要臆测文件内容。",
+                tool_section.push_str(&format!(
+                    "可调用的统一访问工具：{}。优先使用 mounts_list / fs_read / fs_list / fs_search / fs_write / fs_apply_patch / shell_exec，不要臆测文件内容。\n\n",
                     tool_names.join("、")
                 ));
-                sections.push(
-                    "调用这些工具时，path 必须使用 `mount_id://relative/path` 格式（如 `main://src/lib.rs`）。仅当会话只有一个 mount 时可省略前缀。不要把 backend_id 或绝对路径直接写进工具参数。执行 shell 时，`cwd` 也必须是相对 mount 根目录的路径；当前目录就传 `main://.`。".to_string(),
+                tool_section.push_str(
+                    "**路径规范**：path 必须使用 `mount_id://relative/path` 格式（如 `main://src/lib.rs`）。仅当会话只有一个 mount 时可省略前缀。不要把 backend_id 或绝对路径直接写进工具参数。执行 shell 时，`cwd` 也必须是相对 mount 根目录的路径；当前目录就传 `main://.`。\n\n",
                 );
-                sections.push(
-                    "`fs_apply_patch` 必须传 Codex apply_patch 文本：以 `*** Begin Patch` 开始、以 `*** End Patch` 结束；文件头只能用 `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`，需要重命名时在 `Update File` 后跟 `*** Move to: new/path`；每个 hunk 以 `@@` 开始，内部行以前缀空格 / `-` / `+` 表示上下文、删除、新增；所有路径都必须相对 mount 根目录。".to_string(),
+                tool_section.push_str(
+                    "**fs_apply_patch 格式**：必须传 Codex apply_patch 文本——以 `*** Begin Patch` 开始、以 `*** End Patch` 结束；文件头只能用 `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`，需要重命名时在 `Update File` 后跟 `*** Move to: new/path`；每个 hunk 以 `@@` 开始，内部行以前缀空格 / `-` / `+` 表示上下文、删除、新增；所有路径都必须相对 mount 根目录。",
                 );
             } else {
-                sections.push(format!(
-                    "你当前可调用的内置工具有：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。",
+                tool_section.push_str(&format!(
+                    "可调用的内置工具：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。\n\n",
                     tool_names.join("、")
                 ));
-                sections.push(
-                    format!("调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{}/...` 这类绝对路径直接写进工具参数。", context.workspace_root.display()),
-                );
+                tool_section.push_str(&format!(
+                    "**路径规范**：调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{}/...` 这类绝对路径直接写进工具参数。",
+                    context.workspace_root.display()
+                ));
             }
+            sections.push(tool_section);
         }
 
+        // ── 5. MCP Servers ──
         if !context.mcp_servers.is_empty() {
             let server_lines = context
                 .mcp_servers
@@ -251,15 +279,15 @@ impl PiAgentConnector {
                 .collect::<Vec<_>>()
                 .join("\n");
             sections.push(format!(
-                "以下 MCP Server 已注入当前会话，可在需要时使用：\n{}",
-                server_lines
+                "## MCP Servers\n\n以下 MCP Server 已注入当前会话，可在需要时使用：\n\n{server_lines}"
             ));
         }
 
+        // ── 6. Hooks ──
         if let Some(hook_session) = &context.hook_session {
-            let hook_sections = build_hook_runtime_sections(hook_session.as_ref());
-            if !hook_sections.is_empty() {
-                sections.extend(hook_sections);
+            let hook_parts = build_hook_runtime_sections(hook_session.as_ref());
+            if !hook_parts.is_empty() {
+                sections.push(format!("## Hooks\n\n{}", hook_parts.join("\n\n")));
             }
         }
 
@@ -2430,12 +2458,17 @@ mod tests {
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
-        assert!(prompt.contains("工作空间路径锚点：."));
-        assert!(prompt.contains("当前工作目录（相对工作空间）：crates/agentdash-agent"));
+        // section headers
+        assert!(prompt.contains("## Identity"));
+        assert!(prompt.contains("## Workspace"));
+        assert!(prompt.contains("## Tools"));
+        // workspace relative paths
+        assert!(prompt.contains("工作空间路径锚点"));
+        assert!(prompt.contains("`crates/agentdash-agent`"));
         assert!(prompt.contains("不要把 `/tmp/test-workspace/...` 这类绝对路径直接写进工具参数"));
         assert!(prompt.contains("cwd 设为 `.`"));
         assert!(!prompt.contains(
-            "当前工作目录（相对工作空间）：/tmp/test-workspace/crates/agentdash-agent"
+            "当前工作目录（相对工作空间）：`/tmp/test-workspace/crates/agentdash-agent`"
         ));
     }
 

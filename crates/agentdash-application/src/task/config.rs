@@ -3,7 +3,7 @@ use agentdash_domain::{
     task::Task,
 };
 
-use crate::runtime::{AgentConfig, ThinkingLevel};
+use crate::runtime::{AgentConfig, SystemPromptMode, ThinkingLevel};
 
 use super::execution::TaskExecutionError;
 
@@ -76,6 +76,25 @@ pub fn executor_config_from_preset(
         }
         if let Some(v) = obj.get("permission_policy").and_then(|v| v.as_str()) {
             config.permission_policy = normalize_option_string(Some(v.to_string()));
+        }
+        if let Some(arr) = obj.get("tool_clusters").and_then(|v| v.as_array()) {
+            let clusters: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if !clusters.is_empty() {
+                config.tool_clusters = Some(clusters);
+            }
+        }
+        if let Some(v) = obj.get("system_prompt").and_then(|v| v.as_str()) {
+            config.system_prompt = normalize_option_string(Some(v.to_string()));
+        }
+        if let Some(v) = obj.get("system_prompt_mode").and_then(|v| v.as_str()) {
+            if let Ok(mode) = serde_json::from_value::<SystemPromptMode>(
+                serde_json::Value::String(v.to_string()),
+            ) {
+                config.system_prompt_mode = Some(mode);
+            }
         }
     }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, ThinkingLevel, ToolCluster } from "../../types";
+import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
@@ -20,6 +20,8 @@ export interface PresetFormState {
   agent_id: string;
   thinking_level: ThinkingLevel | "";
   permission_policy: string;
+  system_prompt: string;
+  system_prompt_mode: SystemPromptMode | "";
   mcp_servers: McpServerDecl[];
   tool_clusters: ToolCluster[];
 }
@@ -38,6 +40,8 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     agent_id: String(cfg.agent_id ?? ""),
     thinking_level: isThinkingLevel(cfg.thinking_level) ? cfg.thinking_level : "",
     permission_policy: String(cfg.permission_policy ?? ""),
+    system_prompt: String(cfg.system_prompt ?? ""),
+    system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
     mcp_servers: rawMcps,
     tool_clusters: rawClusters,
   };
@@ -52,6 +56,8 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.agent_id.trim()) config.agent_id = form.agent_id.trim();
   if (form.thinking_level) config.thinking_level = form.thinking_level;
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
+  if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
+  if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
   if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
   if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
   return {
@@ -305,6 +311,98 @@ function McpServersEditor({
   );
 }
 
+// ─── Tool Capabilities ──────────────────────────────────
+
+function ToolCapabilitiesField({
+  clusters,
+  onChange,
+}: {
+  clusters: ToolCluster[];
+  onChange: (next: ToolCluster[]) => void;
+}) {
+  // empty = all enabled (no restriction)
+  const isAll = clusters.length === 0;
+  const has = (v: ToolCluster) => isAll || clusters.includes(v);
+
+  const toggle = (v: ToolCluster) => {
+    if (isAll) {
+      // entering custom mode: enable everything except the toggled one
+      onChange(TOOL_CLUSTER_OPTIONS.map((o) => o.value).filter((c) => c !== v));
+      return;
+    }
+    const next = clusters.includes(v)
+      ? clusters.filter((c) => c !== v)
+      : [...clusters, v];
+    // if all re-selected, collapse back to []
+    onChange(next.length >= TOOL_CLUSTER_OPTIONS.length ? [] : next);
+  };
+
+  const basicOpts = TOOL_CLUSTER_OPTIONS.filter((o) => o.group === "basic");
+  const extOpts = TOOL_CLUSTER_OPTIONS.filter((o) => o.group === "extended");
+
+  return (
+    <div className="space-y-3">
+      {/* ── basic: horizontal pill toggles ── */}
+      <div>
+        <label className="agentdash-form-label">基础能力</label>
+        <div className="flex flex-wrap gap-1.5">
+          {basicOpts.map((opt) => {
+            const on = has(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                className={`rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
+                  on
+                    ? "border-primary/30 bg-primary/8 text-primary"
+                    : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                }`}
+                title={opt.description}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── extended: vertical rows with toggle switches ── */}
+      <div>
+        <label className="agentdash-form-label">扩展能力</label>
+        <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-0.5">
+          {extOpts.map((opt) => {
+            const on = has(opt.value);
+            return (
+              <label
+                key={opt.value}
+                className={`flex cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-[7px] transition-all duration-160 ${
+                  on
+                    ? "bg-primary/6"
+                    : "opacity-45 hover:opacity-70"
+                }`}
+              >
+                <span className="relative inline-flex h-[18px] w-[32px] shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => toggle(opt.value)}
+                    className="peer sr-only"
+                  />
+                  <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-primary" />
+                  <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-background shadow-sm transition-transform duration-160 peer-checked:translate-x-[14px]" />
+                </span>
+                <span className="text-xs font-medium text-foreground">{opt.label}</span>
+                <span className="text-[10px] text-muted-foreground">{opt.description}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Preset Form ─────────────────────────────────────────
 
 export function PresetFormFields({
@@ -425,6 +523,48 @@ export function PresetFormFields({
           placeholder="这个 Agent 的职责和用途"
           className="agentdash-form-textarea"
         />
+      </div>
+
+      <div className="sm:col-span-2">
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <label className="agentdash-form-label">System Prompt</label>
+            <textarea
+              value={form.system_prompt}
+              onChange={(e) => patchForm({ system_prompt: e.target.value })}
+              rows={3}
+              placeholder="留空则仅使用全局 System Prompt"
+              className="agentdash-form-textarea"
+            />
+          </div>
+        </div>
+        {form.system_prompt.trim() && (
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">注入模式</span>
+            {(["append", "override"] as const).map((mode) => {
+              const active = (form.system_prompt_mode || "append") === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => patchForm({ system_prompt_mode: mode })}
+                  className={`rounded-[8px] border px-2.5 py-1 text-[11px] font-medium transition-all duration-160 ${
+                    active
+                      ? "border-primary/30 bg-primary/8 text-primary"
+                      : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                  }`}
+                >
+                  {mode === "append" ? "追加" : "覆盖"}
+                </button>
+              );
+            })}
+            <span className="text-[10px] text-muted-foreground/60">
+              {(form.system_prompt_mode || "append") === "append"
+                ? "在全局 prompt 之后追加"
+                : "完全替换全局 prompt"}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="sm:col-span-2">
@@ -571,29 +711,10 @@ export function PresetFormFields({
 
       <details className="sm:col-span-2">
         <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
-          工具权限 {form.tool_clusters.length > 0 ? `(已限制 ${form.tool_clusters.length} 簇)` : "(不限制)"}
+          工具能力 {form.tool_clusters.length > 0 ? `(已启用 ${form.tool_clusters.length}/${TOOL_CLUSTER_OPTIONS.length})` : "(全部启用)"}
         </summary>
-        <div className="mt-2 space-y-1.5">
-          <p className="text-[10px] text-muted-foreground/60">
-            不勾选任何项 = 不限制（使用会话类型默认全量工具）。勾选后仅注入选中的工具簇。
-          </p>
-          {TOOL_CLUSTER_OPTIONS.map((opt) => (
-            <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.tool_clusters.includes(opt.value)}
-                onChange={(e) => {
-                  const next = e.target.checked
-                    ? [...form.tool_clusters, opt.value]
-                    : form.tool_clusters.filter((c) => c !== opt.value);
-                  patchForm({ tool_clusters: next });
-                }}
-                className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/30"
-              />
-              <span className="text-xs text-foreground">{opt.label}</span>
-              <span className="text-[10px] text-muted-foreground/60">{opt.description}</span>
-            </label>
-          ))}
+        <div className="mt-3">
+          <ToolCapabilitiesField clusters={form.tool_clusters} onChange={(v) => patchForm({ tool_clusters: v })} />
         </div>
       </details>
 

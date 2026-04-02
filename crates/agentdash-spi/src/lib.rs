@@ -7,7 +7,7 @@ pub mod schema;
 pub mod tool;
 
 pub use agentdash_domain::common::{
-    AddressSpace, AgentConfig, Mount, MountCapability, ThinkingLevel,
+    AddressSpace, AgentConfig, Mount, MountCapability, SystemPromptMode, ThinkingLevel,
 };
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,

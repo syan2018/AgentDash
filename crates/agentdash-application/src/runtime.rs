@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use agentdash_domain::common::{
-    AddressSpace, AgentConfig, Mount, MountCapability, ThinkingLevel,
+    AddressSpace, AgentConfig, Mount, MountCapability, SystemPromptMode, ThinkingLevel,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

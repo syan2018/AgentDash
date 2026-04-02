@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+/// Agent 级 System Prompt 注入模式。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemPromptMode {
+    /// 在全局 system prompt 之后追加（默认）。
+    #[default]
+    Append,
+    /// 完全替换全局 system prompt。
+    Override,
+}
+
 /// 思考/推理级别 — 跨层通用值对象。
 ///
 /// 在 Domain 层定义，避免各层重复声明或依赖具体 Agent 运行时。
@@ -36,6 +47,12 @@ pub struct AgentConfig {
     /// Agent 级工具簇限制。None = 不限制（使用会话类型默认全量）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_clusters: Option<Vec<String>>,
+    /// Agent 级 system prompt（追加或覆盖全局 prompt）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    /// system_prompt 注入模式。None 时默认 Append。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt_mode: Option<SystemPromptMode>,
 }
 
 /// 已注册的云端原生 Agent executor ID 列表。
@@ -52,6 +69,8 @@ impl AgentConfig {
             thinking_level: None,
             permission_policy: None,
             tool_clusters: None,
+            system_prompt: None,
+            system_prompt_mode: None,
         }
     }
 

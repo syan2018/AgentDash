@@ -56,14 +56,30 @@ export function isAuthMode(value: unknown): value is AuthMode {
 
 export type ToolCluster = "read" | "write" | "execute" | "workflow" | "collaboration" | "canvas";
 
-export const TOOL_CLUSTER_OPTIONS: Array<{ value: ToolCluster; label: string; description: string }> = [
-  { value: "read", label: "只读访问", description: "文件读取、目录列表、搜索" },
-  { value: "write", label: "文件写入", description: "文件写入、补丁应用" },
-  { value: "execute", label: "命令执行", description: "Shell 命令执行" },
-  { value: "workflow", label: "工作流", description: "Workflow 产出汇报" },
-  { value: "collaboration", label: "协作", description: "Companion 派发、回传、Hook 审核" },
-  { value: "canvas", label: "Canvas", description: "Canvas 资产创建与展示" },
+export type ToolClusterGroup = "basic" | "extended";
+
+export interface ToolClusterOption {
+  value: ToolCluster;
+  label: string;
+  description: string;
+  group: ToolClusterGroup;
+}
+
+export const TOOL_CLUSTER_GROUPS: Array<{ key: ToolClusterGroup; label: string }> = [
+  { key: "basic", label: "基础能力" },
+  { key: "extended", label: "扩展能力" },
 ];
+
+export const TOOL_CLUSTER_OPTIONS: ToolClusterOption[] = [
+  { value: "read", label: "只读访问", description: "文件读取、目录列表、搜索", group: "basic" },
+  { value: "write", label: "文件写入", description: "文件写入、补丁应用", group: "basic" },
+  { value: "execute", label: "命令执行", description: "Shell 命令执行", group: "basic" },
+  { value: "workflow", label: "工作流", description: "Workflow 产出汇报", group: "extended" },
+  { value: "collaboration", label: "协作", description: "Companion 派发、回传、Hook 审核", group: "extended" },
+  { value: "canvas", label: "Canvas", description: "Canvas 资产创建与展示", group: "extended" },
+];
+
+export type SystemPromptMode = "append" | "override";
 
 // ─── 登录 / 认证 ──────────────────────────────────────
 

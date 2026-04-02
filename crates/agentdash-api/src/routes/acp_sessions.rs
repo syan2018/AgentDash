@@ -935,11 +935,24 @@ async fn build_project_owner_prompt_request(
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let workspace = resolve_project_workspace(state, project).await?;
 
-    let effective_executor_config = req
-        .user_input
-        .executor_config
-        .clone()
-        .unwrap_or_else(|| project_agent.executor_config.clone());
+    let effective_executor_config = match req.user_input.executor_config.clone() {
+        Some(mut user_ec) => {
+            // 前端传入的 executor_config 可能只包含 model 选择等字段，
+            // 需要从 preset 补全 agent 级配置（system_prompt, tool_clusters 等）
+            let preset_ec = &project_agent.executor_config;
+            if user_ec.system_prompt.is_none() {
+                user_ec.system_prompt = preset_ec.system_prompt.clone();
+            }
+            if user_ec.system_prompt_mode.is_none() {
+                user_ec.system_prompt_mode = preset_ec.system_prompt_mode;
+            }
+            if user_ec.tool_clusters.is_none() {
+                user_ec.tool_clusters = preset_ec.tool_clusters.clone();
+            }
+            user_ec
+        }
+        None => project_agent.executor_config.clone(),
+    };
     let effective_agent_type = Some(effective_executor_config.executor.as_str());
     let mut address_space = match req.address_space.clone() {
         Some(address_space) => Some(address_space),

@@ -1138,6 +1138,18 @@ fn executor_config_from_agent_config(agent_type: &str, config: &serde_json::Valu
             ec.tool_clusters = Some(clusters);
         }
     }
+    if let Some(v) = config.get("system_prompt").and_then(|v| v.as_str()) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            ec.system_prompt = Some(trimmed.to_string());
+        }
+    }
+    if let Some(v) = config
+        .get("system_prompt_mode")
+        .and_then(|v| serde_json::from_value::<agentdash_spi::SystemPromptMode>(v.clone()).ok())
+    {
+        ec.system_prompt_mode = Some(v);
+    }
     ec
 }
 

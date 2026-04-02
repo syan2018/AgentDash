@@ -12,11 +12,7 @@ type BridgeFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>;
 
 pub(crate) const CONTEXT_WINDOW_STANDARD: u64 = 200_000;
 pub(crate) const CONTEXT_WINDOW_LEGACY: u64 = 128_000;
-pub(crate) const CONTEXT_WINDOW_1M: u64 = 1_048_576;
-pub(crate) const MAX_TOKENS_STANDARD: u64 = 16_384;
-pub(crate) const MAX_TOKENS_LARGE_REASONING: u64 = 100_000;
-pub(crate) const MAX_TOKENS_GEMINI: u64 = 65_536;
-pub(crate) const MAX_TOKENS_LEGACY: u64 = 8_192;
+pub(crate) const CONTEXT_WINDOW_1M: u64 = 1_000_000;
 
 type ModelListFuture = BoxFuture<'static, Result<Vec<ModelMeta>, String>>;
 
@@ -26,7 +22,6 @@ pub(crate) struct ModelMeta {
     pub name: String,
     pub reasoning: bool,
     pub context_window: u64,
-    pub max_tokens: u64,
     pub blocked: bool,
 }
 
@@ -55,8 +50,6 @@ struct StoredModelMeta {
     reasoning: Option<bool>,
     #[serde(default)]
     context_window: Option<u64>,
-    #[serde(default)]
-    max_tokens: Option<u64>,
 }
 
 impl From<StoredModelMeta> for ModelMeta {
@@ -70,7 +63,6 @@ impl From<StoredModelMeta> for ModelMeta {
                 .unwrap_or_else(|| inferred.name.clone()),
             reasoning: value.reasoning.unwrap_or(inferred.reasoning),
             context_window: value.context_window.unwrap_or(inferred.context_window),
-            max_tokens: value.max_tokens.unwrap_or(inferred.max_tokens),
             blocked: false,
         }
     }
@@ -554,8 +546,6 @@ struct GeminiModel {
     display_name: String,
     #[serde(default)]
     input_token_limit: Option<u64>,
-    #[serde(default)]
-    output_token_limit: Option<u64>,
 }
 
 async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
@@ -592,7 +582,6 @@ async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
                     model.display_name
                 },
                 context_window: model.input_token_limit.unwrap_or(inferred.context_window),
-                max_tokens: model.output_token_limit.unwrap_or(inferred.max_tokens),
                 ..inferred
             }
         })
@@ -613,61 +602,38 @@ fn dedup_models(models: &mut Vec<ModelMeta>) {
 
 fn infer_model_meta(model_id: &str) -> ModelMeta {
     let id_lower = model_id.to_ascii_lowercase();
-    let reasoning = id_lower.contains("reasoning")
-        || id_lower.contains("thinking")
-        || id_lower.starts_with("o1")
-        || id_lower.starts_with("o3")
-        || id_lower.starts_with("o4")
-        || id_lower.contains("qwq")
-        || id_lower.contains("r1")
-        || id_lower.contains("reasoner");
+
+    // 现代模型普遍支持 extended thinking，只有明确已知的旧模型关闭
+    let reasoning = !is_known_non_reasoning(&id_lower);
 
     let context_window = infer_context_window(&id_lower);
-    let max_tokens = infer_max_tokens(&id_lower, reasoning);
 
     ModelMeta {
         id: model_id.to_string(),
         name: format_model_name(model_id),
         reasoning,
         context_window,
-        max_tokens,
         blocked: false,
     }
 }
 
+fn is_known_non_reasoning(model_id: &str) -> bool {
+    // GPT-3.5 / GPT-4 base (非 o 系列) 的早期版本
+    if model_id.contains("4o") {
+        return true;
+    }
+    false
+}
+
 fn infer_context_window(model_id: &str) -> u64 {
-    if model_id.contains("1m") || model_id.contains("1000000") || model_id.contains("1048576") {
+    if model_id.contains("gemini") || model_id.contains("opus") || model_id.contains("sonnet") || model_id.contains("5.4") {
         return CONTEXT_WINDOW_1M;
     }
-    if model_id.contains("200k") || model_id.contains("200000") {
-        return CONTEXT_WINDOW_STANDARD;
-    }
-    if model_id.contains("128k") || model_id.contains("128000") {
-        return CONTEXT_WINDOW_LEGACY;
-    }
-    if model_id.contains("gemini") {
-        return CONTEXT_WINDOW_1M;
-    }
-    if model_id.contains("claude") || model_id.contains("gpt-4") || model_id.starts_with('o') {
-        return CONTEXT_WINDOW_STANDARD;
-    }
-    if model_id.contains("deepseek") || model_id.contains("grok") {
+
+    if model_id.contains("deepseek") || model_id.contains("grok") || model_id.contains("4o") {
         return CONTEXT_WINDOW_LEGACY;
     }
     CONTEXT_WINDOW_STANDARD
-}
-
-fn infer_max_tokens(model_id: &str, reasoning: bool) -> u64 {
-    if model_id.contains("gemini") {
-        return MAX_TOKENS_GEMINI;
-    }
-    if reasoning && (model_id.starts_with('o') || model_id.contains("reasoner")) {
-        return MAX_TOKENS_LARGE_REASONING;
-    }
-    if model_id.contains("claude") || model_id.contains("deepseek") {
-        return MAX_TOKENS_LEGACY;
-    }
-    MAX_TOKENS_STANDARD
 }
 
 fn format_model_name(model_id: &str) -> String {

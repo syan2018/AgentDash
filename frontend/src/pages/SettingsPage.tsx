@@ -32,9 +32,8 @@ function parseModelConfigs(value: unknown): ModelConfig[] {
     return [{
       id,
       name: String(record.name ?? "").trim(),
-      context_window: Number(record.context_window ?? 128000) || 128000,
+      context_window: Number(record.context_window ?? 200000) || 200000,
       reasoning: record.reasoning === true,
-      max_tokens: typeof record.max_tokens === "number" ? record.max_tokens : undefined,
     }];
   });
 }
@@ -160,7 +159,6 @@ interface ModelConfig {
   name: string;
   context_window: number;
   reasoning: boolean;
-  max_tokens?: number;
 }
 
 function LlmProvidersSection({
@@ -478,14 +476,14 @@ function LlmProviderForm({
   const showDefaultModel = true; // all protocols support default model
 
   const defaultModelOptions = useMemo(() => {
-    const options =
-      models.length > 0
-        ? models
-          .filter((c) => c.id.trim().length > 0)
-          .map((c) => ({ id: c.id, name: c.name.trim() || c.id }))
-        : discoveredModels
-          .filter((c) => c.id.trim().length > 0 && c.blocked !== true)
-          .map((c) => ({ id: c.id, name: c.name.trim() || c.id }));
+    const fromDiscovered = discoveredModels
+      .filter((c) => c.id.trim().length > 0 && c.blocked !== true)
+      .map((c) => ({ id: c.id, name: c.name.trim() || c.id }));
+    const fromCustom = models
+      .filter((c) => c.id.trim().length > 0)
+      .map((c) => ({ id: c.id, name: c.name.trim() || c.id }));
+
+    const options = [...fromDiscovered, ...fromCustom];
 
     if (defaultModel.trim().length > 0 && !options.some((c) => c.id === defaultModel)) {
       options.unshift({ id: defaultModel, name: `${defaultModel}（当前值）` });
@@ -523,7 +521,7 @@ function LlmProviderForm({
   };
 
   const handleAddModel = (initial?: ModelConfig) => {
-    const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 128000, reasoning: false };
+    const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true };
     setModels([...models, newModel]);
     setModelsTouched(true);
   };
@@ -670,7 +668,6 @@ function buildModelTooltip(model: ModelInfo): string {
   const lines = [model.id];
   if (model.name && model.name !== model.id) lines.push(`名称: ${model.name}`);
   lines.push(`上下文窗口: ${(model.context_window / 1000).toFixed(0)}k tokens`);
-  lines.push(`最大输出: ${(model.max_tokens / 1000).toFixed(0)}k tokens`);
   if (model.reasoning) lines.push("支持推理 (extended thinking)");
   return lines.join("\n");
 }
@@ -877,13 +874,16 @@ function CustomModelEditRow({
         placeholder="显示名称"
         onChange={(e) => onUpdate("name", e.target.value)}
       />
-      <input
-        type="number"
-        className={`${inputCls} !w-24`}
-        value={model.context_window}
-        placeholder="Context"
-        onChange={(e) => onUpdate("context_window", parseInt(e.target.value) || 0)}
-      />
+      <div className="flex items-center gap-1">
+        <input
+          type="number"
+          className={`${inputCls} !w-20`}
+          value={Math.round(model.context_window / 1000)}
+          placeholder="200"
+          onChange={(e) => onUpdate("context_window", (parseInt(e.target.value) || 0) * 1000)}
+        />
+        <span className="text-xs text-muted-foreground">k</span>
+      </div>
       <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
         <input
           type="checkbox"
@@ -923,8 +923,8 @@ function NewCustomModelForm({
 }) {
   const [id, setId] = useState("");
   const [name, setName] = useState("");
-  const [contextWindow, setContextWindow] = useState(128000);
-  const [reasoning, setReasoning] = useState(false);
+  const [contextWindowK, setContextWindowK] = useState(200);
+  const [reasoning, setReasoning] = useState(true);
 
   const handleSubmit = () => {
     const trimmedId = id.trim();
@@ -932,7 +932,7 @@ function NewCustomModelForm({
     onAdd({
       id: trimmedId,
       name: name.trim(),
-      context_window: contextWindow,
+      context_window: contextWindowK * 1000,
       reasoning,
     });
   };
@@ -955,13 +955,16 @@ function NewCustomModelForm({
           placeholder="显示名称"
           onChange={(e) => setName(e.target.value)}
         />
-        <input
-          type="number"
-          className={`${inputCls} !w-24`}
-          value={contextWindow}
-          placeholder="Context"
-          onChange={(e) => setContextWindow(parseInt(e.target.value) || 128000)}
-        />
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            className={`${inputCls} !w-20`}
+            value={contextWindowK}
+            placeholder="200"
+            onChange={(e) => setContextWindowK(parseInt(e.target.value) || 200)}
+          />
+          <span className="text-xs text-muted-foreground">k</span>
+        </div>
         <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
           <input
             type="checkbox"

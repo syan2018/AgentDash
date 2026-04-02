@@ -43,7 +43,7 @@ use agentdash_spi::{
 pub struct PiAgentConnector {
     #[allow(dead_code)]
     workspace_root: PathBuf,
-    /// 默认 bridge（向后兼容，无 provider 注册或 model_id 未匹配时使用）
+    /// 默认 bridge（向后兼容，无 provider 注册时使用）
     bridge: Arc<dyn LlmBridge>,
     /// 已注册的 provider 列表（按注册顺序，首个命中的 provider 优先）
     providers: Vec<ProviderEntry>,
@@ -51,7 +51,6 @@ pub struct PiAgentConnector {
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     llm_provider_repo: Option<Arc<dyn LlmProviderRepository>>,
     system_prompt: String,
-    model_id: String,
     agents: Arc<Mutex<HashMap<String, Agent>>>,
 }
 
@@ -72,7 +71,6 @@ impl PiAgentConnector {
         workspace_root: PathBuf,
         bridge: Arc<dyn LlmBridge>,
         system_prompt: impl Into<String>,
-        model_id: impl Into<String>,
     ) -> Self {
         Self {
             workspace_root,
@@ -82,7 +80,6 @@ impl PiAgentConnector {
             settings_repo: None,
             llm_provider_repo: None,
             system_prompt: system_prompt.into(),
-            model_id: model_id.into(),
             agents: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -371,7 +368,6 @@ impl AgentConnector for PiAgentConnector {
                     "provider_id": provider.provider_id,
                     "reasoning": model.reasoning,
                     "context_window": model.context_window,
-                    "max_tokens": model.max_tokens,
                     "blocked": model.blocked,
                 }));
             }
@@ -394,7 +390,6 @@ impl AgentConnector for PiAgentConnector {
                 "provider_id": "default",
                 "reasoning": false,
                 "context_window": CONTEXT_WINDOW_STANDARD,
-                "max_tokens": 16_384u64,
                 "blocked": false,
             }));
         }
@@ -1545,7 +1540,6 @@ pub async fn build_pi_agent_connector(
         workspace_root.to_path_buf(),
         global_default_bridge,
         system_prompt,
-        global_default_model.clone(),
     );
 
     // 注册所有 provider（含第一个 provider）
@@ -2419,7 +2413,6 @@ mod tests {
             PathBuf::from("/tmp/test-workspace"),
             Arc::new(NoopBridge),
             "系统提示",
-            "gpt-5.4",
         );
         let context = ExecutionContext {
             turn_id: "turn-1".to_string(),

@@ -63,8 +63,6 @@ export interface ModelInfo {
   reasoning: boolean;
   /** 上下文窗口大小（tokens） */
   context_window: number;
-  /** 最大输出 tokens */
-  max_tokens: number;
   /** 是否被当前 provider 设置为屏蔽 */
   blocked?: boolean;
 }

@@ -290,9 +290,6 @@ export function ExecutorSelector({
           <span className="rounded-full bg-secondary px-2 py-0.5">
             context: {Math.round(selectedModel.context_window / 1000)}k
           </span>
-          <span className="rounded-full bg-secondary px-2 py-0.5">
-            max: {Math.round(selectedModel.max_tokens / 1000)}k
-          </span>
           <span
             className={`rounded-full px-2 py-0.5 ${
               selectedModel.reasoning

@@ -1,5 +1,1 @@
-pub mod companion;
-pub mod hook_action;
-
-pub use companion::{CompanionCompleteTool, CompanionDispatchTool};
-pub use hook_action::ResolveHookActionTool;
+// companion 工具和 payload_types 已迁移到 crate::companion 模块

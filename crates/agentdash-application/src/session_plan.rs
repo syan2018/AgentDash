@@ -269,38 +269,35 @@ pub fn summarize_tool_visibility_with_context(
 
 /// 根据 session owner 类型返回应注入的流程工具名。
 /// - `report_workflow_artifact`：所有 task/story session 可用
-/// - `companion_dispatch` / `companion_complete`：仅 story owner session 可用
-/// - `resolve_hook_action`：所有有 hook runtime 的 session 可用（暂所有 resolved session）
+/// - `companion_request` / `companion_respond`：统一 companion 信道工具
 fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
     let mut tools = Vec::new();
     match owner_type {
         Some(SessionOwnerType::Task) => {
             tools.push("report_workflow_artifact".to_string());
-            tools.push("resolve_hook_action".to_string());
+            tools.push("companion_respond".to_string());
             tools.push("create_canvas".to_string());
             tools.push("inject_canvas_data".to_string());
             tools.push("present_canvas".to_string());
         }
         Some(SessionOwnerType::Story) => {
             tools.push("report_workflow_artifact".to_string());
-            tools.push("companion_dispatch".to_string());
-            tools.push("companion_complete".to_string());
-            tools.push("resolve_hook_action".to_string());
+            tools.push("companion_request".to_string());
+            tools.push("companion_respond".to_string());
             tools.push("create_canvas".to_string());
             tools.push("inject_canvas_data".to_string());
             tools.push("present_canvas".to_string());
         }
         Some(SessionOwnerType::Project) => {
-            tools.push("resolve_hook_action".to_string());
+            tools.push("companion_respond".to_string());
             tools.push("create_canvas".to_string());
             tools.push("inject_canvas_data".to_string());
             tools.push("present_canvas".to_string());
         }
         None => {
             tools.push("report_workflow_artifact".to_string());
-            tools.push("companion_dispatch".to_string());
-            tools.push("companion_complete".to_string());
-            tools.push("resolve_hook_action".to_string());
+            tools.push("companion_request".to_string());
+            tools.push("companion_respond".to_string());
             tools.push("create_canvas".to_string());
             tools.push("inject_canvas_data".to_string());
             tools.push("present_canvas".to_string());

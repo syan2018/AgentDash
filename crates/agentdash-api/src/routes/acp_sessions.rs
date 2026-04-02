@@ -1134,6 +1134,38 @@ pub async fn reject_tool_call(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CompanionRespondRequest {
+    pub payload: serde_json::Value,
+}
+
+pub async fn respond_companion_request(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((session_id, request_id)): Path<(String, String)>,
+    Json(req): Json<CompanionRespondRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    state
+        .services
+        .session_hub
+        .respond_companion_request(&session_id, &request_id, req.payload)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "responded": true,
+        "sessionId": session_id,
+        "requestId": request_id,
+    })))
+}
+
 /// ACP 会话流（Streaming HTTP / SSE）
 pub async fn acp_session_stream_sse(
     State(state): State<Arc<AppState>>,

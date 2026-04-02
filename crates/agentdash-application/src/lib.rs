@@ -3,6 +3,7 @@ pub mod auth;
 pub mod backend_transport;
 pub mod bootstrap_plan;
 pub mod canvas;
+pub mod companion;
 pub mod context;
 pub mod hooks;
 pub mod project;

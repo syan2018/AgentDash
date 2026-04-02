@@ -20,8 +20,7 @@ use crate::address_space::tools::fs::{
     SharedRuntimeAddressSpace, ShellExecTool,
 };
 use crate::canvas::{CreateCanvasTool, InjectCanvasDataTool, PresentCanvasTool};
-use crate::task::tools::companion::{CompanionCompleteTool, CompanionDispatchTool};
-use crate::task::tools::hook_action::ResolveHookActionTool;
+use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::workflow::tools::artifact_report::WorkflowArtifactReportTool;
 use uuid::Uuid;
 
@@ -172,16 +171,12 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         // Collaboration 簇：Companion 协作 + Hook action 解析
         if clusters.contains(&ToolCluster::Collaboration) {
-            tools.push(Arc::new(CompanionDispatchTool::new(
+            tools.push(Arc::new(CompanionRequestTool::new(
                 self.session_binding_repo.clone(),
                 self.session_hub_handle.clone(),
                 context,
             )));
-            tools.push(Arc::new(CompanionCompleteTool::new(
-                self.session_hub_handle.clone(),
-                context,
-            )));
-            tools.push(Arc::new(ResolveHookActionTool::new(
+            tools.push(Arc::new(CompanionRespondTool::new(
                 self.session_hub_handle.clone(),
                 context,
             )));

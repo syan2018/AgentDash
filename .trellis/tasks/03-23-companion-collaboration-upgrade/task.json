@@ -1,8 +1,8 @@
 {
   "id": "companion-collaboration-upgrade",
   "name": "companion-collaboration-upgrade",
-  "title": "Companion 协作模型剩余升级项",
-  "description": "Project Agent 开放 companion 能力已落地，这条任务改为追踪 companion 的剩余升级项：同步等待、显式 await、以及独立的会话记忆继承模型。",
+  "title": "统一 Companion 信道：双向协作模型",
+  "description": "把 companion 从单向 dispatch→complete 升级为双向协作信道。统一为 companion_request / companion_respond 两个工具，覆盖 agent↔agent 和 agent↔人的所有交互方向，复用 hook 通道和 tool 级阻塞模型。",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -37,5 +37,5 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": "已从原始大任务中剔除“Project Agent 开放 companion”这一已完成部分，保留 wait_for_completion、await_companion 与记忆继承等尚未落地的能力。"
+  “notes”: “从原始的剩余升级项重新设计为统一双向 companion 信道方案。核心决策：两个工具（companion_request/companion_respond）、tool 级阻塞（方案 B）、人的响应走 REST API endpoint。”
 }

@@ -89,7 +89,7 @@ pub enum ToolCluster {
     Execute,
     /// Workflow 产出汇报：report_workflow_artifact
     Workflow,
-    /// 协作与交互：companion_dispatch, companion_complete, resolve_hook_action
+    /// 协作与交互：companion_request, companion_respond
     Collaboration,
     /// Canvas 资产：create_canvas, inject_canvas_data, present_canvas
     Canvas,

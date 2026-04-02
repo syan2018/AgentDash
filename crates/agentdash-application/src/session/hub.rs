@@ -498,6 +498,56 @@ impl SessionHub {
             .reject_tool_call(session_id, tool_call_id, reason)
             .await
     }
+
+    /// 人通过 API 回应 companion 请求：resolve session 中的 pending action
+    pub async fn respond_companion_request(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), ConnectorError> {
+        let hook_session = self
+            .ensure_hook_session_runtime(session_id, None)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "session `{session_id}` 没有可用的 hook runtime"
+                ))
+            })?;
+
+        let resolution_kind = match payload
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("approved")
+        {
+            "rejected" | "dismissed" | "needs_revision" => {
+                agentdash_spi::HookPendingActionResolutionKind::Dismissed
+            }
+            _ => agentdash_spi::HookPendingActionResolutionKind::Adopted,
+        };
+        let note = payload
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .or_else(|| payload.get("note").and_then(|v| v.as_str()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let action = hook_session
+            .resolve_pending_action(request_id, resolution_kind, note, None)
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "session `{session_id}` 中不存在 request_id=`{request_id}` 的 pending action"
+                ))
+            })?;
+
+        use crate::companion::build_hook_action_resolved_notification;
+        let notification =
+            build_hook_action_resolved_notification(session_id, "human-respond", &action);
+        let _ = self.inject_notification(session_id, notification).await;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

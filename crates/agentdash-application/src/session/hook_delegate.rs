@@ -916,7 +916,7 @@ mod tests {
             other => panic!("期望 User 消息，实际为 {other:?}"),
         };
 
-        assert!(text.contains("resolve_hook_action"));
+        assert!(text.contains("companion_respond"));
         assert!(text.contains("follow_up_required"));
         assert!(text.contains("status=pending"));
     }

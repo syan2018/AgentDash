@@ -350,6 +350,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(acp_sessions::reject_tool_call),
         )
         .route(
+            "/sessions/{id}/companion-requests/{request_id}/respond",
+            post(acp_sessions::respond_companion_request),
+        )
+        .route(
             "/acp/sessions/{id}/stream",
             get(acp_sessions::acp_session_stream_sse),
         )

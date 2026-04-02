@@ -7,7 +7,7 @@
 // ── StopDecision::Continue reason (consumed by tracing / tests) ─────────
 
 pub(super) const REASON_BLOCKING_REVIEW_UNRESOLVED: &str =
-    "unresolved blocking_review actions require resolve_hook_action before stop";
+    "unresolved blocking_review actions require companion_respond before stop";
 
 pub(super) const REASON_PENDING_COMPANION_CONSUMED: &str =
     "pending companion/hook messages consumed, continue loop";
@@ -66,14 +66,14 @@ pub(super) fn pending_action_instruction(action_type: &str) -> &'static str {
         "blocking_review" => {
             "\
             当前事项是阻塞式 review。不要复述前文；\
-            直接处理剩余动作，并在完成后调用 `resolve_hook_action` 明确结案。"
+            直接处理剩余动作，并在完成后调用 `companion_respond` 明确结案。"
         }
         "follow_up_required" => {
             "\
             当前事项要求继续跟进。不要停在总结；\
-            请直接落实后续动作，并在完成后调用 `resolve_hook_action` 明确结案。"
+            请直接落实后续动作，并在完成后调用 `companion_respond` 明确结案。"
         }
-        _ => "请直接处理这项 Hook 待办，并在完成后调用 `resolve_hook_action` 明确结案。",
+        _ => "请直接处理这项 Hook 待办，并在完成后调用 `companion_respond` 明确结案。",
     }
 }
 

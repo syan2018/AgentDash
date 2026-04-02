@@ -619,15 +619,15 @@ impl CompanionRequestTool {
         })
     }
 
-    /// target=human 的执行逻辑：在当前 session 创建面向用户的 pending action
+    /// target=human：只发通知事件到前端，不碰 hook 通道
+    /// wait=true → agent 自然结束，人回应后 auto-resume
+    /// wait=false → agent 继续，人回应作为后续事件注入
     async fn execute_human_request(
         &self,
         wait: bool,
         payload: &serde_json::Value,
         _cancel: CancellationToken,
     ) -> Result<AgentToolResult, AgentToolError> {
-
-        // prompt 或 message 至少有一个
         let prompt = payload
             .get("prompt")
             .and_then(|v| v.as_str())
@@ -642,30 +642,15 @@ impl CompanionRequestTool {
 
         let current_session_id = self.current_session_id.clone().ok_or_else(|| {
             AgentToolError::ExecutionFailed(
-                "当前 session 没有可识别的上下文，无法向用户提审".to_string(),
-            )
-        })?;
-        let hook_session = self.hook_session.as_ref().ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前缺少 hook runtime，无法创建面向用户的请求".to_string(),
+                "当前 session 没有可识别的上下文，无法向用户发起请求".to_string(),
             )
         })?;
 
         let request_id = format!("human-{}", Uuid::new_v4().simple());
-
-        // action_type 由 payload type 决定，工具不硬编码 blocking_review
-        // blocking 行为由 workflow 规则产出，不由工具注入
         let payload_type = payload
             .get("type")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let action_type = if payload_type == "notification" {
-            "suggestion"
-        } else {
-            "follow_up_required"
-        };
-
-        // 构造 options 说明（如果有）
         let options: Vec<String> = payload
             .get("options")
             .and_then(|v| v.as_array())
@@ -675,65 +660,14 @@ impl CompanionRequestTool {
                     .collect()
             })
             .unwrap_or_default();
-        let options_hint = if options.is_empty() {
-            String::new()
-        } else {
-            format!("\n可选项: {}", options.join(" / "))
-        };
 
-        let action = HookPendingAction {
-            id: request_id.clone(),
-            created_at_ms: chrono::Utc::now().timestamp_millis(),
-            title: format!(
-                "Agent 请求用户{}",
-                if payload_type == "approval" {
-                    "审批"
-                } else if payload_type == "notification" {
-                    "确认通知"
-                } else {
-                    "回应"
-                }
-            ),
-            summary: format!("{prompt}{options_hint}"),
-            action_type: action_type.to_string(),
-            turn_id: Some(self.current_turn_id.clone()),
-            source_trigger: HookTrigger::AfterTurn,
-            status: agentdash_spi::HookPendingActionStatus::Pending,
-            last_injected_at_ms: None,
-            resolved_at_ms: None,
-            resolution_kind: None,
-            resolution_note: None,
-            resolution_turn_id: None,
-            injections: vec![agentdash_spi::HookInjection {
-                slot: "companion".to_string(),
-                content: {
-                    let registry = super::payload_types::PayloadTypeRegistry::with_builtins();
-                    let response_hint = registry
-                        .response_hint(payload_type)
-                        .map(|h| format!("\n{h}"))
-                        .unwrap_or_default();
-                    if wait {
-                        format!(
-                            "已向用户发起请求，等待用户通过 companion_respond(request_id=\"{request_id}\") 回应。在收到回应前不要结束。{options_hint}{response_hint}"
-                        )
-                    } else {
-                        format!(
-                            "已向用户发送通知: {prompt}"
-                        )
-                    }
-                },
-                source: format!("companion_request:human:{request_id}"),
-            }],
-        };
-        hook_session.enqueue_pending_action(action);
-
-        // 通知当前 session 事件流（前端可据此渲染审批卡片）
+        // 只发通知事件到前端，不创建 pending action，不碰 hook 通道
         if let Some(session_hub) = self.session_hub_handle.get().await {
             let notification = build_companion_event_notification(
                 &current_session_id,
                 &self.current_turn_id,
                 "companion_human_request",
-                format!("Agent 请求用户回应: {prompt}"),
+                prompt.to_string(),
                 serde_json::json!({
                     "request_id": request_id,
                     "prompt": prompt,
@@ -747,20 +681,33 @@ impl CompanionRequestTool {
                 .await;
         }
 
-        Ok(AgentToolResult {
-            content: vec![ContentPart::text(format!(
-                "已向用户发起请求。\n- request_id: {}\n- wait: {}\n- 用户可通过 API 或 UI 调用 companion_respond 回应。",
-                request_id, wait
-            ))],
-            is_error: false,
-            details: Some(serde_json::json!({
-                "request_id": request_id,
-                "wait": wait,
-                "action_type": action_type,
-                "prompt": prompt,
-                "options": options,
-            })),
-        })
+        if wait {
+            Ok(AgentToolResult {
+                content: vec![ContentPart::text(format!(
+                    "已向用户发起请求，session 将暂停等待用户回应。\n- request_id: {request_id}"
+                ))],
+                is_error: false,
+                details: Some(serde_json::json!({
+                    "request_id": request_id,
+                    "wait": true,
+                    "prompt": prompt,
+                    "options": options,
+                })),
+            })
+        } else {
+            Ok(AgentToolResult {
+                content: vec![ContentPart::text(format!(
+                    "已向用户发送请求。\n- request_id: {request_id}\n- 用户回应后会作为事件注入当前 session。"
+                ))],
+                is_error: false,
+                details: Some(serde_json::json!({
+                    "request_id": request_id,
+                    "wait": false,
+                    "prompt": prompt,
+                    "options": options,
+                })),
+            })
+        }
     }
 
     async fn resolve_or_create_companion_binding(

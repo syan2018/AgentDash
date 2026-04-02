@@ -499,52 +499,35 @@ impl SessionHub {
             .await
     }
 
-    /// 人通过 API 回应 companion 请求：resolve session 中的 pending action
+    /// 人通过 API 回应 companion 请求：将回应作为新 prompt 注入 session（auto-resume）
     pub async fn respond_companion_request(
         &self,
         session_id: &str,
         request_id: &str,
         payload: serde_json::Value,
     ) -> Result<(), ConnectorError> {
-        let hook_session = self
-            .ensure_hook_session_runtime(session_id, None)
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "session `{session_id}` 没有可用的 hook runtime"
-                ))
-            })?;
-
-        let resolution_kind = match payload
+        let summary = payload
+            .get("summary")
+            .or_else(|| payload.get("note"))
+            .or_else(|| payload.get("choice"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let status = payload
             .get("status")
             .and_then(|v| v.as_str())
-            .unwrap_or("approved")
-        {
-            "rejected" | "dismissed" | "needs_revision" => {
-                agentdash_spi::HookPendingActionResolutionKind::Dismissed
-            }
-            _ => agentdash_spi::HookPendingActionResolutionKind::Adopted,
-        };
-        let note = payload
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .or_else(|| payload.get("note").and_then(|v| v.as_str()))
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+            .unwrap_or("responded");
 
-        let action = hook_session
-            .resolve_pending_action(request_id, resolution_kind, note, None)
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "session `{session_id}` 中不存在 request_id=`{request_id}` 的 pending action"
-                ))
-            })?;
+        // 构造用户回应文本，作为新 prompt 注入 session
+        let response_text = format!(
+            "[用户回应 companion request {request_id}]\nstatus: {status}\n{summary}"
+        );
 
-        use crate::companion::build_hook_action_resolved_notification;
-        let notification =
-            build_hook_action_resolved_notification(session_id, "human-respond", &action);
-        let _ = self.inject_notification(session_id, notification).await;
+        let resume_req = PromptSessionRequest::from_user_input(
+            UserPromptInput::from_text(&response_text),
+        );
+        self.start_prompt(session_id, resume_req)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
 
         Ok(())
     }

@@ -168,7 +168,7 @@ impl CompanionRequestTool {
     async fn execute_sub_request(
         &self,
         _target: CompanionRequestTarget,
-        wait_for_response: bool,
+        _wait: bool,
         payload: &serde_json::Value,
         _tool_call_id: &str,
         _cancel: CancellationToken,
@@ -406,39 +406,8 @@ impl CompanionRequestTool {
         )
         .await;
 
-        // wait=true: 在当前 session 创建 follow_up_required pending action（可观测、可注入）
-        // 是否阻塞 before_stop 由 workflow 规则决定，工具不硬编码 stop gate
-        if wait_for_response {
-            if let Some(hook_session) = &self.hook_session {
-                let wait_action = HookPendingAction {
-                    id: dispatch_plan.dispatch_id.clone(),
-                    created_at_ms: chrono::Utc::now().timestamp_millis(),
-                    title: format!("等待 Companion `{companion_label}` 回应"),
-                    summary: format!(
-                        "已派发到 session {}，等待 companion_respond 结案",
-                        target_binding.session_id
-                    ),
-                    action_type: "follow_up_required".to_string(),
-                    turn_id: Some(self.current_turn_id.clone()),
-                    source_trigger: HookTrigger::AfterSubagentDispatch,
-                    status: agentdash_spi::HookPendingActionStatus::Pending,
-                    last_injected_at_ms: None,
-                    resolved_at_ms: None,
-                    resolution_kind: None,
-                    resolution_note: None,
-                    resolution_turn_id: None,
-                    injections: vec![agentdash_spi::HookInjection {
-                        slot: "companion".to_string(),
-                        content: format!(
-                            "等待 companion `{companion_label}` 完成任务并调用 companion_respond(request_id=\"{}\") 回传结果。",
-                            dispatch_plan.dispatch_id
-                        ),
-                        source: format!("companion_request:wait:{}", dispatch_plan.dispatch_id),
-                    }],
-                };
-                hook_session.enqueue_pending_action(wait_action);
-            }
-        }
+        // wait 语义通过 details 传递，是否追加 workflow 级别的 follow_up 由 hook 规则决定
+        // 工具不直接创建 pending action
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
@@ -509,35 +478,23 @@ impl CompanionRequestTool {
             )
         })?;
 
-        // 生成 request_id
         let request_id = format!("review-{}", Uuid::new_v4().simple());
 
-        // 在父 session 的 hook runtime 中创建 pending action
-        // 统一使用 follow_up_required，是否 blocking 由 workflow 规则决定
-        let action_type = "follow_up_required";
-        let action = HookPendingAction {
-            id: request_id.clone(),
-            created_at_ms: chrono::Utc::now().timestamp_millis(),
-            title: format!(
-                "Companion `{}` 向上提审",
-                companion_context.companion_label
-            ),
-            summary: prompt.to_string(),
-            action_type: action_type.to_string(),
-            turn_id: Some(companion_context.parent_turn_id.clone()),
-            source_trigger: HookTrigger::SubagentResult,
-            status: agentdash_spi::HookPendingActionStatus::Pending,
-            last_injected_at_ms: None,
-            resolved_at_ms: None,
-            resolution_kind: None,
-            resolution_note: None,
-            resolution_turn_id: None,
-            injections: vec![agentdash_spi::HookInjection {
-                slot: "companion".to_string(),
-                content: prompt.to_string(),
-                source: format!("companion_request:parent:{}", companion_context.companion_label),
-            }],
-        };
+        // 走 SubagentResult hook trigger 统一路径，由 hook 规则决定是否创建 pending action
+        // 与 companion_respond → try_complete_to_parent 的回流路径对称
+        let review_payload = serde_json::json!({
+            "dispatch_id": companion_context.dispatch_id,
+            "companion_label": companion_context.companion_label,
+            "companion_session_id": current_session_id,
+            "parent_session_id": companion_context.parent_session_id,
+            "parent_turn_id": companion_context.parent_turn_id,
+            "request_id": request_id,
+            "request_type": "review",
+            "adoption_mode": "follow_up_required",
+            "status": "pending",
+            "summary": prompt,
+            "wait": wait,
+        });
 
         if let Some(parent_hook_session) = session_hub
             .ensure_hook_session_runtime(
@@ -547,73 +504,59 @@ impl CompanionRequestTool {
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
         {
-            parent_hook_session.enqueue_pending_action(action);
+            let resolution = evaluate_subagent_hook(
+                parent_hook_session.as_ref(),
+                HookTrigger::SubagentResult,
+                Some(companion_context.parent_turn_id.clone()),
+                &companion_context.companion_label,
+                Some(review_payload.clone()),
+            )
+            .await
+            .map_err(AgentToolError::ExecutionFailed)?;
+            if let Some(action) = build_subagent_pending_action(
+                &companion_context.parent_turn_id,
+                &companion_context.companion_label,
+                &review_payload,
+                &resolution,
+            ) {
+                parent_hook_session.enqueue_pending_action(action);
+            }
+            record_subagent_trace(
+                parent_hook_session.as_ref(),
+                Some(&session_hub),
+                Some(companion_context.parent_turn_id.as_str()),
+                HookTrigger::SubagentResult,
+                "review_request",
+                &companion_context.companion_label,
+                &resolution,
+            )
+            .await;
         }
 
-        // 通知父 session
+        // 通知父 session 事件流
         let notification = build_companion_event_notification(
             &companion_context.parent_session_id,
             &companion_context.parent_turn_id,
             "companion_review_request",
             format!(
-                "Companion `{}` 请求向上审阅: {}",
-                companion_context.companion_label,
-                prompt
+                "Companion `{}` 请求审阅: {}",
+                companion_context.companion_label, prompt
             ),
-            serde_json::json!({
-                "request_id": request_id,
-                "companion_session_id": current_session_id,
-                "companion_label": companion_context.companion_label,
-                "prompt": prompt,
-                "wait": wait,
-            }),
+            review_payload,
         );
         let _ = session_hub
             .inject_notification(&companion_context.parent_session_id, notification)
             .await;
 
-        // wait=true: 在当前 session 创建 follow_up_required pending action
-        // 是否阻塞 before_stop 由 workflow 规则决定，工具不硬编码 stop gate
-        if wait {
-            if let Some(hook_session) = &self.hook_session {
-                let wait_action = HookPendingAction {
-                    id: request_id.clone(),
-                    created_at_ms: chrono::Utc::now().timestamp_millis(),
-                    title: "等待父 session 回应提审".to_string(),
-                    summary: format!(
-                        "已向父 session {} 提审，等待 companion_respond 结案",
-                        companion_context.parent_session_id
-                    ),
-                    action_type: "follow_up_required".to_string(),
-                    turn_id: Some(self.current_turn_id.clone()),
-                    source_trigger: HookTrigger::SubagentResult,
-                    status: agentdash_spi::HookPendingActionStatus::Pending,
-                    last_injected_at_ms: None,
-                    resolved_at_ms: None,
-                    resolution_kind: None,
-                    resolution_note: None,
-                    resolution_turn_id: None,
-                    injections: vec![agentdash_spi::HookInjection {
-                        slot: "companion".to_string(),
-                        content: format!(
-                            "已向父 session 提审，等待 companion_respond(request_id=\"{request_id}\") 回应。"
-                        ),
-                        source: format!("companion_request:parent_wait:{request_id}"),
-                    }],
-                };
-                hook_session.enqueue_pending_action(wait_action);
-            }
-        }
-
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "已向父 session 提审。\n- request_id: {}\n- parent_session_id: {}\n- 提审内容已注入父 session 的 hook pending action。",
-                request_id, companion_context.parent_session_id
+                "已向父 session 提审。\n- request_id: {request_id}\n- parent_session_id: {}",
+                companion_context.parent_session_id
             ))],
             is_error: false,
             details: Some(serde_json::json!({
                 "request_id": request_id,
-                "wait": false,
+                "wait": wait,
                 "parent_session_id": companion_context.parent_session_id,
             })),
         })
@@ -1013,11 +956,6 @@ impl CompanionRespondTool {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
-        if summary.is_empty() {
-            return Err(AgentToolError::InvalidArguments(
-                "payload.summary 不能为空".to_string(),
-            ));
-        }
 
         let status = normalize_companion_result_status(
             payload.get("status").and_then(|v| v.as_str()),

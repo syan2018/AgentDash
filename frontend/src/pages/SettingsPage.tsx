@@ -171,7 +171,7 @@ function LlmProvidersSection({
   onRefreshModels: () => void;
 }) {
   const { providers, loading, saving, fetchProviders, createProvider, updateProvider, deleteProvider } = useLlmProviderStore();
-  const discovered = useExecutorDiscoveredOptions("PI_AGENT", "", discoveryRefreshKey);
+  const discovered = useExecutorDiscoveredOptions("PI_AGENT", discoveryRefreshKey);
   const discoveredModels = discovered.options?.model_selector.models ?? [];
   const isLoadingModels = discovered.options?.loading_models ?? true;
 
@@ -251,7 +251,7 @@ function LlmProvidersSection({
             <LlmProviderRow
               key={provider.id}
               provider={provider}
-              discoveredModels={discoveredModels.filter((m) => (m.provider_id ?? "") === provider.id)}
+              discoveredModels={discoveredModels.filter((m) => (m.provider_id ?? "") === provider.slug)}
               isLoadingModels={isLoadingModels}
               onRefreshModels={onRefreshModels}
               saving={saving}

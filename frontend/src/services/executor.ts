@@ -77,3 +77,25 @@ export async function rejectToolCall(
     throw new Error(text || `rejectToolCall failed: HTTP ${res.status}`);
   }
 }
+
+export async function respondCompanionRequest(
+  sessionId: string,
+  requestId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const res = await authenticatedFetch(
+    buildApiPath(
+      `/sessions/${encodeURIComponent(sessionId)}/companion-requests/${encodeURIComponent(requestId)}/respond`,
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payload }),
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `respondCompanionRequest failed: HTTP ${res.status}`);
+  }
+}

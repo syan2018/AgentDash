@@ -19,9 +19,11 @@ import type { ReactNode } from "react";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { extractAgentDashMetaFromUpdate, isRecord } from "../model/agentdashMeta";
 import { EventStripCard, EventFullCard } from "./EventCards";
+import { AcpCompanionRequestCard } from "./AcpCompanionRequestCard";
 
 export interface AcpSystemEventCardProps {
   update: SessionUpdate;
+  sessionId?: string;
 }
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
@@ -79,6 +81,8 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_dispatch_registered:   "协作 Agent 已派发",
   companion_result_available:      "协作结果可用",
   companion_result_returned:       "协作结果已回传",
+  companion_human_request:         "Agent 请求用户回应",
+  companion_review_request:        "协作 Agent 提审",
   canvas_presented:                "Canvas 已展示",
   hook_event:                      "流程事件",
 };
@@ -98,6 +102,8 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_dispatch_registered:   "已注册协作 Agent 派发",
   companion_result_available:      "协作 Agent 已回传结果",
   companion_result_returned:       "协作结果已回传到当前会话",
+  companion_human_request:         "Agent 正在等待用户回应",
+  companion_review_request:        "协作 Agent 请求审阅",
   canvas_presented:                "已请求打开 Canvas 面板",
   hook_event:                      "流程产生新事件",
 };
@@ -123,12 +129,18 @@ function isHighPriorityHookEvent(
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
-export function AcpSystemEventCard({ update }: AcpSystemEventCardProps) {
+export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProps) {
   if (update.sessionUpdate !== "session_info_update") return null;
 
   const meta = extractAgentDashMetaFromUpdate(update);
   const event = meta?.event;
   const eventType = event?.type ?? "system";
+
+  // ── companion_human_request → 交互卡片 ─────────────────────────────────
+  if (eventType === "companion_human_request") {
+    return <AcpCompanionRequestCard update={update} sessionId={sessionId} />;
+  }
+
   const hookData = eventType === "hook_event" ? extractHookEventData(event?.data) : null;
 
   // ── hook_event 路由 ──────────────────────────────────────────────────────
@@ -369,6 +381,16 @@ function buildGenericDetailLines(eventType: string, value: unknown): string[] {
     if (label) lines.push(`协作 Agent：${label}`);
     if (status) lines.push(`状态：${status}`);
     if (summary) lines.push(`摘要：${summary}`);
+    return lines;
+  }
+
+  if (eventType === "companion_review_request") {
+    const label = typeof value.companion_label === "string" ? value.companion_label : null;
+    const prompt = typeof value.prompt === "string" ? value.prompt : null;
+    const wait = typeof value.wait === "boolean" ? value.wait : null;
+    if (label) lines.push(`协作 Agent：${label}`);
+    if (prompt) lines.push(`提审内容：${prompt}`);
+    if (wait != null) lines.push(`等待回应：${wait ? "是" : "否"}`);
     return lines;
   }
 

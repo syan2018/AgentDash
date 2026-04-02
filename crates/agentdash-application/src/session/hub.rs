@@ -553,7 +553,9 @@ impl SessionHub {
             return Ok(());
         }
 
-        // fallback：session 已停，用 start_prompt 注入回应
+        // fallback：wait registry 没命中，说明 tool 没在等（wait=false 或 session 已停）
+        // 不走 start_prompt 避免重复初始化 session（重复注入 instruction 等副作用）
+        // 回应作为通知事件注入到 session 事件流
         let summary = payload
             .get("summary")
             .or_else(|| payload.get("note"))
@@ -565,14 +567,32 @@ impl SessionHub {
             .and_then(|v| v.as_str())
             .unwrap_or("responded");
 
-        let response_text = format!(
-            "[用户回应 companion request {request_id}]\nstatus: {status}\n{summary}"
+        use agentdash_acp_meta::{
+            AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, merge_agentdash_meta,
+        };
+        use agent_client_protocol::{SessionId, SessionInfoUpdate};
+
+        let mut event = AgentDashEventV1::new("companion_human_response");
+        event.severity = Some("info".to_string());
+        event.message = Some(format!("[用户回应] status={status} {summary}"));
+        event.data = Some(serde_json::json!({
+            "request_id": request_id,
+            "status": status,
+            "summary": summary,
+            "payload": payload,
+        }));
+        let source = AgentDashSourceV1::new("agentdash-companion", "human_respond");
+        let agentdash = AgentDashMetaV1::new()
+            .source(Some(source))
+            .event(Some(event));
+        let notification = SessionNotification::new(
+            SessionId::new(session_id.to_string()),
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
+                merge_agentdash_meta(None, &agentdash)
+                    .expect("构造 companion response meta 不应失败"),
+            )),
         );
-        let resume_req =
-            PromptSessionRequest::from_user_input(UserPromptInput::from_text(&response_text));
-        self.start_prompt(session_id, resume_req)
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+        let _ = self.inject_notification(session_id, notification).await;
 
         Ok(())
     }

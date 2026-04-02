@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useLlmProviderStore } from "../stores/llmProviderStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
 import type { ModelInfo } from "../features/executor-selector/model/types";
 import type { SettingEntry, SettingUpdate, SettingsScopeRequest } from "../api/settings";
+import type { LlmProvider, CreateLlmProviderRequest, UpdateLlmProviderRequest } from "../api/llmProviders";
 import type { BackendConfig } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -123,24 +125,33 @@ function Field({
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// LLM Providers 配置
+// LLM Providers 配置 (data-driven from DB)
 // ---------------------------------------------------------------------------
 
-interface LlmProviderDef {
-  id: string;
+interface ProviderPreset {
   name: string;
-  description: string;
-  apiKeySettingKey?: string;
-  baseUrlSettingKey?: string;
-  defaultModelSettingKey?: string;
-  modelsSettingKey?: string;
-  blockedModelsSettingKey?: string;
-  wireApiSettingKey?: string;
-  supportsBaseUrl: boolean;
-  /** 无需 API Key（如本地 Ollama） */
-  noApiKey?: boolean;
-  apiKeyPlaceholder?: string;
-  baseUrlPlaceholder?: string;
+  slug: string;
+  protocol: "anthropic" | "gemini" | "openai_compatible";
+  base_url: string;
+  env_api_key: string;
+  default_model: string;
+}
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  { name: "Anthropic Claude", slug: "anthropic", protocol: "anthropic", base_url: "", env_api_key: "ANTHROPIC_API_KEY", default_model: "claude-sonnet-4-6-20250514" },
+  { name: "Google Gemini", slug: "gemini", protocol: "gemini", base_url: "", env_api_key: "GEMINI_API_KEY", default_model: "gemini-2.5-flash" },
+  { name: "OpenAI", slug: "openai", protocol: "openai_compatible", base_url: "https://api.openai.com/v1", env_api_key: "OPENAI_API_KEY", default_model: "gpt-5.4" },
+  { name: "DeepSeek", slug: "deepseek", protocol: "openai_compatible", base_url: "https://api.deepseek.com/v1", env_api_key: "DEEPSEEK_API_KEY", default_model: "deepseek-chat" },
+  { name: "Groq", slug: "groq", protocol: "openai_compatible", base_url: "https://api.groq.com/openai/v1", env_api_key: "GROQ_API_KEY", default_model: "llama-3.3-70b-versatile" },
+  { name: "xAI (Grok)", slug: "xai", protocol: "openai_compatible", base_url: "https://api.x.ai/v1", env_api_key: "XAI_API_KEY", default_model: "grok-3" },
+];
+
+function defaultOpenAiWireApi(baseUrl: string): "responses" | "completions" {
+  const normalized = baseUrl.trim().replace(/\/+$/, "").toLowerCase();
+  if (!normalized || normalized === "https://api.openai.com/v1" || normalized === "https://api.openai.com") {
+    return "responses";
+  }
+  return "completions";
 }
 
 /** 模型配置 */
@@ -152,144 +163,206 @@ interface ModelConfig {
   max_tokens?: number;
 }
 
-function defaultOpenAiWireApi(baseUrl: string): "responses" | "completions" {
-  const normalized = baseUrl.trim().replace(/\/+$/, "").toLowerCase();
-  if (!normalized || normalized === "https://api.openai.com/v1" || normalized === "https://api.openai.com") {
-    return "responses";
-  }
-  return "completions";
-}
-
-const LLM_PROVIDERS: LlmProviderDef[] = [
-  {
-    id: "anthropic",
-    name: "Anthropic Claude",
-    description: "Claude Opus、Sonnet 等模型",
-    apiKeySettingKey: "llm.anthropic.api_key",
-    modelsSettingKey: "llm.anthropic.models",
-    blockedModelsSettingKey: "llm.anthropic.blocked_models",
-    supportsBaseUrl: false,
-    apiKeyPlaceholder: "sk-ant-...",
-  },
-  {
-    id: "gemini",
-    name: "Google Gemini",
-    description: "Gemini 3.0 Pro、Flash 等模型",
-    apiKeySettingKey: "llm.gemini.api_key",
-    modelsSettingKey: "llm.gemini.models",
-    blockedModelsSettingKey: "llm.gemini.blocked_models",
-    supportsBaseUrl: false,
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    description: "DeepSeek Chat、DeepSeek Reasoner (R1)",
-    apiKeySettingKey: "llm.deepseek.api_key",
-    modelsSettingKey: "llm.deepseek.models",
-    blockedModelsSettingKey: "llm.deepseek.blocked_models",
-    supportsBaseUrl: false,
-    apiKeyPlaceholder: "sk-...",
-  },
-  {
-    id: "openai",
-    name: "OpenAI",
-    description: "gpt-5.4、gpt-5.3-codex 等模型，支持兼容端点",
-    apiKeySettingKey: "llm.openai.api_key",
-    baseUrlSettingKey: "llm.openai.base_url",
-    defaultModelSettingKey: "llm.openai.default_model",
-    modelsSettingKey: "llm.openai.models",
-    blockedModelsSettingKey: "llm.openai.blocked_models",
-    wireApiSettingKey: "llm.openai.wire_api",
-    supportsBaseUrl: true,
-    apiKeyPlaceholder: "sk-...",
-    baseUrlPlaceholder: "https://api.openai.com/v1",
-  },
-  {
-    id: "groq",
-    name: "Groq",
-    description: "Llama、QwQ 等模型（高速推理）",
-    apiKeySettingKey: "llm.groq.api_key",
-    modelsSettingKey: "llm.groq.models",
-    blockedModelsSettingKey: "llm.groq.blocked_models",
-    supportsBaseUrl: false,
-    apiKeyPlaceholder: "gsk_...",
-  },
-  {
-    id: "xai",
-    name: "xAI (Grok)",
-    description: "Grok 3、Grok 3 Mini 等模型",
-    apiKeySettingKey: "llm.xai.api_key",
-    modelsSettingKey: "llm.xai.models",
-    blockedModelsSettingKey: "llm.xai.blocked_models",
-    supportsBaseUrl: false,
-    apiKeyPlaceholder: "xai-...",
-  },
-];
-
-/** 判断 setting value 是否已配置（非空） */
-function isConfigured(val: string): boolean {
-  return val.length > 0;
-}
-
-function isProviderConfigured(
-  provider: LlmProviderDef,
-  settings: { key: string; value: unknown; masked: boolean }[],
-): boolean {
-  const savedApiKey = provider.apiKeySettingKey ? readVal(settings, provider.apiKeySettingKey) : "";
-  const savedBaseUrl = provider.baseUrlSettingKey ? readVal(settings, provider.baseUrlSettingKey) : "";
-  return provider.noApiKey ? isConfigured(savedBaseUrl) : isConfigured(savedApiKey);
-}
-
 function LlmProvidersSection({
-  settings,
-  saving,
-  onSave,
   discoveryRefreshKey,
   onRefreshModels,
 }: {
-  settings: { key: string; value: unknown; masked: boolean }[];
-  saving: boolean;
-  onSave: (updates: SettingUpdate[]) => void;
   discoveryRefreshKey: number;
   onRefreshModels: () => void;
 }) {
+  const { providers, loading, saving, fetchProviders, createProvider, updateProvider, deleteProvider } = useLlmProviderStore();
   const discovered = useExecutorDiscoveredOptions("PI_AGENT", "", discoveryRefreshKey);
   const discoveredModels = discovered.options?.model_selector.models ?? [];
   const isLoadingModels = discovered.options?.loading_models ?? true;
-  const sortedProviders = useMemo(() => (
-    LLM_PROVIDERS
-      .map((provider, index) => ({
-        provider,
-        index,
-        configured: isProviderConfigured(provider, settings),
-      }))
-      .sort((left, right) => {
-        if (left.configured !== right.configured) {
-          return left.configured ? -1 : 1;
-        }
-        return left.index - right.index;
-      })
-      .map((entry) => entry.provider)
-  ), [settings]);
+
+  // 创建流程: null = 未开始, ProviderPreset|null = 选中的模板(null=自定义)
+  const [createStep, setCreateStep] = useState<"idle" | "pick" | "form">("idle");
+  const [createPreset, setCreatePreset] = useState<ProviderPreset | null>(null);
+  const [createName, setCreateName] = useState("");
+  const [createSlug, setCreateSlug] = useState("");
+  const [createProtocol, setCreateProtocol] = useState<"anthropic" | "gemini" | "openai_compatible">("openai_compatible");
+  const [createError, setCreateError] = useState("");
+
+  useEffect(() => {
+    fetchProviders();
+  }, [fetchProviders]);
+
+  const startCreateFromPreset = (preset: ProviderPreset) => {
+    setCreatePreset(preset);
+    setCreateName(preset.name);
+    setCreateSlug(preset.slug);
+    setCreateProtocol(preset.protocol);
+    setCreateError("");
+    setCreateStep("form");
+  };
+
+  const startCreateCustom = (protocol: "anthropic" | "gemini" | "openai_compatible") => {
+    setCreatePreset(null);
+    setCreateName("");
+    setCreateSlug("");
+    setCreateProtocol(protocol);
+    setCreateError("");
+    setCreateStep("form");
+  };
+
+  const cancelCreate = () => {
+    setCreateStep("idle");
+    setCreatePreset(null);
+    setCreateName("");
+    setCreateSlug("");
+    setCreateError("");
+  };
+
+  const submitCreate = async () => {
+    const name = createName.trim();
+    const slug = createSlug.trim().toLowerCase();
+    if (!name) { setCreateError("名称不能为空"); return; }
+    if (!slug) { setCreateError("唯一标识不能为空"); return; }
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(slug)) { setCreateError("唯一标识仅允许小写字母、数字、- 和 _，且不能以符号开头"); return; }
+    if (providers.some((p) => p.slug === slug)) { setCreateError(`标识 "${slug}" 已被占用`); return; }
+    setCreateError("");
+
+    const result = await createProvider({
+      name,
+      slug,
+      protocol: createProtocol,
+      ...(createPreset ? {
+        base_url: createPreset.base_url,
+        env_api_key: createPreset.env_api_key,
+        default_model: createPreset.default_model,
+      } : {}),
+    });
+    if (result) {
+      cancelCreate();
+      onRefreshModels();
+    }
+  };
 
   return (
     <SectionCard title="LLM Providers">
       <p className="text-xs text-muted-foreground -mt-2 mb-1">
-        配置各 LLM 服务商的 API 密钥和端点，按需开启
+        配置各 LLM 服务商的 API 密钥和端点，支持同一协议的多个实例
       </p>
-      <div className="space-y-2">
-        {sortedProviders.map((provider) => (
-          <LlmProviderRow
-            key={provider.id}
-            provider={provider}
-            settings={settings}
-            discoveredModels={discoveredModels}
-            isLoadingModels={isLoadingModels}
-            onRefreshModels={onRefreshModels}
-            saving={saving}
-            onSave={onSave}
-          />
-        ))}
+      {loading ? (
+        <p className="text-xs text-muted-foreground py-2">加载中…</p>
+      ) : (
+        <div className="space-y-2">
+          {providers.map((provider) => (
+            <LlmProviderRow
+              key={provider.id}
+              provider={provider}
+              discoveredModels={discoveredModels.filter((m) => (m.provider_id ?? "") === provider.id)}
+              isLoadingModels={isLoadingModels}
+              onRefreshModels={onRefreshModels}
+              saving={saving}
+              onSave={async (req) => {
+                await updateProvider(provider.id, req);
+                onRefreshModels();
+              }}
+              onDelete={async () => {
+                await deleteProvider(provider.id);
+                onRefreshModels();
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Add Provider */}
+      <div className="mt-2">
+        {createStep === "pick" && (
+          <div className="space-y-1 rounded-[10px] border border-border bg-background/80 p-3">
+            <p className="text-xs font-medium text-foreground mb-2">选择预设模板</p>
+            {PROVIDER_PRESETS.map((preset) => (
+              <button
+                key={preset.slug}
+                type="button"
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
+                onClick={() => startCreateFromPreset(preset)}
+              >
+                <span className="font-medium">{preset.name}</span>
+                <span className="text-xs text-muted-foreground">({preset.protocol})</span>
+              </button>
+            ))}
+            <div className="border-t border-border mt-1 pt-2">
+              <p className="text-xs text-muted-foreground mb-1.5 px-3">自定义端点</p>
+              {(["openai_compatible", "anthropic", "gemini"] as const).map((proto) => (
+                <button
+                  key={proto}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
+                  onClick={() => startCreateCustom(proto)}
+                >
+                  <span className="font-medium">{proto}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end pt-1">
+              <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={cancelCreate}>
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+
+        {createStep === "form" && (
+          <div className="rounded-[10px] border border-border bg-background/80 p-3 space-y-3">
+            <p className="text-xs font-medium text-foreground">
+              创建 Provider{createPreset ? ` — ${createPreset.name}` : ` — ${createProtocol}`}
+            </p>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">名称</label>
+                <input
+                  type="text"
+                  className={inputCls}
+                  value={createName}
+                  placeholder="例如 My Azure Proxy"
+                  onChange={(e) => setCreateName(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">
+                  唯一标识 (slug)
+                  <span className="text-muted-foreground/60 ml-1">— 小写字母、数字、-、_</span>
+                </label>
+                <input
+                  type="text"
+                  className={inputCls}
+                  value={createSlug}
+                  placeholder="例如 my-azure-proxy"
+                  onChange={(e) => {
+                    setCreateSlug(e.target.value.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase());
+                    setCreateError("");
+                  }}
+                />
+              </div>
+            </div>
+            {createError && (
+              <p className="text-xs text-red-500">{createError}</p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={cancelCreate}>
+                取消
+              </button>
+              <button type="button" disabled={saving} className={btnPrimaryCls} onClick={submitCreate}>
+                {saving ? "创建中…" : "创建"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {createStep === "idle" && (
+          <button
+            type="button"
+            className="flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/30"
+            onClick={() => setCreateStep("pick")}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            添加 Provider
+          </button>
+        )}
       </div>
     </SectionCard>
   );
@@ -297,46 +370,23 @@ function LlmProvidersSection({
 
 function LlmProviderRow({
   provider,
-  settings,
   discoveredModels,
   isLoadingModels,
   onRefreshModels,
   saving,
   onSave,
+  onDelete,
 }: {
-  provider: LlmProviderDef;
-  settings: { key: string; value: unknown; masked: boolean }[];
+  provider: LlmProvider;
   discoveredModels: ModelInfo[];
   isLoadingModels: boolean;
   onRefreshModels: () => void;
   saving: boolean;
-  onSave: (updates: SettingUpdate[]) => void;
+  onSave: (req: UpdateLlmProviderRequest) => void;
+  onDelete: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-
-  const savedApiKey = provider.apiKeySettingKey ? readVal(settings, provider.apiKeySettingKey) : "";
-  const savedBaseUrl = provider.baseUrlSettingKey ? readVal(settings, provider.baseUrlSettingKey) : "";
-  const savedModel = provider.defaultModelSettingKey ? readVal(settings, provider.defaultModelSettingKey) : "";
-  const savedWireApi = provider.wireApiSettingKey
-    ? readVal(
-      settings,
-      provider.wireApiSettingKey,
-      provider.id === "openai" ? defaultOpenAiWireApi(savedBaseUrl) : "responses",
-    )
-    : "";
-
-  const savedModelsRaw = provider.modelsSettingKey
-    ? settings.find((s) => s.key === provider.modelsSettingKey)?.value
-    : undefined;
-  const savedModels = parseModelConfigs(savedModelsRaw);
-  const savedBlockedModelsRaw = provider.blockedModelsSettingKey
-    ? settings.find((s) => s.key === provider.blockedModelsSettingKey)?.value
-    : undefined;
-  const savedBlockedModels = parseStringList(savedBlockedModelsRaw);
-
-  const configured = provider.noApiKey
-    ? isConfigured(savedBaseUrl)
-    : isConfigured(savedApiKey);
+  const configured = provider.api_key_configured;
 
   return (
     <div className="rounded-[10px] border border-border bg-background/80">
@@ -350,9 +400,14 @@ function LlmProviderRow({
         />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-foreground">{provider.name}</p>
-          <p className="text-xs text-muted-foreground">{provider.description}</p>
+          <p className="text-xs text-muted-foreground">{provider.slug} · {provider.protocol}{provider.base_url ? ` · ${provider.base_url}` : ""}</p>
         </div>
-        {configured && (
+        {!provider.enabled && (
+          <span className="rounded-[6px] border border-yellow-500/30 bg-yellow-500/10 px-2 py-0.5 text-[11px] text-yellow-700 dark:text-yellow-400">
+            已禁用
+          </span>
+        )}
+        {configured && provider.enabled && (
           <span className="rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-400">
             已配置
           </span>
@@ -375,26 +430,238 @@ function LlmProviderRow({
 
       {expanded && (
         <LlmProviderForm
-          key={`${provider.id}-${savedApiKey}-${savedBaseUrl}-${savedModel}-${JSON.stringify(savedModels)}-${savedBlockedModels.join(",")}`}
+          key={`${provider.id}-${provider.updated_at}`}
           provider={provider}
-          initialApiKey={savedApiKey}
-          initialBaseUrl={savedBaseUrl}
-          initialModel={savedModel}
-          initialWireApi={savedWireApi}
-          initialModels={savedModels}
-          initialBlockedModels={savedBlockedModels}
-          discoveredModels={discoveredModels.filter((model) => (model.provider_id ?? "") === provider.id)}
+          discoveredModels={discoveredModels}
           isLoadingModels={isLoadingModels}
           onRefreshModels={onRefreshModels}
           saving={saving}
           onSave={onSave}
+          onDelete={onDelete}
         />
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
+function LlmProviderForm({
+  provider,
+  discoveredModels,
+  isLoadingModels,
+  onRefreshModels,
+  saving,
+  onSave,
+  onDelete,
+}: {
+  provider: LlmProvider;
+  discoveredModels: ModelInfo[];
+  isLoadingModels: boolean;
+  onRefreshModels: () => void;
+  saving: boolean;
+  onSave: (req: UpdateLlmProviderRequest) => void;
+  onDelete: () => void;
+}) {
+  const [name, setName] = useState(provider.name);
+  const [apiKey, setApiKey] = useState(provider.api_key);
+  const [apiKeyTouched, setApiKeyTouched] = useState(false);
+  const [baseUrl, setBaseUrl] = useState(provider.base_url);
+  const [defaultModel, setDefaultModel] = useState(provider.default_model);
+  const [wireApi, setWireApi] = useState(provider.wire_api || (provider.protocol === "openai_compatible" ? defaultOpenAiWireApi(provider.base_url) : ""));
+  const [enabled, setEnabled] = useState(provider.enabled);
+  const [models, setModels] = useState<ModelConfig[]>(parseModelConfigs(provider.models));
+  const [modelsTouched, setModelsTouched] = useState(false);
+  const [blockedModels, setBlockedModels] = useState<string[]>(parseStringList(provider.blocked_models));
+  const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
+
+  const showBaseUrl = provider.protocol === "openai_compatible" || provider.protocol === "anthropic";
+  const showWireApi = provider.protocol === "openai_compatible";
+  const showDefaultModel = true; // all protocols support default model
+
+  const defaultModelOptions = useMemo(() => {
+    const options =
+      models.length > 0
+        ? models
+          .filter((c) => c.id.trim().length > 0)
+          .map((c) => ({ id: c.id, name: c.name.trim() || c.id }))
+        : discoveredModels
+          .filter((c) => c.id.trim().length > 0 && c.blocked !== true)
+          .map((c) => ({ id: c.id, name: c.name.trim() || c.id }));
+
+    if (defaultModel.trim().length > 0 && !options.some((c) => c.id === defaultModel)) {
+      options.unshift({ id: defaultModel, name: `${defaultModel}（当前值）` });
+    }
+
+    return options.filter((c, i, list) => list.findIndex((x) => x.id === c.id) === i);
+  }, [discoveredModels, defaultModel, models]);
+
+  const toggleBlockedModel = (modelId: string) => {
+    setBlockedModels((current) => {
+      return current.includes(modelId)
+        ? current.filter((item) => item !== modelId)
+        : [...current, modelId];
+    });
+    setBlockedModelsTouched(true);
+  };
+
+  const handleSave = () => {
+    const req: UpdateLlmProviderRequest = {};
+    if (name !== provider.name) req.name = name;
+    if (enabled !== provider.enabled) req.enabled = enabled;
+    if (apiKeyTouched) req.api_key = apiKey;
+    if (baseUrl !== provider.base_url) req.base_url = baseUrl;
+    if (defaultModel !== provider.default_model) req.default_model = defaultModel;
+    if (showWireApi && wireApi !== provider.wire_api) req.wire_api = wireApi;
+    if (modelsTouched) req.models = models;
+    if (blockedModelsTouched) req.blocked_models = blockedModels;
+
+    if (Object.keys(req).length > 0) {
+      onSave(req);
+      setApiKeyTouched(false);
+      setModelsTouched(false);
+      setBlockedModelsTouched(false);
+    }
+  };
+
+  const handleAddModel = (initial?: ModelConfig) => {
+    const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 128000, reasoning: false };
+    setModels([...models, newModel]);
+    setModelsTouched(true);
+  };
+
+  const handleRemoveModel = (index: number) => {
+    setModels(models.filter((_, i) => i !== index));
+    setModelsTouched(true);
+  };
+
+  const handleUpdateModel = (index: number, field: keyof ModelConfig, value: string | number | boolean) => {
+    setModels(models.map((m, i) => i !== index ? m : { ...m, [field]: value }));
+    setModelsTouched(true);
+  };
+
+  return (
+    <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+      {/* Name */}
+      <Field label="名称" desc="Provider 显示名称">
+        <input type="text" className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+
+      {/* Enabled toggle */}
+      <Field label="启用" desc="禁用后不会出现在模型选择中">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="accent-primary"
+          />
+          <span className="text-sm">{enabled ? "已启用" : "已禁用"}</span>
+        </label>
+      </Field>
+
+      {/* API Key */}
+      <Field label="API Key" desc="服务密钥，保存后以掩码形式显示">
+        <input
+          type="password"
+          className={inputCls}
+          value={apiKey}
+          placeholder="输入 API Key"
+          onChange={(e) => { setApiKey(e.target.value); setApiKeyTouched(true); }}
+        />
+      </Field>
+
+      {/* Base URL */}
+      {showBaseUrl && (
+        <Field label="Base URL" desc="API 端点地址（留空使用默认值）">
+          <input
+            type="text"
+            className={inputCls}
+            value={baseUrl}
+            placeholder="https://..."
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+        </Field>
+      )}
+
+      {/* Default Model */}
+      {showDefaultModel && (
+        <Field
+          label="默认模型"
+          desc={defaultModelOptions.length > 0 ? "从当前候选模型中选择默认值" : "先保存配置后会自动出现下拉"}
+        >
+          {defaultModelOptions.length > 0 ? (
+            <select
+              className={`${inputCls} h-10 appearance-none`}
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+            >
+              <option value="">选择默认模型…</option>
+              {defaultModelOptions.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              className={inputCls}
+              value={defaultModel}
+              placeholder="例如 gpt-5.4"
+              onChange={(e) => setDefaultModel(e.target.value)}
+            />
+          )}
+        </Field>
+      )}
+
+      {/* Wire API (OpenAI-compatible only) */}
+      {showWireApi && (
+        <Field
+          label="Wire API"
+          desc="官方 OpenAI 默认用 responses；自定义兼容端点默认更适合 completions"
+        >
+          <div className="flex gap-4">
+            {(["responses", "completions"] as const).map((opt) => (
+              <label key={opt} className="flex items-center gap-1.5 text-sm text-foreground">
+                <input
+                  type="radio"
+                  name={`wire_api_${provider.id}`}
+                  checked={wireApi === opt}
+                  onChange={() => setWireApi(opt)}
+                  className="accent-primary"
+                />
+                {opt}
+              </label>
+            ))}
+          </div>
+        </Field>
+      )}
+
+      {/* Model Management */}
+      <ModelManagementSection
+        discoveredModels={discoveredModels}
+        customModels={models}
+        blockedModels={blockedModels}
+        isLoadingModels={isLoadingModels}
+        onRefreshModels={onRefreshModels}
+        onToggleBlocked={toggleBlockedModel}
+        onAddModel={handleAddModel}
+        onRemoveModel={handleRemoveModel}
+        onUpdateModel={handleUpdateModel}
+      />
+
+      <div className="flex justify-between pt-1">
+        <button
+          type="button"
+          className="text-xs text-red-500 hover:text-red-600"
+          onClick={() => { if (window.confirm(`删除 Provider「${provider.name}」？`)) onDelete(); }}
+        >
+          删除此 Provider
+        </button>
+        <button type="button" disabled={saving} className={btnPrimaryCls} onClick={handleSave}>
+          {saving ? "保存中…" : "保存"}
+        </button>
+      </div>
+    </div>
+  );
+}// ---------------------------------------------------------------------------
 // 统一模型管理
 // ---------------------------------------------------------------------------
 
@@ -720,262 +987,6 @@ function NewCustomModelForm({
           className="rounded-[6px] border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary"
         >
           取消
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function LlmProviderForm({
-  provider,
-  initialApiKey,
-  initialBaseUrl,
-  initialModel,
-  initialWireApi,
-  initialModels,
-  initialBlockedModels,
-  discoveredModels,
-  isLoadingModels,
-  onRefreshModels,
-  saving,
-  onSave,
-}: {
-  provider: LlmProviderDef;
-  initialApiKey: string;
-  initialBaseUrl: string;
-  initialModel: string;
-  initialWireApi: string;
-  initialModels: ModelConfig[];
-  initialBlockedModels: string[];
-  discoveredModels: ModelInfo[];
-  isLoadingModels: boolean;
-  onRefreshModels: () => void;
-  saving: boolean;
-  onSave: (updates: SettingUpdate[]) => void;
-}) {
-  const [apiKey, setApiKey] = useState(initialApiKey);
-  const [apiKeyTouched, setApiKeyTouched] = useState(false);
-  const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
-  const [model, setModel] = useState(initialModel);
-  const [wireApi, setWireApi] = useState(initialWireApi || defaultOpenAiWireApi(initialBaseUrl));
-  const [models, setModels] = useState<ModelConfig[]>(initialModels);
-  const [modelsTouched, setModelsTouched] = useState(false);
-  const [blockedModels, setBlockedModels] = useState<string[]>(initialBlockedModels);
-  const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
-  const defaultModelOptions = useMemo(() => {
-    const options =
-      models.length > 0
-        ? models
-          .filter((candidate) => candidate.id.trim().length > 0)
-          .map((candidate) => ({
-            id: candidate.id,
-            name: candidate.name.trim() || candidate.id,
-          }))
-        : discoveredModels
-          .filter((candidate) => candidate.id.trim().length > 0 && candidate.blocked !== true)
-          .map((candidate) => ({
-            id: candidate.id,
-            name: candidate.name.trim() || candidate.id,
-          }));
-
-    if (model.trim().length > 0 && !options.some((candidate) => candidate.id === model)) {
-      options.unshift({
-        id: model,
-        name: `${model}（当前值）`,
-      });
-    }
-
-    return options.filter((candidate, index, list) => (
-      list.findIndex((item) => item.id === candidate.id) === index
-    ));
-  }, [discoveredModels, model, models]);
-  const toggleBlockedModel = (modelId: string) => {
-    setBlockedModels((current) => {
-      const exists = current.includes(modelId);
-      const next = exists
-        ? current.filter((item) => item !== modelId)
-        : [...current, modelId];
-      return next;
-    });
-    setBlockedModelsTouched(true);
-  };
-
-  const handleSave = () => {
-    const updates: SettingUpdate[] = [];
-
-    // API Key（仅当用户编辑过才提交，避免覆盖掩码值）
-    if (!provider.noApiKey && provider.apiKeySettingKey && apiKeyTouched) {
-      updates.push({ key: provider.apiKeySettingKey, value: apiKey });
-    }
-
-    // Base URL
-    if (provider.supportsBaseUrl && provider.baseUrlSettingKey) {
-      updates.push({ key: provider.baseUrlSettingKey, value: baseUrl });
-    }
-
-    // 默认模型
-    if (provider.defaultModelSettingKey) {
-      updates.push({ key: provider.defaultModelSettingKey, value: model });
-    }
-
-    // Wire API（仅 OpenAI）
-    if (provider.wireApiSettingKey) {
-      updates.push({ key: provider.wireApiSettingKey, value: wireApi });
-    }
-
-    // 模型列表
-    if (modelsTouched && provider.modelsSettingKey) {
-      updates.push({ key: provider.modelsSettingKey, value: models });
-    }
-
-    if (blockedModelsTouched && provider.blockedModelsSettingKey) {
-      updates.push({
-        key: provider.blockedModelsSettingKey,
-        value: blockedModels,
-      });
-    }
-
-    if (updates.length > 0) {
-      onSave(updates);
-      setApiKeyTouched(false);
-      setModelsTouched(false);
-      setBlockedModelsTouched(false);
-    }
-  };
-
-  const handleAddModel = (initial?: ModelConfig) => {
-    const newModel: ModelConfig = initial ?? {
-      id: "",
-      name: "",
-      context_window: 128000,
-      reasoning: false,
-    };
-    setModels([...models, newModel]);
-    setModelsTouched(true);
-  };
-
-  const handleRemoveModel = (index: number) => {
-    const newModels = models.filter((_, i) => i !== index);
-    setModels(newModels);
-    setModelsTouched(true);
-  };
-
-  const handleUpdateModel = (index: number, field: keyof ModelConfig, value: string | number | boolean) => {
-    const newModels = models.map((m, i) => {
-      if (i !== index) return m;
-      return { ...m, [field]: value };
-    });
-    setModels(newModels);
-    setModelsTouched(true);
-  };
-
-  return (
-    <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
-      {/* API Key 输入（非 noApiKey provider） */}
-      {!provider.noApiKey && (
-        <Field label="API Key" desc="服务密钥，保存后以掩码形式显示">
-          <input
-            type="password"
-            className={inputCls}
-            value={apiKey}
-            placeholder={provider.apiKeyPlaceholder ?? "输入 API Key"}
-            onChange={(e) => {
-              setApiKey(e.target.value);
-              setApiKeyTouched(true);
-            }}
-          />
-        </Field>
-      )}
-
-      {/* Base URL 输入（supportsBaseUrl provider） */}
-      {provider.supportsBaseUrl && (
-        <Field label="Base URL" desc="API 端点地址">
-          <input
-            type="text"
-            className={inputCls}
-            value={baseUrl}
-            placeholder={provider.baseUrlPlaceholder ?? "https://..."}
-            onChange={(e) => setBaseUrl(e.target.value)}
-          />
-        </Field>
-      )}
-
-      {/* 默认模型 */}
-      {provider.defaultModelSettingKey && (
-        <Field
-          label="默认模型"
-          desc={defaultModelOptions.length > 0
-            ? "从当前候选模型中选择默认值"
-            : "当前还没有候选模型，先保存 Provider 配置后会自动出现下拉"}
-        >
-          {defaultModelOptions.length > 0 ? (
-            <select
-              className={`${inputCls} h-10 appearance-none`}
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            >
-              <option value="">选择默认模型…</option>
-              {defaultModelOptions.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              type="text"
-              className={inputCls}
-              value={model}
-              placeholder="例如 gpt-5.4"
-              onChange={(e) => setModel(e.target.value)}
-            />
-          )}
-        </Field>
-      )}
-
-      {/* Wire API（仅 OpenAI） */}
-      {provider.wireApiSettingKey && (
-        <Field
-          label="Wire API"
-          desc={provider.id === "openai"
-            ? "官方 OpenAI 默认用 responses；自定义兼容端点默认更适合 completions，可获得更稳定的 tool call delta。"
-            : "请求协议"}
-        >
-          <div className="flex gap-4">
-            {(["responses", "completions"] as const).map((opt) => (
-              <label key={opt} className="flex items-center gap-1.5 text-sm text-foreground">
-                <input
-                  type="radio"
-                  name={`wire_api_${provider.id}`}
-                  checked={wireApi === opt}
-                  onChange={() => setWireApi(opt)}
-                  className="accent-primary"
-                />
-                {opt}
-              </label>
-            ))}
-          </div>
-        </Field>
-      )}
-
-      {/* 统一模型管理区域 */}
-      {(provider.modelsSettingKey || provider.blockedModelsSettingKey) && (
-        <ModelManagementSection
-          discoveredModels={discoveredModels}
-          customModels={models}
-          blockedModels={blockedModels}
-          isLoadingModels={isLoadingModels}
-          onRefreshModels={onRefreshModels}
-          onToggleBlocked={toggleBlockedModel}
-          onAddModel={handleAddModel}
-          onRemoveModel={handleRemoveModel}
-          onUpdateModel={handleUpdateModel}
-        />
-      )}
-
-      <div className="flex justify-end pt-1">
-        <button type="button" disabled={saving} className={btnPrimaryCls} onClick={handleSave}>
-          {saving ? "保存中…" : "保存"}
         </button>
       </div>
     </div>
@@ -1549,9 +1560,6 @@ export function SettingsPage() {
           <>
             <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
             <LlmProvidersSection
-              settings={settings}
-              saving={saving}
-              onSave={handleSave}
               discoveryRefreshKey={llmDiscoveryRefreshKey}
               onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)}
             />

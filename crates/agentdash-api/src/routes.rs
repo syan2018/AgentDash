@@ -9,6 +9,7 @@ pub mod discovery;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
+pub mod llm_providers;
 pub mod me;
 pub mod project_agents;
 pub mod project_sessions;
@@ -88,6 +89,21 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(agents::get_agent)
                 .put(agents::update_agent)
                 .delete(agents::delete_agent),
+        )
+        // LLM Provider CRUD
+        .route(
+            "/llm-providers",
+            get(llm_providers::list_providers).post(llm_providers::create_provider),
+        )
+        .route(
+            "/llm-providers/reorder",
+            post(llm_providers::reorder_providers),
+        )
+        .route(
+            "/llm-providers/{id}",
+            get(llm_providers::get_provider)
+                .put(llm_providers::update_provider)
+                .delete(llm_providers::delete_provider),
         )
         // Project-Agent 关联（新模型）
         .route(

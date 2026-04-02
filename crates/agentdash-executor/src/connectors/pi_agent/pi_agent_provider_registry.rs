@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::rig_bridge::RigBridge;
 use agentdash_agent::LlmBridge;
-use agentdash_domain::settings::{SettingScope, SettingsRepository};
+use agentdash_domain::llm_provider::{LlmProvider, LlmProviderRepository, WireProtocol};
 use futures::future::BoxFuture;
 use rig::client::CompletionClient as _;
 use tokio::sync::RwLock;
@@ -76,16 +76,6 @@ impl From<StoredModelMeta> for ModelMeta {
     }
 }
 
-#[derive(Clone, Copy)]
-enum BridgeKind {
-    Anthropic,
-    Gemini,
-    DeepSeek,
-    Groq,
-    Xai,
-    OpenAi,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenAiWireApi {
     Responses,
@@ -109,118 +99,6 @@ impl OpenAiWireApi {
     }
 }
 
-#[derive(Clone, Copy)]
-enum DiscoveryKind {
-    ConfigOnly,
-    GeminiApi,
-    OpenAiCompatibleFixed(&'static str),
-    OpenAiCompatibleFromBaseUrl { default_base_url: &'static str },
-}
-
-struct ProviderSpec {
-    provider_id: &'static str,
-    provider_name: &'static str,
-    api_key_setting_key: &'static str,
-    api_key_env_var: &'static str,
-    default_model: &'static str,
-    default_model_setting_key: Option<&'static str>,
-    base_url_setting_key: Option<&'static str>,
-    base_url_env_var: Option<&'static str>,
-    models_setting_key: &'static str,
-    blocked_models_setting_key: &'static str,
-    bridge_kind: BridgeKind,
-    discovery_kind: DiscoveryKind,
-}
-
-const PROVIDER_SPECS: &[ProviderSpec] = &[
-    ProviderSpec {
-        provider_id: "anthropic",
-        provider_name: "Anthropic Claude",
-        api_key_setting_key: "llm.anthropic.api_key",
-        api_key_env_var: "ANTHROPIC_API_KEY",
-        default_model: rig::providers::anthropic::completion::CLAUDE_4_SONNET,
-        default_model_setting_key: None,
-        base_url_setting_key: None,
-        base_url_env_var: None,
-        models_setting_key: "llm.anthropic.models",
-        blocked_models_setting_key: "llm.anthropic.blocked_models",
-        bridge_kind: BridgeKind::Anthropic,
-        discovery_kind: DiscoveryKind::ConfigOnly,
-    },
-    ProviderSpec {
-        provider_id: "gemini",
-        provider_name: "Google Gemini",
-        api_key_setting_key: "llm.gemini.api_key",
-        api_key_env_var: "GEMINI_API_KEY",
-        default_model: "gemini-2.5-flash",
-        default_model_setting_key: None,
-        base_url_setting_key: None,
-        base_url_env_var: None,
-        models_setting_key: "llm.gemini.models",
-        blocked_models_setting_key: "llm.gemini.blocked_models",
-        bridge_kind: BridgeKind::Gemini,
-        discovery_kind: DiscoveryKind::GeminiApi,
-    },
-    ProviderSpec {
-        provider_id: "deepseek",
-        provider_name: "DeepSeek",
-        api_key_setting_key: "llm.deepseek.api_key",
-        api_key_env_var: "DEEPSEEK_API_KEY",
-        default_model: "deepseek-chat",
-        default_model_setting_key: None,
-        base_url_setting_key: None,
-        base_url_env_var: None,
-        models_setting_key: "llm.deepseek.models",
-        blocked_models_setting_key: "llm.deepseek.blocked_models",
-        bridge_kind: BridgeKind::DeepSeek,
-        discovery_kind: DiscoveryKind::OpenAiCompatibleFixed("https://api.deepseek.com/v1"),
-    },
-    ProviderSpec {
-        provider_id: "groq",
-        provider_name: "Groq",
-        api_key_setting_key: "llm.groq.api_key",
-        api_key_env_var: "GROQ_API_KEY",
-        default_model: "llama-3.3-70b-versatile",
-        default_model_setting_key: None,
-        base_url_setting_key: None,
-        base_url_env_var: None,
-        models_setting_key: "llm.groq.models",
-        blocked_models_setting_key: "llm.groq.blocked_models",
-        bridge_kind: BridgeKind::Groq,
-        discovery_kind: DiscoveryKind::OpenAiCompatibleFixed("https://api.groq.com/openai/v1"),
-    },
-    ProviderSpec {
-        provider_id: "xai",
-        provider_name: "xAI (Grok)",
-        api_key_setting_key: "llm.xai.api_key",
-        api_key_env_var: "XAI_API_KEY",
-        default_model: "grok-3",
-        default_model_setting_key: None,
-        base_url_setting_key: None,
-        base_url_env_var: None,
-        models_setting_key: "llm.xai.models",
-        blocked_models_setting_key: "llm.xai.blocked_models",
-        bridge_kind: BridgeKind::Xai,
-        discovery_kind: DiscoveryKind::OpenAiCompatibleFixed("https://api.x.ai/v1"),
-    },
-    ProviderSpec {
-        provider_id: "openai",
-        provider_name: "OpenAI",
-        api_key_setting_key: "llm.openai.api_key",
-        api_key_env_var: "OPENAI_API_KEY",
-        default_model: "gpt-5.4",
-        default_model_setting_key: Some("llm.openai.default_model"),
-        base_url_setting_key: Some("llm.openai.base_url"),
-        base_url_env_var: Some("OPENAI_BASE_URL"),
-        models_setting_key: "llm.openai.models",
-        blocked_models_setting_key: "llm.openai.blocked_models",
-        bridge_kind: BridgeKind::OpenAi,
-        discovery_kind: DiscoveryKind::OpenAiCompatibleFromBaseUrl {
-            default_base_url: "https://api.openai.com/v1",
-        },
-    },
-];
-
 pub(crate) struct BuiltProviderEntry {
     pub entry: ProviderEntry,
     pub default_bridge: Arc<dyn LlmBridge>,
@@ -228,8 +106,8 @@ pub(crate) struct BuiltProviderEntry {
 
 #[derive(Clone)]
 pub(crate) struct ProviderEntry {
-    pub provider_id: &'static str,
-    pub provider_name: &'static str,
+    pub provider_id: String,
+    pub provider_name: String,
     pub default_model: String,
     bridge_factory: BridgeFactory,
     list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
@@ -240,8 +118,8 @@ pub(crate) struct ProviderEntry {
 
 impl ProviderEntry {
     fn new(
-        provider_id: &'static str,
-        provider_name: &'static str,
+        provider_id: impl Into<String>,
+        provider_name: impl Into<String>,
         default_model: String,
         bridge_factory: BridgeFactory,
         list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
@@ -249,8 +127,8 @@ impl ProviderEntry {
         blocked_models: HashSet<String>,
     ) -> Self {
         Self {
-            provider_id,
-            provider_name,
+            provider_id: provider_id.into(),
+            provider_name: provider_name.into(),
             default_model,
             bridge_factory,
             list_models,
@@ -285,13 +163,28 @@ impl ProviderEntry {
             Vec::new()
         };
 
-        let mut models = if !discovered_models.is_empty() {
-            discovered_models
-        } else if !self.configured_models.is_empty() {
-            self.configured_models.clone()
-        } else {
-            vec![ModelMeta::fallback(&self.default_model)]
-        };
+        // Start with discovered models
+        let mut models = discovered_models;
+
+        // Merge in configured_models: add any custom IDs not already present
+        for custom in &self.configured_models {
+            if !models.iter().any(|m| m.id == custom.id) {
+                models.push(custom.clone());
+            }
+        }
+
+        // If still empty, synthesize a single-entry fallback from default_model
+        if models.is_empty() && !self.default_model.is_empty() {
+            models.push(ModelMeta::fallback(&self.default_model));
+        }
+
+        // Always ensure default_model is present in the list
+        if !self.default_model.is_empty()
+            && !models.iter().any(|m| m.id == self.default_model)
+        {
+            models.insert(0, ModelMeta::fallback(&self.default_model));
+        }
+
         dedup_models(&mut models);
         for model in &mut models {
             model.blocked = self.blocked_models.contains(model.id.as_str());
@@ -314,78 +207,109 @@ impl ProviderEntry {
     }
 }
 
-pub(crate) async fn build_provider_entries(
-    settings: &dyn SettingsRepository,
+pub(crate) async fn build_provider_entries_from_db(
+    repo: &dyn LlmProviderRepository,
 ) -> Vec<BuiltProviderEntry> {
-    let mut providers = Vec::new();
-    for spec in PROVIDER_SPECS {
-        if let Some(entry) = build_provider_entry(settings, spec).await {
-            providers.push(entry);
+    let providers = match repo.list_enabled().await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!("PiAgentConnector: 从 DB 读取 LLM providers 失败: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut result = Vec::new();
+    for db_provider in providers {
+        if let Some(entry) = build_provider_entry_from_db(&db_provider) {
+            result.push(entry);
         }
     }
-    providers
+    result
 }
 
-async fn build_provider_entry(
-    settings: &dyn SettingsRepository,
-    spec: &ProviderSpec,
-) -> Option<BuiltProviderEntry> {
-    let api_key = read_setting_str(settings, spec.api_key_setting_key)
-        .await
-        .or_else(|| std::env::var(spec.api_key_env_var).ok())?;
+fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProviderEntry> {
+    let api_key = db_provider.resolve_api_key();
+    // 对于非 openai_compatible + 空 api_key 的情况，Anthropic/Gemini 需要 key
+    let needs_api_key = !matches!(db_provider.protocol, WireProtocol::OpenaiCompatible)
+        || !db_provider.api_key.is_empty()
+        || !db_provider.env_api_key.is_empty();
+    if needs_api_key && api_key.is_none() {
+        // 无 API key 且不是可以无 key 运行的 provider (如 Ollama)，跳过
+        // 但 openai_compatible 可能是无 key 的本地端点
+        if !matches!(db_provider.protocol, WireProtocol::OpenaiCompatible) {
+            return None;
+        }
+    }
+    let api_key = api_key.unwrap_or_default();
 
-    let base_url = match (spec.base_url_setting_key, spec.base_url_env_var) {
-        (Some(setting_key), env_key) => read_setting_str(settings, setting_key)
-            .await
-            .or_else(|| env_key.and_then(|key| std::env::var(key).ok())),
-        (None, _) => None,
+    let base_url = if db_provider.base_url.is_empty() {
+        None
+    } else {
+        Some(db_provider.base_url.clone())
     };
 
-    let default_model = match spec.default_model_setting_key {
-        Some(setting_key) => read_setting_str(settings, setting_key)
-            .await
-            .unwrap_or_else(|| spec.default_model.to_string()),
-        None => spec.default_model.to_string(),
+    let default_model = if db_provider.default_model.is_empty() {
+        default_model_for_protocol(db_provider.protocol)
+    } else {
+        db_provider.default_model.clone()
     };
 
-    let configured_models = read_model_list(settings, spec.models_setting_key).await;
-    let blocked_models = read_string_list(settings, spec.blocked_models_setting_key)
-        .await
-        .into_iter()
-        .collect::<HashSet<_>>();
-
-    let openai_wire_api = if matches!(spec.bridge_kind, BridgeKind::OpenAi) {
+    let openai_wire_api = if matches!(db_provider.protocol, WireProtocol::OpenaiCompatible) {
         Some(resolve_openai_wire_api(
-            read_setting_str(settings, "llm.openai.wire_api")
-                .await
-                .as_deref(),
+            if db_provider.wire_api.is_empty() {
+                None
+            } else {
+                Some(db_provider.wire_api.as_str())
+            },
             base_url.as_deref(),
         ))
     } else {
         None
     };
-    let bridge_factory = build_bridge_factory(
-        spec.bridge_kind,
+
+    let bridge_factory = build_bridge_factory_by_protocol(
+        db_provider.protocol,
         api_key.clone(),
         base_url.clone(),
         openai_wire_api,
     );
     let default_bridge = bridge_factory(&default_model);
-    let list_models = build_model_lister(spec.discovery_kind, api_key, base_url);
 
+    let configured_models = parse_model_list(&db_provider.models).unwrap_or_default();
+    let blocked_models: HashSet<String> = parse_string_list(&db_provider.blocked_models)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    let discovery_url = if db_provider.discovery_url.is_empty() {
+        None
+    } else {
+        Some(db_provider.discovery_url.clone())
+    };
+
+    let list_models = build_model_lister_by_protocol(
+        db_provider.protocol,
+        api_key,
+        base_url,
+        discovery_url,
+    );
+
+    let provider_id = db_provider.slug.clone();
     tracing::info!(
-        "PiAgentConnector: provider={} 已注册（default_model={}{}）",
-        spec.provider_id,
+        "PiAgentConnector: provider={} ({}) 已注册（protocol={}, default_model={}{}）",
+        db_provider.name,
+        provider_id,
+        db_provider.protocol,
         default_model,
         openai_wire_api
-            .map(|wire_api| format!(", wire_api={}", wire_api.as_str()))
+            .map(|wa| format!(", wire_api={}", wa.as_str()))
             .unwrap_or_default()
     );
 
     Some(BuiltProviderEntry {
         entry: ProviderEntry::new(
-            spec.provider_id,
-            spec.provider_name,
+            provider_id,
+            db_provider.name.clone(),
             default_model,
             bridge_factory,
             list_models,
@@ -396,52 +320,42 @@ async fn build_provider_entry(
     })
 }
 
-fn build_bridge_factory(
-    kind: BridgeKind,
+fn default_model_for_protocol(protocol: WireProtocol) -> String {
+    match protocol {
+        WireProtocol::Anthropic => "claude-sonnet-4-6-20250514".to_string(),
+        WireProtocol::Gemini => "gemini-2.5-flash".to_string(),
+        WireProtocol::OpenaiCompatible => "gpt-5.4".to_string(),
+    }
+}
+
+fn build_bridge_factory_by_protocol(
+    protocol: WireProtocol,
     api_key: String,
     base_url: Option<String>,
     openai_wire_api: Option<OpenAiWireApi>,
 ) -> BridgeFactory {
-    match kind {
-        BridgeKind::Anthropic => {
-            let client = rig::providers::anthropic::Client::new(&api_key)
-                .expect("构建 Anthropic rig client 失败");
+    match protocol {
+        WireProtocol::Anthropic => {
+            let mut builder = rig::providers::anthropic::Client::builder().api_key(&api_key);
+            if let Some(ref url) = base_url {
+                builder = builder.base_url(url);
+            }
+            let client = builder.build().expect("构建 Anthropic rig client 失败");
             Arc::new(move |model_id: &str| {
                 Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
             })
         }
-        BridgeKind::Gemini => {
+        WireProtocol::Gemini => {
             let client =
                 rig::providers::gemini::Client::new(&api_key).expect("构建 Gemini rig client 失败");
             Arc::new(move |model_id: &str| {
                 Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
             })
         }
-        BridgeKind::DeepSeek => {
-            let client = rig::providers::deepseek::Client::new(&api_key)
-                .expect("构建 DeepSeek rig client 失败");
-            Arc::new(move |model_id: &str| {
-                Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
-            })
-        }
-        BridgeKind::Groq => {
-            let client =
-                rig::providers::groq::Client::new(&api_key).expect("构建 Groq rig client 失败");
-            Arc::new(move |model_id: &str| {
-                Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
-            })
-        }
-        BridgeKind::Xai => {
-            let client =
-                rig::providers::xai::Client::new(&api_key).expect("构建 xAI rig client 失败");
-            Arc::new(move |model_id: &str| {
-                Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
-            })
-        }
-        BridgeKind::OpenAi => {
-            let mut builder = rig::providers::openai::Client::builder().api_key(&api_key);
-            let base_url_owned = base_url;
-            if let Some(ref url) = base_url_owned {
+        WireProtocol::OpenaiCompatible => {
+            let mut builder = rig::providers::openai::Client::builder()
+                .api_key(&api_key); // empty string is fine for keyless endpoints (e.g. Ollama)
+            if let Some(ref url) = base_url {
                 builder = builder.base_url(url);
             }
             let client = builder.build().expect("构建 OpenAI rig client 失败");
@@ -455,6 +369,32 @@ fn build_bridge_factory(
                     client.completion_model(model_id).completions_api(),
                 )) as Arc<dyn LlmBridge>,
             })
+        }
+    }
+}
+
+fn build_model_lister_by_protocol(
+    protocol: WireProtocol,
+    api_key: String,
+    base_url: Option<String>,
+    discovery_url: Option<String>,
+) -> Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>> {
+    match protocol {
+        WireProtocol::Anthropic => None, // Anthropic has no models list API
+        WireProtocol::Gemini => Some(Arc::new(move || {
+            let api_key = api_key.clone();
+            Box::pin(async move { list_gemini_models(&api_key).await })
+        })),
+        WireProtocol::OpenaiCompatible => {
+            // Use discovery_url if provided, else base_url, else default OpenAI
+            let effective_url = discovery_url
+                .or(base_url)
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            Some(Arc::new(move || {
+                let api_key = api_key.clone();
+                let url = effective_url.clone();
+                Box::pin(async move { list_openai_compatible_models(&url, &api_key).await })
+            }))
         }
     }
 }
@@ -490,57 +430,6 @@ fn is_official_openai_base_url(base_url: Option<&str>) -> bool {
     normalized == "https://api.openai.com/v1" || normalized == "https://api.openai.com"
 }
 
-fn build_model_lister(
-    discovery: DiscoveryKind,
-    api_key: String,
-    base_url: Option<String>,
-) -> Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>> {
-    match discovery {
-        DiscoveryKind::ConfigOnly => None,
-        DiscoveryKind::GeminiApi => Some(Arc::new(move || {
-            let api_key = api_key.clone();
-            Box::pin(async move { list_gemini_models(&api_key).await })
-        })),
-        DiscoveryKind::OpenAiCompatibleFixed(url) => Some(Arc::new(move || {
-            let api_key = api_key.clone();
-            let url = url.to_string();
-            Box::pin(async move { list_openai_compatible_models(&url, &api_key).await })
-        })),
-        DiscoveryKind::OpenAiCompatibleFromBaseUrl { default_base_url } => {
-            Some(Arc::new(move || {
-                let api_key = api_key.clone();
-                let api_base = base_url
-                    .clone()
-                    .unwrap_or_else(|| default_base_url.to_string());
-                Box::pin(async move { list_openai_compatible_models(&api_base, &api_key).await })
-            }))
-        }
-    }
-}
-
-async fn read_setting_value(repo: &dyn SettingsRepository, key: &str) -> Option<serde_json::Value> {
-    repo.get(&SettingScope::system(), key)
-        .await
-        .ok()
-        .flatten()
-        .map(|setting| setting.value)
-}
-
-async fn read_setting_str(repo: &dyn SettingsRepository, key: &str) -> Option<String> {
-    read_setting_value(repo, key)
-        .await
-        .and_then(|value| value.as_str().map(str::trim).map(ToOwned::to_owned))
-        .filter(|value| !value.is_empty())
-}
-
-async fn read_model_list(repo: &dyn SettingsRepository, key: &str) -> Vec<ModelMeta> {
-    let Some(value) = read_setting_value(repo, key).await else {
-        return Vec::new();
-    };
-
-    parse_model_list(&value).unwrap_or_default()
-}
-
 fn parse_model_list(value: &serde_json::Value) -> Option<Vec<ModelMeta>> {
     match value {
         serde_json::Value::Array(items) => {
@@ -569,13 +458,6 @@ fn parse_model_list(value: &serde_json::Value) -> Option<Vec<ModelMeta>> {
         }
         _ => None,
     }
-}
-
-async fn read_string_list(repo: &dyn SettingsRepository, key: &str) -> Vec<String> {
-    let Some(value) = read_setting_value(repo, key).await else {
-        return Vec::new();
-    };
-    parse_string_list(&value).unwrap_or_default()
 }
 
 fn parse_string_list(value: &serde_json::Value) -> Option<Vec<String>> {

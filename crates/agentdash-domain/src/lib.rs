@@ -6,6 +6,7 @@ pub mod common;
 pub mod context_container;
 pub mod context_source;
 pub mod identity;
+pub mod llm_provider;
 pub mod project;
 pub mod session_binding;
 pub mod session_composition;

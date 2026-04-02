@@ -24,6 +24,7 @@ use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::TaskLifecycleService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
+use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -36,10 +37,10 @@ use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
-    PostgresCanvasRepository, PostgresProjectRepository, PostgresSessionBindingRepository,
-    PostgresSessionRepository, PostgresSettingsRepository, PostgresStateChangeRepository,
-    PostgresStoryRepository, PostgresTaskRepository, PostgresUserDirectoryRepository,
-    PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresCanvasRepository, PostgresLlmProviderRepository, PostgresProjectRepository,
+    PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
+    PostgresStateChangeRepository, PostgresStoryRepository, PostgresTaskRepository,
+    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_injection::AddressSpaceDiscoveryRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
@@ -138,6 +139,10 @@ impl AppState {
 
         let agent_repo = Arc::new(PostgresAgentRepository::new(pool.clone()));
 
+        let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
+        llm_provider_repo.initialize().await.map_err(|e| anyhow::anyhow!("llm_providers 表初始化失败: {e}"))?;
+        llm_provider_repo.migrate_from_settings(settings_repo.as_ref()).await.map_err(|e| anyhow::anyhow!("llm_providers 迁移失败: {e}"))?;
+
         let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
         let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
 
@@ -179,6 +184,7 @@ impl AppState {
             &workspace_root,
             PiAgentConnectorDeps {
                 settings_repo: settings_repo.clone(),
+                llm_provider_repo: llm_provider_repo.clone(),
                 address_space_service: address_space_service.clone(),
                 canvas_repo: canvas_repo.clone(),
                 session_binding_repo: session_binding_repo.clone(),
@@ -269,6 +275,7 @@ impl AppState {
             auth_session_repo,
             user_directory_repo,
             settings_repo,
+            llm_provider_repo,
             agent_repo: agent_repo.clone(),
             agent_link_repo: agent_repo,
             workflow_definition_repo: workflow_repo.clone(),
@@ -362,6 +369,7 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
 
 struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
+    llm_provider_repo: Arc<dyn LlmProviderRepository>,
     address_space_service: Arc<RelayAddressSpaceService>,
     canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
@@ -381,9 +389,11 @@ async fn build_pi_agent_connector(
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
         workspace_root,
         deps.settings_repo.as_ref(),
+        deps.llm_provider_repo.as_ref(),
     )
     .await?;
     connector.set_settings_repository(deps.settings_repo);
+    connector.set_llm_provider_repository(deps.llm_provider_repo);
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         deps.address_space_service,
         deps.canvas_repo,

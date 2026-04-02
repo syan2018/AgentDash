@@ -24,11 +24,12 @@ use agentdash_agent::{
     Agent, AgentConfig, AgentEvent, AgentMessage, AgentToolResult, ContentPart, DynAgentTool,
     LlmBridge,
 };
+use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::settings::SettingsRepository;
 
 use crate::connectors::pi_agent::pi_agent_mcp::discover_mcp_tools;
 use crate::connectors::pi_agent::pi_agent_provider_registry::{
-    CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries,
+    CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries_from_db,
 };
 use crate::hook_events::build_hook_trace_notification;
 use agentdash_spi::connector::RuntimeToolProvider;
@@ -48,6 +49,7 @@ pub struct PiAgentConnector {
     providers: Vec<ProviderEntry>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     settings_repo: Option<Arc<dyn SettingsRepository>>,
+    llm_provider_repo: Option<Arc<dyn LlmProviderRepository>>,
     system_prompt: String,
     model_id: String,
     agents: Arc<Mutex<HashMap<String, Agent>>>,
@@ -78,6 +80,7 @@ impl PiAgentConnector {
             providers: Vec::new(),
             runtime_tool_provider: None,
             settings_repo: None,
+            llm_provider_repo: None,
             system_prompt: system_prompt.into(),
             model_id: model_id.into(),
             agents: Arc::new(Mutex::new(HashMap::new())),
@@ -92,13 +95,17 @@ impl PiAgentConnector {
         self.settings_repo = Some(settings_repo);
     }
 
+    pub fn set_llm_provider_repository(&mut self, repo: Arc<dyn LlmProviderRepository>) {
+        self.llm_provider_repo = Some(repo);
+    }
+
     fn add_provider(&mut self, provider: ProviderEntry) {
         self.providers.push(provider);
     }
 
     async fn load_provider_runtime_state(&self) -> ProviderRuntimeState {
-        if let Some(settings_repo) = &self.settings_repo {
-            let providers = build_provider_entries(settings_repo.as_ref()).await;
+        if let Some(llm_provider_repo) = &self.llm_provider_repo {
+            let providers = build_provider_entries_from_db(llm_provider_repo.as_ref()).await;
             let default_model = providers
                 .first()
                 .map(|provider| provider.entry.default_model.clone());
@@ -115,18 +122,10 @@ impl PiAgentConnector {
             };
         }
 
-        if self.providers.is_empty() || self.model_id.trim().is_empty() {
-            return ProviderRuntimeState {
-                default_bridge: None,
-                default_model: None,
-                providers: Vec::new(),
-            };
-        }
-
         ProviderRuntimeState {
-            default_bridge: Some(self.bridge.clone()),
-            default_model: Some(self.model_id.clone()),
-            providers: self.providers.clone(),
+            default_bridge: None,
+            default_model: None,
+            providers: Vec::new(),
         }
     }
 
@@ -1510,14 +1509,15 @@ impl LlmBridge for NoopBridge {
 
 // ─── Factory ────────────────────────────────────────────────────────
 
-/// 从 `SettingsRepository` 和环境变量构建 `PiAgentConnector`。
+/// 从 `LlmProviderRepository` 和 `SettingsRepository` 构建 `PiAgentConnector`。
 ///
-/// 配置优先级：Settings DB > 环境变量 > 默认值。
-/// 支持多 provider：Anthropic、Gemini、DeepSeek、Groq、xAI、OpenAI/兼容端点。
-/// 按注册顺序，首个完成注册的 provider 的首个模型作为默认 bridge。
+/// Provider 列表从 `llm_providers` DB 表加载。
+/// `settings_repo` 仅用于 `agent.pi.system_prompt` 等非 provider 设置。
+/// 按 sort_order，首个完成注册的 provider 的首个模型作为默认 bridge。
 pub async fn build_pi_agent_connector(
     workspace_root: &Path,
     settings: &dyn agentdash_domain::settings::SettingsRepository,
+    llm_provider_repo: &dyn LlmProviderRepository,
 ) -> Option<PiAgentConnector> {
     let system_prompt = read_setting_str(settings, "agent.pi.system_prompt")
         .await
@@ -1527,7 +1527,7 @@ pub async fn build_pi_agent_connector(
                 .to_string()
         });
 
-    let providers = build_provider_entries(settings).await;
+    let providers = build_provider_entries_from_db(llm_provider_repo).await;
 
     let (global_default_bridge, global_default_model) = if let Some(provider) = providers.first() {
         (
@@ -1554,7 +1554,7 @@ pub async fn build_pi_agent_connector(
     }
 
     if connector.providers.is_empty() {
-        tracing::info!("PiAgentConnector 已初始化（动态占位模式，等待 settings 注入 provider）");
+        tracing::info!("PiAgentConnector 已初始化（动态占位模式，等待 provider 配置）");
     } else {
         tracing::info!(
             "PiAgentConnector 已初始化（默认模型：{}，provider 数量：{}）",
@@ -1693,6 +1693,20 @@ mod tests {
                 .is_some();
             Ok(removed)
         }
+    }
+
+    #[derive(Default)]
+    struct TestLlmProviderRepository;
+
+    #[async_trait::async_trait]
+    impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRepository {
+        async fn create(&self, _provider: &agentdash_domain::llm_provider::LlmProvider) -> Result<(), DomainError> { Ok(()) }
+        async fn get_by_id(&self, _id: uuid::Uuid) -> Result<Option<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(None) }
+        async fn list_all(&self) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(vec![]) }
+        async fn list_enabled(&self) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(vec![]) }
+        async fn update(&self, _provider: &agentdash_domain::llm_provider::LlmProvider) -> Result<(), DomainError> { Ok(()) }
+        async fn delete(&self, _id: uuid::Uuid) -> Result<(), DomainError> { Ok(()) }
+        async fn reorder(&self, _ids: &[uuid::Uuid]) -> Result<(), DomainError> { Ok(()) }
     }
 
     async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Value {
@@ -2436,7 +2450,7 @@ mod tests {
     async fn discovery_reflects_settings_added_after_startup_without_restart() {
         let repo = Arc::new(TestSettingsRepository::default());
         let mut connector =
-            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref())
+            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref(), &TestLlmProviderRepository)
                 .await
                 .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo.clone());
@@ -2482,7 +2496,7 @@ mod tests {
         .expect("should store anthropic key");
 
         let mut connector =
-            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref())
+            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref(), &TestLlmProviderRepository)
                 .await
                 .expect("connector should initialize");
         connector.set_settings_repository(repo.clone());
@@ -2516,7 +2530,7 @@ mod tests {
     async fn prompt_without_provider_configuration_returns_clear_error() {
         let repo = Arc::new(TestSettingsRepository::default());
         let mut connector =
-            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref())
+            build_pi_agent_connector(Path::new("F:/Projects/AgentDash"), repo.as_ref(), &TestLlmProviderRepository)
                 .await
                 .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo);

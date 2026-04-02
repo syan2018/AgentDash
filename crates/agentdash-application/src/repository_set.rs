@@ -5,6 +5,7 @@ use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::BackendRepository;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
+use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -34,6 +35,7 @@ pub struct RepositorySet {
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
+    pub llm_provider_repo: Arc<dyn LlmProviderRepository>,
     pub agent_repo: Arc<dyn AgentRepository>,
     pub agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,

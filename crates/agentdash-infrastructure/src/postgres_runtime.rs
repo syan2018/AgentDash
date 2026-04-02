@@ -219,28 +219,60 @@ async fn try_reuse_running(
 }
 
 /// 清理残留的 postgres 进程和过期的 postmaster.pid。
+///
+/// 不依赖 postmaster.pid 是否存在 — 无条件杀 embedded postgres 进程并清理锁文件，
+/// 避免 pid 文件被外部脚本提前删除后漏清共享内存。
 fn cleanup_stale_instance(data_dir: &Path) {
-    let Some(info) = read_postmaster_pid(data_dir) else {
-        return;
-    };
+    // 如果有 pid 文件，精准杀对应进程
+    if let Some(info) = read_postmaster_pid(data_dir) {
+        tracing::info!(pid = info.pid, "停止残留 PostgreSQL 进程（来自 postmaster.pid）");
+        kill_process(info.pid);
+    }
 
-    tracing::info!(pid = info.pid, "停止残留 PostgreSQL 进程");
+    // 无条件：杀所有 .theseus 路径下的 postgres 进程（兜底子进程如 io_worker）
+    kill_all_embedded_postgres();
 
+    std::thread::sleep(Duration::from_secs(2));
+
+    // 二次兜底：Windows 上子进程可能在第一轮存活
+    kill_all_embedded_postgres();
+
+    let _ = std::fs::remove_file(data_dir.join("postmaster.pid"));
+}
+
+fn kill_process(pid: u32) {
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &info.pid.to_string()])
+            .args(["/F", "/T", "/PID", &pid.to_string()])
             .output();
     }
     #[cfg(not(windows))]
     {
         let _ = std::process::Command::new("kill")
-            .arg(info.pid.to_string())
+            .arg(pid.to_string())
             .output();
     }
+}
 
-    std::thread::sleep(Duration::from_secs(2));
-    let _ = std::fs::remove_file(data_dir.join("postmaster.pid"));
+/// 杀掉所有 embedded PostgreSQL 进程（路径包含 .theseus 的 postgres 进程）。
+fn kill_all_embedded_postgres() {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "$procs = Get-CimInstance Win32_Process -Filter \"Name = 'postgres.exe'\" | Where-Object { ($_.ExecutablePath -like '*\\.theseus\\postgresql\\*') -or ($_.CommandLine -like '*\\.theseus\\postgresql\\*') }; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId | Out-Null }",
+            ])
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", ".theseus.*postgres"])
+            .output();
+    }
 }
 
 impl Drop for PostgresRuntime {

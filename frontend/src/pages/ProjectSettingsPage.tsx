@@ -14,7 +14,6 @@ import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { AddressSpaceBrowser } from "../features/address-space";
-import { ProjectWorkflowPanel } from "../features/workflow/project-workflow-panel";
 // AgentPresetEditor 已移除，Agent 管理统一在 Agent Hub 中进行
 import {
   ContextContainersEditor,
@@ -28,7 +27,7 @@ import {
 } from "../components/ui/detail-panel";
 import { fetchDirectoryGroups, fetchDirectoryUsers } from "../services/directory";
 
-type SettingsTab = "overview" | "execution" | "context" | "workspace" | "management";
+type SettingsTab = "overview" | "context" | "workspace" | "management";
 
 interface SettingsTabItem {
   key: SettingsTab;
@@ -38,9 +37,8 @@ interface SettingsTabItem {
 
 const SETTINGS_TABS: SettingsTabItem[] = [
   { key: "overview", label: "概览", description: "项目身份、摘要与基础信息" },
-  { key: "execution", label: "执行默认", description: "默认 agent、默认 workspace 与 workflow" },
   { key: "context", label: "上下文资源", description: "context containers 与挂载策略" },
-  { key: "workspace", label: "工作空间", description: "逻辑 workspace、bindings 与 runtime preview" },
+  { key: "workspace", label: "工作空间", description: "默认 workspace、bindings 与 runtime preview" },
   { key: "management", label: "管理动作", description: "共享、模板、clone 与删除" },
 ];
 
@@ -173,8 +171,6 @@ export function ProjectSettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("overview");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [defaultAgentType, setDefaultAgentType] = useState("");
-  const [defaultWorkspaceId, setDefaultWorkspaceId] = useState("");
   const [templateVisibility, setTemplateVisibility] = useState<Project["visibility"]>("private");
   const [templateFlag, setTemplateFlag] = useState(false);
   const [cloneName, setCloneName] = useState("");
@@ -212,8 +208,6 @@ export function ProjectSettingsPage() {
     loadedProjectIdRef.current = project.id;
     setName(project.name);
     setDescription(project.description);
-    setDefaultAgentType(project.config.default_agent_type ?? "");
-    setDefaultWorkspaceId(project.config.default_workspace_id ?? "");
     setTemplateVisibility(project.visibility);
     setTemplateFlag(project.is_template);
     setCloneName(`${project.name}（副本）`);
@@ -319,24 +313,24 @@ export function ProjectSettingsPage() {
     setMessage("已保存基础信息");
   };
 
-  const saveExecutionDefaults = async (overrides?: Partial<Project["config"]>) => {
+  const saveDefaultWorkspace = async (workspaceId: string | null) => {
     if (!canEditProject) {
-      setError("当前权限不允许修改执行默认");
+      setError("当前权限不允许修改默认工作空间");
       return;
     }
     const result = await updateProjectConfig(project.id, {
-      default_agent_type: overrides?.default_agent_type ?? (defaultAgentType.trim() || null),
-      default_workspace_id: overrides?.default_workspace_id ?? (defaultWorkspaceId || null),
-      agent_presets: overrides?.agent_presets ?? project.config.agent_presets ?? [],
+      default_agent_type: project.config.default_agent_type ?? null,
+      default_workspace_id: workspaceId,
+      agent_presets: project.config.agent_presets ?? [],
       context_containers: contextContainers,
       mount_policy: mountPolicy,
     });
     if (!result) {
-      setError("执行默认保存失败");
+      setError("默认工作空间保存失败");
       return;
     }
     setError(null);
-    setMessage("已保存执行默认");
+    setMessage(workspaceId ? "已设为默认工作空间" : "已取消默认工作空间");
   };
 
   const saveContext = async (payload: Parameters<typeof updateProject>[1]) => {
@@ -459,7 +453,7 @@ export function ProjectSettingsPage() {
                   <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Project Settings</p>
                   <h1 className="text-[2rem] font-semibold tracking-[-0.03em] text-foreground">{project.name}</h1>
                   <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                    设置页按概览、执行默认、上下文资源、工作空间和管理动作分栏收纳，让逻辑 workspace、运行时派生结果和项目级配置分开表达。
+                    设置页按概览、上下文资源、工作空间和管理动作分栏收纳，让逻辑 workspace、运行时派生结果和项目级配置分开表达。
                   </p>
                 </div>
               </div>
@@ -484,7 +478,7 @@ export function ProjectSettingsPage() {
           </div>
 
           <div className="rounded-[22px] border border-border bg-muted/20 p-2">
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {SETTINGS_TABS.map((tab) => (
                 <TabButton
                   key={tab.key}
@@ -560,56 +554,6 @@ export function ProjectSettingsPage() {
                 </SectionCard>
               )}
 
-              {activeTab === "execution" && (
-                <SectionCard
-                  title="执行默认"
-                  description="把 default agent、default workspace、Agent presets 与 workflow assignment 放在同一个执行面。"
-                >
-                  <ContentGroup title="默认执行配置">
-                    <input
-                      value={defaultAgentType}
-                      onChange={(event) => setDefaultAgentType(event.target.value)}
-                      disabled={!canEditProject}
-                      className="agentdash-form-input disabled:cursor-not-allowed disabled:opacity-70"
-                      placeholder="默认 Agent 类型（可选）"
-                    />
-                    <select
-                      value={defaultWorkspaceId}
-                      onChange={(event) => setDefaultWorkspaceId(event.target.value)}
-                      disabled={!canEditProject}
-                      className="agentdash-form-select disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      <option value="">默认 Workspace（可选）</option>
-                      {workspaces.map((workspace) => (
-                        <option key={workspace.id} value={workspace.id}>
-                          {workspace.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => void saveExecutionDefaults()}
-                        disabled={!canEditProject}
-                        className="agentdash-button-primary"
-                      >
-                        保存执行默认
-                      </button>
-                    </div>
-                  </ContentGroup>
-
-                  <ContentGroup title="Agent 管理">
-                    <p className="text-sm text-muted-foreground">
-                      Agent 管理已迁移至 Agent Hub 标签页，请在左侧 Agent 面板中创建和管理 Agent。
-                    </p>
-                  </ContentGroup>
-
-                  <ContentGroup title="Workflow Assignment">
-                    <ProjectWorkflowPanel projectId={project.id} />
-                  </ContentGroup>
-                </SectionCard>
-              )}
-
               {activeTab === "context" && (
                 <SectionCard
                   title="上下文资源"
@@ -646,9 +590,14 @@ export function ProjectSettingsPage() {
                 <>
                   <SectionCard
                     title="工作空间"
-                    description="这一块只处理逻辑 Workspace、bindings 以及 backend 快捷入口。"
+                    description="逻辑 Workspace、bindings 以及 backend 快捷入口。点击卡片上的「设为默认」可指定项目默认 Workspace。"
                   >
-                    <WorkspaceList projectId={project.id} workspaces={workspaces} />
+                    <WorkspaceList
+                      projectId={project.id}
+                      workspaces={workspaces}
+                      defaultWorkspaceId={project.config.default_workspace_id}
+                      onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
+                    />
                   </SectionCard>
 
                   <SectionCard

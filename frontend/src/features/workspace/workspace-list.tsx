@@ -240,6 +240,7 @@ interface WorkspaceEditorDrawerProps {
   mode: "create" | "detail";
   workspace: Workspace | null;
   onClose: () => void;
+  onSetDefault?: (workspaceId: string | null) => void;
 }
 
 function WorkspaceEditorDrawer({
@@ -248,6 +249,7 @@ function WorkspaceEditorDrawer({
   mode,
   workspace,
   onClose,
+  onSetDefault,
 }: WorkspaceEditorDrawerProps) {
   const {
     createWorkspace,
@@ -293,6 +295,7 @@ function WorkspaceEditorDrawer({
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isShortcutBrowseOpen, setIsShortcutBrowseOpen] = useState(false);
+  const [setAsDefault, setSetAsDefault] = useState(false);
 
   const handleDetectShortcut = async () => {
     const backendId = shortcutBackendId.trim();
@@ -342,6 +345,9 @@ function WorkspaceEditorDrawer({
         bindings,
       });
       if (!created) return;
+      if (setAsDefault && onSetDefault) {
+        onSetDefault(created.id);
+      }
       onClose();
       return;
     }
@@ -543,7 +549,20 @@ function WorkspaceEditorDrawer({
             <p className="text-xs text-destructive">{message || error}</p>
           )}
 
-          <div className="flex items-center justify-end border-t border-border pt-3">
+          <div className="flex items-center justify-between border-t border-border pt-3">
+            {mode === "create" && onSetDefault ? (
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={setAsDefault}
+                  onChange={(e) => setSetAsDefault(e.target.checked)}
+                  className="rounded border-border"
+                />
+                创建后设为项目默认 Workspace
+              </label>
+            ) : (
+              <div />
+            )}
             <button
               type="button"
               onClick={() => void handleSave()}
@@ -578,11 +597,24 @@ function WorkspaceEditorDrawer({
 interface WorkspaceListProps {
   projectId: string;
   workspaces: Workspace[];
+  defaultWorkspaceId?: string | null;
+  onSetDefault?: (workspaceId: string | null) => void;
 }
 
-export function WorkspaceList({ projectId, workspaces }: WorkspaceListProps) {
+export function WorkspaceList({
+  projectId,
+  workspaces,
+  defaultWorkspaceId,
+  onSetDefault,
+}: WorkspaceListProps) {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+
+  const handleToggleDefault = (workspaceId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!onSetDefault) return;
+    onSetDefault(defaultWorkspaceId === workspaceId ? null : workspaceId);
+  };
 
   return (
     <>
@@ -611,17 +643,27 @@ export function WorkspaceList({ projectId, workspaces }: WorkspaceListProps) {
 
         {workspaces.map((workspace) => {
           const primaryBinding = findWorkspaceBinding(workspace);
+          const isDefault = defaultWorkspaceId === workspace.id;
           return (
             <button
               key={workspace.id}
               type="button"
               onClick={() => setSelectedWorkspace(workspace)}
-              className="w-full rounded-[12px] border border-border bg-background px-4 py-4 text-left transition-colors hover:bg-secondary/35"
+              className={`w-full rounded-[12px] border px-4 py-4 text-left transition-colors hover:bg-secondary/35 ${
+                isDefault
+                  ? "border-primary/30 bg-primary/[0.03]"
+                  : "border-border bg-background"
+              }`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-medium text-foreground">{workspace.name}</p>
+                    {isDefault && (
+                      <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">
+                        默认
+                      </span>
+                    )}
                     <WorkspaceStatusBadge status={workspace.status} />
                     <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
                       {identityKindLabels[workspace.identity_kind]}
@@ -645,12 +687,33 @@ export function WorkspaceList({ projectId, workspaces }: WorkspaceListProps) {
                   )}
                 </div>
 
-                <div className="shrink-0 text-right">
-                  <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                    bindings
-                  </p>
-                  <p className="text-sm font-medium text-foreground">{workspace.bindings.length}</p>
-                  {primaryBinding && <BindingStatusBadge status={primaryBinding.status} />}
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <div className="text-right">
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      bindings
+                    </p>
+                    <p className="text-sm font-medium text-foreground">{workspace.bindings.length}</p>
+                    {primaryBinding && <BindingStatusBadge status={primaryBinding.status} />}
+                  </div>
+                  {onSetDefault && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => handleToggleDefault(workspace.id, e)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          handleToggleDefault(workspace.id, e as unknown as React.MouseEvent);
+                        }
+                      }}
+                      className={`rounded-[8px] border px-2.5 py-1.5 text-[11px] transition-colors ${
+                        isDefault
+                          ? "border-primary/25 bg-primary/10 text-primary hover:bg-primary/15"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/25 hover:bg-primary/5 hover:text-primary"
+                      }`}
+                    >
+                      {isDefault ? "取消默认" : "设为默认"}
+                    </span>
+                  )}
                 </div>
               </div>
             </button>

@@ -13,6 +13,7 @@ use agentdash_acp_meta::{
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
+use agentdash_spi::action_type as at;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
     AddressSpace, AgentConfig, ExecutionContext, HookEvaluationQuery, HookPendingAction,
@@ -500,7 +501,7 @@ impl CompanionRequestTool {
             "parent_turn_id": companion_context.parent_turn_id,
             "request_id": request_id,
             "request_type": "review",
-            "adoption_mode": "follow_up_required",
+            "adoption_mode": at::FOLLOW_UP_REQUIRED,
             "status": "pending",
             "summary": prompt,
             "wait": wait,
@@ -1159,10 +1160,12 @@ fn parse_slice_mode(value: &str) -> CompanionSliceMode {
 }
 
 fn parse_adoption_mode(value: &str) -> CompanionAdoptionMode {
-    match value {
-        "follow_up_required" => CompanionAdoptionMode::FollowUpRequired,
-        "blocking_review" => CompanionAdoptionMode::BlockingReview,
-        _ => CompanionAdoptionMode::Suggestion,
+    if value == at::FOLLOW_UP_REQUIRED {
+        CompanionAdoptionMode::FollowUpRequired
+    } else if value == at::BLOCKING_REVIEW {
+        CompanionAdoptionMode::BlockingReview
+    } else {
+        CompanionAdoptionMode::Suggestion
     }
 }
 
@@ -1327,7 +1330,7 @@ fn build_subagent_pending_action(
         .unwrap_or("suggestion")
         .trim()
         .to_string();
-    if adoption_mode.is_empty() || adoption_mode == "suggestion" {
+    if adoption_mode.is_empty() || adoption_mode == at::SUGGESTION {
         return None;
     }
 
@@ -1351,7 +1354,7 @@ fn build_subagent_pending_action(
     Some(HookPendingAction {
         id: format!("{adoption_mode}:{dispatch_id}:{parent_turn_id}"),
         created_at_ms: chrono::Utc::now().timestamp_millis(),
-        title: if adoption_mode == "blocking_review" {
+        title: if adoption_mode == at::BLOCKING_REVIEW {
             format!("Companion `{companion_label}` 结果需要阻塞式 review")
         } else {
             format!("Companion `{companion_label}` 结果需要主 session 跟进")
@@ -1750,9 +1753,9 @@ fn companion_slice_mode_key(mode: CompanionSliceMode) -> &'static str {
 
 fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
     match mode {
-        CompanionAdoptionMode::Suggestion => "suggestion",
-        CompanionAdoptionMode::FollowUpRequired => "follow_up_required",
-        CompanionAdoptionMode::BlockingReview => "blocking_review",
+        CompanionAdoptionMode::Suggestion => at::SUGGESTION,
+        CompanionAdoptionMode::FollowUpRequired => at::FOLLOW_UP_REQUIRED,
+        CompanionAdoptionMode::BlockingReview => at::BLOCKING_REVIEW,
     }
 }
 

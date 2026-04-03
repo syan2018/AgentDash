@@ -15,11 +15,12 @@ pub use connector::{
     ToolCluster, content_block_to_text,
 };
 pub use hooks::{
-    ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus,
-    HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookOwnerSummary,
-    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
-    HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry,
-    HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+    action_type, ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest,
+    HookCompletionStatus, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection,
+    HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
+    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess,
+    HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry, HookTrigger,
+    NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime,
 };
 pub use lifecycle::{

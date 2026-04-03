@@ -384,6 +384,11 @@ pub fn build_effective_contract(
     }
 }
 
+/// Preset key constants referencing implementations in agentdash-application/src/hooks/presets.rs.
+/// If a preset is renamed in the application layer, update these constants accordingly.
+const PRESET_BLOCK_RECORD_ARTIFACT: &str = "block_record_artifact";
+const PRESET_SESSION_TERMINAL_ADVANCE: &str = "session_terminal_advance";
+
 /// When a WorkflowContract has no `hook_rules` but uses legacy `constraints`/`checks`,
 /// synthesize equivalent hook_rules so the new evaluation path can handle them.
 ///
@@ -411,7 +416,7 @@ fn migrate_legacy_to_hook_rules(contract: &WorkflowContract) -> Vec<WorkflowHook
                     key: format!("migrated:{}", constraint.key),
                     trigger: WorkflowHookTrigger::BeforeTool,
                     description: constraint.description.clone(),
-                    preset: Some("block_record_artifact".to_string()),
+                    preset: Some(PRESET_BLOCK_RECORD_ARTIFACT.to_string()),
                     params: Some(serde_json::json!({ "artifact_types": artifact_types })),
                     script: None,
                     enabled: true,
@@ -423,7 +428,7 @@ fn migrate_legacy_to_hook_rules(contract: &WorkflowContract) -> Vec<WorkflowHook
     for check in &contract.completion.checks {
         let (preset_key, trigger) = match check.kind {
             WorkflowCheckKind::SessionTerminalIn => {
-                ("session_terminal_advance", WorkflowHookTrigger::BeforeStop)
+                (PRESET_SESSION_TERMINAL_ADVANCE, WorkflowHookTrigger::BeforeStop)
             }
             _ => continue,
         };

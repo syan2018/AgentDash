@@ -3,6 +3,22 @@ use std::sync::Arc;
 use agentdash_domain::workflow::{
     EffectiveSessionContract, LifecycleRunStatus, WorkflowRecordArtifactType,
 };
+
+/// Well-known `action_type` string values for [`HookPendingAction`].
+///
+/// These identifiers form the protocol contract between the hook runtime,
+/// companion tools, and workflow rules (including Rhai scripts).
+/// All string comparisons against `action_type` must use these constants.
+pub mod action_type {
+    /// Companion result requires the parent session to review and explicitly
+    /// adopt or reject before proceeding or stopping.
+    pub const BLOCKING_REVIEW: &str = "blocking_review";
+    /// Companion result requires the parent session to follow up;
+    /// does not block stop but is delivered as a follow-up prompt.
+    pub const FOLLOW_UP_REQUIRED: &str = "follow_up_required";
+    /// Companion result is informational only; parent session may ignore.
+    pub const SUGGESTION: &str = "suggestion";
+}
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -200,8 +216,15 @@ impl HookPendingAction {
         matches!(self.status, HookPendingActionStatus::Pending)
     }
 
+    /// Returns `true` if this action must be resolved before the session can stop.
     pub fn is_blocking(&self) -> bool {
-        self.action_type == "blocking_review"
+        self.action_type == action_type::BLOCKING_REVIEW
+    }
+
+    /// Returns `true` if this action should be delivered as a follow-up prompt
+    /// rather than an inline steering message.
+    pub fn is_follow_up(&self) -> bool {
+        self.action_type == action_type::FOLLOW_UP_REQUIRED
     }
 }
 

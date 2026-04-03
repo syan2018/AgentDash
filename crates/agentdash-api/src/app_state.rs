@@ -123,6 +123,10 @@ impl AppState {
         let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
 
         let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
+        workspace_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("workspaces 表初始化失败: {e}"))?;
 
         let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
         let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type {
+  ContextContainerCapability,
   Workspace,
   WorkspaceBinding,
   WorkspaceBindingStatus,
@@ -8,6 +9,7 @@ import type {
   WorkspaceResolutionPolicy,
   WorkspaceStatus,
 } from "../../types";
+import { ALL_CAPABILITIES, CONTEXT_CAPABILITY_OPTIONS } from "../../components/context-config-defaults";
 import {
   type WorkspaceBindingInput,
   findWorkspaceBinding,
@@ -292,6 +294,9 @@ function WorkspaceEditorDrawer({
   const [shortcutRootRef, setShortcutRootRef] = useState(initialBinding?.root_ref ?? "");
   const [detectionResult, setDetectionResult] = useState<WorkspaceDetectionResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [mountCapabilities, setMountCapabilities] = useState<ContextContainerCapability[]>(
+    workspace?.mount_capabilities.length ? workspace.mount_capabilities : [...ALL_CAPABILITIES],
+  );
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isShortcutBrowseOpen, setIsShortcutBrowseOpen] = useState(false);
@@ -337,12 +342,16 @@ function WorkspaceEditorDrawer({
 
     setMessage(null);
 
+    const isAllCaps = ALL_CAPABILITIES.every((c) => mountCapabilities.includes(c));
+    const capsToSave = isAllCaps ? [] : mountCapabilities;
+
     if (mode === "create") {
       const created = await createWorkspace(projectId, trimmedName, {
         identity_kind: identityKind,
         identity_payload: identityPayload,
         resolution_policy: resolutionPolicy,
         bindings,
+        mount_capabilities: capsToSave,
       });
       if (!created) return;
       if (setAsDefault && onSetDefault) {
@@ -360,6 +369,7 @@ function WorkspaceEditorDrawer({
       resolution_policy: resolutionPolicy,
       default_binding_id: defaultBindingId,
       bindings,
+      mount_capabilities: capsToSave,
     });
     if (!updated) return;
 
@@ -543,6 +553,37 @@ function WorkspaceEditorDrawer({
               onChange={setBindings}
               onDefaultBindingChange={setDefaultBindingId}
             />
+          </DetailSection>
+
+          <DetailSection title="挂载能力">
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              选择此 Workspace 挂载后 Agent 可使用的能力。不选则默认全部开启。
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {CONTEXT_CAPABILITY_OPTIONS.map((opt) => {
+                const active = mountCapabilities.includes(opt.value);
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      setMountCapabilities((prev) =>
+                        active
+                          ? prev.filter((c) => c !== opt.value)
+                          : [...prev, opt.value],
+                      );
+                    }}
+                    className={`rounded-[8px] border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      active
+                        ? "border-primary/30 bg-primary/10 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:border-primary/25 hover:bg-primary/5"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
           </DetailSection>
 
           {(message || error) && (

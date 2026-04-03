@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  ContextContainerCapability,
   Workspace,
   WorkspaceBinding,
   WorkspaceBindingStatus,
@@ -25,6 +26,7 @@ export interface CreateWorkspaceOpts {
   resolution_policy?: WorkspaceResolutionPolicy;
   bindings?: WorkspaceBindingInput[];
   shortcut_binding?: WorkspaceBindingInput;
+  mount_capabilities?: ContextContainerCapability[];
 }
 
 interface WorkspaceState {
@@ -45,6 +47,7 @@ interface WorkspaceState {
       resolution_policy?: WorkspaceResolutionPolicy;
       default_binding_id?: string | null;
       bindings?: WorkspaceBindingInput[];
+      mount_capabilities?: ContextContainerCapability[];
     },
   ) => Promise<Workspace | null>;
   updateStatus: (id: string, status: WorkspaceStatus) => Promise<void>;
@@ -103,6 +106,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         resolution_policy: opts?.resolution_policy ?? 'prefer_online',
         bindings: opts?.bindings,
         shortcut_binding: opts?.shortcut_binding,
+        mount_capabilities: opts?.mount_capabilities,
       });
       set((state) => {
         const existing = state.workspacesByProjectId[projectId] ?? [];

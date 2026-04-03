@@ -15,6 +15,9 @@ export const CONTEXT_CAPABILITY_OPTIONS: Array<{
   { value: "exec", label: "执行" },
 ];
 
+export const ALL_CAPABILITIES: ContextContainerCapability[] =
+  CONTEXT_CAPABILITY_OPTIONS.map((o) => o.value);
+
 export function createDefaultMountPolicy(): MountDerivationPolicy {
   return {
     include_local_workspace: true,

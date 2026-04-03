@@ -784,6 +784,7 @@ export interface Workspace {
   default_binding_id?: string | null;
   status: WorkspaceStatus;
   bindings: WorkspaceBinding[];
+  mount_capabilities: ContextContainerCapability[];
   created_at: string;
   updated_at: string;
 }

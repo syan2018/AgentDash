@@ -72,6 +72,8 @@ impl PostgresWorkspaceRepository {
             .await?;
         self.ensure_workspace_column("created_at", "TEXT").await?;
         self.ensure_workspace_column("updated_at", "TEXT").await?;
+        self.ensure_workspace_column("mount_capabilities", "TEXT NOT NULL DEFAULT '[]'")
+            .await?;
 
         Ok(())
     }
@@ -177,9 +179,11 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        let mount_caps = serde_json::to_string(&workspace.mount_capabilities)
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         sqlx::query(
-            "INSERT INTO workspaces (id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO workspaces (id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, mount_capabilities, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(workspace.id.to_string())
         .bind(workspace.project_id.to_string())
@@ -189,6 +193,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(resolution_policy_to_str(&workspace.resolution_policy))
         .bind(workspace.default_binding_id.map(|id| id.to_string()))
         .bind(workspace_status_to_str(&workspace.status))
+        .bind(mount_caps)
         .bind(workspace.created_at.to_rfc3339())
         .bind(workspace.updated_at.to_rfc3339())
         .execute(&mut *tx)
@@ -204,7 +209,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Workspace>, DomainError> {
         let row = sqlx::query(
-            "SELECT id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, created_at, updated_at
+            "SELECT id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, mount_capabilities, created_at, updated_at
              FROM workspaces WHERE id = $1",
         )
         .bind(id.to_string())
@@ -224,7 +229,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
 
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Workspace>, DomainError> {
         let rows = sqlx::query(
-            "SELECT id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, created_at, updated_at
+            "SELECT id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, mount_capabilities, created_at, updated_at
              FROM workspaces WHERE project_id = $1 ORDER BY created_at DESC",
         )
         .bind(project_id.to_string())
@@ -251,10 +256,12 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        let mount_caps = serde_json::to_string(&workspace.mount_capabilities)
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         let result = sqlx::query(
             "UPDATE workspaces
-             SET name = $1, identity_kind = $2, identity_payload = $3, resolution_policy = $4, default_binding_id = $5, status = $6, updated_at = $7
-             WHERE id = $8",
+             SET name = $1, identity_kind = $2, identity_payload = $3, resolution_policy = $4, default_binding_id = $5, status = $6, mount_capabilities = $7, updated_at = $8
+             WHERE id = $9",
         )
         .bind(workspace.name.trim())
         .bind(identity_kind_to_str(&workspace.identity_kind))
@@ -262,6 +269,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(resolution_policy_to_str(&workspace.resolution_policy))
         .bind(workspace.default_binding_id.map(|id| id.to_string()))
         .bind(workspace_status_to_str(&workspace.status))
+        .bind(mount_caps)
         .bind(Utc::now().to_rfc3339())
         .bind(workspace.id.to_string())
         .execute(&mut *tx)
@@ -355,6 +363,12 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         })
         .transpose()?;
 
+    let mount_capabilities_raw = row
+        .try_get::<String, _>("mount_capabilities")
+        .unwrap_or_else(|_| "[]".to_string());
+    let mount_capabilities: Vec<agentdash_domain::context_container::ContextContainerCapability> =
+        serde_json::from_str(&mount_capabilities_raw).unwrap_or_default();
+
     Ok(Workspace {
         id,
         project_id,
@@ -365,6 +379,7 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         default_binding_id,
         status: str_to_workspace_status(&status)?,
         bindings: Vec::new(),
+        mount_capabilities,
         created_at: parse_datetime(&created_at, "workspaces.created_at")?,
         updated_at: parse_datetime(&updated_at, "workspaces.updated_at")?,
     })

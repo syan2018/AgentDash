@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_application::backend_transport::BackendTransport;
+use agentdash_domain::context_container::ContextContainerCapability;
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
     WorkspaceResolutionPolicy, WorkspaceStatus,
@@ -40,6 +41,7 @@ pub struct CreateWorkspaceRequest {
     pub default_binding_id: Option<Uuid>,
     pub bindings: Option<Vec<WorkspaceBindingInput>>,
     pub shortcut_binding: Option<WorkspaceBindingInput>,
+    pub mount_capabilities: Option<Vec<ContextContainerCapability>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +52,7 @@ pub struct UpdateWorkspaceRequest {
     pub resolution_policy: Option<WorkspaceResolutionPolicy>,
     pub default_binding_id: Option<Uuid>,
     pub bindings: Option<Vec<WorkspaceBindingInput>>,
+    pub mount_capabilities: Option<Vec<ContextContainerCapability>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,6 +161,7 @@ pub async fn create_workspace(
     );
     workspace.set_bindings(initial_bindings);
     workspace.default_binding_id = req.default_binding_id.or(workspace.default_binding_id);
+    workspace.mount_capabilities = req.mount_capabilities.unwrap_or_default();
     workspace.status = derive_workspace_status(&workspace.bindings);
     workspace.refresh_default_binding();
 
@@ -224,6 +228,9 @@ pub async fn update_workspace(
     }
     if let Some(default_binding_id) = req.default_binding_id {
         workspace.default_binding_id = Some(default_binding_id);
+    }
+    if let Some(mount_capabilities) = req.mount_capabilities {
+        workspace.mount_capabilities = mount_capabilities;
     }
     workspace.status = derive_workspace_status(&workspace.bindings);
     workspace.refresh_default_binding();

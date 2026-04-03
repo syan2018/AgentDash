@@ -186,6 +186,7 @@ export interface ContextContainersEditorProps {
   value: ContextContainerDefinition[];
   domain: string;
   isSaving?: boolean;
+  readOnly?: boolean;
   addLabel?: string;
   emptyText?: string;
   onSave: (next: ContextContainerDefinition[]) => Promise<unknown>;
@@ -195,6 +196,7 @@ export function ContextContainersEditor({
   value,
   domain,
   isSaving = false,
+  readOnly = false,
   addLabel = "添加容器",
   emptyText = "暂无容器",
   onSave,
@@ -205,6 +207,7 @@ export function ContextContainersEditor({
       value={value}
       domain={domain}
       isSaving={isSaving}
+      readOnly={readOnly}
       addLabel={addLabel}
       emptyText={emptyText}
       onSave={onSave}
@@ -212,15 +215,69 @@ export function ContextContainersEditor({
   );
 }
 
+function ContainerSummaryCard({
+  container,
+  onClick,
+}: {
+  container: ContextContainerDefinition;
+  onClick: () => void;
+}) {
+  const providerLabel =
+    container.provider.kind === "inline_files"
+      ? `内联 · ${container.provider.files.length} 个文件`
+      : container.provider.service_id;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full rounded-[12px] border border-border bg-background/70 px-3 py-3 text-left transition-colors hover:bg-secondary/35"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-xs font-medium text-foreground">
+              {container.display_name.trim() || container.id}
+            </p>
+            <span className="rounded-[4px] bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {container.mount_id}
+            </span>
+            <span className="rounded-[4px] bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {providerLabel}
+            </span>
+            {container.default_write && (
+              <span className="rounded-[4px] bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600">
+                默认写入
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+          {container.capabilities.map((cap) => (
+            <span
+              key={cap}
+              className="rounded-full border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground"
+            >
+              {CONTEXT_CAPABILITY_OPTIONS.find((o) => o.value === cap)?.label ?? cap}
+            </span>
+          ))}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function ContextContainersEditorForm({
   value,
   domain,
   isSaving = false,
+  readOnly = false,
   addLabel = "添加容器",
   emptyText = "暂无容器",
   onSave,
 }: ContextContainersEditorProps) {
   const [draft, setDraft] = useState<ContextContainerDefinition[]>(() => value.map(cloneContainer));
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const mountProviders = useMountProviders();
 
   const isDirty = useMemo(
@@ -245,49 +302,75 @@ function ContextContainersEditorForm({
         <p className="text-xs text-muted-foreground">{emptyText}</p>
       )}
 
-      {draft.map((container, index) => (
-        <ContainerEditorItem
-          key={`container-editor-${index}`}
-          container={container}
-          index={index}
-          isSaving={isSaving}
-          mountProviders={mountProviders}
-          onUpdate={(updater) => updateContainerAt(index, updater)}
-          onRemove={() => setDraft((current) => current.filter((_, i) => i !== index))}
-        />
-      ))}
+      {draft.map((container, index) =>
+        editingIndex === index ? (
+          <ContainerEditorItem
+            key={`container-editor-${index}`}
+            container={container}
+            index={index}
+            isSaving={isSaving}
+            mountProviders={mountProviders}
+            onUpdate={(updater) => updateContainerAt(index, updater)}
+            onRemove={() => {
+              setDraft((current) => current.filter((_, i) => i !== index));
+              setEditingIndex(null);
+            }}
+            onCollapse={() => setEditingIndex(null)}
+          />
+        ) : (
+          <ContainerSummaryCard
+            key={`container-summary-${index}`}
+            container={container}
+            onClick={() => !readOnly && setEditingIndex(index)}
+          />
+        ),
+      )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setDraft((current) => [...current, createDefaultContainer(domain, current)])}
-          disabled={isSaving}
-          className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:opacity-40"
-        >
-          + {addLabel}
-        </button>
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setDraft((current) => {
+                const next = [...current, createDefaultContainer(domain, current)];
+                setEditingIndex(next.length - 1);
+                return next;
+              });
+            }}
+            disabled={isSaving}
+            className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:opacity-40"
+          >
+            + {addLabel}
+          </button>
 
-        {isDirty && (
-          <>
-            <button
-              type="button"
-              onClick={() => void onSave(draft.map(cloneContainer))}
-              disabled={isSaving}
-              className="agentdash-button-primary"
-            >
-              {saveLabel(isSaving, "保存容器配置")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setDraft(value.map(cloneContainer))}
-              disabled={isSaving}
-              className="agentdash-button-secondary"
-            >
-              还原
-            </button>
-          </>
-        )}
-      </div>
+          {isDirty && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingIndex(null);
+                  void onSave(draft.map(cloneContainer));
+                }}
+                disabled={isSaving}
+                className="agentdash-button-primary"
+              >
+                {saveLabel(isSaving, "保存容器配置")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(value.map(cloneContainer));
+                  setEditingIndex(null);
+                }}
+                disabled={isSaving}
+                className="agentdash-button-secondary"
+              >
+                还原
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -299,6 +382,7 @@ function ContainerEditorItem({
   mountProviders,
   onUpdate,
   onRemove,
+  onCollapse,
 }: {
   container: ContextContainerDefinition;
   index: number;
@@ -306,11 +390,12 @@ function ContainerEditorItem({
   mountProviders: ConfigurableProviderInfo[];
   onUpdate: (updater: (c: ContextContainerDefinition) => ContextContainerDefinition) => void;
   onRemove: () => void;
+  onCollapse?: () => void;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   return (
-    <div className="space-y-3 rounded-[12px] border border-border bg-background/70 p-3">
+    <div className="space-y-3 rounded-[12px] border border-primary/20 bg-background/70 p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium text-foreground">
           {container.display_name.trim() || `容器 ${index + 1}`}
@@ -318,14 +403,25 @@ function ContainerEditorItem({
             {container.id}
           </span>
         </p>
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={isSaving}
-          className="rounded-[8px] border border-destructive/20 bg-destructive/5 px-2 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
-        >
-          删除
-        </button>
+        <div className="flex items-center gap-2">
+          {onCollapse && (
+            <button
+              type="button"
+              onClick={onCollapse}
+              className="rounded-[8px] border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              收起
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={isSaving}
+            className="rounded-[8px] border border-destructive/20 bg-destructive/5 px-2 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
+          >
+            删除
+          </button>
+        </div>
       </div>
 
       <input

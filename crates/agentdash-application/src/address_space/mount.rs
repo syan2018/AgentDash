@@ -123,7 +123,14 @@ pub fn workspace_mount_from_policy(
         return Err("Workspace binding.root_ref 不能为空".to_string());
     }
 
-    let capabilities = if policy.local_workspace_capabilities.is_empty() {
+    let effective_caps = if !workspace.mount_capabilities.is_empty() {
+        &workspace.mount_capabilities
+    } else if !policy.local_workspace_capabilities.is_empty() {
+        &policy.local_workspace_capabilities
+    } else {
+        &[][..]
+    };
+    let capabilities = if effective_caps.is_empty() {
         vec![
             MountCapability::Read,
             MountCapability::Write,
@@ -132,7 +139,7 @@ pub fn workspace_mount_from_policy(
             MountCapability::Exec,
         ]
     } else {
-        map_container_capabilities(&policy.local_workspace_capabilities)
+        map_container_capabilities(effective_caps)
     };
 
     Ok(Mount {

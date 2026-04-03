@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import type {
+  ContextContainerDefinition,
   DirectoryGroup,
   DirectoryUser,
   Project,
@@ -14,14 +15,10 @@ import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { AddressSpaceBrowser } from "../features/address-space";
-// AgentPresetEditor 已移除，Agent 管理统一在 Agent Hub 中进行
 import {
   ContextContainersEditor,
-  MountPolicyEditor,
 } from "../components/context-config-editor";
-import {
-  createDefaultMountPolicy,
-} from "../components/context-config-defaults";
+import { previewAddressSpace, type MountSummary } from "../services/addressSpaces";
 import {
   DangerConfirmDialog,
 } from "../components/ui/detail-panel";
@@ -144,6 +141,199 @@ function TabButton({
       <p className="truncate text-sm font-medium">{tab.label}</p>
       <p className="mt-1 text-xs leading-5 opacity-80">{tab.description}</p>
     </button>
+  );
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  relay_fs: "工作区文件",
+  inline_fs: "内联文件",
+  lifecycle_vfs: "Lifecycle 记录",
+  canvas_fs: "Canvas",
+  external_service: "外部服务",
+};
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  read: "读",
+  write: "写",
+  list: "列",
+  search: "搜",
+  exec: "执行",
+};
+
+function MountOverviewList({ projectId, refreshKey }: { projectId: string; refreshKey?: number }) {
+  const [mounts, setMounts] = useState<MountSummary[]>([]);
+  const [defaultMountId, setDefaultMountId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const result = await previewAddressSpace({ projectId, target: "project" });
+        if (cancelled) return;
+        setMounts(result.mounts);
+        setDefaultMountId(result.default_mount_id ?? null);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, refreshKey]);
+
+  if (loading) {
+    return (
+      <p className="py-6 text-center text-xs text-muted-foreground">
+        正在加载 Mount 概览…
+      </p>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-[10px] border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+        {error}
+      </div>
+    );
+  }
+
+  if (mounts.length === 0) {
+    return (
+      <p className="rounded-[10px] border border-dashed border-border px-4 py-4 text-center text-sm text-muted-foreground">
+        当前配置下没有可用的 Mount。请先配置工作空间或上下文容器。
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {mounts.map((mount) => {
+        const isDefault = mount.id === defaultMountId;
+        const providerLabel = PROVIDER_LABELS[mount.provider] ?? mount.provider;
+        const online = mount.backend_online;
+
+        return (
+          <div
+            key={mount.id}
+            className={`rounded-[12px] border px-4 py-3 ${
+              isDefault
+                ? "border-primary/25 bg-primary/[0.03]"
+                : "border-border bg-background"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* 状态指示点 */}
+                  {mount.provider === "relay_fs" ? (
+                    <span
+                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                        online === true
+                          ? "bg-emerald-500"
+                          : online === false
+                            ? "bg-red-400"
+                            : "bg-muted-foreground/30"
+                      }`}
+                      title={online === true ? "Backend 在线" : online === false ? "Backend 离线" : "状态未知"}
+                    />
+                  ) : (
+                    <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-400" />
+                  )}
+
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {mount.display_name}
+                  </p>
+
+                  {isDefault && (
+                    <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                      默认
+                    </span>
+                  )}
+                  {mount.default_write && (
+                    <span className="inline-flex items-center rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                      默认写入
+                    </span>
+                  )}
+                  <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                    {providerLabel}
+                  </span>
+                </div>
+
+                <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                  {mount.root_ref}
+                </p>
+              </div>
+
+              {/* 能力标签 */}
+              <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                {mount.capabilities.map((cap) => (
+                  <span
+                    key={cap}
+                    className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground"
+                  >
+                    {CAPABILITY_LABELS[cap] ?? cap}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {mount.file_count != null && (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                {mount.file_count} 个文件
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ContextTabContent({
+  project,
+  contextContainers,
+  canEdit,
+  onSave,
+}: {
+  project: Project;
+  contextContainers: ContextContainerDefinition[];
+  canEdit: boolean;
+  onSave: (next: ContextContainerDefinition[]) => Promise<unknown>;
+}) {
+  const [mountRefreshKey, setMountRefreshKey] = useState(0);
+
+  const handleContainerSave = async (next: ContextContainerDefinition[]) => {
+    await onSave(next);
+    setMountRefreshKey((k) => k + 1);
+  };
+
+  return (
+    <>
+      <SectionCard
+        title="上下文容器"
+        description="项目级上下文容器，可以是内联文件或外部服务。Agent 会话运行时会根据可见性规则自动挂载。"
+      >
+        <ContextContainersEditor
+          value={contextContainers}
+          domain="project"
+          emptyText="暂无项目级容器"
+          isSaving={false}
+          readOnly={!canEdit}
+          onSave={handleContainerSave}
+        />
+      </SectionCard>
+
+      <SectionCard
+        title="当前可用 Mount"
+        description="基于当前 Workspace 和上下文容器配置，系统派生出的所有挂载点及其能力概览。"
+      >
+        <MountOverviewList projectId={project.id} refreshKey={mountRefreshKey} />
+      </SectionCard>
+    </>
   );
 }
 
@@ -286,7 +476,6 @@ export function ProjectSettingsPage() {
 
   const canEditProject = project.access.can_edit;
   const canManageSharing = project.access.can_manage_sharing;
-  const mountPolicy = project.config.mount_policy ?? createDefaultMountPolicy();
   const contextContainers = project.config.context_containers ?? [];
   const availableUsers = directoryUsers.filter((item) => item.user_id !== currentUser?.user_id);
   const activeTabMeta = SETTINGS_TABS.find((item) => item.key === activeTab) ?? SETTINGS_TABS[0];
@@ -323,7 +512,7 @@ export function ProjectSettingsPage() {
       default_workspace_id: workspaceId,
       agent_presets: project.config.agent_presets ?? [],
       context_containers: contextContainers,
-      mount_policy: mountPolicy,
+      mount_policy: project.config.mount_policy,
     });
     if (!result) {
       setError("默认工作空间保存失败");
@@ -555,35 +744,14 @@ export function ProjectSettingsPage() {
               )}
 
               {activeTab === "context" && (
-                <SectionCard
-                  title="上下文资源"
-                  description="这里是 Project 的上下文容器和挂载策略。它们是运行时资源，不是 Workspace 管理的一部分。"
-                >
-                  <div className="grid gap-6 xl:grid-cols-2">
-                    <ContentGroup title="上下文容器">
-                      <ContextContainersEditor
-                        value={contextContainers}
-                        domain="project"
-                        emptyText="暂无项目级容器"
-                        isSaving={false}
-                        onSave={async (next) => {
-                          await saveContext({ context_containers: next });
-                        }}
-                      />
-                    </ContentGroup>
-
-                    <ContentGroup title="挂载策略">
-                      <MountPolicyEditor
-                        value={mountPolicy}
-                        isSaving={false}
-                        onSave={async (next) => {
-                          await saveContext({ mount_policy: next });
-                        }}
-                      />
-                    </ContentGroup>
-
-                  </div>
-                </SectionCard>
+                <ContextTabContent
+                  project={project}
+                  contextContainers={contextContainers}
+                  canEdit={canEditProject}
+                  onSave={async (next) => {
+                    await saveContext({ context_containers: next });
+                  }}
+                />
               )}
 
               {activeTab === "workspace" && (

@@ -3,6 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
+use agentdash_domain::context_container::ContextContainerCapability;
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
     WorkspaceResolutionPolicy, WorkspaceStatus,
@@ -50,6 +51,7 @@ pub struct WorkspaceResponse {
     pub default_binding_id: Option<Uuid>,
     pub status: WorkspaceStatus,
     pub bindings: Vec<WorkspaceBindingResponse>,
+    pub mount_capabilities: Vec<ContextContainerCapability>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -70,6 +72,7 @@ impl From<Workspace> for WorkspaceResponse {
                 .into_iter()
                 .map(WorkspaceBindingResponse::from)
                 .collect(),
+            mount_capabilities: workspace.mount_capabilities,
             created_at: workspace.created_at,
             updated_at: workspace.updated_at,
         }

@@ -295,7 +295,7 @@ function WorkspaceEditorDrawer({
   const [detectionResult, setDetectionResult] = useState<WorkspaceDetectionResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [mountCapabilities, setMountCapabilities] = useState<ContextContainerCapability[]>(
-    workspace?.mount_capabilities.length ? workspace.mount_capabilities : [...ALL_CAPABILITIES],
+    workspace?.mount_capabilities ?? [...ALL_CAPABILITIES],
   );
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
@@ -342,16 +342,13 @@ function WorkspaceEditorDrawer({
 
     setMessage(null);
 
-    const isAllCaps = ALL_CAPABILITIES.every((c) => mountCapabilities.includes(c));
-    const capsToSave = isAllCaps ? [] : mountCapabilities;
-
     if (mode === "create") {
       const created = await createWorkspace(projectId, trimmedName, {
         identity_kind: identityKind,
         identity_payload: identityPayload,
         resolution_policy: resolutionPolicy,
         bindings,
-        mount_capabilities: capsToSave,
+        mount_capabilities: mountCapabilities,
       });
       if (!created) return;
       if (setAsDefault && onSetDefault) {
@@ -369,7 +366,7 @@ function WorkspaceEditorDrawer({
       resolution_policy: resolutionPolicy,
       default_binding_id: defaultBindingId,
       bindings,
-      mount_capabilities: capsToSave,
+      mount_capabilities: mountCapabilities,
     });
     if (!updated) return;
 

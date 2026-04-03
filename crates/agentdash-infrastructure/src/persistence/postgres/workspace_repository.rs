@@ -19,9 +19,8 @@ impl PostgresWorkspaceRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS workspaces (
+        let ddl_statements: &[&str] = &[
+            r#"CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id),
                 name TEXT NOT NULL,
@@ -32,12 +31,10 @@ impl PostgresWorkspaceRepository {
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id);
-            CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
-
-            CREATE TABLE IF NOT EXISTS workspace_bindings (
+            )"#,
+            "CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)",
+            r#"CREATE TABLE IF NOT EXISTS workspace_bindings (
                 id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
                 backend_id TEXT NOT NULL,
@@ -48,15 +45,16 @@ impl PostgresWorkspaceRepository {
                 priority INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_workspace_bindings_workspace ON workspace_bindings(workspace_id);
-            CREATE INDEX IF NOT EXISTS idx_workspace_bindings_backend ON workspace_bindings(backend_id);
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            )"#,
+            "CREATE INDEX IF NOT EXISTS idx_workspace_bindings_workspace ON workspace_bindings(workspace_id)",
+            "CREATE INDEX IF NOT EXISTS idx_workspace_bindings_backend ON workspace_bindings(backend_id)",
+        ];
+        for stmt in ddl_statements {
+            sqlx::query(stmt)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        }
 
         self.ensure_workspace_column("name", "TEXT NOT NULL DEFAULT ''")
             .await?;
@@ -72,8 +70,11 @@ impl PostgresWorkspaceRepository {
             .await?;
         self.ensure_workspace_column("created_at", "TEXT").await?;
         self.ensure_workspace_column("updated_at", "TEXT").await?;
-        self.ensure_workspace_column("mount_capabilities", "TEXT NOT NULL DEFAULT '[]'")
-            .await?;
+        self.ensure_workspace_column(
+            "mount_capabilities",
+            r#"TEXT NOT NULL DEFAULT '["read","write","list","search","exec"]'"#,
+        )
+        .await?;
 
         Ok(())
     }
@@ -366,8 +367,11 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
     let mount_capabilities_raw = row
         .try_get::<String, _>("mount_capabilities")
         .unwrap_or_else(|_| "[]".to_string());
-    let mount_capabilities: Vec<agentdash_domain::context_container::ContextContainerCapability> =
+    let mut mount_capabilities: Vec<agentdash_domain::context_container::ContextContainerCapability> =
         serde_json::from_str(&mount_capabilities_raw).unwrap_or_default();
+    if mount_capabilities.is_empty() {
+        mount_capabilities = agentdash_domain::workspace::Workspace::default_mount_capabilities();
+    }
 
     Ok(Workspace {
         id,

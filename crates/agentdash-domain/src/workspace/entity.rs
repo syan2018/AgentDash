@@ -26,8 +26,7 @@ pub struct Workspace {
     pub status: WorkspaceStatus,
     pub bindings: Vec<WorkspaceBinding>,
     /// Agent 会话中该 Workspace mount 可使用的能力。
-    /// 空 Vec 视为全部开启（read/write/list/search/exec）。
-    #[serde(default)]
+    #[serde(default = "Workspace::default_mount_capabilities")]
     pub mount_capabilities: Vec<ContextContainerCapability>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -52,10 +51,20 @@ impl Workspace {
             default_binding_id: None,
             status: WorkspaceStatus::Pending,
             bindings: Vec::new(),
-            mount_capabilities: Vec::new(),
+            mount_capabilities: Self::default_mount_capabilities(),
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn default_mount_capabilities() -> Vec<ContextContainerCapability> {
+        vec![
+            ContextContainerCapability::Read,
+            ContextContainerCapability::Write,
+            ContextContainerCapability::List,
+            ContextContainerCapability::Search,
+            ContextContainerCapability::Exec,
+        ]
     }
 
     pub fn set_bindings(&mut self, mut bindings: Vec<WorkspaceBinding>) {

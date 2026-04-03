@@ -117,7 +117,9 @@ pub struct ReorderRequest {
 
 // ─── Access control ───
 
-fn require_system_access(current_user: &agentdash_plugin_api::AuthIdentity) -> Result<(), ApiError> {
+fn require_system_access(
+    current_user: &agentdash_plugin_api::AuthIdentity,
+) -> Result<(), ApiError> {
     if current_user.is_admin || current_user.auth_mode == AuthMode::Personal {
         return Ok(());
     }
@@ -162,7 +164,10 @@ pub async fn create_provider(
     if slug.is_empty() {
         return Err(ApiError::BadRequest("slug 不能为空".into()));
     }
-    if !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(ApiError::BadRequest("slug 仅允许字母、数字、- 和 _".into()));
     }
     let protocol = WireProtocol::from_str(&req.protocol).ok_or_else(|| {
@@ -262,9 +267,8 @@ pub async fn update_provider(
         provider.name = trimmed;
     }
     if let Some(protocol_str) = req.protocol {
-        let protocol = WireProtocol::from_str(&protocol_str).ok_or_else(|| {
-            ApiError::BadRequest(format!("无效的 protocol: {protocol_str}"))
-        })?;
+        let protocol = WireProtocol::from_str(&protocol_str)
+            .ok_or_else(|| ApiError::BadRequest(format!("无效的 protocol: {protocol_str}")))?;
         provider.protocol = protocol;
     }
     if let Some(api_key) = req.api_key {
@@ -352,8 +356,7 @@ pub async fn reorder_providers(
 // ─── Helpers ───
 
 fn parse_id(id: &str) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(id)
-        .map_err(|_| ApiError::BadRequest(format!("无效的 llm_provider id: {id}")))
+    Uuid::parse_str(id).map_err(|_| ApiError::BadRequest(format!("无效的 llm_provider id: {id}")))
 }
 
 fn is_masked_placeholder(value: &str) -> bool {

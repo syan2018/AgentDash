@@ -141,7 +141,7 @@ function SingleEntry({
         return <AcpTaskEventCard update={update} />;
       }
       if (isRenderableSystemEventUpdate(update)) {
-        return <AcpSystemEventCard update={update} />;
+        return <AcpSystemEventCard update={update} sessionId={sessionId ?? undefined} />;
       }
       return null;
 

@@ -5,7 +5,11 @@ use std::{
     sync::Arc,
 };
 
+use agent_client_protocol::{SessionId, SessionInfoUpdate};
 use agent_client_protocol::{SessionNotification, SessionUpdate};
+use agentdash_acp_meta::{
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+};
 use tokio::sync::{Mutex, broadcast};
 
 use super::hook_messages as msg;
@@ -13,11 +17,81 @@ use super::hook_runtime::HookSessionRuntime;
 use super::hub_support::*;
 use super::persistence::SessionPersistence;
 pub use super::types::*;
-use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
     ExecutionHookProvider, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 use agentdash_spi::{AgentConnector, ConnectorError};
+
+/// companion_request(wait=true) 的等待 registry。
+/// 工具 execute 持有 receiver 不返回，respond 侧找到 sender 发回去。
+/// 纯执行层概念，不涉及 hook 通道。
+#[derive(Debug)]
+struct CompanionWaitEntry {
+    session_id: String,
+    turn_id: String,
+    request_type: Option<String>,
+    sender: tokio::sync::oneshot::Sender<serde_json::Value>,
+}
+
+#[derive(Debug)]
+pub struct CompanionWaitResolution {
+    pub payload: serde_json::Value,
+    pub turn_id: String,
+    pub request_type: Option<String>,
+}
+
+#[derive(Clone, Default)]
+pub struct CompanionWaitRegistry {
+    inner: Arc<Mutex<HashMap<String, CompanionWaitEntry>>>,
+}
+
+impl CompanionWaitRegistry {
+    pub async fn register(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        turn_id: &str,
+        request_type: Option<String>,
+    ) -> tokio::sync::oneshot::Receiver<serde_json::Value> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.inner.lock().await.insert(
+            request_id.to_string(),
+            CompanionWaitEntry {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.to_string(),
+                request_type,
+                sender: tx,
+            },
+        );
+        rx
+    }
+
+    pub async fn resolve(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        payload: serde_json::Value,
+    ) -> Option<CompanionWaitResolution> {
+        let entry = self.inner.lock().await.remove(request_id)?;
+        if entry.session_id != session_id {
+            self.inner
+                .lock()
+                .await
+                .insert(request_id.to_string(), entry);
+            return None;
+        }
+        let _ = entry.sender.send(payload.clone());
+        Some(CompanionWaitResolution {
+            payload,
+            turn_id: entry.turn_id,
+            request_type: entry.request_type,
+        })
+    }
+
+    pub async fn remove(&self, request_id: &str) {
+        self.inner.lock().await.remove(request_id);
+    }
+}
 
 #[derive(Clone)]
 pub struct SessionHub {
@@ -26,6 +100,7 @@ pub struct SessionHub {
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
     pub(super) persistence: Arc<dyn SessionPersistence>,
+    pub companion_wait_registry: CompanionWaitRegistry,
 }
 
 impl SessionHub {
@@ -41,6 +116,7 @@ impl SessionHub {
             hook_provider,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             persistence,
+            companion_wait_registry: CompanionWaitRegistry::default(),
         }
     }
 
@@ -499,55 +575,97 @@ impl SessionHub {
             .await
     }
 
-    /// 人通过 API 回应 companion 请求：resolve session 中的 pending action
+    /// 人通过 API 回应 companion 请求。
+    /// 若命中 wait registry，则恢复挂起的工具调用；
+    /// 无论是否命中，都把回应写入 session 事件流，保证历史可回放。
     pub async fn respond_companion_request(
         &self,
         session_id: &str,
         request_id: &str,
         payload: serde_json::Value,
     ) -> Result<(), ConnectorError> {
-        let hook_session = self
-            .ensure_hook_session_runtime(session_id, None)
+        let resolved = self
+            .companion_wait_registry
+            .resolve(session_id, request_id, payload.clone())
+            .await;
+
+        let fallback_turn_id = self
+            .persistence
+            .get_session_meta(session_id)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "session `{session_id}` 没有可用的 hook runtime"
-                ))
-            })?;
+            .and_then(|meta| meta.last_turn_id);
+        let turn_id = resolved
+            .as_ref()
+            .map(|result| result.turn_id.as_str())
+            .or_else(|| fallback_turn_id.as_deref());
 
-        let resolution_kind = match payload
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("approved")
-        {
-            "rejected" | "dismissed" | "needs_revision" => {
-                agentdash_spi::HookPendingActionResolutionKind::Dismissed
-            }
-            _ => agentdash_spi::HookPendingActionResolutionKind::Adopted,
-        };
-        let note = payload
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .or_else(|| payload.get("note").and_then(|v| v.as_str()))
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        let request_type = resolved
+            .as_ref()
+            .and_then(|result| result.request_type.as_deref());
 
-        let action = hook_session
-            .resolve_pending_action(request_id, resolution_kind, note, None)
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "session `{session_id}` 中不存在 request_id=`{request_id}` 的 pending action"
-                ))
-            })?;
-
-        use crate::companion::build_hook_action_resolved_notification;
-        let notification =
-            build_hook_action_resolved_notification(session_id, "human-respond", &action);
+        let notification = build_companion_human_response_notification(
+            session_id,
+            turn_id,
+            request_id,
+            &payload,
+            request_type,
+            resolved.is_some(),
+        );
         let _ = self.inject_notification(session_id, notification).await;
 
         Ok(())
     }
+}
+
+fn build_companion_human_response_notification(
+    session_id: &str,
+    turn_id: Option<&str>,
+    request_id: &str,
+    payload: &serde_json::Value,
+    request_type: Option<&str>,
+    resumed_waiting_tool: bool,
+) -> SessionNotification {
+    let summary = payload
+        .get("summary")
+        .or_else(|| payload.get("note"))
+        .or_else(|| payload.get("choice"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let status = payload
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("responded");
+    let response_type = payload.get("type").and_then(|v| v.as_str());
+
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = turn_id.map(ToString::to_string);
+
+    let mut event = AgentDashEventV1::new("companion_human_response");
+    event.severity = Some("info".to_string());
+    event.message = Some(format!("[用户回应] status={status} {summary}"));
+    event.data = Some(serde_json::json!({
+        "request_id": request_id,
+        "status": status,
+        "summary": summary,
+        "payload": payload,
+        "request_type": request_type,
+        "response_type": response_type,
+        "resumed_waiting_tool": resumed_waiting_tool,
+    }));
+
+    let source = AgentDashSourceV1::new("agentdash-companion", "human_respond");
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source))
+        .trace(Some(trace))
+        .event(Some(event));
+
+    SessionNotification::new(
+        SessionId::new(session_id.to_string()),
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
+            merge_agentdash_meta(None, &agentdash).expect("构造 companion response meta 不应失败"),
+        )),
+    )
 }
 
 #[cfg(test)]
@@ -694,6 +812,135 @@ mod tests {
                 .and_then(|t| t.get("entryIndex"))
                 .and_then(|v| v.as_u64()),
             Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn respond_companion_request_resolves_waiting_tool_and_persists_response_event() {
+        struct NoopConnector;
+
+        #[async_trait::async_trait]
+        impl AgentConnector for NoopConnector {
+            fn connector_id(&self) -> &'static str {
+                "noop"
+            }
+            fn connector_type(&self) -> agentdash_spi::ConnectorType {
+                agentdash_spi::ConnectorType::LocalExecutor
+            }
+            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+                agentdash_spi::ConnectorCapabilities::default()
+            }
+            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+                Vec::new()
+            }
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                _context: agentdash_spi::ExecutionContext,
+            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+                Ok(Box::pin(stream::empty()))
+            }
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+        }
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = test_hub(base.path().to_path_buf(), Arc::new(NoopConnector), None);
+        let session = hub.create_session("test").await.expect("create session");
+        let payload = json!({
+            "type": "decision",
+            "status": "approved",
+            "choice": "YES",
+            "summary": "YES"
+        });
+
+        let rx = hub
+            .companion_wait_registry
+            .register(&session.id, "req-1", "turn-1", Some("approval".to_string()))
+            .await;
+
+        hub.respond_companion_request(&session.id, "req-1", payload.clone())
+            .await
+            .expect("respond should succeed");
+
+        assert_eq!(rx.await.expect("wait registry should resolve"), payload);
+
+        let events = hub
+            .persistence
+            .list_all_events(&session.id)
+            .await
+            .expect("events should load");
+        let response = events
+            .iter()
+            .find(|event| {
+                let event_type = serde_json::to_value(&event.notification)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("update")
+                            .and_then(|update| update.get("_meta"))
+                            .and_then(|meta| meta.get("agentdash"))
+                            .and_then(|agentdash| agentdash.get("event"))
+                            .and_then(|event| event.get("type"))
+                            .and_then(|value| value.as_str().map(ToString::to_string))
+                    });
+                event_type.as_deref() == Some("companion_human_response")
+            })
+            .expect("response event should exist");
+
+        assert_eq!(response.turn_id.as_deref(), Some("turn-1"));
+
+        let notification = serde_json::to_value(&response.notification).expect("serialize");
+        let event_data = notification
+            .get("update")
+            .and_then(|update| update.get("_meta"))
+            .and_then(|meta| meta.get("agentdash"))
+            .and_then(|agentdash| agentdash.get("event"))
+            .and_then(|event| event.get("data"))
+            .expect("response event data");
+        assert_eq!(
+            event_data
+                .get("request_id")
+                .and_then(|value| value.as_str()),
+            Some("req-1")
+        );
+        assert_eq!(
+            event_data
+                .get("resumed_waiting_tool")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            event_data
+                .get("request_type")
+                .and_then(|value| value.as_str()),
+            Some("approval")
         );
     }
 

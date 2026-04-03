@@ -202,10 +202,7 @@ impl PiAgentConnector {
                 sections.push(format!("## Identity\n\n{sp}"));
             }
             (_, Some(sp)) => {
-                sections.push(format!(
-                    "## Identity\n\n{}\n\n{sp}",
-                    self.system_prompt
-                ));
+                sections.push(format!("## Identity\n\n{}\n\n{sp}", self.system_prompt));
             }
             _ => {
                 sections.push(format!("## Identity\n\n{}", self.system_prompt));
@@ -454,6 +451,7 @@ impl AgentConnector for PiAgentConnector {
             agents.remove(session_id)
         };
 
+        let is_new_agent = existing_agent.is_none();
         let mut agent = if let Some(agent) = existing_agent {
             agent
         } else {
@@ -474,27 +472,32 @@ impl AgentConnector for PiAgentConnector {
             self.create_agent_with_bridge(bridge)
         };
 
-        let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
-            Ok(tools) => tools,
-            Err(error) => {
-                tracing::warn!("发现 MCP 工具失败，继续使用本地工具: {error}");
-                Vec::new()
-            }
-        };
-        let mut runtime_tools: Vec<DynAgentTool> = Vec::new();
-        let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
-            ConnectorError::InvalidConfig(
-                "PiAgentConnector 未配置 runtime tool provider".to_string(),
-            )
-        })?;
-        runtime_tools.extend(provider.build_tools(&context).await?);
-        runtime_tools.extend(mcp_tools);
-        let tool_names = runtime_tools
-            .iter()
-            .map(|tool| tool.name().to_string())
-            .collect::<Vec<_>>();
-        agent.set_tools(runtime_tools);
-        agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
+        // 只有新创建的 agent 才需要 build tools 和 system prompt。
+        // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
+        // 只更新 runtime delegate（hook session 每轮刷新）。
+        if is_new_agent {
+            let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
+                Ok(tools) => tools,
+                Err(error) => {
+                    tracing::warn!("发现 MCP 工具失败，继续使用本地工具: {error}");
+                    Vec::new()
+                }
+            };
+            let mut runtime_tools: Vec<DynAgentTool> = Vec::new();
+            let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "PiAgentConnector 未配置 runtime tool provider".to_string(),
+                )
+            })?;
+            runtime_tools.extend(provider.build_tools(&context).await?);
+            runtime_tools.extend(mcp_tools);
+            let tool_names = runtime_tools
+                .iter()
+                .map(|tool| tool.name().to_string())
+                .collect::<Vec<_>>();
+            agent.set_tools(runtime_tools);
+            agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
+        }
         let hook_trace_rx = context
             .hook_session
             .as_ref()
@@ -1722,13 +1725,40 @@ mod tests {
 
     #[async_trait::async_trait]
     impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRepository {
-        async fn create(&self, _provider: &agentdash_domain::llm_provider::LlmProvider) -> Result<(), DomainError> { Ok(()) }
-        async fn get_by_id(&self, _id: uuid::Uuid) -> Result<Option<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(None) }
-        async fn list_all(&self) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(vec![]) }
-        async fn list_enabled(&self) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(vec![]) }
-        async fn update(&self, _provider: &agentdash_domain::llm_provider::LlmProvider) -> Result<(), DomainError> { Ok(()) }
-        async fn delete(&self, _id: uuid::Uuid) -> Result<(), DomainError> { Ok(()) }
-        async fn reorder(&self, _ids: &[uuid::Uuid]) -> Result<(), DomainError> { Ok(()) }
+        async fn create(
+            &self,
+            _provider: &agentdash_domain::llm_provider::LlmProvider,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+        async fn get_by_id(
+            &self,
+            _id: uuid::Uuid,
+        ) -> Result<Option<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
+            Ok(None)
+        }
+        async fn list_all(
+            &self,
+        ) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
+            Ok(vec![])
+        }
+        async fn list_enabled(
+            &self,
+        ) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
+            Ok(vec![])
+        }
+        async fn update(
+            &self,
+            _provider: &agentdash_domain::llm_provider::LlmProvider,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+        async fn delete(&self, _id: uuid::Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+        async fn reorder(&self, _ids: &[uuid::Uuid]) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Value {
@@ -2475,10 +2505,13 @@ mod tests {
     #[tokio::test]
     async fn discovery_reflects_settings_added_after_startup_without_restart() {
         let repo = Arc::new(TestSettingsRepository::default());
-        let mut connector =
-            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
-                .await
-                .expect("connector should initialize even without provider");
+        let mut connector = build_pi_agent_connector(
+            Path::new("/tmp/test-workspace"),
+            repo.as_ref(),
+            &TestLlmProviderRepository,
+        )
+        .await
+        .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo.clone());
 
         let initial = discover_options_state(&connector).await;
@@ -2521,10 +2554,13 @@ mod tests {
         .await
         .expect("should store anthropic key");
 
-        let mut connector =
-            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
-                .await
-                .expect("connector should initialize");
+        let mut connector = build_pi_agent_connector(
+            Path::new("/tmp/test-workspace"),
+            repo.as_ref(),
+            &TestLlmProviderRepository,
+        )
+        .await
+        .expect("connector should initialize");
         connector.set_settings_repository(repo.clone());
 
         let initial = discover_options_state(&connector).await;
@@ -2555,10 +2591,13 @@ mod tests {
     #[tokio::test]
     async fn prompt_without_provider_configuration_returns_clear_error() {
         let repo = Arc::new(TestSettingsRepository::default());
-        let mut connector =
-            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
-                .await
-                .expect("connector should initialize even without provider");
+        let mut connector = build_pi_agent_connector(
+            Path::new("/tmp/test-workspace"),
+            repo.as_ref(),
+            &TestLlmProviderRepository,
+        )
+        .await
+        .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo);
 
         let result = connector

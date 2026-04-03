@@ -86,34 +86,65 @@ impl SessionHub {
                 )
             })?;
 
-        let hook_session = match self
-            .load_session_hook_runtime(
-                session_id,
-                &turn_id,
-                executor_config.executor.as_str(),
-                executor_config.permission_policy.as_deref(),
-                workspace_root.as_path(),
-                working_directory.as_path(),
-            )
-            .await
-        {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                let mut sessions = self.sessions.lock().await;
-                if let Some(runtime) = sessions.get_mut(session_id) {
-                    runtime.running = false;
-                    runtime.current_turn_id = None;
-                    runtime.cancel_requested = false;
-                    runtime.hook_session = None;
+        // 区分首次 prompt 和后续 prompt：
+        // 首次 → 完整 load hook runtime + SessionStart trigger
+        // 后续 → 复用已有 hook_session，只 refresh snapshot
+        let is_first_turn = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .map_or(true, |rt| rt.turn_count == 0)
+        };
+
+        let hook_session: Option<SharedHookSessionRuntime> = if is_first_turn {
+            match self
+                .load_session_hook_runtime(
+                    session_id,
+                    &turn_id,
+                    executor_config.executor.as_str(),
+                    executor_config.permission_policy.as_deref(),
+                    workspace_root.as_path(),
+                    working_directory.as_path(),
+                )
+                .await
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let mut sessions = self.sessions.lock().await;
+                    if let Some(runtime) = sessions.get_mut(session_id) {
+                        runtime.running = false;
+                        runtime.current_turn_id = None;
+                        runtime.cancel_requested = false;
+                        runtime.hook_session = None;
+                    }
+                    return Err(error);
                 }
-                return Err(error);
             }
+        } else {
+            // 后续 turn：复用已有 hook_session，refresh snapshot 以获取最新状态
+            let existing = {
+                let sessions = self.sessions.lock().await;
+                sessions
+                    .get(session_id)
+                    .and_then(|rt| rt.hook_session.clone())
+            };
+            if let Some(ref hs) = existing {
+                let _ = hs
+                    .refresh(agentdash_spi::hooks::SessionHookRefreshQuery {
+                        session_id: session_id.to_string(),
+                        turn_id: Some(turn_id.clone()),
+                        reason: Some("subsequent_turn_refresh".to_string()),
+                    })
+                    .await;
+            }
+            existing
         };
 
         {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
                 runtime.hook_session = hook_session.clone();
+                runtime.turn_count += 1;
             }
         }
 
@@ -185,23 +216,26 @@ impl SessionHub {
         );
         let _ = self.persist_notification(&sid, started).await;
 
-        if let Some(hook_session) = hook_session.as_ref() {
-            self.emit_session_hook_trigger(
-                hook_session.as_ref(),
-                &HookTriggerInput {
-                    session_id: &sid,
-                    turn_id: Some(&turn_id),
-                    trigger: HookTrigger::SessionStart,
-                    payload: Some(serde_json::json!({
-                        "text_prompt": resolved_payload.text_prompt,
-                        "user_block_count": resolved_payload.user_blocks.len(),
-                    })),
-                    refresh_reason: "trigger:session_start",
-                    source: source.clone(),
-                },
-                &tx,
-            )
-            .await;
+        // SessionStart trigger 只在首次 turn 触发，后续 turn 不重复
+        if is_first_turn {
+            if let Some(hook_session) = hook_session.as_ref() {
+                self.emit_session_hook_trigger(
+                    hook_session.as_ref(),
+                    &HookTriggerInput {
+                        session_id: &sid,
+                        turn_id: Some(&turn_id),
+                        trigger: HookTrigger::SessionStart,
+                        payload: Some(serde_json::json!({
+                            "text_prompt": resolved_payload.text_prompt,
+                            "user_block_count": resolved_payload.user_blocks.len(),
+                        })),
+                        refresh_reason: "trigger:session_start",
+                        source: source.clone(),
+                    },
+                    &tx,
+                )
+                .await;
+            }
         }
 
         let mut stream = match self

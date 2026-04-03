@@ -364,10 +364,7 @@ mod tests {
 
         let meta = snapshot.metadata.as_ref().unwrap();
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
-        assert_eq!(
-            meta.workspace_root.as_deref(),
-            Some("/tmp/test-workspace")
-        );
+        assert_eq!(meta.workspace_root.as_deref(), Some("/tmp/test-workspace"));
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));
@@ -426,10 +423,7 @@ mod tests {
 
         let meta = refreshed.metadata.unwrap();
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
-        assert_eq!(
-            meta.workspace_root.as_deref(),
-            Some("/tmp/test-workspace")
-        );
+        assert_eq!(meta.workspace_root.as_deref(), Some("/tmp/test-workspace"));
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));

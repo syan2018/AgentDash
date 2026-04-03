@@ -53,4 +53,3 @@ impl ToolRegistry {
         items
     }
 }
-

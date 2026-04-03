@@ -96,12 +96,19 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         // 合并 session-type 默认簇 与 agent 级 tool_clusters 限制（交集）
         let session_clusters = &context.flow_capabilities.enabled_clusters;
-        let effective_clusters = if let Some(ref agent_clusters) = context.executor_config.tool_clusters {
+        let effective_clusters = if let Some(ref agent_clusters) =
+            context.executor_config.tool_clusters
+        {
             let agent_set: std::collections::BTreeSet<ToolCluster> = agent_clusters
                 .iter()
-                .filter_map(|s| serde_json::from_value::<ToolCluster>(serde_json::Value::String(s.clone())).ok())
+                .filter_map(|s| {
+                    serde_json::from_value::<ToolCluster>(serde_json::Value::String(s.clone())).ok()
+                })
                 .collect();
-            session_clusters.intersection(&agent_set).copied().collect::<std::collections::BTreeSet<_>>()
+            session_clusters
+                .intersection(&agent_set)
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
         } else {
             session_clusters.clone()
         };

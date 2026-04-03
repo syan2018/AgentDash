@@ -10,9 +10,7 @@ pub use bridge::{
     BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
 };
 pub use event_stream::{EventReceiver, EventSender, event_channel};
-pub use tools::{
-    ToolInfo, ToolRegistry,
-};
+pub use tools::{ToolInfo, ToolRegistry};
 pub use types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentError, AgentEvent, AgentMessage, AgentRuntimeDelegate,

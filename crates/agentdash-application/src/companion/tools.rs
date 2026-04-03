@@ -221,7 +221,7 @@ impl CompanionRequestTool {
             payload
                 .get("adoption_mode")
                 .and_then(|v| v.as_str())
-                .unwrap_or("suggestion"),
+                .unwrap_or(at::SUGGESTION),
         );
         let auto_create = payload
             .get("auto_create")
@@ -1327,7 +1327,7 @@ fn build_subagent_pending_action(
     let adoption_mode = payload
         .get("adoption_mode")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("suggestion")
+        .unwrap_or(at::SUGGESTION)
         .trim()
         .to_string();
     if adoption_mode.is_empty() || adoption_mode == at::SUGGESTION {

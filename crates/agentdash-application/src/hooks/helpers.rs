@@ -96,7 +96,7 @@ pub(super) fn shell_exec_rewritten_args(
 ) -> Option<serde_json::Value> {
     let workspace_root = snapshot_workspace_root(snapshot)?;
     let cwd = extract_tool_arg(payload, "cwd")?;
-    if !std::path::Path::new(cwd).is_absolute() {
+    if !cwd.starts_with('/') && !std::path::Path::new(cwd).is_absolute() {
         return None;
     }
 

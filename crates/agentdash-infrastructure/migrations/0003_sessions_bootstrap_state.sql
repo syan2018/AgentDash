@@ -1,0 +1,2 @@
+ALTER TABLE sessions
+ADD COLUMN IF NOT EXISTS bootstrap_state TEXT NOT NULL DEFAULT 'plain';

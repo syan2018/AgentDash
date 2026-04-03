@@ -108,7 +108,7 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.tags)?)
-        .bind(story.task_count as i64)
+        .bind(story.task_count as i32)
         .bind(serde_json::to_string(&story.context)?)
         .bind(story.created_at.to_rfc3339())
         .bind(story.updated_at.to_rfc3339())
@@ -177,7 +177,7 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.tags)?)
-        .bind(story.task_count as i64)
+        .bind(story.task_count as i32)
         .bind(serde_json::to_string(&story.context)?)
         .bind(chrono::Utc::now().to_rfc3339())
         .bind(story.id.to_string())
@@ -238,7 +238,7 @@ struct StoryRow {
     priority: String,
     story_type: String,
     tags: String,
-    task_count: i64,
+    task_count: i32,
     context: String,
     created_at: String,
     updated_at: String,

@@ -81,6 +81,11 @@ impl AgentConnector for CompositeConnector {
         caps
     }
 
+    fn supports_repository_restore(&self, executor: &str) -> bool {
+        self.resolve_connector(executor)
+            .is_some_and(|connector| connector.supports_repository_restore(executor))
+    }
+
     fn list_executors(&self) -> Vec<AgentInfo> {
         self.refresh_routing();
         let mut all = Vec::new();
@@ -101,6 +106,15 @@ impl AgentConnector for CompositeConnector {
         connector
             .discover_options_stream(executor, working_dir)
             .await
+    }
+
+    async fn has_live_session(&self, session_id: &str) -> bool {
+        for connector in &self.connectors {
+            if connector.has_live_session(session_id).await {
+                return true;
+            }
+        }
+        false
     }
 
     async fn prompt(

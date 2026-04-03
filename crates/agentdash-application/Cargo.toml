@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agentdash-agent-types = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-injection = { workspace = true }

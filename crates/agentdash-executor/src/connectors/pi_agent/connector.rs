@@ -115,7 +115,22 @@ impl PiAgentConnector {
                 providers: providers
                     .into_iter()
                     .map(|provider| provider.entry)
-                    .collect(),
+                .collect(),
+            };
+        }
+
+        // 直接通过 `PiAgentConnector::new(...)` 构造且未挂载动态 provider repo 的场景，
+        // 允许回退到构造时注入的静态 bridge，便于测试和嵌入式用法。
+        if self.settings_repo.is_none() && self.llm_provider_repo.is_none() {
+            let default_model = self
+                .providers
+                .first()
+                .map(|provider| provider.default_model.clone())
+                .or_else(|| Some("static-default".to_string()));
+            return ProviderRuntimeState {
+                default_bridge: Some(self.bridge.clone()),
+                default_model,
+                providers: self.providers.clone(),
             };
         }
 
@@ -362,6 +377,10 @@ impl AgentConnector for PiAgentConnector {
         }
     }
 
+    fn supports_repository_restore(&self, executor: &str) -> bool {
+        executor.trim() == "PI_AGENT"
+    }
+
     fn list_executors(&self) -> Vec<AgentInfo> {
         vec![AgentInfo {
             id: "PI_AGENT".to_string(),
@@ -433,6 +452,10 @@ impl AgentConnector for PiAgentConnector {
         Ok(Box::pin(futures::stream::once(async move { patch })))
     }
 
+    async fn has_live_session(&self, session_id: &str) -> bool {
+        self.agents.lock().await.contains_key(session_id)
+    }
+
     async fn prompt(
         &self,
         session_id: &str,
@@ -445,6 +468,10 @@ impl AgentConnector for PiAgentConnector {
         if prompt_text.is_empty() {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
+        let restored_messages = context
+            .restored_session_state
+            .as_ref()
+            .map(|state| state.messages.clone());
 
         let existing_agent = {
             let mut agents = self.agents.lock().await;
@@ -497,6 +524,9 @@ impl AgentConnector for PiAgentConnector {
                 .collect::<Vec<_>>();
             agent.set_tools(runtime_tools);
             agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
+            if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
+                agent.replace_messages(messages).await;
+            }
         }
         let hook_trace_rx = context
             .hook_session
@@ -1609,10 +1639,48 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
     use chrono::Utc;
-    use std::sync::RwLock;
+    use std::sync::{Mutex as StdMutex, RwLock};
 
     fn test_source() -> AgentDashSourceV1 {
         AgentDashSourceV1::new("pi-agent", "local_executor")
+    }
+
+    #[derive(Default)]
+    struct RecordingBridge {
+        requests: StdMutex<Vec<agentdash_agent::BridgeRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBridge for RecordingBridge {
+        async fn stream_complete(
+            &self,
+            request: agentdash_agent::BridgeRequest,
+        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>>
+        {
+            self.requests
+                .lock()
+                .expect("recording bridge lock poisoned")
+                .push(request);
+            Box::pin(tokio_stream::once(agentdash_agent::StreamChunk::Done(
+                agentdash_agent::BridgeResponse {
+                    message: agentdash_agent::AgentMessage::assistant("done"),
+                    raw_content: vec![agentdash_agent::ContentPart::text("done")],
+                    usage: agentdash_agent::TokenUsage::default(),
+                },
+            )))
+        }
+    }
+
+    struct EmptyRuntimeToolProvider;
+
+    #[async_trait::async_trait]
+    impl RuntimeToolProvider for EmptyRuntimeToolProvider {
+        async fn build_tools(
+            &self,
+            _context: &ExecutionContext,
+        ) -> Result<Vec<agentdash_spi::DynAgentTool>, ConnectorError> {
+            Ok(Vec::new())
+        }
     }
 
     #[derive(Default)]
@@ -2485,6 +2553,7 @@ mod tests {
             system_context: None,
             runtime_delegate: None,
             identity: None,
+            restored_session_state: None,
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
@@ -2618,6 +2687,7 @@ mod tests {
                     system_context: None,
                     runtime_delegate: None,
                     identity: None,
+                    restored_session_state: None,
                 },
             )
             .await;
@@ -2629,5 +2699,59 @@ mod tests {
             Ok(_) => panic!("prompt should fail without configured provider"),
             Err(other) => panic!("unexpected connector error: {other}"),
         }
+    }
+
+    #[tokio::test]
+    async fn prompt_restores_repository_messages_before_new_user_prompt() {
+        let bridge = Arc::new(RecordingBridge::default());
+        let mut connector = PiAgentConnector::new(
+            PathBuf::from("/tmp/test-workspace"),
+            bridge.clone(),
+            "系统提示",
+        );
+        connector.set_runtime_tool_provider(Arc::new(EmptyRuntimeToolProvider));
+
+        let mut stream = connector
+            .prompt(
+                "session-restore-1",
+                None,
+                &PromptPayload::Text("新的用户消息".to_string()),
+                ExecutionContext {
+                    turn_id: "turn-1".to_string(),
+                    workspace_root: PathBuf::from("/tmp/test-workspace"),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                    mcp_servers: vec![],
+                    address_space: None,
+                    hook_session: None,
+                    flow_capabilities: Default::default(),
+                    system_context: Some("## Owner Context\nproject".to_string()),
+                    runtime_delegate: None,
+                    identity: None,
+                    restored_session_state: Some(agentdash_spi::RestoredSessionState {
+                        messages: vec![
+                            agentdash_spi::AgentMessage::user("历史用户消息"),
+                            agentdash_spi::AgentMessage::assistant("历史助手消息"),
+                        ],
+                    }),
+                },
+            )
+            .await
+            .expect("prompt should start");
+
+        while let Some(next) = stream.next().await {
+            next.expect("stream item should succeed");
+        }
+
+        let requests = bridge
+            .requests
+            .lock()
+            .expect("recording bridge lock poisoned");
+        let request = requests.last().expect("bridge request should be recorded");
+        assert_eq!(request.messages.len(), 3);
+        assert_eq!(request.messages[0].first_text(), Some("历史用户消息"));
+        assert_eq!(request.messages[1].first_text(), Some("历史助手消息"));
+        assert_eq!(request.messages[2].first_text(), Some("新的用户消息"));
     }
 }

@@ -478,7 +478,12 @@ impl TaskLifecycleService {
             .session_binding_repo
             .create(&binding)
             .await
-            .map_err(map_domain_error)
+            .map_err(map_domain_error)?;
+        self.hub
+            .mark_owner_bootstrap_pending(session_id)
+            .await
+            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
+        Ok(())
     }
 
     async fn bridge_status_event(

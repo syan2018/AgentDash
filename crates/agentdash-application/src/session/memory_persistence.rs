@@ -13,7 +13,7 @@ use super::hub_support::{
 use super::persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
-use super::types::SessionMeta;
+use super::types::{SessionBootstrapState, SessionMeta};
 
 #[derive(Clone, Default)]
 pub struct MemorySessionPersistence {
@@ -236,6 +236,9 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.executor_session_id = incoming.executor_session_id.clone();
     current.companion_context = incoming.companion_context.clone();
     current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
+    if current.bootstrap_state != SessionBootstrapState::Bootstrapped {
+        current.bootstrap_state = incoming.bootstrap_state;
+    }
 }
 
 pub(super) fn apply_notification_projection(
@@ -310,6 +313,7 @@ mod tests {
             executor_session_id: None,
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
         };
         persistence
             .create_session(&meta)

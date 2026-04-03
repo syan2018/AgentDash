@@ -3,6 +3,7 @@ use std::{collections::BTreeSet, collections::HashMap, path::PathBuf, pin::Pin, 
 use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
 };
+use agentdash_agent_types::AgentMessage;
 use agentdash_domain::common::{AddressSpace, AgentConfig};
 use async_trait::async_trait;
 use futures::Stream;
@@ -60,6 +61,9 @@ pub struct ExecutionContext {
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::auth::AuthIdentity>,
+    /// 当 session 生命周期层判定为“冷启动仓储恢复”且执行器支持原生恢复时，
+    /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
+    pub restored_session_state: Option<RestoredSessionState>,
 }
 
 impl std::fmt::Debug for ExecutionContext {
@@ -73,8 +77,20 @@ impl std::fmt::Debug for ExecutionContext {
                 "runtime_delegate",
                 &self.runtime_delegate.as_ref().map(|_| ".."),
             )
+            .field(
+                "restored_session_state",
+                &self
+                    .restored_session_state
+                    .as_ref()
+                    .map(|state| state.messages.len()),
+            )
             .finish_non_exhaustive()
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RestoredSessionState {
+    pub messages: Vec<AgentMessage>,
 }
 
 /// 工具簇标识 — 每个簇控制一组相关工具的注入。
@@ -283,6 +299,14 @@ pub trait AgentConnector: Send + Sync {
 
     fn capabilities(&self) -> ConnectorCapabilities;
 
+    /// 指示给定 executor 是否支持基于 session 仓储的原生消息恢复。
+    ///
+    /// 当返回 `true` 时，session 生命周期层会在冷启动 continuation 场景下
+    /// 传入 `ExecutionContext.restored_session_state`，而不是退化为 continuation 文本。
+    fn supports_repository_restore(&self, _executor: &str) -> bool {
+        false
+    }
+
     fn list_executors(&self) -> Vec<AgentInfo>;
 
     async fn discover_options_stream(
@@ -290,6 +314,13 @@ pub trait AgentConnector: Send + Sync {
         executor: &str,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError>;
+
+    /// 返回当前进程内该 session 是否仍有可直接续跑的执行器 runtime。
+    ///
+    /// 这与 session 事件广播或订阅状态不同；仅用于判断是否可以跳过仓储恢复。
+    async fn has_live_session(&self, _session_id: &str) -> bool {
+        false
+    }
 
     async fn prompt(
         &self,

@@ -220,6 +220,58 @@ fn emit_deduped(emitted: &mut String, full_content: &str, ...) {
 
 ---
 
+### 错误模式6：把“session 已存在”误判成“执行器还能续跑”
+
+**问题：**
+```
+// 错误：只要 SessionHub 内存 map 里有 session 条目，就当作热续跑
+if session_runtime_map.contains(session_id) {
+  lifecycle = Plain  // 冷启动被误判
+}
+```
+
+**正确：**
+```
+// continuation 语义要看 connector 是否仍持有 live runtime
+if connector.has_live_session(session_id) {
+  lifecycle = Plain
+} else if session_has_history(session_id) {
+  lifecycle = RepositoryRehydrate
+}
+```
+
+**为何重要：**
+订阅 backlog、打开旧会话页、补写历史事件都可能创建 session 级广播条目，
+但这并不代表执行器内存态还活着。若继续按“session 存在 = 热续跑”处理，
+就会跳过真正的恢复流程，导致 owner bootstrap / continuation 行为再次漂移。
+
+---
+
+### 错误模式7：只把 continuation 当成一段文本提示
+
+**问题：**
+```
+// 错误：所有冷启动恢复都退化成 system prompt 文本摘要
+req.system_context = build_continuation_markdown(events)
+```
+
+**正确：**
+```
+// 优先原生恢复消息历史；做不到时才退化为文本 continuation
+if connector.supports_repository_restore(executor) {
+  context.restored_session_state = rebuild_messages(events)
+} else {
+  req.system_context = build_continuation_markdown(events)
+}
+```
+
+**为何重要：**
+把 transcript / tool result / assistant tool-use 历史全部压缩成摘要文本，
+只能算“语义补丁”，不算真正的执行器恢复。会话模型若要成为系统真相，
+session 仓储就必须能在支持的 connector 上重建出可继续运行的消息历史。
+
+---
+
 ### 设计决策6：ACP 事件的 UI 展示策略
 
 **问题：**

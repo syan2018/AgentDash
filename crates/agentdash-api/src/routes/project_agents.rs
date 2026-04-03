@@ -317,6 +317,12 @@ pub async fn open_project_agent_session(
         .create(&binding)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    state
+        .services
+        .session_hub
+        .mark_owner_bootstrap_pending(&meta.id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     // 自动启动 Lifecycle Run（如果 Agent Link 配置了 default_lifecycle_key）
     if let Some(lifecycle_key) = resolve_agent_default_lifecycle(&state, project.id, agent_id).await

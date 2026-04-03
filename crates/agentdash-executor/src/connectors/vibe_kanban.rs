@@ -158,6 +158,10 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             .map_err(|e| ConnectorError::Runtime(format!("discover_options 失败: {e}")))
     }
 
+    async fn has_live_session(&self, session_id: &str) -> bool {
+        self.cancel_by_session.lock().await.contains_key(session_id)
+    }
+
     async fn prompt(
         &self,
         session_id: &str,

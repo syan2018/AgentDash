@@ -223,6 +223,127 @@ store.write_meta(&meta).await?;
 
 进程重启时必须调用 `executor_hub.recover_interrupted_sessions()`，将残留的 `running` 状态修正为 `interrupted`。云端和本机两个 binary 的启动流程都必须调用。
 
+### 冷启动 continuation 判定
+
+- `SessionHub` 中“是否已有 session 条目 / broadcaster / backlog 订阅”**不等于**执行器仍有 live runtime。
+- continuation 是否可直接续跑，必须以 connector 级 `has_live_session(session_id)` 为准；否则打开旧会话页面、补写历史事件、或仅建立订阅时，都可能把冷启动误判成热续跑。
+- 只有以下两种情况可以跳过仓储恢复：
+  - 执行器原生 follow-up token / `executor_session_id` 仍然可用
+  - connector 明确报告该 session 在当前进程内仍有 live runtime
+- 其余“无 live runtime 但已有历史事件”的场景，一律视为 repository rehydrate。
+
+### 仓储恢复优先级
+
+- repository rehydrate 不是单一策略：
+  - 若 connector 支持原生仓储恢复，应优先把 `session_events` 重建成消息历史，放入 `ExecutionContext.restored_session_state`
+  - 若 connector 不支持原生恢复，才退化为 continuation `system_context` 文本
+- owner 上下文（project/story/task）在冷启动恢复时仍属于 `system_context`，但不得再次把 owner resource block 当成新的用户消息注入。
+- `agentdash://project-context/*` / `story-context/*` / `task-context/*` 这类 owner 展示块在恢复消息历史时必须过滤，否则会把首轮 bootstrap 内容重复回灌给模型。
+
+### 场景：Session Prompt Lifecycle 与 Repository Rehydrate
+
+#### 1. Scope / Trigger
+
+- 触发点：
+  - `POST /api/sessions/:id/prompt`
+  - 已存在 session 在页面 reopen 后再次发送 prompt
+  - 后端或本地执行器重启后，用户继续同一条 owner session
+- 该场景属于 infra/cross-layer 契约，必须同时约束：
+  - API route 生命周期判定
+  - Session 仓储恢复模式
+  - Connector 恢复能力
+  - 前端 reopen 后的实际行为
+
+#### 2. Signatures
+
+- 生命周期判定入口：
+  - `crates/agentdash-application/src/session/types.rs`
+  - `resolve_session_prompt_lifecycle(...) -> SessionPromptLifecycle`
+- Connector 能力：
+  - `AgentConnector::supports_repository_restore(executor: &str) -> bool`
+  - `AgentConnector::has_live_session(session_id: &str) -> bool`
+- 执行上下文：
+  - `ExecutionContext.restored_session_state: Option<RestoredSessionState>`
+- 持久化字段：
+  - `sessions.bootstrap_state`
+  - `session_events(session_id, event_seq, notification_json, ...)`
+
+#### 3. Contracts
+
+- 前端 contract：
+  - 会话页发送请求时只提交 `promptBlocks`
+  - owner bootstrap 的判定与注入不得由前端手写
+- API contract：
+  - `OwnerBootstrap`：route 负责附加 owner resource block 展示锚点 + `system_context`
+  - `RepositoryRehydrate(SystemContext)`：只补 continuation `system_context`，不再追加 owner resource block
+  - `RepositoryRehydrate(ExecutorState)`：通过 `ExecutionContext.restored_session_state` 下发消息历史
+  - `Plain`：视为热续跑，不做额外 bootstrap / rehydrate
+- Repository contract：
+  - `build_restored_session_messages(session_id)` 必须按 `session_events` 重建 user / assistant / tool_call / tool_result
+  - 必须过滤 `agentdash://project-context/*` / `story-context/*` / `task-context/*`
+- Migration contract：
+  - PostgreSQL migration 必须显式创建 `sessions.bootstrap_state`
+  - 不允许只依赖 repository `initialize()` 的运行时补列
+
+#### 4. Validation & Error Matrix
+
+| 场景 | 期望 | 错误表现 |
+|------|------|----------|
+| broadcaster/backlog 已存在，但执行器无 live runtime | 进入 `RepositoryRehydrate` | 误判 `Plain`，导致恢复链路被跳过 |
+| connector 支持仓储恢复 | 下发 `restored_session_state` | 退化成 continuation 文本，丢失 tool / assistant 历史 |
+| connector 不支持仓储恢复 | 使用 continuation `system_context` | 直接报不支持，无法继续旧会话 |
+| owner resource block 未过滤 | 模型历史中无重复 owner bootstrap | reopen/restart 后再次注入 project/story/task 上下文 |
+| migration 缺 `bootstrap_state` | 启动恢复与查询正常 | 启动期 warn/失败：`字段 "bootstrap_state" 不存在` |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：
+  - 首次 owner prompt 只出现一次 owner context block
+  - reopen 同一 session 后继续发送，不新增第二份 owner context block
+  - restart 后 reopen 同一 session，再发 prompt，owner context block 总数保持不变
+- Base：
+  - connector 不支持 `restored_session_state` 时，允许用 continuation 文本兜底继续会话
+- Bad：
+  - 以 `SessionHub.sessions` / broadcaster 是否存在来判断热续跑
+  - 将 owner resource block 当普通历史消息重建回执行器
+  - 只在 repository `initialize()` 里补 `bootstrap_state`，不做 migration
+
+#### 6. Tests Required
+
+- `cargo test -p agentdash-application session::hub::tests -- --nocapture`
+  - 断言 session 仓储历史可重建，且 owner block 不被重复回灌
+- `cargo test -p agentdash-api session_prompt_lifecycle -- --nocapture`
+  - 断言 route 生命周期判定符合 `OwnerBootstrap / RepositoryRehydrate / Plain`
+- `cargo test -p agentdash-executor prompt_restores_repository_messages_before_new_user_prompt -- --nocapture`
+  - 断言支持恢复的 connector 会先消费仓储消息，再追加新用户 prompt
+- 手工前端验证：
+  - 首次 prompt
+  - reopen 后再次 prompt
+  - restart 后 reopen 再次 prompt
+  - 三步都要确认 owner context 卡片不重复出现
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```rust
+if session_hub.has_session(session_id) {
+    SessionPromptLifecycle::Plain
+} else {
+    SessionPromptLifecycle::OwnerBootstrap
+}
+```
+
+##### Correct
+
+```rust
+if connector.has_live_session(session_id).await {
+    SessionPromptLifecycle::Plain
+} else {
+    resolve_session_prompt_lifecycle(meta, connector.supports_repository_restore(executor))
+}
+```
+
 ### 合法值枚举
 
 `last_execution_status` 只有五个合法值：`idle` / `running` / `completed` / `failed` / `interrupted`。查询时非法值应 `unreachable!`。

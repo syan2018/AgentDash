@@ -3,7 +3,8 @@ use std::io;
 use agent_client_protocol::{SessionNotification, SessionUpdate};
 use agentdash_acp_meta::parse_agentdash_meta;
 use agentdash_application::session::{
-    PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionMeta, SessionPersistence,
+    PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog, SessionEventPage,
+    SessionMeta, SessionPersistence,
 };
 use sqlx::{Row, SqlitePool};
 
@@ -31,7 +32,8 @@ impl SqliteSessionRepository {
                 executor_config_json TEXT,
                 executor_session_id TEXT,
                 companion_context_json TEXT,
-                visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]'
+                visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]',
+                bootstrap_state TEXT NOT NULL DEFAULT 'plain'
             );
 
             CREATE TABLE IF NOT EXISTS session_events (
@@ -66,6 +68,18 @@ impl SqliteSessionRepository {
         .execute(&self.pool)
         .await;
         if let Err(error) = alter_result {
+            let message = error.to_string().to_ascii_lowercase();
+            if !message.contains("duplicate column name") {
+                return Err(sqlx_to_io(error));
+            }
+        }
+
+        let alter_bootstrap_result = sqlx::query(
+            "ALTER TABLE sessions ADD COLUMN bootstrap_state TEXT NOT NULL DEFAULT 'plain'",
+        )
+        .execute(&self.pool)
+        .await;
+        if let Err(error) = alter_bootstrap_result {
             let message = error.to_string().to_ascii_lowercase();
             if !message.contains("duplicate column name") {
                 return Err(sqlx_to_io(error));
@@ -107,6 +121,10 @@ impl SqliteSessionRepository {
                     "缺少 visible_canvas_mount_ids_json",
                 )
             })?,
+            bootstrap_state: parse_bootstrap_state(
+                row.get::<String, _>("bootstrap_state"),
+                "sessions.bootstrap_state",
+            )?,
         })
     }
 
@@ -165,8 +183,9 @@ impl SessionPersistence for SqliteSessionRepository {
             INSERT INTO sessions (
                 id, title, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, visible_canvas_mount_ids_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                bootstrap_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&meta.id)
@@ -181,6 +200,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(&meta.executor_session_id)
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
+        .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -192,7 +212,8 @@ impl SessionPersistence for SqliteSessionRepository {
             r#"
             SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json
+                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                   bootstrap_state
             FROM sessions
             WHERE id = ?
             "#,
@@ -209,7 +230,8 @@ impl SessionPersistence for SqliteSessionRepository {
             r#"
             SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json
+                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                   bootstrap_state
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -235,8 +257,9 @@ impl SessionPersistence for SqliteSessionRepository {
             INSERT INTO sessions (
                 id, title, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, visible_canvas_mount_ids_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                bootstrap_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 created_at = excluded.created_at,
@@ -260,7 +283,12 @@ impl SessionPersistence for SqliteSessionRepository {
                 executor_config_json = excluded.executor_config_json,
                 executor_session_id = excluded.executor_session_id,
                 companion_context_json = excluded.companion_context_json,
-                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json
+                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json,
+                bootstrap_state = CASE
+                    WHEN sessions.bootstrap_state = 'bootstrapped'
+                        THEN sessions.bootstrap_state
+                    ELSE excluded.bootstrap_state
+                END
             "#,
         )
         .bind(&meta.id)
@@ -275,6 +303,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(&meta.executor_session_id)
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
+        .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -515,6 +544,26 @@ fn optional_json_string<T: serde::Serialize>(
     value.map(|inner| json_string(inner, column)).transpose()
 }
 
+fn bootstrap_state_to_str(state: SessionBootstrapState) -> &'static str {
+    match state {
+        SessionBootstrapState::Plain => "plain",
+        SessionBootstrapState::Pending => "pending",
+        SessionBootstrapState::Bootstrapped => "bootstrapped",
+    }
+}
+
+fn parse_bootstrap_state(value: String, field: &str) -> io::Result<SessionBootstrapState> {
+    match value.as_str() {
+        "plain" => Ok(SessionBootstrapState::Plain),
+        "pending" => Ok(SessionBootstrapState::Pending),
+        "bootstrapped" => Ok(SessionBootstrapState::Bootstrapped),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{field} 非法: {other}"),
+        )),
+    }
+}
+
 fn encode_u64_as_i64(value: u64, field: &str) -> io::Result<i64> {
     i64::try_from(value).map_err(|_| {
         io::Error::new(
@@ -738,6 +787,7 @@ mod tests {
             executor_session_id: None,
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -787,6 +837,7 @@ mod tests {
             executor_session_id: None,
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 

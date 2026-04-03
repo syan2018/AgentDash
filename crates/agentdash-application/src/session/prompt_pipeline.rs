@@ -6,7 +6,7 @@ use futures::StreamExt;
 
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime};
-use agentdash_spi::{ConnectorError, ExecutionContext};
+use agentdash_spi::{ConnectorError, ExecutionContext, RestoredSessionState};
 
 use super::event_bridge::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
@@ -28,6 +28,7 @@ impl SessionHub {
             .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
+        let had_existing_runtime = self.connector.has_live_session(session_id).await;
 
         let tx = {
             let mut sessions = self.sessions.lock().await;
@@ -86,17 +87,21 @@ impl SessionHub {
                 )
             })?;
 
-        // 区分首次 prompt 和后续 prompt：
-        // 首次 → 完整 load hook runtime + SessionStart trigger
-        // 后续 → 复用已有 hook_session，只 refresh snapshot
-        let is_first_turn = {
+        let is_owner_bootstrap = req.bootstrap_action == SessionBootstrapAction::OwnerContext;
+        let existing_hook_session = {
             let sessions = self.sessions.lock().await;
             sessions
                 .get(session_id)
-                .map_or(true, |rt| rt.turn_count == 0)
+                .and_then(|rt| rt.hook_session.clone())
         };
 
-        let hook_session: Option<SharedHookSessionRuntime> = if is_first_turn {
+        // hook runtime 的语义与 owner bootstrap 解耦：
+        // - owner 首轮 bootstrap：总是重新 load snapshot，并触发 SessionStart
+        // - 同进程续跑：复用已有 hook_session，只 refresh snapshot
+        // - 冷启动恢复：若内存里没有 runtime，则重建 snapshot，但不触发 SessionStart
+        let hook_session: Option<SharedHookSessionRuntime> = if is_owner_bootstrap
+            || existing_hook_session.is_none()
+        {
             match self
                 .load_session_hook_runtime(
                     session_id,
@@ -121,14 +126,7 @@ impl SessionHub {
                 }
             }
         } else {
-            // 后续 turn：复用已有 hook_session，refresh snapshot 以获取最新状态
-            let existing = {
-                let sessions = self.sessions.lock().await;
-                sessions
-                    .get(session_id)
-                    .and_then(|rt| rt.hook_session.clone())
-            };
-            if let Some(ref hs) = existing {
+            if let Some(ref hs) = existing_hook_session {
                 let _ = hs
                     .refresh(agentdash_spi::hooks::SessionHookRefreshQuery {
                         session_id: session_id.to_string(),
@@ -137,20 +135,43 @@ impl SessionHub {
                     })
                     .await;
             }
-            existing
+            existing_hook_session
         };
 
         {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
                 runtime.hook_session = hook_session.clone();
-                runtime.turn_count += 1;
             }
         }
 
         let runtime_delegate = hook_session
             .as_ref()
             .map(|hs| HookRuntimeDelegate::new(hs.clone()));
+        let supports_repository_restore = self
+            .connector
+            .supports_repository_restore(executor_config.executor.as_str());
+        let prompt_lifecycle = resolve_session_prompt_lifecycle(
+            &session_meta,
+            had_existing_runtime,
+            supports_repository_restore,
+        );
+        let restored_session_state = match prompt_lifecycle {
+            SessionPromptLifecycle::RepositoryRehydrate(
+                SessionRepositoryRehydrateMode::ExecutorState,
+            ) => {
+                let messages = self
+                    .build_restored_session_messages(session_id)
+                    .await
+                    .map_err(|error| {
+                        ConnectorError::Runtime(format!(
+                            "重建 session `{session_id}` 历史消息失败: {error}"
+                        ))
+                    })?;
+                (!messages.is_empty()).then_some(RestoredSessionState { messages })
+            }
+            _ => None,
+        };
 
         let context = ExecutionContext {
             turn_id: turn_id.clone(),
@@ -165,6 +186,7 @@ impl SessionHub {
             system_context: req.system_context,
             runtime_delegate,
             identity: req.identity,
+            restored_session_state,
         };
 
         session_meta.updated_at = now;
@@ -172,6 +194,9 @@ impl SessionHub {
         session_meta.last_turn_id = Some(turn_id.clone());
         session_meta.last_terminal_message = None;
         session_meta.executor_config = Some(context.executor_config.clone());
+        if is_owner_bootstrap {
+            session_meta.bootstrap_state = SessionBootstrapState::Bootstrapped;
+        }
         if session_meta.title.trim().is_empty() {
             session_meta.title = title_hint;
         }
@@ -216,8 +241,8 @@ impl SessionHub {
         );
         let _ = self.persist_notification(&sid, started).await;
 
-        // SessionStart trigger 只在首次 turn 触发，后续 turn 不重复
-        if is_first_turn {
+        // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
+        if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
                 self.emit_session_hook_trigger(
                     hook_session.as_ref(),

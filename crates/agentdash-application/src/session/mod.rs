@@ -19,6 +19,7 @@ pub use persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
 pub use types::{
-    CompanionSessionContext, PromptSessionRequest, ResolvedPromptPayload, SessionExecutionState,
-    SessionMeta, UserPromptInput,
+    CompanionSessionContext, PromptSessionRequest, ResolvedPromptPayload, SessionBootstrapAction,
+    SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
+    SessionRepositoryRehydrateMode, UserPromptInput, resolve_session_prompt_lifecycle,
 };

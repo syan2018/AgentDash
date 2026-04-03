@@ -246,6 +246,7 @@ pub async fn create_story_session(
 
     let label = req.label.unwrap_or_else(|| "companion".to_string());
 
+    let created_new_session = req.session_id.is_none();
     let session_id = match (req.session_id, req.title) {
         (Some(_), Some(_)) => {
             return Err(ApiError::BadRequest(
@@ -273,7 +274,6 @@ pub async fn create_story_session(
             meta.id
         }
     };
-
     let binding = SessionBinding::new(
         story.project_id,
         session_id.clone(),
@@ -282,6 +282,14 @@ pub async fn create_story_session(
         &label,
     );
     state.repos.session_binding_repo.create(&binding).await?;
+    if created_new_session {
+        state
+            .services
+            .session_hub
+            .mark_owner_bootstrap_pending(&session_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
 
     let mut resp = SessionBindingResponse::from_binding(&binding);
     if let Ok(Some(meta)) = state

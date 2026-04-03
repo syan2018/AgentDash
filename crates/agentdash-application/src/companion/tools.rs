@@ -356,6 +356,7 @@ impl CompanionRequestTool {
                     address_space: execution_slice.address_space.clone(),
                     flow_capabilities: None,
                     system_context: self.system_context.clone(),
+                    bootstrap_action: crate::session::SessionBootstrapAction::None,
                     identity: None,
                 },
             )
@@ -765,6 +766,10 @@ impl CompanionRequestTool {
             SessionBinding::new(project_id, meta.id, owner_type, owner_id, label.to_string());
         self.session_binding_repo
             .create(&binding)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        session_hub
+            .mark_owner_bootstrap_pending(&binding.session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
         Ok(binding)

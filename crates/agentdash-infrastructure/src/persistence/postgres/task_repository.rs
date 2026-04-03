@@ -417,7 +417,7 @@ struct StorySnapshotRow {
     priority: String,
     story_type: String,
     tags: String,
-    task_count: i64,
+    task_count: i32,
     context: String,
     created_at: String,
     updated_at: String,

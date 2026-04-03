@@ -172,6 +172,7 @@ async fn dispatch_cloud_native(
             agentdash_spi::ToolCluster::Canvas,
         ])),
         system_context: ctx.built.system_context.clone(),
+        bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,
         identity: ctx.identity,
     };
 

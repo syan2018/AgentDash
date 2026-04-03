@@ -190,6 +190,7 @@ impl CommandHandler {
             address_space: None,
             flow_capabilities: None,
             system_context: None,
+            bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,
             identity: None,
         };
 

@@ -1,26 +1,29 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use agent_client_protocol::{SessionId, SessionInfoUpdate};
-use agent_client_protocol::{SessionNotification, SessionUpdate};
+use agent_client_protocol::{
+    ContentBlock, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
+    ToolCallContent, ToolCallStatus,
+};
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
+use agentdash_agent_types::{AgentMessage, ContentPart, StopReason, ToolCallInfo};
 use tokio::sync::{Mutex, broadcast};
 
 use super::hook_messages as msg;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub_support::*;
-use super::persistence::SessionPersistence;
+use super::persistence::{PersistedSessionEvent, SessionPersistence};
 pub use super::types::*;
 use agentdash_spi::hooks::{
     ExecutionHookProvider, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{AgentConnector, ConnectorError};
+use agentdash_spi::{AgentConnector, ConnectorError, content_block_to_text};
 
 /// companion_request(wait=true) 的等待 registry。
 /// 工具 execute 持有 receiver 不返回，respond 侧找到 sender 发回去。
@@ -173,6 +176,7 @@ impl SessionHub {
             executor_session_id: None,
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
         };
         self.persistence.create_session(&meta).await?;
         Ok(meta)
@@ -326,6 +330,39 @@ impl SessionHub {
         sessions
             .get(session_id)
             .and_then(|runtime| runtime.hook_session.clone())
+    }
+
+    pub async fn has_live_runtime(&self, session_id: &str) -> bool {
+        self.connector.has_live_session(session_id).await
+    }
+
+    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> std::io::Result<()> {
+        let _ = self
+            .update_session_meta(session_id, |meta| {
+                meta.bootstrap_state = SessionBootstrapState::Pending;
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn build_continuation_system_context(
+        &self,
+        session_id: &str,
+        owner_context: Option<&str>,
+    ) -> std::io::Result<Option<String>> {
+        let events = self.persistence.list_all_events(session_id).await?;
+        Ok(build_continuation_system_context_from_events(
+            owner_context,
+            &events,
+        ))
+    }
+
+    pub async fn build_restored_session_messages(
+        &self,
+        session_id: &str,
+    ) -> std::io::Result<Vec<AgentMessage>> {
+        let events = self.persistence.list_all_events(session_id).await?;
+        Ok(build_restored_session_messages_from_events(&events))
     }
 
     pub async fn ensure_hook_session_runtime(
@@ -618,6 +655,679 @@ impl SessionHub {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ContinuationTranscriptEntry {
+    order: u64,
+    role: &'static str,
+    turn_id: Option<String>,
+    text: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ContinuationToolState {
+    order: u64,
+    turn_id: Option<String>,
+    title: Option<String>,
+    status: Option<String>,
+    raw_input: Option<String>,
+    raw_output: Option<String>,
+    content_preview: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RestoredUserMessageState {
+    order: u64,
+    content: Vec<ContentPart>,
+}
+
+#[derive(Debug, Clone)]
+struct RestoredAssistantMessageState {
+    order: u64,
+    content: Vec<ContentPart>,
+    tool_calls: Vec<ToolCallInfo>,
+    tool_call_ids: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RestoredToolResultState {
+    order: u64,
+    tool_call_id: String,
+    call_id: Option<String>,
+    tool_name: Option<String>,
+    content: Vec<ContentPart>,
+    details: Option<serde_json::Value>,
+    is_error: bool,
+    terminal: bool,
+}
+
+#[derive(Debug, Clone)]
+enum RestoredMessageEnvelope {
+    User {
+        order: u64,
+        content: Vec<ContentPart>,
+    },
+    Assistant {
+        order: u64,
+        content: Vec<ContentPart>,
+        tool_calls: Vec<ToolCallInfo>,
+    },
+    ToolResult {
+        order: u64,
+        tool_call_id: String,
+        call_id: Option<String>,
+        tool_name: Option<String>,
+        content: Vec<ContentPart>,
+        details: Option<serde_json::Value>,
+        is_error: bool,
+    },
+}
+
+fn build_continuation_system_context_from_events(
+    owner_context: Option<&str>,
+    events: &[PersistedSessionEvent],
+) -> Option<String> {
+    if events.is_empty() {
+        return owner_context
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+    }
+
+    let mut transcript_entries: Vec<ContinuationTranscriptEntry> = Vec::new();
+    let mut message_index: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut tool_states: std::collections::HashMap<String, ContinuationToolState> =
+        std::collections::HashMap::new();
+
+    for event in events {
+        match &event.notification.update {
+            SessionUpdate::UserMessageChunk(chunk) => {
+                if let Some(text) = content_block_to_transcript_text(&chunk.content) {
+                    merge_transcript_chunk(
+                        &mut transcript_entries,
+                        &mut message_index,
+                        message_key("user", event, chunk.message_id.as_deref()),
+                        event.event_seq,
+                        "用户",
+                        event.turn_id.clone(),
+                        &text,
+                    );
+                }
+            }
+            SessionUpdate::AgentMessageChunk(chunk) => {
+                if let Some(text) = content_block_to_transcript_text(&chunk.content) {
+                    merge_transcript_chunk(
+                        &mut transcript_entries,
+                        &mut message_index,
+                        message_key("assistant", event, chunk.message_id.as_deref()),
+                        event.event_seq,
+                        "助手",
+                        event.turn_id.clone(),
+                        &text,
+                    );
+                }
+            }
+            SessionUpdate::AgentThoughtChunk(chunk) => {
+                if let Some(text) = content_block_to_transcript_text(&chunk.content) {
+                    merge_transcript_chunk(
+                        &mut transcript_entries,
+                        &mut message_index,
+                        message_key("thought", event, chunk.message_id.as_deref()),
+                        event.event_seq,
+                        "助手思考",
+                        event.turn_id.clone(),
+                        &text,
+                    );
+                }
+            }
+            SessionUpdate::ToolCall(call) => {
+                tool_states.insert(
+                    call.tool_call_id.to_string(),
+                    ContinuationToolState {
+                        order: event.event_seq,
+                        turn_id: event.turn_id.clone(),
+                        title: Some(call.title.clone()),
+                        status: Some(format!("{:?}", call.status).to_ascii_lowercase()),
+                        raw_input: call.raw_input.as_ref().map(json_preview),
+                        raw_output: call.raw_output.as_ref().map(json_preview),
+                        content_preview: (!call.content.is_empty())
+                            .then(|| json_preview(&serde_json::json!(call.content))),
+                    },
+                );
+            }
+            SessionUpdate::ToolCallUpdate(update) => {
+                let tool_state = tool_states
+                    .entry(update.tool_call_id.to_string())
+                    .or_insert_with(|| ContinuationToolState {
+                        order: event.event_seq,
+                        turn_id: event.turn_id.clone(),
+                        ..ContinuationToolState::default()
+                    });
+                tool_state.order = tool_state.order.min(event.event_seq);
+                if tool_state.turn_id.is_none() {
+                    tool_state.turn_id = event.turn_id.clone();
+                }
+                if let Some(title) = update.fields.title.clone() {
+                    tool_state.title = Some(title);
+                }
+                if let Some(status) = update.fields.status {
+                    tool_state.status = Some(format!("{status:?}").to_ascii_lowercase());
+                }
+                if let Some(raw_input) = update.fields.raw_input.as_ref() {
+                    tool_state.raw_input = Some(json_preview(raw_input));
+                }
+                if let Some(raw_output) = update.fields.raw_output.as_ref() {
+                    tool_state.raw_output = Some(json_preview(raw_output));
+                }
+                if let Some(content) = update.fields.content.as_ref() {
+                    tool_state.content_preview = Some(json_preview(&serde_json::json!(content)));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    transcript_entries.sort_by_key(|entry| entry.order);
+    let mut ordered_tool_states = tool_states.into_iter().collect::<Vec<_>>();
+    ordered_tool_states.sort_by_key(|(_, state)| state.order);
+
+    let mut sections = Vec::new();
+    if let Some(owner) = owner_context
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sections.push(format!("## Owner Context\n\n{owner}"));
+    }
+
+    let mut history_lines = Vec::new();
+    history_lines.push(
+        "以下内容由 session 仓储事件重建，用于在当前进程缺少 live runtime 时恢复连续会话语义。请将其视为本 session 已经发生过的事实，并在此基础上继续处理新的用户输入。"
+            .to_string(),
+    );
+
+    if !transcript_entries.is_empty() {
+        history_lines.push(String::new());
+        history_lines.push("### Transcript".to_string());
+        for entry in transcript_entries {
+            let turn_line = entry
+                .turn_id
+                .as_deref()
+                .map(|turn_id| format!(" ({turn_id})"))
+                .unwrap_or_default();
+            history_lines.push(format!("#### {}{}", entry.role, turn_line));
+            history_lines.push(entry.text);
+            history_lines.push(String::new());
+        }
+    }
+
+    if !ordered_tool_states.is_empty() {
+        history_lines.push("### Tool State".to_string());
+        for (tool_call_id, state) in ordered_tool_states {
+            let mut lines = vec![format!(
+                "- tool_call_id: {tool_call_id}\n  title: {}\n  status: {}",
+                state.title.as_deref().unwrap_or("-"),
+                state.status.as_deref().unwrap_or("-"),
+            )];
+            if let Some(turn_id) = state.turn_id.as_deref() {
+                lines.push(format!("  turn_id: {turn_id}"));
+            }
+            if let Some(raw_input) = state.raw_input.as_deref() {
+                lines.push(format!("  raw_input: {raw_input}"));
+            }
+            if let Some(raw_output) = state.raw_output.as_deref() {
+                lines.push(format!("  raw_output: {raw_output}"));
+            } else if let Some(content_preview) = state.content_preview.as_deref() {
+                lines.push(format!("  content: {content_preview}"));
+            }
+            history_lines.push(lines.join("\n"));
+        }
+    }
+
+    sections.push(format!("## Session Continuation\n\n{}", history_lines.join("\n")));
+    Some(sections.join("\n\n"))
+}
+
+fn build_restored_session_messages_from_events(
+    events: &[PersistedSessionEvent],
+) -> Vec<AgentMessage> {
+    let mut user_messages: HashMap<String, RestoredUserMessageState> = HashMap::new();
+    let mut assistant_messages: HashMap<String, RestoredAssistantMessageState> = HashMap::new();
+    let mut tool_results: HashMap<String, RestoredToolResultState> = HashMap::new();
+
+    for event in events {
+        match &event.notification.update {
+            SessionUpdate::UserMessageChunk(chunk) => {
+                if let Some(part) = content_block_to_message_part(&chunk.content) {
+                    let key = restored_user_key(event);
+                    let state = user_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredUserMessageState {
+                            order: event.event_seq,
+                            content: Vec::new(),
+                        });
+                    state.content.push(part);
+                }
+            }
+            SessionUpdate::AgentMessageChunk(chunk) => {
+                if let Some(part) = content_block_to_message_part(&chunk.content) {
+                    let key = restored_assistant_key(event, chunk.message_id.as_deref());
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState {
+                            order: event.event_seq,
+                            content: Vec::new(),
+                            tool_calls: Vec::new(),
+                            tool_call_ids: HashSet::new(),
+                        });
+                    state.content.push(part);
+                }
+            }
+            SessionUpdate::AgentThoughtChunk(chunk) => {
+                if let Some(part) = content_block_to_reasoning_part(&chunk.content) {
+                    let key = restored_assistant_key(event, chunk.message_id.as_deref());
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState {
+                            order: event.event_seq,
+                            content: Vec::new(),
+                            tool_calls: Vec::new(),
+                            tool_call_ids: HashSet::new(),
+                        });
+                    state.content.push(part);
+                }
+            }
+            SessionUpdate::ToolCall(call) => {
+                let key = restored_assistant_key(event, None);
+                let state = assistant_messages
+                    .entry(key)
+                    .or_insert_with(|| RestoredAssistantMessageState {
+                        order: event.event_seq,
+                        content: Vec::new(),
+                        tool_calls: Vec::new(),
+                        tool_call_ids: HashSet::new(),
+                    });
+                state.order = state.order.min(event.event_seq);
+                upsert_restored_tool_call(
+                    state,
+                    call.tool_call_id.0.as_ref(),
+                    Some(call.title.as_str()),
+                    call.raw_input.as_ref(),
+                );
+                update_restored_tool_result(
+                    &mut tool_results,
+                    call.tool_call_id.0.as_ref(),
+                    event.event_seq,
+                    Some(call.title.as_str()),
+                    call.raw_output.as_ref(),
+                    Some(&call.content),
+                    Some(call.status),
+                );
+            }
+            SessionUpdate::ToolCallUpdate(update) => {
+                let key = restored_assistant_key(event, None);
+                let state = assistant_messages
+                    .entry(key)
+                    .or_insert_with(|| RestoredAssistantMessageState {
+                        order: event.event_seq,
+                        content: Vec::new(),
+                        tool_calls: Vec::new(),
+                        tool_call_ids: HashSet::new(),
+                    });
+                state.order = state.order.min(event.event_seq);
+                upsert_restored_tool_call(
+                    state,
+                    update.tool_call_id.0.as_ref(),
+                    update.fields.title.as_deref(),
+                    update.fields.raw_input.as_ref(),
+                );
+                update_restored_tool_result(
+                    &mut tool_results,
+                    update.tool_call_id.0.as_ref(),
+                    event.event_seq,
+                    update.fields.title.as_deref(),
+                    update.fields.raw_output.as_ref(),
+                    update.fields.content.as_deref(),
+                    update.fields.status,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let mut envelopes = Vec::new();
+    for state in user_messages.into_values() {
+        if state.content.is_empty() {
+            continue;
+        }
+        envelopes.push(RestoredMessageEnvelope::User {
+            order: state.order,
+            content: state.content,
+        });
+    }
+    for state in assistant_messages.into_values() {
+        if state.content.is_empty() && state.tool_calls.is_empty() {
+            continue;
+        }
+        envelopes.push(RestoredMessageEnvelope::Assistant {
+            order: state.order,
+            content: state.content,
+            tool_calls: state.tool_calls,
+        });
+    }
+    for state in tool_results.into_values() {
+        if !state.terminal || state.content.is_empty() && state.details.is_none() {
+            continue;
+        }
+        envelopes.push(RestoredMessageEnvelope::ToolResult {
+            order: state.order,
+            tool_call_id: state.tool_call_id,
+            call_id: state.call_id,
+            tool_name: state.tool_name,
+            content: state.content,
+            details: state.details,
+            is_error: state.is_error,
+        });
+    }
+
+    envelopes.sort_by_key(restored_message_order);
+    envelopes.into_iter().map(restored_envelope_to_message).collect()
+}
+
+fn restored_user_key(event: &PersistedSessionEvent) -> String {
+    event.turn_id
+        .as_deref()
+        .map(|turn_id| format!("user:turn:{turn_id}"))
+        .unwrap_or_else(|| format!("user:event:{}", event.event_seq))
+}
+
+fn restored_assistant_key(event: &PersistedSessionEvent, message_id: Option<&str>) -> String {
+    if let (Some(turn_id), Some(entry_index)) = (event.turn_id.as_deref(), event.entry_index) {
+        return format!("assistant:turn:{turn_id}:{entry_index}");
+    }
+    if let Some(message_id) = message_id.map(str::trim).filter(|value| !value.is_empty()) {
+        return format!("assistant:msg:{message_id}");
+    }
+    if let Some(tool_call_id) = event
+        .tool_call_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return format!("assistant:tool:{tool_call_id}");
+    }
+    format!("assistant:event:{}", event.event_seq)
+}
+
+fn upsert_restored_tool_call(
+    state: &mut RestoredAssistantMessageState,
+    tool_call_id: &str,
+    title: Option<&str>,
+    raw_input: Option<&serde_json::Value>,
+) {
+    let resolved_title = title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tool_call");
+    let arguments = raw_input
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    if let Some(existing) = state.tool_calls.iter_mut().find(|item| item.id == tool_call_id) {
+        if existing.name.trim().is_empty() {
+            existing.name = resolved_title.to_string();
+        }
+        if existing.arguments.is_null() || existing.arguments == serde_json::json!({}) {
+            existing.arguments = arguments;
+        }
+        return;
+    }
+
+    if state.tool_call_ids.insert(tool_call_id.to_string()) {
+        state.tool_calls.push(ToolCallInfo {
+            id: tool_call_id.to_string(),
+            call_id: Some(tool_call_id.to_string()),
+            name: resolved_title.to_string(),
+            arguments,
+        });
+    }
+}
+
+fn update_restored_tool_result(
+    tool_results: &mut HashMap<String, RestoredToolResultState>,
+    tool_call_id: &str,
+    order: u64,
+    title: Option<&str>,
+    raw_output: Option<&serde_json::Value>,
+    content: Option<&[ToolCallContent]>,
+    status: Option<ToolCallStatus>,
+) {
+    let state = tool_results
+        .entry(tool_call_id.to_string())
+        .or_insert_with(|| RestoredToolResultState {
+            order,
+            tool_call_id: tool_call_id.to_string(),
+            call_id: Some(tool_call_id.to_string()),
+            ..RestoredToolResultState::default()
+        });
+
+    if let Some(title) = title.map(str::trim).filter(|value| !value.is_empty()) {
+        state.tool_name = Some(title.to_string());
+    }
+
+    let Some(status) = status else {
+        return;
+    };
+    if !matches!(status, ToolCallStatus::Completed | ToolCallStatus::Failed) {
+        return;
+    }
+
+    state.order = order;
+    state.terminal = true;
+    state.is_error = matches!(status, ToolCallStatus::Failed);
+
+    if let Some(raw_output) = raw_output {
+        if let Ok(decoded) = serde_json::from_value::<agentdash_spi::tool::AgentToolResult>(
+            raw_output.clone(),
+        ) {
+            state.content = decoded.content;
+            state.details = decoded.details;
+            state.is_error = decoded.is_error || state.is_error;
+            return;
+        }
+
+        state.details = Some(raw_output.clone());
+        if state.content.is_empty() {
+            state.content = vec![ContentPart::text(json_preview(raw_output))];
+        }
+    }
+
+    if let Some(content) = content {
+        let next_content = tool_call_content_to_content_parts(content);
+        if !next_content.is_empty() {
+            state.content = next_content;
+        }
+    }
+}
+
+fn restored_message_order(envelope: &RestoredMessageEnvelope) -> u64 {
+    match envelope {
+        RestoredMessageEnvelope::User { order, .. }
+        | RestoredMessageEnvelope::Assistant { order, .. }
+        | RestoredMessageEnvelope::ToolResult { order, .. } => *order,
+    }
+}
+
+fn restored_envelope_to_message(envelope: RestoredMessageEnvelope) -> AgentMessage {
+    match envelope {
+        RestoredMessageEnvelope::User { content, .. } => AgentMessage::User {
+            content,
+            timestamp: None,
+        },
+        RestoredMessageEnvelope::Assistant {
+            content, tool_calls, ..
+        } => AgentMessage::Assistant {
+            content,
+            tool_calls: tool_calls.clone(),
+            stop_reason: Some(if tool_calls.is_empty() {
+                StopReason::Stop
+            } else {
+                StopReason::ToolUse
+            }),
+            error_message: None,
+            usage: None,
+            timestamp: None,
+        },
+        RestoredMessageEnvelope::ToolResult {
+            tool_call_id,
+            call_id,
+            tool_name,
+            content,
+            details,
+            is_error,
+            ..
+        } => AgentMessage::ToolResult {
+            tool_call_id,
+            call_id,
+            tool_name,
+            content,
+            details,
+            is_error,
+            timestamp: None,
+        },
+    }
+}
+
+fn message_key(
+    role: &str,
+    event: &PersistedSessionEvent,
+    message_id: Option<&str>,
+) -> String {
+    if let Some(message_id) = message_id.map(str::trim).filter(|value| !value.is_empty()) {
+        return format!("{role}:msg:{message_id}");
+    }
+    if let (Some(turn_id), Some(entry_index)) = (event.turn_id.as_deref(), event.entry_index) {
+        return format!("{role}:turn:{turn_id}:{entry_index}");
+    }
+    format!("{role}:event:{}", event.event_seq)
+}
+
+fn merge_transcript_chunk(
+    entries: &mut Vec<ContinuationTranscriptEntry>,
+    index: &mut std::collections::HashMap<String, usize>,
+    key: String,
+    order: u64,
+    role: &'static str,
+    turn_id: Option<String>,
+    incoming_text: &str,
+) {
+    if let Some(existing_index) = index.get(&key).copied() {
+        if let Some(entry) = entries.get_mut(existing_index) {
+            entry.text = merge_continuation_text(&entry.text, incoming_text);
+            return;
+        }
+    }
+    index.insert(key, entries.len());
+    entries.push(ContinuationTranscriptEntry {
+        order,
+        role,
+        turn_id,
+        text: incoming_text.to_string(),
+    });
+}
+
+fn merge_continuation_text(previous: &str, incoming: &str) -> String {
+    if incoming.is_empty() || incoming == previous {
+        return previous.to_string();
+    }
+    if previous.is_empty() || incoming.starts_with(previous) {
+        return incoming.to_string();
+    }
+
+    format!("{previous}{incoming}")
+}
+
+fn content_block_to_transcript_text(block: &ContentBlock) -> Option<String> {
+    content_block_to_rendered_text(block)
+}
+
+fn content_block_to_message_part(block: &ContentBlock) -> Option<ContentPart> {
+    match block {
+        ContentBlock::Image(image) => Some(ContentPart::Image {
+            mime_type: image.mime_type.clone(),
+            data: image.data.clone(),
+        }),
+        _ => content_block_to_rendered_text(block).map(ContentPart::text),
+    }
+}
+
+fn content_block_to_reasoning_part(block: &ContentBlock) -> Option<ContentPart> {
+    content_block_to_rendered_text(block).map(|text| ContentPart::reasoning(text, None, None))
+}
+
+fn content_block_to_rendered_text(block: &ContentBlock) -> Option<String> {
+    if is_owner_context_resource_block(block) {
+        return None;
+    }
+
+    content_block_to_text(block)
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn is_owner_context_resource_block(block: &ContentBlock) -> bool {
+    match block {
+        ContentBlock::Resource(resource) => match &resource.resource {
+            agent_client_protocol::EmbeddedResourceResource::TextResourceContents(text_resource) => {
+                let uri = text_resource.uri.as_str();
+                uri.starts_with("agentdash://project-context/")
+                    || uri.starts_with("agentdash://story-context/")
+                    || uri.starts_with("agentdash://task-context/")
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn tool_call_content_to_content_parts(content: &[ToolCallContent]) -> Vec<ContentPart> {
+    let mut parts = Vec::new();
+    for item in content {
+        match item {
+            ToolCallContent::Content(content) => {
+                if let Some(part) = content_block_to_message_part(&content.content) {
+                    parts.push(part);
+                }
+            }
+            ToolCallContent::Diff(diff) => {
+                parts.push(ContentPart::text(format!(
+                    "<diff path=\"{}\">\n{}\n</diff>",
+                    diff.path.display(),
+                    diff.new_text
+                )));
+            }
+            ToolCallContent::Terminal(terminal) => {
+                parts.push(ContentPart::text(format!(
+                    "[terminal:{}]",
+                    terminal.terminal_id.0
+                )));
+            }
+            _ => {}
+        }
+    }
+    parts
+}
+
+fn json_preview(value: &serde_json::Value) -> String {
+    const MAX_LEN: usize = 320;
+    let rendered = value.to_string();
+    if rendered.len() <= MAX_LEN {
+        rendered
+    } else {
+        let shortened: String = rendered.chars().take(MAX_LEN).collect();
+        format!("{shortened}...")
+    }
+}
+
 fn build_companion_human_response_notification(
     session_id: &str,
     turn_id: Option<&str>,
@@ -672,7 +1382,10 @@ fn build_companion_human_response_notification(
 mod tests {
     use super::*;
     use crate::session::MemorySessionPersistence;
-    use agent_client_protocol::ContentBlock;
+    use agent_client_protocol::{
+        ContentBlock, ContentChunk, TextContent, ToolCall, ToolCallId, ToolCallStatus,
+        ToolCallUpdate, ToolCallUpdateFields,
+    };
     use agentdash_spi::PromptPayload;
     use agentdash_spi::hooks::HookTrigger;
     use agentdash_spi::hooks::SessionHookRefreshQuery;
@@ -708,7 +1421,196 @@ mod tests {
             address_space: None,
             flow_capabilities: None,
             system_context: None,
+            bootstrap_action: SessionBootstrapAction::None,
             identity: None,
+        }
+    }
+
+    fn owner_bootstrap_request(prompt: &str, system_context: &str) -> PromptSessionRequest {
+        let mut req = simple_prompt_request(prompt);
+        req.system_context = Some(system_context.to_string());
+        req.bootstrap_action = SessionBootstrapAction::OwnerContext;
+        req
+    }
+
+    fn test_meta(
+        source: &AgentDashSourceV1,
+        turn_id: &str,
+        entry_index: u32,
+    ) -> agent_client_protocol::Meta {
+        let mut trace = AgentDashTraceV1::new();
+        trace.turn_id = Some(turn_id.to_string());
+        trace.entry_index = Some(entry_index);
+
+        merge_agentdash_meta(
+            None,
+            &AgentDashMetaV1::new()
+                .source(Some(source.clone()))
+                .trace(Some(trace)),
+        )
+        .expect("test meta should build")
+    }
+
+    #[derive(Default)]
+    struct SessionStartAwareConnector {
+        session_start_seen: Arc<TokioMutex<Vec<bool>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentConnector for SessionStartAwareConnector {
+        fn connector_id(&self) -> &'static str {
+            "session-start-aware"
+        }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            context: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            let seen = context.hook_session.as_ref().is_some_and(|runtime| {
+                runtime
+                    .trace()
+                    .iter()
+                    .any(|trace| matches!(&trace.trigger, HookTrigger::SessionStart))
+            });
+            self.session_start_seen.lock().await.push(seen);
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    struct RecordingHookProvider {
+        queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl agentdash_spi::hooks::ExecutionHookProvider for RecordingHookProvider {
+        async fn load_session_snapshot(
+            &self,
+            query: SessionHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                ..SessionHookSnapshot::default()
+            })
+        }
+        async fn refresh_session_snapshot(
+            &self,
+            query: SessionHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                ..SessionHookSnapshot::default()
+            })
+        }
+        async fn evaluate_hook(
+            &self,
+            query: HookEvaluationQuery,
+        ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+            self.queries.lock().await.push(query);
+            Ok(HookResolution::default())
+        }
+    }
+
+    #[derive(Default)]
+    struct RepositoryRestoreRecordingConnector {
+        contexts: Arc<TokioMutex<Vec<agentdash_spi::ExecutionContext>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentConnector for RepositoryRestoreRecordingConnector {
+        fn connector_id(&self) -> &'static str {
+            "repository-restore-recording"
+        }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+        fn supports_repository_restore(&self, executor: &str) -> bool {
+            executor == "PI_AGENT"
+        }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            vec![agentdash_spi::AgentInfo {
+                id: "PI_AGENT".to_string(),
+                name: "Pi Agent".to_string(),
+                variants: Vec::new(),
+                available: true,
+            }]
+        }
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            context: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            self.contexts.lock().await.push(context);
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
         }
     }
 
@@ -946,104 +1848,6 @@ mod tests {
 
     #[tokio::test]
     async fn start_prompt_triggers_session_start_before_connector_prompt() {
-        #[derive(Default)]
-        struct SessionStartAwareConnector {
-            session_start_seen: Arc<TokioMutex<Vec<bool>>>,
-        }
-
-        #[async_trait::async_trait]
-        impl AgentConnector for SessionStartAwareConnector {
-            fn connector_id(&self) -> &'static str {
-                "session-start-aware"
-            }
-            fn connector_type(&self) -> agentdash_spi::ConnectorType {
-                agentdash_spi::ConnectorType::LocalExecutor
-            }
-            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-                agentdash_spi::ConnectorCapabilities::default()
-            }
-            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-                Vec::new()
-            }
-            async fn discover_options_stream(
-                &self,
-                _executor: &str,
-                _working_dir: Option<PathBuf>,
-            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-            {
-                Ok(Box::pin(stream::empty()))
-            }
-
-            async fn prompt(
-                &self,
-                _session_id: &str,
-                _follow_up_session_id: Option<&str>,
-                _prompt: &PromptPayload,
-                context: agentdash_spi::ExecutionContext,
-            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-                let seen = context.hook_session.as_ref().is_some_and(|runtime| {
-                    runtime
-                        .trace()
-                        .iter()
-                        .any(|trace| matches!(&trace.trigger, HookTrigger::SessionStart))
-                });
-                self.session_start_seen.lock().await.push(seen);
-                Ok(Box::pin(stream::empty()))
-            }
-
-            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-                Ok(())
-            }
-            async fn approve_tool_call(
-                &self,
-                _session_id: &str,
-                _tool_call_id: &str,
-            ) -> Result<(), ConnectorError> {
-                Ok(())
-            }
-            async fn reject_tool_call(
-                &self,
-                _session_id: &str,
-                _tool_call_id: &str,
-                _reason: Option<String>,
-            ) -> Result<(), ConnectorError> {
-                Ok(())
-            }
-        }
-
-        struct RecordingHookProvider {
-            queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
-        }
-
-        #[async_trait::async_trait]
-        impl agentdash_spi::hooks::ExecutionHookProvider for RecordingHookProvider {
-            async fn load_session_snapshot(
-                &self,
-                query: SessionHookSnapshotQuery,
-            ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-                Ok(SessionHookSnapshot {
-                    session_id: query.session_id,
-                    ..SessionHookSnapshot::default()
-                })
-            }
-            async fn refresh_session_snapshot(
-                &self,
-                query: SessionHookRefreshQuery,
-            ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-                Ok(SessionHookSnapshot {
-                    session_id: query.session_id,
-                    ..SessionHookSnapshot::default()
-                })
-            }
-            async fn evaluate_hook(
-                &self,
-                query: HookEvaluationQuery,
-            ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
-                self.queries.lock().await.push(query);
-                Ok(HookResolution::default())
-            }
-        }
-
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(SessionStartAwareConnector::default());
         let queries = Arc::new(TokioMutex::new(Vec::new()));
@@ -1056,8 +1860,11 @@ mod tests {
             Some(hook_provider),
         );
         let session = hub.create_session("test").await.expect("create session");
+        hub.mark_owner_bootstrap_pending(&session.id)
+            .await
+            .expect("should mark pending");
 
-        hub.start_prompt(&session.id, simple_prompt_request("hello"))
+        hub.start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
             .await
             .expect("prompt should start");
 
@@ -1070,6 +1877,285 @@ mod tests {
                 .iter()
                 .any(|query| matches!(query.trigger, HookTrigger::SessionStart))
         );
+    }
+
+    #[tokio::test]
+    async fn owner_bootstrap_marks_session_meta_bootstrapped() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let connector = Arc::new(SessionStartAwareConnector::default());
+        let queries = Arc::new(TokioMutex::new(Vec::new()));
+        let hook_provider = Arc::new(RecordingHookProvider {
+            queries: queries.clone(),
+        });
+        let hub = test_hub(base.path().to_path_buf(), connector, Some(hook_provider));
+        let session = hub.create_session("test").await.expect("create session");
+        hub.mark_owner_bootstrap_pending(&session.id)
+            .await
+            .expect("should mark pending");
+
+        hub.start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
+            .await
+            .expect("prompt should start");
+
+        let meta = hub
+            .get_session_meta(&session.id)
+            .await
+            .expect("meta should load")
+            .expect("session should exist");
+        assert_eq!(meta.bootstrap_state, SessionBootstrapState::Bootstrapped);
+    }
+
+    #[tokio::test]
+    async fn build_continuation_system_context_strips_owner_resource_blocks() {
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            base.path().to_path_buf(),
+            Arc::new(SessionStartAwareConnector::default()),
+            None,
+            persistence,
+        );
+        let session = hub.create_session("test").await.expect("create session");
+
+        let source = AgentDashSourceV1::new("test", "unit");
+        let user_blocks = vec![
+            serde_json::from_value::<ContentBlock>(serde_json::json!({
+                "type": "resource",
+                "resource": {
+                    "uri": "agentdash://project-context/project-1",
+                    "mimeType": "text/markdown",
+                    "text": "## Project\nhidden"
+                }
+            }))
+            .expect("resource block"),
+            ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
+        ];
+        for notification in build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
+        {
+            hub.inject_notification(&session.id, notification)
+                .await
+                .expect("inject user notification");
+        }
+
+        let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("已记录历史")))
+            .message_id(Some("assistant-msg-1".to_string()))
+            .meta(merge_agentdash_meta(
+                None,
+                &AgentDashMetaV1::new()
+                    .source(Some(source.clone()))
+                    .trace(Some({
+                        let mut trace = AgentDashTraceV1::new();
+                        trace.turn_id = Some("t-1".to_string());
+                        trace.entry_index = Some(99);
+                        trace
+                    })),
+            )
+            .expect("assistant meta"));
+        hub.inject_notification(
+            &session.id,
+            SessionNotification::new(
+                SessionId::new(session.id.clone()),
+                SessionUpdate::AgentMessageChunk(assistant_chunk),
+            ),
+        )
+        .await
+        .expect("inject assistant notification");
+
+        let context = hub
+            .build_continuation_system_context(&session.id, Some("## Owner\nproject"))
+            .await
+            .expect("context should build")
+            .expect("continuation context should exist");
+        assert!(context.contains("继续分析 session 生命周期"));
+        assert!(context.contains("已记录历史"));
+        assert!(context.contains("## Owner"));
+        assert!(!context.contains("agentdash://project-context/"));
+        assert!(!context.contains("hidden"));
+    }
+
+    #[tokio::test]
+    async fn build_restored_session_messages_reconstructs_tool_history_without_owner_blocks() {
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            base.path().to_path_buf(),
+            Arc::new(SessionStartAwareConnector::default()),
+            None,
+            persistence,
+        );
+        let session = hub.create_session("test").await.expect("create session");
+
+        let source = AgentDashSourceV1::new("test", "unit");
+        let user_blocks = vec![
+            serde_json::from_value::<ContentBlock>(serde_json::json!({
+                "type": "resource",
+                "resource": {
+                    "uri": "agentdash://project-context/project-1",
+                    "mimeType": "text/markdown",
+                    "text": "## Project\nhidden"
+                }
+            }))
+            .expect("resource block"),
+            ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
+        ];
+        for notification in build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
+        {
+            hub.inject_notification(&session.id, notification)
+                .await
+                .expect("inject user notification");
+        }
+
+        let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("已记录历史")))
+            .message_id(Some("assistant-msg-1".to_string()))
+            .meta(Some(test_meta(&source, "t-1", 1)));
+        hub.inject_notification(
+            &session.id,
+            SessionNotification::new(
+                SessionId::new(session.id.clone()),
+                SessionUpdate::AgentMessageChunk(assistant_chunk),
+            ),
+        )
+        .await
+        .expect("inject assistant notification");
+
+        let tool_call = ToolCall::new(ToolCallId::new("tool-1"), "shell_exec")
+            .status(ToolCallStatus::Pending)
+            .raw_input(serde_json::json!({ "command": "pwd" }))
+            .meta(Some(test_meta(&source, "t-1", 1)));
+        hub.inject_notification(
+            &session.id,
+            SessionNotification::new(SessionId::new(session.id.clone()), SessionUpdate::ToolCall(tool_call)),
+        )
+        .await
+        .expect("inject tool call");
+
+        let raw_result = serde_json::to_value(agentdash_spi::AgentToolResult {
+            content: vec![agentdash_spi::ContentPart::text("workspace root")],
+            is_error: false,
+            details: Some(serde_json::json!({ "exit_code": 0 })),
+        })
+        .expect("serialize tool result");
+        let mut fields = ToolCallUpdateFields::default();
+        fields.title = Some("shell_exec".to_string());
+        fields.status = Some(ToolCallStatus::Completed);
+        fields.raw_output = Some(raw_result);
+        let tool_update = ToolCallUpdate::new(ToolCallId::new("tool-1"), fields)
+            .meta(Some(test_meta(&source, "t-1", 1)));
+        hub.inject_notification(
+            &session.id,
+            SessionNotification::new(
+                SessionId::new(session.id.clone()),
+                SessionUpdate::ToolCallUpdate(tool_update),
+            ),
+        )
+        .await
+        .expect("inject tool update");
+
+        let messages = hub
+            .build_restored_session_messages(&session.id)
+            .await
+            .expect("messages should build");
+        assert_eq!(messages.len(), 3);
+
+        match &messages[0] {
+            agentdash_spi::AgentMessage::User { content, .. } => {
+                assert_eq!(content.len(), 1);
+                assert_eq!(messages[0].first_text(), Some("继续分析 session 生命周期"));
+                assert_ne!(messages[0].first_text(), Some("## Project\nhidden"));
+            }
+            other => panic!("unexpected first message: {other:?}"),
+        }
+
+        match &messages[1] {
+            agentdash_spi::AgentMessage::Assistant {
+                tool_calls,
+                stop_reason,
+                ..
+            } => {
+                assert_eq!(messages[1].first_text(), Some("已记录历史"));
+                assert_eq!(tool_calls.len(), 1);
+                assert_eq!(tool_calls[0].name, "shell_exec");
+                assert_eq!(stop_reason.clone(), Some(StopReason::ToolUse));
+            }
+            other => panic!("unexpected assistant message: {other:?}"),
+        }
+
+        match &messages[2] {
+            agentdash_spi::AgentMessage::ToolResult {
+                tool_call_id,
+                tool_name,
+                details,
+                is_error,
+                ..
+            } => {
+                assert_eq!(tool_call_id, "tool-1");
+                assert_eq!(tool_name.as_deref(), Some("shell_exec"));
+                assert_eq!(messages[2].first_text(), Some("workspace root"));
+                assert_eq!(
+                    details
+                        .as_ref()
+                        .and_then(|value| value.get("exit_code"))
+                        .and_then(serde_json::Value::as_i64),
+                    Some(0)
+                );
+                assert!(!*is_error);
+            }
+            other => panic!("unexpected tool result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn start_prompt_passes_restored_session_state_when_connector_supports_repository_restore() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let connector = Arc::new(RepositoryRestoreRecordingConnector::default());
+        let hub = test_hub(base.path().to_path_buf(), connector.clone(), None);
+        let session = hub.create_session("test").await.expect("create session");
+
+        let source = AgentDashSourceV1::new("test", "unit");
+        for notification in build_user_message_notifications(
+            &session.id,
+            &source,
+            "t-1",
+            &[ContentBlock::Text(TextContent::new("历史用户消息"))],
+        ) {
+            hub.inject_notification(&session.id, notification)
+                .await
+                .expect("inject user notification");
+        }
+        let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("历史助手消息")))
+            .message_id(Some("assistant-msg-restore".to_string()))
+            .meta(Some(test_meta(&source, "t-1", 1)));
+        hub.inject_notification(
+            &session.id,
+            SessionNotification::new(
+                SessionId::new(session.id.clone()),
+                SessionUpdate::AgentMessageChunk(assistant_chunk),
+            ),
+        )
+        .await
+        .expect("inject assistant notification");
+
+        assert!(
+            !hub.has_live_runtime(&session.id).await,
+            "仅有被动 session 条目时不应视为 live runtime"
+        );
+
+        let mut req = simple_prompt_request("新的用户消息");
+        req.user_input.executor_config = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
+        hub.start_prompt(&session.id, req)
+            .await
+            .expect("prompt should start");
+
+        let contexts = connector.contexts.lock().await;
+        let context = contexts.last().expect("context should be recorded");
+        let restored = context
+            .restored_session_state
+            .as_ref()
+            .expect("restored session state should exist");
+        assert_eq!(restored.messages.len(), 2);
+        assert_eq!(restored.messages[0].first_text(), Some("历史用户消息"));
+        assert_eq!(restored.messages[1].first_text(), Some("历史助手消息"));
+        assert!(context.system_context.is_none());
     }
 
     #[tokio::test]
@@ -1154,6 +2240,7 @@ mod tests {
                 address_space: None,
                 flow_capabilities: None,
                 system_context: None,
+                bootstrap_action: SessionBootstrapAction::None,
                 identity: None,
             },
         )

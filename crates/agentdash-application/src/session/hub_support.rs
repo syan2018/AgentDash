@@ -157,7 +157,6 @@ pub(super) fn build_session_runtime(
         cancel_requested: false,
         hook_session: None,
         hook_auto_resume_count: 0,
-        turn_count: 0,
     }
 }
 
@@ -169,8 +168,6 @@ pub(super) struct SessionRuntime {
     pub hook_session: Option<SharedHookSessionRuntime>,
     /// Counter for hook-driven auto-resumes (prevents infinite loops).
     pub hook_auto_resume_count: u32,
-    /// 当前 session 已执行过的 turn 数，用于区分首次 prompt 和后续 prompt。
-    pub turn_count: u32,
 }
 
 pub struct SessionEventSubscription {

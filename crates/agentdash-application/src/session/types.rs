@@ -31,6 +31,10 @@ pub struct PromptSessionRequest {
     pub address_space: Option<AddressSpace>,
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
     pub system_context: Option<String>,
+    /// Session 模型判定出的 bootstrap 动作。
+    /// owner 首轮初始化与冷启动续跑都由 session 生命周期层决定，
+    /// route / frontend 只传原始用户输入。
+    pub bootstrap_action: SessionBootstrapAction,
     /// 发起本次 prompt 的用户身份（由 HTTP handler 从 session 注入）。
     pub identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
@@ -45,9 +49,73 @@ impl PromptSessionRequest {
             address_space: None,
             flow_capabilities: None,
             system_context: None,
+            bootstrap_action: SessionBootstrapAction::None,
             identity: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionBootstrapAction {
+    None,
+    OwnerContext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionBootstrapState {
+    /// 普通 session，不需要 owner 首轮 bootstrap。
+    Plain,
+    /// 已绑定 owner，但首轮上下文还未正式注入 session 历史。
+    Pending,
+    /// owner 首轮 bootstrap 已完成；后续仅允许正常续跑或冷启动 rehydrate。
+    Bootstrapped,
+}
+
+impl Default for SessionBootstrapState {
+    fn default() -> Self {
+        Self::Plain
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionRepositoryRehydrateMode {
+    SystemContext,
+    ExecutorState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionPromptLifecycle {
+    Plain,
+    OwnerBootstrap,
+    RepositoryRehydrate(SessionRepositoryRehydrateMode),
+}
+
+pub fn resolve_session_prompt_lifecycle(
+    meta: &SessionMeta,
+    has_live_runtime: bool,
+    supports_repository_restore: bool,
+) -> SessionPromptLifecycle {
+    if meta.bootstrap_state == SessionBootstrapState::Pending {
+        return SessionPromptLifecycle::OwnerBootstrap;
+    }
+
+    let has_executor_follow_up = meta
+        .executor_session_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+
+    if !has_live_runtime && meta.last_event_seq > 0 && !has_executor_follow_up {
+        return SessionPromptLifecycle::RepositoryRehydrate(if supports_repository_restore {
+            SessionRepositoryRehydrateMode::ExecutorState
+        } else {
+            SessionRepositoryRehydrateMode::SystemContext
+        });
+    }
+
+    SessionPromptLifecycle::Plain
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +207,8 @@ pub struct SessionMeta {
     pub companion_context: Option<CompanionSessionContext>,
     #[serde(default)]
     pub visible_canvas_mount_ids: Vec<String>,
+    #[serde(default)]
+    pub bootstrap_state: SessionBootstrapState,
 }
 
 impl SessionMeta {

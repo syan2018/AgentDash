@@ -1,0 +1,58 @@
+{
+  "id": "session-lifecycle-repository-rehydrate",
+  "name": "session-lifecycle-repository-rehydrate",
+  "title": "Session 生命周期与仓储恢复重构",
+  "description": "梳理 session 生命周期模型，把 owner bootstrap、仓储恢复与执行器续跑判定统一下沉到 session 模型与仓储恢复能力中，避免 reopen/restart 后重复注入 project/story/task 上下文。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "session-lifecycle-persistence",
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "codex",
+  "createdAt": "2026-04-03",
+  "completedAt": "2026-04-03",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 3,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "session-lifecycle-resolution",
+    "repository-message-rehydrate",
+    "connector-native-restore",
+    "prompt-route-owner-bootstrap-unify",
+    "postgres-bootstrap-state-migration",
+    "manual-frontend-reopen-regression-check"
+  ],
+  "relatedFiles": [
+    "crates/agentdash-application/src/session/types.rs",
+    "crates/agentdash-application/src/session/prompt_pipeline.rs",
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent/connector.rs",
+    "crates/agentdash-infrastructure/src/persistence/postgres/session_repository.rs",
+    "crates/agentdash-infrastructure/migrations/0003_sessions_bootstrap_state.sql",
+    "frontend/src/features/acp-session/ui/SessionChatView.tsx",
+    "playwright.config.ts"
+  ],
+  "notes": "本轮把 session 初始化逻辑从前端/route 层回收到 session 生命周期模型，统一了 OwnerBootstrap / RepositoryRehydrate / Plain 三态，并验证 reopen / restart 后不会重复注入 owner context。手工前端验证中同时发现 discovery 可见的远程 executor 尚未接入云端 session prompt 路由。"
+}

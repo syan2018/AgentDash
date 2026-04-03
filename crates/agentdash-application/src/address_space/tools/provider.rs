@@ -19,7 +19,7 @@ use crate::address_space::tools::fs::{
     FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
     SharedRuntimeAddressSpace, ShellExecTool,
 };
-use crate::canvas::{CreateCanvasTool, InjectCanvasDataTool, PresentCanvasTool};
+use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::workflow::tools::artifact_report::WorkflowArtifactReportTool;
 use uuid::Uuid;
@@ -186,7 +186,11 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         // Canvas 簇：Canvas 资产工具
         if clusters.contains(&ToolCluster::Canvas) {
             if let Some(project_id) = project_id_from_context(context) {
-                tools.push(Arc::new(CreateCanvasTool::new(
+                tools.push(Arc::new(ListCanvasesTool::new(
+                    self.canvas_repo.clone(),
+                    project_id,
+                )));
+                tools.push(Arc::new(StartCanvasTool::new(
                     self.canvas_repo.clone(),
                     project_id,
                     shared_address_space.clone(),
@@ -196,7 +200,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                         .as_ref()
                         .map(|session| session.session_id().to_string()),
                 )));
-                tools.push(Arc::new(InjectCanvasDataTool::new(
+                tools.push(Arc::new(BindCanvasDataTool::new(
                     self.canvas_repo.clone(),
                     project_id,
                 )));

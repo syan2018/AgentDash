@@ -107,7 +107,7 @@ pub enum ToolCluster {
     Workflow,
     /// 协作与交互：companion_request, companion_respond
     Collaboration,
-    /// Canvas 资产：create_canvas, inject_canvas_data, present_canvas
+    /// Canvas 资产：canvases_list, canvas_start, bind_canvas_data, present_canvas
     Canvas,
 }
 

@@ -11,5 +11,5 @@ pub use runtime::{
     CanvasRuntimeBinding, CanvasRuntimeFile, CanvasRuntimeSnapshot, build_runtime_snapshot,
     build_runtime_snapshot_with_bindings,
 };
-pub use tools::{CreateCanvasTool, InjectCanvasDataTool, PresentCanvasTool};
+pub use tools::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
 pub use visibility::append_visible_canvas_mounts;

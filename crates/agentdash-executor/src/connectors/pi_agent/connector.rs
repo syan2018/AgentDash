@@ -260,7 +260,7 @@ impl PiAgentConnector {
             let mut tool_section = String::from("## Tools\n\n");
             if context.address_space.is_some() {
                 tool_section.push_str(&format!(
-                    "Available address-space tools: {}. Prefer mounts_list / fs_read / fs_glob / fs_grep / fs_apply_patch / shell_exec — do not guess file contents.\n\n",
+                    "Available address-space tools: {}. Prefer mounts_list / fs_read / fs_glob / fs_grep / fs_apply_patch / shell_exec to inspect and edit files.\n\n",
                     tool_names.join(", ")
                 ));
                 tool_section.push_str(
@@ -855,8 +855,12 @@ fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String
 
 fn map_tool_kind(tool_name: &str) -> ToolKind {
     match tool_name {
-        "read_file" | "fs_read" | "list_directory" | "fs_list" | "fs_glob" => ToolKind::Read,
-        "write_file" | "fs_write" | "fs_apply_patch" => ToolKind::Edit,
+        "read_file" | "fs_read" | "list_directory" | "fs_list" | "fs_glob" | "canvases_list" => {
+            ToolKind::Read
+        }
+        "write_file" | "fs_write" | "fs_apply_patch" | "canvas_start" | "bind_canvas_data" => {
+            ToolKind::Edit
+        }
         "search" | "fs_search" | "fs_grep" => ToolKind::Search,
         "shell" | "shell_exec" => ToolKind::Execute,
         "fetch" | "web_fetch" => ToolKind::Fetch,

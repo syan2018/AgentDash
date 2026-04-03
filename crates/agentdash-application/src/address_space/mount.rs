@@ -466,7 +466,7 @@ pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
 }
 
 pub fn build_canvas_mount_id(canvas: &Canvas) -> String {
-    canvas.mount_id.clone()
+    format!("cvs-{}", canvas.mount_id)
 }
 
 pub fn build_canvas_mount(canvas: &Canvas) -> Mount {

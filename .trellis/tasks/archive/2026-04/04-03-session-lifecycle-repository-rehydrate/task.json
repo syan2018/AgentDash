@@ -33,7 +33,7 @@
       "action": "create-pr"
     }
   ],
-  "commit": null,
+  "commit": "b0bdb9f",
   "pr_url": null,
   "subtasks": [
     "session-lifecycle-resolution",

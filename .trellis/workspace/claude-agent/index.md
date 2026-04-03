@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-04-02
+- **Total Sessions**: 28
+- **Last Active**: 2026-04-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1263 | Active |
+| `journal-1.md` | ~1318 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 28 | 2026-04-03 | Session 生命周期与仓储恢复重构 | `b0bdb9f` |
 | 27 | 2026-04-02 | Agent 创建面板配置项补全 + ToolCluster 簇化注入管线 | `eab63d3`, `3ccfe9b` |
 | 26 | 2026-03-31 | 统一 Mount Patch 能力推进到组合式 Apply Patch | - |
 | 25 | 2026-03-26 | Agent Entity + Lifecycle Binding: Full Migration | `0a3c401` |

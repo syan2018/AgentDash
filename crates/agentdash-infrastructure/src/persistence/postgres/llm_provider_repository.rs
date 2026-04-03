@@ -1,8 +1,8 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use agentdash_domain::llm_provider::{LlmProvider, LlmProviderRepository, WireProtocol};
 use agentdash_domain::common::error::DomainError;
+use agentdash_domain::llm_provider::{LlmProvider, LlmProviderRepository, WireProtocol};
 
 pub struct PostgresLlmProviderRepository {
     pool: PgPool,
@@ -64,7 +64,10 @@ impl PostgresLlmProviderRepository {
             .into_iter()
             .filter(|s| s.key.starts_with("llm."))
             .filter_map(|s| {
-                let val = s.value.as_str().map(|v| v.to_string())
+                let val = s
+                    .value
+                    .as_str()
+                    .map(|v| v.to_string())
                     .unwrap_or_else(|| s.value.to_string());
                 if val.is_empty() {
                     None
@@ -187,18 +190,30 @@ impl PostgresLlmProviderRepository {
                 continue;
             }
 
-            let api_key = setting_map.get(spec.api_key_key).cloned().unwrap_or_default();
-            let base_url = spec.base_url_key
+            let api_key = setting_map
+                .get(spec.api_key_key)
+                .cloned()
+                .unwrap_or_default();
+            let base_url = spec
+                .base_url_key
                 .and_then(|k| setting_map.get(k))
                 .cloned()
                 .unwrap_or_else(|| spec.default_base_url.to_string());
-            let default_model = spec.default_model_key
+            let default_model = spec
+                .default_model_key
                 .and_then(|k| setting_map.get(k))
                 .cloned()
                 .unwrap_or_else(|| spec.default_model_fallback.to_string());
-            let models = setting_map.get(spec.models_key).cloned().unwrap_or_else(|| "[]".to_string());
-            let blocked_models = setting_map.get(spec.blocked_models_key).cloned().unwrap_or_else(|| "[]".to_string());
-            let wire_api = spec.wire_api_key
+            let models = setting_map
+                .get(spec.models_key)
+                .cloned()
+                .unwrap_or_else(|| "[]".to_string());
+            let blocked_models = setting_map
+                .get(spec.blocked_models_key)
+                .cloned()
+                .unwrap_or_else(|| "[]".to_string());
+            let wire_api = spec
+                .wire_api_key
                 .and_then(|k| setting_map.get(k))
                 .cloned()
                 .unwrap_or_default();

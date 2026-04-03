@@ -171,9 +171,7 @@ impl ProviderEntry {
         }
 
         // Always ensure default_model is present in the list
-        if !self.default_model.is_empty()
-            && !models.iter().any(|m| m.id == self.default_model)
-        {
+        if !self.default_model.is_empty() && !models.iter().any(|m| m.id == self.default_model) {
             models.insert(0, ModelMeta::fallback(&self.default_model));
         }
 
@@ -279,12 +277,8 @@ fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProvid
         Some(db_provider.discovery_url.clone())
     };
 
-    let list_models = build_model_lister_by_protocol(
-        db_provider.protocol,
-        api_key,
-        base_url,
-        discovery_url,
-    );
+    let list_models =
+        build_model_lister_by_protocol(db_provider.protocol, api_key, base_url, discovery_url);
 
     let provider_id = db_provider.slug.clone();
     tracing::info!(
@@ -345,8 +339,7 @@ fn build_bridge_factory_by_protocol(
             })
         }
         WireProtocol::OpenaiCompatible => {
-            let mut builder = rig::providers::openai::Client::builder()
-                .api_key(&api_key); // empty string is fine for keyless endpoints (e.g. Ollama)
+            let mut builder = rig::providers::openai::Client::builder().api_key(&api_key); // empty string is fine for keyless endpoints (e.g. Ollama)
             if let Some(ref url) = base_url {
                 builder = builder.base_url(url);
             }
@@ -626,7 +619,11 @@ fn is_known_non_reasoning(model_id: &str) -> bool {
 }
 
 fn infer_context_window(model_id: &str) -> u64 {
-    if model_id.contains("gemini") || model_id.contains("opus") || model_id.contains("sonnet") || model_id.contains("5.4") {
+    if model_id.contains("gemini")
+        || model_id.contains("opus")
+        || model_id.contains("sonnet")
+        || model_id.contains("5.4")
+    {
         return CONTEXT_WINDOW_1M;
     }
 

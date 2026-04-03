@@ -202,10 +202,7 @@ impl PiAgentConnector {
                 sections.push(format!("## Identity\n\n{sp}"));
             }
             (_, Some(sp)) => {
-                sections.push(format!(
-                    "## Identity\n\n{}\n\n{sp}",
-                    self.system_prompt
-                ));
+                sections.push(format!("## Identity\n\n{}\n\n{sp}", self.system_prompt));
             }
             _ => {
                 sections.push(format!("## Identity\n\n{}", self.system_prompt));
@@ -1728,13 +1725,40 @@ mod tests {
 
     #[async_trait::async_trait]
     impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRepository {
-        async fn create(&self, _provider: &agentdash_domain::llm_provider::LlmProvider) -> Result<(), DomainError> { Ok(()) }
-        async fn get_by_id(&self, _id: uuid::Uuid) -> Result<Option<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(None) }
-        async fn list_all(&self) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(vec![]) }
-        async fn list_enabled(&self) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> { Ok(vec![]) }
-        async fn update(&self, _provider: &agentdash_domain::llm_provider::LlmProvider) -> Result<(), DomainError> { Ok(()) }
-        async fn delete(&self, _id: uuid::Uuid) -> Result<(), DomainError> { Ok(()) }
-        async fn reorder(&self, _ids: &[uuid::Uuid]) -> Result<(), DomainError> { Ok(()) }
+        async fn create(
+            &self,
+            _provider: &agentdash_domain::llm_provider::LlmProvider,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+        async fn get_by_id(
+            &self,
+            _id: uuid::Uuid,
+        ) -> Result<Option<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
+            Ok(None)
+        }
+        async fn list_all(
+            &self,
+        ) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
+            Ok(vec![])
+        }
+        async fn list_enabled(
+            &self,
+        ) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
+            Ok(vec![])
+        }
+        async fn update(
+            &self,
+            _provider: &agentdash_domain::llm_provider::LlmProvider,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+        async fn delete(&self, _id: uuid::Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+        async fn reorder(&self, _ids: &[uuid::Uuid]) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Value {
@@ -2481,10 +2505,13 @@ mod tests {
     #[tokio::test]
     async fn discovery_reflects_settings_added_after_startup_without_restart() {
         let repo = Arc::new(TestSettingsRepository::default());
-        let mut connector =
-            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
-                .await
-                .expect("connector should initialize even without provider");
+        let mut connector = build_pi_agent_connector(
+            Path::new("/tmp/test-workspace"),
+            repo.as_ref(),
+            &TestLlmProviderRepository,
+        )
+        .await
+        .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo.clone());
 
         let initial = discover_options_state(&connector).await;
@@ -2527,10 +2554,13 @@ mod tests {
         .await
         .expect("should store anthropic key");
 
-        let mut connector =
-            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
-                .await
-                .expect("connector should initialize");
+        let mut connector = build_pi_agent_connector(
+            Path::new("/tmp/test-workspace"),
+            repo.as_ref(),
+            &TestLlmProviderRepository,
+        )
+        .await
+        .expect("connector should initialize");
         connector.set_settings_repository(repo.clone());
 
         let initial = discover_options_state(&connector).await;
@@ -2561,10 +2591,13 @@ mod tests {
     #[tokio::test]
     async fn prompt_without_provider_configuration_returns_clear_error() {
         let repo = Arc::new(TestSettingsRepository::default());
-        let mut connector =
-            build_pi_agent_connector(Path::new("/tmp/test-workspace"), repo.as_ref(), &TestLlmProviderRepository)
-                .await
-                .expect("connector should initialize even without provider");
+        let mut connector = build_pi_agent_connector(
+            Path::new("/tmp/test-workspace"),
+            repo.as_ref(),
+            &TestLlmProviderRepository,
+        )
+        .await
+        .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo);
 
         let result = connector

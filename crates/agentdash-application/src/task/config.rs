@@ -90,9 +90,9 @@ pub fn executor_config_from_preset(
             config.system_prompt = normalize_option_string(Some(v.to_string()));
         }
         if let Some(v) = obj.get("system_prompt_mode").and_then(|v| v.as_str()) {
-            if let Ok(mode) = serde_json::from_value::<SystemPromptMode>(
-                serde_json::Value::String(v.to_string()),
-            ) {
+            if let Ok(mode) =
+                serde_json::from_value::<SystemPromptMode>(serde_json::Value::String(v.to_string()))
+            {
                 config.system_prompt_mode = Some(mode);
             }
         }

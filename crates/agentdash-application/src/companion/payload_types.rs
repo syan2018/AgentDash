@@ -135,9 +135,7 @@ impl PayloadTypeRegistry {
                 .map(|v| v.as_str().is_some_and(|s| s.trim().is_empty()) || v.is_null())
                 .unwrap_or(true);
             if is_empty {
-                return Some(format!(
-                    "payload.type=`{type_name}` 要求必填 `{field}`"
-                ));
+                return Some(format!("payload.type=`{type_name}` 要求必填 `{field}`"));
             }
         }
 
@@ -186,9 +184,7 @@ impl PayloadTypeRegistry {
                 .map(|v| v.as_str().is_some_and(|s| s.trim().is_empty()) || v.is_null())
                 .unwrap_or(true);
             if is_empty {
-                return Some(format!(
-                    "payload.type=`{type_name}` 要求必填 `{field}`"
-                ));
+                return Some(format!("payload.type=`{type_name}` 要求必填 `{field}`"));
             }
         }
 
@@ -261,7 +257,8 @@ mod tests {
     #[test]
     fn validate_request_fails_for_response_type_used_as_request() {
         let registry = PayloadTypeRegistry::with_builtins();
-        let payload = serde_json::json!({"type": "completion", "status": "completed", "summary": "done"});
+        let payload =
+            serde_json::json!({"type": "completion", "status": "completed", "summary": "done"});
         let error = registry.validate_request(&payload);
         assert!(error.is_some());
         assert!(error.unwrap().contains("response type"));
@@ -284,14 +281,20 @@ mod tests {
     #[test]
     fn validate_response_passes_for_valid_resolution() {
         let registry = PayloadTypeRegistry::with_builtins();
-        let payload = serde_json::json!({"type": "resolution", "status": "approved", "summary": "ok"});
-        assert!(registry.validate_response(&payload, Some("review")).is_none());
+        let payload =
+            serde_json::json!({"type": "resolution", "status": "approved", "summary": "ok"});
+        assert!(
+            registry
+                .validate_response(&payload, Some("review"))
+                .is_none()
+        );
     }
 
     #[test]
     fn validate_response_fails_for_type_mismatch() {
         let registry = PayloadTypeRegistry::with_builtins();
-        let payload = serde_json::json!({"type": "completion", "status": "completed", "summary": "done"});
+        let payload =
+            serde_json::json!({"type": "completion", "status": "completed", "summary": "done"});
         let error = registry.validate_response(&payload, Some("review"));
         assert!(error.is_some());
         assert!(error.unwrap().contains("resolution"));

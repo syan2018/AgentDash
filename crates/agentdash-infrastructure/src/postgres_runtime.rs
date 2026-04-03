@@ -225,7 +225,10 @@ async fn try_reuse_running(
 fn cleanup_stale_instance(data_dir: &Path) {
     // 如果有 pid 文件，精准杀对应进程
     if let Some(info) = read_postmaster_pid(data_dir) {
-        tracing::info!(pid = info.pid, "停止残留 PostgreSQL 进程（来自 postmaster.pid）");
+        tracing::info!(
+            pid = info.pid,
+            "停止残留 PostgreSQL 进程（来自 postmaster.pid）"
+        );
         kill_process(info.pid);
     }
 

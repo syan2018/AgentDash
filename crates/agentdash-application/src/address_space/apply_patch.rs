@@ -516,7 +516,7 @@ fn parse_one_entry(lines: &[&str], line_number: usize) -> Result<(PatchEntry, us
 
         if chunks.is_empty() {
             return Err(ParseError::InvalidHunkError {
-                message: format!("Update file hunk for path '{path}' is empty"),
+                message: format!("Update File entry for path '{path}' has no @@ chunks"),
                 line_number,
             });
         }
@@ -533,7 +533,7 @@ fn parse_one_entry(lines: &[&str], line_number: usize) -> Result<(PatchEntry, us
 
     Err(ParseError::InvalidHunkError {
         message: format!(
-            "'{first_line}' is not a valid hunk header. Valid hunk headers: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
+            "'{first_line}' is not a valid file entry header. Expected one of: '*** Add File: {{path}}', '*** Delete File: {{path}}', '*** Update File: {{path}}'"
         ),
         line_number,
     })

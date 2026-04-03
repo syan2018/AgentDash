@@ -267,7 +267,12 @@ impl PiAgentConnector {
                     "**路径规范**：path 必须使用 `mount_id://relative/path` 格式（如 `main://src/lib.rs`）。仅当会话只有一个 mount 时可省略前缀。不要把 backend_id 或绝对路径直接写进工具参数。执行 shell 时，`cwd` 也必须是相对 mount 根目录的路径；当前目录就传 `main://.`。\n\n",
                 );
                 tool_section.push_str(
-                    "**fs_apply_patch 格式**：必须传 Codex apply_patch 文本——以 `*** Begin Patch` 开始、以 `*** End Patch` 结束；文件头只能用 `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`，需要重命名时在 `Update File` 后跟 `*** Move to: new/path`；每个 hunk 以 `@@` 开始，内部行以前缀空格 / `-` / `+` 表示上下文、删除、新增；所有路径都必须相对 mount 根目录。",
+                    "**fs_apply_patch 格式**：使用 Codex apply_patch 语法（**不是** unified diff）。\
+以 `*** Begin Patch` 开始、`*** End Patch` 结束；\
+每个文件操作必须以 `*** Add File: path` / `*** Update File: path` / `*** Delete File: path` 开头；\
+需要重命名时在 `Update File` 后跟 `*** Move to: new/path`；\
+每个变更块以 `@@` 开始（可跟上下文锚定行），内部行以前缀空格 / `-` / `+` 表示上下文、删除、新增。\
+路径可用 `mount_id://path` 指定目标 mount，不含前缀时使用默认 mount。",
                 );
             } else {
                 tool_section.push_str(&format!(

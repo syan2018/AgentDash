@@ -80,11 +80,27 @@ pub fn ok_text(text: String) -> AgentToolResult {
 }
 
 const FS_APPLY_PATCH_DESCRIPTION: &str = "使用 Codex apply_patch 语法进行局部或多文件修改，支持跨 mount。\n\
-补丁必须以 `*** Begin Patch` 开始、以 `*** End Patch` 结束。\n\
-文件操作头只能是 `*** Add File: path`、`*** Update File: path`、`*** Delete File: path`，重命名时可在 `Update File` 后追加 `*** Move to: new/path`。\n\
-路径可以使用 `mount_id://relative/path` 格式指定目标 mount；不含前缀的路径使用 mount 参数或默认 mount。\n\
-每个更新块以 `@@` 开始；块内每行必须以前缀空格 / `-` / `+` 表示上下文、删除、新增。\n\
-新增文件内容每行都必须以 `+` 开头。";
+注意：这不是 unified diff 格式。每个文件操作必须以 `*** Add File:` / `*** Update File:` / `*** Delete File:` 开头。\n\
+路径可以使用 `mount_id://relative/path` 格式指定目标 mount；不含前缀时使用 mount 参数或默认 mount。\n\
+格式示例：\n\
+```\n\
+*** Begin Patch\n\
+*** Update File: src/main.rs\n\
+@@ fn main()\n\
+ fn main() {\n\
+-    println!(\"old\");\n\
++    println!(\"new\");\n\
+ }\n\
+*** Add File: src/util.rs\n\
++pub fn helper() {}\n\
+*** End Patch\n\
+```\n\
+规则：\n\
+- 补丁必须以 `*** Begin Patch` 开始、以 `*** End Patch` 结束\n\
+- 文件操作头只能是 `*** Add File: path`、`*** Update File: path`、`*** Delete File: path`\n\
+- 重命名时可在 `Update File` 后追加 `*** Move to: new/path`\n\
+- 每个更新块以 `@@` 开始（可跟上下文锚定行），块内每行必须以空格 / `-` / `+` 开头\n\
+- 新增文件内容每行都必须以 `+` 开头";
 
 #[derive(Clone)]
 pub struct MountsListTool {

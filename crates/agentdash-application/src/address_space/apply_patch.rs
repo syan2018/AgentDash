@@ -42,7 +42,7 @@ pub enum ParseError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Hunk {
+pub enum PatchEntry {
     AddFile {
         path: PathBuf,
         contents: String,
@@ -57,8 +57,28 @@ enum Hunk {
     },
 }
 
+impl PatchEntry {
+    /// Returns the primary file path of this entry.
+    pub fn path(&self) -> &Path {
+        match self {
+            PatchEntry::AddFile { path, .. } => path,
+            PatchEntry::DeleteFile { path } => path,
+            PatchEntry::UpdateFile { path, .. } => path,
+        }
+    }
+
+    /// Sets the primary file path (used when stripping mount prefixes).
+    pub fn set_path(&mut self, new_path: PathBuf) {
+        match self {
+            PatchEntry::AddFile { path, .. } => *path = new_path,
+            PatchEntry::DeleteFile { path } => *path = new_path,
+            PatchEntry::UpdateFile { path, .. } => *path = new_path,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct UpdateFileChunk {
+pub struct UpdateFileChunk {
     change_context: Option<String>,
     old_lines: Vec<String>,
     new_lines: Vec<String>,
@@ -91,8 +111,8 @@ pub fn apply_patch_to_fs(
 ) -> Result<AffectedPaths, ApplyPatchError> {
     let workspace_root = std::fs::canonicalize(workspace_root)
         .map_err(|e| ApplyPatchError::Apply(format!("解析 workspace_root 失败: {e}")))?;
-    let hunks = parse_patch(patch)?;
-    if hunks.is_empty() {
+    let entries = parse_patch(patch)?;
+    if entries.is_empty() {
         return Err(ApplyPatchError::Apply("没有检测到任何文件改动".to_string()));
     }
 
@@ -102,9 +122,9 @@ pub fn apply_patch_to_fs(
         deleted: Vec::new(),
     };
 
-    for hunk in hunks {
-        match hunk {
-            Hunk::AddFile { path, contents } => {
+    for entry in entries {
+        match entry {
+            PatchEntry::AddFile { path, contents } => {
                 let target = resolve_path_for_write(&workspace_root, &path)?;
                 if target.exists() {
                     return Err(ApplyPatchError::Apply(format!(
@@ -120,13 +140,13 @@ pub fn apply_patch_to_fs(
                     .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
                 affected.added.push(display_relative(&path));
             }
-            Hunk::DeleteFile { path } => {
+            PatchEntry::DeleteFile { path } => {
                 let target = resolve_existing_path(&workspace_root, &path)?;
                 std::fs::remove_file(&target)
                     .map_err(|e| ApplyPatchError::Apply(format!("删除文件失败: {e}")))?;
                 affected.deleted.push(display_relative(&path));
             }
-            Hunk::UpdateFile {
+            PatchEntry::UpdateFile {
                 path,
                 move_path,
                 chunks,
@@ -173,8 +193,8 @@ pub fn apply_patch_to_inline_files(
     files: &mut BTreeMap<String, String>,
     patch: &str,
 ) -> Result<AffectedPaths, ApplyPatchError> {
-    let hunks = parse_patch(patch)?;
-    if hunks.is_empty() {
+    let entries = parse_patch(patch)?;
+    if entries.is_empty() {
         return Err(ApplyPatchError::Apply("没有检测到任何文件改动".to_string()));
     }
 
@@ -184,9 +204,9 @@ pub fn apply_patch_to_inline_files(
         deleted: Vec::new(),
     };
 
-    for hunk in hunks {
-        match hunk {
-            Hunk::AddFile { path, contents } => {
+    for entry in entries {
+        match entry {
+            PatchEntry::AddFile { path, contents } => {
                 let normalized = normalize_relative_path(&path)?;
                 let key = display_relative(&normalized);
                 if files.contains_key(&key) {
@@ -195,7 +215,7 @@ pub fn apply_patch_to_inline_files(
                 files.insert(key.clone(), contents);
                 affected.added.push(key);
             }
-            Hunk::DeleteFile { path } => {
+            PatchEntry::DeleteFile { path } => {
                 let normalized = normalize_relative_path(&path)?;
                 let key = display_relative(&normalized);
                 if files.remove(&key).is_none() {
@@ -203,7 +223,7 @@ pub fn apply_patch_to_inline_files(
                 }
                 affected.deleted.push(key);
             }
-            Hunk::UpdateFile {
+            PatchEntry::UpdateFile {
                 path,
                 move_path,
                 chunks,
@@ -245,14 +265,21 @@ pub async fn apply_patch_to_target<T: ApplyPatchTarget>(
     target: &T,
     patch: &str,
 ) -> Result<AffectedPaths, ApplyPatchError> {
-    let hunks = parse_patch(patch)?;
-    if hunks.is_empty() {
+    let entries = parse_patch(patch)?;
+    apply_entries_to_target(target, &entries).await
+}
+
+pub async fn apply_entries_to_target<T: ApplyPatchTarget>(
+    target: &T,
+    entries: &[PatchEntry],
+) -> Result<AffectedPaths, ApplyPatchError> {
+    if entries.is_empty() {
         return Err(ApplyPatchError::Apply("没有检测到任何文件改动".to_string()));
     }
 
     ensure_edit_capabilities(
         target.edit_capabilities(),
-        required_edit_capabilities(&hunks),
+        required_edit_capabilities(entries),
     )?;
 
     let mut affected = AffectedPaths {
@@ -261,38 +288,38 @@ pub async fn apply_patch_to_target<T: ApplyPatchTarget>(
         deleted: Vec::new(),
     };
 
-    for hunk in hunks {
-        match hunk {
-            Hunk::AddFile { path, contents } => {
-                let normalized = normalize_relative_path(&path)?;
+    for entry in entries {
+        match entry {
+            PatchEntry::AddFile { path, contents } => {
+                let normalized = normalize_relative_path(path)?;
                 let path_label = display_relative(&normalized);
                 if target.read_text(&path_label).await.is_ok() {
                     return Err(ApplyPatchError::Apply(format!(
                         "目标文件已存在: {path_label}"
                     )));
                 }
-                target.write_text(&path_label, &contents).await?;
+                target.write_text(&path_label, contents).await?;
                 affected.added.push(path_label);
             }
-            Hunk::DeleteFile { path } => {
-                let normalized = normalize_relative_path(&path)?;
+            PatchEntry::DeleteFile { path } => {
+                let normalized = normalize_relative_path(path)?;
                 let path_label = display_relative(&normalized);
                 target.delete_text(&path_label).await?;
                 affected.deleted.push(path_label);
             }
-            Hunk::UpdateFile {
+            PatchEntry::UpdateFile {
                 path,
                 move_path,
                 chunks,
             } => {
-                let normalized = normalize_relative_path(&path)?;
+                let normalized = normalize_relative_path(path)?;
                 let source_label = display_relative(&normalized);
                 let original_contents = target.read_text(&source_label).await?;
                 let new_contents =
-                    derive_new_contents_from_text(&source_label, &original_contents, &chunks)?;
+                    derive_new_contents_from_text(&source_label, &original_contents, chunks)?;
 
                 if let Some(dest_rel) = move_path {
-                    let dest_normalized = normalize_relative_path(&dest_rel)?;
+                    let dest_normalized = normalize_relative_path(dest_rel)?;
                     let dest_label = display_relative(&dest_normalized);
                     let edit_caps = target.edit_capabilities();
 
@@ -324,13 +351,13 @@ pub async fn apply_patch_to_target<T: ApplyPatchTarget>(
     Ok(affected)
 }
 
-fn required_edit_capabilities(hunks: &[Hunk]) -> RequiredEditCapabilities {
+fn required_edit_capabilities(entries: &[PatchEntry]) -> RequiredEditCapabilities {
     let mut required = RequiredEditCapabilities::default();
-    for hunk in hunks {
-        match hunk {
-            Hunk::AddFile { .. } => required.create = true,
-            Hunk::DeleteFile { .. } => required.delete = true,
-            Hunk::UpdateFile { move_path, .. } => {
+    for entry in entries {
+        match entry {
+            PatchEntry::AddFile { .. } => required.create = true,
+            PatchEntry::DeleteFile { .. } => required.delete = true,
+            PatchEntry::UpdateFile { move_path, .. } => {
                 if move_path.is_some() {
                     required.move_path = true;
                 }
@@ -365,22 +392,22 @@ fn ensure_edit_capabilities(
     }
 }
 
-fn parse_patch(patch: &str) -> Result<Vec<Hunk>, ParseError> {
+pub fn parse_patch(patch: &str) -> Result<Vec<PatchEntry>, ParseError> {
     let lines: Vec<&str> = patch.trim().lines().collect();
     let lines = check_patch_boundaries(&lines)?;
     let last_line_index = lines.len().saturating_sub(1);
     let mut remaining = &lines[1..last_line_index];
     let mut line_number = 2;
-    let mut hunks = Vec::new();
+    let mut entries = Vec::new();
 
     while !remaining.is_empty() {
-        let (hunk, consumed) = parse_one_hunk(remaining, line_number)?;
-        hunks.push(hunk);
+        let (entry, consumed) = parse_one_entry(remaining, line_number)?;
+        entries.push(entry);
         remaining = &remaining[consumed..];
         line_number += consumed;
     }
 
-    Ok(hunks)
+    Ok(entries)
 }
 
 fn check_patch_boundaries<'a>(lines: &'a [&'a str]) -> Result<&'a [&'a str], ParseError> {
@@ -425,7 +452,7 @@ fn check_patch_boundaries<'a>(lines: &'a [&'a str]) -> Result<&'a [&'a str], Par
     }
 }
 
-fn parse_one_hunk(lines: &[&str], line_number: usize) -> Result<(Hunk, usize), ParseError> {
+fn parse_one_entry(lines: &[&str], line_number: usize) -> Result<(PatchEntry, usize), ParseError> {
     let first_line = lines[0].trim();
     if let Some(path) = first_line.strip_prefix(ADD_FILE_MARKER) {
         let mut contents = String::new();
@@ -440,7 +467,7 @@ fn parse_one_hunk(lines: &[&str], line_number: usize) -> Result<(Hunk, usize), P
             }
         }
         return Ok((
-            Hunk::AddFile {
+            PatchEntry::AddFile {
                 path: PathBuf::from(path),
                 contents,
             },
@@ -450,7 +477,7 @@ fn parse_one_hunk(lines: &[&str], line_number: usize) -> Result<(Hunk, usize), P
 
     if let Some(path) = first_line.strip_prefix(DELETE_FILE_MARKER) {
         return Ok((
-            Hunk::DeleteFile {
+            PatchEntry::DeleteFile {
                 path: PathBuf::from(path),
             },
             1,
@@ -495,7 +522,7 @@ fn parse_one_hunk(lines: &[&str], line_number: usize) -> Result<(Hunk, usize), P
         }
 
         return Ok((
-            Hunk::UpdateFile {
+            PatchEntry::UpdateFile {
                 path: PathBuf::from(path),
                 move_path,
                 chunks,

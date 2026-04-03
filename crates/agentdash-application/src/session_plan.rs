@@ -541,29 +541,16 @@ fn render_capability(capability: &MountCapability) -> &'static str {
     }
 }
 
-fn runtime_address_space_tools(address_space: &AddressSpace) -> Vec<String> {
-    let mut tools = vec![
+fn runtime_address_space_tools(_address_space: &AddressSpace) -> Vec<String> {
+    vec![
         "mounts_list".to_string(),
         "fs_read".to_string(),
         "fs_list".to_string(),
         "fs_search".to_string(),
-    ];
-    if address_space
-        .mounts
-        .iter()
-        .any(|mount| mount.supports(MountCapability::Write))
-    {
-        tools.push("fs_write".to_string());
-        tools.push("fs_apply_patch".to_string());
-    }
-    if address_space
-        .mounts
-        .iter()
-        .any(|mount| mount.supports(MountCapability::Exec))
-    {
-        tools.push("shell_exec".to_string());
-    }
-    tools
+        "fs_write".to_string(),
+        "fs_apply_patch".to_string(),
+        "shell_exec".to_string(),
+    ]
 }
 
 fn summarize_mcp_servers(mcp_servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServerSummary> {

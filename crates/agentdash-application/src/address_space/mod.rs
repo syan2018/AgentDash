@@ -12,8 +12,8 @@ pub mod types;
 
 pub use apply_patch::{
     AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget,
-    ParseError as ApplyPatchParseError, apply_patch_to_fs, apply_patch_to_inline_files,
-    apply_patch_to_target,
+    ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_fs,
+    apply_patch_to_inline_files, apply_patch_to_target, parse_patch as parse_patch_text,
 };
 pub use mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
@@ -38,5 +38,5 @@ pub use provider_lifecycle::LifecycleMountProvider;
 pub use relay_service::{RelayAddressSpaceService, TextSearchParams};
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
-    ReadResult, ResourceRef,
+    MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef,
 };

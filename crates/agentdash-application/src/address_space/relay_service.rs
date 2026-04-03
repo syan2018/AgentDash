@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::address_space::*;
@@ -197,6 +199,122 @@ impl RelayAddressSpaceService {
                 }
                 Err(other) => return Err(other.to_string()),
             }
+        }
+
+        Err(format!("未注册的 mount provider: {}", mount.provider))
+    }
+
+    /// 跨 mount apply_patch —— 解析 patch 条目中的路径前缀，按 mount 分组独立执行。
+    ///
+    /// patch 中的文件路径支持 `mount_id://relative/path` 格式；
+    /// 不含前缀的路径使用 `default_mount_id`（或 address space 默认 mount）。
+    /// 每个 mount 组独立执行，支持 partial success。
+    pub async fn apply_patch_multi(
+        &self,
+        address_space: &AddressSpace,
+        default_mount_id: Option<&str>,
+        patch: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+    ) -> Result<MultiMountPatchResult, String> {
+        let entries =
+            parse_patch_text(patch).map_err(|e| format!("patch 解析失败: {e}"))?;
+        if entries.is_empty() {
+            return Err("没有检测到任何文件改动".to_string());
+        }
+
+        let fallback_mount_id = match default_mount_id {
+            Some(id) if !id.trim().is_empty() => id.to_string(),
+            _ => resolve_mount_id(address_space, None)?,
+        };
+
+        // 按 mount 分组
+        let mut grouped: BTreeMap<String, Vec<PatchEntry>> = BTreeMap::new();
+        for mut entry in entries {
+            let raw_path = entry.path().to_string_lossy().to_string();
+            let (mount_id, relative) = split_mount_prefix(&raw_path, &fallback_mount_id);
+            entry.set_path(PathBuf::from(&relative));
+            grouped.entry(mount_id).or_default().push(entry);
+        }
+
+        let mut result = MultiMountPatchResult::default();
+
+        for (mount_id, group) in &grouped {
+            match self
+                .apply_entry_group(address_space, mount_id, group, overlay, identity)
+                .await
+            {
+                Ok(affected) => {
+                    let prefix = if grouped.len() > 1 {
+                        format!("{mount_id}://")
+                    } else {
+                        String::new()
+                    };
+                    result
+                        .added
+                        .extend(affected.added.iter().map(|p| format!("{prefix}{p}")));
+                    result
+                        .modified
+                        .extend(affected.modified.iter().map(|p| format!("{prefix}{p}")));
+                    result
+                        .deleted
+                        .extend(affected.deleted.iter().map(|p| format!("{prefix}{p}")));
+                }
+                Err(error) => {
+                    for entry in group {
+                        result.errors.push(PatchEntryError {
+                            mount_id: mount_id.clone(),
+                            path: entry.path().to_string_lossy().to_string(),
+                            message: error.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// 对单个 mount 的一组 PatchEntry 执行 apply。
+    async fn apply_entry_group(
+        &self,
+        address_space: &AddressSpace,
+        mount_id: &str,
+        entries: &[PatchEntry],
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+    ) -> Result<ApplyPatchAffectedPaths, String> {
+        let mount = resolve_mount(address_space, mount_id, MountCapability::Write)?;
+
+        if mount.provider == PROVIDER_INLINE_FS {
+            let ov = overlay.ok_or_else(|| {
+                format!(
+                    "mount `{}` 是内联容器，需要 InlineContentOverlay 才能应用 patch",
+                    mount.id
+                )
+            })?;
+            let target = InlineOverlayPatchTarget {
+                address_space,
+                mount,
+                overlay: ov,
+            };
+            return apply_entries_to_target(&target, entries)
+                .await
+                .map_err(|e| e.to_string());
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
+            let target = ProviderPatchTarget {
+                provider: provider.as_ref(),
+                mount,
+                ctx: &ctx,
+            };
+            return apply_entries_to_target(&target, entries)
+                .await
+                .map_err(|e| e.to_string());
         }
 
         Err(format!("未注册的 mount provider: {}", mount.provider))
@@ -414,6 +532,20 @@ impl RelayAddressSpaceService {
         }
 
         Ok((hits, truncated))
+    }
+}
+
+/// 从 patch 内的路径拆出 mount 前缀。
+/// `"main://src/lib.rs"` → `("main", "src/lib.rs")`
+/// `"src/lib.rs"` → `(fallback, "src/lib.rs")`
+fn split_mount_prefix(raw: &str, fallback: &str) -> (String, String) {
+    if let Some(pos) = raw.find("://") {
+        let mount_id = &raw[..pos];
+        let relative = &raw[pos + 3..];
+        let relative = relative.trim_start_matches('/');
+        (mount_id.to_string(), relative.to_string())
+    } else {
+        (fallback.to_string(), raw.to_string())
     }
 }
 

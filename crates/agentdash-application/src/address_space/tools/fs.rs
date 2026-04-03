@@ -13,7 +13,7 @@ use crate::address_space::build_canvas_mount;
 use crate::address_space::inline_persistence::InlineContentOverlay;
 use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::{
-    ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri, resolve_mount_id,
+    ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri,
 };
 
 /// 将工具参数中的 path 解析为 `ResourceRef`。
@@ -79,11 +79,12 @@ pub fn ok_text(text: String) -> AgentToolResult {
     }
 }
 
-const FS_APPLY_PATCH_DESCRIPTION: &str = "使用 Codex apply_patch 语法在指定 mount 下进行局部或多文件修改。\n\
+const FS_APPLY_PATCH_DESCRIPTION: &str = "使用 Codex apply_patch 语法进行局部或多文件修改，支持跨 mount。\n\
 补丁必须以 `*** Begin Patch` 开始、以 `*** End Patch` 结束。\n\
 文件操作头只能是 `*** Add File: path`、`*** Update File: path`、`*** Delete File: path`，重命名时可在 `Update File` 后追加 `*** Move to: new/path`。\n\
+路径可以使用 `mount_id://relative/path` 格式指定目标 mount；不含前缀的路径使用 mount 参数或默认 mount。\n\
 每个更新块以 `@@` 开始；块内每行必须以前缀空格 / `-` / `+` 表示上下文、删除、新增。\n\
-新增文件内容每行都必须以 `+` 开头；所有路径都必须相对 mount 根目录，不能使用绝对路径。";
+新增文件内容每行都必须以 `+` 开头。";
 
 #[derive(Clone)]
 pub struct MountsListTool {
@@ -351,7 +352,7 @@ impl FsApplyPatchTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FsApplyPatchParams {
-    /// 目标 mount；省略时使用默认 mount。patch 中所有路径都必须相对该 mount 根目录。
+    /// 默认 mount；patch 中不含 mount 前缀的路径会使用此值。省略时使用 address space 默认 mount。
     pub mount: Option<String>,
     /// Codex apply_patch 自由格式补丁文本。
     /// 语法骨架：
@@ -361,6 +362,8 @@ pub struct FsApplyPatchParams {
     /// `@@`
     /// hunk 行以前缀空格 / `-` / `+` 表示上下文、删除、新增
     /// `*** End Patch`
+    ///
+    /// path 可以使用 `mount_id://relative/path` 格式指定目标 mount。
     pub patch: String,
 }
 
@@ -385,13 +388,11 @@ impl AgentTool for FsApplyPatchTool {
         let params: FsApplyPatchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
         let address_space = self.address_space.snapshot().await;
-        let mount_id = resolve_mount_id(&address_space, params.mount.as_deref())
-            .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
-            .apply_patch(
+            .apply_patch_multi(
                 &address_space,
-                &mount_id,
+                params.mount.as_deref(),
                 &params.patch,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
@@ -399,7 +400,7 @@ impl AgentTool for FsApplyPatchTool {
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
 
-        let mut lines = vec![format!("已对 mount `{mount_id}` 应用 patch。")];
+        let mut lines = Vec::new();
         if !result.added.is_empty() {
             lines.push(format!("新增: {}", result.added.join(", ")));
         }
@@ -409,7 +410,24 @@ impl AgentTool for FsApplyPatchTool {
         if !result.deleted.is_empty() {
             lines.push(format!("删除: {}", result.deleted.join(", ")));
         }
-        Ok(ok_text(lines.join("\n")))
+        for err in &result.errors {
+            lines.push(format!(
+                "失败: {}://{} — {}",
+                err.mount_id, err.path, err.message
+            ));
+        }
+        if lines.is_empty() {
+            lines.push("patch 未产生任何变更。".to_string());
+        }
+        let is_error = result.added.is_empty()
+            && result.modified.is_empty()
+            && result.deleted.is_empty()
+            && !result.errors.is_empty();
+        Ok(AgentToolResult {
+            content: vec![ContentPart::text(lines.join("\n"))],
+            is_error,
+            details: None,
+        })
     }
 }
 

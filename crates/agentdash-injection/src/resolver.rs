@@ -306,9 +306,9 @@ fn format_file_like_read_tool(path: &Path, content: &str, workspace_root: Option
         .join("\n");
 
     if numbered.is_empty() {
-        format!("文件: {display_path}\n   1 | ")
+        format!("file: {display_path}\n   1 | ")
     } else {
-        format!("文件: {display_path}\n{numbered}")
+        format!("file: {display_path}\n{numbered}")
     }
 }
 
@@ -401,7 +401,7 @@ mod tests {
         })
         .expect("file source should resolve");
 
-        assert!(result.fragments[0].content.contains("文件: notes.md"));
+        assert!(result.fragments[0].content.contains("file: notes.md"));
         assert!(result.fragments[0].content.contains("1 | # hello"));
         assert!(result.fragments[0].content.contains("2 | world"));
     }
@@ -431,7 +431,7 @@ mod tests {
         })
         .expect("tsx source should resolve");
 
-        assert!(result.fragments[0].content.contains("文件: StoryPage.tsx"));
+        assert!(result.fragments[0].content.contains("file: StoryPage.tsx"));
         assert!(
             result.fragments[0]
                 .content

@@ -463,7 +463,6 @@ impl HookScriptEngine {
             normalized.ends_with("shell_exec")
                 || normalized.ends_with("shell")
                 || normalized.ends_with("write_file")
-                || normalized.ends_with("fs_write")
                 || normalized.ends_with("fs_apply_patch")
                 || normalized.contains("delete")
                 || normalized.contains("remove")

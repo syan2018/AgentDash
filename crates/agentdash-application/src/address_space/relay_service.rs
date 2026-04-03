@@ -90,7 +90,7 @@ impl RelayAddressSpaceService {
                 .map_err(|e| e.to_string());
         }
 
-        Err(format!("未注册的 mount provider: {}", mount.provider))
+        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     pub async fn write_text(
@@ -131,7 +131,7 @@ impl RelayAddressSpaceService {
                 .map_err(|e| e.to_string());
         }
 
-        Err(format!("未注册的 mount provider: {}", mount.provider))
+        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     pub async fn apply_patch(
@@ -201,7 +201,7 @@ impl RelayAddressSpaceService {
             }
         }
 
-        Err(format!("未注册的 mount provider: {}", mount.provider))
+        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     /// 跨 mount apply_patch —— 解析 patch 条目中的路径前缀，按 mount 分组独立执行。
@@ -317,7 +317,7 @@ impl RelayAddressSpaceService {
                 .map_err(|e| e.to_string());
         }
 
-        Err(format!("未注册的 mount provider: {}", mount.provider))
+        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     pub async fn list(
@@ -362,7 +362,7 @@ impl RelayAddressSpaceService {
                 .map_err(|e| e.to_string());
         }
 
-        Err(format!("未注册的 mount provider: {}", mount.provider))
+        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     pub async fn exec(
@@ -392,7 +392,7 @@ impl RelayAddressSpaceService {
                 .map_err(|e| e.to_string());
         }
 
-        Err(format!("未注册的 mount provider: {}", mount.provider))
+        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     pub async fn search_text(
@@ -468,7 +468,7 @@ impl RelayAddressSpaceService {
             return Ok((hits, false));
         }
 
-        Err(format!("未注册的 mount provider: {}", mount.provider))
+        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     async fn search_inline(

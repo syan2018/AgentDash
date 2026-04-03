@@ -545,9 +545,8 @@ fn runtime_address_space_tools(_address_space: &AddressSpace) -> Vec<String> {
     vec![
         "mounts_list".to_string(),
         "fs_read".to_string(),
-        "fs_list".to_string(),
-        "fs_search".to_string(),
-        "fs_write".to_string(),
+        "fs_glob".to_string(),
+        "fs_grep".to_string(),
         "fs_apply_patch".to_string(),
         "shell_exec".to_string(),
     ]
@@ -671,7 +670,6 @@ mod tests {
 
         assert!(summary.resolved);
         assert!(summary.tool_names.contains(&"mounts_list".to_string()));
-        assert!(summary.tool_names.contains(&"fs_write".to_string()));
         assert!(summary.tool_names.contains(&"fs_apply_patch".to_string()));
         assert!(summary.tool_names.contains(&"shell_exec".to_string()));
         assert!(

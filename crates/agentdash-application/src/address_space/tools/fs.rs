@@ -16,16 +16,16 @@ use crate::address_space::{
     ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri,
 };
 
-/// 将工具参数中的 path 解析为 `ResourceRef`。
+/// Resolve a tool parameter path into a `ResourceRef`.
 ///
-/// 规则：
-/// 1. 包含 `://` → 按 URI 语法拆分 mount_id 与相对路径
-/// 2. 不含 `://` 且当前 address space 仅有**一个** mount → 隐式使用该 mount
-/// 3. 其他情况 → 报错，要求显式指定 mount 前缀
+/// Rules:
+/// 1. Contains `://` -> split into mount_id and relative path by URI syntax
+/// 2. No `://` and the address space has exactly one mount -> use that mount implicitly
+/// 3. Otherwise -> error, require explicit mount prefix
 pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<ResourceRef, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err("路径不能为空".to_string());
+        return Err("path must not be empty".to_string());
     }
 
     if trimmed.contains("://") {
@@ -41,8 +41,9 @@ pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<Reso
     }
 
     Err(format!(
-        "路径 `{trimmed}` 缺少 mount 前缀（格式: mount_id://path）。\
-        当前会话有 {} 个 mount，请先调用 mounts_list 查看可用挂载，再使用完整 URI。",
+        "path `{trimmed}` is missing a mount prefix (format: mount_id://path). \
+        The current session has {} mount(s); call mounts_list to see available mounts, \
+        then use a fully qualified URI.",
         address_space.mounts.len(),
     ))
 }
@@ -79,28 +80,58 @@ pub fn ok_text(text: String) -> AgentToolResult {
     }
 }
 
-const FS_APPLY_PATCH_DESCRIPTION: &str = "使用 Codex apply_patch 语法进行局部或多文件修改，支持跨 mount。\n\
-注意：这不是 unified diff 格式。每个文件操作必须以 `*** Add File:` / `*** Update File:` / `*** Delete File:` 开头。\n\
-路径可以使用 `mount_id://relative/path` 格式指定目标 mount；不含前缀时使用 mount 参数或默认 mount。\n\
-格式示例：\n\
+// ---------------------------------------------------------------------------
+// fs_apply_patch — Codex-style description
+// ---------------------------------------------------------------------------
+
+const FS_APPLY_PATCH_DESCRIPTION: &str = "\
+Apply edits to one or more files using the Codex apply_patch format.\n\
+This is NOT a unified diff. Use this tool for all file modifications: \
+creating new files, editing existing files, deleting files, and renaming.\n\
+\n\
+Usage:\n\
+- Paths inside the patch can use `mount_id://relative/path` to target a specific mount; \
+paths without a prefix fall back to the `mount` parameter or the session default mount.\n\
+- ALWAYS read the target file with fs_read before editing, so context lines are accurate.\n\
+- To create a new file, use `*** Add File: path` with every content line prefixed by `+`.\n\
+- NEVER use unified diff syntax (`---`/`+++`); use only the grammar below.\n\
+\n\
+Grammar:\n\
+  Patch       := \"*** Begin Patch\" NL { FileOp } \"*** End Patch\" NL?\n\
+  FileOp      := AddFile | DeleteFile | UpdateFile\n\
+  AddFile     := \"*** Add File: \" path NL { \"+\" line NL }\n\
+  DeleteFile  := \"*** Delete File: \" path NL\n\
+  UpdateFile  := \"*** Update File: \" path NL [ MoveTo ] { Hunk }\n\
+  MoveTo      := \"*** Move to: \" newPath NL\n\
+  Hunk        := \"@@\" [ header ] NL { HunkLine } [ \"*** End of File\" NL ]\n\
+  HunkLine    := (\" \" | \"-\" | \"+\") text NL\n\
+\n\
+Example:\n\
 ```\n\
 *** Begin Patch\n\
+*** Add File: src/util.rs\n\
++pub fn helper() -> &'static str {\n\
++    \"hello\"\n\
++}\n\
 *** Update File: src/main.rs\n\
 @@ fn main()\n\
  fn main() {\n\
 -    println!(\"old\");\n\
-+    println!(\"new\");\n\
++    println!(\"{}\", util::helper());\n\
  }\n\
-*** Add File: src/util.rs\n\
-+pub fn helper() {}\n\
+*** Delete File: obsolete.rs\n\
 *** End Patch\n\
 ```\n\
-规则：\n\
-- 补丁必须以 `*** Begin Patch` 开始、以 `*** End Patch` 结束\n\
-- 文件操作头只能是 `*** Add File: path`、`*** Update File: path`、`*** Delete File: path`\n\
-- 重命名时可在 `Update File` 后追加 `*** Move to: new/path`\n\
-- 每个更新块以 `@@` 开始（可跟上下文锚定行），块内每行必须以空格 / `-` / `+` 开头\n\
-- 新增文件内容每行都必须以 `+` 开头";
+\n\
+Important:\n\
+- The patch MUST begin with `*** Begin Patch` and end with `*** End Patch`.\n\
+- Context lines (space prefix) must exactly match the current file content.\n\
+- Add File content lines must ALL begin with `+`.\n\
+- Show ~3 lines of context above and below each change for reliable anchoring.";
+
+// ---------------------------------------------------------------------------
+// mounts_list
+// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct MountsListTool {
@@ -126,7 +157,13 @@ impl AgentTool for MountsListTool {
         "mounts_list"
     }
     fn description(&self) -> &str {
-        "列出当前会话可访问的 Address Space 挂载与能力"
+        "List all available mounts and their capabilities in the current session.\n\
+         \n\
+         Usage:\n\
+         - Call this tool first to discover which mounts (file systems) are accessible.\n\
+         - Each mount exposes a set of capabilities (read, write, exec, etc.).\n\
+         - Use the returned mount IDs as prefixes in paths for other tools (e.g., `main://src/lib.rs`).\n\
+         - If only one mount exists, the prefix can be omitted in other tool calls."
     }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {}, "required": [], "additionalProperties": false })
@@ -157,15 +194,19 @@ impl AgentTool for MountsListTool {
             .collect::<Vec<_>>()
             .join("\n");
         Ok(ok_text(if body.is_empty() {
-            "当前会话没有可用 mount".to_string()
+            "No mounts available in the current session.".to_string()
         } else {
             format!(
-                "路径格式: mount_id://relative/path（仅当只有一个 mount 时可省略前缀）\n\n{}",
+                "Path format: mount_id://relative/path (prefix may be omitted when only one mount exists)\n\n{}",
                 body
             )
         }))
     }
 }
+
+// ---------------------------------------------------------------------------
+// fs_read
+// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct FsReadTool {
@@ -192,9 +233,11 @@ impl FsReadTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FsReadParams {
-    /// 统一路径，格式 `mount_id://relative/path`（如 `main://src/lib.rs`、`lifecycle://active/steps/start`）；仅当会话只有唯一 mount 时可省略前缀
+    /// Unified path in `mount_id://relative/path` format (e.g., `main://src/lib.rs`). The mount prefix may be omitted when the session has exactly one mount.
     pub path: String,
+    /// 1-based start line number. If omitted, reading starts from line 1.
     pub start_line: Option<usize>,
+    /// 1-based end line number (inclusive). If omitted, reads to the end of the file.
     pub end_line: Option<usize>,
 }
 
@@ -204,7 +247,14 @@ impl AgentTool for FsReadTool {
         "fs_read"
     }
     fn description(&self) -> &str {
-        "读取指定 mount 下的文本文件内容"
+        "Read the contents of a text file from a mount.\n\
+         \n\
+         Usage:\n\
+         - The path parameter uses `mount_id://relative/path` format (e.g., `main://src/lib.rs`).\n\
+         - When the session has only one mount, the prefix may be omitted.\n\
+         - By default reads the entire file; use start_line / end_line for partial reads.\n\
+         - Results are returned with numbered lines in `cat -n` style (line_number | content).\n\
+         - This tool can only read files, not directories. Use fs_glob for directory contents."
     }
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<FsReadParams>()
@@ -217,7 +267,7 @@ impl AgentTool for FsReadTool {
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsReadParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let address_space = self.address_space.snapshot().await;
         let target = resolve_uri_path(&address_space, &params.path)
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -244,7 +294,7 @@ impl AgentTool for FsReadTool {
             .collect::<Vec<_>>()
             .join("\n");
         Ok(ok_text(format!(
-            "文件: {}\n{}",
+            "file: {}\n{}",
             result.path,
             if selected.is_empty() {
                 "   1 | ".to_string()
@@ -255,93 +305,9 @@ impl AgentTool for FsReadTool {
     }
 }
 
-#[derive(Clone)]
-pub struct FsWriteTool {
-    service: Arc<RelayAddressSpaceService>,
-    address_space: SharedRuntimeAddressSpace,
-    overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::auth::AuthIdentity>,
-}
-impl FsWriteTool {
-    pub fn new(
-        service: Arc<RelayAddressSpaceService>,
-        address_space: SharedRuntimeAddressSpace,
-        overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::auth::AuthIdentity>,
-    ) -> Self {
-        Self {
-            service,
-            address_space,
-            overlay,
-            identity,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct FsWriteParams {
-    /// 统一路径，格式 `mount_id://relative/path`（如 `main://src/lib.rs`）；仅当会话只有唯一 mount 时可省略前缀
-    pub path: String,
-    pub content: String,
-    pub append: Option<bool>,
-}
-
-#[async_trait]
-impl AgentTool for FsWriteTool {
-    fn name(&self) -> &str {
-        "fs_write"
-    }
-    fn description(&self) -> &str {
-        "向指定 mount 下的文件写入内容"
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsWriteParams>()
-    }
-    async fn execute(
-        &self,
-        _: &str,
-        args: serde_json::Value,
-        _: CancellationToken,
-        on_update: Option<ToolUpdateCallback>,
-    ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsWriteParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
-        let address_space = self.address_space.snapshot().await;
-        let target = resolve_uri_path(&address_space, &params.path)
-            .map_err(AgentToolError::ExecutionFailed)?;
-        if let Some(callback) = on_update.as_ref() {
-            callback(AgentToolResult {
-                content: vec![ContentPart::text(format!("开始写入文件: {}", target.path))],
-                is_error: false,
-                details: None,
-            });
-        }
-        let overlay_ref = self.overlay.as_ref().map(|arc| arc.as_ref());
-        let final_content = if params.append.unwrap_or(false) {
-            match self
-                .service
-                .read_text(&address_space, &target, overlay_ref, self.identity.as_ref())
-                .await
-            {
-                Ok(existing) => format!("{}{}", existing.content, params.content),
-                Err(_) => params.content,
-            }
-        } else {
-            params.content
-        };
-        self.service
-            .write_text(
-                &address_space,
-                &target,
-                &final_content,
-                overlay_ref,
-                self.identity.as_ref(),
-            )
-            .await
-            .map_err(AgentToolError::ExecutionFailed)?;
-        Ok(ok_text(format!("已写入文件: {}", target.path)))
-    }
-}
+// ---------------------------------------------------------------------------
+// fs_apply_patch
+// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct FsApplyPatchTool {
@@ -368,18 +334,9 @@ impl FsApplyPatchTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FsApplyPatchParams {
-    /// 默认 mount；patch 中不含 mount 前缀的路径会使用此值。省略时使用 address space 默认 mount。
+    /// Default mount ID. Paths in the patch that lack a mount prefix will use this mount. If omitted, the session's default mount is used.
     pub mount: Option<String>,
-    /// Codex apply_patch 自由格式补丁文本。
-    /// 语法骨架：
-    /// `*** Begin Patch`
-    /// `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`
-    /// `*** Move to: new/path`（仅可跟在 `Update File` 后）
-    /// `@@`
-    /// hunk 行以前缀空格 / `-` / `+` 表示上下文、删除、新增
-    /// `*** End Patch`
-    ///
-    /// path 可以使用 `mount_id://relative/path` 格式指定目标 mount。
+    /// The patch text in Codex apply_patch format. See the tool description for the full grammar and examples. Paths inside the patch may use `mount_id://relative/path` to target a specific mount.
     pub patch: String,
 }
 
@@ -402,7 +359,7 @@ impl AgentTool for FsApplyPatchTool {
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsApplyPatchParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let address_space = self.address_space.snapshot().await;
         let result = self
             .service
@@ -418,22 +375,22 @@ impl AgentTool for FsApplyPatchTool {
 
         let mut lines = Vec::new();
         if !result.added.is_empty() {
-            lines.push(format!("新增: {}", result.added.join(", ")));
+            lines.push(format!("added: {}", result.added.join(", ")));
         }
         if !result.modified.is_empty() {
-            lines.push(format!("修改: {}", result.modified.join(", ")));
+            lines.push(format!("modified: {}", result.modified.join(", ")));
         }
         if !result.deleted.is_empty() {
-            lines.push(format!("删除: {}", result.deleted.join(", ")));
+            lines.push(format!("deleted: {}", result.deleted.join(", ")));
         }
         for err in &result.errors {
             lines.push(format!(
-                "失败: {}://{} — {}",
+                "error: {}://{} — {}",
                 err.mount_id, err.path, err.message
             ));
         }
         if lines.is_empty() {
-            lines.push("patch 未产生任何变更。".to_string());
+            lines.push("patch produced no changes.".to_string());
         }
         let is_error = result.added.is_empty()
             && result.modified.is_empty()
@@ -447,14 +404,18 @@ impl AgentTool for FsApplyPatchTool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// fs_glob  (formerly fs_list)
+// ---------------------------------------------------------------------------
+
 #[derive(Clone)]
-pub struct FsListTool {
+pub struct FsGlobTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: SharedRuntimeAddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
-impl FsListTool {
+impl FsGlobTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
         address_space: SharedRuntimeAddressSpace,
@@ -471,23 +432,33 @@ impl FsListTool {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FsListParams {
-    /// 统一路径，格式 `mount_id://relative/path`；仅当会话只有唯一 mount 时可省略前缀
+pub struct FsGlobParams {
+    /// Directory path in `mount_id://relative/path` format. The mount prefix may be omitted when the session has exactly one mount. Defaults to the mount root if omitted.
     pub path: Option<String>,
+    /// If true, list contents recursively. Defaults to false.
     pub recursive: Option<bool>,
+    /// Glob pattern to filter entries (e.g., "*.rs", "**/*.json", "src/**/*.{ts,tsx}"). Supports wildcards (*, ?), recursive (**), character classes ([abc]), and alternation ({a,b}). If the pattern contains no glob characters, it is treated as a substring filter.
     pub pattern: Option<String>,
 }
 
 #[async_trait]
-impl AgentTool for FsListTool {
+impl AgentTool for FsGlobTool {
     fn name(&self) -> &str {
-        "fs_list"
+        "fs_glob"
     }
     fn description(&self) -> &str {
-        "列出指定 mount 下的目录内容"
+        "Fast file pattern matching across all mount types.\n\
+         \n\
+         Usage:\n\
+         - Supports glob patterns like \"**/*.rs\", \"src/**/*.ts\", or \"*.{ts,tsx}\".\n\
+         - When pattern is omitted, lists direct children of the given path.\n\
+         - Set recursive to true to list all nested contents; combine with pattern for deep matching.\n\
+         - Returns entries tagged as [dir] or [file] with forward-slash separated paths.\n\
+         - Use this tool to understand project structure before reading or editing files.\n\
+         - For text content search (grep-style), use fs_grep instead."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsListParams>()
+        schema_value::<FsGlobParams>()
     }
     async fn execute(
         &self,
@@ -496,8 +467,8 @@ impl AgentTool for FsListTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsListParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+        let params: FsGlobParams = serde_json::from_value(args)
+            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let address_space = self.address_space.snapshot().await;
         let target = resolve_uri_path(&address_space, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -530,20 +501,24 @@ impl AgentTool for FsListTool {
             .collect::<Vec<_>>()
             .join("\n");
         Ok(ok_text(if lines.is_empty() {
-            "(空目录)".to_string()
+            "(empty directory)".to_string()
         } else {
             lines
         }))
     }
 }
 
+// ---------------------------------------------------------------------------
+// fs_grep  (formerly fs_search)
+// ---------------------------------------------------------------------------
+
 #[derive(Clone)]
-pub struct FsSearchTool {
+pub struct FsGrepTool {
     service: Arc<RelayAddressSpaceService>,
     address_space: SharedRuntimeAddressSpace,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
-impl FsSearchTool {
+impl FsGrepTool {
     pub fn new(
         service: Arc<RelayAddressSpaceService>,
         address_space: SharedRuntimeAddressSpace,
@@ -559,27 +534,40 @@ impl FsSearchTool {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FsSearchParams {
+pub struct FsGrepParams {
+    /// The search query string. Interpreted as literal text by default; set regex to true for regex syntax.
     pub query: String,
-    /// 搜索根路径，格式 `mount_id://relative/path`；仅当会话只有唯一 mount 时可省略前缀
+    /// Root path to search under, in `mount_id://relative/path` format. The mount prefix may be omitted when the session has exactly one mount. Defaults to the mount root.
     pub path: Option<String>,
+    /// If true, interpret query as a regular expression. Defaults to false.
     #[serde(default)]
     pub regex: bool,
+    /// Glob pattern to filter which files are searched (e.g., "*.rs", "src/**/*.ts").
     pub include: Option<String>,
+    /// Maximum number of matches to return. Defaults to 50.
     pub max_results: Option<usize>,
+    /// Number of context lines to show around each match. Defaults to 0.
     pub context_lines: Option<usize>,
 }
 
 #[async_trait]
-impl AgentTool for FsSearchTool {
+impl AgentTool for FsGrepTool {
     fn name(&self) -> &str {
-        "fs_search"
+        "fs_grep"
     }
     fn description(&self) -> &str {
-        "在指定 mount 下进行文本搜索，支持正则和 glob 过滤"
+        "Search for text content within files on a mount.\n\
+         \n\
+         Usage:\n\
+         - ALWAYS use fs_grep for text search. NEVER use shell_exec with grep/rg.\n\
+         - Supports literal text and regex patterns (set regex to true for regex mode).\n\
+         - Use the include parameter to filter by file glob (e.g., \"*.rs\", \"src/**/*.ts\").\n\
+         - Results show matching lines with file paths and line numbers.\n\
+         - Defaults to max 50 results; adjust with max_results.\n\
+         - Use context_lines to show surrounding lines for better understanding."
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<FsSearchParams>()
+        schema_value::<FsGrepParams>()
     }
     async fn execute(
         &self,
@@ -588,8 +576,8 @@ impl AgentTool for FsSearchTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: FsSearchParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+        let params: FsGrepParams = serde_json::from_value(args)
+            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let address_space = self.address_space.snapshot().await;
         let target = resolve_uri_path(&address_space, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -616,16 +604,20 @@ impl AgentTool for FsSearchTool {
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
         let mut output = if hits.is_empty() {
-            "未找到匹配结果".to_string()
+            "no matches found".to_string()
         } else {
             hits.join("\n")
         };
         if truncated {
-            output.push_str("\n(结果已截断，请缩小搜索范围)");
+            output.push_str("\n(results truncated; narrow your search to see more)");
         }
         Ok(ok_text(output))
     }
 }
+
+// ---------------------------------------------------------------------------
+// shell_exec
+// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct ShellExecTool {
@@ -646,9 +638,11 @@ impl ShellExecTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ShellExecParams {
-    /// 工作目录，格式 `mount_id://relative/path`；仅当会话只有唯一 mount 时可省略前缀
+    /// Working directory in `mount_id://relative/path` format. The mount prefix may be omitted when the session has exactly one mount. Defaults to the mount root.
     pub cwd: Option<String>,
+    /// The shell command to execute.
     pub command: String,
+    /// Command timeout in seconds. If omitted, the system default timeout applies.
     pub timeout_secs: Option<u64>,
 }
 
@@ -658,7 +652,15 @@ impl AgentTool for ShellExecTool {
         "shell_exec"
     }
     fn description(&self) -> &str {
-        "在指定 mount 下执行 shell 命令"
+        "Execute a shell command on a mount.\n\
+         \n\
+         Usage:\n\
+         - Commands run in the shell environment of the target mount.\n\
+         - Use the cwd parameter to set the working directory (defaults to mount root).\n\
+         - stdout and stderr are returned separately, labeled as [stdout] and [stderr].\n\
+         - The exit code is included in the output; non-zero exit codes are flagged as errors.\n\
+         - Use timeout_secs to limit execution time for long-running commands.\n\
+         - Prefer dedicated tools (fs_read, fs_glob, fs_grep) over shell equivalents when possible."
     }
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<ShellExecParams>()
@@ -671,7 +673,7 @@ impl AgentTool for ShellExecTool {
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
+            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let address_space = self.address_space.snapshot().await;
         let target = resolve_uri_path(&address_space, params.cwd.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -702,7 +704,7 @@ impl AgentTool for ShellExecTool {
         };
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "命令: {}\ncwd: {}://{}\n退出码: {}\n{}",
+                "command: {}\ncwd: {}://{}\nexit_code: {}\n{}",
                 params.command, target.mount_id, cwd, result.exit_code, merged
             ))],
             is_error: result.exit_code != 0,

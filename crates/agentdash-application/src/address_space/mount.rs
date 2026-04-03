@@ -599,5 +599,19 @@ pub fn list_inline_entries(
 }
 
 fn path_matches_pattern(path: &str, pattern: Option<&str>) -> bool {
-    pattern.is_none_or(|needle| path.contains(needle))
+    match pattern {
+        None => true,
+        Some(pat)
+            if pat.contains('*')
+                || pat.contains('?')
+                || pat.contains('[')
+                || pat.contains('{') =>
+        {
+            globset::Glob::new(pat)
+                .ok()
+                .map(|g| g.compile_matcher().is_match(path))
+                .unwrap_or(false)
+        }
+        Some(pat) => path.contains(pat),
+    }
 }

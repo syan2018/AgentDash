@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use crate::address_space::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::address_space::relay_service::RelayAddressSpaceService;
 use crate::address_space::tools::fs::{
-    FsApplyPatchTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool,
+    FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
     SharedRuntimeAddressSpace, ShellExecTool,
 };
 use crate::canvas::{CreateCanvasTool, InjectCanvasDataTool, PresentCanvasTool};
@@ -128,13 +128,13 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 overlay.clone(),
                 identity.clone(),
             )));
-            tools.push(Arc::new(FsListTool::new(
+            tools.push(Arc::new(FsGlobTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
                 overlay.clone(),
                 identity.clone(),
             )));
-            tools.push(Arc::new(FsSearchTool::new(
+            tools.push(Arc::new(FsGrepTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),
                 overlay.clone(),
@@ -144,12 +144,6 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         // Write 簇：文件写入
         if clusters.contains(&ToolCluster::Write) {
-            tools.push(Arc::new(FsWriteTool::new(
-                self.service.clone(),
-                shared_address_space.clone(),
-                overlay.clone(),
-                identity.clone(),
-            )));
             tools.push(Arc::new(FsApplyPatchTool::new(
                 self.service.clone(),
                 shared_address_space.clone(),

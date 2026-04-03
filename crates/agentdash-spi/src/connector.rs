@@ -97,9 +97,9 @@ pub struct RestoredSessionState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCluster {
-    /// 只读访问：mounts_list, fs_read, fs_list, fs_search
+    /// Read-only access: mounts_list, fs_read, fs_glob, fs_grep
     Read,
-    /// 文件写入：fs_write, fs_apply_patch
+    /// File editing: fs_apply_patch
     Write,
     /// 命令执行：shell_exec
     Execute,

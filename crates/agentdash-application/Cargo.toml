@@ -25,6 +25,7 @@ regex = "1"
 tokio-util = { version = "0.7", features = ["rt"] }
 rhai = { workspace = true }
 base64 = "0.22"
+globset = "0.4"
 sha2 = "0.10"
 
 [dev-dependencies]

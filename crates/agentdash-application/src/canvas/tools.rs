@@ -414,7 +414,7 @@ mod tests {
     use async_trait::async_trait;
     use tokio::sync::RwLock;
 
-    use crate::address_space::tools::fs::FsWriteTool;
+    use crate::address_space::tools::fs::FsApplyPatchTool;
     use crate::address_space::{
         CanvasFsMountProvider, MountProviderRegistry, RelayAddressSpaceService,
     };
@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_canvas_updates_shared_mounts_for_followup_fs_write() {
+    async fn create_canvas_updates_shared_mounts_for_followup_apply_patch() {
         let project_id = Uuid::new_v4();
         let canvas_repo = Arc::new(MemoryCanvasRepository::default());
 
@@ -508,7 +508,8 @@ mod tests {
             SharedSessionHubHandle::default(),
             Some("sess-test".to_string()),
         );
-        let write_tool = FsWriteTool::new(service, shared_address_space.clone(), None, None);
+        let patch_tool =
+            FsApplyPatchTool::new(service, shared_address_space.clone(), None, None);
 
         let create_result = create_tool
             .execute(
@@ -521,15 +522,15 @@ mod tests {
                 None,
             )
             .await
-            .expect("create_canvas 应成功");
+            .expect("create_canvas should succeed");
         let create_details = create_result
             .details
             .as_ref()
-            .expect("create_canvas 应返回 details");
+            .expect("create_canvas should return details");
         let mount_id = create_details
             .get("mount_id")
             .and_then(serde_json::Value::as_str)
-            .expect("mount_id 应存在");
+            .expect("mount_id should exist");
 
         let address_space = shared_address_space.snapshot().await;
         assert!(
@@ -537,33 +538,34 @@ mod tests {
                 .mounts
                 .iter()
                 .any(|mount| mount.id == mount_id),
-            "create_canvas 后共享 address space 应包含新 mount"
+            "shared address space should contain the new canvas mount after create_canvas"
         );
 
-        write_tool
+        let patch_content = format!(
+            "*** Begin Patch\n*** Add File: {mount_id}://src/util.ts\n+export const value = 'ok';\n*** End Patch"
+        );
+        patch_tool
             .execute(
-                "tool-write",
+                "tool-patch",
                 serde_json::json!({
-                    "path": format!("{mount_id}://src/main.tsx"),
-                    "content": "export const value = 'ok';",
-                    "append": false
+                    "patch": patch_content
                 }),
                 CancellationToken::new(),
                 None,
             )
             .await
-            .expect("fs_write 应能在同一轮写入新建 canvas mount");
+            .expect("fs_apply_patch should write to the newly created canvas mount");
 
         let saved = canvas_repo
             .get_by_mount_id(project_id, mount_id)
             .await
-            .expect("repo 查询应成功")
-            .expect("canvas 应存在");
-        let main_file = saved
+            .expect("repo query should succeed")
+            .expect("canvas should exist");
+        let util_file = saved
             .files
             .iter()
-            .find(|file| file.path == "src/main.tsx")
-            .expect("应存在 src/main.tsx");
-        assert_eq!(main_file.content, "export const value = 'ok';");
+            .find(|file| file.path == "src/util.ts")
+            .expect("src/util.ts should exist");
+        assert_eq!(util_file.content, "export const value = 'ok';\n");
     }
 }

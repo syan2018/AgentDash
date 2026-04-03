@@ -327,9 +327,9 @@ fn format_file_like_read_tool(path: &str, content: &str) -> String {
         .join("\n");
 
     if numbered.is_empty() {
-        format!("文件: {}\n   1 | ", path.replace('\\', "/"))
+        format!("file: {}\n   1 | ", path.replace('\\', "/"))
     } else {
-        format!("文件: {}\n{}", path.replace('\\', "/"), numbered)
+        format!("file: {}\n{}", path.replace('\\', "/"), numbered)
     }
 }
 

@@ -16,7 +16,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use agentdash_application::address_space::tools::fs::{
-        FsApplyPatchTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, MountsListTool,
+        FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
         SharedRuntimeAddressSpace, ShellExecTool,
     };
 
@@ -510,13 +510,11 @@ mod tests {
             MountsListTool::new(service.clone(), shared_address_space.clone()).parameters_schema(),
             FsReadTool::new(service.clone(), shared_address_space.clone(), None, None)
                 .parameters_schema(),
-            FsWriteTool::new(service.clone(), shared_address_space.clone(), None, None)
-                .parameters_schema(),
             FsApplyPatchTool::new(service.clone(), shared_address_space.clone(), None, None)
                 .parameters_schema(),
-            FsListTool::new(service.clone(), shared_address_space.clone(), None, None)
+            FsGlobTool::new(service.clone(), shared_address_space.clone(), None, None)
                 .parameters_schema(),
-            FsSearchTool::new(service.clone(), shared_address_space.clone(), None, None)
+            FsGrepTool::new(service.clone(), shared_address_space.clone(), None, None)
                 .parameters_schema(),
             ShellExecTool::new(service, shared_address_space).parameters_schema(),
         ];

@@ -260,19 +260,23 @@ impl PiAgentConnector {
             let mut tool_section = String::from("## Tools\n\n");
             if context.address_space.is_some() {
                 tool_section.push_str(&format!(
-                    "可调用的统一访问工具：{}。优先使用 mounts_list / fs_read / fs_list / fs_search / fs_write / fs_apply_patch / shell_exec，不要臆测文件内容。\n\n",
-                    tool_names.join("、")
+                    "Available address-space tools: {}. Prefer mounts_list / fs_read / fs_glob / fs_grep / fs_apply_patch / shell_exec — do not guess file contents.\n\n",
+                    tool_names.join(", ")
                 ));
                 tool_section.push_str(
-                    "**路径规范**：path 必须使用 `mount_id://relative/path` 格式（如 `main://src/lib.rs`）。仅当会话只有一个 mount 时可省略前缀。不要把 backend_id 或绝对路径直接写进工具参数。执行 shell 时，`cwd` 也必须是相对 mount 根目录的路径；当前目录就传 `main://.`。\n\n",
+                    "**Path convention**: paths MUST use `mount_id://relative/path` format (e.g., `main://src/lib.rs`). \
+The mount prefix may be omitted when the session has exactly one mount. \
+Never put backend_id or absolute paths into tool arguments. \
+For shell_exec, `cwd` must also be relative to the mount root; use `main://.` for the current directory.\n\n",
                 );
                 tool_section.push_str(
-                    "**fs_apply_patch 格式**：使用 Codex apply_patch 语法（**不是** unified diff）。\
-以 `*** Begin Patch` 开始、`*** End Patch` 结束；\
-每个文件操作必须以 `*** Add File: path` / `*** Update File: path` / `*** Delete File: path` 开头；\
-需要重命名时在 `Update File` 后跟 `*** Move to: new/path`；\
-每个变更块以 `@@` 开始（可跟上下文锚定行），内部行以前缀空格 / `-` / `+` 表示上下文、删除、新增。\
-路径可用 `mount_id://path` 指定目标 mount，不含前缀时使用默认 mount。",
+                    "**fs_apply_patch format**: uses Codex apply_patch syntax (**not** unified diff). \
+Starts with `*** Begin Patch`, ends with `*** End Patch`. \
+Each file operation MUST begin with `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`. \
+For renaming, follow `Update File` with `*** Move to: new/path`. \
+Each hunk starts with `@@` (optionally followed by a context-anchor line); \
+lines within a hunk are prefixed with space (context) / `-` (remove) / `+` (add). \
+Paths may use `mount_id://path` to target a specific mount; paths without a prefix use the default mount.",
                 );
             } else {
                 tool_section.push_str(&format!(
@@ -851,9 +855,9 @@ fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String
 
 fn map_tool_kind(tool_name: &str) -> ToolKind {
     match tool_name {
-        "read_file" | "fs_read" | "list_directory" | "fs_list" => ToolKind::Read,
+        "read_file" | "fs_read" | "list_directory" | "fs_list" | "fs_glob" => ToolKind::Read,
         "write_file" | "fs_write" | "fs_apply_patch" => ToolKind::Edit,
-        "search" | "fs_search" => ToolKind::Search,
+        "search" | "fs_search" | "fs_grep" => ToolKind::Search,
         "shell" | "shell_exec" => ToolKind::Execute,
         "fetch" | "web_fetch" => ToolKind::Fetch,
         "think" => ToolKind::Think,
@@ -2076,9 +2080,9 @@ mod tests {
             message: AgentMessage::Assistant {
                 content: vec![],
                 tool_calls: vec![agentdash_agent::ToolCallInfo {
-                    id: "tool-fs-write-1".to_string(),
-                    call_id: Some("tool-fs-write-1".to_string()),
-                    name: "fs_write".to_string(),
+                    id: "tool-fs-apply-patch-1".to_string(),
+                    call_id: Some("tool-fs-apply-patch-1".to_string()),
+                    name: "fs_apply_patch".to_string(),
                     arguments: serde_json::json!({}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
@@ -2088,10 +2092,10 @@ mod tests {
             },
             event: AssistantStreamEvent::ToolCallDelta {
                 content_index: 0,
-                tool_call_id: "tool-fs-write-1".to_string(),
-                name: "fs_write".to_string(),
+                tool_call_id: "tool-fs-apply-patch-1".to_string(),
+                name: "fs_apply_patch".to_string(),
                 delta: "\"hello".to_string(),
-                draft: "{\"path\":\"notes.txt\",\"content\":\"hello".to_string(),
+                draft: "{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello".to_string(),
                 is_parseable: false,
             },
         };

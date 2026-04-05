@@ -1,6 +1,0 @@
-{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
-{"file": ".trellis/spec/backend/address-space-access.md", "reason": "统一 Address Space 与 runtime access 契约，帮助辨别当前已有能力与自动化脚手架所需能力的边界"}
-{"file": "docs/modules/04-orchestration.md", "reason": "项目对可插拔编排层的原始定义，是讨论通用 workflow scaffold 的直接锚点"}
-{"file": "crates/agentdash-api/src/session_plan.rs", "reason": "当前仓库中最接近 repo-owned workflow prompt 组合层的实现"}
-{"file": "crates/agentdash-api/src/routes/story_sessions.rs", "reason": "用于核对 Story owner session 目前是否只是 companion session，而非真正的自动化工作流 owner"}

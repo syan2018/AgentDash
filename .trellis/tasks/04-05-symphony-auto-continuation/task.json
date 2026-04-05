@@ -1,0 +1,46 @@
+{
+  "id": "symphony-auto-continuation",
+  "name": "symphony-auto-continuation",
+  "title": "Symphony Milestone: Turn 自动 Continuation",
+  "description": "Turn 成功完成后自动检查 task 状态是否仍需继续，若 active 且 turn_count < max_turns 则自动发起下一 turn（同 session thread），实现 Symphony worker 内循环",
+  "status": "draft",
+  "dev_type": "backend",
+  "scope": "orchestrator",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/task/gateway/turn_monitor.rs",
+    "crates/agentdash-application/src/task/service.rs",
+    "crates/agentdash-application/src/task/execution.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs"
+  ],
+  "notes": "Phase 2 — Execution Enhancement。依赖: symphony-orchestrator-config（需要 max_turns_per_task 配置）。参考 Symphony spec Section 7.1 worker 内循环和 Section 16.5。"
+}

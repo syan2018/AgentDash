@@ -1,0 +1,46 @@
+{
+  "id": "symphony-orchestrator-config",
+  "name": "symphony-orchestrator-config",
+  "title": "Symphony Milestone: Orchestrator 编排配置扩展",
+  "description": "扩展 ProjectConfig 增加 Orchestrator 编排字段（poll_interval_ms, max_concurrent_sessions, max_turns_per_task, stall_timeout_ms 等），为自主调度守护循环提供配置基础",
+  "status": "draft",
+  "dev_type": "backend",
+  "scope": "orchestrator",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-domain/src/project/value_objects.rs",
+    "crates/agentdash-domain/src/project/entity.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs",
+    "crates/agentdash-application/src/task/restart_tracker.rs"
+  ],
+  "notes": "Phase 1 — Orchestrator Foundation。前置任务，无依赖。其他 orchestrator task 都依赖此配置层。"
+}

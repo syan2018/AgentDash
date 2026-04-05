@@ -1,0 +1,45 @@
+{
+  "id": "symphony-startup-reconcile",
+  "name": "symphony-startup-reconcile",
+  "title": "Symphony Milestone: 启动时状态对账增强",
+  "description": "服务启动时：清理残留 Running 状态的 task（crash recovery）、释放并发槽位、重置 claimed 状态。确保重启后系统能从干净状态恢复调度",
+  "status": "draft",
+  "dev_type": "backend",
+  "scope": "session-infra",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/task/state_reconciler.rs",
+    "crates/agentdash-application/src/task/service.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs"
+  ],
+  "notes": "Wave 1 — Session 基建。增强现有 TaskStateReconciler，覆盖进程重启后 running session 清理场景。session 通用逻辑，不绑定 task 特殊路径。"
+}

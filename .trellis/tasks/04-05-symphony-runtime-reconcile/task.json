@@ -1,0 +1,46 @@
+{
+  "id": "symphony-runtime-reconcile",
+  "name": "symphony-runtime-reconcile",
+  "title": "Symphony Milestone: 运行时活跃对账",
+  "description": "Orchestrator 每 tick 执行活跃对账：检查 running task 对应的 story/task 状态，若外部已 cancel/complete 则停止 session 并释放槽位。与 startup reconcile 互补",
+  "status": "draft",
+  "dev_type": "backend",
+  "scope": "session-infra",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/task/state_reconciler.rs",
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs",
+    "crates/agentdash-domain/src/story/value_objects.rs"
+  ],
+  "notes": "Wave 1 — Session 基建。事件驱动实现：当 task/story 状态变更时主动通知 session hub 停止相关 session。不依赖 orchestrator tick。"
+}

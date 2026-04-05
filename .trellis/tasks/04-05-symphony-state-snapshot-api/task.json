@@ -1,0 +1,45 @@
+{
+  "id": "symphony-state-snapshot-api",
+  "name": "symphony-state-snapshot-api",
+  "title": "Symphony Milestone: Orchestrator 运行时状态快照 API",
+  "description": "提供 Orchestrator 运行时快照 API（running entries / retry queue / token totals / runtime seconds），供前端 Dashboard 和调试使用",
+  "status": "draft",
+  "dev_type": "fullstack",
+  "scope": "ui-optimization",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-api/src/",
+    "crates/agentdash-application/src/task/service.rs",
+    "crates/agentdash-application/src/session/hub.rs"
+  ],
+  "notes": "移出 Symphony milestone scope(设计对账#2): 不应绑定 Symphony 做法。作为独立的 UI 优化项，根据项目实际需要后续跟进。"
+}

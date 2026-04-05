@@ -1,0 +1,45 @@
+{
+  "id": "symphony-concurrency-governor",
+  "name": "symphony-concurrency-governor",
+  "title": "Symphony Milestone: 全局并发治理器",
+  "description": "实现项目级并发槽位管理，在 dispatch 前检查 running session 数量 vs max_concurrent_sessions 上限，支持 per-state 细粒度控制",
+  "status": "draft",
+  "dev_type": "backend",
+  "scope": "session-infra",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/task/service.rs",
+    "crates/agentdash-application/src/task/gateway/turn_monitor.rs",
+    "crates/agentdash-domain/src/project/value_objects.rs"
+  ],
+  "notes": "Wave 1 — Session 基建。session 并发治理作为通用能力，提供查询接口 + start_task 前置硬性检查。不绑定 orchestrator dispatch 逻辑。"
+}

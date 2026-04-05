@@ -1,0 +1,45 @@
+{
+  "id": "symphony-stall-detection",
+  "name": "symphony-stall-detection",
+  "title": "Symphony Milestone: Stall Detection 超时守卫",
+  "description": "Orchestrator tick 中检查每个 running session 的 last_event_at，若超过 stall_timeout_ms 无新事件则 kill session 并触发 retry。防止 agent 静默挂死",
+  "status": "draft",
+  "dev_type": "backend",
+  "scope": "session-infra",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-application/src/task/gateway/turn_monitor.rs",
+    "crates/agentdash-application/src/task/restart_tracker.rs"
+  ],
+  "notes": "Wave 1 — Session 基建。session 通用 stall 检测，不绑定 orchestrator tick。覆盖所有 session 类型（task session + project agent session）。"
+}

@@ -1,0 +1,49 @@
+{
+  "id": "symphony-tick-loop",
+  "name": "symphony-tick-loop",
+  "title": "Symphony Milestone: Orchestrator Tick Loop 核心调度循环",
+  "description": "实现 ProjectOrchestrator 守护循环：按 poll_interval_ms 节拍 tick，每 tick 执行 reconcile → validate → fetch candidates → sort → dispatch。这是 Symphony 式自主调度的核心引擎",
+  "status": "draft",
+  "dev_type": "backend",
+  "scope": "orchestrator",
+  "priority": "P0",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/task/service.rs",
+    "crates/agentdash-application/src/task/state_reconciler.rs",
+    "crates/agentdash-application/src/task/restart_tracker.rs",
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-domain/src/task/entity.rs",
+    "crates/agentdash-domain/src/task/value_objects.rs",
+    "docs/symphony-spec.md"
+  ],
+  "notes": "Phase 1 — Orchestrator Foundation 的核心。依赖: symphony-orchestrator-config + symphony-concurrency-governor。这是整个 milestone 最关键的 task，参考 Symphony spec Section 7+8。"
+}

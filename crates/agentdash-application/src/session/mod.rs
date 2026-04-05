@@ -8,6 +8,7 @@ mod hub_support;
 mod memory_persistence;
 pub mod persistence;
 mod prompt_pipeline;
+pub mod stall_detector;
 pub mod types;
 
 pub use hook_delegate::HookRuntimeDelegate;

@@ -13,12 +13,12 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StateChangeRepository;
 use agentdash_domain::task::TaskRepository;
 
-struct HubSessionStateReader<'a> {
-    hub: &'a SessionHub,
+pub struct HubSessionStateReader {
+    pub hub: SessionHub,
 }
 
 #[async_trait]
-impl TaskSessionStateReader for HubSessionStateReader<'_> {
+impl TaskSessionStateReader for HubSessionStateReader {
     async fn inspect_session_execution_state(
         &self,
         session_id: &str,
@@ -52,7 +52,7 @@ pub async fn reconcile_task_states_on_boot(
     session_hub: &SessionHub,
     restart_tracker: &RestartTracker,
 ) -> Result<()> {
-    let session_state_reader = HubSessionStateReader { hub: session_hub };
+    let session_state_reader = HubSessionStateReader { hub: session_hub.clone() };
 
     reconcile_running_tasks_on_boot(
         project_repo,

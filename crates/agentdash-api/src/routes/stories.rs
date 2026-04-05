@@ -228,6 +228,7 @@ pub async fn update_story(
     } else {
         req.session_composition.map(Some)
     };
+    let status_changed = req.status.is_some();
     apply_story_mutation(
         &mut story,
         StoryMutationInput {
@@ -247,8 +248,17 @@ pub async fn update_story(
     );
 
     validate_story_context(&story, &project)?;
-
+    let new_status = story.status.clone();
     state.repos.story_repo.update(&story).await?;
+
+    if status_changed {
+        let reconciler = state.services.runtime_reconciler.clone();
+        let story_id = story.id;
+        tokio::spawn(async move {
+            reconciler.on_story_status_changed(story_id, &new_status).await;
+        });
+    }
+
     Ok(Json(StoryResponse::from(story)))
 }
 
@@ -497,6 +507,16 @@ pub async fn update_task(
         None,
     )
     .await?;
+
+    // 运行时对账：Task 进入终态时取消关联 session
+    if old_status != task.status {
+        let reconciler = state.services.runtime_reconciler.clone();
+        let task_id = task.id;
+        let new_status = task.status.clone();
+        tokio::spawn(async move {
+            reconciler.on_task_status_changed(task_id, &new_status).await;
+        });
+    }
 
     Ok(Json(TaskResponse::from(task)))
 }

@@ -5,7 +5,7 @@
 AgentDash 的 Project Agent 已具备伴随式项目管理能力，但缺少支撑其**自主、周期性调度**的基础设施。
 本里程碑以 Symphony service specification 为参考蓝本，补齐这些通用能力，使 Project Agent 能独立完成：
 - 定时评估项目状态并调度待执行任务
-- 在并发限制下安全启动和管理多个 session
+- 安全启动和管理多个并发 session
 - 检测和处理异常 session（挂死、孤儿）
 - 在 turn 完成后智能决定 continuation / retry / stop
 
@@ -35,7 +35,6 @@ Turn 完成后的行为由 Hook 层定义（AfterTurn / BeforeStop / SessionTerm
 
 | Task | 范围 | 目标 |
 |------|------|------|
-| `symphony-concurrency-governor` | session-infra | 项目级并发槽位管理，查询+强制上限 |
 | `symphony-stall-detection` | session-infra | session 无活动超时检测，per-session timer |
 | `symphony-startup-reconcile` | session-infra | 服务重启后的通用对账管线 |
 | `symphony-runtime-reconcile` | session-infra | 事件驱动的运行时状态联动 |
@@ -53,6 +52,7 @@ Turn 完成后的行为由 Hook 层定义（AfterTurn / BeforeStop / SessionTerm
 | 原 Task | 处置 | 原因 |
 |---------|------|------|
 | `symphony-priority-dispatch` | 砍掉 | Agent 自身即可做优先级判断，无需平台硬编码 |
+| `symphony-concurrency-governor` | 砍掉 | 企业级多人协作平台，per-project 并发上限与产品定位冲突 |
 | `symphony-state-snapshot-api` | 移出 | UI 优化项，不绑定本里程碑，后续按需推进 |
 
 ## 现有能力盘点
@@ -70,7 +70,7 @@ Turn 完成后的行为由 Hook 层定义（AfterTurn / BeforeStop / SessionTerm
 里程碑完成时，Project Agent 应能在 Hook+Config 驱动下自动执行以下流程：
 
 1. 被定时触发器唤醒
-2. 查询项目待执行 task、可用并发槽位
+2. 查询项目待执行 task
 3. 自主选择 task 并发起 session
 4. Session 挂死时被平台 stall timer 自动处理
 5. Turn 完成后由 Hook 决定 continuation/retry/stop

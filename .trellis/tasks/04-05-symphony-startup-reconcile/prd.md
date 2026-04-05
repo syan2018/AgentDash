@@ -26,7 +26,6 @@ Phase 2: Task Reconcile
   - Assigned 但无 session 的 task → 清理为 Pending
 
 Phase 3: Infrastructure Restore
-  - 并发槽位计数重建（从持久化的 running session 数恢复，或内存态归零）
   - 定时触发器重建（若 Project Agent 配置了定时触发）
 ```
 
@@ -51,7 +50,7 @@ Session 自身的对账（Phase 1）当前不存在，需要新增。
 
 ## 依赖
 
-- symphony-concurrency-governor（Phase 3 槽位重建依赖其接口）
+无前置依赖。
 
 ## 参考
 

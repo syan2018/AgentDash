@@ -43,13 +43,11 @@ task_status_changed(task_id, new_status):
   if new_status in [Completed, Failed, Cancelled]:
     if task.session_id is not None:
       session_hub.cancel(task.session_id)
-      release_concurrency_slot(task.project_id)
 
 story_status_changed(story_id, new_status):
   if new_status in [Completed, Failed, Cancelled]:
     for task in story.running_tasks():
       session_hub.cancel(task.session_id)
-      release_concurrency_slot(task.project_id)
 ```
 
 ## 现有基础
@@ -69,7 +67,6 @@ story_status_changed(story_id, new_status):
 ## 依赖
 
 - symphony-tick-loop（若选 A，嵌入 Agent tick）
-- symphony-concurrency-governor（释放槽位）
 
 ## 参考
 

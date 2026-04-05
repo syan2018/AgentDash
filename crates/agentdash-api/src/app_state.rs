@@ -5,7 +5,7 @@ use anyhow::Result;
 use sqlx::PgPool;
 use tokio::sync::RwLock;
 
-use crate::bootstrap::task_state_reconcile::reconcile_task_states_on_boot;
+use crate::bootstrap::task_state_reconcile::HubSessionStateReader;
 use crate::mount_providers::RelayFsMountProvider;
 use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
@@ -67,6 +67,8 @@ pub struct ServiceSet {
     pub hook_provider: Arc<AppExecutionHookProvider>,
     /// 统一认证会话服务（application 层）
     pub auth_session_service: Arc<AuthSessionService>,
+    /// 运行时对账服务 — Story/Task 状态变更时联动 session 取消
+    pub runtime_reconciler: Arc<agentdash_application::reconcile::runtime::RuntimeReconciler>,
 }
 
 /// Task 执行运行时状态 — 并发锁与重试控制
@@ -231,11 +233,6 @@ impl AppState {
         );
         session_hub_handle.set(session_hub.clone()).await;
 
-        // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
-        if let Err(e) = session_hub.recover_interrupted_sessions().await {
-            tracing::warn!("启动恢复 session 状态失败（非致命）: {e}");
-        }
-
         let restart_tracker = Arc::new(RestartTracker::default());
         let lock_map = Arc::new(TaskLockMap::new());
 
@@ -243,14 +240,28 @@ impl AppState {
         let state_change_repo_port: Arc<dyn StateChangeRepository> = state_change_repo.clone();
         let task_repo_port: Arc<dyn TaskRepository> = task_repo.clone();
         let task_command_repo_port: Arc<dyn TaskAggregateCommandRepository> = task_repo.clone();
-        reconcile_task_states_on_boot(
-            &project_repo_port,
-            &state_change_repo_port,
-            &task_repo_port,
-            &session_hub,
-            &restart_tracker,
-        )
-        .await?;
+
+        // 启动对账管线：Session → Task → Infrastructure（有序不可跳过）
+        {
+            let deps = agentdash_application::reconcile::boot::BootReconcileDeps {
+                session_hub: session_hub.clone(),
+                project_repo: project_repo_port.clone(),
+                state_change_repo: state_change_repo_port.clone(),
+                task_repo: task_repo_port.clone(),
+                restart_tracker: restart_tracker.clone(),
+                session_state_reader: Arc::new(HubSessionStateReader {
+                    hub: session_hub.clone(),
+                }),
+            };
+            let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
+            if report.has_errors() {
+                for phase in &report.phases {
+                    for err in &phase.errors {
+                        tracing::warn!(phase = phase.phase, error = %err, "启动对账阶段出错");
+                    }
+                }
+            }
+        }
 
         let mcp_base_url = std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
             let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
@@ -294,6 +305,13 @@ impl AppState {
             lifecycle_run_repo: workflow_repo,
         };
 
+        let runtime_reconciler = Arc::new(
+            agentdash_application::reconcile::runtime::RuntimeReconciler::new(
+                session_hub.clone(),
+                task_repo_port.clone(),
+            ),
+        );
+
         let dispatcher = crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(
             session_hub.clone(),
             backend_registry.clone(),
@@ -327,6 +345,7 @@ impl AppState {
                 task_lifecycle_service,
                 hook_provider,
                 auth_session_service,
+                runtime_reconciler,
             },
             task_runtime: TaskRuntime {
                 lock_map,
@@ -342,6 +361,12 @@ impl AppState {
 
         let state = Arc::new(state);
         dispatcher.set_retry_service(state.services.task_lifecycle_service.clone());
+
+        // 后台 session stall 检测：定期扫描 running session，超时自动取消
+        agentdash_application::session::stall_detector::spawn_stall_detector(
+            state.services.session_hub.clone(),
+            agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
+        );
 
         // 后台定时清理过期认证会话，避免 auth_sessions 无限增长。
         {

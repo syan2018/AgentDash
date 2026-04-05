@@ -565,10 +565,25 @@ impl SessionHub {
                 let (tx, _rx) = broadcast::channel(1024);
                 build_session_runtime(tx)
             });
+            runtime.last_activity_at = chrono::Utc::now().timestamp_millis();
             runtime.tx.clone()
         };
         let _ = tx.send(persisted.clone());
         Ok(persisted)
+    }
+
+    /// 查找所有超过指定超时时间无活动的 running session，返回其 session_id 列表。
+    pub async fn find_stalled_sessions(&self, stall_timeout_ms: u64) -> Vec<String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let threshold = stall_timeout_ms as i64;
+        let sessions = self.sessions.lock().await;
+        sessions
+            .iter()
+            .filter(|(_, runtime)| {
+                runtime.running && (now - runtime.last_activity_at) > threshold
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     /// Hook auto-resume: schedule a delayed follow-up prompt in a separate task.

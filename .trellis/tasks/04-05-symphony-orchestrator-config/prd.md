@@ -15,7 +15,6 @@ Orchestrator 配置在 Project 层。只有 Project 层有相对完整的 Agent 
 需要区分"平台基础设施配置"和"Agent 行为偏好"：
 
 **平台基础设施（由平台强制执行）**:
-- `max_concurrent_sessions`: 该项目最大并行执行的 session 数
 - `stall_timeout_ms`: session 无活动超时（平台级安全网）
 - `max_turns_per_task`: 单 task 最大 turn 数（防失控）
 

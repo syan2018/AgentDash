@@ -45,7 +45,6 @@ task 管理、session 创建）自主决定下一步行动。
 ## 依赖
 
 - symphony-orchestrator-config（poll_interval_ms 配置）
-- symphony-concurrency-governor（Agent 需要查询可用槽位）
 
 ## 参考
 

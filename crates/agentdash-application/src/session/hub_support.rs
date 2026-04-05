@@ -157,6 +157,7 @@ pub(super) fn build_session_runtime(
         cancel_requested: false,
         hook_session: None,
         hook_auto_resume_count: 0,
+        last_activity_at: chrono::Utc::now().timestamp_millis(),
     }
 }
 
@@ -168,6 +169,8 @@ pub(super) struct SessionRuntime {
     pub hook_session: Option<SharedHookSessionRuntime>,
     /// Counter for hook-driven auto-resumes (prevents infinite loops).
     pub hook_auto_resume_count: u32,
+    /// 最近一次事件活动的时间戳（毫秒），用于 stall 检测。
+    pub last_activity_at: i64,
 }
 
 pub struct SessionEventSubscription {

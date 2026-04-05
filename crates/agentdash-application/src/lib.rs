@@ -7,6 +7,7 @@ pub mod companion;
 pub mod context;
 pub mod hooks;
 pub mod project;
+pub mod reconcile;
 pub mod repository_set;
 pub mod runtime;
 pub mod runtime_bridge;

@@ -3,7 +3,7 @@
   "name": "symphony-concurrency-governor",
   "title": "Symphony Milestone: 全局并发治理器",
   "description": "实现项目级并发槽位管理，在 dispatch 前检查 running session 数量 vs max_concurrent_sessions 上限，支持 per-state 细粒度控制",
-  "status": "draft",
+  "status": "cancelled",
   "dev_type": "backend",
   "scope": "session-infra",
   "priority": "P1",
@@ -41,5 +41,5 @@
     "crates/agentdash-application/src/task/gateway/turn_monitor.rs",
     "crates/agentdash-domain/src/project/value_objects.rs"
   ],
-  "notes": "Wave 1 — Session 基建。session 并发治理作为通用能力，提供查询接口 + start_task 前置硬性检查。不绑定 orchestrator dispatch 逻辑。"
+  "notes": "已砍。AgentDash 是企业级多人协作平台，单 Project 下多人并发是正常场景，在业务层卡并发上限与产品定位根本冲突。Symphony 的并发治理是单人 orchestrator 视角，不适用。"
 }

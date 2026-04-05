@@ -34,7 +34,7 @@
 
 ## 依赖
 
-- symphony-tick-loop + symphony-concurrency-governor（需要 orchestrator 运行时状态已存在）
+- symphony-tick-loop（需要 orchestrator 运行时状态已存在）
 
 ## 参考
 

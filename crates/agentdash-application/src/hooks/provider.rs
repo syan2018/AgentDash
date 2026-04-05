@@ -357,7 +357,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 }
             }
             HookTrigger::SessionTerminal => {
-                // 1) workflow/global hook rules（包括 task owner 自动注入的 rule）
+                // 1) global + workflow contract + owner default hook rules
+                //    owner_default_hook_rules 会为 task owner 自动注入
+                //    task_session_terminal preset，无需此处硬编码
                 apply_hook_rules(
                     HookEvaluationContext {
                         snapshot: &snapshot,
@@ -367,37 +369,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     &self.script_engine,
                 );
 
-                // 2) task owner 自动注入 task_session_terminal preset
-                // TODO: 正式化为 Task Default Lifecycle Workflow，
-                //       当前以 builtin preset 自动注入方式实现
-                if snapshot_has_task_owner(&snapshot) {
-                    let ctx = HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    };
-                    match self
-                        .script_engine
-                        .eval_preset("task_session_terminal", &ctx, None)
-                    {
-                        Ok(decision) if !decision.is_empty() => {
-                            resolution
-                                .matched_rule_keys
-                                .push("builtin:task_session_terminal".to_string());
-                            merge_script_decision(&mut resolution, decision);
-                        }
-                        Err(err) => {
-                            resolution.diagnostics.push(HookDiagnosticEntry {
-                                code: "task_session_terminal_error".to_string(),
-                                message: format!(
-                                    "task_session_terminal preset 执行失败: {err}"
-                                ),
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-
-                // 3) workflow completion decision（step 推进）
+                // 2) workflow completion decision（step 推进）
                 if let Some(decision) = completion_decision_for_active_workflow_snapshot(
                     &snapshot,
                     &WorkflowCompletionSignalSet {

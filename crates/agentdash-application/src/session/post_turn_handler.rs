@@ -27,6 +27,13 @@ pub trait PostTurnHandler: Send + Sync + 'static {
     /// `effects` 来自 `HookResolution.effects`，由 Hook 规则（Rhai 脚本）声明，
     /// 实现方按 `effect.kind` 分派到具体的领域逻辑（如 task 状态变更、retry 触发等）。
     async fn execute_effects(&self, session_id: &str, turn_id: &str, effects: &[HookEffect]);
+
+    /// 返回本 handler 能处理的 effect kind 列表。
+    /// 用于运行时校验：不在列表中的 effect 会被 pipeline warn 日志记录。
+    /// 默认返回空切片（向后兼容，不要求已有实现填写）。
+    fn supported_effect_kinds(&self) -> &[&str] {
+        &[]
+    }
 }
 
 pub type DynPostTurnHandler = Arc<dyn PostTurnHandler>;

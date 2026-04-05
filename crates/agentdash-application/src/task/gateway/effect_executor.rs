@@ -47,9 +47,21 @@ impl PostTurnHandler for TaskHookEffectExecutor {
             }
         }
     }
+
+    fn supported_effect_kinds(&self) -> &[&str] {
+        Self::SUPPORTED_KINDS
+    }
 }
 
 impl TaskHookEffectExecutor {
+    /// 本 executor 能处理的 effect kinds。
+    /// 任何不在此列表中的 kind 会产生运行时 warning。
+    pub const SUPPORTED_KINDS: &[&str] = &[
+        "task:set_status",
+        "task:retry",
+        "task:clear_binding",
+    ];
+
     async fn handle_event(&self, _session_id: &str, notification: &SessionNotification) {
         use agent_client_protocol::SessionUpdate;
         use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
@@ -105,7 +117,12 @@ impl TaskHookEffectExecutor {
             "task:retry" => self.handle_retry(turn_id, &effect.payload).await,
             "task:clear_binding" => self.handle_clear_binding(&effect.payload).await,
             other => {
-                tracing::debug!(kind = other, "Unknown task effect kind, skipping");
+                tracing::warn!(
+                    task_id = %self.task_id,
+                    kind = other,
+                    supported = ?Self::SUPPORTED_KINDS,
+                    "Unhandled effect kind — 检查 Rhai 脚本是否拼写有误或需要新增 handler"
+                );
                 Ok(())
             }
         }

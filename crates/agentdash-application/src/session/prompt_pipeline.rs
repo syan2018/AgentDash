@@ -422,6 +422,19 @@ impl SessionHub {
 
             if let Some(handler) = post_turn_handler.as_ref() {
                 if !terminal_effects.is_empty() {
+                    let supported = handler.supported_effect_kinds();
+                    if !supported.is_empty() {
+                        for eff in &terminal_effects {
+                            if !supported.contains(&eff.kind.as_str()) {
+                                tracing::warn!(
+                                    session_id = %session_id,
+                                    effect_kind = %eff.kind,
+                                    supported = ?supported,
+                                    "Hook 产出了 handler 未声明支持的 effect kind"
+                                );
+                            }
+                        }
+                    }
                     handler
                         .execute_effects(&session_id, &turn_id_for_spawn, &terminal_effects)
                         .await;

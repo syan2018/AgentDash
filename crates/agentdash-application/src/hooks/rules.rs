@@ -45,6 +45,11 @@ pub(crate) fn apply_hook_rules(
     if !contract_rules.is_empty() {
         apply_contract_hook_rules(&ctx, contract_rules, resolution, script_engine);
     }
+
+    let owner_rules = owner_default_hook_rules(ctx.snapshot);
+    if !owner_rules.is_empty() {
+        apply_contract_hook_rules(&ctx, &owner_rules, resolution, script_engine);
+    }
 }
 
 fn apply_contract_hook_rules(

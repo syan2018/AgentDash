@@ -9,6 +9,7 @@ pub mod hooks;
 pub mod project;
 pub mod reconcile;
 pub mod repository_set;
+pub mod scheduling;
 pub mod runtime;
 pub mod runtime_bridge;
 pub mod session;

@@ -368,6 +368,21 @@ impl AppState {
             agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
         );
 
+        // 后台 cron 调度器：按 Agent 配置的 cron 表达式定期触发 session
+        {
+            let cron_target = Arc::new(crate::bootstrap::cron_target::AppCronTriggerTarget {
+                session_hub: state.services.session_hub.clone(),
+            });
+            let cron_repos = state.repos.clone();
+            tokio::spawn(async move {
+                agentdash_application::scheduling::cron_scheduler::spawn_cron_scheduler(
+                    cron_repos,
+                    cron_target,
+                )
+                .await;
+            });
+        }
+
         // 后台定时清理过期认证会话，避免 auth_sessions 无限增长。
         {
             let auth_session_service = state.services.auth_session_service.clone();

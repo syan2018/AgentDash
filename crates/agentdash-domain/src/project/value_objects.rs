@@ -24,11 +24,12 @@ pub struct ProjectConfig {
     pub scheduling: SchedulingConfig,
 }
 
-/// 自主调度与 session 安全网配置
+/// 平台级 session 安全网配置
 ///
 /// 所有字段均为 Option，未设置时使用系统默认值。
-/// 这些配置同时作为平台安全网参数（由平台强制执行）
-/// 和 Agent 行为偏好（由 Project Agent 自行解释）。
+/// 这些配置由平台强制执行，与 Agent 行为偏好解耦。
+/// Agent 级调度配置（如 cron_schedule）存储在 Agent.base_config /
+/// ProjectAgentLink.config_override 中，参见 `AgentSchedulingConfig`。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SchedulingConfig {
     /// Session 无活动超时（毫秒）。超时后平台自动取消 session。
@@ -36,8 +37,6 @@ pub struct SchedulingConfig {
     pub stall_timeout_ms: Option<u64>,
     /// 单 Task 最大 turn 数。超限后平台拒绝继续执行（防失控）。
     pub max_turns_per_task: Option<u32>,
-    /// Project Agent 被定时唤醒的间隔（毫秒）。仅对配置了自主调度的 Project 生效。
-    pub poll_interval_ms: Option<u64>,
 }
 
 /// Agent 预设配置

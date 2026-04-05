@@ -1,6 +1,6 @@
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
-    HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
+    HookEffect, HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery,
 };
 use tokio::sync::broadcast;
@@ -20,12 +20,14 @@ pub(super) struct HookTriggerInput<'a> {
 }
 
 impl SessionHub {
+    /// 评估 session hook 并广播 trace 事件。返回 hook 产出的 effects 列表，
+    /// 由调用方决定是否/如何执行这些副作用。
     pub(super) async fn emit_session_hook_trigger(
         &self,
         hook_session: &dyn HookSessionRuntimeAccess,
         input: &HookTriggerInput<'_>,
         _tx: &broadcast::Sender<PersistedSessionEvent>,
-    ) {
+    ) -> Vec<HookEffect> {
         let HookTriggerInput {
             session_id,
             turn_id,
@@ -57,6 +59,7 @@ impl SessionHub {
                         })
                         .await;
                 }
+                let effects = resolution.effects.clone();
                 let trace = HookTraceEntry {
                     sequence: hook_session.next_trace_sequence(),
                     timestamp_ms: chrono::Utc::now().timestamp_millis(),
@@ -78,6 +81,7 @@ impl SessionHub {
                 {
                     let _ = self.persist_notification(session_id, notification).await;
                 }
+                effects
             }
             Err(error) => {
                 tracing::warn!(
@@ -86,6 +90,7 @@ impl SessionHub {
                     error = %error,
                     "session hook 评估失败"
                 );
+                Vec::new()
             }
         }
     }

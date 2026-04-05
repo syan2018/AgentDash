@@ -359,6 +359,7 @@ impl CompanionRequestTool {
                     system_context: self.system_context.clone(),
                     bootstrap_action: crate::session::SessionBootstrapAction::None,
                     identity: None,
+                    post_turn_handler: None,
                 },
             )
             .await

@@ -180,7 +180,7 @@ pub struct SessionEventSubscription {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TurnTerminalKind {
+pub enum TurnTerminalKind {
     Completed,
     Failed,
     Interrupted,

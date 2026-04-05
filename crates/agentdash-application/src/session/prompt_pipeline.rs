@@ -244,22 +244,23 @@ impl SessionHub {
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
-                self.emit_session_hook_trigger(
-                    hook_session.as_ref(),
-                    &HookTriggerInput {
-                        session_id: &sid,
-                        turn_id: Some(&turn_id),
-                        trigger: HookTrigger::SessionStart,
-                        payload: Some(serde_json::json!({
-                            "text_prompt": resolved_payload.text_prompt,
-                            "user_block_count": resolved_payload.user_blocks.len(),
-                        })),
-                        refresh_reason: "trigger:session_start",
-                        source: source.clone(),
-                    },
-                    &tx,
-                )
-                .await;
+                let _start_effects = self
+                    .emit_session_hook_trigger(
+                        hook_session.as_ref(),
+                        &HookTriggerInput {
+                            session_id: &sid,
+                            turn_id: Some(&turn_id),
+                            trigger: HookTrigger::SessionStart,
+                            payload: Some(serde_json::json!({
+                                "text_prompt": resolved_payload.text_prompt,
+                                "user_block_count": resolved_payload.user_blocks.len(),
+                            })),
+                            refresh_reason: "trigger:session_start",
+                            source: source.clone(),
+                        },
+                        &tx,
+                    )
+                    .await;
             }
         }
 
@@ -300,6 +301,7 @@ impl SessionHub {
         let hook_session_for_spawn = hook_session;
         let hub = self.clone();
         let persistence = self.persistence.clone();
+        let post_turn_handler = req.post_turn_handler;
 
         let turn_id_for_spawn = turn_id.clone();
         tokio::spawn(async move {
@@ -329,6 +331,9 @@ impl SessionHub {
                                 meta.updated_at = chrono::Utc::now().timestamp_millis();
                                 let _ = persistence.save_session_meta(&meta).await;
                             }
+                        }
+                        if let Some(handler) = post_turn_handler.as_ref() {
+                            handler.on_event(&session_id, &notification).await;
                         }
                         let _ = hub.persist_notification(&session_id, notification).await;
                     }
@@ -394,7 +399,7 @@ impl SessionHub {
                 let _ = hub.persist_notification(&session_id, done).await;
             }
 
-            if let Some(hook_session) = hook_session_for_spawn.as_ref() {
+            let terminal_effects = if let Some(hook_session) = hook_session_for_spawn.as_ref() {
                 hub.emit_session_hook_trigger(
                     hook_session.as_ref(),
                     &HookTriggerInput {
@@ -410,7 +415,17 @@ impl SessionHub {
                     },
                     &tx,
                 )
-                .await;
+                .await
+            } else {
+                Vec::new()
+            };
+
+            if let Some(handler) = post_turn_handler.as_ref() {
+                if !terminal_effects.is_empty() {
+                    handler
+                        .execute_effects(&session_id, &turn_id_for_spawn, &terminal_effects)
+                        .await;
+                }
             }
 
             // Hook auto-resume: when agent loop exits with an unsatisfied stop

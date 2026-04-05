@@ -174,6 +174,14 @@ pub(crate) fn parse_session_terminal_state(
     }
 }
 
+/// 检查 snapshot 是否关联了 task owner
+pub(crate) fn snapshot_has_task_owner(snapshot: &SessionHookSnapshot) -> bool {
+    snapshot
+        .owners
+        .iter()
+        .any(|o| o.owner_type == "task" && o.task_id.is_some())
+}
+
 pub(crate) fn active_workflow_hook_rules(
     snapshot: &SessionHookSnapshot,
 ) -> &[WorkflowHookRuleSpec] {

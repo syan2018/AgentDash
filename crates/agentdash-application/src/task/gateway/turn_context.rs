@@ -34,6 +34,9 @@ pub struct PreparedTurnContext {
     pub workspace: Option<agentdash_domain::workspace::Workspace>,
     /// 发起本次 task 执行的用户身份（由 HTTP handler 注入）。
     pub identity: Option<agentdash_spi::auth::AuthIdentity>,
+    /// Hook effect 回调（cloud-native 路径取代 TurnMonitor）。
+    /// Relay 路径暂不使用此字段。
+    pub post_turn_handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
 }
 
 /// 从 Task / Story / Project / Workspace 等上下文中构建 turn 执行所需的完整信息
@@ -140,5 +143,6 @@ pub async fn prepare_task_turn_context(
         use_cloud_native_agent,
         workspace,
         identity: None,
+        post_turn_handler: None,
     })
 }

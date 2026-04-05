@@ -174,6 +174,7 @@ async fn dispatch_cloud_native(
         system_context: ctx.built.system_context.clone(),
         bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,
         identity: ctx.identity,
+        post_turn_handler: ctx.post_turn_handler,
     };
 
     let turn_id = dispatcher
@@ -185,6 +186,7 @@ async fn dispatch_cloud_native(
     Ok(StartedTurn {
         turn_id,
         context_sources: ctx.built.source_summary,
+        cloud_native: true,
     })
 }
 
@@ -230,6 +232,7 @@ async fn dispatch_relay(
     Ok(StartedTurn {
         turn_id,
         context_sources: ctx.built.source_summary.clone(),
+        cloud_native: false,
     })
 }
 

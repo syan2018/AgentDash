@@ -16,8 +16,8 @@ pub use connector::{
 };
 pub use hooks::{
     action_type, ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest,
-    HookCompletionStatus, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection,
-    HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
+    HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery,
+    HookInjection, HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
     HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess,
     HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry, HookTrigger,
     NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,

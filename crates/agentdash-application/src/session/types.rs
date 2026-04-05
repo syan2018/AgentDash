@@ -23,7 +23,6 @@ pub struct UserPromptInput {
 /// 后端完整请求 — 包含用户输入 + 后端注入的运行时上下文。
 ///
 /// 由 session bootstrap 代码组合 `UserPromptInput` + 后端注入字段构造。
-#[derive(Debug, Clone)]
 pub struct PromptSessionRequest {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<McpServer>,
@@ -37,6 +36,10 @@ pub struct PromptSessionRequest {
     pub bootstrap_action: SessionBootstrapAction,
     /// 发起本次 prompt 的用户身份（由 HTTP handler 从 session 注入）。
     pub identity: Option<agentdash_spi::auth::AuthIdentity>,
+    /// Turn 事件回调（替代 TurnMonitor）。
+    /// 由 task 执行层注入，在 session pipeline 事件流和终态时回调。
+    /// 为 None 时不执行任何回调（普通 session prompt 场景）。
+    pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
 }
 
 impl PromptSessionRequest {
@@ -51,6 +54,7 @@ impl PromptSessionRequest {
             system_context: None,
             bootstrap_action: SessionBootstrapAction::None,
             identity: None,
+            post_turn_handler: None,
         }
     }
 }

@@ -96,7 +96,7 @@ fn apply_contract_hook_rules(
     }
 }
 
-fn merge_script_decision(
+pub(crate) fn merge_script_decision(
     resolution: &mut HookResolution,
     decision: super::script_engine::ScriptDecision,
 ) {
@@ -117,6 +117,7 @@ fn merge_script_decision(
         resolution.rewritten_tool_input = decision.rewrite_input;
     }
     resolution.diagnostics.extend(decision.diagnostics);
+    resolution.effects.extend(decision.effects);
 }
 
 fn global_hook_rule_registry() -> &'static [NormalizedHookRule] {

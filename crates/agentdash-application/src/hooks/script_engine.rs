@@ -6,7 +6,8 @@ use rhai::{AST, Dynamic, Engine, Scope};
 
 use agentdash_domain::workflow::WorkflowConstraintKind;
 use agentdash_spi::{
-    HookApprovalRequest, HookCompletionStatus, HookDiagnosticEntry, HookInjection, HookTrigger,
+    HookApprovalRequest, HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookInjection,
+    HookTrigger,
 };
 
 use super::snapshot_helpers::*;
@@ -23,6 +24,7 @@ pub(crate) struct ScriptDecision {
     pub refresh: bool,
     pub rewrite_input: Option<serde_json::Value>,
     pub diagnostics: Vec<HookDiagnosticEntry>,
+    pub effects: Vec<HookEffect>,
 }
 
 impl ScriptDecision {
@@ -34,6 +36,7 @@ impl ScriptDecision {
             && !self.refresh
             && self.rewrite_input.is_none()
             && self.diagnostics.is_empty()
+            && self.effects.is_empty()
     }
 }
 
@@ -334,6 +337,9 @@ impl HookScriptEngine {
                 "workspace_root": ctx.snapshot.metadata.as_ref().and_then(|m| m.workspace_root.as_deref()),
                 "connector_id": ctx.snapshot.metadata.as_ref().and_then(|m| m.connector_id.as_deref()),
                 "executor": ctx.snapshot.metadata.as_ref().and_then(|m| m.executor.as_deref()),
+                "task_execution_mode": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_execution_mode")),
+                "task_status": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_status")),
+                "task_id": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_id")),
             },
 
             "params": params.unwrap_or(&serde_json::Value::Null),
@@ -442,6 +448,25 @@ impl HookScriptEngine {
             })
             .unwrap_or_default();
 
+        let effects = obj
+            .get("effects")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        let o = item.as_object()?;
+                        Some(HookEffect {
+                            kind: o.get("kind")?.as_str()?.to_string(),
+                            payload: o
+                                .get("payload")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(ScriptDecision {
             block,
             inject,
@@ -450,6 +475,7 @@ impl HookScriptEngine {
             refresh,
             rewrite_input,
             diagnostics,
+            effects,
         })
     }
 
@@ -567,6 +593,7 @@ fn empty_decision() -> ScriptDecision {
         refresh: false,
         rewrite_input: None,
         diagnostics: Vec::new(),
+        effects: Vec::new(),
     }
 }
 

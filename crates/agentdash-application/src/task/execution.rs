@@ -80,4 +80,7 @@ pub struct TaskSessionResult {
 pub struct StartedTurn {
     pub turn_id: String,
     pub context_sources: Vec<String>,
+    /// True if dispatched via cloud-native pipeline (PostTurnHandler active).
+    /// False if dispatched via relay (needs legacy TurnMonitor).
+    pub cloud_native: bool,
 }

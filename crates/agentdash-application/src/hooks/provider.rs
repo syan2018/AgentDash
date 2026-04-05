@@ -145,6 +145,32 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
             if let Some(task_id) = owner.task_id.as_deref() {
                 snapshot.tags.push(format!("task:{task_id}"));
+
+                if let Ok(Some(task)) = self
+                    .owner_resolver
+                    .task_repo()
+                    .get_by_id(
+                        task_id
+                            .parse::<uuid::Uuid>()
+                            .unwrap_or(uuid::Uuid::nil()),
+                    )
+                    .await
+                {
+                    if let Some(meta) = snapshot.metadata.as_mut() {
+                        meta.extra.insert(
+                            "task_execution_mode".to_string(),
+                            serde_json::Value::String(format!("{:?}", task.execution_mode)),
+                        );
+                        meta.extra.insert(
+                            "task_status".to_string(),
+                            serde_json::Value::String(format!("{:?}", task.status)),
+                        );
+                        meta.extra.insert(
+                            "task_id".to_string(),
+                            serde_json::Value::String(task.id.to_string()),
+                        );
+                    }
+                }
             }
 
             if let Some(workflow) = self
@@ -331,6 +357,47 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 }
             }
             HookTrigger::SessionTerminal => {
+                // 1) workflow/global hook rules（包括 task owner 自动注入的 rule）
+                apply_hook_rules(
+                    HookEvaluationContext {
+                        snapshot: &snapshot,
+                        query: &query,
+                    },
+                    &mut resolution,
+                    &self.script_engine,
+                );
+
+                // 2) task owner 自动注入 task_session_terminal preset
+                // TODO: 正式化为 Task Default Lifecycle Workflow，
+                //       当前以 builtin preset 自动注入方式实现
+                if snapshot_has_task_owner(&snapshot) {
+                    let ctx = HookEvaluationContext {
+                        snapshot: &snapshot,
+                        query: &query,
+                    };
+                    match self
+                        .script_engine
+                        .eval_preset("task_session_terminal", &ctx, None)
+                    {
+                        Ok(decision) if !decision.is_empty() => {
+                            resolution
+                                .matched_rule_keys
+                                .push("builtin:task_session_terminal".to_string());
+                            merge_script_decision(&mut resolution, decision);
+                        }
+                        Err(err) => {
+                            resolution.diagnostics.push(HookDiagnosticEntry {
+                                code: "task_session_terminal_error".to_string(),
+                                message: format!(
+                                    "task_session_terminal preset 执行失败: {err}"
+                                ),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                // 3) workflow completion decision（step 推进）
                 if let Some(decision) = completion_decision_for_active_workflow_snapshot(
                     &snapshot,
                     &WorkflowCompletionSignalSet {

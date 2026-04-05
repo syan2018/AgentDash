@@ -1438,6 +1438,7 @@ mod tests {
             system_context: None,
             bootstrap_action: SessionBootstrapAction::None,
             identity: None,
+            post_turn_handler: None,
         }
     }
 
@@ -2257,6 +2258,7 @@ mod tests {
                 system_context: None,
                 bootstrap_action: SessionBootstrapAction::None,
                 identity: None,
+                post_turn_handler: None,
             },
         )
         .await

@@ -33,6 +33,10 @@ impl SessionOwnerResolver {
         }
     }
 
+    pub fn task_repo(&self) -> &dyn TaskRepository {
+        self.task_repo.as_ref()
+    }
+
     pub async fn resolve(
         &self,
         binding: &SessionBinding,

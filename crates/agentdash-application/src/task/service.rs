@@ -264,12 +264,14 @@ impl TaskLifecycleService {
         )
         .await;
 
-        self.dispatcher.spawn_turn_monitor(
-            task.id,
-            session_id.clone(),
-            started_turn.turn_id.clone(),
-            backend_id,
-        );
+        if !started_turn.cloud_native {
+            self.dispatcher.spawn_turn_monitor(
+                task.id,
+                session_id.clone(),
+                started_turn.turn_id.clone(),
+                backend_id,
+            );
+        }
 
         Ok(StartTaskResult {
             task_id: task.id,
@@ -348,12 +350,14 @@ impl TaskLifecycleService {
         )
         .await;
 
-        self.dispatcher.spawn_turn_monitor(
-            task.id,
-            session_id.clone(),
-            started_turn.turn_id.clone(),
-            backend_id,
-        );
+        if !started_turn.cloud_native {
+            self.dispatcher.spawn_turn_monitor(
+                task.id,
+                session_id.clone(),
+                started_turn.turn_id.clone(),
+                backend_id,
+            );
+        }
 
         Ok(ContinueTaskResult {
             task_id: task.id,
@@ -452,6 +456,26 @@ impl TaskLifecycleService {
             .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
         }
         ctx.identity = identity;
+
+        // Cloud-native 路径：注入 TaskHookEffectExecutor 取代 TurnMonitor
+        if ctx.use_cloud_native_agent {
+            let backend_id = resolve_task_backend_id(
+                &self.repos,
+                self.backend_availability.as_ref(),
+                task,
+            )
+            .await
+            .unwrap_or_default();
+            let handler = super::gateway::effect_executor::TaskHookEffectExecutor {
+                repos: self.repos.clone(),
+                restart_tracker: self.restart_tracker.clone(),
+                task_id: task.id,
+                session_id: session_id.to_string(),
+                backend_id,
+            };
+            ctx.post_turn_handler =
+                Some(Arc::new(handler) as crate::session::post_turn_handler::DynPostTurnHandler);
+        }
 
         self.dispatcher.dispatch_turn(session_id, ctx).await
     }

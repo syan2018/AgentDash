@@ -192,6 +192,7 @@ impl CommandHandler {
             system_context: None,
             bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,
             identity: None,
+            post_turn_handler: None,
         };
 
         tracing::info!(

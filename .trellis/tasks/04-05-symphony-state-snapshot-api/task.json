@@ -1,9 +1,9 @@
 {
   "id": "symphony-state-snapshot-api",
   "name": "symphony-state-snapshot-api",
-  "title": "Symphony Milestone: Orchestrator 运行时状态快照 API",
-  "description": "提供 Orchestrator 运行时快照 API（running entries / retry queue / token totals / runtime seconds），供前端 Dashboard 和调试使用",
-  "status": "draft",
+  "title": "Orchestrator 运行时状态快照 API",
+  "description": "提供 Orchestrator 运行时快照 API（running entries / retry queue / token totals / runtime seconds），供前端 Dashboard 和调试使用。已从 Symphony milestone 独立为单独的 UI 优化项。",
+  "status": "planning",
   "dev_type": "fullstack",
   "scope": "ui-optimization",
   "priority": "P2",

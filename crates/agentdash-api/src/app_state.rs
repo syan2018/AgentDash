@@ -20,6 +20,7 @@ use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::ContextContributorRegistry;
 use agentdash_application::hooks::AppExecutionHookProvider;
 pub use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::TaskLifecycleService;
 use agentdash_application::task_lock::TaskLockMap;
@@ -69,6 +70,8 @@ pub struct ServiceSet {
     pub auth_session_service: Arc<AuthSessionService>,
     /// 运行时对账服务 — Story/Task 状态变更时联动 session 取消
     pub runtime_reconciler: Arc<agentdash_application::reconcile::runtime::RuntimeReconciler>,
+    /// Cron 调度器句柄 — 配置变更时调用 `notify_config_changed()` 触发热重载
+    pub cron_scheduler: CronSchedulerHandle,
 }
 
 /// Task 执行运行时状态 — 并发锁与重试控制
@@ -346,6 +349,7 @@ impl AppState {
                 hook_provider,
                 auth_session_service,
                 runtime_reconciler,
+                cron_scheduler: CronSchedulerHandle::new(),
             },
             task_runtime: TaskRuntime {
                 lock_map,
@@ -374,10 +378,12 @@ impl AppState {
                 session_hub: state.services.session_hub.clone(),
             });
             let cron_repos = state.repos.clone();
+            let cron_handle = state.services.cron_scheduler.clone();
             tokio::spawn(async move {
                 agentdash_application::scheduling::cron_scheduler::spawn_cron_scheduler(
                     cron_repos,
                     cron_target,
+                    &cron_handle,
                 )
                 .await;
             });

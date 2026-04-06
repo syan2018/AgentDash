@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use cron::Schedule;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::config::{AgentSchedulingConfig, CronSessionMode};
@@ -22,21 +23,60 @@ pub trait CronTriggerTarget: Send + Sync + 'static {
     ) -> Result<(), String>;
 }
 
+/// Cron 调度器的外部控制句柄。
+///
+/// 当 Agent 的 cron 配置发生变更（新增 / 修改 / 删除 ProjectAgentLink 或 Agent base_config），
+/// 调用 `notify_config_changed()` 即可触发调度器重新加载条目并做 diff merge。
+///
+/// 句柄始终可用——即使调度器因初始无条目而未启动，通知也只是被丢弃（无 listener）。
+#[derive(Clone)]
+pub struct CronSchedulerHandle {
+    notify: Arc<Notify>,
+}
+
+impl CronSchedulerHandle {
+    pub fn new() -> Self {
+        Self {
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    /// 通知调度器 Agent cron 配置已变更，触发异步重新加载。
+    pub fn notify_config_changed(&self) {
+        self.notify.notify_one();
+    }
+}
+
 struct CronEntry {
     project_id: Uuid,
     agent_id: Uuid,
+    /// 原始 cron 表达式，用于 reload 时比对是否变更
+    cron_expr: String,
     schedule: Schedule,
     session_mode: CronSessionMode,
     next_fire: chrono::DateTime<Utc>,
+}
+
+/// 用于 diff merge 的 entry 唯一键
+type EntryKey = (Uuid, Uuid);
+
+fn entry_key(entry: &CronEntry) -> EntryKey {
+    (entry.project_id, entry.agent_id)
 }
 
 /// 启动 cron 调度器后台任务。
 ///
 /// 启动时扫描所有 Agent 配置，找出带 cron_schedule 的条目，
 /// 然后在后台 loop 中按 cron 表达式触发对应 Project Agent session。
+///
+/// 当 `handle` 收到配置变更通知时，调度器会重新加载条目并 diff merge，
+/// 已有且表达式未变的条目保留 `next_fire` 时间，避免重复触发。
+///
+/// 如果初始无条目，调度器不启动（后续新增的条目需重启服务才能生效）。
 pub async fn spawn_cron_scheduler(
     repos: RepositorySet,
     target: Arc<dyn CronTriggerTarget>,
+    handle: &CronSchedulerHandle,
 ) {
     let entries = match load_cron_entries(&repos).await {
         Ok(entries) => entries,
@@ -57,8 +97,9 @@ pub async fn spawn_cron_scheduler(
         entries.len()
     );
 
+    let notify = handle.notify.clone();
     tokio::spawn(async move {
-        run_cron_loop(entries, target).await;
+        run_cron_loop(entries, repos, target, notify).await;
     });
 }
 
@@ -129,6 +170,7 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
             entries.push(CronEntry {
                 project_id: project.id,
                 agent_id: agent.id,
+                cron_expr: cron_expr.to_string(),
                 schedule,
                 session_mode: scheduling.cron_session_mode,
                 next_fire,
@@ -139,13 +181,74 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
     Ok(entries)
 }
 
+/// 将新加载的条目与现有条目做 diff merge：
+/// - cron 表达式未变的条目保留 `next_fire`（避免重复触发）
+/// - cron 表达式变更的条目使用新的 `next_fire`
+/// - 新增的条目直接加入
+/// - 不再存在的条目自动移除
+fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEntry> {
+    let mut existing_map: HashMap<EntryKey, CronEntry> = existing
+        .into_iter()
+        .map(|e| (entry_key(&e), e))
+        .collect();
+
+    let mut result = Vec::with_capacity(fresh.len());
+    let mut kept = 0usize;
+    let mut updated = 0usize;
+    let mut added = 0usize;
+
+    for mut new_entry in fresh {
+        let key = entry_key(&new_entry);
+        if let Some(old) = existing_map.remove(&key) {
+            if old.cron_expr == new_entry.cron_expr && old.session_mode == new_entry.session_mode {
+                new_entry.next_fire = old.next_fire;
+                kept += 1;
+            } else {
+                updated += 1;
+            }
+        } else {
+            added += 1;
+        }
+        result.push(new_entry);
+    }
+
+    let removed = existing_map.len();
+    tracing::info!(
+        kept, updated, added, removed,
+        total = result.len(),
+        "Cron 调度条目 diff merge 完成"
+    );
+
+    result
+}
+
 const TICK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
-async fn run_cron_loop(mut entries: Vec<CronEntry>, target: Arc<dyn CronTriggerTarget>) {
-    loop {
-        tokio::time::sleep(TICK_INTERVAL).await;
-        let now = Utc::now();
+async fn run_cron_loop(
+    mut entries: Vec<CronEntry>,
+    repos: RepositorySet,
+    target: Arc<dyn CronTriggerTarget>,
+    notify: Arc<Notify>,
+) {
+    let mut tick = tokio::time::interval(TICK_INTERVAL);
+    tick.tick().await; // 消费立即触发的第一个 tick
 
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {}
+            _ = notify.notified() => {
+                match load_cron_entries(&repos).await {
+                    Ok(fresh) => {
+                        entries = merge_entries(entries, fresh);
+                    }
+                    Err(err) => {
+                        tracing::warn!("热更新 cron 条目失败，保持现有调度: {err}");
+                    }
+                }
+            }
+        }
+
+        let now = Utc::now();
         for entry in entries.iter_mut() {
             if now < entry.next_fire {
                 continue;

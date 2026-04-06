@@ -132,6 +132,7 @@ pub async fn update_agent(
     if let Some(agent_type) = req.agent_type {
         agent.agent_type = agent_type.trim().to_string();
     }
+    let config_changed = req.base_config.is_some();
     if let Some(config) = req.base_config {
         agent.base_config = config;
     }
@@ -143,6 +144,10 @@ pub async fn update_agent(
         .update(&agent)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if config_changed {
+        state.services.cron_scheduler.notify_config_changed();
+    }
 
     Ok(Json(AgentResponse::from(agent)))
 }

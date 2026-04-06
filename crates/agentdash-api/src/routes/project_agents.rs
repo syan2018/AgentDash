@@ -889,6 +889,8 @@ pub async fn create_project_agent_link(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    state.services.cron_scheduler.notify_config_changed();
+
     Ok(Json(build_link_response(&agent, &link)))
 }
 
@@ -965,6 +967,8 @@ pub async fn update_project_agent_link(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    state.services.cron_scheduler.notify_config_changed();
+
     Ok(Json(build_link_response(&agent, &link)))
 }
 
@@ -990,6 +994,8 @@ pub async fn delete_project_agent_link(
         .delete_by_project_and_agent(project_id, agent_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    state.services.cron_scheduler.notify_config_changed();
 
     Ok(Json(serde_json::json!({ "deleted": true })))
 }

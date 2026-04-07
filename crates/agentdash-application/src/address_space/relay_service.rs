@@ -576,6 +576,16 @@ impl ApplyPatchTarget for ProviderPatchTarget<'_> {
             .map_err(|e| ApplyPatchError::Apply(e.to_string()))
     }
 
+    async fn create_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
+        let patch = build_add_file_patch(path, content);
+        let request = ApplyPatchRequest { patch };
+        match self.provider.apply_patch(self.mount, &request, self.ctx).await {
+            Ok(_) => Ok(()),
+            Err(MountError::NotSupported(_)) => self.write_text(path, content).await,
+            Err(e) => Err(ApplyPatchError::Apply(e.to_string())),
+        }
+    }
+
     async fn delete_text(&self, path: &str) -> Result<(), ApplyPatchError> {
         self.provider
             .delete_text(self.mount, path, self.ctx)
@@ -589,6 +599,26 @@ impl ApplyPatchTarget for ProviderPatchTarget<'_> {
             .await
             .map_err(|e| ApplyPatchError::Apply(e.to_string()))
     }
+}
+
+fn build_add_file_patch(path: &str, content: &str) -> String {
+    let mut patch = String::new();
+    patch.push_str("*** Begin Patch\n");
+    patch.push_str(&format!("*** Add File: {path}\n"));
+
+    let lines: Vec<&str> = if let Some(stripped) = content.strip_suffix('\n') {
+        stripped.split('\n').collect()
+    } else {
+        content.split('\n').collect()
+    };
+    for line in lines {
+        patch.push('+');
+        patch.push_str(line);
+        patch.push('\n');
+    }
+
+    patch.push_str("*** End Patch");
+    patch
 }
 
 struct InlineOverlayPatchTarget<'a> {

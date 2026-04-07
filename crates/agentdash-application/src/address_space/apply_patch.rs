@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use agentdash_spi::MountEditCapabilities;
@@ -100,6 +101,10 @@ pub trait ApplyPatchTarget: Send + Sync {
 
     async fn write_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError>;
 
+    async fn create_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
+        self.write_text(path, content).await
+    }
+
     async fn delete_text(&self, path: &str) -> Result<(), ApplyPatchError>;
 
     async fn rename_text(&self, from_path: &str, to_path: &str) -> Result<(), ApplyPatchError>;
@@ -136,7 +141,12 @@ pub fn apply_patch_to_fs(
                     std::fs::create_dir_all(parent)
                         .map_err(|e| ApplyPatchError::Apply(format!("创建目录失败: {e}")))?;
                 }
-                std::fs::write(&target, contents)
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&target)
+                    .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
+                file.write_all(contents.as_bytes())
                     .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
                 affected.added.push(display_relative(&path));
             }
@@ -298,7 +308,7 @@ pub async fn apply_entries_to_target<T: ApplyPatchTarget>(
                         "目标文件已存在: {path_label}"
                     )));
                 }
-                target.write_text(&path_label, contents).await?;
+                target.create_text(&path_label, contents).await?;
                 affected.added.push(path_label);
             }
             PatchEntry::DeleteFile { path } => {
@@ -457,14 +467,22 @@ fn parse_one_entry(lines: &[&str], line_number: usize) -> Result<(PatchEntry, us
     if let Some(path) = first_line.strip_prefix(ADD_FILE_MARKER) {
         let mut contents = String::new();
         let mut consumed = 1;
+        let mut has_content_line = false;
         for line in &lines[1..] {
             if let Some(content_line) = line.strip_prefix('+') {
+                has_content_line = true;
                 contents.push_str(content_line);
                 contents.push('\n');
                 consumed += 1;
             } else {
                 break;
             }
+        }
+        if !has_content_line {
+            return Err(ParseError::InvalidHunkError {
+                message: format!("Add File entry for path '{path}' has no + lines"),
+                line_number,
+            });
         }
         return Ok((
             PatchEntry::AddFile {
@@ -955,6 +973,13 @@ EOF"#;
             std::fs::read_to_string(temp.path().join("hello.txt")).expect("read file"),
             "hi\n"
         );
+    }
+
+    #[test]
+    fn parse_patch_rejects_add_file_without_plus_lines() {
+        let patch = wrap_patch("*** Add File: empty.txt");
+        let error = parse_patch(&patch).expect_err("add file without + lines should fail");
+        assert!(matches!(error, ParseError::InvalidHunkError { .. }));
     }
 
     #[test]

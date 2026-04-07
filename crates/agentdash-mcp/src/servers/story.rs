@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::error::McpError;
 use crate::services::McpServices;
 use agentdash_domain::context_container::{
-    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+    ContextContainerDefinition, validate_context_containers,
     validate_disabled_container_ids,
 };
 use agentdash_domain::context_source::{
@@ -42,10 +42,6 @@ pub struct UpdateStoryContextParams {
     pub replace_context_containers: Option<Vec<ContextContainerDefinition>>,
     #[schemars(description = "完整替换 disabled_container_ids")]
     pub replace_disabled_container_ids: Option<Vec<String>>,
-    #[schemars(description = "覆盖 mount_policy_override")]
-    pub mount_policy_override: Option<MountDerivationPolicy>,
-    #[schemars(description = "是否清空 mount_policy_override")]
-    pub clear_mount_policy_override: Option<bool>,
     #[schemars(description = "覆盖 session_composition")]
     pub session_composition: Option<SessionComposition>,
     #[schemars(description = "是否清空 session_composition")]
@@ -242,7 +238,6 @@ impl StoryMcpServer {
                 "source_refs": story.context.source_refs,
                 "context_containers": story.context.context_containers,
                 "disabled_container_ids": story.context.disabled_container_ids,
-                "mount_policy_override": story.context.mount_policy_override,
                 "session_composition": story.context.session_composition,
             },
         });
@@ -309,13 +304,6 @@ impl StoryMcpServer {
                 .collect();
         }
 
-        if let Some(mount_policy_override) = params.mount_policy_override {
-            story.context.mount_policy_override = Some(mount_policy_override);
-        }
-
-        if params.clear_mount_policy_override.unwrap_or(false) {
-            story.context.mount_policy_override = None;
-        }
         if let Some(session_composition) = params.session_composition {
             story.context.session_composition = Some(session_composition);
         }

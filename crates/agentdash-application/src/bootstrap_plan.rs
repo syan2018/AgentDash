@@ -153,9 +153,6 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
     let project = &plan.owner.project;
     let story = plan.owner.story.as_ref();
 
-    let effective_mount_policy = story
-        .and_then(|s| s.context.mount_policy_override.clone())
-        .unwrap_or_else(|| project.config.mount_policy.clone());
     let effective_session_composition =
         crate::session_plan::resolve_story_session_composition(story).unwrap_or_default();
 
@@ -184,10 +181,8 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
                 project.config.default_agent_type.clone(),
             ),
             context_containers: project.config.context_containers.clone(),
-            mount_policy: project.config.mount_policy.clone(),
         },
         effective: SessionEffectiveContext {
-            mount_policy: effective_mount_policy,
             session_composition: effective_session_composition,
             tool_visibility: plan.tool_visibility.clone(),
             runtime_policy: plan.runtime_policy.clone(),

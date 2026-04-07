@@ -67,23 +67,6 @@ pub struct ContextContainerDefinition {
     pub exposure: ContextContainerExposure,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct MountDerivationPolicy {
-    #[serde(default = "bool_true")]
-    pub include_local_workspace: bool,
-    #[serde(default)]
-    pub local_workspace_capabilities: Vec<ContextContainerCapability>,
-}
-
-impl Default for MountDerivationPolicy {
-    fn default() -> Self {
-        Self {
-            include_local_workspace: true,
-            local_workspace_capabilities: Vec::new(),
-        }
-    }
-}
-
 pub fn validate_context_containers(
     containers: &[ContextContainerDefinition],
 ) -> Result<(), String> {

@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import type {
   AgentEntity,
   ContextContainerDefinition,
-  MountDerivationPolicy,
   OpenProjectAgentSessionResult,
   ProjectAgentLink,
   ProjectAgentSession,
@@ -58,7 +57,6 @@ interface ProjectState {
     description?: string;
     config?: ProjectConfig;
     context_containers?: ContextContainerDefinition[];
-    mount_policy?: MountDerivationPolicy;
     visibility?: Project["visibility"];
     is_template?: boolean;
   }) => Promise<Project | null>;
@@ -317,7 +315,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         config: config ?? {
           agent_presets: [],
           context_containers: [],
-          mount_policy: { include_local_workspace: true, local_workspace_capabilities: [] },
         },
       });
       set((s) => ({

@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
+use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::{
@@ -23,7 +23,6 @@ pub struct StoryMutationInput {
     pub context_source_refs: Option<Vec<ContextSourceRef>>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
-    pub mount_policy_override: Option<Option<MountDerivationPolicy>>,
     pub session_composition: Option<Option<SessionComposition>>,
 }
 
@@ -87,9 +86,6 @@ pub fn apply_story_mutation(story: &mut Story, input: StoryMutationInput) {
     }
     if let Some(disabled_container_ids) = input.disabled_container_ids {
         story.context.disabled_container_ids = normalize_string_list(disabled_container_ids);
-    }
-    if let Some(mount_policy_override) = input.mount_policy_override {
-        story.context.mount_policy_override = mount_policy_override;
     }
     if let Some(session_composition) = input.session_composition {
         story.context.session_composition = session_composition;

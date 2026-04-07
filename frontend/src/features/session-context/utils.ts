@@ -6,7 +6,6 @@ export function hasStoryContextInfo(story: Story): boolean {
   return (
     ctx.context_containers.length > 0
     || ctx.session_composition != null
-    || ctx.mount_policy_override != null
     || ctx.disabled_container_ids.length > 0
   );
 }

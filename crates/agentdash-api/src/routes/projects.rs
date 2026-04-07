@@ -11,7 +11,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::context_container::{
-    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+    ContextContainerDefinition, validate_context_containers,
 };
 use agentdash_domain::project::{
     Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType, ProjectVisibility,
@@ -32,7 +32,6 @@ pub struct CreateProjectRequest {
     pub is_template: Option<bool>,
     pub cloned_from_project_id: Option<Uuid>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
-    pub mount_policy: Option<MountDerivationPolicy>,
 }
 
 #[derive(Deserialize)]
@@ -44,7 +43,6 @@ pub struct UpdateProjectRequest {
     pub is_template: Option<bool>,
     pub cloned_from_project_id: Option<Uuid>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
-    pub mount_policy: Option<MountDerivationPolicy>,
 }
 
 #[derive(Deserialize)]
@@ -88,7 +86,6 @@ pub async fn create_project(
             is_template: req.is_template,
             cloned_from_project_id: req.cloned_from_project_id,
             context_containers: req.context_containers,
-            mount_policy: req.mount_policy,
             ..ProjectMutationInput::default()
         },
     );
@@ -173,7 +170,6 @@ pub async fn update_project(
             is_template: req.is_template,
             cloned_from_project_id: req.cloned_from_project_id,
             context_containers: req.context_containers,
-            mount_policy: req.mount_policy,
         },
         Some(current_user.user_id.clone()),
     );

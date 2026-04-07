@@ -9,7 +9,6 @@ import type {
   ContextSourceRef,
   ContextContainerDefinition,
   ExecutionAddressSpace,
-  MountDerivationPolicy,
   SessionComposition,
   StorySessionInfo,
   SessionContextSnapshot,
@@ -77,8 +76,6 @@ interface StoryState {
       context_source_refs?: ContextSourceRef[];
       context_containers?: ContextContainerDefinition[];
       disabled_container_ids?: string[];
-      mount_policy_override?: MountDerivationPolicy | null;
-      clear_mount_policy_override?: boolean;
       session_composition?: SessionComposition | null;
       clear_session_composition?: boolean;
     },
@@ -248,7 +245,6 @@ const defaultContext: StoryContext = {
   source_refs: [],
   context_containers: [],
   disabled_container_ids: [],
-  mount_policy_override: null,
   session_composition: null,
 };
 
@@ -323,9 +319,6 @@ const mapStory = (raw: Record<string, unknown>): Story => {
       disabled_container_ids: ctx.disabled_container_ids == null
         ? []
         : ctx.disabled_container_ids as string[],
-      mount_policy_override: ctx.mount_policy_override == null
-        ? null
-        : ctx.mount_policy_override as MountDerivationPolicy,
       session_composition: ctx.session_composition == null
         ? null
         : ctx.session_composition as SessionComposition,

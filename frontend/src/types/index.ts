@@ -178,11 +178,6 @@ export interface ContextContainerDefinition {
   exposure: ContextContainerExposure;
 }
 
-export interface MountDerivationPolicy {
-  include_local_workspace: boolean;
-  local_workspace_capabilities: ContextContainerCapability[];
-}
-
 export interface SessionRequiredContextBlock {
   title: string;
   content: string;
@@ -257,18 +252,15 @@ export interface TaskSessionExecutorSummary {
 export interface SessionProjectDefaults {
   default_agent_type?: string | null;
   context_containers: ContextContainerDefinition[];
-  mount_policy: MountDerivationPolicy;
 }
 
 export interface SessionStoryOverrides {
   context_containers: ContextContainerDefinition[];
   disabled_container_ids: string[];
-  mount_policy_override?: MountDerivationPolicy | null;
   session_composition?: SessionComposition | null;
 }
 
 export interface SessionEffectiveContext {
-  mount_policy: MountDerivationPolicy;
   session_composition: SessionComposition;
   tool_visibility: TaskSessionToolVisibilitySummary;
   runtime_policy: TaskSessionRuntimePolicySummary;
@@ -678,7 +670,6 @@ export interface ProjectConfig {
   default_workspace_id?: string | null;
   agent_presets?: AgentPreset[];
   context_containers: ContextContainerDefinition[];
-  mount_policy: MountDerivationPolicy;
 }
 
 export interface Project {
@@ -838,7 +829,6 @@ export interface StoryContext {
   source_refs: ContextSourceRef[];
   context_containers: ContextContainerDefinition[];
   disabled_container_ids: string[];
-  mount_policy_override?: MountDerivationPolicy | null;
   session_composition?: SessionComposition | null;
 }
 

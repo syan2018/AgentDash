@@ -6,7 +6,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ContextSourceRef,
-  MountDerivationPolicy,
   ProjectConfig,
   SessionComposition,
   Story,
@@ -19,11 +18,9 @@ import { DetailSection } from "../../components/ui/detail-panel";
 import {
   ContextContainersEditor,
   DisabledContainerIdsEditor,
-  MountPolicyEditor,
   SessionCompositionEditor,
 } from "../../components/context-config-editor";
 import {
-  createDefaultMountPolicy,
   createDefaultSessionComposition,
 } from "../../components/context-config-defaults";
 import { AddressSpaceBrowser } from "../address-space";
@@ -61,72 +58,6 @@ function buildManualTextSource(text: string, label: string, index: number): Cont
 }
 
 // ─── Override Editors ──────────────────────────────────
-
-function OptionalMountPolicyOverrideEditor({
-  value,
-  isSaving,
-  onSave,
-  onClear,
-}: {
-  value: MountDerivationPolicy | null;
-  isSaving: boolean;
-  onSave: (next: MountDerivationPolicy) => Promise<unknown>;
-  onClear: () => Promise<unknown>;
-}) {
-  const [isCreating, setIsCreating] = useState(false);
-
-  if (!value && !isCreating) {
-    return (
-      <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          当前没有显式挂载策略覆盖，将直接继承 Project 默认挂载策略。
-        </p>
-        <button
-          type="button"
-          onClick={() => setIsCreating(true)}
-          className="agentdash-button-secondary"
-        >
-          新建挂载策略覆盖
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      <MountPolicyEditor
-        value={value ?? createDefaultMountPolicy()}
-        isSaving={isSaving}
-        onSave={onSave}
-      />
-      <div className="flex items-center gap-2">
-        {value ? (
-          <button
-            type="button"
-            onClick={() => {
-              void onClear().then(() => {
-                setIsCreating(false);
-              });
-            }}
-            disabled={isSaving}
-            className="agentdash-button-secondary"
-          >
-            清空覆盖
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setIsCreating(false)}
-            disabled={isSaving}
-            className="agentdash-button-secondary"
-          >
-            取消
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function OptionalSessionCompositionEditor({
   value,
@@ -401,23 +332,6 @@ export function ContextPanel({
       <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            挂载策略覆盖
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            只有当前 Story 需要偏离 Project 默认挂载规则时，才在这里建立 override。
-          </p>
-        </div>
-        <OptionalMountPolicyOverrideEditor
-          value={ctx.mount_policy_override ?? null}
-          isSaving={isSaving}
-          onSave={(next) => persistStoryContext({ mount_policy_override: next }, "已保存挂载策略覆盖")}
-          onClear={() => persistStoryContext({ clear_mount_policy_override: true }, "已清空挂载策略覆盖")}
-        />
-      </div>
-
-      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             会话编排
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -452,7 +366,6 @@ export function ContextPanel({
         && !hasLegacyContent
         && ctx.context_containers.length === 0
         && ctx.disabled_container_ids.length === 0
-        && !ctx.mount_policy_override
         && !ctx.session_composition && (
         <p className="py-3 text-center text-xs text-muted-foreground/70">
           暂无上下文源

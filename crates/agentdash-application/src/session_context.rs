@@ -1,4 +1,4 @@
-use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
+use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
 use serde::Serialize;
@@ -53,20 +53,17 @@ pub struct SessionExecutorSummary {
 pub struct SessionProjectDefaults {
     pub default_agent_type: Option<String>,
     pub context_containers: Vec<ContextContainerDefinition>,
-    pub mount_policy: MountDerivationPolicy,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionStoryOverrides {
     pub context_containers: Vec<ContextContainerDefinition>,
     pub disabled_container_ids: Vec<String>,
-    pub mount_policy_override: Option<MountDerivationPolicy>,
     pub session_composition: Option<SessionComposition>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionEffectiveContext {
-    pub mount_policy: MountDerivationPolicy,
     pub session_composition: SessionComposition,
     pub tool_visibility: SessionToolVisibilitySummary,
     pub runtime_policy: SessionRuntimePolicySummary,
@@ -121,7 +118,6 @@ pub fn extract_story_overrides(story: &Story) -> SessionStoryOverrides {
     SessionStoryOverrides {
         context_containers: story.context.context_containers.clone(),
         disabled_container_ids: story.context.disabled_container_ids.clone(),
-        mount_policy_override: story.context.mount_policy_override.clone(),
         session_composition: story.context.session_composition.clone(),
     }
 }

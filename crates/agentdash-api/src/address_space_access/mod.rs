@@ -22,7 +22,7 @@ mod tests {
 
     use agentdash_domain::context_container::{
         ContextContainerCapability, ContextContainerDefinition, ContextContainerExposure,
-        ContextContainerFile, ContextContainerProvider, MountDerivationPolicy,
+        ContextContainerFile, ContextContainerProvider,
     };
     use agentdash_domain::workspace::Workspace;
 
@@ -139,13 +139,6 @@ mod tests {
             "backend/spec.md",
             "# spec",
         )];
-        project.config.mount_policy = MountDerivationPolicy {
-            include_local_workspace: true,
-            local_workspace_capabilities: vec![
-                ContextContainerCapability::Read,
-                ContextContainerCapability::List,
-            ],
-        };
 
         let mut story =
             agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
@@ -156,11 +149,17 @@ mod tests {
             "story brief",
         )];
 
+        let mut ws = sample_workspace();
+        ws.mount_capabilities = vec![
+            ContextContainerCapability::Read,
+            ContextContainerCapability::List,
+        ];
+
         let address_space = service
             .build_address_space(
                 &project,
                 Some(&story),
-                Some(&sample_workspace()),
+                Some(&ws),
                 SessionMountTarget::Task,
                 Some("PI_AGENT"),
             )

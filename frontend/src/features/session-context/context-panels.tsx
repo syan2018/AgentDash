@@ -4,7 +4,6 @@ import type {
   ContextContainerDefinition,
   ExecutionAddressSpace,
   HookSessionRuntimeInfo,
-  MountDerivationPolicy,
   SessionComposition,
   SessionContextSnapshot,
   SessionStoryOverrides,
@@ -510,7 +509,6 @@ export function StorySessionContextPanel({
                 emptyText="Story 未追加容器"
               />
               <DisabledContainerCard ids={getOwnerStoryOverrides(contextSnapshot)?.disabled_container_ids ?? []} />
-              <MountPolicyCard title="当前生效挂载策略" policy={contextSnapshot.effective.mount_policy} />
               <SessionCompositionCard title="当前生效会话编排" composition={contextSnapshot.effective.session_composition} />
               <ToolVisibilityCard summary={contextSnapshot.effective.tool_visibility} />
               <RuntimePolicyCard summary={contextSnapshot.effective.runtime_policy} />
@@ -525,9 +523,6 @@ export function StorySessionContextPanel({
                 emptyText="Story 暂无容器"
               />
               <DisabledContainerCard ids={story.context.disabled_container_ids} />
-              {story.context.mount_policy_override && (
-                <MountPolicyCard title="Story 挂载策略覆盖" policy={story.context.mount_policy_override} />
-              )}
               {story.context.session_composition && (
                 <SessionCompositionCard title="Story 会话编排" composition={story.context.session_composition} />
               )}
@@ -627,7 +622,6 @@ export function ProjectSessionContextPanel({
                 containers={snapshot.project_defaults.context_containers}
                 emptyText="Project 未配置容器"
               />
-              <MountPolicyCard title="Project 默认挂载策略" policy={snapshot.project_defaults.mount_policy} />
               <ToolVisibilityCard summary={snapshot.effective.tool_visibility} />
               <RuntimePolicyCard summary={snapshot.effective.runtime_policy} />
               <AddressSpaceCard addressSpace={addressSpace} />
@@ -742,36 +736,6 @@ function DisabledContainerCard({ ids }: { ids: string[] }) {
         {ids.map((id) => (
           <span key={id} className="rounded-[6px] bg-destructive/10 px-2 py-1 text-xs text-destructive">{id}</span>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function MountPolicyCard({
-  title,
-  policy,
-}: {
-  title: string;
-  policy: MountDerivationPolicy;
-}) {
-  return (
-    <div>
-      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">{title}</p>
-      <div className="rounded-[8px] border border-border bg-background/60 px-2.5 py-2 text-xs">
-        <div className="flex items-center gap-2">
-          <span className={policy.include_local_workspace ? "text-emerald-600" : "text-muted-foreground"}>
-            {policy.include_local_workspace ? "✓" : "✗"} 包含本地工作空间
-          </span>
-        </div>
-        {policy.local_workspace_capabilities.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {policy.local_workspace_capabilities.map((cap) => (
-              <span key={cap} className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {CAPABILITY_LABELS[cap] ?? cap}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );

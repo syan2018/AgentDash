@@ -1,6 +1,5 @@
 import type {
   ContextContainerCapability,
-  MountDerivationPolicy,
   SessionComposition,
 } from "../types";
 
@@ -17,13 +16,6 @@ export const CONTEXT_CAPABILITY_OPTIONS: Array<{
 
 export const ALL_CAPABILITIES: ContextContainerCapability[] =
   CONTEXT_CAPABILITY_OPTIONS.map((o) => o.value);
-
-export function createDefaultMountPolicy(): MountDerivationPolicy {
-  return {
-    include_local_workspace: true,
-    local_workspace_capabilities: ["read", "write", "list", "search", "exec"],
-  };
-}
 
 export function createDefaultSessionComposition(): SessionComposition {
   return {

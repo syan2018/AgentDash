@@ -11,7 +11,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::context_container::{
-    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+    ContextContainerDefinition, validate_context_containers,
     validate_disabled_container_ids,
 };
 use agentdash_domain::context_source::ContextSourceRef;
@@ -46,7 +46,6 @@ pub struct CreateStoryRequest {
     pub context_source_refs: Option<Vec<ContextSourceRef>>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
-    pub mount_policy_override: Option<MountDerivationPolicy>,
     pub session_composition: Option<SessionComposition>,
 }
 
@@ -62,8 +61,6 @@ pub struct UpdateStoryRequest {
     pub context_source_refs: Option<Vec<ContextSourceRef>>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
     pub disabled_container_ids: Option<Vec<String>>,
-    pub mount_policy_override: Option<MountDerivationPolicy>,
-    pub clear_mount_policy_override: Option<bool>,
     pub session_composition: Option<SessionComposition>,
     pub clear_session_composition: Option<bool>,
 }
@@ -149,7 +146,6 @@ pub async fn create_story(
             context_source_refs: req.context_source_refs,
             context_containers: req.context_containers,
             disabled_container_ids: req.disabled_container_ids,
-            mount_policy_override: req.mount_policy_override.map(Some),
             session_composition: req.session_composition.map(Some),
             ..StoryMutationInput::default()
         },
@@ -218,11 +214,6 @@ pub async fn update_story(
         }
         None => None,
     };
-    let mount_policy_override = if req.clear_mount_policy_override.unwrap_or(false) {
-        Some(None)
-    } else {
-        req.mount_policy_override.map(Some)
-    };
     let session_composition = if req.clear_session_composition.unwrap_or(false) {
         Some(None)
     } else {
@@ -242,7 +233,6 @@ pub async fn update_story(
             context_source_refs: req.context_source_refs,
             context_containers: req.context_containers,
             disabled_container_ids: req.disabled_container_ids,
-            mount_policy_override,
             session_composition,
         },
     );

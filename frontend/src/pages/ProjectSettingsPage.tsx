@@ -512,7 +512,6 @@ export function ProjectSettingsPage() {
       default_workspace_id: workspaceId,
       agent_presets: project.config.agent_presets ?? [],
       context_containers: contextContainers,
-      mount_policy: project.config.mount_policy,
     });
     if (!result) {
       setError("默认工作空间保存失败");

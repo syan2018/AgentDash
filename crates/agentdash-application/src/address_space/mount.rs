@@ -4,7 +4,6 @@ use super::path::normalize_mount_relative_path;
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 use agentdash_domain::context_container::{
     ContextContainerCapability, ContextContainerDefinition, ContextContainerProvider,
-    MountDerivationPolicy,
 };
 use agentdash_domain::{
     canvas::Canvas,
@@ -63,14 +62,9 @@ pub fn build_derived_address_space(
     target: SessionMountTarget,
 ) -> Result<AddressSpace, String> {
     let mut mounts = Vec::new();
-    let mount_policy = story
-        .and_then(|item| item.context.mount_policy_override.clone())
-        .unwrap_or_else(|| project.config.mount_policy.clone());
 
-    if mount_policy.include_local_workspace
-        && let Some(workspace) = workspace
-    {
-        mounts.push(workspace_mount_from_policy(workspace, &mount_policy)?);
+    if let Some(workspace) = workspace {
+        mounts.push(workspace_mount(workspace)?);
     }
 
     for (container, owner_scope) in effective_context_containers_with_origin(project, story) {
@@ -99,20 +93,14 @@ pub fn build_derived_address_space(
 /// 为 Workspace 创建简易单 mount Address Space
 pub fn build_workspace_address_space(workspace: &Workspace) -> Result<AddressSpace, String> {
     Ok(AddressSpace {
-        mounts: vec![workspace_mount_from_policy(
-            workspace,
-            &MountDerivationPolicy::default(),
-        )?],
+        mounts: vec![workspace_mount(workspace)?],
         default_mount_id: Some("main".to_string()),
         source_project_id: None,
         source_story_id: None,
     })
 }
 
-pub fn workspace_mount_from_policy(
-    workspace: &Workspace,
-    policy: &MountDerivationPolicy,
-) -> Result<Mount, String> {
+pub fn workspace_mount(workspace: &Workspace) -> Result<Mount, String> {
     let binding = selected_workspace_binding(workspace)
         .ok_or_else(|| "Workspace 当前没有可用 binding".to_string())?;
     let backend_id = binding.backend_id.trim();
@@ -123,12 +111,7 @@ pub fn workspace_mount_from_policy(
         return Err("Workspace binding.root_ref 不能为空".to_string());
     }
 
-    // policy.local_workspace_capabilities 非空时覆盖 workspace 默认值
-    let capabilities = if !policy.local_workspace_capabilities.is_empty() {
-        map_container_capabilities(&policy.local_workspace_capabilities)
-    } else {
-        map_container_capabilities(&workspace.mount_capabilities)
-    };
+    let capabilities = map_container_capabilities(&workspace.mount_capabilities);
 
     Ok(Mount {
         id: "main".to_string(),
@@ -147,15 +130,16 @@ pub fn workspace_mount_from_policy(
 }
 
 pub fn selected_workspace_binding(workspace: &Workspace) -> Option<&WorkspaceBinding> {
-    if let Some(default_binding_id) = workspace.default_binding_id
-        && let Some(binding) = workspace
+    if let Some(default_binding_id) = workspace.default_binding_id {
+        return workspace
             .bindings
             .iter()
-            .find(|binding| binding.id == default_binding_id)
-    {
-        return Some(binding);
+            .find(|binding| binding.id == default_binding_id);
     }
-    workspace.bindings.first()
+    if workspace.bindings.len() == 1 {
+        return workspace.bindings.first();
+    }
+    None
 }
 
 pub fn effective_context_containers(

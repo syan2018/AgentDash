@@ -17,21 +17,6 @@ impl PostgresWorkflowRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        recreate_if_column_exists(&self.pool, "workflow_definitions", "phases").await?;
-        recreate_if_column_exists(&self.pool, "workflow_assignments", "workflow_id").await?;
-        recreate_if_column_exists(&self.pool, "workflow_runs", "current_phase_key").await?;
-        recreate_if_column_exists(&self.pool, "lifecycle_runs", "workflow_id").await?;
-        recreate_if_column_exists(&self.pool, "workflow_definitions", "record_policy").await?;
-        recreate_if_column_exists(&self.pool, "workflow_definitions", "recommended_role").await?;
-        recreate_if_column_exists(&self.pool, "workflow_definitions", "target_kind").await?;
-        recreate_if_column_exists(&self.pool, "workflow_definitions", "recommended_roles").await?;
-        recreate_if_column_exists(&self.pool, "lifecycle_definitions", "recommended_role").await?;
-        recreate_if_column_exists(&self.pool, "lifecycle_definitions", "target_kind").await?;
-        recreate_if_column_exists(&self.pool, "lifecycle_definitions", "recommended_roles").await?;
-        recreate_if_column_exists(&self.pool, "lifecycle_runs", "runtime_attachments").await?;
-        recreate_if_column_exists(&self.pool, "lifecycle_runs", "target_kind").await?;
-        recreate_if_column_exists(&self.pool, "lifecycle_runs", "target_id").await?;
-
         sqlx::query(r#"CREATE TABLE IF NOT EXISTS workflow_definitions (
             id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '', binding_kind TEXT NOT NULL, recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
@@ -75,14 +60,6 @@ impl PostgresWorkflowRepository {
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_lifecycle_runs_project_id ON lifecycle_runs(project_id)")
             .execute(&self.pool).await.map_err(db_err)?;
-
-        add_column_if_missing(
-            &self.pool,
-            "lifecycle_runs",
-            "execution_log",
-            "TEXT NOT NULL DEFAULT '[]'",
-        )
-        .await?;
 
         Ok(())
     }
@@ -365,51 +342,6 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
-}
-
-async fn recreate_if_column_exists(
-    pool: &PgPool,
-    table: &str,
-    column: &str,
-) -> Result<(), DomainError> {
-    let has_column = sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = '{table}' AND column_name = '{column}'"
-    ))
-    .fetch_one(pool)
-    .await
-    .map_err(db_err)?;
-    if has_column > 0 {
-        sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
-            .execute(pool)
-            .await
-            .map_err(db_err)?;
-    }
-    Ok(())
-}
-
-async fn add_column_if_missing(
-    pool: &PgPool,
-    table: &str,
-    column: &str,
-    column_def: &str,
-) -> Result<(), DomainError> {
-    let has_column = sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = '{table}' AND column_name = '{column}'"
-    ))
-    .fetch_one(pool)
-    .await
-    .map_err(db_err)?;
-    if has_column == 0 {
-        sqlx::query(&format!(
-            "ALTER TABLE {table} ADD COLUMN {column} {column_def}"
-        ))
-        .execute(pool)
-        .await
-        .map_err(db_err)?;
-    }
-    Ok(())
 }
 
 fn ensure_rows_affected(

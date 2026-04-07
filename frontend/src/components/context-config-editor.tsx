@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   ContextContainerCapability,
   ContextContainerDefinition,
-  MountDerivationPolicy,
   SessionComposition,
   SessionRequiredContextBlock,
 } from "../types";
@@ -47,13 +46,6 @@ function cloneContainer(
       include_in_story_sessions: container.exposure.include_in_story_sessions ?? true,
       allowed_agent_types: [...container.exposure.allowed_agent_types],
     },
-  };
-}
-
-function cloneMountPolicy(policy: MountDerivationPolicy): MountDerivationPolicy {
-  return {
-    include_local_workspace: policy.include_local_workspace,
-    local_workspace_capabilities: [...policy.local_workspace_capabilities],
   };
 }
 
@@ -738,113 +730,6 @@ function DisabledContainerIdsEditorForm({
           <button
             type="button"
             onClick={() => setDraft([...value])}
-            disabled={isSaving}
-            className="agentdash-button-secondary"
-          >
-            还原
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export interface MountPolicyEditorProps {
-  value: MountDerivationPolicy;
-  isSaving?: boolean;
-  onSave: (next: MountDerivationPolicy) => Promise<unknown>;
-}
-
-export function MountPolicyEditor({
-  value,
-  isSaving = false,
-  onSave,
-}: MountPolicyEditorProps) {
-  return (
-    <MountPolicyEditorForm
-      key={JSON.stringify(value)}
-      value={value}
-      isSaving={isSaving}
-      onSave={onSave}
-    />
-  );
-}
-
-function MountPolicyEditorForm({
-  value,
-  isSaving = false,
-  onSave,
-}: MountPolicyEditorProps) {
-  const [draft, setDraft] = useState<MountDerivationPolicy>(() => cloneMountPolicy(value));
-
-  const isDirty = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(value),
-    [draft, value],
-  );
-
-  return (
-    <div className="space-y-3 rounded-[12px] border border-border bg-background/70 p-3">
-      <label className="flex items-center gap-2 text-sm text-foreground">
-        <input
-          type="checkbox"
-          checked={draft.include_local_workspace}
-          onChange={(event) =>
-            setDraft((current) => ({
-              ...current,
-              include_local_workspace: event.target.checked,
-            }))
-          }
-          disabled={isSaving}
-          className="h-4 w-4 rounded border-border"
-        />
-        包含本地工作空间
-      </label>
-
-      <div className="space-y-2">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-          Local Workspace Capabilities
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {CONTEXT_CAPABILITY_OPTIONS.map((option) => (
-            <label
-              key={option.value}
-              className="inline-flex items-center gap-2 rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
-            >
-              <input
-                type="checkbox"
-                checked={draft.local_workspace_capabilities.includes(option.value)}
-                disabled={isSaving}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    local_workspace_capabilities: updateCapabilityList(
-                      current.local_workspace_capabilities,
-                      option.value,
-                      event.target.checked,
-                    ),
-                  }))
-                }
-                className="h-4 w-4 rounded border-border"
-              />
-              {option.label}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {isDirty && (
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void onSave(cloneMountPolicy(draft))}
-            disabled={isSaving}
-            className="agentdash-button-primary"
-          >
-            {saveLabel(isSaving, "保存挂载策略")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setDraft(cloneMountPolicy(value))}
             disabled={isSaving}
             className="agentdash-button-secondary"
           >

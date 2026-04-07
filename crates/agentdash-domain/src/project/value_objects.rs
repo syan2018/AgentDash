@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::context_container::{ContextContainerDefinition, MountDerivationPolicy};
+use crate::context_container::ContextContainerDefinition;
 
 /// 项目级配置
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -16,9 +16,6 @@ pub struct ProjectConfig {
     /// 项目级上下文容器定义
     #[serde(default)]
     pub context_containers: Vec<ContextContainerDefinition>,
-    /// 项目级挂载派生策略
-    #[serde(default)]
-    pub mount_policy: MountDerivationPolicy,
     /// 自主调度相关配置（stall 检测、turn 限制、定时唤醒等）
     #[serde(default)]
     pub scheduling: SchedulingConfig,

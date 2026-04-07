@@ -1,7 +1,7 @@
 use agentdash_domain::project::ProjectRepository;
 use uuid::Uuid;
 
-use agentdash_domain::context_container::{ContextContainerDefinition, MountDerivationPolicy};
+use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::project::{Project, ProjectConfig, ProjectVisibility};
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
@@ -17,7 +17,6 @@ pub struct ProjectMutationInput {
     pub is_template: Option<bool>,
     pub cloned_from_project_id: Option<Uuid>,
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
-    pub mount_policy: Option<MountDerivationPolicy>,
 }
 
 pub fn build_project(
@@ -56,9 +55,6 @@ pub fn apply_project_mutation(
     }
     if let Some(context_containers) = input.context_containers {
         project.config.context_containers = context_containers;
-    }
-    if let Some(mount_policy) = input.mount_policy {
-        project.config.mount_policy = mount_policy;
     }
     if let Some(updated_by_user_id) = updated_by_user_id {
         project.touch_updated_by(updated_by_user_id);

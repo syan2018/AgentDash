@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::error::McpError;
 use crate::services::McpServices;
 use agentdash_domain::context_container::{
-    ContextContainerDefinition, MountDerivationPolicy, validate_context_containers,
+    ContextContainerDefinition, validate_context_containers,
 };
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
@@ -73,8 +73,6 @@ pub struct UpdateProjectContextConfigParams {
     pub project_id: String,
     #[schemars(description = "完整替换项目级 context_containers")]
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
-    #[schemars(description = "覆盖项目级 mount_policy")]
-    pub mount_policy: Option<MountDerivationPolicy>,
 }
 
 // ─── Server 定义 ──────────────────────────────────────────────
@@ -368,10 +366,6 @@ impl RelayMcpServer {
         if let Some(context_containers) = params.context_containers {
             project.config.context_containers = context_containers;
         }
-
-        if let Some(mount_policy) = params.mount_policy {
-            project.config.mount_policy = mount_policy;
-        }
         validate_context_containers(&project.config.context_containers)
             .map_err(|error| McpError::invalid_param("context_containers", error))?;
 
@@ -385,7 +379,6 @@ impl RelayMcpServer {
         let result = serde_json::json!({
             "project_id": project.id.to_string(),
             "context_container_count": project.config.context_containers.len(),
-            "mount_policy": project.config.mount_policy,
         });
 
         Ok(CallToolResult::success(vec![Content::text(

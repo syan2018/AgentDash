@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_application::session_context::SessionContextSnapshot;
 use agentdash_application::task::context_builder::build_task_session_context;
 use agentdash_application::task::execution::{
-    ContinueTaskCommand, StartTaskCommand, TaskExecutionError,
+    ExecutionPhase, TaskExecutionCommand, TaskExecutionError,
 };
 use agentdash_domain::task::TaskStatus;
 use axum::{
@@ -91,9 +91,10 @@ pub async fn start_task(
     let result = state
         .services
         .task_lifecycle_service
-        .start_task(StartTaskCommand {
+        .start_task(TaskExecutionCommand {
             task_id,
-            override_prompt: req.override_prompt,
+            phase: ExecutionPhase::Start,
+            prompt: req.override_prompt,
             executor_config: req.executor_config,
             identity: Some(current_user),
         })
@@ -127,9 +128,10 @@ pub async fn continue_task(
     let result = state
         .services
         .task_lifecycle_service
-        .continue_task(ContinueTaskCommand {
+        .continue_task(TaskExecutionCommand {
             task_id,
-            additional_prompt: req.additional_prompt,
+            phase: ExecutionPhase::Continue,
+            prompt: req.additional_prompt,
             executor_config: req.executor_config,
             identity: Some(current_user),
         })

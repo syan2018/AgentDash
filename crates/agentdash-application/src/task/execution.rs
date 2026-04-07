@@ -23,33 +23,17 @@ pub enum ExecutionPhase {
 }
 
 #[derive(Debug, Clone)]
-pub struct StartTaskCommand {
+pub struct TaskExecutionCommand {
     pub task_id: Uuid,
-    pub override_prompt: Option<String>,
+    pub phase: ExecutionPhase,
+    /// Start 时为 override_prompt，Continue 时为 additional_prompt
+    pub prompt: Option<String>,
     pub executor_config: Option<AgentConfig>,
     pub identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ContinueTaskCommand {
-    pub task_id: Uuid,
-    pub additional_prompt: Option<String>,
-    pub executor_config: Option<AgentConfig>,
-    pub identity: Option<agentdash_spi::auth::AuthIdentity>,
-}
-
-#[derive(Debug, Clone)]
-pub struct StartTaskResult {
-    pub task_id: Uuid,
-    pub session_id: String,
-    pub executor_session_id: Option<String>,
-    pub turn_id: String,
-    pub status: TaskStatus,
-    pub context_sources: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ContinueTaskResult {
+pub struct TaskExecutionResult {
     pub task_id: Uuid,
     pub session_id: String,
     pub executor_session_id: Option<String>,

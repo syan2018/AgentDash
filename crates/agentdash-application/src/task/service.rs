@@ -65,8 +65,9 @@ pub struct TaskLifecycleService {
 impl TaskLifecycleService {
     pub async fn start_task(
         &self,
-        cmd: StartTaskCommand,
-    ) -> Result<StartTaskResult, TaskExecutionError> {
+        cmd: TaskExecutionCommand,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        debug_assert_eq!(cmd.phase, ExecutionPhase::Start);
         let svc = &self;
         svc.lock_map
             .with_lock(cmd.task_id, || async { svc.start_task_inner(cmd).await })
@@ -75,8 +76,9 @@ impl TaskLifecycleService {
 
     pub async fn continue_task(
         &self,
-        cmd: ContinueTaskCommand,
-    ) -> Result<ContinueTaskResult, TaskExecutionError> {
+        cmd: TaskExecutionCommand,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        debug_assert_eq!(cmd.phase, ExecutionPhase::Continue);
         let svc = &self;
         svc.lock_map
             .with_lock(cmd.task_id, || async { svc.continue_task_inner(cmd).await })
@@ -138,8 +140,8 @@ impl TaskLifecycleService {
 
     async fn start_task_inner(
         &self,
-        cmd: StartTaskCommand,
-    ) -> Result<StartTaskResult, TaskExecutionError> {
+        cmd: TaskExecutionCommand,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
         let mut task = gw_get_task(&self.repos, cmd.task_id).await?;
 
         if task.session_id.is_some() {
@@ -210,7 +212,7 @@ impl TaskLifecycleService {
             .dispatch_prepared_turn(
                 &task,
                 ExecutionPhase::Start,
-                cmd.override_prompt.as_deref(),
+                cmd.prompt.as_deref(),
                 None,
                 cmd.executor_config.as_ref(),
                 cmd.identity,
@@ -255,7 +257,7 @@ impl TaskLifecycleService {
         )
         .await;
 
-        Ok(StartTaskResult {
+        Ok(TaskExecutionResult {
             task_id: task.id,
             session_id,
             executor_session_id: task.executor_session_id.clone(),
@@ -267,8 +269,8 @@ impl TaskLifecycleService {
 
     async fn continue_task_inner(
         &self,
-        cmd: ContinueTaskCommand,
-    ) -> Result<ContinueTaskResult, TaskExecutionError> {
+        cmd: TaskExecutionCommand,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
         let mut task = gw_get_task(&self.repos, cmd.task_id).await?;
         let session_id = task.session_id.clone().ok_or_else(|| {
             TaskExecutionError::UnprocessableEntity("Task 尚未启动，请先执行 start".into())
@@ -286,7 +288,7 @@ impl TaskLifecycleService {
                 &task,
                 ExecutionPhase::Continue,
                 None,
-                cmd.additional_prompt.as_deref(),
+                cmd.prompt.as_deref(),
                 cmd.executor_config.as_ref(),
                 cmd.identity,
             )
@@ -332,7 +334,7 @@ impl TaskLifecycleService {
         )
         .await;
 
-        Ok(ContinueTaskResult {
+        Ok(TaskExecutionResult {
             task_id: task.id,
             session_id,
             executor_session_id: task.executor_session_id.clone(),

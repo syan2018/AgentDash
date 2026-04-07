@@ -69,8 +69,23 @@ pub fn resolve_mount_id(
     address_space
         .default_mount_id
         .clone()
-        .or_else(|| address_space.mounts.first().map(|mount| mount.id.clone()))
-        .ok_or_else(|| "当前会话没有可用 mount".to_string())
+        .or_else(|| {
+            if address_space.mounts.len() == 1 {
+                address_space.mounts.first().map(|mount| mount.id.clone())
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            if address_space.mounts.is_empty() {
+                "当前会话没有可用 mount".to_string()
+            } else {
+                format!(
+                    "address space 存在 {} 个 mount 但未设置 default_mount_id，需显式指定",
+                    address_space.mounts.len()
+                )
+            }
+        })
 }
 
 pub fn capability_name(capability: &MountCapability) -> &'static str {

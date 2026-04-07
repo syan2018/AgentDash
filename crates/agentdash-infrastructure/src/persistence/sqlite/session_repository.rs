@@ -62,30 +62,6 @@ impl SqliteSessionRepository {
         .await
         .map_err(sqlx_to_io)?;
 
-        let alter_result = sqlx::query(
-            "ALTER TABLE sessions ADD COLUMN visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]'",
-        )
-        .execute(&self.pool)
-        .await;
-        if let Err(error) = alter_result {
-            let message = error.to_string().to_ascii_lowercase();
-            if !message.contains("duplicate column name") {
-                return Err(sqlx_to_io(error));
-            }
-        }
-
-        let alter_bootstrap_result = sqlx::query(
-            "ALTER TABLE sessions ADD COLUMN bootstrap_state TEXT NOT NULL DEFAULT 'plain'",
-        )
-        .execute(&self.pool)
-        .await;
-        if let Err(error) = alter_bootstrap_result {
-            let message = error.to_string().to_ascii_lowercase();
-            if !message.contains("duplicate column name") {
-                return Err(sqlx_to_io(error));
-            }
-        }
-
         Ok(())
     }
 

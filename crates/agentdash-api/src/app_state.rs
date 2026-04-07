@@ -153,10 +153,6 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("llm_providers 表初始化失败: {e}"))?;
-        llm_provider_repo
-            .migrate_from_settings(settings_repo.as_ref())
-            .await
-            .map_err(|e| anyhow::anyhow!("llm_providers 迁移失败: {e}"))?;
 
         let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
         let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));

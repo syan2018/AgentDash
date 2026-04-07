@@ -1,4 +1,6 @@
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
+#[cfg(test)]
+use sqlx::Row;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::{
@@ -42,48 +44,11 @@ impl PostgresStoryRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        self.ensure_story_column("default_workspace_id", "TEXT")
-            .await?;
-
         initialize_state_changes_schema(&self.pool).await?;
 
         Ok(())
     }
 
-    async fn ensure_story_column(
-        &self,
-        column_name: &str,
-        column_definition: &str,
-    ) -> Result<(), DomainError> {
-        let rows = sqlx::query(
-            "SELECT column_name AS name
-             FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = 'stories'",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        let column_names = rows
-            .iter()
-            .map(|row| {
-                row.try_get::<String, _>("name")
-                    .map_err(|e| DomainError::InvalidConfig(e.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let column_exists = column_names.iter().any(|name| name == column_name);
-
-        if !column_exists {
-            sqlx::query(&format!(
-                "ALTER TABLE stories ADD COLUMN {column_name} {column_definition}"
-            ))
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        }
-
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]

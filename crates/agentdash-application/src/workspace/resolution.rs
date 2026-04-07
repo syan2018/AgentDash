@@ -72,11 +72,9 @@ pub async fn resolve_workspace_binding(
         WorkspaceResolutionPolicy::PreferDefaultBinding => {
             select_default_binding(workspace, &online_candidates)
                 .or_else(|| select_first_online(&online_candidates))
-                .or_else(|| online_candidates.first().map(|(binding, _)| *binding))
         }
         WorkspaceResolutionPolicy::PreferOnline => select_first_online(&online_candidates)
-            .or_else(|| select_default_binding(workspace, &online_candidates))
-            .or_else(|| online_candidates.first().map(|(binding, _)| *binding)),
+            .or_else(|| select_default_binding(workspace, &online_candidates)),
     };
 
     let Some(binding) = selected else {

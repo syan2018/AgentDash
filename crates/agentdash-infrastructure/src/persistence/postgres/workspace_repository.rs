@@ -366,12 +366,10 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
 
     let mount_capabilities_raw = row
         .try_get::<String, _>("mount_capabilities")
-        .unwrap_or_else(|_| "[]".to_string());
-    let mut mount_capabilities: Vec<agentdash_domain::context_container::ContextContainerCapability> =
-        serde_json::from_str(&mount_capabilities_raw).unwrap_or_default();
-    if mount_capabilities.is_empty() {
-        mount_capabilities = agentdash_domain::workspace::Workspace::default_mount_capabilities();
-    }
+        .map_err(|e| DomainError::InvalidConfig(format!("workspaces.mount_capabilities: {e}")))?;
+    let mount_capabilities: Vec<agentdash_domain::context_container::ContextContainerCapability> =
+        serde_json::from_str(&mount_capabilities_raw)
+            .map_err(|e| DomainError::InvalidConfig(format!("workspaces.mount_capabilities JSON: {e}")))?;
 
     Ok(Workspace {
         id,

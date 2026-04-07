@@ -336,15 +336,22 @@ function formatDatabaseMode(value) {
 }
 
 async function runStep0Cleanup() {
-  console.log('[0/4] 启动前预清理...');
+  console.log('[0/4] 启动前环境检测...');
 
-  // 优先清理 embedded PostgreSQL 残留进程，防止数据目录锁死导致启动卡死
   if (!config.skipServer) {
-    await killEmbeddedPostgres();
+    const pgConflict = await detectEmbeddedPostgres();
+    if (pgConflict) {
+      console.log('  [warn] 检测到残留 embedded PostgreSQL，正在终止以释放数据目录锁...');
+      await killEmbeddedPostgres();
+    }
   }
 
   if (!config.skipLocal) {
-    await killProcessByName('agentdash-local');
+    const localConflict = await detectProcessByName('agentdash-local');
+    if (localConflict) {
+      console.log('  [warn] 检测到残留 agentdash-local 进程，正在终止以避免重复注册...');
+      await killProcessByName('agentdash-local');
+    }
   } else {
     console.log('  [skip] 保留现有 agentdash-local（--skip-local）');
   }
@@ -360,15 +367,78 @@ async function runStep0Cleanup() {
   const uniquePorts = [...new Set(ports)];
 
   if (uniquePorts.length === 0) {
-    console.log('  [skip] 当前模式无需端口清理');
+    console.log('  [skip] 当前模式无需端口检测');
     return;
   }
 
-  console.log(`  [run] 清理端口: ${uniquePorts.join(', ')}`);
-  await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js'), ...uniquePorts.map(String)], {
-    cwd: root,
-    label: 'kill-ports'
-  });
+  const occupiedPorts = await detectOccupiedPorts(uniquePorts);
+  if (occupiedPorts.length > 0) {
+    console.log(`  [warn] 端口被占用: ${occupiedPorts.join(', ')}，正在释放...`);
+    await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js'), ...occupiedPorts.map(String)], {
+      cwd: root,
+      label: 'kill-ports'
+    });
+  } else {
+    console.log(`  [ok] 所需端口均可用: ${uniquePorts.join(', ')}`);
+  }
+}
+
+async function detectProcessByName(name) {
+  try {
+    if (isWindows) {
+      const { execSync } = require('child_process');
+      const out = execSync(
+        `powershell -NoProfile -Command "(Get-Process -Name '${name}' -ErrorAction SilentlyContinue).Count"`,
+        { encoding: 'utf8', timeout: 5000 }
+      ).trim();
+      return parseInt(out, 10) > 0;
+    }
+    const { execSync } = require('child_process');
+    execSync(`pgrep -f ${name}`, { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function detectEmbeddedPostgres() {
+  try {
+    if (isWindows) {
+      const { execSync } = require('child_process');
+      const out = execSync(
+        "powershell -NoProfile -Command \"(Get-Process -Name 'postgres' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\\.theseus\\*' }).Count\"",
+        { encoding: 'utf8', timeout: 5000 }
+      ).trim();
+      return parseInt(out, 10) > 0;
+    }
+    const { execSync } = require('child_process');
+    execSync('pgrep -f ".theseus.*postgres"', { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function detectOccupiedPorts(ports) {
+  const occupied = [];
+  const { execSync } = require('child_process');
+  for (const port of ports) {
+    try {
+      if (isWindows) {
+        const out = execSync(
+          `powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).Count"`,
+          { encoding: 'utf8', timeout: 5000 }
+        ).trim();
+        if (parseInt(out, 10) > 0) occupied.push(port);
+      } else {
+        execSync(`lsof -ti:${port}`, { timeout: 5000 });
+        occupied.push(port);
+      }
+    } catch {
+      // port is free
+    }
+  }
+  return occupied;
 }
 
 async function killProcessByName(name) {

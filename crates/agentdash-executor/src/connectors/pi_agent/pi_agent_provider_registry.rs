@@ -239,20 +239,33 @@ fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProvid
     };
 
     let default_model = if db_provider.default_model.is_empty() {
-        default_model_for_protocol(db_provider.protocol)
+        let fallback = default_model_for_protocol(db_provider.protocol);
+        tracing::warn!(
+            "PiAgentConnector: provider={} 未配置 default_model，使用协议默认值 {}",
+            db_provider.slug,
+            fallback,
+        );
+        fallback
     } else {
         db_provider.default_model.clone()
     };
 
     let openai_wire_api = if matches!(db_provider.protocol, WireProtocol::OpenaiCompatible) {
-        Some(resolve_openai_wire_api(
-            if db_provider.wire_api.is_empty() {
-                None
-            } else {
-                Some(db_provider.wire_api.as_str())
-            },
-            base_url.as_deref(),
-        ))
+        let wire_api_setting = if db_provider.wire_api.is_empty() {
+            None
+        } else {
+            Some(db_provider.wire_api.as_str())
+        };
+        match resolve_openai_wire_api(wire_api_setting, base_url.as_deref()) {
+            Ok(api) => Some(api),
+            Err(err) => {
+                tracing::error!(
+                    "PiAgentConnector: provider={} wire_api 配置错误: {err}",
+                    db_provider.slug
+                );
+                return None;
+            }
+        }
     } else {
         None
     };
@@ -265,11 +278,28 @@ fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProvid
     );
     let default_bridge = bridge_factory(&default_model);
 
-    let configured_models = parse_model_list(&db_provider.models).unwrap_or_default();
-    let blocked_models: HashSet<String> = parse_string_list(&db_provider.blocked_models)
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let configured_models = match parse_model_list(&db_provider.models) {
+        Some(models) => models,
+        None => {
+            tracing::error!(
+                "PiAgentConnector: provider={} models 字段解析失败: {:?}",
+                db_provider.slug,
+                db_provider.models
+            );
+            return None;
+        }
+    };
+    let blocked_models: HashSet<String> = match parse_string_list(&db_provider.blocked_models) {
+        Some(list) => list.into_iter().collect(),
+        None => {
+            tracing::error!(
+                "PiAgentConnector: provider={} blocked_models 字段解析失败: {:?}",
+                db_provider.slug,
+                db_provider.blocked_models
+            );
+            return None;
+        }
+    };
 
     let discovery_url = if db_provider.discovery_url.is_empty() {
         None
@@ -387,24 +417,20 @@ fn build_model_lister_by_protocol(
 fn resolve_openai_wire_api(
     configured_value: Option<&str>,
     base_url: Option<&str>,
-) -> OpenAiWireApi {
+) -> Result<OpenAiWireApi, String> {
     if let Some(value) = configured_value {
-        if let Some(parsed) = OpenAiWireApi::from_setting(value) {
-            return parsed;
-        }
-        tracing::warn!(
-            value = value,
-            "PiAgentConnector: 无法识别 llm.openai.wire_api，已回退到默认策略"
-        );
+        return OpenAiWireApi::from_setting(value).ok_or_else(|| {
+            format!(
+                "无法识别 wire_api 设置 '{value}'，合法值: responses | completions"
+            )
+        });
     }
 
-    if is_official_openai_base_url(base_url) {
+    Ok(if is_official_openai_base_url(base_url) {
         OpenAiWireApi::Responses
     } else {
-        // 对大多数自定义 OpenAI-compatible 端点，Chat Completions 的 tool delta
-        // 流更成熟，优先选择它以获得更早的工具参数草稿事件。
         OpenAiWireApi::Completions
-    }
+    })
 }
 
 fn is_official_openai_base_url(base_url: Option<&str>) -> bool {
@@ -659,11 +685,11 @@ mod tests {
     #[test]
     fn official_openai_base_url_defaults_to_responses() {
         assert_eq!(
-            resolve_openai_wire_api(None, Some("https://api.openai.com/v1")),
+            resolve_openai_wire_api(None, Some("https://api.openai.com/v1")).unwrap(),
             OpenAiWireApi::Responses
         );
         assert_eq!(
-            resolve_openai_wire_api(None, None),
+            resolve_openai_wire_api(None, None).unwrap(),
             OpenAiWireApi::Responses
         );
     }
@@ -671,7 +697,7 @@ mod tests {
     #[test]
     fn custom_openai_compatible_base_url_defaults_to_completions() {
         assert_eq!(
-            resolve_openai_wire_api(None, Some("https://right.codes/codex/v1")),
+            resolve_openai_wire_api(None, Some("https://right.codes/codex/v1")).unwrap(),
             OpenAiWireApi::Completions
         );
     }
@@ -679,12 +705,19 @@ mod tests {
     #[test]
     fn explicit_wire_api_setting_wins_over_base_url_default() {
         assert_eq!(
-            resolve_openai_wire_api(Some("responses"), Some("https://right.codes/codex/v1")),
+            resolve_openai_wire_api(Some("responses"), Some("https://right.codes/codex/v1")).unwrap(),
             OpenAiWireApi::Responses
         );
         assert_eq!(
-            resolve_openai_wire_api(Some("completions"), Some("https://api.openai.com/v1")),
+            resolve_openai_wire_api(Some("completions"), Some("https://api.openai.com/v1")).unwrap(),
             OpenAiWireApi::Completions
         );
+    }
+
+    #[test]
+    fn unrecognized_wire_api_value_returns_error() {
+        let result = resolve_openai_wire_api(Some("invalid_value"), None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("合法值"));
     }
 }

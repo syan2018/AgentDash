@@ -1802,7 +1802,15 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestLlmProviderRepository;
+    struct TestLlmProviderRepository {
+        providers: RwLock<Vec<agentdash_domain::llm_provider::LlmProvider>>,
+    }
+
+    impl TestLlmProviderRepository {
+        fn set_providers(&self, providers: Vec<agentdash_domain::llm_provider::LlmProvider>) {
+            *self.providers.write().expect("test provider lock") = providers;
+        }
+    }
 
     #[async_trait::async_trait]
     impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRepository {
@@ -1821,12 +1829,16 @@ mod tests {
         async fn list_all(
             &self,
         ) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
-            Ok(vec![])
+            Ok(self.providers.read().expect("test provider lock").clone())
         }
         async fn list_enabled(
             &self,
         ) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
-            Ok(vec![])
+            Ok(self.providers.read().expect("test provider lock")
+                .iter()
+                .filter(|p| p.enabled)
+                .cloned()
+                .collect())
         }
         async fn update(
             &self,
@@ -2136,7 +2148,7 @@ mod tests {
                         .and_then(|event| event.data.as_ref())
                         .and_then(|data| data.get("draftInput"))
                         .and_then(|value| value.as_str()),
-                    Some("{\"path\":\"notes.txt\",\"content\":\"hello")
+                    Some("{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello")
                 );
                 assert_eq!(
                     agentdash
@@ -2585,16 +2597,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovery_reflects_settings_added_after_startup_without_restart() {
-        let repo = Arc::new(TestSettingsRepository::default());
+    async fn discovery_reflects_provider_added_to_db_without_restart() {
+        use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+        let settings_repo = Arc::new(TestSettingsRepository::default());
+        let llm_repo = Arc::new(TestLlmProviderRepository::default());
+
         let mut connector = build_pi_agent_connector(
             Path::new("/tmp/test-workspace"),
-            repo.as_ref(),
-            &TestLlmProviderRepository,
+            settings_repo.as_ref(),
+            llm_repo.as_ref(),
         )
         .await
         .expect("connector should initialize even without provider");
-        connector.set_settings_repository(repo.clone());
+        connector.set_llm_provider_repository(llm_repo.clone());
 
         let initial = discover_options_state(&connector).await;
         assert_eq!(
@@ -2606,13 +2622,10 @@ mod tests {
             serde_json::Value::Null
         );
 
-        repo.set(
-            &SettingScope::system(),
-            "llm.anthropic.api_key",
-            serde_json::json!("test-key"),
-        )
-        .await
-        .expect("should store anthropic key");
+        let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+        provider.api_key = "test-key".to_string();
+        provider.default_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET.to_string();
+        llm_repo.set_providers(vec![provider]);
 
         let refreshed = discover_options_state(&connector).await;
         assert_eq!(
@@ -2626,24 +2639,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovery_does_not_fall_back_to_startup_provider_after_settings_cleared() {
-        let repo = Arc::new(TestSettingsRepository::default());
-        repo.set(
-            &SettingScope::system(),
-            "llm.anthropic.api_key",
-            serde_json::json!("test-key"),
-        )
-        .await
-        .expect("should store anthropic key");
+    async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
+        use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+        let settings_repo = Arc::new(TestSettingsRepository::default());
+        let llm_repo = Arc::new(TestLlmProviderRepository::default());
+
+        let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+        provider.api_key = "test-key".to_string();
+        provider.default_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET.to_string();
+        llm_repo.set_providers(vec![provider]);
 
         let mut connector = build_pi_agent_connector(
             Path::new("/tmp/test-workspace"),
-            repo.as_ref(),
-            &TestLlmProviderRepository,
+            settings_repo.as_ref(),
+            llm_repo.as_ref(),
         )
         .await
         .expect("connector should initialize");
-        connector.set_settings_repository(repo.clone());
+        connector.set_llm_provider_repository(llm_repo.clone());
 
         let initial = discover_options_state(&connector).await;
         assert_eq!(
@@ -2651,9 +2665,7 @@ mod tests {
             serde_json::json!([{ "id": "anthropic", "name": "Anthropic Claude" }])
         );
 
-        repo.delete(&SettingScope::system(), "llm.anthropic.api_key")
-            .await
-            .expect("should delete anthropic key");
+        llm_repo.set_providers(vec![]);
 
         let refreshed = discover_options_state(&connector).await;
         assert_eq!(
@@ -2673,10 +2685,11 @@ mod tests {
     #[tokio::test]
     async fn prompt_without_provider_configuration_returns_clear_error() {
         let repo = Arc::new(TestSettingsRepository::default());
+        let llm_repo = TestLlmProviderRepository::default();
         let mut connector = build_pi_agent_connector(
             Path::new("/tmp/test-workspace"),
             repo.as_ref(),
-            &TestLlmProviderRepository,
+            &llm_repo,
         )
         .await
         .expect("connector should initialize even without provider");

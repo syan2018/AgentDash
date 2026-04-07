@@ -41,8 +41,6 @@ use agentdash_spi::{
 // ─── PiAgentConnector ───────────────────────────────────────────
 
 pub struct PiAgentConnector {
-    #[allow(dead_code)]
-    workspace_root: PathBuf,
     /// 默认 bridge（向后兼容，无 provider 注册时使用）
     bridge: Arc<dyn LlmBridge>,
     /// 已注册的 provider 列表（按注册顺序，首个命中的 provider 优先）
@@ -68,12 +66,11 @@ impl ProviderRuntimeState {
 
 impl PiAgentConnector {
     pub fn new(
-        workspace_root: PathBuf,
+        _workspace_root: PathBuf,
         bridge: Arc<dyn LlmBridge>,
         system_prompt: impl Into<String>,
     ) -> Self {
         Self {
-            workspace_root,
             bridge,
             providers: Vec::new(),
             runtime_tool_provider: None,
@@ -147,11 +144,6 @@ impl PiAgentConnector {
             ..AgentConfig::default()
         };
         Agent::new(bridge, config)
-    }
-
-    #[allow(dead_code)]
-    fn create_agent(&self) -> Agent {
-        self.create_agent_with_bridge(self.bridge.clone())
     }
 
     async fn resolve_bridge_for_execution(

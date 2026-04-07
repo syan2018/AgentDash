@@ -91,7 +91,6 @@ impl HookScriptEngine {
     }
 
     /// 移除一个 preset（仅 UserDefined 类型应调用此接口）。
-    #[allow(dead_code)]
     pub fn remove_preset(&self, key: &str) -> bool {
         self.preset_asts
             .write()
@@ -200,21 +199,11 @@ impl HookScriptEngine {
     }
 
     /// 仅编译，不执行——用于验证 API (R11)
-    #[allow(dead_code)]
     pub fn validate_script(&self, script: &str) -> Result<(), Vec<String>> {
         self.engine
             .compile(script)
             .map(|_| ())
             .map_err(|e| vec![e.to_string()])
-    }
-
-    /// 获取已注册的 preset key 列表 (R10)
-    #[allow(dead_code)]
-    pub fn preset_keys(&self) -> Vec<String> {
-        self.preset_asts
-            .read()
-            .map(|map| map.keys().cloned().collect())
-            .unwrap_or_default()
     }
 
     // ── 内部方法 ──

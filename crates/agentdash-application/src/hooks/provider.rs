@@ -78,11 +78,6 @@ impl AppExecutionHookProvider {
     pub fn remove_preset(&self, key: &str) -> bool {
         self.script_engine.remove_preset(key)
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn script_engine(&self) -> &HookScriptEngine {
-        &self.script_engine
-    }
 }
 
 #[async_trait]

@@ -58,8 +58,7 @@ pub struct TaskMcpServer {
     services: Arc<McpServices>,
     task_id: Uuid,
     story_id: Uuid,
-    #[allow(dead_code)]
-    project_id: Uuid,
+    _project_id: Uuid,
     tool_router: ToolRouter<Self>,
 }
 
@@ -74,7 +73,7 @@ impl TaskMcpServer {
             services,
             task_id,
             story_id,
-            project_id,
+            _project_id: project_id,
             tool_router: Self::tool_router(),
         }
     }

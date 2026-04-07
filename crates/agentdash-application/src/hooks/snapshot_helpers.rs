@@ -120,15 +120,6 @@ pub(crate) fn active_workflow_constraints(
         .unwrap_or_default()
 }
 
-#[allow(dead_code)]
-pub(crate) fn active_workflow_checks(
-    snapshot: &SessionHookSnapshot,
-) -> Vec<agentdash_domain::workflow::WorkflowCheckSpec> {
-    active_workflow_contract(snapshot)
-        .map(|contract| contract.completion.checks)
-        .unwrap_or_default()
-}
-
 pub(crate) fn active_workflow_denied_record_artifact_types(
     snapshot: &SessionHookSnapshot,
 ) -> Vec<String> {

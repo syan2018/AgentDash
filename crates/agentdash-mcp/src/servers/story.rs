@@ -126,7 +126,6 @@ pub struct AdvanceStoryStatusParams {
 pub struct StoryMcpServer {
     services: Arc<McpServices>,
     story_id: Uuid,
-    #[allow(dead_code)]
     project_id: Uuid,
     tool_router: ToolRouter<Self>,
 }

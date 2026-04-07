@@ -1,5 +1,6 @@
 import { buildApiPath } from "../api/origin";
 import { authenticatedFetch } from "../api/client";
+import { requireStringField, requireNumberField } from "../api/mappers";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type {
   AgentBinding,
@@ -13,22 +14,6 @@ import type {
   SessionExecutionStatus,
 } from "../types";
 import { isThinkingLevel } from "../types";
-
-function requireStringField(raw: Record<string, unknown>, field: string): string {
-  const value = raw[field];
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`缺少或非法的字段 ${field}`);
-  }
-  return value;
-}
-
-function requireNumberField(raw: Record<string, unknown>, field: string): number {
-  const value = raw[field];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`缺少或非法的数字字段 ${field}`);
-  }
-  return value;
-}
 
 function normalizeSessionBindingOwnerType(value: unknown): SessionBindingOwner["owner_type"] {
   switch (value) {

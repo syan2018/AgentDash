@@ -1,4 +1,5 @@
 import { api } from "../api/client";
+import { asRecord, asRecordArray, asStringArray } from "../api/mappers";
 import type {
   Canvas,
   CanvasDataBinding,
@@ -9,20 +10,6 @@ import type {
   CanvasRuntimeSnapshot,
   CanvasSandboxConfig,
 } from "../types";
-
-function asRecord(raw: unknown): Record<string, unknown> | null {
-  return raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
-}
-
-function asRecordArray(raw: unknown): Record<string, unknown>[] {
-  return Array.isArray(raw)
-    ? raw.filter((item): item is Record<string, unknown> => item != null && typeof item === "object")
-    : [];
-}
-
-function asStringArray(raw: unknown): string[] {
-  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : [];
-}
 
 function mapCanvasImportMap(raw: unknown): CanvasImportMap {
   const value = asRecord(raw);

@@ -1,4 +1,5 @@
 import { api } from "../api/client";
+import { asRecord, asRecordArray, asStringArray, optString } from "../api/mappers";
 import type {
   HookRulePreset,
   LifecycleDefinition,
@@ -88,24 +89,6 @@ function mapValidationIssue(raw: Record<string, unknown>) {
 }
 
 // ─── 子结构 mapper ──────────────────────────────────────
-
-function asRecord(raw: unknown): Record<string, unknown> | null {
-  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
-}
-
-function asRecordArray(raw: unknown): Record<string, unknown>[] {
-  return Array.isArray(raw)
-    ? raw.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-    : [];
-}
-
-function asStringArray(raw: unknown): string[] {
-  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : [];
-}
-
-function optString(raw: unknown): string | null {
-  return raw != null ? String(raw) : null;
-}
 
 function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContextBinding {
   return {

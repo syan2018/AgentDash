@@ -4,10 +4,8 @@ use agentdash_injection::{
     ContextComposer, ContextFragment, MergeStrategy, ResolveSourcesRequest,
     resolve_declared_sources,
 };
-use serde_json::json;
 
-use crate::address_space::selected_workspace_binding;
-use crate::context::{clean_text, trim_or_dash};
+use crate::context::{build_owner_prompt_blocks, clean_text, trim_or_dash, workspace_context_fragment};
 use crate::runtime::{AddressSpace, RuntimeMcpServer};
 use crate::session::plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
@@ -59,28 +57,7 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
         ),
     );
     if let Some(workspace) = input.workspace {
-        let binding_summary = selected_workspace_binding(workspace)
-            .map(|binding| {
-                format!(
-                    "{} @ {}",
-                    trim_or_dash(&binding.backend_id),
-                    trim_or_dash(&binding.root_ref)
-                )
-            })
-            .unwrap_or_else(|| "-".to_string());
-        composer.push(
-            "workspace",
-            "workspace_context",
-            30,
-            MergeStrategy::Append,
-            format!(
-                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
-                workspace.id,
-                workspace.identity_kind,
-                trim_or_dash(&workspace.name),
-                binding_summary,
-            ),
-        );
+        composer.push_fragment(workspace_context_fragment(workspace));
     }
 
     let effective_session_composition = resolve_story_session_composition(Some(input.story));
@@ -211,19 +188,10 @@ pub fn build_story_owner_prompt_blocks(
     context_markdown: String,
     user_prompt_blocks: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
-    let mut prefix_blocks = Vec::new();
-    if !context_markdown.trim().is_empty() {
-        prefix_blocks.push(json!({
-            "type": "resource",
-            "resource": {
-                "uri": format!("agentdash://story-context/{}", story_id),
-                "mimeType": "text/markdown",
-                "text": context_markdown,
-            }
-        }));
-    }
-
-    prefix_blocks.extend(user_prompt_blocks);
-    prefix_blocks
+    build_owner_prompt_blocks(
+        &format!("agentdash://story-context/{}", story_id),
+        &context_markdown,
+        user_prompt_blocks,
+    )
 }
 

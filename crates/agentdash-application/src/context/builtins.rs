@@ -5,6 +5,7 @@ use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_injection::{
     ContextFragment, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
 };
+use serde_json::{Value, json};
 
 use crate::runtime::{RuntimeMcpBinding, RuntimeToolScope};
 
@@ -26,6 +27,72 @@ pub(crate) fn clean_text(input: Option<&str>) -> Option<&str> {
 pub(crate) fn trim_or_dash(text: &str) -> &str {
     let trimmed = text.trim();
     if trimmed.is_empty() { "-" } else { trimmed }
+}
+
+// ─── Workspace Context Fragment ──────────────────────────────
+
+/// Project / Story owner 路径共享的 workspace context fragment 构建。
+///
+/// Task owner 路径在 `StaticFragmentsContributor` 中有自己的版本（包含 status 字段），
+/// 此函数仅供 project / story context builder 使用以消除重复。
+pub(crate) fn workspace_context_fragment(workspace: &agentdash_domain::workspace::Workspace) -> ContextFragment {
+    let binding_summary = selected_workspace_binding(workspace)
+        .map(|binding| {
+            format!(
+                "{} @ {}",
+                trim_or_dash(&binding.backend_id),
+                trim_or_dash(&binding.root_ref)
+            )
+        })
+        .unwrap_or_else(|| "-".to_string());
+
+    ContextFragment {
+        slot: "workspace",
+        label: "workspace_context",
+        order: 30,
+        strategy: MergeStrategy::Append,
+        content: format!(
+            "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
+            workspace.id,
+            workspace.identity_kind,
+            trim_or_dash(&workspace.name),
+            binding_summary,
+        ),
+    }
+}
+
+// ─── Owner Context Resource Block ───────────────────────────
+
+/// 将 context markdown 封装为 ACP resource content block。
+///
+/// 所有 owner 类型（Project / Story / Task）的 context 都需要以
+/// `{ "type": "resource", "resource": { uri, mimeType, text } }` 结构
+/// 注入到 prompt blocks 中，此函数统一了该构建逻辑。
+pub fn build_owner_context_resource_block(uri: &str, markdown: &str) -> Value {
+    json!({
+        "type": "resource",
+        "resource": {
+            "uri": uri,
+            "mimeType": "text/markdown",
+            "text": markdown,
+        }
+    })
+}
+
+/// 将 context markdown 包装为 resource block，拼接用户 blocks。
+///
+/// Project / Story owner 路径共享此"resource prefix + user blocks"模式。
+pub fn build_owner_prompt_blocks(
+    context_uri: &str,
+    context_markdown: &str,
+    user_prompt_blocks: Vec<Value>,
+) -> Vec<Value> {
+    let mut blocks = Vec::new();
+    if !context_markdown.trim().is_empty() {
+        blocks.push(build_owner_context_resource_block(context_uri, context_markdown));
+    }
+    blocks.extend(user_prompt_blocks);
+    blocks
 }
 
 // ─── 指令模板 ────────────────────────────────────────────────

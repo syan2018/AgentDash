@@ -1,6 +1,7 @@
 use agentdash_injection::{ContextComposer, ContextFragment, MergeStrategy};
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use super::builtins::build_owner_context_resource_block;
 use super::contributor::{
     BuiltTaskAgentContext, ContextContributorRegistry, ContributorInput, TaskAgentBuildInput,
     TaskExecutionPhase,
@@ -111,15 +112,10 @@ fn build_task_context_resource_block(
         TaskExecutionPhase::Start => "start",
         TaskExecutionPhase::Continue => "continue",
     };
-
-    json!({
-        "type": "resource",
-        "resource": {
-            "uri": format!("agentdash://task-context/{task_id}?phase={phase_label}"),
-            "mimeType": "text/markdown",
-            "text": markdown,
-        }
-    })
+    build_owner_context_resource_block(
+        &format!("agentdash://task-context/{task_id}?phase={phase_label}"),
+        &markdown,
+    )
 }
 
 pub fn build_declared_source_warning_fragment(

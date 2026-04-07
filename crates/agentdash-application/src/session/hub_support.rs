@@ -158,6 +158,7 @@ pub(super) fn build_session_runtime(
         hook_session: None,
         hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
+        processor_tx: None,
     }
 }
 
@@ -171,6 +172,9 @@ pub(super) struct SessionRuntime {
     pub hook_auto_resume_count: u32,
     /// 最近一次事件活动的时间戳（毫秒），用于 stall 检测。
     pub last_activity_at: i64,
+    /// 活跃 turn 的事件处理 channel（由 SessionTurnProcessor 持有接收端）。
+    /// relay 和 cloud-native 路径共用此通道发送 turn 事件。
+    pub processor_tx: Option<tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>>,
 }
 
 pub struct SessionEventSubscription {

@@ -1,30 +1,22 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
-use agentdash_application::task::execution::{
-    ContinueTaskCommand, StartedTurn, TaskExecutionError,
-};
+use agentdash_application::task::execution::{StartedTurn, TaskExecutionError};
 use agentdash_application::task::gateway::{
-    PreparedTurnContext, TurnOutcome, map_connector_error, normalize_backend_id, run_turn_monitor,
-    update_task_status,
+    PreparedTurnContext, map_connector_error, normalize_backend_id,
 };
-use agentdash_application::task::service::{TaskLifecycleService, TurnDispatcher};
+use agentdash_application::task::service::TurnDispatcher;
 use agentdash_domain::common::ThinkingLevel;
 use agentdash_relay::{
     AgentConfigRelay, CommandCancelPayload, CommandPromptPayload, RelayMessage,
     ResponsePromptPayload,
 };
 use async_trait::async_trait;
-use serde_json::json;
 use tokio::sync::RwLock;
-use uuid::Uuid;
-
 use crate::relay::registry::BackendRegistry;
 use crate::runtime_bridge::runtime_mcp_servers_to_acp;
 use crate::workspace_resolution::resolve_workspace_binding_core;
-use agentdash_application::task::restart_tracker::RestartTracker;
 use agentdash_application::workspace::{ResolvedWorkspaceBinding, WorkspaceResolutionError};
 
 /// API 层 `TurnDispatcher` 实现 — 封装 relay / 云端原生执行分发逻辑。
@@ -34,34 +26,20 @@ use agentdash_application::workspace::{ResolvedWorkspaceBinding, WorkspaceResolu
 pub struct AppStateTurnDispatcher {
     pub(crate) session_hub: SessionHub,
     pub(crate) backend_registry: Arc<BackendRegistry>,
-    pub(crate) repos: RepositorySet,
-    pub(crate) restart_tracker: Arc<RestartTracker>,
     pub(crate) remote_sessions: Arc<RwLock<HashMap<String, String>>>,
-    /// 仅在 auto-retry 路径使用。构建后通过 `set_retry_service()` 注入，
-    /// 打断 dispatcher ↔ TaskLifecycleService 的循环引用。
-    retry_service: tokio::sync::OnceCell<Arc<TaskLifecycleService>>,
 }
 
 impl AppStateTurnDispatcher {
     pub fn new(
         session_hub: SessionHub,
         backend_registry: Arc<BackendRegistry>,
-        repos: RepositorySet,
-        restart_tracker: Arc<RestartTracker>,
         remote_sessions: Arc<RwLock<HashMap<String, String>>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             session_hub,
             backend_registry,
-            repos,
-            restart_tracker,
             remote_sessions,
-            retry_service: tokio::sync::OnceCell::new(),
         })
-    }
-
-    pub fn set_retry_service(&self, service: Arc<TaskLifecycleService>) {
-        let _ = self.retry_service.set(service);
     }
 }
 
@@ -89,44 +67,6 @@ impl TurnDispatcher for AppStateTurnDispatcher {
                 .await
                 .map_err(map_connector_error)
         }
-    }
-
-    fn spawn_turn_monitor(
-        &self,
-        task_id: Uuid,
-        session_id: String,
-        turn_id: String,
-        backend_id: String,
-    ) {
-        let repos = self.repos.clone();
-        let hub = self.session_hub.clone();
-        let tracker = self.restart_tracker.clone();
-        let retry_service = self.retry_service.get().cloned();
-        let retry_repos = self.repos.clone();
-        tokio::spawn(async move {
-            let outcome = run_turn_monitor(
-                &repos,
-                &hub,
-                &tracker,
-                task_id,
-                &session_id,
-                &turn_id,
-                &backend_id,
-            )
-            .await;
-            if let TurnOutcome::NeedsRetry { delay, attempt } = outcome {
-                schedule_auto_retry(
-                    retry_service,
-                    &retry_repos,
-                    task_id,
-                    session_id,
-                    backend_id,
-                    delay,
-                    attempt,
-                )
-                .await;
-            }
-        });
     }
 }
 
@@ -186,7 +126,6 @@ async fn dispatch_cloud_native(
     Ok(StartedTurn {
         turn_id,
         context_sources: ctx.built.source_summary,
-        cloud_native: true,
     })
 }
 
@@ -223,6 +162,67 @@ async fn dispatch_relay(
     )
     .await?;
 
+    // 为 relay session 初始化 hook runtime + SessionTurnProcessor
+    let executor = ctx
+        .resolved_config
+        .as_ref()
+        .map(|c| c.executor.as_str())
+        .unwrap_or("unknown");
+    let permission_policy = ctx.resolved_config.as_ref().and_then(|c| c.permission_policy.as_deref());
+    let workspace_root = std::path::PathBuf::from(&resolved_binding.root_ref);
+    let working_directory = ctx
+        .built
+        .working_dir
+        .as_ref()
+        .map(|d| workspace_root.join(d))
+        .unwrap_or_else(|| workspace_root.clone());
+
+    let hook_session = dispatcher
+        .session_hub
+        .load_session_hook_runtime(
+            session_id,
+            &turn_id,
+            executor,
+            permission_policy,
+            &workspace_root,
+            &working_directory,
+        )
+        .await
+        .map_err(|e| TaskExecutionError::Internal(format!("加载 relay hook runtime 失败: {e}")))?;
+
+    // 将 hook_session 写入内存 SessionRuntime
+    dispatcher
+        .session_hub
+        .set_session_hook_runtime(session_id, hook_session.clone())
+        .await;
+
+    // 构造 source
+    let source = agentdash_acp_meta::AgentDashSourceV1::new(backend_id, "relay_backend");
+
+    let _processor = agentdash_application::session::SessionTurnProcessor::spawn(
+        dispatcher.session_hub.clone(),
+        agentdash_application::session::SessionTurnProcessorConfig {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            source,
+            hook_session,
+            post_turn_handler: ctx.post_turn_handler,
+        },
+    );
+
+    // 注册 processor_tx 到 SessionRuntime（SessionTurnProcessor::spawn 内部已完成，
+    // 但 prompt_pipeline 中是在 spawn 之后手动注册的；这里直接通过 set_processor 注册）
+    dispatcher
+        .session_hub
+        .set_session_processor_tx(session_id, _processor.tx())
+        .await;
+
+    // 标记 session 为 running
+    dispatcher
+        .session_hub
+        .mark_session_running(session_id, &turn_id)
+        .await;
+
     dispatcher
         .remote_sessions
         .write()
@@ -232,7 +232,6 @@ async fn dispatch_relay(
     Ok(StartedTurn {
         turn_id,
         context_sources: ctx.built.source_summary.clone(),
-        cloud_native: false,
     })
 }
 
@@ -341,65 +340,3 @@ async fn relay_cancel(
     }
 }
 
-async fn schedule_auto_retry(
-    retry_service: Option<Arc<TaskLifecycleService>>,
-    repos: &RepositorySet,
-    task_id: Uuid,
-    session_id: String,
-    backend_id: String,
-    delay: std::time::Duration,
-    attempt: u32,
-) {
-    let Some(service) = retry_service else {
-        tracing::error!(task_id = %task_id, "auto-retry 服务未就绪，跳过重试");
-        return;
-    };
-
-    tracing::info!(
-        task_id = %task_id, session_id = %session_id,
-        attempt, delay_ms = delay.as_millis() as u64,
-        "等待退避延迟后自动重试"
-    );
-    tokio::time::sleep(delay).await;
-
-    let retry_prompt = format!(
-        "上一次执行失败，这是第 {} 次自动重试。请继续完成任务。",
-        attempt
-    );
-    match service
-        .continue_task(ContinueTaskCommand {
-            task_id,
-            additional_prompt: Some(retry_prompt),
-            executor_config: None,
-            identity: None,
-        })
-        .await
-    {
-        Ok(result) => {
-            tracing::info!(
-                task_id = %task_id, session_id = %session_id,
-                new_turn_id = %result.turn_id, attempt,
-                "自动重试已成功发起新 turn"
-            );
-        }
-        Err(err) => {
-            tracing::error!(
-                task_id = %task_id, session_id = %session_id, attempt,
-                "自动重试发起失败，标记 Task 为 Failed: {}", err
-            );
-            let _ = update_task_status(
-                repos,
-                task_id,
-                &backend_id,
-                agentdash_domain::task::TaskStatus::Failed,
-                "auto_retry_failed",
-                json!({
-                    "session_id": session_id,
-                    "attempt": attempt,
-                    "error": err.to_string(),
-                }),
-            )
-            .await;
-        }
-    }
-}

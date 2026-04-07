@@ -44,15 +44,6 @@ pub trait TurnDispatcher: Send + Sync {
 
     /// 取消会话执行（自动路由到本地 Hub 或远程中继）
     async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError>;
-
-    /// 启动 turn 完成监控 — 在后台追踪 turn 结果并触发状态同步
-    fn spawn_turn_monitor(
-        &self,
-        task_id: Uuid,
-        session_id: String,
-        turn_id: String,
-        backend_id: String,
-    );
 }
 
 /// Task 执行 Service — Application 层直接编排
@@ -264,15 +255,6 @@ impl TaskLifecycleService {
         )
         .await;
 
-        if !started_turn.cloud_native {
-            self.dispatcher.spawn_turn_monitor(
-                task.id,
-                session_id.clone(),
-                started_turn.turn_id.clone(),
-                backend_id,
-            );
-        }
-
         Ok(StartTaskResult {
             task_id: task.id,
             session_id,
@@ -349,15 +331,6 @@ impl TaskLifecycleService {
             }),
         )
         .await;
-
-        if !started_turn.cloud_native {
-            self.dispatcher.spawn_turn_monitor(
-                task.id,
-                session_id.clone(),
-                started_turn.turn_id.clone(),
-                backend_id,
-            );
-        }
 
         Ok(ContinueTaskResult {
             task_id: task.id,
@@ -457,8 +430,8 @@ impl TaskLifecycleService {
         }
         ctx.identity = identity;
 
-        // Cloud-native 路径：注入 TaskHookEffectExecutor 取代 TurnMonitor
-        if ctx.use_cloud_native_agent {
+        // 所有路径统一注入 TaskHookEffectExecutor 作为 PostTurnHandler
+        {
             let backend_id = resolve_task_backend_id(
                 &self.repos,
                 self.backend_availability.as_ref(),

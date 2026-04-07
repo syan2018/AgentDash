@@ -469,7 +469,8 @@ impl SessionHub {
             .await
     }
 
-    /// 向指定 session 主动注入通知：先持久化，再广播。
+    /// 向指定 session 主动注入补充通知（bridge 事件 / companion / canvas 等）。
+    /// 直接 persist + broadcast，不经过 turn processor。
     pub async fn inject_notification(
         &self,
         session_id: &str,
@@ -477,6 +478,95 @@ impl SessionHub {
     ) -> std::io::Result<()> {
         let _ = self.persist_notification(session_id, notification).await?;
         Ok(())
+    }
+
+    /// 将 relay 回传的 turn notification 送入活跃 processor channel。
+    /// 这是 relay 路径 session_notification 事件的唯一入口。
+    pub async fn feed_turn_notification(
+        &self,
+        session_id: &str,
+        notification: SessionNotification,
+    ) {
+        let processor_tx = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .and_then(|rt| rt.processor_tx.clone())
+        };
+        if let Some(tx) = processor_tx {
+            let _ = tx.send(super::turn_processor::TurnEvent::Notification(notification));
+        } else {
+            tracing::warn!(
+                session_id = %session_id,
+                "feed_turn_notification: 该 session 没有活跃的 turn processor，\
+                 notification 被丢弃（relay session 应在 dispatch 时创建 processor）"
+            );
+        }
+    }
+
+    /// 将 relay event.session_state_changed 转换为 terminal 信号并送入 processor。
+    pub async fn signal_relay_terminal(
+        &self,
+        session_id: &str,
+        kind: TurnTerminalKind,
+        message: Option<String>,
+    ) {
+        let processor_tx = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .and_then(|rt| rt.processor_tx.clone())
+        };
+        if let Some(tx) = processor_tx {
+            let _ = tx.send(super::turn_processor::TurnEvent::Terminal { kind, message });
+        } else {
+            tracing::warn!(
+                session_id = %session_id,
+                terminal_kind = ?kind,
+                "signal_relay_terminal: 该 session 没有活跃的 turn processor，\
+                 terminal 信号被丢弃"
+            );
+        }
+    }
+
+    /// 将 hook_session 写入内存 SessionRuntime（供 relay 路径在 dispatch 时调用）。
+    pub async fn set_session_hook_runtime(
+        &self,
+        session_id: &str,
+        hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
+    ) {
+        let mut sessions = self.sessions.lock().await;
+        let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+            let (tx, _rx) = broadcast::channel(1024);
+            build_session_runtime(tx)
+        });
+        runtime.hook_session = hook_session;
+    }
+
+    /// 注册外部创建的 processor_tx（供 relay 路径在 dispatch 时调用）。
+    pub async fn set_session_processor_tx(
+        &self,
+        session_id: &str,
+        tx: tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>,
+    ) {
+        let mut sessions = self.sessions.lock().await;
+        let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+            let (broadcast_tx, _rx) = broadcast::channel(1024);
+            build_session_runtime(broadcast_tx)
+        });
+        runtime.processor_tx = Some(tx);
+    }
+
+    /// 将 session 标记为 running 状态（供 relay 路径在 dispatch 时调用）。
+    pub async fn mark_session_running(&self, session_id: &str, turn_id: &str) {
+        let mut sessions = self.sessions.lock().await;
+        let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+            let (tx, _rx) = broadcast::channel(1024);
+            build_session_runtime(tx)
+        });
+        runtime.running = true;
+        runtime.current_turn_id = Some(turn_id.to_string());
+        runtime.cancel_requested = false;
     }
 
     pub async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
@@ -2527,7 +2617,9 @@ mod tests {
         hub.cancel(&session.id)
             .await
             .expect("cancel should succeed");
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        // 等待 adapter task（检测 stream 关闭 → drop processor_tx）
+        // 和 processor task（检测 channel 关闭 → 清理 runtime）完成
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         let state = hub
             .inspect_session_execution_state(&session.id)

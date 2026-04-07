@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use agent_client_protocol::{SessionNotification, SessionUpdate};
 use futures::StreamExt;
 
 use agentdash_acp_meta::AgentDashSourceV1;
@@ -296,46 +295,39 @@ impl SessionHub {
                 return Err(error);
             }
         };
-        let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
-        let hook_session_for_spawn = hook_session;
-        let hub = self.clone();
-        let persistence = self.persistence.clone();
-        let post_turn_handler = req.post_turn_handler;
 
-        let turn_id_for_spawn = turn_id.clone();
+        // 创建 SessionTurnProcessor — cloud-native 和 relay 共用的事件处理核心
+        let processor = super::turn_processor::SessionTurnProcessor::spawn(
+            self.clone(),
+            super::turn_processor::SessionTurnProcessorConfig {
+                session_id: session_id.clone(),
+                turn_id: turn_id.clone(),
+                source: source.clone(),
+                hook_session,
+                post_turn_handler: req.post_turn_handler,
+            },
+        );
+
+        let processor_tx = processor.tx();
+
+        // 注册 processor_tx 到 SessionRuntime，供 relay 路径使用
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(runtime) = sessions.get_mut(&session_id) {
+                runtime.processor_tx = Some(processor_tx.clone());
+            }
+        }
+
+        // connector stream → processor channel 适配器
+        let sessions = self.sessions.clone();
+        let turn_id_for_adapter = turn_id.clone();
         tokio::spawn(async move {
-            let mut terminal_notification: Option<SessionNotification> = None;
-            let mut last_executor_session_id: Option<String> = None;
-            let mut terminal_kind = TurnTerminalKind::Completed;
-            let mut terminal_message: Option<String> = None;
             while let Some(next) = stream.next().await {
                 match next {
                     Ok(notification) => {
-                        let meta = match &notification.update {
-                            SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
-                            _ => None,
-                        };
-                        if let Some(executor_session_id) =
-                            parse_executor_session_bound(meta, &turn_id_for_spawn)
-                            && last_executor_session_id.as_deref()
-                                != Some(executor_session_id.as_str())
-                        {
-                            last_executor_session_id = Some(executor_session_id.clone());
-                            if let Ok(Some(mut meta)) =
-                                persistence.get_session_meta(&session_id).await
-                                && meta.executor_session_id.as_deref()
-                                    != Some(executor_session_id.as_str())
-                            {
-                                meta.executor_session_id = Some(executor_session_id);
-                                meta.updated_at = chrono::Utc::now().timestamp_millis();
-                                let _ = persistence.save_session_meta(&meta).await;
-                            }
-                        }
-                        if let Some(handler) = post_turn_handler.as_ref() {
-                            handler.on_event(&session_id, &notification).await;
-                        }
-                        let _ = hub.persist_notification(&session_id, notification).await;
+                        let _ = processor_tx
+                            .send(super::turn_processor::TurnEvent::Notification(notification));
                     }
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
@@ -345,147 +337,48 @@ impl SessionHub {
                                 Some(runtime) => (
                                     runtime.cancel_requested,
                                     runtime.current_turn_id.as_deref()
-                                        == Some(turn_id_for_spawn.as_str()),
+                                        == Some(turn_id_for_adapter.as_str()),
                                 ),
                                 None => (false, false),
                             }
                         };
-                        if cancel_requested && live_turn_matches {
-                            terminal_kind = TurnTerminalKind::Interrupted;
-                            terminal_message = Some("执行已取消".to_string());
+                        let (kind, message) = if cancel_requested && live_turn_matches {
+                            (TurnTerminalKind::Interrupted, Some("执行已取消".to_string()))
                         } else {
-                            terminal_kind = TurnTerminalKind::Failed;
-                            terminal_message = Some(e.to_string());
-                        }
-                        terminal_notification = Some(build_turn_terminal_notification(
-                            &session_id,
-                            &source,
-                            &turn_id_for_spawn,
-                            terminal_kind,
-                            terminal_message.clone(),
-                        ));
-                        break;
+                            (TurnTerminalKind::Failed, Some(e.to_string()))
+                        };
+                        let _ = processor_tx
+                            .send(super::turn_processor::TurnEvent::Terminal { kind, message });
+                        return;
                     }
                 }
             }
 
-            if terminal_notification.is_none() {
-                let (cancel_requested, live_turn_matches) = {
-                    let guard = sessions.lock().await;
-                    match guard.get(&session_id) {
-                        Some(runtime) => (
-                            runtime.cancel_requested,
-                            runtime.current_turn_id.as_deref() == Some(turn_id_for_spawn.as_str()),
-                        ),
-                        None => (false, false),
-                    }
-                };
-                if cancel_requested && live_turn_matches {
-                    terminal_kind = TurnTerminalKind::Interrupted;
-                    if terminal_message.is_none() {
-                        terminal_message = Some("执行已取消".to_string());
-                    }
-                }
-                terminal_notification = Some(build_turn_terminal_notification(
-                    &session_id,
-                    &source,
-                    &turn_id_for_spawn,
-                    terminal_kind,
-                    terminal_message.clone(),
-                ));
-            }
-
-            if let Some(done) = terminal_notification {
-                let _ = hub.persist_notification(&session_id, done).await;
-            }
-
-            let terminal_effects = if let Some(hook_session) = hook_session_for_spawn.as_ref() {
-                hub.emit_session_hook_trigger(
-                    hook_session.as_ref(),
-                    &HookTriggerInput {
-                        session_id: &session_id,
-                        turn_id: Some(&turn_id_for_spawn),
-                        trigger: HookTrigger::SessionTerminal,
-                        payload: Some(serde_json::json!({
-                            "terminal_state": terminal_kind.state_tag(),
-                            "message": terminal_message,
-                        })),
-                        refresh_reason: "trigger:session_terminal",
-                        source: source.clone(),
-                    },
-                    &tx,
-                )
-                .await
-            } else {
-                Vec::new()
-            };
-
-            if let Some(handler) = post_turn_handler.as_ref() {
-                if !terminal_effects.is_empty() {
-                    let supported = handler.supported_effect_kinds();
-                    if !supported.is_empty() {
-                        for eff in &terminal_effects {
-                            if !supported.contains(&eff.kind.as_str()) {
-                                tracing::warn!(
-                                    session_id = %session_id,
-                                    effect_kind = %eff.kind,
-                                    supported = ?supported,
-                                    "Hook 产出了 handler 未声明支持的 effect kind"
-                                );
-                            }
-                        }
-                    }
-                    handler
-                        .execute_effects(&session_id, &turn_id_for_spawn, &terminal_effects)
-                        .await;
-                }
-            }
-
-            // Hook auto-resume: when agent loop exits with an unsatisfied stop
-            // gate, automatically schedule a follow-up prompt to keep the session alive.
-            const MAX_HOOK_AUTO_RESUMES: u32 = 2;
-            let should_auto_resume = matches!(terminal_kind, TurnTerminalKind::Completed)
-                && hook_session_for_spawn.as_ref().is_some_and(|hs| {
-                    let trace = hs.trace();
-                    trace
-                        .iter()
-                        .rev()
-                        .find(|t| matches!(t.trigger, HookTrigger::BeforeStop))
-                        .is_some_and(|t| t.decision == "continue")
-                });
-
-            let can_auto_resume = should_auto_resume && {
+            // stream 正常结束 → 发送显式 Terminal（不能依赖 drop sender，因为还有其他 clone 存活）
+            let (cancel_requested, live_turn_matches) = {
                 let guard = sessions.lock().await;
-                guard
-                    .get(&session_id)
-                    .is_some_and(|rt| rt.hook_auto_resume_count < MAX_HOOK_AUTO_RESUMES)
-            };
-
-            {
-                let mut guard = sessions.lock().await;
-                if let Some(runtime) = guard.get_mut(&session_id) {
-                    runtime.running = false;
-                    runtime.current_turn_id = None;
-                    runtime.cancel_requested = false;
-                    if can_auto_resume {
-                        runtime.hook_auto_resume_count += 1;
-                    }
+                match guard.get(&session_id) {
+                    Some(runtime) => (
+                        runtime.cancel_requested,
+                        runtime.current_turn_id.as_deref()
+                            == Some(turn_id_for_adapter.as_str()),
+                    ),
+                    None => (false, false),
                 }
-            }
-
-            if can_auto_resume {
-                tracing::info!(
-                    session_id = %session_id,
-                    "Hook auto-resume: stop gate unsatisfied, scheduling retry"
-                );
-                hub.schedule_hook_auto_resume(session_id);
-            }
+            };
+            let (kind, message) = if cancel_requested && live_turn_matches {
+                (TurnTerminalKind::Interrupted, Some("执行已取消".to_string()))
+            } else {
+                (TurnTerminalKind::Completed, None)
+            };
+            let _ = processor_tx
+                .send(super::turn_processor::TurnEvent::Terminal { kind, message });
         });
 
         Ok(turn_id)
     }
 
-    pub(super) async fn load_session_hook_runtime(
+    pub async fn load_session_hook_runtime(
         &self,
         session_id: &str,
         turn_id: &str,

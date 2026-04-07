@@ -1,7 +1,10 @@
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
+
 use crate::session::SessionMeta;
+use crate::task::meta::build_task_lifecycle_meta;
 use agentdash_domain::DomainError;
 use agentdash_domain::project::Project;
 use agentdash_domain::session_binding::SessionOwnerType;
@@ -505,4 +508,32 @@ pub async fn sync_task_executor_session_binding_from_hub(
         executor_session_id,
     )
     .await
+}
+
+pub fn bridge_task_status_event_to_session_notification(
+    session_id: &str,
+    turn_id: &str,
+    event_type: &str,
+    message: &str,
+    data: Value,
+) -> SessionNotification {
+    let meta = build_task_lifecycle_meta(turn_id, event_type, message, data);
+    SessionNotification::new(
+        SessionId::new(session_id.to_string()),
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
+    )
+}
+
+pub async fn get_session_overview(
+    session_hub: &crate::session::SessionHub,
+    session_id: &str,
+) -> Result<Option<crate::task::execution::SessionOverview>, TaskExecutionError> {
+    let meta = session_hub
+        .get_session_meta(session_id)
+        .await
+        .map_err(map_internal_error)?;
+    Ok(meta.map(|value| crate::task::execution::SessionOverview {
+        title: value.title,
+        updated_at: value.updated_at,
+    }))
 }

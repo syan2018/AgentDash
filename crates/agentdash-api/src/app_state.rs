@@ -318,8 +318,6 @@ impl AppState {
         let dispatcher = crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(
             session_hub.clone(),
             backend_registry.clone(),
-            repos.clone(),
-            restart_tracker.clone(),
             remote_sessions.clone(),
         );
 
@@ -364,8 +362,6 @@ impl AppState {
         };
 
         let state = Arc::new(state);
-        dispatcher.set_retry_service(state.services.task_lifecycle_service.clone());
-
         // 后台 session stall 检测：定期扫描 running session，超时自动取消
         agentdash_application::session::stall_detector::spawn_stall_detector(
             state.services.session_hub.clone(),

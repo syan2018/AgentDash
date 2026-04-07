@@ -235,19 +235,11 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 payload.notification.clone(),
             ) {
                 Ok(notification) => {
-                    if let Err(err) = state
+                    state
                         .services
                         .session_hub
-                        .inject_notification(&payload.session_id, notification)
-                        .await
-                    {
-                        tracing::warn!(
-                            backend_id = %backend_id,
-                            session_id = %payload.session_id,
-                            error = %err,
-                            "注入远程 SessionNotification 失败"
-                        );
-                    }
+                        .feed_turn_notification(&payload.session_id, notification)
+                        .await;
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -260,12 +252,29 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventSessionStateChanged { payload, .. } => {
+            use agentdash_application::session::TurnTerminalKind;
+
             tracing::info!(
                 backend_id = %backend_id,
                 session_id = %payload.session_id,
                 state = ?payload.state,
                 "收到远程会话状态变更"
             );
+
+            let terminal_kind = match payload.state {
+                agentdash_relay::SessionState::Completed => TurnTerminalKind::Completed,
+                agentdash_relay::SessionState::Failed => TurnTerminalKind::Failed,
+                agentdash_relay::SessionState::Cancelled => TurnTerminalKind::Interrupted,
+                agentdash_relay::SessionState::Started => {
+                    // started 不是 terminal 信号，不发送
+                    return;
+                }
+            };
+            state
+                .services
+                .session_hub
+                .signal_relay_terminal(&payload.session_id, terminal_kind, payload.message.clone())
+                .await;
         }
         RelayMessage::EventCapabilitiesChanged { .. } => {
             tracing::info!(backend_id = %backend_id, "收到能力变更通知");

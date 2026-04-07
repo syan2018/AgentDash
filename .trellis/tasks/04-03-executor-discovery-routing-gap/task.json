@@ -1,20 +1,20 @@
 {
   "id": "executor-discovery-routing-gap",
   "name": "executor-discovery-routing-gap",
-  "title": "远程执行器 discovery 与 session prompt 路由未对齐",
-  "description": "前端 discovery 会展示在线 backend 上报的远程 executors，但云端 session prompt 路由当前并不能直接处理这些 executor，导致手工选择 CODEX 等执行器时会报未知执行器。后续需要决定是补齐路由能力，还是删除这条前端暴露能力。",
-  "status": "planning",
+  "title": "统一执行器 discovery 与 session prompt 路由",
+  "description": "将 relay 分发能力从 TurnDispatcher (API 层) 下沉为 RelayAgentConnector (Application 层)，使 SessionHub.start_prompt() 成为唯一的 prompt 入口，消除 discovery 与 prompt 路由的不一致。",
+  "status": "in-progress",
   "dev_type": "fullstack",
   "scope": "executor-discovery-routing",
   "priority": "P2",
   "creator": "claude-agent",
-  "assignee": "codex",
+  "assignee": "cursor-agent",
   "createdAt": "2026-04-03",
   "completedAt": null,
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
+  "current_phase": 1,
   "next_action": [
     {
       "phase": 1,
@@ -27,27 +27,30 @@
     {
       "phase": 3,
       "action": "finish"
-    },
-    {
-      "phase": 4,
-      "action": "create-pr"
     }
   ],
   "commit": null,
   "pr_url": null,
   "subtasks": [
-    "reproduce-discovery-routing-mismatch",
-    "decide-patch-vs-remove",
-    "align-discovery-contract-or-prune-ui-surface"
+    "phase-0-execution-context-extend",
+    "phase-1-relay-agent-connector",
+    "phase-2-switch-notification-path",
+    "phase-3-cleanup-old-relay-dispatch"
   ],
   "relatedFiles": [
-    "frontend/src/features/acp-session/ui/SessionChatView.tsx",
-    "frontend/src/services/executor.ts",
-    "crates/agentdash-api/src/routes/discovery.rs",
-    "crates/agentdash-api/src/bootstrap/turn_dispatcher.rs",
+    "crates/agentdash-spi/src/connector.rs",
+    "crates/agentdash-application/src/backend_transport.rs",
+    "crates/agentdash-application/src/relay_connector.rs",
     "crates/agentdash-api/src/app_state.rs",
-    "crates/agentdash-executor/src/connectors/composite.rs",
-    "crates/agentdash-executor/src/connectors/remote_acp.rs"
+    "crates/agentdash-api/src/workspace_resolution.rs",
+    "crates/agentdash-api/src/relay/ws_handler.rs",
+    "crates/agentdash-api/src/relay/registry.rs",
+    "crates/agentdash-api/src/bootstrap/turn_dispatcher.rs",
+    "crates/agentdash-api/src/routes/discovery.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-application/src/session/prompt_pipeline.rs",
+    "crates/agentdash-application/src/session/turn_processor.rs"
   ],
-  "notes": "手工前端验证已确认：/api/discovery 会把在线 backend 上报的远程 executors 合并进前端下拉，但 session prompt 主路径仍依赖云端 CompositeConnector，本地远程 executors 未直接注册到该路由面，手工选择 CODEX 时会报未知执行器。该 task 仅记录问题与后续决策面，不预设必须修复。"
+  "notes": "方案确认：统一执行路径（业务层只见 ExecutionStream，relay 差异封装在 RelayAgentConnector 内部）。分 4 个 Phase 增量推进。"
 }

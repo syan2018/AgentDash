@@ -3,6 +3,7 @@ use agentdash_injection::{ContextComposer, MergeStrategy};
 use serde_json::json;
 
 use crate::address_space::selected_workspace_binding;
+use crate::context::trim_or_dash;
 use crate::runtime::{AddressSpace, RuntimeMcpServer};
 use crate::session_plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
@@ -121,7 +122,3 @@ pub fn build_project_owner_prompt_blocks(
     prefix_blocks
 }
 
-fn trim_or_dash(text: &str) -> &str {
-    let trimmed = text.trim();
-    if trimmed.is_empty() { "-" } else { trimmed }
-}

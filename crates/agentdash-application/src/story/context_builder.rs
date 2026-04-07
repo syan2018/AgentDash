@@ -7,6 +7,7 @@ use agentdash_injection::{
 use serde_json::json;
 
 use crate::address_space::selected_workspace_binding;
+use crate::context::{clean_text, trim_or_dash};
 use crate::runtime::{AddressSpace, RuntimeMcpServer};
 use crate::session_plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
@@ -226,18 +227,3 @@ pub fn build_story_owner_prompt_blocks(
     prefix_blocks
 }
 
-fn clean_text(input: Option<&str>) -> Option<&str> {
-    input.and_then(|text| {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    })
-}
-
-fn trim_or_dash(text: &str) -> &str {
-    let trimmed = text.trim();
-    if trimmed.is_empty() { "-" } else { trimmed }
-}

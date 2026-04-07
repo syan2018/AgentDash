@@ -5,7 +5,7 @@ use super::contributor::{
     BuiltTaskAgentContext, ContextContributorRegistry, ContributorInput, TaskAgentBuildInput,
     TaskExecutionPhase,
 };
-use crate::session_plan::{
+use crate::session::plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
 };

@@ -6,12 +6,12 @@ use agentdash_domain::workspace::Workspace;
 
 use crate::address_space::selected_workspace_binding;
 use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpServer};
-use crate::session_context::{
+use super::context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
     SessionProjectDefaults, SessionStoryOverrides, SharedContextMount,
     build_session_executor_summary, normalize_optional_string,
 };
-use crate::session_plan::{
+use super::plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
 };
 use crate::workflow::ActiveWorkflowProjection;
@@ -107,7 +107,7 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
             agentdash_domain::session_binding::SessionOwnerType::Project
         }
     };
-    let tool_visibility = crate::session_plan::summarize_tool_visibility_with_context(
+    let tool_visibility = super::plan::summarize_tool_visibility_with_context(
         input.address_space.as_ref(),
         &input.mcp_servers,
         Some(owner_type),
@@ -154,7 +154,7 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
     let story = plan.owner.story.as_ref();
 
     let effective_session_composition =
-        crate::session_plan::resolve_story_session_composition(story).unwrap_or_default();
+        super::plan::resolve_story_session_composition(story).unwrap_or_default();
 
     let owner_context = match &plan.owner.variant {
         BootstrapOwnerVariant::Task { story_overrides } => SessionOwnerContext::Task {

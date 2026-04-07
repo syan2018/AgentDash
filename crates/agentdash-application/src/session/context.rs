@@ -4,7 +4,7 @@ use agentdash_domain::story::Story;
 use serde::Serialize;
 
 use crate::runtime::{AgentConfig, ThinkingLevel};
-use crate::session_plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
+use super::plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
 
 // ─── Unified DTO ─────────────────────────────────────
 

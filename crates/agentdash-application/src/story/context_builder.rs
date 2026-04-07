@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::address_space::selected_workspace_binding;
 use crate::context::{clean_text, trim_or_dash};
 use crate::runtime::{AddressSpace, RuntimeMcpServer};
-use crate::session_plan::{
+use crate::session::plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
 };

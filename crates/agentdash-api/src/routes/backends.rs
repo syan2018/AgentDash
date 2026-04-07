@@ -11,7 +11,7 @@ use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use crate::app_state::AppState;
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
-use agentdash_application::session_context::normalize_optional_string;
+use agentdash_application::session::context::normalize_optional_string;
 
 #[derive(Deserialize)]
 pub struct CreateBackendRequest {

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::session_context::SessionContextSnapshot;
+use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::task::context_builder::build_task_session_context;
 use agentdash_application::task::execution::{
     ExecutionPhase, TaskExecutionCommand, TaskExecutionError,

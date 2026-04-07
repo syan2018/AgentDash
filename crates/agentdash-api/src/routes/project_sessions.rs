@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::address_space::SessionMountTarget;
-use agentdash_application::bootstrap_plan::{
+use agentdash_application::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::SessionExecutionState;
-use agentdash_application::session_context::{SessionContextSnapshot, SharedContextMount};
+use agentdash_application::session::context::{SessionContextSnapshot, SharedContextMount};
 
 use crate::{
     app_state::AppState,

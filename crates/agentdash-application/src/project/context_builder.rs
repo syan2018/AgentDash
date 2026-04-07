@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::address_space::selected_workspace_binding;
 use crate::context::trim_or_dash;
 use crate::runtime::{AddressSpace, RuntimeMcpServer};
-use crate::session_plan::{
+use crate::session::plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
 };
 

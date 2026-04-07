@@ -1,7 +1,6 @@
 pub mod address_space;
 pub mod auth;
 pub mod backend_transport;
-pub mod bootstrap_plan;
 pub mod canvas;
 pub mod companion;
 pub mod context;
@@ -14,8 +13,6 @@ pub mod scheduling;
 pub mod runtime;
 pub mod runtime_bridge;
 pub mod session;
-pub mod session_context;
-pub mod session_plan;
 pub mod story;
 pub mod task;
 pub mod workflow;

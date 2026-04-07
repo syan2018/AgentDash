@@ -25,7 +25,7 @@ use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::WorkflowValidationResponse;
 use crate::rpc::ApiError;
-use agentdash_application::session_context::normalize_string;
+use agentdash_application::session::context::normalize_string;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {

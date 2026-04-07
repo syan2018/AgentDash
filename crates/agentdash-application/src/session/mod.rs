@@ -1,3 +1,5 @@
+pub mod bootstrap;
+pub mod context;
 mod event_bridge;
 pub mod hook_delegate;
 pub mod hook_events;
@@ -7,6 +9,7 @@ pub mod hub;
 mod hub_support;
 mod memory_persistence;
 pub mod persistence;
+pub mod plan;
 pub mod post_turn_handler;
 mod prompt_pipeline;
 pub mod stall_detector;

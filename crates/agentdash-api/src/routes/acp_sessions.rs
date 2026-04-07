@@ -26,7 +26,7 @@ use agentdash_application::session::{
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
     resolve_session_prompt_lifecycle,
 };
-use agentdash_application::session_context::SessionContextSnapshot;
+use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::story::context_builder::{
     StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
 };
@@ -51,7 +51,7 @@ use crate::auth::{
 use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::task_agent_context::resolve_workspace_declared_sources;
-use agentdash_application::session_context::apply_workspace_defaults;
+use agentdash_application::session::context::apply_workspace_defaults;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 

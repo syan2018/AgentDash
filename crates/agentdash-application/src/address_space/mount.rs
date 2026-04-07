@@ -123,7 +123,12 @@ pub fn workspace_mount_from_policy(
         return Err("Workspace binding.root_ref 不能为空".to_string());
     }
 
-    let capabilities = map_container_capabilities(&workspace.mount_capabilities);
+    // policy.local_workspace_capabilities 非空时覆盖 workspace 默认值
+    let capabilities = if !policy.local_workspace_capabilities.is_empty() {
+        map_container_capabilities(&policy.local_workspace_capabilities)
+    } else {
+        map_container_capabilities(&workspace.mount_capabilities)
+    };
 
     Ok(Mount {
         id: "main".to_string(),

@@ -1,5 +1,7 @@
 pub mod bootstrap;
+pub mod companion_wait;
 pub mod context;
+mod continuation;
 mod event_bridge;
 pub mod hook_delegate;
 pub mod hook_events;

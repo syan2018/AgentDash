@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+
+use agent_client_protocol::SessionNotification;
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
 /// Application 层端口：后端在线探测 + workspace 检测
 ///
@@ -18,6 +22,106 @@ pub trait BackendTransport: Send + Sync {
         backend_id: &str,
         root: &str,
     ) -> Result<GitRepoInfo, TransportError>;
+}
+
+/// relay prompt 传输端口 — `RelayAgentConnector` 通过此 trait 与远程后端交互。
+///
+/// 继承 `BackendTransport` 的在线探测能力，额外提供：
+/// - prompt / cancel 命令发送
+/// - 在线后端执行器枚举
+/// - per-session 通知接收端注册（将 WebSocket 推送桥接为 `ExecutionStream`）
+#[async_trait]
+pub trait RelayPromptTransport: BackendTransport {
+    /// 向指定后端发送 prompt 命令，返回 turn_id。
+    async fn relay_prompt(
+        &self,
+        backend_id: &str,
+        payload: RelayPromptRequest,
+    ) -> Result<String, TransportError>;
+
+    /// 取消远程会话。
+    async fn relay_cancel(
+        &self,
+        backend_id: &str,
+        session_id: &str,
+    ) -> Result<(), TransportError>;
+
+    /// 列出所有在线后端上报的执行器信息。
+    async fn list_online_executors(&self) -> Vec<RemoteExecutorInfo>;
+
+    /// 根据 executor_id + workspace_root 解析应使用的后端。
+    /// 解析策略：找到同时满足「提供该 executor」且「能访问该 workspace root」的在线后端。
+    async fn resolve_backend(
+        &self,
+        executor_id: &str,
+        workspace_root: &str,
+    ) -> Result<String, TransportError>;
+
+    /// 注册 per-session 通知接收端。
+    /// WebSocket handler 收到 relay notification 时，通过此 channel 投递到 connector stream。
+    fn register_session_sink(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<RelaySessionEvent>,
+    );
+
+    /// 注销 per-session 通知接收端。
+    fn unregister_session_sink(&self, session_id: &str);
+
+    /// 检查指定 session 是否有已注册的通知接收端。
+    fn has_session_sink(&self, session_id: &str) -> bool;
+}
+
+/// relay prompt 命令 payload — application 层抽象，不依赖 relay 协议。
+#[derive(Debug, Clone)]
+pub struct RelayPromptRequest {
+    pub session_id: String,
+    pub follow_up_session_id: Option<String>,
+    pub prompt_blocks: Option<serde_json::Value>,
+    pub workspace_root: String,
+    pub working_dir: Option<String>,
+    pub env: HashMap<String, String>,
+    pub executor_config: Option<RelayExecutorConfig>,
+    pub mcp_servers: Vec<serde_json::Value>,
+}
+
+/// relay 执行器配置 — 对齐远程后端需要的最小字段集。
+#[derive(Debug, Clone)]
+pub struct RelayExecutorConfig {
+    pub executor: String,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub thinking_level: Option<String>,
+    pub permission_policy: Option<String>,
+}
+
+/// 远程后端上报的执行器信息。
+#[derive(Debug, Clone)]
+pub struct RemoteExecutorInfo {
+    pub backend_id: String,
+    pub executor_id: String,
+    pub executor_name: String,
+    pub variants: Vec<String>,
+    pub available: bool,
+}
+
+/// relay session 事件 — 由 WebSocket handler 投递到 connector stream。
+#[derive(Debug)]
+pub enum RelaySessionEvent {
+    Notification(SessionNotification),
+    Terminal {
+        kind: RelayTerminalKind,
+        message: Option<String>,
+    },
+}
+
+/// relay session 终态类型。
+#[derive(Debug, Clone, Copy)]
+pub enum RelayTerminalKind {
+    Completed,
+    Failed,
+    Interrupted,
 }
 
 #[derive(Debug, Clone, Default)]

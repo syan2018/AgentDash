@@ -62,11 +62,11 @@ ALL paths ──→ SessionHub.start_prompt()
 - receiver 包装为 `ExecutionStream`，被 `prompt_pipeline.rs` 统一消费
 - **淘汰** `SessionHub.feed_turn_notification` 和 `signal_relay_terminal`
 
-#### 3. `ExecutionContext` 扩展 `target_backend_id`
+#### 3. backend 解析完全封装在 connector 内部
 
-- `target_backend_id: Option<String>` — 由 workspace 解析得出
-- cloud-native 执行器忽略此字段
-- relay connector 据此决定发送到哪个后端
+- 上游（SessionHub / prompt_pipeline / TurnDispatcher）不感知 backend_id
+- `RelayAgentConnector.prompt()` 内部通过 `resolve_backend(executor_id, workspace_root)` 自动匹配后端
+- 匹配策略：找到同时提供该 executor 且能访问该 workspace root 的在线后端
 
 #### 4. `BackendTransport` 扩展为 `RelayPromptTransport`
 
@@ -122,7 +122,7 @@ Application 层定义自己的 payload 类型，API 层负责翻译为 relay 协
 
 | 文件 | 变更类型 |
 |------|---------|
-| `crates/agentdash-spi/src/connector.rs` | `ExecutionContext` 加字段 |
+| `crates/agentdash-spi/src/connector.rs` | 无变更 |
 | `crates/agentdash-application/src/backend_transport.rs` | 新增 `RelayPromptTransport` trait |
 | `crates/agentdash-application/src/relay_connector.rs` | **新增** `RelayAgentConnector` |
 | `crates/agentdash-api/src/app_state.rs` | 注册 relay connector |

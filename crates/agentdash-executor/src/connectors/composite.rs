@@ -44,6 +44,17 @@ impl CompositeConnector {
     }
 
     fn resolve_connector(&self, executor_id: &str) -> Option<Arc<dyn AgentConnector>> {
+        {
+            let routing = self.executor_routing.read().unwrap();
+            if let Some(connector) = routing
+                .get(executor_id)
+                .and_then(|&idx| self.connectors.get(idx))
+            {
+                return Some(connector.clone());
+            }
+        }
+        // miss — relay 后端可能在 CompositeConnector 初始化后才上线，刷新重试
+        self.refresh_routing();
         let routing = self.executor_routing.read().unwrap();
         routing
             .get(executor_id)

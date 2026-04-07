@@ -8,6 +8,7 @@ pub mod context;
 pub mod hooks;
 pub mod project;
 pub mod reconcile;
+pub mod relay_connector;
 pub mod repository_set;
 pub mod scheduling;
 pub mod runtime;

@@ -5,9 +5,7 @@ use axum::{Json, extract::State};
 use serde::Serialize;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_spi::connector::{
-    AgentInfo as ConnectorAgentInfo, ConnectorCapabilities, ConnectorType,
-};
+use agentdash_spi::connector::{ConnectorCapabilities, ConnectorType};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentInfoResponse {
@@ -43,48 +41,26 @@ pub async fn get_discovery(
         capabilities: connector.capabilities(),
     };
 
+    // CompositeConnector.list_executors() 现已包含 relay 执行器
     let mut merged: HashMap<String, AgentInfoResponse> = HashMap::new();
-
     for info in connector.list_executors() {
-        let ConnectorAgentInfo {
-            id,
-            name,
-            variants,
-            available,
-        } = info;
         merged.insert(
-            id.clone(),
+            info.id.clone(),
             AgentInfoResponse {
-                id,
-                name,
-                variants,
-                available,
+                id: info.id,
+                name: info.name,
+                variants: info.variants,
+                available: info.available,
                 backend_ids: Vec::new(),
             },
         );
     }
 
+    // 丰富 backend_ids 信息（保留前端的"在哪个后端可用"展示）
     for backend in state.services.backend_registry.list_online().await {
         for ex in &backend.capabilities.executors {
-            match merged.get_mut(&ex.id) {
-                Some(existing) => {
-                    if ex.available && !existing.available {
-                        existing.available = true;
-                    }
-                    existing.backend_ids.push(backend.backend_id.clone());
-                }
-                None => {
-                    merged.insert(
-                        ex.id.clone(),
-                        AgentInfoResponse {
-                            id: ex.id.clone(),
-                            name: ex.name.clone(),
-                            variants: ex.variants.clone(),
-                            available: ex.available,
-                            backend_ids: vec![backend.backend_id.clone()],
-                        },
-                    );
-                }
+            if let Some(existing) = merged.get_mut(&ex.id) {
+                existing.backend_ids.push(backend.backend_id.clone());
             }
         }
     }

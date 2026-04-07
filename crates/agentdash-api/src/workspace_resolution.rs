@@ -1,11 +1,18 @@
 use std::sync::Arc;
 
-use agentdash_application::backend_transport::{BackendTransport, GitRepoInfo, TransportError};
+use agentdash_application::backend_transport::{
+    BackendTransport, GitRepoInfo, RelayPromptRequest, RelayPromptTransport, RelaySessionEvent,
+    RemoteExecutorInfo, TransportError,
+};
 pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
 use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolutionError};
 use agentdash_domain::workspace::Workspace;
-use agentdash_relay::{CommandWorkspaceDetectGitPayload, RelayMessage};
+use agentdash_relay::{
+    AgentConfigRelay, CommandCancelPayload, CommandPromptPayload, CommandWorkspaceDetectGitPayload,
+    RelayMessage, ResponsePromptPayload,
+};
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
 use crate::app_state::AppState;
 use crate::relay::registry::BackendRegistry;
@@ -67,6 +74,153 @@ impl BackendTransport for BackendRegistry {
             _ => Err(TransportError::OperationFailed(
                 "远程 workspace_detect_git 返回了意外响应".into(),
             )),
+        }
+    }
+}
+
+/// BackendRegistry 适配 RelayPromptTransport trait —— relay connector 所需的完整传输能力
+#[async_trait]
+impl RelayPromptTransport for BackendRegistry {
+    async fn relay_prompt(
+        &self,
+        backend_id: &str,
+        payload: RelayPromptRequest,
+    ) -> Result<String, TransportError> {
+        let relay_config = payload.executor_config.map(|c| AgentConfigRelay {
+            executor: c.executor,
+            provider_id: c.provider_id,
+            model_id: c.model_id,
+            agent_id: c.agent_id,
+            thinking_level: c.thinking_level,
+            permission_policy: c.permission_policy,
+        });
+
+        let cmd = RelayMessage::CommandPrompt {
+            id: RelayMessage::new_id("prompt"),
+            payload: Box::new(CommandPromptPayload {
+                session_id: payload.session_id,
+                follow_up_session_id: payload.follow_up_session_id,
+                prompt_blocks: payload.prompt_blocks,
+                workspace_root: payload.workspace_root,
+                working_dir: payload.working_dir,
+                env: payload.env,
+                executor_config: relay_config,
+                mcp_servers: payload.mcp_servers,
+            }),
+        };
+
+        let resp = self
+            .send_command(backend_id, cmd)
+            .await
+            .map_err(|e| TransportError::OperationFailed(format!("relay prompt 失败: {e}")))?;
+
+        match resp {
+            RelayMessage::ResponsePrompt {
+                payload: Some(ResponsePromptPayload { turn_id, .. }),
+                error: None,
+                ..
+            } => Ok(turn_id),
+            RelayMessage::ResponsePrompt {
+                error: Some(err), ..
+            } => Err(TransportError::OperationFailed(format!(
+                "远程后端执行失败: {}",
+                err.message
+            ))),
+            other => Err(TransportError::OperationFailed(format!(
+                "远程后端返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn relay_cancel(
+        &self,
+        backend_id: &str,
+        session_id: &str,
+    ) -> Result<(), TransportError> {
+        let cmd = RelayMessage::CommandCancel {
+            id: RelayMessage::new_id("cancel"),
+            payload: CommandCancelPayload {
+                session_id: session_id.to_string(),
+            },
+        };
+        let resp = self
+            .send_command(backend_id, cmd)
+            .await
+            .map_err(|e| TransportError::OperationFailed(format!("relay cancel 失败: {e}")))?;
+
+        match resp {
+            RelayMessage::ResponseCancel { error: None, .. } => Ok(()),
+            RelayMessage::ResponseCancel {
+                error: Some(err), ..
+            } => Err(TransportError::OperationFailed(format!(
+                "远程取消失败: {}",
+                err.message
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    async fn list_online_executors(&self) -> Vec<RemoteExecutorInfo> {
+        let mut result = Vec::new();
+        for backend in self.list_online().await {
+            for ex in &backend.capabilities.executors {
+                result.push(RemoteExecutorInfo {
+                    backend_id: backend.backend_id.clone(),
+                    executor_id: ex.id.clone(),
+                    executor_name: ex.name.clone(),
+                    variants: ex.variants.clone(),
+                    available: ex.available,
+                });
+            }
+        }
+        result
+    }
+
+    fn register_session_sink(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<RelaySessionEvent>,
+    ) {
+        BackendRegistry::register_session_sink(self, session_id, tx);
+    }
+
+    fn unregister_session_sink(&self, session_id: &str) {
+        BackendRegistry::unregister_session_sink(self, session_id);
+    }
+
+    fn has_session_sink(&self, session_id: &str) -> bool {
+        BackendRegistry::has_session_sink(self, session_id)
+    }
+
+    async fn resolve_backend(
+        &self,
+        executor_id: &str,
+        workspace_root: &str,
+    ) -> Result<String, TransportError> {
+        let online = self.list_online().await;
+        // 寻找同时满足：(1) 提供该 executor (2) 能访问该 workspace root 的后端
+        let candidates: Vec<_> = online
+            .iter()
+            .filter(|b| {
+                let has_executor = b
+                    .capabilities
+                    .executors
+                    .iter()
+                    .any(|ex| ex.id.eq_ignore_ascii_case(executor_id) && ex.available);
+                let can_access = b.accessible_roots.is_empty()
+                    || b.accessible_roots
+                        .iter()
+                        .any(|root| workspace_root.starts_with(root));
+                has_executor && can_access
+            })
+            .collect();
+
+        match candidates.len() {
+            0 => Err(TransportError::OperationFailed(format!(
+                "没有在线后端同时提供执行器 '{executor_id}' 且能访问 '{workspace_root}'"
+            ))),
+            _ => Ok(candidates[0].backend_id.clone()),
         }
     }
 }

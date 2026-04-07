@@ -41,6 +41,10 @@ pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
     /// 等待本机响应的挂起请求（msg_id → oneshot sender）
     pending: RwLock<HashMap<String, oneshot::Sender<RelayMessage>>>,
+    /// per-session relay 通知接收端（由 RelayAgentConnector 注册，WebSocket handler 投递）
+    session_sinks: std::sync::RwLock<
+        HashMap<String, mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>>,
+    >,
 }
 
 impl BackendRegistry {
@@ -48,7 +52,23 @@ impl BackendRegistry {
         Arc::new(Self {
             backends: RwLock::new(HashMap::new()),
             pending: RwLock::new(HashMap::new()),
+            session_sinks: std::sync::RwLock::new(HashMap::new()),
         })
+    }
+
+    /// 向 relay session sink 投递 notification（供 WebSocket handler 调用）。
+    /// 返回 true 表示投递成功（有已注册的 sink）。
+    pub fn feed_session_event(
+        &self,
+        session_id: &str,
+        event: agentdash_application::backend_transport::RelaySessionEvent,
+    ) -> bool {
+        let sinks = self.session_sinks.read().unwrap();
+        if let Some(tx) = sinks.get(session_id) {
+            tx.send(event).is_ok()
+        } else {
+            false
+        }
     }
 
     pub async fn try_register(
@@ -134,6 +154,28 @@ impl BackendRegistry {
 
     pub async fn list_online_ids(&self) -> Vec<String> {
         self.backends.read().await.keys().cloned().collect()
+    }
+
+    /// 注册 per-session 通知接收端。
+    pub fn register_session_sink(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>,
+    ) {
+        self.session_sinks
+            .write()
+            .unwrap()
+            .insert(session_id.to_string(), tx);
+    }
+
+    /// 注销 per-session 通知接收端。
+    pub fn unregister_session_sink(&self, session_id: &str) {
+        self.session_sinks.write().unwrap().remove(session_id);
+    }
+
+    /// 检查指定 session 是否有已注册的通知接收端。
+    pub fn has_session_sink(&self, session_id: &str) -> bool {
+        self.session_sinks.read().unwrap().contains_key(session_id)
     }
 }
 

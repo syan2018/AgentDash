@@ -1,9 +1,7 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::PgPool;
-use tokio::sync::RwLock;
 
 use crate::bootstrap::task_state_reconcile::HubSessionStateReader;
 use crate::mount_providers::RelayFsMountProvider;
@@ -101,8 +99,6 @@ pub struct AppState {
     pub services: ServiceSet,
     pub task_runtime: TaskRuntime,
     pub config: AppConfig,
-    /// 远程会话映射：session_id → backend_id（路由到远程后端的会话）
-    pub remote_sessions: Arc<RwLock<HashMap<String, String>>>,
     /// 认证/授权提供者（由插件注入，None 表示无认证）
     pub auth_provider: Option<Arc<dyn agentdash_plugin_api::AuthProvider>>,
 }
@@ -210,6 +206,15 @@ impl AppState {
         {
             sub_connectors.push(Arc::new(pi_connector));
         }
+        // relay connector — 将远程后端上报的执行器纳入统一路由
+        {
+            let relay_transport: Arc<dyn agentdash_application::backend_transport::RelayPromptTransport> =
+                backend_registry.clone();
+            sub_connectors.push(Arc::new(
+                agentdash_application::relay_connector::RelayAgentConnector::new(relay_transport),
+            ));
+        }
+
         sub_connectors.extend(plugin_registration.connectors);
         validate_connector_executor_ids(&sub_connectors)
             .map_err(|err| anyhow::anyhow!("连接器注册失败: {err}"))?;
@@ -280,7 +285,6 @@ impl AppState {
         }
 
         let contributor_registry = Arc::new(ContextContributorRegistry::with_builtins());
-        let remote_sessions = Arc::new(RwLock::new(HashMap::new()));
 
         let repos = RepositorySet {
             project_repo,
@@ -314,7 +318,6 @@ impl AppState {
         let dispatcher = crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(
             session_hub.clone(),
             backend_registry.clone(),
-            remote_sessions.clone(),
         );
 
         let task_lifecycle_service = Arc::new(TaskLifecycleService {
@@ -353,7 +356,6 @@ impl AppState {
                 mcp_base_url,
                 auth_mode,
             },
-            remote_sessions,
             auth_provider: plugin_registration.auth_provider,
         };
 

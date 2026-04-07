@@ -231,15 +231,22 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventSessionNotification { payload, .. } => {
+            use agentdash_application::backend_transport::RelaySessionEvent;
+
             match serde_json::from_value::<agent_client_protocol::SessionNotification>(
                 payload.notification.clone(),
             ) {
                 Ok(notification) => {
-                    state
-                        .services
-                        .session_hub
-                        .feed_turn_notification(&payload.session_id, notification)
-                        .await;
+                    if !state.services.backend_registry.feed_session_event(
+                        &payload.session_id,
+                        RelaySessionEvent::Notification(notification),
+                    ) {
+                        tracing::debug!(
+                            backend_id = %backend_id,
+                            session_id = %payload.session_id,
+                            "relay notification 到达时 session sink 不存在（session 可能已结束）"
+                        );
+                    }
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -252,7 +259,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventSessionStateChanged { payload, .. } => {
-            use agentdash_application::session::TurnTerminalKind;
+            use agentdash_application::backend_transport::{RelaySessionEvent, RelayTerminalKind};
 
             tracing::info!(
                 backend_id = %backend_id,
@@ -261,20 +268,30 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 "收到远程会话状态变更"
             );
 
+            if matches!(payload.state, agentdash_relay::SessionState::Started) {
+                return;
+            }
+
             let terminal_kind = match payload.state {
-                agentdash_relay::SessionState::Completed => TurnTerminalKind::Completed,
-                agentdash_relay::SessionState::Failed => TurnTerminalKind::Failed,
-                agentdash_relay::SessionState::Cancelled => TurnTerminalKind::Interrupted,
-                agentdash_relay::SessionState::Started => {
-                    // started 不是 terminal 信号，不发送
-                    return;
-                }
+                agentdash_relay::SessionState::Completed => RelayTerminalKind::Completed,
+                agentdash_relay::SessionState::Failed => RelayTerminalKind::Failed,
+                agentdash_relay::SessionState::Cancelled => RelayTerminalKind::Interrupted,
+                agentdash_relay::SessionState::Started => unreachable!(),
             };
-            state
-                .services
-                .session_hub
-                .signal_relay_terminal(&payload.session_id, terminal_kind, payload.message.clone())
-                .await;
+
+            if !state.services.backend_registry.feed_session_event(
+                &payload.session_id,
+                RelaySessionEvent::Terminal {
+                    kind: terminal_kind,
+                    message: payload.message.clone(),
+                },
+            ) {
+                tracing::debug!(
+                    backend_id = %backend_id,
+                    session_id = %payload.session_id,
+                    "relay terminal 到达时 session sink 不存在（session 可能已结束）"
+                );
+            }
         }
         RelayMessage::EventCapabilitiesChanged { .. } => {
             tracing::info!(backend_id = %backend_id, "收到能力变更通知");

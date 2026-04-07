@@ -1,5 +1,4 @@
-import { buildApiPath } from "../api/origin";
-import { authenticatedFetch } from "../api/client";
+import { api } from "../api/client";
 
 // ─── Descriptor（能力发现） ─────────────────────────────
 
@@ -108,22 +107,9 @@ function applyQueryParams(searchParams: URLSearchParams, params?: AddressSpaceQu
   if (params.workspaceId) searchParams.set("workspace_id", params.workspaceId);
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await authenticatedFetch(url, init);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    let message = `HTTP ${res.status}`;
-    if (text) {
-      try {
-        const parsed = JSON.parse(text);
-        message = parsed.error ?? parsed.message ?? text;
-      } catch {
-        message = text;
-      }
-    }
-    throw new Error(message);
-  }
-  return res.json();
+function buildQs(searchParams: URLSearchParams): string {
+  const qs = searchParams.toString();
+  return qs ? `?${qs}` : "";
 }
 
 // ─── API 函数 ────────────────────────────────────────────
@@ -131,29 +117,24 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 export async function listAddressSpaces(
   params?: AddressSpaceQueryParams,
 ): Promise<ListAddressSpacesResponse> {
-  const searchParams = new URLSearchParams();
-  applyQueryParams(searchParams, params);
-
-  const qs = searchParams.toString();
-  const url = buildApiPath(`/address-spaces${qs ? `?${qs}` : ""}`);
-  return fetchJson(url);
+  const sp = new URLSearchParams();
+  applyQueryParams(sp, params);
+  return api.get<ListAddressSpacesResponse>(`/address-spaces${buildQs(sp)}`);
 }
 
 export async function listAddressEntries(
   spaceId: string,
   params?: ListEntriesParams,
 ): Promise<ListEntriesResponse> {
-  const searchParams = new URLSearchParams();
-  applyQueryParams(searchParams, params);
-  if (params?.query) searchParams.set("query", params.query);
-  if (params?.path) searchParams.set("path", params.path);
-  if (params?.recursive !== undefined) searchParams.set("recursive", String(params.recursive));
+  const sp = new URLSearchParams();
+  applyQueryParams(sp, params);
+  if (params?.query) sp.set("query", params.query);
+  if (params?.path) sp.set("path", params.path);
+  if (params?.recursive !== undefined) sp.set("recursive", String(params.recursive));
 
-  const qs = searchParams.toString();
-  const url = buildApiPath(
-    `/address-spaces/${encodeURIComponent(spaceId)}/entries${qs ? `?${qs}` : ""}`,
+  return api.get<ListEntriesResponse>(
+    `/address-spaces/${encodeURIComponent(spaceId)}/entries${buildQs(sp)}`,
   );
-  return fetchJson(url);
 }
 
 export async function listMountEntries(params: {
@@ -166,20 +147,18 @@ export async function listMountEntries(params: {
   pattern?: string;
   recursive?: boolean;
 }): Promise<ListMountEntriesResponse> {
-  const searchParams = new URLSearchParams();
-  searchParams.set("project_id", params.projectId);
-  if (params.storyId) searchParams.set("story_id", params.storyId);
-  if (params.ownerType) searchParams.set("owner_type", params.ownerType);
-  if (params.ownerId) searchParams.set("owner_id", params.ownerId);
-  if (params.path) searchParams.set("path", params.path);
-  if (params.pattern) searchParams.set("pattern", params.pattern);
-  if (params.recursive !== undefined) searchParams.set("recursive", String(params.recursive));
+  const sp = new URLSearchParams();
+  sp.set("project_id", params.projectId);
+  if (params.storyId) sp.set("story_id", params.storyId);
+  if (params.ownerType) sp.set("owner_type", params.ownerType);
+  if (params.ownerId) sp.set("owner_id", params.ownerId);
+  if (params.path) sp.set("path", params.path);
+  if (params.pattern) sp.set("pattern", params.pattern);
+  if (params.recursive !== undefined) sp.set("recursive", String(params.recursive));
 
-  const qs = searchParams.toString();
-  const url = buildApiPath(
-    `/address-spaces/mounts/${encodeURIComponent(params.mountId)}/entries${qs ? `?${qs}` : ""}`,
+  return api.get<ListMountEntriesResponse>(
+    `/address-spaces/mounts/${encodeURIComponent(params.mountId)}/entries${buildQs(sp)}`,
   );
-  return fetchJson(url);
 }
 
 export async function readMountFile(params: {
@@ -190,18 +169,13 @@ export async function readMountFile(params: {
   mountId: string;
   path: string;
 }): Promise<ReadMountFileResponse> {
-  const url = buildApiPath("/address-spaces/read-file");
-  return fetchJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      project_id: params.projectId,
-      story_id: params.storyId,
-      owner_type: params.ownerType,
-      owner_id: params.ownerId,
-      mount_id: params.mountId,
-      path: params.path,
-    }),
+  return api.post<ReadMountFileResponse>("/address-spaces/read-file", {
+    project_id: params.projectId,
+    story_id: params.storyId,
+    owner_type: params.ownerType,
+    owner_id: params.ownerId,
+    mount_id: params.mountId,
+    path: params.path,
   });
 }
 
@@ -212,17 +186,12 @@ export async function previewAddressSpace(params: {
   ownerId?: string;
   target?: "project" | "story" | "task";
 }): Promise<PreviewAddressSpaceResponse> {
-  const url = buildApiPath("/address-spaces/preview");
-  return fetchJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      project_id: params.projectId,
-      story_id: params.storyId,
-      owner_type: params.ownerType,
-      owner_id: params.ownerId,
-      target: params.target ?? "project",
-    }),
+  return api.post<PreviewAddressSpaceResponse>("/address-spaces/preview", {
+    project_id: params.projectId,
+    story_id: params.storyId,
+    owner_type: params.ownerType,
+    owner_id: params.ownerId,
+    target: params.target ?? "project",
   });
 }
 
@@ -235,18 +204,13 @@ export async function writeMountFile(params: {
   path: string;
   content: string;
 }): Promise<WriteMountFileResponse> {
-  const url = buildApiPath("/address-spaces/write-file");
-  return fetchJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      project_id: params.projectId,
-      story_id: params.storyId,
-      owner_type: params.ownerType,
-      owner_id: params.ownerId,
-      mount_id: params.mountId,
-      path: params.path,
-      content: params.content,
-    }),
+  return api.post<WriteMountFileResponse>("/address-spaces/write-file", {
+    project_id: params.projectId,
+    story_id: params.storyId,
+    owner_type: params.ownerType,
+    owner_id: params.ownerId,
+    mount_id: params.mountId,
+    path: params.path,
+    content: params.content,
   });
 }

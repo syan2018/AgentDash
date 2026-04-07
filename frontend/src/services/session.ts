@@ -1,5 +1,5 @@
 import { buildApiPath } from "../api/origin";
-import { authenticatedFetch } from "../api/client";
+import { api, authenticatedFetch } from "../api/client";
 import { requireStringField, requireNumberField } from "../api/mappers";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type {
@@ -88,26 +88,16 @@ export async function fetchSessions(options?: FetchSessionsOptions): Promise<Ses
     params.set("exclude_bound", "true");
   }
   const query = params.toString();
-  const url = query ? `${buildApiPath("/sessions")}?${query}` : buildApiPath("/sessions");
-  const res = await authenticatedFetch(url);
-  if (!res.ok) throw new Error(`获取会话列表失败: HTTP ${res.status}`);
-  return res.json();
+  const path = query ? `/sessions?${query}` : "/sessions";
+  return api.get<SessionMeta[]>(path);
 }
 
 export async function createSession(title?: string): Promise<SessionMeta> {
-  const res = await authenticatedFetch(buildApiPath("/sessions"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
-  });
-  if (!res.ok) throw new Error(`创建会话失败: HTTP ${res.status}`);
-  return res.json();
+  return api.post<SessionMeta>("/sessions", { title });
 }
 
 export async function fetchSessionMeta(id: string): Promise<SessionMeta> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}`));
-  if (!res.ok) throw new Error(`获取会话详情失败: HTTP ${res.status}`);
-  return res.json();
+  return api.get<SessionMeta>(`/sessions/${encodeURIComponent(id)}`);
 }
 
 function mapPersistedSessionEvent(raw: Record<string, unknown>): PersistedSessionEvent {
@@ -150,10 +140,7 @@ export async function fetchSessionEvents(
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}`), {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error(`删除会话失败: HTTP ${res.status}`);
+  await api.delete<void>(`/sessions/${encodeURIComponent(id)}`);
 }
 
 function mapSessionContextAgentBinding(raw: unknown): AgentBinding | null {
@@ -248,11 +235,7 @@ export async function fetchSessionExecutionState(id: string): Promise<SessionExe
 }
 
 export async function cancelSession(id: string): Promise<void> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/cancel`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) throw new Error(`取消会话失败: HTTP ${res.status}`);
+  await api.post<void>(`/sessions/${encodeURIComponent(id)}/cancel`, {});
 }
 
 // ─── 项目会话列表 ─────────────────────────────────────

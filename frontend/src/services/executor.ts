@@ -1,5 +1,4 @@
-import { buildApiPath } from "../api/origin";
-import { authenticatedFetch } from "../api/client";
+import { api } from "../api/client";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import type { ThinkingLevel } from "../types";
 import type { PermissionPolicy } from "../features/executor-selector/model/types";
@@ -11,10 +10,8 @@ export type { PermissionPolicy };
 export interface ExecutorConfig {
   executor: ExecutorProfile;
   provider_id?: string;
-  // 对齐后端 ExecutorConfig（Rust 侧使用 snake_case 字段）
   model_id?: string;
   agent_id?: string;
-  /** 推理级别，替代旧的 reasoning_id 字段 */
   thinking_level?: ThinkingLevel;
   permission_policy?: PermissionPolicy;
 }
@@ -27,33 +24,17 @@ export interface PromptSessionRequest {
 }
 
 export async function promptSession(sessionId: string, req: PromptSessionRequest): Promise<void> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/prompt`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `promptSession failed: HTTP ${res.status}`);
-  }
+  await api.post<void>(
+    `/sessions/${encodeURIComponent(sessionId)}/prompt`,
+    req,
+  );
 }
 
 export async function approveToolCall(sessionId: string, toolCallId: string): Promise<void> {
-  const res = await authenticatedFetch(
-    buildApiPath(
-      `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/approve`,
-    ),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    },
+  await api.post<void>(
+    `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/approve`,
+    {},
   );
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `approveToolCall failed: HTTP ${res.status}`);
-  }
 }
 
 export async function rejectToolCall(
@@ -61,21 +42,10 @@ export async function rejectToolCall(
   toolCallId: string,
   reason?: string,
 ): Promise<void> {
-  const res = await authenticatedFetch(
-    buildApiPath(
-      `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/reject`,
-    ),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason }),
-    },
+  await api.post<void>(
+    `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/reject`,
+    { reason },
   );
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `rejectToolCall failed: HTTP ${res.status}`);
-  }
 }
 
 export async function respondCompanionRequest(
@@ -83,19 +53,8 @@ export async function respondCompanionRequest(
   requestId: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
-  const res = await authenticatedFetch(
-    buildApiPath(
-      `/sessions/${encodeURIComponent(sessionId)}/companion-requests/${encodeURIComponent(requestId)}/respond`,
-    ),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payload }),
-    },
+  await api.post<void>(
+    `/sessions/${encodeURIComponent(sessionId)}/companion-requests/${encodeURIComponent(requestId)}/respond`,
+    { payload },
   );
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `respondCompanionRequest failed: HTTP ${res.status}`);
-  }
 }

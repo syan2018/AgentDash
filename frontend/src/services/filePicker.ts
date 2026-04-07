@@ -1,5 +1,4 @@
-import { buildApiPath } from "../api/origin";
-import { authenticatedFetch } from "../api/client";
+import { api } from "../api/client";
 
 export interface FileEntry {
   relPath: string;
@@ -42,32 +41,15 @@ export async function listFiles(
   params.set("workspace_id", workspaceId);
   if (pattern) params.set("pattern", pattern);
 
-  const url = buildApiPath(`/file-picker${params.toString() ? `?${params}` : ""}`);
-  const res = await authenticatedFetch(url);
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `file-picker list failed: HTTP ${res.status}`);
-  }
-
-  return res.json();
+  return api.get<ListFilesResponse>(`/file-picker?${params}`);
 }
 
 export async function batchReadFiles(
   workspaceId: string,
   paths: string[],
 ): Promise<BatchReadFilesResponse> {
-  const url = buildApiPath("/file-picker/batch-read");
-  const res = await authenticatedFetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspace_id: workspaceId, paths }),
+  return api.post<BatchReadFilesResponse>("/file-picker/batch-read", {
+    workspace_id: workspaceId,
+    paths,
   });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `file-picker batch-read failed: HTTP ${res.status}`);
-  }
-
-  return res.json();
 }

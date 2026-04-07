@@ -3,14 +3,14 @@
   "name": "executor-discovery-routing-gap",
   "title": "统一执行器 discovery 与 session prompt 路由",
   "description": "将 relay 分发能力从 TurnDispatcher (API 层) 下沉为 RelayAgentConnector (Application 层)，使 SessionHub.start_prompt() 成为唯一的 prompt 入口，消除 discovery 与 prompt 路由的不一致。",
-  "status": "in-progress",
+  "status": "completed",
   "dev_type": "fullstack",
   "scope": "executor-discovery-routing",
   "priority": "P2",
   "creator": "claude-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-04-03",
-  "completedAt": null,
+  "completedAt": "2026-04-08",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -29,7 +29,7 @@
       "action": "finish"
     }
   ],
-  "commit": null,
+  "commit": "d3aba6b",
   "pr_url": null,
   "subtasks": [
     "phase-0-execution-context-extend",

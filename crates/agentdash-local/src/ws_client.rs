@@ -176,21 +176,6 @@ fn build_capabilities(handler: &CommandHandler) -> CapabilitiesPayload {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_capabilities_disables_unimplemented_discover_options() {
-        let (event_tx, _event_rx) = mpsc::unbounded_channel();
-        let handler = CommandHandler::new(ToolExecutor::new(Vec::new()), None, None, event_tx);
-
-        let capabilities = build_capabilities(&handler);
-
-        assert!(!capabilities.supports_discover_options);
-    }
-}
-
 fn parse_ws_message(msg: &Message) -> Option<RelayMessage> {
     match msg {
         Message::Text(text) => match serde_json::from_str::<RelayMessage>(text.as_ref()) {

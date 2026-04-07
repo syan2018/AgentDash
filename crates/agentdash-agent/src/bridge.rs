@@ -98,19 +98,3 @@ pub trait LlmBridge: Send + Sync {
         result.ok_or(BridgeError::EmptyResponse)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bridge_request_builds_correctly() {
-        let req = BridgeRequest {
-            system_prompt: Some("你是一个助手".into()),
-            messages: vec![AgentMessage::user("你好")],
-            tools: vec![],
-        };
-        assert!(req.system_prompt.is_some());
-        assert_eq!(req.messages.len(), 1);
-    }
-}

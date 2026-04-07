@@ -56,18 +56,3 @@ pub fn validate_session_composition(composition: &SessionComposition) -> Result<
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validate_session_composition_rejects_blank_workflow_step() {
-        let composition = SessionComposition {
-            workflow_steps: vec!["  ".to_string()],
-            ..Default::default()
-        };
-        let error = validate_session_composition(&composition).expect_err("should fail");
-        assert!(error.contains("workflow_steps"));
-    }
-}

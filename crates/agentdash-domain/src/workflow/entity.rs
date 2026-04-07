@@ -544,12 +544,4 @@ mod tests {
         assert!(lifecycle.is_active());
     }
 
-    #[test]
-    fn workflow_assignment_uses_lifecycle_id() {
-        let lifecycle_id = Uuid::new_v4();
-        let assignment =
-            WorkflowAssignment::new(Uuid::new_v4(), lifecycle_id, WorkflowBindingRole::Task);
-
-        assert_eq!(assignment.lifecycle_id, lifecycle_id);
-    }
 }

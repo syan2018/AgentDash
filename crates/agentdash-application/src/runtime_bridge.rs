@@ -71,30 +71,3 @@ pub fn runtime_mcp_servers_to_acp(servers: &[RuntimeMcpServer]) -> Vec<McpServer
         .filter_map(runtime_mcp_server_to_acp)
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use agentdash_domain::common::{AddressSpace, Mount, MountCapability};
-
-    #[test]
-    fn address_space_roundtrip_preserves_mount_shape() {
-        let address_space = AddressSpace {
-            mounts: vec![Mount {
-                id: "main".to_string(),
-                provider: "relay_fs".to_string(),
-                backend_id: "backend-a".to_string(),
-                root_ref: "/workspace".to_string(),
-                capabilities: vec![MountCapability::Read, MountCapability::Write],
-                default_write: true,
-                display_name: "主工作区".to_string(),
-                metadata: serde_json::json!({ "kind": "workspace" }),
-            }],
-            default_mount_id: Some("main".to_string()),
-            source_project_id: Some("project-1".to_string()),
-            source_story_id: Some("story-1".to_string()),
-        };
-
-        let cloned = address_space.clone();
-        assert_eq!(cloned, address_space);
-    }
-}

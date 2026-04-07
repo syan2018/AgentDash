@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_application::backend_transport::BackendTransport;
-use agentdash_domain::context_container::ContextContainerCapability;
+use agentdash_domain::common::MountCapability;
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
     WorkspaceResolutionPolicy, WorkspaceStatus,
@@ -41,7 +41,7 @@ pub struct CreateWorkspaceRequest {
     pub default_binding_id: Option<Uuid>,
     pub bindings: Option<Vec<WorkspaceBindingInput>>,
     pub shortcut_binding: Option<WorkspaceBindingInput>,
-    pub mount_capabilities: Option<Vec<ContextContainerCapability>>,
+    pub mount_capabilities: Option<Vec<MountCapability>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,7 +52,7 @@ pub struct UpdateWorkspaceRequest {
     pub resolution_policy: Option<WorkspaceResolutionPolicy>,
     pub default_binding_id: Option<Uuid>,
     pub bindings: Option<Vec<WorkspaceBindingInput>>,
-    pub mount_capabilities: Option<Vec<ContextContainerCapability>>,
+    pub mount_capabilities: Option<Vec<MountCapability>>,
 }
 
 #[derive(Debug, Deserialize)]

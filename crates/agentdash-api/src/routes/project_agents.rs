@@ -8,7 +8,7 @@ use agentdash_application::address_space::{
 };
 use agentdash_domain::{
     agent::{Agent, ProjectAgentLink},
-    context_container::ContextContainerCapability,
+    common::MountCapability,
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
     workspace::Workspace,
@@ -473,7 +473,7 @@ pub(crate) fn build_project_agent_visible_mounts(
                 || container
                     .capabilities
                     .iter()
-                    .any(|capability| matches!(capability, ContextContainerCapability::Write));
+                    .any(|capability| matches!(capability, MountCapability::Write));
 
             ProjectAgentMountResponse {
                 container_id,

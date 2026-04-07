@@ -5,9 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::MountCapability;
 
-/// 向后兼容别名
-pub type ContextContainerCapability = MountCapability;
-
 fn bool_true() -> bool {
     true
 }
@@ -60,7 +57,7 @@ pub struct ContextContainerDefinition {
     pub display_name: String,
     pub provider: ContextContainerProvider,
     #[serde(default)]
-    pub capabilities: Vec<ContextContainerCapability>,
+    pub capabilities: Vec<MountCapability>,
     #[serde(default)]
     pub default_write: bool,
     #[serde(default)]
@@ -107,7 +104,7 @@ pub fn validate_context_container(container: &ContextContainerDefinition) -> Res
         && !container
             .capabilities
             .iter()
-            .any(|item| matches!(item, ContextContainerCapability::Write))
+            .any(|item| matches!(item, MountCapability::Write))
     {
         return Err("default_write=true 时必须显式声明 write capability".to_string());
     }
@@ -120,7 +117,7 @@ pub fn validate_context_container(container: &ContextContainerDefinition) -> Res
             if container
                 .capabilities
                 .iter()
-                .any(|item| matches!(item, ContextContainerCapability::Exec))
+                .any(|item| matches!(item, MountCapability::Exec))
             {
                 return Err("inline_files 不支持 exec capability".to_string());
             }
@@ -149,7 +146,7 @@ pub fn validate_context_container(container: &ContextContainerDefinition) -> Res
             if container
                 .capabilities
                 .iter()
-                .any(|item| matches!(item, ContextContainerCapability::Exec))
+                .any(|item| matches!(item, MountCapability::Exec))
             {
                 return Err("external_service 不支持 exec capability".to_string());
             }
@@ -259,9 +256,9 @@ mod tests {
                 }],
             },
             capabilities: vec![
-                ContextContainerCapability::Read,
-                ContextContainerCapability::List,
-                ContextContainerCapability::Search,
+                MountCapability::Read,
+                MountCapability::List,
+                MountCapability::Search,
             ],
             default_write: false,
             exposure: ContextContainerExposure::default(),
@@ -296,9 +293,9 @@ mod tests {
                 root_ref: "18724/doc123".to_string(),
             },
             capabilities: vec![
-                ContextContainerCapability::Read,
-                ContextContainerCapability::Write,
-                ContextContainerCapability::List,
+                MountCapability::Read,
+                MountCapability::Write,
+                MountCapability::List,
             ],
             default_write: false,
             exposure: ContextContainerExposure::default(),

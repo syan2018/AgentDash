@@ -20,9 +20,10 @@ mod tests {
         SharedRuntimeAddressSpace, ShellExecTool,
     };
 
+    use agentdash_domain::common::MountCapability;
     use agentdash_domain::context_container::{
-        ContextContainerCapability, ContextContainerDefinition, ContextContainerExposure,
-        ContextContainerFile, ContextContainerProvider,
+        ContextContainerDefinition, ContextContainerExposure, ContextContainerFile,
+        ContextContainerProvider,
     };
     use agentdash_domain::workspace::Workspace;
 
@@ -66,9 +67,9 @@ mod tests {
                 }],
             },
             capabilities: vec![
-                ContextContainerCapability::Read,
-                ContextContainerCapability::List,
-                ContextContainerCapability::Search,
+                MountCapability::Read,
+                MountCapability::List,
+                MountCapability::Search,
             ],
             default_write: false,
             exposure: ContextContainerExposure::default(),
@@ -151,8 +152,8 @@ mod tests {
 
         let mut ws = sample_workspace();
         ws.mount_capabilities = vec![
-            ContextContainerCapability::Read,
-            ContextContainerCapability::List,
+            MountCapability::Read,
+            MountCapability::List,
         ];
 
         let address_space = service
@@ -239,9 +240,9 @@ mod tests {
                         ],
                     },
                     capabilities: vec![
-                        ContextContainerCapability::Read,
-                        ContextContainerCapability::List,
-                        ContextContainerCapability::Search,
+                        MountCapability::Read,
+                        MountCapability::List,
+                        MountCapability::Search,
                     ],
                     default_write: false,
                     exposure: ContextContainerExposure::default(),
@@ -314,10 +315,10 @@ mod tests {
                         ],
                     },
                     capabilities: vec![
-                        ContextContainerCapability::Read,
-                        ContextContainerCapability::Write,
-                        ContextContainerCapability::List,
-                        ContextContainerCapability::Search,
+                        MountCapability::Read,
+                        MountCapability::Write,
+                        MountCapability::List,
+                        MountCapability::Search,
                     ],
                     default_write: true,
                     exposure: ContextContainerExposure::default(),

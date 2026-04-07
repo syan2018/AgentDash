@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::context_container::ContextContainerCapability;
+use crate::common::MountCapability;
 
 use super::value_objects::{
     WorkspaceBinding, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceStatus,
@@ -27,7 +27,7 @@ pub struct Workspace {
     pub bindings: Vec<WorkspaceBinding>,
     /// Agent 会话中该 Workspace mount 可使用的能力。
     #[serde(default = "Workspace::default_mount_capabilities")]
-    pub mount_capabilities: Vec<ContextContainerCapability>,
+    pub mount_capabilities: Vec<MountCapability>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -57,13 +57,13 @@ impl Workspace {
         }
     }
 
-    pub fn default_mount_capabilities() -> Vec<ContextContainerCapability> {
+    pub fn default_mount_capabilities() -> Vec<MountCapability> {
         vec![
-            ContextContainerCapability::Read,
-            ContextContainerCapability::Write,
-            ContextContainerCapability::List,
-            ContextContainerCapability::Search,
-            ContextContainerCapability::Exec,
+            MountCapability::Read,
+            MountCapability::Write,
+            MountCapability::List,
+            MountCapability::Search,
+            MountCapability::Exec,
         ]
     }
 

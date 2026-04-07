@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 use agentdash_domain::context_container::{
-    ContextContainerCapability, ContextContainerDefinition, ContextContainerProvider,
+    ContextContainerDefinition, ContextContainerProvider,
 };
 use agentdash_domain::{
     canvas::Canvas,
@@ -111,7 +111,7 @@ pub fn workspace_mount(workspace: &Workspace) -> Result<Mount, String> {
         return Err("Workspace binding.root_ref 不能为空".to_string());
     }
 
-    let capabilities = map_container_capabilities(&workspace.mount_capabilities);
+    let capabilities = workspace.mount_capabilities.to_vec();
 
     Ok(Mount {
         id: "main".to_string(),
@@ -230,7 +230,7 @@ pub fn build_context_container_mount(
             MountCapability::Search,
         ]
     } else {
-        map_container_capabilities(&container.capabilities)
+        container.capabilities.to_vec()
     };
 
     let (provider, root_ref, metadata) = match &container.provider {
@@ -281,24 +281,6 @@ fn annotate_context_mount_owner_scope(mount: &mut Mount, owner_scope: ContextCon
     mount.metadata = serde_json::Value::Object(metadata);
 }
 
-pub fn map_container_capabilities(
-    capabilities: &[ContextContainerCapability],
-) -> Vec<MountCapability> {
-    let mut mapped = Vec::new();
-    for capability in capabilities {
-        let next = match capability {
-            ContextContainerCapability::Read => MountCapability::Read,
-            ContextContainerCapability::Write => MountCapability::Write,
-            ContextContainerCapability::List => MountCapability::List,
-            ContextContainerCapability::Search => MountCapability::Search,
-            ContextContainerCapability::Exec => MountCapability::Exec,
-        };
-        if !mapped.contains(&next) {
-            mapped.push(next);
-        }
-    }
-    mapped
-}
 
 fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, String> {
     let trimmed = value.trim();

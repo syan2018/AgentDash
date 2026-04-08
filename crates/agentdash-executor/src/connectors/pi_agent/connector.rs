@@ -363,8 +363,8 @@ fn escape_xml(s: &str) -> String {
 
 /// 从工作目录扫描 SKILL.md 文件，生成 slash command 列表。
 ///
-/// 轻量实现：直接遍历本地 `.agents/skills/` 和 `skills/` 目录，
-/// 无需依赖 application 层的 skill loader。
+/// 遍历本地 `.agents/skills/` 和 `skills/` 目录的一级子目录，
+/// 解析 SKILL.md 的 frontmatter 提取 name 和 description。
 fn discover_skill_slash_commands(workspace_root: &Path) -> Vec<serde_json::Value> {
     let mut commands = Vec::new();
     let scan_dirs = [
@@ -388,51 +388,44 @@ fn discover_skill_slash_commands(workspace_root: &Path) -> Vec<serde_json::Value
             if !skill_md.exists() {
                 continue;
             }
-            // 快速解析 frontmatter 提取 name 和 description
             let content = match std::fs::read_to_string(&skill_md) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            let (name, description) = parse_skill_frontmatter_lightweight(&content);
-            let name = name.unwrap_or_else(|| {
-                subdir
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            });
-            commands.push(serde_json::json!({
-                "name": format!("/skill:{name}"),
-                "description": description.unwrap_or_default(),
-            }));
+            if let Some(fm) = parse_skill_frontmatter(&content) {
+                let name = fm.name.unwrap_or_else(|| {
+                    subdir
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                });
+                commands.push(serde_json::json!({
+                    "name": format!("/skill:{name}"),
+                    "description": fm.description.unwrap_or_default(),
+                }));
+            }
         }
     }
     commands
 }
 
-/// 轻量 frontmatter 解析（仅提取 name 和 description，不依赖 serde_yaml）
-fn parse_skill_frontmatter_lightweight(content: &str) -> (Option<String>, Option<String>) {
+/// SKILL.md frontmatter 结构（仅用于 slash command 发现）
+#[derive(serde::Deserialize, Default)]
+struct SkillSlashCommandFrontmatter {
+    name: Option<String>,
+    description: Option<String>,
+}
+
+/// 解析 SKILL.md frontmatter
+fn parse_skill_frontmatter(content: &str) -> Option<SkillSlashCommandFrontmatter> {
     let content = content.trim_start_matches('\u{feff}');
     if !content.starts_with("---") {
-        return (None, None);
+        return None;
     }
     let after_open = &content[3..];
-    let close_pos = match after_open.find("\n---") {
-        Some(pos) => pos,
-        None => return (None, None),
-    };
-    let yaml_block = &after_open[..close_pos];
-    let mut name = None;
-    let mut description = None;
-    for line in yaml_block.lines() {
-        let line = line.trim();
-        if let Some(val) = line.strip_prefix("name:") {
-            name = Some(val.trim().trim_matches('"').trim_matches('\'').to_string());
-        } else if let Some(val) = line.strip_prefix("description:") {
-            description =
-                Some(val.trim().trim_matches('"').trim_matches('\'').to_string());
-        }
-    }
-    (name, description)
+    let close_pos = after_open.find("\n---")?;
+    let yaml_str = &after_open[..close_pos];
+    serde_yaml::from_str(yaml_str).ok()
 }
 
 fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {

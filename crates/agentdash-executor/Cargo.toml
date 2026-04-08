@@ -25,6 +25,7 @@ agentdash-acp-meta = { workspace = true }
 executors = { workspace = true }
 workspace_utils = { path = "../../third_party/vibe-kanban/crates/utils", package = "utils" }
 json-patch = "2.0"
+serde_yaml = "0.9"
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
 

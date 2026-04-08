@@ -46,12 +46,26 @@ impl SessionHub {
             runtime.tx.clone()
         };
 
-        let workspace_root = req
-            .workspace_root
+        let effective_address_space = req
+            .address_space
             .clone()
-            .unwrap_or_else(|| self.workspace_root.clone());
+            .or_else(|| self.default_address_space.clone())
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "prompt 缺少 address_space，且 SessionHub 未配置默认 address_space".to_string(),
+                )
+            })?;
+        let default_mount_root = effective_address_space
+            .default_mount()
+            .map(|m| PathBuf::from(m.root_ref.trim()))
+            .filter(|p| !p.as_os_str().is_empty())
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "address_space 缺少 default_mount 或 root_ref 无效".to_string(),
+                )
+            })?;
         let working_directory =
-            resolve_working_dir(&workspace_root, req.user_input.working_dir.as_deref());
+            resolve_working_dir(&default_mount_root, req.user_input.working_dir.as_deref());
 
         let title_hint = resolved_payload
             .text_prompt
@@ -98,44 +112,43 @@ impl SessionHub {
         // - owner 首轮 bootstrap：总是重新 load snapshot，并触发 SessionStart
         // - 同进程续跑：复用已有 hook_session，只 refresh snapshot
         // - 冷启动恢复：若内存里没有 runtime，则重建 snapshot，但不触发 SessionStart
-        let hook_session: Option<SharedHookSessionRuntime> = if is_owner_bootstrap
-            || existing_hook_session.is_none()
-        {
-            match self
-                .load_session_hook_runtime(
-                    session_id,
-                    &turn_id,
-                    executor_config.executor.as_str(),
-                    executor_config.permission_policy.as_deref(),
-                    workspace_root.as_path(),
-                    working_directory.as_path(),
-                )
-                .await
-            {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let mut sessions = self.sessions.lock().await;
-                    if let Some(runtime) = sessions.get_mut(session_id) {
-                        runtime.running = false;
-                        runtime.current_turn_id = None;
-                        runtime.cancel_requested = false;
-                        runtime.hook_session = None;
+        let hook_session: Option<SharedHookSessionRuntime> =
+            if is_owner_bootstrap || existing_hook_session.is_none() {
+                match self
+                    .load_session_hook_runtime(
+                        session_id,
+                        &turn_id,
+                        executor_config.executor.as_str(),
+                        executor_config.permission_policy.as_deref(),
+                        default_mount_root.as_path(),
+                        working_directory.as_path(),
+                    )
+                    .await
+                {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        let mut sessions = self.sessions.lock().await;
+                        if let Some(runtime) = sessions.get_mut(session_id) {
+                            runtime.running = false;
+                            runtime.current_turn_id = None;
+                            runtime.cancel_requested = false;
+                            runtime.hook_session = None;
+                        }
+                        return Err(error);
                     }
-                    return Err(error);
                 }
-            }
-        } else {
-            if let Some(ref hs) = existing_hook_session {
-                let _ = hs
-                    .refresh(agentdash_spi::hooks::SessionHookRefreshQuery {
-                        session_id: session_id.to_string(),
-                        turn_id: Some(turn_id.clone()),
-                        reason: Some("subsequent_turn_refresh".to_string()),
-                    })
-                    .await;
-            }
-            existing_hook_session
-        };
+            } else {
+                if let Some(ref hs) = existing_hook_session {
+                    let _ = hs
+                        .refresh(agentdash_spi::hooks::SessionHookRefreshQuery {
+                            session_id: session_id.to_string(),
+                            turn_id: Some(turn_id.clone()),
+                            reason: Some("subsequent_turn_refresh".to_string()),
+                        })
+                        .await;
+                }
+                existing_hook_session
+            };
 
         {
             let mut sessions = self.sessions.lock().await;
@@ -173,11 +186,10 @@ impl SessionHub {
         };
 
         // 通过 address space service 扫描所有 mount 的 skill
-        let discovered_skills = if let (Some(service), Some(address_space)) =
-            (&self.address_space_service, &req.address_space)
-        {
+        let discovered_skills = if let Some(service) = &self.address_space_service {
             let skill_result =
-                crate::skill::load_skills_from_address_space(service, address_space).await;
+                crate::skill::load_skills_from_address_space(service, &effective_address_space)
+                    .await;
             for diag in &skill_result.diagnostics {
                 tracing::warn!(
                     skill_name = %diag.name,
@@ -193,12 +205,11 @@ impl SessionHub {
 
         let context = ExecutionContext {
             turn_id: turn_id.clone(),
-            workspace_root,
             working_directory,
             environment_variables: req.user_input.env,
             executor_config,
             mcp_servers: req.mcp_servers,
-            address_space: req.address_space,
+            address_space: Some(effective_address_space),
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
             system_context: req.system_context,
@@ -363,7 +374,10 @@ impl SessionHub {
                             }
                         };
                         let (kind, message) = if cancel_requested && live_turn_matches {
-                            (TurnTerminalKind::Interrupted, Some("执行已取消".to_string()))
+                            (
+                                TurnTerminalKind::Interrupted,
+                                Some("执行已取消".to_string()),
+                            )
                         } else {
                             (TurnTerminalKind::Failed, Some(e.to_string()))
                         };
@@ -380,19 +394,20 @@ impl SessionHub {
                 match guard.get(&session_id) {
                     Some(runtime) => (
                         runtime.cancel_requested,
-                        runtime.current_turn_id.as_deref()
-                            == Some(turn_id_for_adapter.as_str()),
+                        runtime.current_turn_id.as_deref() == Some(turn_id_for_adapter.as_str()),
                     ),
                     None => (false, false),
                 }
             };
             let (kind, message) = if cancel_requested && live_turn_matches {
-                (TurnTerminalKind::Interrupted, Some("执行已取消".to_string()))
+                (
+                    TurnTerminalKind::Interrupted,
+                    Some("执行已取消".to_string()),
+                )
             } else {
                 (TurnTerminalKind::Completed, None)
             };
-            let _ = processor_tx
-                .send(super::turn_processor::TurnEvent::Terminal { kind, message });
+            let _ = processor_tx.send(super::turn_processor::TurnEvent::Terminal { kind, message });
         });
 
         Ok(turn_id)
@@ -404,7 +419,7 @@ impl SessionHub {
         turn_id: &str,
         executor: &str,
         permission_policy: Option<&str>,
-        workspace_root: &Path,
+        default_mount_root: &Path,
         working_directory: &Path,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
         let Some(provider) = self.hook_provider.as_ref() else {
@@ -419,7 +434,9 @@ impl SessionHub {
                 executor: Some(executor.to_string()),
                 permission_policy: permission_policy.map(ToString::to_string),
                 working_directory: Some(working_directory.to_string_lossy().replace('\\', "/")),
-                workspace_root: Some(workspace_root.to_string_lossy().replace('\\', "/")),
+                default_mount_root_ref: Some(
+                    default_mount_root.to_string_lossy().replace('\\', "/"),
+                ),
                 owners: Vec::new(),
                 tags: Vec::new(),
             })
@@ -436,9 +453,9 @@ impl SessionHub {
     }
 }
 
-fn resolve_working_dir(workspace_root: &Path, working_dir: Option<&str>) -> PathBuf {
+fn resolve_working_dir(default_mount_root: &Path, working_dir: Option<&str>) -> PathBuf {
     match working_dir {
-        Some(rel) if !rel.trim().is_empty() => workspace_root.join(rel),
-        _ => workspace_root.to_path_buf(),
+        Some(rel) if !rel.trim().is_empty() => default_mount_root.join(rel),
+        _ => default_mount_root.to_path_buf(),
     }
 }

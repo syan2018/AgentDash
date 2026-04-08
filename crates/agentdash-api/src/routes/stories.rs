@@ -11,8 +11,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::context_container::{
-    ContextContainerDefinition, validate_context_containers,
-    validate_disabled_container_ids,
+    ContextContainerDefinition, validate_context_containers, validate_disabled_container_ids,
 };
 use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::project::Project;
@@ -245,7 +244,9 @@ pub async fn update_story(
         let reconciler = state.services.runtime_reconciler.clone();
         let story_id = story.id;
         tokio::spawn(async move {
-            reconciler.on_story_status_changed(story_id, &new_status).await;
+            reconciler
+                .on_story_status_changed(story_id, &new_status)
+                .await;
         });
     }
 
@@ -504,7 +505,9 @@ pub async fn update_task(
         let task_id = task.id;
         let new_status = task.status.clone();
         tokio::spawn(async move {
-            reconciler.on_task_status_changed(task_id, &new_status).await;
+            reconciler
+                .on_task_status_changed(task_id, &new_status)
+                .await;
         });
     }
 

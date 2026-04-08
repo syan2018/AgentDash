@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::address_space::selected_workspace_binding;
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_injection::{
-    ContextFragment, MergeStrategy, ResolveSourcesRequest, resolve_declared_sources,
-};
+use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
+
+use super::resolve_declared_sources;
 use serde_json::{Value, json};
 
 use crate::runtime::{RuntimeMcpBinding, RuntimeToolScope};
@@ -35,7 +35,9 @@ pub(crate) fn trim_or_dash(text: &str) -> &str {
 ///
 /// Task owner 路径在 `StaticFragmentsContributor` 中有自己的版本（包含 status 字段），
 /// 此函数仅供 project / story context builder 使用以消除重复。
-pub(crate) fn workspace_context_fragment(workspace: &agentdash_domain::workspace::Workspace) -> ContextFragment {
+pub(crate) fn workspace_context_fragment(
+    workspace: &agentdash_domain::workspace::Workspace,
+) -> ContextFragment {
     let binding_summary = selected_workspace_binding(workspace)
         .map(|binding| {
             format!(
@@ -89,7 +91,10 @@ pub fn build_owner_prompt_blocks(
 ) -> Vec<Value> {
     let mut blocks = Vec::new();
     if !context_markdown.trim().is_empty() {
-        blocks.push(build_owner_context_resource_block(context_uri, context_markdown));
+        blocks.push(build_owner_context_resource_block(
+            context_uri,
+            context_markdown,
+        ));
     }
     blocks.extend(user_prompt_blocks);
     blocks
@@ -338,10 +343,14 @@ impl ContextContributor for DeclaredSourcesContributor {
             })
             .cloned()
             .collect::<Vec<_>>();
+        let mount_root = input
+            .workspace
+            .and_then(selected_workspace_binding)
+            .map(|binding| std::path::PathBuf::from(binding.root_ref.as_str()));
 
         match resolve_declared_sources(ResolveSourcesRequest {
             sources: &resolvable_sources,
-            workspace_root: None,
+            mount_root: mount_root.as_deref(),
             base_order: 82,
         }) {
             Ok(result) => {

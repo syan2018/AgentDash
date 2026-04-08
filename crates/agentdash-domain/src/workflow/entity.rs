@@ -427,9 +427,10 @@ fn migrate_legacy_to_hook_rules(contract: &WorkflowContract) -> Vec<WorkflowHook
 
     for check in &contract.completion.checks {
         let (preset_key, trigger) = match check.kind {
-            WorkflowCheckKind::SessionTerminalIn => {
-                (PRESET_SESSION_TERMINAL_ADVANCE, WorkflowHookTrigger::BeforeStop)
-            }
+            WorkflowCheckKind::SessionTerminalIn => (
+                PRESET_SESSION_TERMINAL_ADVANCE,
+                WorkflowHookTrigger::BeforeStop,
+            ),
             _ => continue,
         };
         let key = format!("migrated:{}", check.key);
@@ -543,5 +544,4 @@ mod tests {
 
         assert!(lifecycle.is_active());
     }
-
 }

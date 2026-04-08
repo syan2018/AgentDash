@@ -1,6 +1,6 @@
 use agentdash_spi::SessionHookSnapshot;
 
-use super::snapshot_helpers::snapshot_workspace_root;
+use super::snapshot_helpers::snapshot_default_mount_root_ref;
 
 pub(super) fn extract_tool_arg<'a>(
     payload: Option<&'a serde_json::Value>,
@@ -16,21 +16,21 @@ pub(super) fn shell_exec_rewritten_args(
     snapshot: &SessionHookSnapshot,
     payload: Option<&serde_json::Value>,
 ) -> Option<serde_json::Value> {
-    let workspace_root = snapshot_workspace_root(snapshot)?;
+    let default_mount_root_ref = snapshot_default_mount_root_ref(snapshot)?;
     let cwd = extract_tool_arg(payload, "cwd")?;
     if !cwd.starts_with('/') && !std::path::Path::new(cwd).is_absolute() {
         return None;
     }
 
-    let rewritten_cwd = absolutize_cwd_to_workspace_relative(workspace_root, cwd)?;
+    let rewritten_cwd = absolutize_cwd_to_mount_relative(default_mount_root_ref, cwd)?;
     let mut args = payload?.get("args")?.clone();
     args.as_object_mut()?
         .insert("cwd".to_string(), serde_json::Value::String(rewritten_cwd));
     Some(args)
 }
 
-fn absolutize_cwd_to_workspace_relative(workspace_root: &str, cwd: &str) -> Option<String> {
-    let display_root = normalize_path_display_for_hook(workspace_root);
+fn absolutize_cwd_to_mount_relative(default_mount_root_ref: &str, cwd: &str) -> Option<String> {
+    let display_root = normalize_path_display_for_hook(default_mount_root_ref);
     let display_cwd = normalize_path_display_for_hook(cwd);
     let normalized_root = display_root.to_ascii_lowercase();
     let normalized_cwd = display_cwd.to_ascii_lowercase();

@@ -323,7 +323,7 @@ impl HookScriptEngine {
             "meta": {
                 "permission_policy": ctx.snapshot.metadata.as_ref().and_then(|m| m.permission_policy.as_deref()),
                 "working_directory": ctx.snapshot.metadata.as_ref().and_then(|m| m.working_directory.as_deref()),
-                "workspace_root": ctx.snapshot.metadata.as_ref().and_then(|m| m.workspace_root.as_deref()),
+                "default_mount_root_ref": ctx.snapshot.metadata.as_ref().and_then(|m| m.default_mount_root_ref.as_deref()),
                 "connector_id": ctx.snapshot.metadata.as_ref().and_then(|m| m.connector_id.as_deref()),
                 "executor": ctx.snapshot.metadata.as_ref().and_then(|m| m.executor.as_deref()),
                 "task_execution_mode": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_execution_mode")),
@@ -446,10 +446,7 @@ impl HookScriptEngine {
                         let o = item.as_object()?;
                         Some(HookEffect {
                             kind: o.get("kind")?.as_str()?.to_string(),
-                            payload: o
-                                .get("payload")
-                                .cloned()
-                                .unwrap_or(serde_json::Value::Null),
+                            payload: o.get("payload").cloned().unwrap_or(serde_json::Value::Null),
                         })
                     })
                     .collect()

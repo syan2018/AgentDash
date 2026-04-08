@@ -20,6 +20,7 @@ use agentdash_spi::{
     AddressSpace, AgentConfig, ExecutionContext, FlowCapabilities, HookEvaluationQuery,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry,
     HookTrigger, MountCapability, SessionHookRefreshQuery, ToolCluster,
+    workspace_path_from_context,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -81,7 +82,6 @@ pub struct CompanionRequestTool {
     current_session_id: Option<String>,
     current_turn_id: String,
     current_executor_config: AgentConfig,
-    workspace_root: std::path::PathBuf,
     working_dir: String,
     address_space: Option<AddressSpace>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
@@ -108,7 +108,6 @@ impl CompanionRequestTool {
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.turn_id.clone(),
             current_executor_config: context.executor_config.clone(),
-            workspace_root: context.workspace_root.clone(),
             working_dir: relative_working_dir(context),
             address_space: context.address_space.clone(),
             mcp_servers: context.mcp_servers.clone(),
@@ -317,8 +316,7 @@ impl CompanionRequestTool {
         )
         .await;
 
-        let isolated_label =
-            format!("companion:{}:{}", current_session_id, companion_label);
+        let isolated_label = format!("companion:{}:{}", current_session_id, companion_label);
         let target_binding = self
             .resolve_or_create_companion_binding(
                 hook_session.as_ref(),
@@ -373,7 +371,6 @@ impl CompanionRequestTool {
                         executor_config: Some(companion_executor_config),
                     },
                     mcp_servers: execution_slice.mcp_servers.clone(),
-                    workspace_root: Some(self.workspace_root.clone()),
                     address_space: execution_slice.address_space.clone(),
                     flow_capabilities: Some(build_companion_flow_capabilities(slice_mode)),
                     system_context: self.system_context.clone(),
@@ -509,10 +506,7 @@ impl CompanionRequestTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "已派发到 companion session（异步）。\n- request_id: {}\n- label: {}\n- session_id: {}\n- turn_id: {}",
-                dispatch_plan.dispatch_id,
-                companion_label,
-                target_binding.session_id,
-                turn_id,
+                dispatch_plan.dispatch_id, companion_label, target_binding.session_id, turn_id,
             ))],
             is_error: false,
             details: Some(serde_json::json!({
@@ -829,10 +823,7 @@ impl CompanionRequestTool {
             if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
                 if agent.name.eq_ignore_ascii_case(agent_name) {
                     let merged = link.merged_config(&agent.base_config);
-                    return Ok(build_agent_config_from_merged(
-                        &agent.agent_type,
-                        &merged,
-                    ));
+                    return Ok(build_agent_config_from_merged(&agent.agent_type, &merged));
                 }
             }
         }
@@ -1252,9 +1243,7 @@ impl CompanionRespondTool {
             &companion_context.parent_session_id,
             &companion_context.parent_turn_id,
             "companion_result_available",
-            format!(
-                "Companion `{result_agent_display}` 已回传结果，等待主 session 采纳",
-            ),
+            format!("Companion `{result_agent_display}` 已回传结果，等待主 session 采纳",),
             hook_payload.clone(),
         );
         session_hub
@@ -1307,7 +1296,6 @@ impl CompanionRespondTool {
                     .unwrap_or_else(|| AgentConfig::new("PI_AGENT"));
 
                 let parent_sid = companion_context.parent_session_id.clone();
-                let ws_root = session_hub.workspace_root().to_path_buf();
                 let hub_clone = session_hub.clone();
                 tokio::spawn(async move {
                     let _ = hub_clone
@@ -1324,7 +1312,6 @@ impl CompanionRespondTool {
                                     executor_config: Some(resume_config),
                                 },
                                 mcp_servers: vec![],
-                                workspace_root: Some(ws_root),
                                 address_space: None,
                                 flow_capabilities: None,
                                 system_context: None,
@@ -1429,9 +1416,12 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
 // ─── 以下为原有内部逻辑函数，保持不变 ──────────────────────────────
 
 pub fn relative_working_dir(context: &ExecutionContext) -> String {
+    let Ok(workspace_root) = workspace_path_from_context(context) else {
+        return ".".to_string();
+    };
     context
         .working_directory
-        .strip_prefix(&context.workspace_root)
+        .strip_prefix(&workspace_root)
         .ok()
         .map(|relative| {
             if relative.as_os_str().is_empty() {
@@ -1847,10 +1837,7 @@ pub fn build_companion_execution_slice(
     }
 }
 
-fn build_agent_config_from_merged(
-    agent_type: &str,
-    config: &serde_json::Value,
-) -> AgentConfig {
+fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) -> AgentConfig {
     let mut ec = AgentConfig::new(agent_type.to_string());
     if let Some(v) = config.get("provider_id").and_then(|v| v.as_str()) {
         ec.provider_id = Some(v.to_string());

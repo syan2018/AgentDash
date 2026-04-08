@@ -8,12 +8,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::address_space::SessionMountTarget;
+use agentdash_application::canvas::append_visible_canvas_mounts;
+use agentdash_application::session::SessionExecutionState;
 use agentdash_application::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
-use agentdash_application::canvas::append_visible_canvas_mounts;
-use agentdash_application::session::SessionExecutionState;
 use agentdash_application::session::context::{SessionContextSnapshot, SharedContextMount};
 
 use crate::{
@@ -196,7 +196,6 @@ pub(crate) async fn build_project_session_context_response(
         address_space: runtime_address_space,
         mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
-        workspace_root: None,
         executor_preset_name: project_agent.preset_name,
         executor_source,
         executor_resolution_error: None,

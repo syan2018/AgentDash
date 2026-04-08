@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
-use agentdash_domain::context_container::{
-    ContextContainerDefinition, ContextContainerProvider,
-};
+use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
 use agentdash_domain::{
     canvas::Canvas,
     project::Project,
@@ -280,7 +278,6 @@ fn annotate_context_mount_owner_scope(mount: &mut Mount, owner_scope: ContextCon
     );
     mount.metadata = serde_json::Value::Object(metadata);
 }
-
 
 fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, String> {
     let trimmed = value.trim();
@@ -563,10 +560,7 @@ fn path_matches_pattern(path: &str, pattern: Option<&str>) -> bool {
     match pattern {
         None => true,
         Some(pat)
-            if pat.contains('*')
-                || pat.contains('?')
-                || pat.contains('[')
-                || pat.contains('{') =>
+            if pat.contains('*') || pat.contains('?') || pat.contains('[') || pat.contains('{') =>
         {
             globset::Glob::new(pat)
                 .ok()

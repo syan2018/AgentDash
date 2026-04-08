@@ -81,8 +81,12 @@ pub(crate) fn workflow_step_key(snapshot: &SessionHookSnapshot) -> Option<&str> 
     active_workflow(snapshot)?.step_key.as_deref()
 }
 
-pub(crate) fn snapshot_workspace_root(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot.metadata.as_ref()?.workspace_root.as_deref()
+pub(crate) fn snapshot_default_mount_root_ref(snapshot: &SessionHookSnapshot) -> Option<&str> {
+    snapshot
+        .metadata
+        .as_ref()?
+        .default_mount_root_ref
+        .as_deref()
 }
 
 pub(crate) fn active_workflow_locator(
@@ -178,7 +182,9 @@ pub(crate) fn snapshot_has_task_owner(snapshot: &SessionHookSnapshot) -> bool {
 /// 当 session 关联了某种 owner 但该 owner 没有自己的 Workflow（或 Workflow 中
 /// 未定义某些阶段的 lifecycle rules）时，由此函数提供 owner 级别的"内置默认"。
 /// 调用方在 `apply_hook_rules` 中统一评估，与 workflow contract rules 合并。
-pub(crate) fn owner_default_hook_rules(snapshot: &SessionHookSnapshot) -> Vec<WorkflowHookRuleSpec> {
+pub(crate) fn owner_default_hook_rules(
+    snapshot: &SessionHookSnapshot,
+) -> Vec<WorkflowHookRuleSpec> {
     let mut rules = Vec::new();
 
     if snapshot_has_task_owner(snapshot) {

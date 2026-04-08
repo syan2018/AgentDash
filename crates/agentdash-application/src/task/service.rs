@@ -434,13 +434,10 @@ impl TaskLifecycleService {
 
         // 所有路径统一注入 TaskHookEffectExecutor 作为 PostTurnHandler
         {
-            let backend_id = resolve_task_backend_id(
-                &self.repos,
-                self.backend_availability.as_ref(),
-                task,
-            )
-            .await
-            .unwrap_or_default();
+            let backend_id =
+                resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), task)
+                    .await
+                    .unwrap_or_default();
             let handler = super::gateway::effect_executor::TaskHookEffectExecutor {
                 repos: self.repos.clone(),
                 restart_tracker: self.restart_tracker.clone(),

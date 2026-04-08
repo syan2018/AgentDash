@@ -368,8 +368,9 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         .try_get::<String, _>("mount_capabilities")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.mount_capabilities: {e}")))?;
     let mount_capabilities: Vec<agentdash_domain::common::MountCapability> =
-        serde_json::from_str(&mount_capabilities_raw)
-            .map_err(|e| DomainError::InvalidConfig(format!("workspaces.mount_capabilities JSON: {e}")))?;
+        serde_json::from_str(&mount_capabilities_raw).map_err(|e| {
+            DomainError::InvalidConfig(format!("workspaces.mount_capabilities JSON: {e}"))
+        })?;
 
     Ok(Workspace {
         id,

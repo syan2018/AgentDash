@@ -1,11 +1,7 @@
-use std::path::PathBuf;
-
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workspace::Workspace;
 
-use crate::address_space::selected_workspace_binding;
-use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpServer};
 use super::context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
     SessionProjectDefaults, SessionStoryOverrides, SharedContextMount,
@@ -14,6 +10,7 @@ use super::context::{
 use super::plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
 };
+use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpServer};
 use crate::workflow::ActiveWorkflowProjection;
 
 /// 统一的 session bootstrap 计划。
@@ -30,7 +27,6 @@ pub struct SessionBootstrapPlan {
     pub address_space: Option<AddressSpace>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
-    pub workspace_root: Option<PathBuf>,
     pub tool_visibility: SessionToolVisibilitySummary,
     pub runtime_policy: SessionRuntimePolicySummary,
     pub workflow: Option<ActiveWorkflowProjection>,
@@ -71,7 +67,6 @@ pub struct BootstrapPlanInput {
     pub address_space: Option<AddressSpace>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
-    pub workspace_root: Option<PathBuf>,
     pub executor_preset_name: Option<String>,
     pub executor_source: String,
     pub executor_resolution_error: Option<String>,
@@ -84,16 +79,8 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
     let workspace_attached = input.workspace.is_some();
 
     let mut working_dir = input.working_dir;
-    let mut workspace_root = input.workspace_root;
     if working_dir.is_none() && input.workspace.is_some() {
         working_dir = Some(".".to_string());
-    }
-    if workspace_root.is_none() {
-        workspace_root = input
-            .workspace
-            .as_ref()
-            .and_then(selected_workspace_binding)
-            .map(|binding| PathBuf::from(binding.root_ref.clone()));
     }
 
     let owner_type = match &input.owner_variant {
@@ -138,7 +125,6 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
         address_space: input.address_space,
         mcp_servers: input.mcp_servers,
         working_dir,
-        workspace_root,
         tool_visibility,
         runtime_policy,
         workflow: input.workflow,
@@ -229,7 +215,6 @@ mod tests {
             address_space: None,
             mcp_servers: vec![],
             working_dir: None,
-            workspace_root: None,
             executor_preset_name: None,
             executor_source: "test".to_string(),
             executor_resolution_error: None,
@@ -242,7 +227,6 @@ mod tests {
         });
 
         assert_eq!(plan.working_dir.as_deref(), Some("."));
-        assert_eq!(plan.workspace_root, Some(PathBuf::from("/workspace/test")));
         assert!(plan.owner.workspace_attached);
     }
 
@@ -258,7 +242,6 @@ mod tests {
             address_space: None,
             mcp_servers: vec![],
             working_dir: None,
-            workspace_root: None,
             executor_preset_name: None,
             executor_source: "test".to_string(),
             executor_resolution_error: None,

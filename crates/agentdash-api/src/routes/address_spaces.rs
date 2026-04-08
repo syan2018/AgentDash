@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::WorkflowBindingKind;
-use agentdash_injection::{AddressSpaceContext, AddressSpaceDescriptor};
-use agentdash_spi::AddressSpace;
+use agentdash_spi::{AddressSpace, AddressSpaceContext, AddressSpaceDescriptor};
 
 use crate::app_state::AppState;
 use crate::auth::{
@@ -59,7 +58,7 @@ pub async fn list_address_spaces(
 
     let has_mcp = state.config.mcp_base_url.is_some();
     let ctx = AddressSpaceContext {
-        workspace_root: workspace_available.then_some(std::path::Path::new(".")),
+        mount_root: workspace_available.then_some(std::path::Path::new(".")),
         has_mcp,
     };
 

@@ -82,7 +82,11 @@ impl AppExecutionHookProvider {
             .find_map(|o| o.project_id.as_deref())
             .and_then(|id| id.parse::<uuid::Uuid>().ok())?;
 
-        let links = self.agent_link_repo.list_by_project(project_id).await.ok()?;
+        let links = self
+            .agent_link_repo
+            .list_by_project(project_id)
+            .await
+            .ok()?;
         if links.is_empty() {
             return None;
         }
@@ -118,7 +122,9 @@ impl AppExecutionHookProvider {
 
         let mut lines = vec!["## Companion Agents\n以下 agent 已关联到当前项目，可通过 `companion_request` 工具的 `agent_key` 参数按名称指定：\n".to_string()];
         for (name, agent_type, display) in &agents_info {
-            lines.push(format!("- **{name}** (executor: `{agent_type}`): {display}"));
+            lines.push(format!(
+                "- **{name}** (executor: `{agent_type}`): {display}"
+            ));
         }
 
         Some(HookInjection {
@@ -201,7 +207,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 executor: query.executor,
                 permission_policy: query.permission_policy,
                 working_directory: query.working_directory,
-                workspace_root: query.workspace_root,
+                default_mount_root_ref: query.default_mount_root_ref,
                 ..Default::default()
             }),
         };
@@ -240,11 +246,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 if let Ok(Some(task)) = self
                     .owner_resolver
                     .task_repo()
-                    .get_by_id(
-                        task_id
-                            .parse::<uuid::Uuid>()
-                            .unwrap_or(uuid::Uuid::nil()),
-                    )
+                    .get_by_id(task_id.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil()))
                     .await
                 {
                     if let Some(meta) = snapshot.metadata.as_mut() {
@@ -363,7 +365,10 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             snapshot.owners.push(owner);
         }
 
-        if let Some(injection) = self.build_companion_agents_injection(&snapshot, &bindings).await {
+        if let Some(injection) = self
+            .build_companion_agents_injection(&snapshot, &bindings)
+            .await
+        {
             snapshot.injections.push(injection);
         }
 
@@ -382,7 +387,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             executor: None,
             permission_policy: None,
             working_directory: None,
-            workspace_root: None,
+            default_mount_root_ref: None,
             owners: Vec::new(),
             tags: Vec::new(),
         })

@@ -24,11 +24,11 @@ use executors::{
 use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, PromptPayload,
+    ExecutionContext, ExecutionStream, PromptPayload, workspace_path_from_context,
 };
 
 pub struct VibeKanbanExecutorsConnector {
-    workspace_root: PathBuf,
+    default_repo_root: PathBuf,
     cancel_by_session: Arc<Mutex<HashMap<String, executors::executors::CancellationToken>>>,
 }
 
@@ -74,9 +74,9 @@ fn build_executor_session_bound_notification(
 }
 
 impl VibeKanbanExecutorsConnector {
-    pub fn new(workspace_root: PathBuf) -> Self {
+    pub fn new(default_repo_root: PathBuf) -> Self {
         Self {
-            workspace_root,
+            default_repo_root,
             cancel_by_session: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -151,9 +151,9 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
                 ConnectorError::InvalidConfig(format!("找不到执行器 profile: {profile_id}"))
             })?;
 
-        let wd = working_dir.unwrap_or_else(|| self.workspace_root.clone());
+        let wd = working_dir.unwrap_or_else(|| self.default_repo_root.clone());
         agent
-            .discover_options(Some(&wd), Some(&self.workspace_root))
+            .discover_options(Some(&wd), Some(&self.default_repo_root))
             .await
             .map_err(|e| ConnectorError::Runtime(format!("discover_options 失败: {e}")))
     }
@@ -198,7 +198,8 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
 
         agent.use_approvals(Arc::new(NoopExecutorApprovalService));
 
-        let repo_context = RepoContext::new(context.workspace_root.clone(), vec![".".to_string()]);
+        let repo_root = workspace_path_from_context(&context)?;
+        let repo_context = RepoContext::new(repo_root, vec![".".to_string()]);
         let mut env = ExecutionEnv::new(
             repo_context,
             false,

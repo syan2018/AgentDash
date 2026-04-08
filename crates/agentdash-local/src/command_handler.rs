@@ -172,6 +172,9 @@ impl CommandHandler {
             }
         };
 
+        let address_space =
+            agentdash_application::session::local_workspace_address_space(&workspace_root);
+
         let req = PromptSessionRequest {
             user_input: UserPromptInput {
                 prompt_blocks: payload.prompt_blocks.map(|v| {
@@ -186,8 +189,7 @@ impl CommandHandler {
                 executor_config,
             },
             mcp_servers: parse_relay_mcp_servers(&payload.mcp_servers),
-            workspace_root: Some(workspace_root),
-            address_space: None,
+            address_space: Some(address_space),
             flow_capabilities: None,
             system_context: None,
             bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,

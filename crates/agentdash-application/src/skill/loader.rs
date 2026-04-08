@@ -39,13 +39,7 @@ pub async fn load_skills_from_address_space(
         }
 
         for skill_dir in [".agents/skills", "skills"] {
-            let skills = scan_mount_skill_dir(
-                service,
-                address_space,
-                &mount.id,
-                skill_dir,
-            )
-            .await;
+            let skills = scan_mount_skill_dir(service, address_space, &mount.id, skill_dir).await;
 
             for (skill, diags) in skills {
                 result.diagnostics.extend(diags);
@@ -138,7 +132,12 @@ async fn scan_mount_skill_dir(
 
         let mut diags = Vec::new();
         // 验证
-        diags.extend(validate_and_collect(&name, &parent_dir_name, &fm, &skill_md_path));
+        diags.extend(validate_and_collect(
+            &name,
+            &parent_dir_name,
+            &fm,
+            &skill_md_path,
+        ));
 
         if !diags.is_empty() {
             results.push((None, diags));

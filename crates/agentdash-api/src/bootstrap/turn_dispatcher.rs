@@ -8,23 +8,18 @@ use async_trait::async_trait;
 
 use crate::relay::registry::BackendRegistry;
 use crate::runtime_bridge::runtime_mcp_servers_to_acp;
-use crate::workspace_resolution::resolve_workspace_binding_core;
-use agentdash_application::workspace::WorkspaceResolutionError;
 
 /// API 层 `TurnDispatcher` 实现 — 所有执行器统一走 `SessionHub.start_prompt()`。
 ///
 /// relay 与 cloud-native 的差异由 `CompositeConnector` 内部的子连接器处理，
-/// dispatcher 只负责 workspace 解析和构建 `PromptSessionRequest`。
+/// dispatcher 负责构建 `PromptSessionRequest`。
 pub struct AppStateTurnDispatcher {
     pub(crate) session_hub: SessionHub,
     pub(crate) backend_registry: Arc<BackendRegistry>,
 }
 
 impl AppStateTurnDispatcher {
-    pub fn new(
-        session_hub: SessionHub,
-        backend_registry: Arc<BackendRegistry>,
-    ) -> Arc<Self> {
+    pub fn new(session_hub: SessionHub, backend_registry: Arc<BackendRegistry>) -> Arc<Self> {
         Arc::new(Self {
             session_hub,
             backend_registry,
@@ -39,21 +34,6 @@ impl TurnDispatcher for AppStateTurnDispatcher {
         session_id: &str,
         ctx: PreparedTurnContext,
     ) -> Result<StartedTurn, TaskExecutionError> {
-        let workspace_root = if let Some(ws) = ctx.workspace.as_ref() {
-            let resolved =
-                resolve_workspace_binding_core(self.backend_registry.as_ref(), ws)
-                    .await
-                    .map_err(|e| match e {
-                        WorkspaceResolutionError::NoBindings(msg)
-                        | WorkspaceResolutionError::NoAvailable(msg) => {
-                            TaskExecutionError::Internal(msg)
-                        }
-                    })?;
-            Some(std::path::PathBuf::from(resolved.root_ref.clone()))
-        } else {
-            None
-        };
-
         let prompt_req = PromptSessionRequest {
             user_input: UserPromptInput {
                 prompt_blocks: Some(ctx.built.prompt_blocks),
@@ -62,7 +42,6 @@ impl TurnDispatcher for AppStateTurnDispatcher {
                 executor_config: ctx.resolved_config.clone(),
             },
             mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers),
-            workspace_root,
             address_space: ctx.address_space.clone(),
             flow_capabilities: Some(agentdash_spi::FlowCapabilities::from_clusters([
                 agentdash_spi::ToolCluster::Read,

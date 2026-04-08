@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use agent_client_protocol::{ContentBlock, McpServer};
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,6 @@ pub struct UserPromptInput {
 pub struct PromptSessionRequest {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<McpServer>,
-    pub workspace_root: Option<PathBuf>,
     pub address_space: Option<AddressSpace>,
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
     pub system_context: Option<String>,
@@ -48,7 +47,6 @@ impl PromptSessionRequest {
         Self {
             user_input: input,
             mcp_servers: Vec::new(),
-            workspace_root: None,
             address_space: None,
             flow_capabilities: None,
             system_context: None,

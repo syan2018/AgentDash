@@ -27,6 +27,7 @@ use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload, SystemPromptMode,
+    workspace_path_from_context,
 };
 
 // ─── PiAgentConnector ───────────────────────────────────────────
@@ -56,11 +57,7 @@ impl ProviderRuntimeState {
 }
 
 impl PiAgentConnector {
-    pub fn new(
-        _workspace_root: PathBuf,
-        bridge: Arc<dyn LlmBridge>,
-        system_prompt: impl Into<String>,
-    ) -> Self {
+    pub fn new(bridge: Arc<dyn LlmBridge>, system_prompt: impl Into<String>) -> Self {
         Self {
             bridge,
             providers: Vec::new(),
@@ -103,7 +100,7 @@ impl PiAgentConnector {
                 providers: providers
                     .into_iter()
                     .map(|provider| provider.entry)
-                .collect(),
+                    .collect(),
             };
         }
 
@@ -230,12 +227,7 @@ impl PiAgentConnector {
                 "## Workspace\n\n当前会话可访问的 Address Space 挂载如下：\n\n{mount_lines}\n\n默认 mount：`{default_mount}`"
             ));
         } else {
-            let current_dir_display =
-                workspace_relative_display(&context.workspace_root, &context.working_directory);
-            sections.push(format!(
-                "## Workspace\n\n- 工作空间路径锚点：`.`\n- 工作空间绝对路径（仅供参考，不要直接写入工具参数）：`{}`\n- 当前工作目录（相对工作空间）：`{current_dir_display}`",
-                context.workspace_root.display(),
-            ));
+            sections.push("## Workspace\n\n（当前会话未配置 Address Space。）".to_string());
         }
 
         // ── 4. Tools: 可用工具及使用规范 ──
@@ -266,9 +258,11 @@ Paths may use `mount_id://path` to target a specific mount; paths without a pref
                     "可调用的内置工具：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。\n\n",
                     tool_names.join("、")
                 ));
+                let abs_hint = workspace_path_from_context(context)
+                    .map(|root| root.display().to_string())
+                    .unwrap_or_else(|_| "（未配置工作区路径）".to_string());
                 tool_section.push_str(&format!(
-                    "**路径规范**：调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{}/...` 这类绝对路径直接写进工具参数。",
-                    context.workspace_root.display()
+                    "**路径规范**：调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{abs_hint}/...` 这类绝对路径直接写进工具参数。",
                 ));
             }
             sections.push(tool_section);
@@ -335,10 +329,7 @@ fn format_skills_for_prompt(
     ];
     for skill in &visible {
         lines.push("  <skill>".to_string());
-        lines.push(format!(
-            "    <name>{}</name>",
-            escape_xml(&skill.name)
-        ));
+        lines.push(format!("    <name>{}</name>", escape_xml(&skill.name)));
         lines.push(format!(
             "    <description>{}</description>",
             escape_xml(&skill.description)
@@ -365,11 +356,11 @@ fn escape_xml(s: &str) -> String {
 ///
 /// 遍历本地 `.agents/skills/` 和 `skills/` 目录的一级子目录，
 /// 解析 SKILL.md 的 frontmatter 提取 name 和 description。
-fn discover_skill_slash_commands(workspace_root: &Path) -> Vec<serde_json::Value> {
+fn discover_skill_slash_commands(mount_root: &Path) -> Vec<serde_json::Value> {
     let mut commands = Vec::new();
     let scan_dirs = [
-        workspace_root.join(".agents").join("skills"),
-        workspace_root.join("skills"),
+        mount_root.join(".agents").join("skills"),
+        mount_root.join("skills"),
     ];
     for dir in &scan_dirs {
         if !dir.is_dir() {
@@ -426,19 +417,6 @@ fn parse_skill_frontmatter(content: &str) -> Option<SkillSlashCommandFrontmatter
     let close_pos = after_open.find("\n---")?;
     let yaml_str = &after_open[..close_pos];
     serde_yaml::from_str(yaml_str).ok()
-}
-
-fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {
-    path.strip_prefix(workspace_root)
-        .ok()
-        .map(|relative| {
-            if relative.as_os_str().is_empty() {
-                ".".to_string()
-            } else {
-                relative.to_string_lossy().replace('\\', "/")
-            }
-        })
-        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn describe_mount(mount: &Mount) -> String {
@@ -850,7 +828,6 @@ use super::stream_mapper::{
     ChunkEmitState, ToolCallEmitState, convert_event_to_notifications, describe_mcp_server,
 };
 
-
 struct NoopBridge;
 
 #[async_trait::async_trait]
@@ -871,7 +848,6 @@ impl LlmBridge for NoopBridge {
 /// `settings_repo` 仅用于 `agent.pi.system_prompt` 等非 provider 设置。
 /// 按 sort_order，首个完成注册的 provider 的首个模型作为默认 bridge。
 pub async fn build_pi_agent_connector(
-    workspace_root: &Path,
     settings: &dyn agentdash_domain::settings::SettingsRepository,
     llm_provider_repo: &dyn LlmProviderRepository,
 ) -> Option<PiAgentConnector> {
@@ -897,11 +873,7 @@ pub async fn build_pi_agent_connector(
         (Arc::new(NoopBridge) as Arc<dyn LlmBridge>, String::new())
     };
 
-    let mut connector = PiAgentConnector::new(
-        workspace_root.to_path_buf(),
-        global_default_bridge,
-        system_prompt,
-    );
+    let mut connector = PiAgentConnector::new(global_default_bridge, system_prompt);
 
     // 注册所有 provider（含第一个 provider）
     for provider in providers {
@@ -935,7 +907,10 @@ async fn read_setting_str(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_agent::{AssistantStreamEvent, StopReason};
+    use agent_client_protocol::{ContentBlock, SessionUpdate, ToolCallStatus, ToolKind};
+    use agentdash_agent::{
+        AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, StopReason,
+    };
     use agentdash_domain::DomainError;
     use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
     use chrono::Utc;
@@ -943,6 +918,29 @@ mod tests {
 
     fn test_source() -> AgentDashSourceV1 {
         AgentDashSourceV1::new("pi-agent", "local_executor")
+    }
+
+    fn test_address_space(root_ref: &str) -> agentdash_spi::AddressSpace {
+        agentdash_spi::AddressSpace {
+            mounts: vec![Mount {
+                id: "workspace".to_string(),
+                provider: "local_fs".to_string(),
+                backend_id: "local".to_string(),
+                root_ref: root_ref.to_string(),
+                capabilities: vec![
+                    MountCapability::Read,
+                    MountCapability::Write,
+                    MountCapability::List,
+                    MountCapability::Search,
+                    MountCapability::Exec,
+                ],
+                default_write: true,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            ..Default::default()
+        }
     }
 
     #[derive(Default)]
@@ -1121,7 +1119,10 @@ mod tests {
         async fn list_enabled(
             &self,
         ) -> Result<Vec<agentdash_domain::llm_provider::LlmProvider>, DomainError> {
-            Ok(self.providers.read().expect("test provider lock")
+            Ok(self
+                .providers
+                .read()
+                .expect("test provider lock")
                 .iter()
                 .filter(|p| p.enabled)
                 .cloned()
@@ -1398,7 +1399,8 @@ mod tests {
                 tool_call_id: "tool-fs-apply-patch-1".to_string(),
                 name: "fs_apply_patch".to_string(),
                 delta: "\"hello".to_string(),
-                draft: "{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello".to_string(),
+                draft: "{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello"
+                    .to_string(),
                 is_parseable: false,
             },
         };
@@ -1847,40 +1849,30 @@ mod tests {
 
     #[test]
     fn runtime_system_prompt_prefers_relative_workspace_paths() {
-        let connector = PiAgentConnector::new(
-            PathBuf::from("/tmp/test-workspace"),
-            Arc::new(NoopBridge),
-            "系统提示",
-        );
+        let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
         let context = ExecutionContext {
             turn_id: "turn-1".to_string(),
-            workspace_root: PathBuf::from("/tmp/test-workspace"),
             working_directory: PathBuf::from("/tmp/test-workspace/crates/agentdash-agent"),
             environment_variables: HashMap::new(),
             executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
-            address_space: None,
+            address_space: Some(test_address_space("/tmp/test-workspace")),
             hook_session: None,
             flow_capabilities: Default::default(),
             system_context: None,
             runtime_delegate: None,
             identity: None,
             restored_session_state: None,
+            skills: vec![],
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
-        // section headers
         assert!(prompt.contains("## Identity"));
         assert!(prompt.contains("## Workspace"));
         assert!(prompt.contains("## Tools"));
-        // workspace relative paths
-        assert!(prompt.contains("工作空间路径锚点"));
-        assert!(prompt.contains("`crates/agentdash-agent`"));
-        assert!(prompt.contains("不要把 `/tmp/test-workspace/...` 这类绝对路径直接写进工具参数"));
-        assert!(prompt.contains("cwd 设为 `.`"));
-        assert!(!prompt.contains(
-            "当前工作目录（相对工作空间）：`/tmp/test-workspace/crates/agentdash-agent`"
-        ));
+        assert!(prompt.contains("/tmp/test-workspace"));
+        assert!(prompt.contains("Available address-space tools"));
+        assert!(prompt.contains("mounts_list"));
     }
 
     #[tokio::test]
@@ -1890,13 +1882,9 @@ mod tests {
         let settings_repo = Arc::new(TestSettingsRepository::default());
         let llm_repo = Arc::new(TestLlmProviderRepository::default());
 
-        let mut connector = build_pi_agent_connector(
-            Path::new("/tmp/test-workspace"),
-            settings_repo.as_ref(),
-            llm_repo.as_ref(),
-        )
-        .await
-        .expect("connector should initialize even without provider");
+        let mut connector = build_pi_agent_connector(settings_repo.as_ref(), llm_repo.as_ref())
+            .await
+            .expect("connector should initialize even without provider");
         connector.set_llm_provider_repository(llm_repo.clone());
 
         let initial = discover_options_state(&connector).await;
@@ -1909,7 +1897,8 @@ mod tests {
             serde_json::Value::Null
         );
 
-        let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+        let mut provider =
+            LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
         provider.api_key = "test-key".to_string();
         provider.default_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET.to_string();
         llm_repo.set_providers(vec![provider]);
@@ -1932,18 +1921,15 @@ mod tests {
         let settings_repo = Arc::new(TestSettingsRepository::default());
         let llm_repo = Arc::new(TestLlmProviderRepository::default());
 
-        let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+        let mut provider =
+            LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
         provider.api_key = "test-key".to_string();
         provider.default_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET.to_string();
         llm_repo.set_providers(vec![provider]);
 
-        let mut connector = build_pi_agent_connector(
-            Path::new("/tmp/test-workspace"),
-            settings_repo.as_ref(),
-            llm_repo.as_ref(),
-        )
-        .await
-        .expect("connector should initialize");
+        let mut connector = build_pi_agent_connector(settings_repo.as_ref(), llm_repo.as_ref())
+            .await
+            .expect("connector should initialize");
         connector.set_llm_provider_repository(llm_repo.clone());
 
         let initial = discover_options_state(&connector).await;
@@ -1973,13 +1959,9 @@ mod tests {
     async fn prompt_without_provider_configuration_returns_clear_error() {
         let repo = Arc::new(TestSettingsRepository::default());
         let llm_repo = TestLlmProviderRepository::default();
-        let mut connector = build_pi_agent_connector(
-            Path::new("/tmp/test-workspace"),
-            repo.as_ref(),
-            &llm_repo,
-        )
-        .await
-        .expect("connector should initialize even without provider");
+        let mut connector = build_pi_agent_connector(repo.as_ref(), &llm_repo)
+            .await
+            .expect("connector should initialize even without provider");
         connector.set_settings_repository(repo);
 
         let result = connector
@@ -1989,18 +1971,18 @@ mod tests {
                 &PromptPayload::Text("hello".to_string()),
                 ExecutionContext {
                     turn_id: "turn-1".to_string(),
-                    workspace_root: PathBuf::from("/tmp/test-workspace"),
                     working_directory: PathBuf::from("/tmp/test-workspace"),
                     environment_variables: HashMap::new(),
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
-                    address_space: None,
+                    address_space: Some(test_address_space("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),
                     system_context: None,
                     runtime_delegate: None,
                     identity: None,
                     restored_session_state: None,
+                    skills: vec![],
                 },
             )
             .await;
@@ -2017,11 +1999,7 @@ mod tests {
     #[tokio::test]
     async fn prompt_restores_repository_messages_before_new_user_prompt() {
         let bridge = Arc::new(RecordingBridge::default());
-        let mut connector = PiAgentConnector::new(
-            PathBuf::from("/tmp/test-workspace"),
-            bridge.clone(),
-            "系统提示",
-        );
+        let mut connector = PiAgentConnector::new(bridge.clone(), "系统提示");
         connector.set_runtime_tool_provider(Arc::new(EmptyRuntimeToolProvider));
 
         let mut stream = connector
@@ -2031,12 +2009,11 @@ mod tests {
                 &PromptPayload::Text("新的用户消息".to_string()),
                 ExecutionContext {
                     turn_id: "turn-1".to_string(),
-                    workspace_root: PathBuf::from("/tmp/test-workspace"),
                     working_directory: PathBuf::from("/tmp/test-workspace"),
                     environment_variables: HashMap::new(),
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
-                    address_space: None,
+                    address_space: Some(test_address_space("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),
                     system_context: Some("## Owner Context\nproject".to_string()),
@@ -2048,6 +2025,7 @@ mod tests {
                             agentdash_spi::AgentMessage::assistant("历史助手消息"),
                         ],
                     }),
+                    skills: vec![],
                 },
             )
             .await

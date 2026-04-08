@@ -16,8 +16,7 @@ use uuid::Uuid;
 use crate::error::McpError;
 use crate::services::McpServices;
 use agentdash_domain::context_container::{
-    ContextContainerDefinition, validate_context_containers,
-    validate_disabled_container_ids,
+    ContextContainerDefinition, validate_context_containers, validate_disabled_container_ids,
 };
 use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,

@@ -52,7 +52,9 @@ pub async fn reconcile_task_states_on_boot(
     session_hub: &SessionHub,
     restart_tracker: &RestartTracker,
 ) -> Result<()> {
-    let session_state_reader = HubSessionStateReader { hub: session_hub.clone() };
+    let session_state_reader = HubSessionStateReader {
+        hub: session_hub.clone(),
+    };
 
     reconcile_running_tasks_on_boot(
         project_repo,

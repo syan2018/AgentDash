@@ -3,7 +3,7 @@ use std::path::{Component, Path};
 
 use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
 use agentdash_domain::workspace::Workspace;
-use agentdash_injection::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
+use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
 use crate::address_space::{
     ListOptions, RelayAddressSpaceService, ResourceRef, selected_workspace_binding,

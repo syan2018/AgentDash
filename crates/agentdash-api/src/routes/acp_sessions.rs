@@ -21,12 +21,12 @@ use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
 };
+use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     PromptSessionRequest, SessionBootstrapAction, SessionExecutionState, SessionMeta,
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
     resolve_session_prompt_lifecycle,
 };
-use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::story::context_builder::{
     StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
 };
@@ -843,18 +843,19 @@ async fn augment_prompt_request_for_owner(
         .executor_config
         .clone()
         .or_else(|| meta.executor_config.clone());
-    let has_live_runtime = state.services.session_hub.has_live_runtime(session_id).await;
+    let has_live_runtime = state
+        .services
+        .session_hub
+        .has_live_runtime(session_id)
+        .await;
     let supports_repository_restore = effective_executor.as_ref().is_some_and(|config| {
         state
             .services
             .connector
             .supports_repository_restore(config.executor.as_str())
     });
-    let lifecycle_kind = resolve_session_prompt_lifecycle(
-        &meta,
-        has_live_runtime,
-        supports_repository_restore,
-    );
+    let lifecycle_kind =
+        resolve_session_prompt_lifecycle(&meta, has_live_runtime, supports_repository_restore);
 
     if let Some(binding) = bindings
         .iter()
@@ -967,7 +968,7 @@ fn finalize_augmented_request(
 
     apply_workspace_defaults(
         &mut req.user_input.working_dir,
-        &mut req.workspace_root,
+        &mut req.address_space,
         workspace,
     );
     if req.address_space.is_none() {
@@ -1102,11 +1103,7 @@ async fn build_story_owner_prompt_request(
             user_prompt_blocks,
             SessionBootstrapAction::None,
         ),
-        SessionPromptLifecycle::Plain => (
-            None,
-            user_prompt_blocks,
-            SessionBootstrapAction::None,
-        ),
+        SessionPromptLifecycle::Plain => (None, user_prompt_blocks, SessionBootstrapAction::None),
     };
     req.user_input.executor_config = Some(effective_executor_config);
 
@@ -1246,11 +1243,7 @@ async fn build_project_owner_prompt_request(
             user_prompt_blocks,
             SessionBootstrapAction::None,
         ),
-        SessionPromptLifecycle::Plain => (
-            None,
-            user_prompt_blocks,
-            SessionBootstrapAction::None,
-        ),
+        SessionPromptLifecycle::Plain => (None, user_prompt_blocks, SessionBootstrapAction::None),
     };
 
     req.user_input.executor_config = Some(effective_executor_config);

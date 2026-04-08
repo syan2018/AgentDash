@@ -108,10 +108,7 @@ impl RuntimeReconciler {
 }
 
 fn is_task_terminal(status: &TaskStatus) -> bool {
-    matches!(
-        status,
-        TaskStatus::Completed | TaskStatus::Failed
-    )
+    matches!(status, TaskStatus::Completed | TaskStatus::Failed)
 }
 
 fn is_story_terminal(status: &StoryStatus) -> bool {

@@ -2,33 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
+use agentdash_spi::{
+    ContextFragment, InjectionError, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest,
+    SourceResolver,
+};
 use walkdir::WalkDir;
-
-use crate::composer::{ContextFragment, MergeStrategy};
-use crate::error::InjectionError;
 
 const MAX_SOURCE_FILE_BYTES: u64 = 1_000_000;
 const DEFAULT_TRUNCATE_CHARS: usize = 12_000;
-
-pub struct ResolveSourcesRequest<'a> {
-    pub sources: &'a [ContextSourceRef],
-    pub workspace_root: Option<&'a Path>,
-    pub base_order: i32,
-}
-
-pub struct ResolveSourcesOutput {
-    pub fragments: Vec<ContextFragment>,
-    pub warnings: Vec<String>,
-}
-
-pub trait SourceResolver: Send + Sync {
-    fn resolve(
-        &self,
-        source: &ContextSourceRef,
-        workspace_root: Option<&Path>,
-        order: i32,
-    ) -> Result<ContextFragment, InjectionError>;
-}
 
 /// 来源解析器注册表 — 按 ContextSourceKind 注册解析器
 ///
@@ -104,7 +85,7 @@ pub fn resolve_declared_sources_with_registry(
         let resolver = registry.get(&source.kind);
 
         let resolved = match resolver {
-            Some(r) => r.resolve(source, request.workspace_root, order),
+            Some(r) => r.resolve(source, request.mount_root, order),
             None => {
                 let msg = format!(
                     "source `{}` 的类型 {:?} 暂无已注册的解析器",
@@ -141,7 +122,7 @@ impl SourceResolver for ManualTextResolver {
     fn resolve(
         &self,
         source: &ContextSourceRef,
-        _workspace_root: Option<&Path>,
+        _mount_root: Option<&Path>,
         order: i32,
     ) -> Result<ContextFragment, InjectionError> {
         Ok(ContextFragment {
@@ -160,10 +141,10 @@ impl SourceResolver for FileResolver {
     fn resolve(
         &self,
         source: &ContextSourceRef,
-        workspace_root: Option<&Path>,
+        mount_root: Option<&Path>,
         order: i32,
     ) -> Result<ContextFragment, InjectionError> {
-        let path = resolve_path(&source.locator, workspace_root)?;
+        let path = resolve_path(&source.locator, mount_root)?;
         let metadata = fs::metadata(&path)?;
         if metadata.len() > MAX_SOURCE_FILE_BYTES {
             return Err(InjectionError::SourceTooLarge {
@@ -173,7 +154,7 @@ impl SourceResolver for FileResolver {
         }
 
         let raw = fs::read_to_string(&path)?;
-        let formatted = format_file_like_read_tool(&path, &raw, workspace_root);
+        let formatted = format_file_like_read_tool(&path, &raw, mount_root);
 
         Ok(ContextFragment {
             slot: fragment_slot(&source.slot),
@@ -191,10 +172,10 @@ impl SourceResolver for ProjectSnapshotResolver {
     fn resolve(
         &self,
         source: &ContextSourceRef,
-        workspace_root: Option<&Path>,
+        mount_root: Option<&Path>,
         order: i32,
     ) -> Result<ContextFragment, InjectionError> {
-        let root = workspace_root.ok_or_else(|| {
+        let root = mount_root.ok_or_else(|| {
             InjectionError::MissingWorkspace(display_source_label(source).to_string())
         })?;
         let content = build_project_snapshot(root, source.max_chars);
@@ -209,13 +190,13 @@ impl SourceResolver for ProjectSnapshotResolver {
     }
 }
 
-fn resolve_path(locator: &str, workspace_root: Option<&Path>) -> Result<PathBuf, InjectionError> {
+fn resolve_path(locator: &str, mount_root: Option<&Path>) -> Result<PathBuf, InjectionError> {
     let candidate = PathBuf::from(locator);
     let path = if candidate.is_absolute() {
         candidate
     } else {
         let root =
-            workspace_root.ok_or_else(|| InjectionError::MissingWorkspace(locator.to_string()))?;
+            mount_root.ok_or_else(|| InjectionError::MissingWorkspace(locator.to_string()))?;
         root.join(candidate)
     };
 
@@ -291,8 +272,8 @@ fn render_source_section(source: &ContextSourceRef, content: String) -> String {
     format!("## 来源: {title}\n{content}")
 }
 
-fn format_file_like_read_tool(path: &Path, content: &str, workspace_root: Option<&Path>) -> String {
-    let display_path = workspace_root
+fn format_file_like_read_tool(path: &Path, content: &str, mount_root: Option<&Path>) -> String {
+    let display_path = mount_root
         .and_then(|root| path.strip_prefix(root).ok())
         .map(|rel| rel.display().to_string())
         .unwrap_or_else(|| path.display().to_string())
@@ -370,7 +351,7 @@ mod tests {
                 max_chars: None,
                 delivery: ContextDelivery::Resource,
             }],
-            workspace_root: None,
+            mount_root: None,
             base_order: 10,
         })
         .expect("manual text should resolve");
@@ -396,7 +377,7 @@ mod tests {
                 max_chars: None,
                 delivery: ContextDelivery::Resource,
             }],
-            workspace_root: Some(temp.path()),
+            mount_root: Some(temp.path()),
             base_order: 20,
         })
         .expect("file source should resolve");
@@ -426,7 +407,7 @@ mod tests {
                 max_chars: None,
                 delivery: ContextDelivery::Resource,
             }],
-            workspace_root: Some(temp.path()),
+            mount_root: Some(temp.path()),
             base_order: 20,
         })
         .expect("tsx source should resolve");
@@ -458,7 +439,7 @@ mod tests {
                 max_chars: None,
                 delivery: ContextDelivery::Resource,
             }],
-            workspace_root: Some(temp.path()),
+            mount_root: Some(temp.path()),
             base_order: 30,
         })
         .expect("project snapshot should resolve");

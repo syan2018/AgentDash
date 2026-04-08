@@ -1,4 +1,6 @@
-use agentdash_injection::{ContextComposer, ContextFragment, MergeStrategy};
+use agentdash_spi::{ContextFragment, MergeStrategy};
+
+use super::ContextComposer;
 use serde_json::Value;
 
 use super::builtins::build_owner_context_resource_block;

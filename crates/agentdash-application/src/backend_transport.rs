@@ -40,11 +40,7 @@ pub trait RelayPromptTransport: BackendTransport {
     ) -> Result<String, TransportError>;
 
     /// 取消远程会话。
-    async fn relay_cancel(
-        &self,
-        backend_id: &str,
-        session_id: &str,
-    ) -> Result<(), TransportError>;
+    async fn relay_cancel(&self, backend_id: &str, session_id: &str) -> Result<(), TransportError>;
 
     /// 列出所有在线后端上报的执行器信息。
     async fn list_online_executors(&self) -> Vec<RemoteExecutorInfo>;
@@ -59,11 +55,7 @@ pub trait RelayPromptTransport: BackendTransport {
 
     /// 注册 per-session 通知接收端。
     /// WebSocket handler 收到 relay notification 时，通过此 channel 投递到 connector stream。
-    fn register_session_sink(
-        &self,
-        session_id: &str,
-        tx: mpsc::UnboundedSender<RelaySessionEvent>,
-    );
+    fn register_session_sink(&self, session_id: &str, tx: mpsc::UnboundedSender<RelaySessionEvent>);
 
     /// 注销 per-session 通知接收端。
     fn unregister_session_sink(&self, session_id: &str);

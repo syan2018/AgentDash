@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    io,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, io, sync::Arc};
 
 use agent_client_protocol::{SessionNotification, SessionUpdate};
 use agentdash_acp_meta::AgentDashSourceV1;
@@ -23,11 +18,12 @@ pub use super::types::*;
 use agentdash_spi::hooks::{
     ExecutionHookProvider, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{AgentConnector, ConnectorError};
+use agentdash_spi::{AddressSpace, AgentConnector, ConnectorError};
 
 #[derive(Clone)]
 pub struct SessionHub {
-    pub(super) workspace_root: PathBuf,
+    /// 当 `PromptSessionRequest.address_space` 为 None 时回退使用（如云宿主 cwd、本机首个 accessible root）。
+    pub(super) default_address_space: Option<AddressSpace>,
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
@@ -38,13 +34,13 @@ pub struct SessionHub {
 
 impl SessionHub {
     pub fn new_with_hooks_and_persistence(
-        workspace_root: PathBuf,
+        default_address_space: Option<AddressSpace>,
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
         persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
         Self {
-            workspace_root,
+            default_address_space,
             connector,
             hook_provider,
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -90,10 +86,6 @@ impl SessionHub {
             }
         }
         Ok(())
-    }
-
-    pub fn workspace_root(&self) -> &Path {
-        &self.workspace_root
     }
 
     pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
@@ -341,7 +333,7 @@ impl SessionHub {
                 executor: None,
                 permission_policy: None,
                 working_directory: None,
-                workspace_root: None,
+                default_mount_root_ref: None,
                 owners: Vec::new(),
                 tags: Vec::new(),
             })
@@ -520,9 +512,7 @@ impl SessionHub {
         let sessions = self.sessions.lock().await;
         sessions
             .iter()
-            .filter(|(_, runtime)| {
-                runtime.running && (now - runtime.last_activity_at) > threshold
-            })
+            .filter(|(_, runtime)| runtime.running && (now - runtime.last_activity_at) > threshold)
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -615,11 +605,14 @@ impl SessionHub {
 mod tests {
     use super::*;
     use crate::session::MemorySessionPersistence;
+    use crate::session::local_workspace_address_space;
     use agent_client_protocol::{
-        ContentBlock, ContentChunk, TextContent, ToolCall, ToolCallId, ToolCallStatus,
+        ContentBlock, ContentChunk, SessionId, TextContent, ToolCall, ToolCallId, ToolCallStatus,
         ToolCallUpdate, ToolCallUpdateFields,
     };
+    use agentdash_acp_meta::{AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta};
     use agentdash_spi::PromptPayload;
+    use agentdash_spi::StopReason;
     use agentdash_spi::hooks::HookTrigger;
     use agentdash_spi::hooks::SessionHookRefreshQuery;
     use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
@@ -631,12 +624,12 @@ mod tests {
     use tokio_stream::wrappers::ReceiverStream;
 
     fn test_hub(
-        workspace_root: PathBuf,
+        mount_root: PathBuf,
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn agentdash_spi::hooks::ExecutionHookProvider>>,
     ) -> SessionHub {
         SessionHub::new_with_hooks_and_persistence(
-            workspace_root,
+            Some(local_workspace_address_space(&mount_root)),
             connector,
             hook_provider,
             Arc::new(MemorySessionPersistence::default()),
@@ -650,7 +643,6 @@ mod tests {
                 ..UserPromptInput::from_text(prompt)
             },
             mcp_servers: vec![],
-            workspace_root: None,
             address_space: None,
             flow_capabilities: None,
             system_context: None,
@@ -1144,7 +1136,7 @@ mod tests {
         let persistence = Arc::new(MemorySessionPersistence::default());
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionHub::new_with_hooks_and_persistence(
-            base.path().to_path_buf(),
+            Some(local_workspace_address_space(&base.path().to_path_buf())),
             Arc::new(SessionStartAwareConnector::default()),
             None,
             persistence,
@@ -1164,7 +1156,8 @@ mod tests {
             .expect("resource block"),
             ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
         ];
-        for notification in build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
+        for notification in
+            build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
         {
             hub.inject_notification(&session.id, notification)
                 .await
@@ -1173,18 +1166,20 @@ mod tests {
 
         let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("已记录历史")))
             .message_id(Some("assistant-msg-1".to_string()))
-            .meta(merge_agentdash_meta(
-                None,
-                &AgentDashMetaV1::new()
-                    .source(Some(source.clone()))
-                    .trace(Some({
-                        let mut trace = AgentDashTraceV1::new();
-                        trace.turn_id = Some("t-1".to_string());
-                        trace.entry_index = Some(99);
-                        trace
-                    })),
-            )
-            .expect("assistant meta"));
+            .meta(
+                merge_agentdash_meta(
+                    None,
+                    &AgentDashMetaV1::new()
+                        .source(Some(source.clone()))
+                        .trace(Some({
+                            let mut trace = AgentDashTraceV1::new();
+                            trace.turn_id = Some("t-1".to_string());
+                            trace.entry_index = Some(99);
+                            trace
+                        })),
+                )
+                .expect("assistant meta"),
+            );
         hub.inject_notification(
             &session.id,
             SessionNotification::new(
@@ -1212,7 +1207,7 @@ mod tests {
         let persistence = Arc::new(MemorySessionPersistence::default());
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionHub::new_with_hooks_and_persistence(
-            base.path().to_path_buf(),
+            Some(local_workspace_address_space(&base.path().to_path_buf())),
             Arc::new(SessionStartAwareConnector::default()),
             None,
             persistence,
@@ -1232,7 +1227,8 @@ mod tests {
             .expect("resource block"),
             ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
         ];
-        for notification in build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
+        for notification in
+            build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
         {
             hub.inject_notification(&session.id, notification)
                 .await
@@ -1258,7 +1254,10 @@ mod tests {
             .meta(Some(test_meta(&source, "t-1", 1)));
         hub.inject_notification(
             &session.id,
-            SessionNotification::new(SessionId::new(session.id.clone()), SessionUpdate::ToolCall(tool_call)),
+            SessionNotification::new(
+                SessionId::new(session.id.clone()),
+                SessionUpdate::ToolCall(tool_call),
+            ),
         )
         .await
         .expect("inject tool call");
@@ -1339,7 +1338,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_prompt_passes_restored_session_state_when_connector_supports_repository_restore() {
+    async fn start_prompt_passes_restored_session_state_when_connector_supports_repository_restore()
+    {
         let base = tempfile::tempdir().expect("tempdir");
         let connector = Arc::new(RepositoryRestoreRecordingConnector::default());
         let hub = test_hub(base.path().to_path_buf(), connector.clone(), None);
@@ -1356,9 +1356,10 @@ mod tests {
                 .await
                 .expect("inject user notification");
         }
-        let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("历史助手消息")))
-            .message_id(Some("assistant-msg-restore".to_string()))
-            .meta(Some(test_meta(&source, "t-1", 1)));
+        let assistant_chunk =
+            ContentChunk::new(ContentBlock::Text(TextContent::new("历史助手消息")))
+                .message_id(Some("assistant-msg-restore".to_string()))
+                .meta(Some(test_meta(&source, "t-1", 1)));
         hub.inject_notification(
             &session.id,
             SessionNotification::new(
@@ -1393,7 +1394,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_prompt_uses_request_workspace_root_override() {
+    async fn start_prompt_uses_request_address_space_override() {
         #[derive(Default)]
         struct RecordingConnector {
             contexts: Arc<TokioMutex<Vec<agentdash_spi::ExecutionContext>>>,
@@ -1470,8 +1471,7 @@ mod tests {
                     executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
                 },
                 mcp_servers: vec![],
-                workspace_root: Some(workspace.path().to_path_buf()),
-                address_space: None,
+                address_space: Some(local_workspace_address_space(workspace.path())),
                 flow_capabilities: None,
                 system_context: None,
                 bootstrap_action: SessionBootstrapAction::None,
@@ -1484,7 +1484,8 @@ mod tests {
 
         let contexts = connector.contexts.lock().await;
         let context = contexts.last().expect("context should be recorded");
-        assert_eq!(context.workspace_root, workspace.path().to_path_buf());
+        let ws_path = agentdash_spi::workspace_path_from_context(context).expect("default mount");
+        assert_eq!(ws_path, workspace.path().to_path_buf());
         assert_eq!(context.working_directory, workspace.path().join("src"));
     }
 

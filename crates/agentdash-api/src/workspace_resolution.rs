@@ -133,11 +133,7 @@ impl RelayPromptTransport for BackendRegistry {
         }
     }
 
-    async fn relay_cancel(
-        &self,
-        backend_id: &str,
-        session_id: &str,
-    ) -> Result<(), TransportError> {
+    async fn relay_cancel(&self, backend_id: &str, session_id: &str) -> Result<(), TransportError> {
         let cmd = RelayMessage::CommandCancel {
             id: RelayMessage::new_id("cancel"),
             payload: CommandCancelPayload {

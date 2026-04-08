@@ -100,7 +100,7 @@ pub struct SessionSnapshotMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_root: Option<String>,
+    pub default_mount_root_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connector_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -285,7 +285,7 @@ pub struct SessionHookSnapshotQuery {
     #[serde(default)]
     pub working_directory: Option<String>,
     #[serde(default)]
-    pub workspace_root: Option<String>,
+    pub default_mount_root_ref: Option<String>,
     #[serde(default)]
     pub owners: Vec<HookOwnerSummary>,
     #[serde(default)]

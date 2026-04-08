@@ -34,10 +34,7 @@ impl PostTurnHandler for TaskHookEffectExecutor {
 
     async fn execute_effects(&self, session_id: &str, turn_id: &str, effects: &[HookEffect]) {
         for effect in effects {
-            if let Err(err) = self
-                .dispatch_effect(session_id, turn_id, effect)
-                .await
-            {
+            if let Err(err) = self.dispatch_effect(session_id, turn_id, effect).await {
                 tracing::warn!(
                     task_id = %self.task_id,
                     effect_kind = %effect.kind,
@@ -56,16 +53,12 @@ impl PostTurnHandler for TaskHookEffectExecutor {
 impl TaskHookEffectExecutor {
     /// 本 executor 能处理的 effect kinds。
     /// 任何不在此列表中的 kind 会产生运行时 warning。
-    pub const SUPPORTED_KINDS: &[&str] = &[
-        "task:set_status",
-        "task:retry",
-        "task:clear_binding",
-    ];
+    pub const SUPPORTED_KINDS: &[&str] = &["task:set_status", "task:retry", "task:clear_binding"];
 
     async fn handle_event(&self, _session_id: &str, notification: &SessionNotification) {
-        use agent_client_protocol::SessionUpdate;
         use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
         use crate::task::meta::extract_turn_id_from_meta;
+        use agent_client_protocol::SessionUpdate;
 
         match &notification.update {
             SessionUpdate::ToolCall(tc) => {
@@ -173,11 +166,7 @@ impl TaskHookEffectExecutor {
         Ok(())
     }
 
-    async fn handle_retry(
-        &self,
-        turn_id: &str,
-        payload: &serde_json::Value,
-    ) -> Result<(), String> {
+    async fn handle_retry(&self, turn_id: &str, payload: &serde_json::Value) -> Result<(), String> {
         let reason = payload
             .get("reason")
             .and_then(|v| v.as_str())
@@ -213,9 +202,7 @@ impl TaskHookEffectExecutor {
                 .map_err(|e| e.to_string())?;
                 Ok(())
             }
-            RestartDecision::Denied {
-                attempts_exhausted,
-            } => {
+            RestartDecision::Denied { attempts_exhausted } => {
                 tracing::warn!(
                     task_id = %self.task_id,
                     attempts_exhausted,
@@ -244,10 +231,7 @@ impl TaskHookEffectExecutor {
         }
     }
 
-    async fn handle_clear_binding(
-        &self,
-        payload: &serde_json::Value,
-    ) -> Result<(), String> {
+    async fn handle_clear_binding(&self, payload: &serde_json::Value) -> Result<(), String> {
         let reason = payload
             .get("reason")
             .and_then(|v| v.as_str())

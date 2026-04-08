@@ -7,11 +7,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
-use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
@@ -446,7 +446,6 @@ pub(crate) async fn build_story_session_context_response(
         address_space: runtime_address_space,
         mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
-        workspace_root: None,
         executor_preset_name: None,
         executor_source: executor_source.to_string(),
         executor_resolution_error: None,

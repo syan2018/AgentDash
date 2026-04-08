@@ -8,7 +8,6 @@ license.workspace = true
 [dependencies]
 agentdash-spi = { workspace = true }
 agentdash-domain = { workspace = true }
-agentdash-injection = { workspace = true }
 async-trait = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }

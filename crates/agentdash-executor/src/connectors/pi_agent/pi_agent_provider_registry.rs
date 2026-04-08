@@ -420,9 +420,7 @@ fn resolve_openai_wire_api(
 ) -> Result<OpenAiWireApi, String> {
     if let Some(value) = configured_value {
         return OpenAiWireApi::from_setting(value).ok_or_else(|| {
-            format!(
-                "无法识别 wire_api 设置 '{value}'，合法值: responses | completions"
-            )
+            format!("无法识别 wire_api 设置 '{value}'，合法值: responses | completions")
         });
     }
 
@@ -705,11 +703,13 @@ mod tests {
     #[test]
     fn explicit_wire_api_setting_wins_over_base_url_default() {
         assert_eq!(
-            resolve_openai_wire_api(Some("responses"), Some("https://right.codes/codex/v1")).unwrap(),
+            resolve_openai_wire_api(Some("responses"), Some("https://right.codes/codex/v1"))
+                .unwrap(),
             OpenAiWireApi::Responses
         );
         assert_eq!(
-            resolve_openai_wire_api(Some("completions"), Some("https://api.openai.com/v1")).unwrap(),
+            resolve_openai_wire_api(Some("completions"), Some("https://api.openai.com/v1"))
+                .unwrap(),
             OpenAiWireApi::Completions
         );
     }

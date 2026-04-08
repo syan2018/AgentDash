@@ -195,14 +195,23 @@ mod tests {
 
     #[test]
     fn emit_all_events_including_silent() {
-        for decision in ["allow", "noop", "stop", "terminal_observed", "refresh_requested"] {
+        for decision in [
+            "allow",
+            "noop",
+            "stop",
+            "terminal_observed",
+            "refresh_requested",
+        ] {
             let notification = build_hook_trace_notification(
                 "sess-1",
                 Some("t-1"),
                 sample_source(),
                 &silent_entry(decision),
             );
-            assert!(notification.is_some(), "should emit even silent decision: {decision}");
+            assert!(
+                notification.is_some(),
+                "should emit even silent decision: {decision}"
+            );
         }
     }
 
@@ -292,9 +301,7 @@ mod tests {
             build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &entry)
                 .expect("should emit");
         let value = serde_json::to_value(notification).unwrap();
-        let data = value
-            .pointer("/update/_meta/agentdash/event/data")
-            .unwrap();
+        let data = value.pointer("/update/_meta/agentdash/event/data").unwrap();
         let injections = data.get("injections").and_then(|v| v.as_array()).unwrap();
         assert_eq!(injections.len(), 1);
         assert_eq!(injections[0]["slot"], "companion_agents");

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agentdash_injection::AddressSpaceDiscoveryProvider;
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
+use agentdash_spi::AddressSpaceDiscoveryProvider;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::mount::MountProvider;
 use thiserror::Error;

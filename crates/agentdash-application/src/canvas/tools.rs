@@ -198,12 +198,10 @@ impl AgentTool for ListCanvasesTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(body)],
             is_error: false,
-            details: Some(
-                serde_json::json!({
-                    "canvas_count": entries.len(),
-                    "canvases": entries,
-                }),
-            ),
+            details: Some(serde_json::json!({
+                "canvas_count": entries.len(),
+                "canvases": entries,
+            })),
         })
     }
 }
@@ -247,8 +245,9 @@ impl AgentTool for StartCanvasTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let params: StartCanvasParams = serde_json::from_value(args)
-            .map_err(|error| AgentToolError::InvalidArguments(format!("invalid arguments: {error}")))?;
+        let params: StartCanvasParams = serde_json::from_value(args).map_err(|error| {
+            AgentToolError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
         let requested_canvas_id = params
             .canvas_id
             .as_deref()
@@ -274,7 +273,8 @@ impl AgentTool for StartCanvasTool {
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
                         AgentToolError::InvalidArguments(
-                            "title is required when canvas_id does not match an existing canvas".to_string(),
+                            "title is required when canvas_id does not match an existing canvas"
+                                .to_string(),
                         )
                     })?;
 
@@ -685,8 +685,7 @@ mod tests {
             SharedSessionHubHandle::default(),
             Some("sess-test".to_string()),
         );
-        let patch_tool =
-            FsApplyPatchTool::new(service, shared_address_space.clone(), None, None);
+        let patch_tool = FsApplyPatchTool::new(service, shared_address_space.clone(), None, None);
 
         let create_result = start_tool
             .execute(
@@ -822,10 +821,7 @@ mod tests {
             Default::default(),
         )
         .expect("应能构建 canvas");
-        canvas_repo
-            .create(&canvas)
-            .await
-            .expect("应能写入仓储");
+        canvas_repo.create(&canvas).await.expect("应能写入仓储");
 
         let list_tool = ListCanvasesTool::new(canvas_repo, project_id);
         let result = list_tool
@@ -854,11 +850,15 @@ mod tests {
             .expect("details.canvases 应为数组");
         assert_eq!(entries.len(), 1);
         assert_eq!(
-            entries[0].get("canvas_id").and_then(serde_json::Value::as_str),
+            entries[0]
+                .get("canvas_id")
+                .and_then(serde_json::Value::as_str),
             Some("dashboard-a")
         );
         assert_eq!(
-            entries[0].get("mount_id").and_then(serde_json::Value::as_str),
+            entries[0]
+                .get("mount_id")
+                .and_then(serde_json::Value::as_str),
             Some("cvs-dashboard-a")
         );
         assert!(entries[0].get("entry_file").is_none());
@@ -925,10 +925,7 @@ mod tests {
             Default::default(),
         )
         .expect("应能构建 canvas");
-        canvas_repo
-            .create(&canvas)
-            .await
-            .expect("应能写入仓储");
+        canvas_repo.create(&canvas).await.expect("应能写入仓储");
 
         let bind_tool = BindCanvasDataTool::new(canvas_repo.clone(), project_id);
         bind_tool

@@ -1,7 +1,9 @@
 use agentdash_domain::{project::Project, workspace::Workspace};
-use agentdash_injection::{ContextComposer, MergeStrategy};
+use agentdash_spi::MergeStrategy;
 
-use crate::context::{build_owner_prompt_blocks, trim_or_dash, workspace_context_fragment};
+use crate::context::{
+    ContextComposer, build_owner_prompt_blocks, trim_or_dash, workspace_context_fragment,
+};
 use crate::runtime::{AddressSpace, RuntimeMcpServer};
 use crate::session::plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
@@ -89,4 +91,3 @@ pub fn build_project_owner_prompt_blocks(
         user_prompt_blocks,
     )
 }
-

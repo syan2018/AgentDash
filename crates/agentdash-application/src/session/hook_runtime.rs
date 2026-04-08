@@ -102,7 +102,7 @@ fn preserve_session_level_metadata(
     }
     preserve_field!(permission_policy);
     preserve_field!(working_directory);
-    preserve_field!(workspace_root);
+    preserve_field!(default_mount_root_ref);
     preserve_field!(connector_id);
     preserve_field!(executor);
 }
@@ -353,7 +353,7 @@ mod tests {
         let previous = SessionSnapshotMetadata {
             turn_id: Some("turn-1".into()),
             permission_policy: Some("SUPERVISED".into()),
-            workspace_root: Some("/tmp/test-workspace".into()),
+            default_mount_root_ref: Some("/tmp/test-workspace".into()),
             working_directory: Some(".".into()),
             connector_id: Some("pi_agent".into()),
             executor: Some("local".into()),
@@ -364,7 +364,10 @@ mod tests {
 
         let meta = snapshot.metadata.as_ref().unwrap();
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
-        assert_eq!(meta.workspace_root.as_deref(), Some("/tmp/test-workspace"));
+        assert_eq!(
+            meta.default_mount_root_ref.as_deref(),
+            Some("/tmp/test-workspace")
+        );
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));
@@ -377,14 +380,14 @@ mod tests {
             session_id: "s1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 permission_policy: Some("AUTONOMOUS".into()),
-                workspace_root: Some("/new/root".into()),
+                default_mount_root_ref: Some("/new/root".into()),
                 ..Default::default()
             }),
             ..Default::default()
         };
         let previous = SessionSnapshotMetadata {
             permission_policy: Some("SUPERVISED".into()),
-            workspace_root: Some("/old/root".into()),
+            default_mount_root_ref: Some("/old/root".into()),
             ..Default::default()
         };
 
@@ -392,7 +395,7 @@ mod tests {
 
         let meta = snapshot.metadata.as_ref().unwrap();
         assert_eq!(meta.permission_policy.as_deref(), Some("AUTONOMOUS"));
-        assert_eq!(meta.workspace_root.as_deref(), Some("/new/root"));
+        assert_eq!(meta.default_mount_root_ref.as_deref(), Some("/new/root"));
     }
 
     #[tokio::test]
@@ -401,7 +404,7 @@ mod tests {
             session_id: "sess-1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 permission_policy: Some("SUPERVISED".into()),
-                workspace_root: Some("/tmp/test-workspace".into()),
+                default_mount_root_ref: Some("/tmp/test-workspace".into()),
                 working_directory: Some(".".into()),
                 connector_id: Some("pi_agent".into()),
                 executor: Some("local".into()),
@@ -423,7 +426,10 @@ mod tests {
 
         let meta = refreshed.metadata.unwrap();
         assert_eq!(meta.permission_policy.as_deref(), Some("SUPERVISED"));
-        assert_eq!(meta.workspace_root.as_deref(), Some("/tmp/test-workspace"));
+        assert_eq!(
+            meta.default_mount_root_ref.as_deref(),
+            Some("/tmp/test-workspace")
+        );
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));

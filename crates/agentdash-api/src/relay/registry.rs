@@ -43,7 +43,10 @@ pub struct BackendRegistry {
     pending: RwLock<HashMap<String, oneshot::Sender<RelayMessage>>>,
     /// per-session relay 通知接收端（由 RelayAgentConnector 注册，WebSocket handler 投递）
     session_sinks: std::sync::RwLock<
-        HashMap<String, mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>>,
+        HashMap<
+            String,
+            mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>,
+        >,
     >,
 }
 

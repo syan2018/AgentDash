@@ -346,13 +346,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 .iter()
                 .map(|action| action.id.clone())
                 .collect::<Vec<_>>();
-            evaluated
-                .resolution
-                .matched_rule_keys
-                .push(format!(
-                    "runtime_pending_action:{}:stop_gate",
-                    agentdash_spi::hooks::action_type::BLOCKING_REVIEW
-                ));
+            evaluated.resolution.matched_rule_keys.push(format!(
+                "runtime_pending_action:{}:stop_gate",
+                agentdash_spi::hooks::action_type::BLOCKING_REVIEW
+            ));
             evaluated.resolution.diagnostics.push(HookDiagnosticEntry {
                 code: "pending_action_blocking_review_unresolved".to_string(),
                 message: msg::diag_blocking_review_unresolved(&unresolved_ids.join(",")),
@@ -925,7 +922,13 @@ mod tests {
             !text.contains("companion_respond"),
             "pending action 指令文本不应硬编码具体工具名: {text}"
         );
-        assert!(text.contains("follow_up_required"), "消息应包含 action_type 标识: {text}");
-        assert!(text.contains("status=pending"), "消息应包含状态标识: {text}");
+        assert!(
+            text.contains("follow_up_required"),
+            "消息应包含 action_type 标识: {text}"
+        );
+        assert!(
+            text.contains("status=pending"),
+            "消息应包含状态标识: {text}"
+        );
     }
 }

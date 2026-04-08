@@ -132,8 +132,7 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
                 continue;
             };
             let merged_config = link.merged_config(&agent.base_config);
-            let Some(scheduling) = AgentSchedulingConfig::from_merged_config(&merged_config)
-            else {
+            let Some(scheduling) = AgentSchedulingConfig::from_merged_config(&merged_config) else {
                 continue;
             };
             if !scheduling.has_cron() {
@@ -187,10 +186,8 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
 /// - 新增的条目直接加入
 /// - 不再存在的条目自动移除
 fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEntry> {
-    let mut existing_map: HashMap<EntryKey, CronEntry> = existing
-        .into_iter()
-        .map(|e| (entry_key(&e), e))
-        .collect();
+    let mut existing_map: HashMap<EntryKey, CronEntry> =
+        existing.into_iter().map(|e| (entry_key(&e), e)).collect();
 
     let mut result = Vec::with_capacity(fresh.len());
     let mut kept = 0usize;
@@ -214,7 +211,10 @@ fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEnt
 
     let removed = existing_map.len();
     tracing::info!(
-        kept, updated, added, removed,
+        kept,
+        updated,
+        added,
+        removed,
         total = result.len(),
         "Cron 调度条目 diff merge 完成"
     );

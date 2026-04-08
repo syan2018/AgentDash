@@ -1,55 +1,7 @@
-use std::path::Path;
-
 use agentdash_domain::context_source::ContextSourceKind;
-use serde::Serialize;
-
-/// 寻址空间描述符 — 描述后端当前环境中可用的一种资源引用能力
-///
-/// 前端通过 `/api/address-spaces` 获取可用空间列表后，
-/// 根据 `selector` 字段决定如何呈现引用选择器 UI。
-#[derive(Debug, Clone, Serialize)]
-pub struct AddressSpaceDescriptor {
-    /// 空间唯一标识（如 "workspace_file"、"mcp_resource"）
-    pub id: String,
-    /// 用户可见的显示名称
-    pub label: String,
-    /// 映射到的 ContextSourceKind
-    pub kind: ContextSourceKind,
-    /// 能力提供者标识
-    pub provider: String,
-    /// 支持的操作（"search" / "browse" / "read"）
-    pub supports: Vec<String>,
-    /// 前端选择器 hint
-    pub selector: Option<SelectorHint>,
-}
-
-/// 前端选择器 UI 提示
-#[derive(Debug, Clone, Serialize)]
-pub struct SelectorHint {
-    /// 触发字符（如 "@"）
-    pub trigger: Option<String>,
-    /// 搜索框占位符
-    pub placeholder: String,
-    /// 结果条目类型（"file" / "resource" / "entity"）
-    pub result_item_type: String,
-}
-
-/// 寻址空间能力上下文 — 传递给 Provider 用于决定能力可用性
-pub struct AddressSpaceContext<'a> {
-    pub workspace_root: Option<&'a Path>,
-    pub has_mcp: bool,
-}
-
-/// 寻址空间能力发现提供者
-///
-/// 每个 Provider 负责一类资源的能力描述（discovery），
-/// 告诉前端当前环境中有哪些可引用的地址空间类型。
-/// 注册到 `AddressSpaceDiscoveryRegistry` 后，由 API 层统一暴露。
-///
-/// 注意：这不是 I/O 操作层的 `MountProvider`，后者负责 read/write/list/search/exec。
-pub trait AddressSpaceDiscoveryProvider: Send + Sync {
-    fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor>;
-}
+use agentdash_spi::{
+    AddressSpaceContext, AddressSpaceDescriptor, AddressSpaceDiscoveryProvider, SelectorHint,
+};
 
 /// 寻址空间发现注册表 — 持有所有已注册的能力发现提供者
 pub struct AddressSpaceDiscoveryRegistry {
@@ -88,7 +40,7 @@ pub struct WorkspaceFileProvider;
 
 impl AddressSpaceDiscoveryProvider for WorkspaceFileProvider {
     fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
-        ctx.workspace_root?;
+        ctx.mount_root?;
         Some(AddressSpaceDescriptor {
             id: "workspace_file".to_string(),
             label: "工作空间文件".to_string(),
@@ -113,7 +65,7 @@ pub struct WorkspaceSnapshotProvider;
 
 impl AddressSpaceDiscoveryProvider for WorkspaceSnapshotProvider {
     fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
-        ctx.workspace_root?;
+        ctx.mount_root?;
         Some(AddressSpaceDescriptor {
             id: "workspace_snapshot".to_string(),
             label: "项目结构快照".to_string(),
@@ -176,6 +128,8 @@ pub fn builtin_address_space_registry() -> AddressSpaceDiscoveryRegistry {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_spi::AddressSpaceContext;
+
     use super::*;
 
     #[test]
@@ -183,7 +137,7 @@ mod tests {
         let registry = builtin_address_space_registry();
         let tmp = tempfile::tempdir().unwrap();
         let ctx = AddressSpaceContext {
-            workspace_root: Some(tmp.path()),
+            mount_root: Some(tmp.path()),
             has_mcp: false,
         };
         let spaces = registry.available_spaces(&ctx);
@@ -196,7 +150,7 @@ mod tests {
     fn mcp_resource_available_with_mcp() {
         let registry = builtin_address_space_registry();
         let ctx = AddressSpaceContext {
-            workspace_root: None,
+            mount_root: None,
             has_mcp: true,
         };
         let spaces = registry.available_spaces(&ctx);
@@ -208,7 +162,7 @@ mod tests {
     fn lifecycle_space_always_advertised() {
         let registry = builtin_address_space_registry();
         let ctx = AddressSpaceContext {
-            workspace_root: None,
+            mount_root: None,
             has_mcp: false,
         };
         let spaces = registry.available_spaces(&ctx);

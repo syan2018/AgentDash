@@ -8,7 +8,7 @@ license.workspace = true
 agentdash-agent-types = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }
-agentdash-injection = { workspace = true }
+walkdir = "2.5"
 agent-client-protocol = { workspace = true }
 agentdash-acp-meta = { workspace = true }
 serde = { workspace = true }

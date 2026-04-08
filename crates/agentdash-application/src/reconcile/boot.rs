@@ -7,9 +7,7 @@ use std::sync::Arc;
 
 use crate::session::SessionHub;
 use crate::task::restart_tracker::RestartTracker;
-use crate::task::state_reconciler::{
-    TaskSessionStateReader, reconcile_running_tasks_on_boot,
-};
+use crate::task::state_reconciler::{TaskSessionStateReader, reconcile_running_tasks_on_boot};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StateChangeRepository;
 use agentdash_domain::task::TaskRepository;

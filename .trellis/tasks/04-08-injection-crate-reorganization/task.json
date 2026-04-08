@@ -2,35 +2,32 @@
   "id": "injection-crate-reorganization",
   "name": "injection-crate-reorganization",
   "title": "agentdash-injection crate 归并重组",
-  "description": "将 injection crate 的 trait 定义上移至 plugin-api，实现代码下沉至 application，消除 injection crate",
-  "status": "planning",
-  "dev_type": null,
-  "scope": null,
+  "description": "将 injection crate 的 trait/DTO 上移至 spi，实现代码下沉至 application/context/，消除 injection crate",
+  "status": "done",
+  "dev_type": "backend",
+  "scope": "refactor",
   "priority": "P3",
   "creator": "claude-agent",
-  "assignee": "-",
+  "assignee": "cursor-agent",
   "createdAt": "2026-04-08",
-  "completedAt": null,
+  "completedAt": "2026-04-08",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
+  "current_phase": 3,
   "next_action": [
-    { "phase": 1, "action": "implement" },
-    { "phase": 2, "action": "check" },
-    { "phase": 3, "action": "finish" },
     { "phase": 4, "action": "create-pr" }
   ],
   "commit": null,
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [
-    "crates/agentdash-injection/",
+    "crates/agentdash-spi/src/context_injection.rs",
+    "crates/agentdash-application/src/context/address_space_discovery.rs",
+    "crates/agentdash-application/src/context/source_resolver.rs",
+    "crates/agentdash-application/src/context/context_composer.rs",
     "crates/agentdash-plugin-api/src/lib.rs",
-    "crates/agentdash-plugin-api/src/plugin.rs",
-    "crates/agentdash-application/src/context/",
-    "crates/agentdash-api/src/task_agent_context.rs",
-    "crates/agentdash-api/src/routes/address_spaces.rs"
+    "crates/agentdash-plugin-api/src/plugin.rs"
   ],
-  "notes": "纯机械重组，无逻辑变更。当前消费方：agentdash-api、agentdash-application、agentdash-plugin-api。"
+  "notes": "纯机械重组完成。trait+DTO→spi/context_injection.rs，实现→application/context/{address_space_discovery,source_resolver,context_composer}.rs，plugin-api 改为从 spi re-export。injection crate 已删除。"
 }

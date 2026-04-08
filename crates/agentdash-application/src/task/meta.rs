@@ -6,8 +6,7 @@ use agentdash_acp_meta::{
 
 /// 从 ACP Meta 中提取 turn_id（不做匹配，纯提取）
 pub fn extract_turn_id_from_meta(meta: Option<&Meta>) -> Option<String> {
-    parse_agentdash_meta(meta?)
-        .and_then(|m| m.trace.and_then(|trace| trace.turn_id))
+    parse_agentdash_meta(meta?).and_then(|m| m.trace.and_then(|trace| trace.turn_id))
 }
 
 /// 判断通知事件是否属于指定 turn

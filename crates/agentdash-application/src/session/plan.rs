@@ -1,6 +1,6 @@
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
-use agentdash_injection::{ContextFragment, MergeStrategy};
+use agentdash_spi::{ContextFragment, MergeStrategy};
 use serde::Serialize;
 
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeMcpServer};

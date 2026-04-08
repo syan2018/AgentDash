@@ -1,5 +1,5 @@
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
-use agentdash_injection::ContextFragment;
+use agentdash_spi::ContextFragment;
 use serde_json::Value;
 
 use crate::runtime::{AddressSpace, RuntimeMcpServer};

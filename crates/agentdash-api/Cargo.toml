@@ -16,7 +16,6 @@ path = "src/lib.rs"
 agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-application = { workspace = true }
-agentdash-injection = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-executor = { workspace = true, features = ["pi-agent"] }
 agentdash-acp-meta = { workspace = true }

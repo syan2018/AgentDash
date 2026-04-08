@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::workspace::Workspace;
-use agentdash_injection::ResolveSourcesOutput;
+use agentdash_spi::ResolveSourcesOutput;
 
 use crate::app_state::AppState;
 

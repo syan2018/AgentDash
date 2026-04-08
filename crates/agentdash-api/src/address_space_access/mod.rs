@@ -151,10 +151,7 @@ mod tests {
         )];
 
         let mut ws = sample_workspace();
-        ws.mount_capabilities = vec![
-            MountCapability::Read,
-            MountCapability::List,
-        ];
+        ws.mount_capabilities = vec![MountCapability::Read, MountCapability::List];
 
         let address_space = service
             .build_address_space(

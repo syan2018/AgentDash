@@ -127,16 +127,24 @@ impl SessionTurnProcessor {
         }
 
         // 生成并持久化终态 notification
-        let terminal_notification =
-            build_turn_terminal_notification(&session_id, &source, &turn_id, terminal_kind, terminal_message.clone());
-        let _ = hub.persist_notification(&session_id, terminal_notification).await;
+        let terminal_notification = build_turn_terminal_notification(
+            &session_id,
+            &source,
+            &turn_id,
+            terminal_kind,
+            terminal_message.clone(),
+        );
+        let _ = hub
+            .persist_notification(&session_id, terminal_notification)
+            .await;
 
         // Hook 评估（SessionTerminal trigger）
         let broadcast_tx = {
             let sessions_guard = sessions.lock().await;
             sessions_guard.get(&session_id).map(|rt| rt.tx.clone())
         };
-        let terminal_effects = if let (Some(hs), Some(tx)) = (hook_session.as_ref(), &broadcast_tx) {
+        let terminal_effects = if let (Some(hs), Some(tx)) = (hook_session.as_ref(), &broadcast_tx)
+        {
             hub.emit_session_hook_trigger(
                 hs.as_ref(),
                 &HookTriggerInput {
@@ -252,6 +260,8 @@ impl SessionTurnProcessor {
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, notification).await;
         }
-        let _ = hub.persist_notification(session_id, notification.clone()).await;
+        let _ = hub
+            .persist_notification(session_id, notification.clone())
+            .await;
     }
 }

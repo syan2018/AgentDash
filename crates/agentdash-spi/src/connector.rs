@@ -47,7 +47,6 @@ pub struct AgentInfo {
 #[derive(Clone)]
 pub struct ExecutionContext {
     pub turn_id: String,
-    pub workspace_root: PathBuf,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
@@ -74,7 +73,6 @@ impl std::fmt::Debug for ExecutionContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExecutionContext")
             .field("turn_id", &self.turn_id)
-            .field("workspace_root", &self.workspace_root)
             .field("executor_config", &self.executor_config)
             .field("hook_session", &self.hook_session)
             .field(
@@ -90,6 +88,23 @@ impl std::fmt::Debug for ExecutionContext {
             )
             .finish_non_exhaustive()
     }
+}
+
+/// 从 `ExecutionContext.address_space` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
+pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf, ConnectorError> {
+    let space = context.address_space.as_ref().ok_or_else(|| {
+        ConnectorError::InvalidConfig("ExecutionContext 缺少 address_space".to_string())
+    })?;
+    let mount = space.default_mount().ok_or_else(|| {
+        ConnectorError::InvalidConfig("address_space 缺少 default_mount".to_string())
+    })?;
+    let path = PathBuf::from(mount.root_ref.trim());
+    if path.as_os_str().is_empty() {
+        return Err(ConnectorError::InvalidConfig(
+            "default mount 的 root_ref 为空".to_string(),
+        ));
+    }
+    Ok(path)
 }
 
 #[derive(Debug, Clone, Default)]

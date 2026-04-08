@@ -10,11 +10,11 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
+use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, PromptPayload,
+    ExecutionStream, PromptPayload, workspace_path_from_context,
 };
-use agentdash_spi::AgentConnector;
 
 use crate::backend_transport::{
     RelayExecutorConfig, RelayPromptRequest, RelayPromptTransport, RelaySessionEvent,
@@ -94,7 +94,8 @@ impl AgentConnector for RelayAgentConnector {
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
         let executor_id = &context.executor_config.executor;
-        let workspace_root_str = context.workspace_root.to_string_lossy();
+        let workspace_root = workspace_path_from_context(&context)?;
+        let workspace_root_str = workspace_root.to_string_lossy();
         let backend_id = self
             .transport
             .resolve_backend(executor_id, &workspace_root_str)
@@ -102,12 +103,8 @@ impl AgentConnector for RelayAgentConnector {
             .map_err(|e| ConnectorError::Runtime(format!("无法解析 relay 后端: {e}")))?;
 
         let prompt_blocks = match prompt {
-            PromptPayload::Text(text) => {
-                Some(serde_json::json!([{"type": "text", "text": text}]))
-            }
-            PromptPayload::Blocks(blocks) => {
-                serde_json::to_value(blocks).ok()
-            }
+            PromptPayload::Text(text) => Some(serde_json::json!([{"type": "text", "text": text}])),
+            PromptPayload::Blocks(blocks) => serde_json::to_value(blocks).ok(),
         };
 
         let executor_config = context.executor_config.clone();
@@ -134,10 +131,10 @@ impl AgentConnector for RelayAgentConnector {
             session_id: session_id.to_string(),
             follow_up_session_id: _follow_up_session_id.map(ToString::to_string),
             prompt_blocks,
-            workspace_root: context.workspace_root.to_string_lossy().to_string(),
+            workspace_root: workspace_root.to_string_lossy().to_string(),
             working_dir: context
                 .working_directory
-                .strip_prefix(&context.workspace_root)
+                .strip_prefix(&workspace_root)
                 .ok()
                 .and_then(|p| {
                     let s = p.to_string_lossy().replace('\\', "/");
@@ -160,8 +157,7 @@ impl AgentConnector for RelayAgentConnector {
 
         // 创建 notification channel 并注册到 transport sink map
         let (tx, rx) = mpsc::unbounded_channel::<RelaySessionEvent>();
-        self.transport
-            .register_session_sink(session_id, tx);
+        self.transport.register_session_sink(session_id, tx);
 
         let stream: ExecutionStream = Box::pin(futures::stream::unfold(rx, |mut rx| async {
             match rx.recv().await {
@@ -195,11 +191,7 @@ impl AgentConnector for RelayAgentConnector {
         let online_ids = self.transport.list_online_backend_ids().await;
         let mut last_error = None;
         for backend_id in &online_ids {
-            match self
-                .transport
-                .relay_cancel(backend_id, session_id)
-                .await
-            {
+            match self.transport.relay_cancel(backend_id, session_id).await {
                 Ok(()) => {
                     self.transport.unregister_session_sink(session_id);
                     return Ok(());

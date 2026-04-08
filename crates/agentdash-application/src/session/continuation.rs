@@ -192,7 +192,10 @@ pub(super) fn build_continuation_system_context_from_events(
         }
     }
 
-    sections.push(format!("## Session Continuation\n\n{}", history_lines.join("\n")));
+    sections.push(format!(
+        "## Session Continuation\n\n{}",
+        history_lines.join("\n")
+    ));
     Some(sections.join("\n\n"))
 }
 
@@ -258,53 +261,54 @@ pub(super) fn build_restored_session_messages_from_events(
             SessionUpdate::UserMessageChunk(chunk) => {
                 if let Some(part) = content_block_to_message_part(&chunk.content) {
                     let key = restored_user_key(event);
-                    let state = user_messages
-                        .entry(key)
-                        .or_insert_with(|| RestoredUserMessageState {
-                            order: event.event_seq,
-                            content: Vec::new(),
-                        });
+                    let state =
+                        user_messages
+                            .entry(key)
+                            .or_insert_with(|| RestoredUserMessageState {
+                                order: event.event_seq,
+                                content: Vec::new(),
+                            });
                     state.content.push(part);
                 }
             }
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let Some(part) = content_block_to_message_part(&chunk.content) {
                     let key = restored_assistant_key(event, chunk.message_id.as_deref());
-                    let state = assistant_messages
-                        .entry(key)
-                        .or_insert_with(|| RestoredAssistantMessageState {
+                    let state = assistant_messages.entry(key).or_insert_with(|| {
+                        RestoredAssistantMessageState {
                             order: event.event_seq,
                             content: Vec::new(),
                             tool_calls: Vec::new(),
                             tool_call_ids: HashSet::new(),
-                        });
+                        }
+                    });
                     state.content.push(part);
                 }
             }
             SessionUpdate::AgentThoughtChunk(chunk) => {
                 if let Some(part) = content_block_to_reasoning_part(&chunk.content) {
                     let key = restored_assistant_key(event, chunk.message_id.as_deref());
-                    let state = assistant_messages
-                        .entry(key)
-                        .or_insert_with(|| RestoredAssistantMessageState {
+                    let state = assistant_messages.entry(key).or_insert_with(|| {
+                        RestoredAssistantMessageState {
                             order: event.event_seq,
                             content: Vec::new(),
                             tool_calls: Vec::new(),
                             tool_call_ids: HashSet::new(),
-                        });
+                        }
+                    });
                     state.content.push(part);
                 }
             }
             SessionUpdate::ToolCall(call) => {
                 let key = restored_assistant_key(event, None);
-                let state = assistant_messages
-                    .entry(key)
-                    .or_insert_with(|| RestoredAssistantMessageState {
+                let state = assistant_messages.entry(key).or_insert_with(|| {
+                    RestoredAssistantMessageState {
                         order: event.event_seq,
                         content: Vec::new(),
                         tool_calls: Vec::new(),
                         tool_call_ids: HashSet::new(),
-                    });
+                    }
+                });
                 state.order = state.order.min(event.event_seq);
                 upsert_restored_tool_call(
                     state,
@@ -324,14 +328,14 @@ pub(super) fn build_restored_session_messages_from_events(
             }
             SessionUpdate::ToolCallUpdate(update) => {
                 let key = restored_assistant_key(event, None);
-                let state = assistant_messages
-                    .entry(key)
-                    .or_insert_with(|| RestoredAssistantMessageState {
+                let state = assistant_messages.entry(key).or_insert_with(|| {
+                    RestoredAssistantMessageState {
                         order: event.event_seq,
                         content: Vec::new(),
                         tool_calls: Vec::new(),
                         tool_call_ids: HashSet::new(),
-                    });
+                    }
+                });
                 state.order = state.order.min(event.event_seq);
                 upsert_restored_tool_call(
                     state,
@@ -389,7 +393,10 @@ pub(super) fn build_restored_session_messages_from_events(
     }
 
     envelopes.sort_by_key(restored_message_order);
-    envelopes.into_iter().map(restored_envelope_to_message).collect()
+    envelopes
+        .into_iter()
+        .map(restored_envelope_to_message)
+        .collect()
 }
 
 // ─── Helper: companion notification ─────────────────────────
@@ -447,7 +454,8 @@ pub(super) fn build_companion_human_response_notification(
 // ─── Private helpers ────────────────────────────────────────
 
 fn restored_user_key(event: &PersistedSessionEvent) -> String {
-    event.turn_id
+    event
+        .turn_id
         .as_deref()
         .map(|turn_id| format!("user:turn:{turn_id}"))
         .unwrap_or_else(|| format!("user:event:{}", event.event_seq))
@@ -481,11 +489,13 @@ fn upsert_restored_tool_call(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("tool_call");
-    let arguments = raw_input
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
+    let arguments = raw_input.cloned().unwrap_or_else(|| serde_json::json!({}));
 
-    if let Some(existing) = state.tool_calls.iter_mut().find(|item| item.id == tool_call_id) {
+    if let Some(existing) = state
+        .tool_calls
+        .iter_mut()
+        .find(|item| item.id == tool_call_id)
+    {
         if existing.name.trim().is_empty() {
             existing.name = resolved_title.to_string();
         }
@@ -539,9 +549,9 @@ fn update_restored_tool_result(
     state.is_error = matches!(status, ToolCallStatus::Failed);
 
     if let Some(raw_output) = raw_output {
-        if let Ok(decoded) = serde_json::from_value::<agentdash_spi::tool::AgentToolResult>(
-            raw_output.clone(),
-        ) {
+        if let Ok(decoded) =
+            serde_json::from_value::<agentdash_spi::tool::AgentToolResult>(raw_output.clone())
+        {
             state.content = decoded.content;
             state.details = decoded.details;
             state.is_error = decoded.is_error || state.is_error;
@@ -577,7 +587,9 @@ fn restored_envelope_to_message(envelope: RestoredMessageEnvelope) -> AgentMessa
             timestamp: None,
         },
         RestoredMessageEnvelope::Assistant {
-            content, tool_calls, ..
+            content,
+            tool_calls,
+            ..
         } => AgentMessage::Assistant {
             content,
             tool_calls: tool_calls.clone(),
@@ -610,11 +622,7 @@ fn restored_envelope_to_message(envelope: RestoredMessageEnvelope) -> AgentMessa
     }
 }
 
-fn message_key(
-    role: &str,
-    event: &PersistedSessionEvent,
-    message_id: Option<&str>,
-) -> String {
+fn message_key(role: &str, event: &PersistedSessionEvent, message_id: Option<&str>) -> String {
     if let Some(message_id) = message_id.map(str::trim).filter(|value| !value.is_empty()) {
         return format!("{role}:msg:{message_id}");
     }
@@ -690,7 +698,9 @@ fn content_block_to_rendered_text(block: &ContentBlock) -> Option<String> {
 fn is_owner_context_resource_block(block: &ContentBlock) -> bool {
     match block {
         ContentBlock::Resource(resource) => match &resource.resource {
-            agent_client_protocol::EmbeddedResourceResource::TextResourceContents(text_resource) => {
+            agent_client_protocol::EmbeddedResourceResource::TextResourceContents(
+                text_resource,
+            ) => {
                 let uri = text_resource.uri.as_str();
                 uri.starts_with("agentdash://project-context/")
                     || uri.starts_with("agentdash://story-context/")

@@ -46,7 +46,6 @@ impl PostgresStoryRepository {
 
         Ok(())
     }
-
 }
 
 #[async_trait::async_trait]
@@ -303,4 +302,3 @@ fn parse_story_type(raw: &str) -> Result<StoryType, DomainError> {
         ))),
     }
 }
-

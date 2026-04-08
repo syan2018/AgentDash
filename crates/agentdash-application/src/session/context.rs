@@ -3,8 +3,8 @@ use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
 use serde::Serialize;
 
-use crate::runtime::{AgentConfig, ThinkingLevel};
 use super::plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
+use crate::runtime::{AgentConfig, ThinkingLevel};
 
 // ─── Unified DTO ─────────────────────────────────────
 
@@ -125,7 +125,9 @@ pub fn extract_story_overrides(story: &Story) -> SessionStoryOverrides {
 // ─── Bootstrap helpers ───────────────────────────────
 
 use agentdash_domain::workspace::Workspace;
-use std::path::PathBuf;
+use std::path::Path;
+
+use agentdash_spi::AddressSpace;
 
 use crate::address_space::selected_workspace_binding;
 
@@ -133,15 +135,20 @@ use crate::address_space::selected_workspace_binding;
 /// 仅在字段为 None 时填充，不覆盖已有值。
 pub fn apply_workspace_defaults(
     working_dir: &mut Option<String>,
-    workspace_root: &mut Option<PathBuf>,
+    address_space: &mut Option<AddressSpace>,
     workspace: Option<&Workspace>,
 ) {
     if working_dir.is_none() && workspace.is_some() {
         *working_dir = Some(".".to_string());
     }
-    if workspace_root.is_none() {
-        *workspace_root = workspace
+    if address_space.is_none() {
+        if let Some(root_ref) = workspace
             .and_then(selected_workspace_binding)
-            .map(|binding| PathBuf::from(binding.root_ref.clone()));
+            .map(|binding| binding.root_ref.clone())
+        {
+            *address_space = Some(super::local_workspace_address_space(Path::new(
+                root_ref.as_str(),
+            )));
+        }
     }
 }

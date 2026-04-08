@@ -217,8 +217,7 @@ impl RelayAddressSpaceService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::auth::AuthIdentity>,
     ) -> Result<MultiMountPatchResult, String> {
-        let entries =
-            parse_patch_text(patch).map_err(|e| format!("patch 解析失败: {e}"))?;
+        let entries = parse_patch_text(patch).map_err(|e| format!("patch 解析失败: {e}"))?;
         if entries.is_empty() {
             return Err("没有检测到任何文件改动".to_string());
         }
@@ -579,7 +578,11 @@ impl ApplyPatchTarget for ProviderPatchTarget<'_> {
     async fn create_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
         let patch = build_add_file_patch(path, content);
         let request = ApplyPatchRequest { patch };
-        match self.provider.apply_patch(self.mount, &request, self.ctx).await {
+        match self
+            .provider
+            .apply_patch(self.mount, &request, self.ctx)
+            .await
+        {
             Ok(_) => Ok(()),
             Err(MountError::NotSupported(_)) => self.write_text(path, content).await,
             Err(e) => Err(ApplyPatchError::Apply(e.to_string())),

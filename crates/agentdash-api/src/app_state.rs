@@ -16,10 +16,13 @@ use agentdash_application::address_space::tools::provider::{
 use agentdash_application::address_space::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::ContextContributorRegistry;
+use agentdash_application::context::{
+    AddressSpaceDiscoveryRegistry, builtin_address_space_registry,
+};
 use agentdash_application::hooks::AppExecutionHookProvider;
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::scheduling::CronSchedulerHandle;
-use agentdash_application::session::SessionHub;
+use agentdash_application::session::{SessionHub, local_workspace_address_space};
 use agentdash_application::task::service::TaskLifecycleService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
@@ -41,7 +44,6 @@ use agentdash_infrastructure::{
     PostgresStateChangeRepository, PostgresStoryRepository, PostgresTaskRepository,
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
-use agentdash_injection::AddressSpaceDiscoveryRegistry;
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
 
@@ -187,31 +189,29 @@ impl AppState {
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
 
-        if let Some(pi_connector) = build_pi_agent_connector(
-            &workspace_root,
-            PiAgentConnectorDeps {
-                settings_repo: settings_repo.clone(),
-                llm_provider_repo: llm_provider_repo.clone(),
-                address_space_service: address_space_service.clone(),
-                canvas_repo: canvas_repo.clone(),
-                session_binding_repo: session_binding_repo.clone(),
-                agent_repo: agent_repo.clone(),
-                agent_link_repo: agent_repo.clone(),
-                workflow_definition_repo: workflow_repo.clone(),
-                lifecycle_definition_repo: workflow_repo.clone(),
-                lifecycle_run_repo: workflow_repo.clone(),
-                session_hub_handle: session_hub_handle.clone(),
-                inline_persister: Some(inline_persister),
-            },
-        )
+        if let Some(pi_connector) = build_pi_agent_connector(PiAgentConnectorDeps {
+            settings_repo: settings_repo.clone(),
+            llm_provider_repo: llm_provider_repo.clone(),
+            address_space_service: address_space_service.clone(),
+            canvas_repo: canvas_repo.clone(),
+            session_binding_repo: session_binding_repo.clone(),
+            agent_repo: agent_repo.clone(),
+            agent_link_repo: agent_repo.clone(),
+            workflow_definition_repo: workflow_repo.clone(),
+            lifecycle_definition_repo: workflow_repo.clone(),
+            lifecycle_run_repo: workflow_repo.clone(),
+            session_hub_handle: session_hub_handle.clone(),
+            inline_persister: Some(inline_persister),
+        })
         .await
         {
             sub_connectors.push(Arc::new(pi_connector));
         }
         // relay connector — 将远程后端上报的执行器纳入统一路由
         {
-            let relay_transport: Arc<dyn agentdash_application::backend_transport::RelayPromptTransport> =
-                backend_registry.clone();
+            let relay_transport: Arc<
+                dyn agentdash_application::backend_transport::RelayPromptTransport,
+            > = backend_registry.clone();
             sub_connectors.push(Arc::new(
                 agentdash_application::relay_connector::RelayAgentConnector::new(relay_transport),
             ));
@@ -234,7 +234,7 @@ impl AppState {
             workflow_repo.clone(),
         ));
         let session_hub = SessionHub::new_with_hooks_and_persistence(
-            workspace_root,
+            Some(local_workspace_address_space(&workspace_root)),
             connector.clone(),
             Some(hook_provider.clone()),
             session_repo,
@@ -284,7 +284,7 @@ impl AppState {
 
         tracing::info!(auth_mode = %auth_mode, "认证模式已加载");
 
-        let mut address_space_registry = agentdash_injection::builtin_address_space_registry();
+        let mut address_space_registry = builtin_address_space_registry();
         for provider in plugin_registration.address_space_providers {
             address_space_registry.register(provider);
         }
@@ -440,11 +440,9 @@ struct PiAgentConnectorDeps {
 }
 
 async fn build_pi_agent_connector(
-    workspace_root: &std::path::Path,
     deps: PiAgentConnectorDeps,
 ) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
-        workspace_root,
         deps.settings_repo.as_ref(),
         deps.llm_provider_repo.as_ref(),
     )

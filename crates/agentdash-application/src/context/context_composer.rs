@@ -1,19 +1,6 @@
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MergeStrategy {
-    Append,
-    Override,
-}
-
-#[derive(Debug, Clone)]
-pub struct ContextFragment {
-    pub slot: &'static str,
-    pub label: &'static str,
-    pub order: i32,
-    pub strategy: MergeStrategy,
-    pub content: String,
-}
+use agentdash_spi::{ContextFragment, MergeStrategy};
 
 #[derive(Default)]
 pub struct ContextComposer {

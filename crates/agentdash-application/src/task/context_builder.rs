@@ -2,13 +2,13 @@ use agent_client_protocol::McpServer;
 use uuid::Uuid;
 
 use crate::address_space::RelayAddressSpaceService;
+use crate::canvas::append_visible_canvas_mounts;
+use crate::repository_set::RepositorySet;
+use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
-use crate::canvas::append_visible_canvas_mounts;
-use crate::repository_set::RepositorySet;
-use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::session::context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
@@ -84,7 +84,6 @@ pub async fn build_task_session_context(
         address_space: runtime_address_space,
         mcp_servers: acp_mcp_servers_to_runtime(&mcp_servers),
         working_dir: None,
-        workspace_root: None,
         executor_preset_name: preset_name,
         executor_source: session_runtime_inputs.executor_source,
         executor_resolution_error: session_runtime_inputs.executor_resolution_error,

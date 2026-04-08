@@ -176,9 +176,7 @@ fn validate_description(description: Option<&str>) -> Vec<String> {
     let mut errors = Vec::new();
     match description {
         None | Some("") => errors.push("description 为必填项".to_string()),
-        Some(desc) if desc.trim().is_empty() => {
-            errors.push("description 不能为空白".to_string())
-        }
+        Some(desc) if desc.trim().is_empty() => errors.push("description 不能为空白".to_string()),
         Some(desc) if desc.len() > MAX_DESCRIPTION_LENGTH => errors.push(format!(
             "description 超过 {MAX_DESCRIPTION_LENGTH} 字符（当前 {} 字符）",
             desc.len()

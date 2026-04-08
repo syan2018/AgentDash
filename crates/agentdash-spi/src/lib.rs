@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod connector;
+pub mod context_injection;
 pub mod hook_trace_notification;
 pub mod hooks;
 pub mod lifecycle;
@@ -14,16 +15,22 @@ pub use agentdash_domain::common::{
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, FlowCapabilities, PromptPayload, RestoredSessionState,
-    ToolCluster, content_block_to_text,
+    ToolCluster, content_block_to_text, workspace_path_from_context,
 };
+pub use context_injection::{
+    AddressSpaceContext, AddressSpaceDescriptor, AddressSpaceDiscoveryProvider, ContextFragment,
+    InjectionError, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint,
+    SourceResolver,
+};
+pub use hook_trace_notification::build_hook_trace_notification;
 pub use hooks::{
-    action_type, ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest,
-    HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery,
-    HookInjection, HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess,
-    HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry, HookTrigger,
-    NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime,
+    ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus,
+    HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookInjection,
+    HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
+    HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest,
+    HookTraceEntry, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
+    SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
+    SharedHookSessionRuntime, action_type,
 };
 pub use lifecycle::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
@@ -35,7 +42,6 @@ pub use lifecycle::{
 };
 pub use mount::MountEditCapabilities;
 pub use skill::SkillRef;
-pub use hook_trace_notification::build_hook_trace_notification;
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
     ToolUpdateCallback,

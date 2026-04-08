@@ -1,24 +1,21 @@
 {
   "id": "workspace-root-elimination",
   "name": "workspace-root-elimination",
-  "title": "清除 workspace_root 冗余概念，统一走 Address Space",
-  "description": "workspace_root 是 address space 体系出现前的遗留字段，当前 245 处 / 40 文件使用。统一收敛到 mount root_ref，涉及 relay 协议变更和本机安全边界重设计。",
-  "status": "planning",
-  "dev_type": null,
-  "scope": null,
+  "title": "清除业务编排层 workspace_root 冗余概念，统一走 Address Space",
+  "description": "从 PromptSessionRequest/ExecutionContext/SessionHub/Bootstrap 等业务编排层移除 workspace_root 字段，统一由 address_space.default_mount() 派生",
+  "status": "done",
+  "dev_type": "backend",
+  "scope": "refactor",
   "priority": "P2",
   "creator": "claude-agent",
-  "assignee": "-",
+  "assignee": "cursor-agent",
   "createdAt": "2026-04-08",
-  "completedAt": null,
+  "completedAt": "2026-04-08",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
+  "current_phase": 3,
   "next_action": [
-    { "phase": 1, "action": "implement" },
-    { "phase": 2, "action": "check" },
-    { "phase": 3, "action": "finish" },
     { "phase": 4, "action": "create-pr" }
   ],
   "commit": null,
@@ -26,11 +23,19 @@
   "subtasks": [],
   "relatedFiles": [
     "crates/agentdash-spi/src/connector.rs",
-    "crates/agentdash-local/src/tool_executor.rs",
-    "crates/agentdash-relay/src/protocol.rs",
+    "crates/agentdash-application/src/session/prompt_address_space.rs",
+    "crates/agentdash-application/src/session/types.rs",
     "crates/agentdash-application/src/session/hub.rs",
     "crates/agentdash-application/src/session/prompt_pipeline.rs",
-    "crates/agentdash-executor/src/connectors/pi_agent/connector.rs"
+    "crates/agentdash-application/src/session/bootstrap.rs",
+    "crates/agentdash-application/src/session/context.rs",
+    "crates/agentdash-application/src/companion/tools.rs",
+    "crates/agentdash-application/src/relay_connector.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent/connector.rs",
+    "crates/agentdash-executor/src/connectors/vibe_kanban.rs",
+    "crates/agentdash-local/src/command_handler.rs",
+    "crates/agentdash-api/src/bootstrap/turn_dispatcher.rs",
+    "crates/agentdash-api/src/app_state.rs"
   ],
-  "notes": "245 处 / 40 文件，最大风险在 tool_executor(49处) 的安全边界和 relay protocol(12处) 的协议变更"
+  "notes": "业务编排层清除完成。基础设施层（tool_executor/relay protocol/apply_patch）保持不动。新增 local_workspace_address_space() 和 workspace_path_from_context() 辅助函数。"
 }

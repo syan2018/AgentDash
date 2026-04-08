@@ -295,8 +295,70 @@ Paths may use `mount_id://path` to target a specific mount; paths without a pref
             }
         }
 
+        // ── 7. Skills：懒加载指针，模型按需 read 加载 ──
+        if let Some(skills_block) = format_skills_for_prompt(&context.skills, tool_names) {
+            sections.push(skills_block);
+        }
+
         sections.join("\n\n")
     }
+}
+
+/// 将 skill 列表格式化为 `<available_skills>` XML 块注入 system prompt。
+///
+/// 仅包含 `disable_model_invocation = false` 的 skill；
+/// 仅在会话有文件读取工具（fs_read / read_file）时生成。
+fn format_skills_for_prompt(
+    skills: &[agentdash_spi::SkillRef],
+    tool_names: &[String],
+) -> Option<String> {
+    let read_tool = tool_names
+        .iter()
+        .find(|t| *t == "fs_read" || *t == "read_file")?;
+
+    let visible: Vec<_> = skills
+        .iter()
+        .filter(|s| !s.disable_model_invocation)
+        .collect();
+    if visible.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec![
+        format!(
+            "The following skills provide specialized instructions for specific tasks.\n\
+             Use the {read_tool} tool to load a skill's file when the task matches its description.\n\
+             When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md)."
+        ),
+        String::new(),
+        "<available_skills>".to_string(),
+    ];
+    for skill in &visible {
+        lines.push("  <skill>".to_string());
+        lines.push(format!(
+            "    <name>{}</name>",
+            escape_xml(&skill.name)
+        ));
+        lines.push(format!(
+            "    <description>{}</description>",
+            escape_xml(&skill.description)
+        ));
+        lines.push(format!(
+            "    <location>{}</location>",
+            escape_xml(&skill.file_path.to_string_lossy())
+        ));
+        lines.push("  </skill>".to_string());
+    }
+    lines.push("</available_skills>".to_string());
+    Some(lines.join("\n"))
+}
+
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {

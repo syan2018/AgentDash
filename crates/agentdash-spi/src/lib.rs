@@ -5,6 +5,7 @@ pub mod hooks;
 pub mod lifecycle;
 pub mod mount;
 pub mod schema;
+pub mod skill;
 pub mod tool;
 
 pub use agentdash_domain::common::{
@@ -33,6 +34,7 @@ pub use lifecycle::{
     TransformContextOutput, TurnControlDecision, now_millis,
 };
 pub use mount::MountEditCapabilities;
+pub use skill::SkillRef;
 pub use hook_trace_notification::build_hook_trace_notification;
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,

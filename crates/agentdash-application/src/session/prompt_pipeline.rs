@@ -6,6 +6,7 @@ use futures::StreamExt;
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime};
 use agentdash_spi::{ConnectorError, ExecutionContext, RestoredSessionState};
+use crate::skill::load_skills_for_workspace;
 
 use super::event_bridge::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
@@ -172,6 +173,20 @@ impl SessionHub {
             _ => None,
         };
 
+        // 扫描工作区 skill（first-wins，诊断信息输出到日志）
+        let discovered_skills = {
+            let skill_result = load_skills_for_workspace(&workspace_root);
+            for diag in &skill_result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "skill 诊断: {}",
+                    diag.message
+                );
+            }
+            skill_result.skills
+        };
+
         let context = ExecutionContext {
             turn_id: turn_id.clone(),
             workspace_root,
@@ -186,6 +201,7 @@ impl SessionHub {
             runtime_delegate,
             identity: req.identity,
             restored_session_state,
+            skills: discovered_skills,
         };
 
         session_meta.updated_at = now;

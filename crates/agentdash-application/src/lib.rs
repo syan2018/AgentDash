@@ -11,6 +11,7 @@ pub mod relay_connector;
 pub mod repository_set;
 pub mod scheduling;
 pub mod runtime;
+pub mod skill;
 pub mod runtime_bridge;
 pub mod session;
 pub mod story;

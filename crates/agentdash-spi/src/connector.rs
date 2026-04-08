@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
 use crate::lifecycle::DynAgentRuntimeDelegate;
+use crate::skill::SkillRef;
 
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -61,9 +62,12 @@ pub struct ExecutionContext {
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::auth::AuthIdentity>,
-    /// 当 session 生命周期层判定为“冷启动仓储恢复”且执行器支持原生恢复时，
+    /// 当 session 生命周期层判定为”冷启动仓储恢复”且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
+    /// 当前会话发现的 skill 列表（由 Application 层从工作区扫描构建）。
+    /// Connector 将可见 skill 注入 system prompt 的 `<available_skills>` 块。
+    pub skills: Vec<SkillRef>,
 }
 
 impl std::fmt::Debug for ExecutionContext {

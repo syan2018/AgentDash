@@ -6,7 +6,6 @@ use futures::StreamExt;
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime};
 use agentdash_spi::{ConnectorError, ExecutionContext, RestoredSessionState};
-use crate::skill::load_skills_for_workspace;
 
 use super::event_bridge::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
@@ -173,12 +172,12 @@ impl SessionHub {
             _ => None,
         };
 
-        // 扫描工作区 skill（first-wins，诊断信息输出到日志）
-        let discovered_skills = {
-            let skill_result = load_skills_for_workspace(
-                &workspace_root,
-                req.address_space.as_ref(),
-            );
+        // 通过 address space service 扫描所有 mount 的 skill
+        let discovered_skills = if let (Some(service), Some(address_space)) =
+            (&self.address_space_service, &req.address_space)
+        {
+            let skill_result =
+                crate::skill::load_skills_from_address_space(service, address_space).await;
             for diag in &skill_result.diagnostics {
                 tracing::warn!(
                     skill_name = %diag.name,
@@ -188,6 +187,8 @@ impl SessionHub {
                 );
             }
             skill_result.skills
+        } else {
+            Vec::new()
         };
 
         let context = ExecutionContext {

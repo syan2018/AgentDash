@@ -32,6 +32,7 @@ pub struct SessionHub {
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
     pub(super) persistence: Arc<dyn SessionPersistence>,
+    pub(crate) address_space_service: Option<Arc<crate::address_space::RelayAddressSpaceService>>,
     pub companion_wait_registry: CompanionWaitRegistry,
 }
 
@@ -48,8 +49,18 @@ impl SessionHub {
             hook_provider,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             persistence,
+            address_space_service: None,
             companion_wait_registry: CompanionWaitRegistry::default(),
         }
+    }
+
+    /// 注入 Address Space 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
+    pub fn with_address_space_service(
+        mut self,
+        service: Arc<crate::address_space::RelayAddressSpaceService>,
+    ) -> Self {
+        self.address_space_service = Some(service);
+        self
     }
 
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。

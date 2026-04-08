@@ -24,12 +24,14 @@ export interface PresetFormState {
   system_prompt_mode: SystemPromptMode | "";
   mcp_servers: McpServerDecl[];
   tool_clusters: ToolCluster[];
+  allowed_companions: string[];
 }
 
 export function presetToForm(preset?: AgentPreset): PresetFormState {
   const cfg = preset?.config ?? {};
   const rawMcps = Array.isArray(cfg.mcp_servers) ? (cfg.mcp_servers as McpServerDecl[]) : [];
   const rawClusters = Array.isArray(cfg.tool_clusters) ? (cfg.tool_clusters as ToolCluster[]) : [];
+  const rawCompanions = Array.isArray(cfg.allowed_companions) ? (cfg.allowed_companions as string[]) : [];
   return {
     name: preset?.name ?? "",
     display_name: String(cfg.display_name ?? ""),
@@ -44,6 +46,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
     mcp_servers: rawMcps,
     tool_clusters: rawClusters,
+    allowed_companions: rawCompanions,
   };
 }
 
@@ -60,6 +63,7 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
   if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
   if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
+  if (form.allowed_companions.length > 0) config.allowed_companions = form.allowed_companions;
   return {
     name: form.name.trim(),
     agent_type: form.agent_type.trim(),
@@ -410,11 +414,13 @@ export function PresetFormFields({
   patchForm,
   agentTypeOptions,
   isDiscoveryLoading,
+  siblingAgents,
 }: {
   form: PresetFormState;
   patchForm: (patch: Partial<PresetFormState>) => void;
   agentTypeOptions: Array<{ value: string; label: string }>;
   isDiscoveryLoading: boolean;
+  siblingAgents?: Array<{ name: string; display_name: string }>;
 }) {
   const discovered = useExecutorDiscoveredOptions(form.agent_type);
   const modelSelector = discovered.options?.model_selector ?? null;
@@ -718,6 +724,54 @@ export function PresetFormFields({
         </div>
       </details>
 
+      {siblingAgents && siblingAgents.length > 0 && (
+        <details className="sm:col-span-2" open={form.allowed_companions.length > 0}>
+          <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
+            可用 Companion Agents {form.allowed_companions.length > 0
+              ? `(已选 ${form.allowed_companions.length}/${siblingAgents.length})`
+              : `(全部 ${siblingAgents.length} 个)`}
+          </summary>
+          <div className="mt-2 space-y-1">
+            <p className="text-[10px] text-muted-foreground/60">
+              勾选此 Agent 可调用的 companion，不选则默认可调用全部项目 Agent
+            </p>
+            <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-0.5">
+              {siblingAgents.filter((a) => a.name !== form.name).map((agent) => {
+                const checked = form.allowed_companions.includes(agent.name);
+                return (
+                  <label
+                    key={agent.name}
+                    className={`flex cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-[7px] transition-all duration-160 ${
+                      checked ? "bg-violet-500/6" : "opacity-50 hover:opacity-70"
+                    }`}
+                  >
+                    <span className="relative inline-flex h-[18px] w-[32px] shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          const next = checked
+                            ? form.allowed_companions.filter((c) => c !== agent.name)
+                            : [...form.allowed_companions, agent.name];
+                          patchForm({ allowed_companions: next });
+                        }}
+                        className="peer sr-only"
+                      />
+                      <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-violet-500" />
+                      <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-background shadow-sm transition-transform duration-160 peer-checked:translate-x-[14px]" />
+                    </span>
+                    <span className="text-xs font-medium text-foreground">{agent.name}</span>
+                    {agent.display_name && agent.display_name !== agent.name && (
+                      <span className="text-[10px] text-muted-foreground">{agent.display_name}</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </details>
+      )}
+
       <details className="sm:col-span-2">
         <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
           MCP Servers 配置 ({form.mcp_servers.length} 个)
@@ -910,6 +964,7 @@ export interface SinglePresetDialogProps {
   onSave: (preset: AgentPreset) => Promise<void>;
   onClose: () => void;
   isSaving?: boolean;
+  siblingAgents?: Array<{ name: string; display_name: string }>;
 }
 
 export function SinglePresetDialog({
@@ -919,6 +974,7 @@ export function SinglePresetDialog({
   onSave,
   onClose,
   isSaving = false,
+  siblingAgents,
 }: SinglePresetDialogProps) {
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const [form, setForm] = useState<PresetFormState>(presetToForm(initialPreset));
@@ -966,6 +1022,7 @@ export function SinglePresetDialog({
                 patchForm={patchForm}
                 agentTypeOptions={agentTypeOptions}
                 isDiscoveryLoading={isDiscoveryLoading}
+                siblingAgents={siblingAgents}
               />
             </div>
 

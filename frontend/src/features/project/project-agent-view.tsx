@@ -141,10 +141,12 @@ function SessionHistoryPanel({
 function CreateAgentDialog({
   open,
   projectId,
+  siblingAgents,
   onClose,
 }: {
   open: boolean;
   projectId: string;
+  siblingAgents: Array<{ name: string; display_name: string }>;
   onClose: () => void;
 }) {
   const { createAgent, createProjectAgentLink, fetchProjectAgents, fetchAgents } = useProjectStore();
@@ -214,6 +216,7 @@ function CreateAgentDialog({
                 patchForm={patchForm}
                 agentTypeOptions={agentTypeOptions}
                 isDiscoveryLoading={isDiscoveryLoading}
+                siblingAgents={siblingAgents}
               />
             </div>
 
@@ -674,6 +677,7 @@ export function ProjectAgentView({
       <CreateAgentDialog
         open={isCreateOpen}
         projectId={project.id}
+        siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
         onClose={() => setIsCreateOpen(false)}
       />
 
@@ -691,6 +695,7 @@ export function ProjectAgentView({
         onSave={handleSaveEditConfig}
         onClose={() => setEditingAgent(null)}
         isSaving={isEditSaving}
+        siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
       />
     </>
   );

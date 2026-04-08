@@ -381,8 +381,11 @@ function buildGenericDetailLines(eventType: string, value: unknown): string[] {
     const agentName = typeof value.agent_name === "string" ? value.agent_name : null;
     const summary = typeof value.summary === "string" ? value.summary : null;
     const status = typeof value.status === "string" ? value.status : null;
-    if (label) lines.push(`协作 Agent：${label}`);
-    if (agentName) lines.push(`Agent 配置：${agentName}`);
+    if (agentName) {
+      lines.push(`协作 Agent：${agentName}`);
+    } else if (label) {
+      lines.push(`协作 Agent：${label}`);
+    }
     if (status) lines.push(`状态：${status}`);
     if (summary) lines.push(`摘要：${summary}`);
     return lines;

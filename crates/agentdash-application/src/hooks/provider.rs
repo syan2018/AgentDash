@@ -74,6 +74,7 @@ impl AppExecutionHookProvider {
     async fn build_companion_agents_injection(
         &self,
         snapshot: &SessionHookSnapshot,
+        bindings: &[agentdash_domain::session_binding::SessionBinding],
     ) -> Option<HookInjection> {
         let project_id = snapshot
             .owners
@@ -86,9 +87,20 @@ impl AppExecutionHookProvider {
             return None;
         }
 
-        let mut lines = vec!["## Companion Agents\n以下 agent 已关联到当前项目，可通过 `companion_request` 工具的 `agent_key` 参数按名称指定：\n".to_string()];
+        // Resolve caller agent's allowed_companions from its link config
+        let caller_allowed: Option<Vec<String>> = self
+            .resolve_caller_allowed_companions(bindings, &links)
+            .await;
+
+        let mut agents_info: Vec<(String, String, String)> = Vec::new(); // (name, agent_type, display)
         for link in &links {
             if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
+                // If caller has explicit allowed list, skip agents not in it
+                if let Some(ref allowed) = caller_allowed {
+                    if !allowed.iter().any(|a| a.eq_ignore_ascii_case(&agent.name)) {
+                        continue;
+                    }
+                }
                 let display = link
                     .merged_config(&agent.base_config)
                     .get("display_name")
@@ -96,17 +108,17 @@ impl AppExecutionHookProvider {
                     .filter(|s| !s.trim().is_empty())
                     .map(String::from)
                     .unwrap_or_else(|| agent.name.clone());
-                lines.push(format!(
-                    "- **{}** (executor: `{}`): {}",
-                    agent.name,
-                    agent.agent_type,
-                    display,
-                ));
+                agents_info.push((agent.name, agent.agent_type, display));
             }
         }
 
-        if lines.len() <= 1 {
+        if agents_info.is_empty() {
             return None;
+        }
+
+        let mut lines = vec!["## Companion Agents\n以下 agent 已关联到当前项目，可通过 `companion_request` 工具的 `agent_key` 参数按名称指定：\n".to_string()];
+        for (name, agent_type, display) in &agents_info {
+            lines.push(format!("- **{name}** (executor: `{agent_type}`): {display}"));
         }
 
         Some(HookInjection {
@@ -114,6 +126,38 @@ impl AppExecutionHookProvider {
             content: lines.join("\n"),
             source: "builtin:companion_agents".to_string(),
         })
+    }
+
+    async fn resolve_caller_allowed_companions(
+        &self,
+        bindings: &[agentdash_domain::session_binding::SessionBinding],
+        project_links: &[agentdash_domain::agent::ProjectAgentLink],
+    ) -> Option<Vec<String>> {
+        // Find the caller agent UUID from binding label (project_agent:<uuid>)
+        let caller_agent_id = bindings.iter().find_map(|b| {
+            b.label
+                .strip_prefix("project_agent:")
+                .and_then(|id_str| id_str.parse::<uuid::Uuid>().ok())
+        })?;
+
+        let link = project_links
+            .iter()
+            .find(|l| l.agent_id == caller_agent_id)?;
+
+        let agent = self.agent_repo.get_by_id(caller_agent_id).await.ok()??;
+        let merged = link.merged_config(&agent.base_config);
+
+        let allowed = merged
+            .get("allowed_companions")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+
+        allowed
     }
 
     /// 验证 Rhai 脚本语法是否合法，不执行脚本。
@@ -319,7 +363,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             snapshot.owners.push(owner);
         }
 
-        if let Some(injection) = self.build_companion_agents_injection(&snapshot).await {
+        if let Some(injection) = self.build_companion_agents_injection(&snapshot, &bindings).await {
             snapshot.injections.push(injection);
         }
 

@@ -1130,6 +1130,7 @@ impl CompanionRespondTool {
         let hook_payload = serde_json::json!({
             "dispatch_id": companion_context.dispatch_id,
             "companion_label": companion_context.companion_label,
+            "agent_name": companion_context.agent_name,
             "companion_session_id": current_session_id,
             "companion_turn_id": self.current_turn_id,
             "parent_session_id": companion_context.parent_session_id,
@@ -1180,13 +1181,16 @@ impl CompanionRespondTool {
             .await;
         }
 
+        let result_agent_display = companion_context
+            .agent_name
+            .as_deref()
+            .unwrap_or(&companion_context.companion_label);
         let parent_notification = build_companion_event_notification(
             &companion_context.parent_session_id,
             &companion_context.parent_turn_id,
             "companion_result_available",
             format!(
-                "Companion `{}` 已回传结果，等待主 session 采纳",
-                companion_context.companion_label
+                "Companion `{result_agent_display}` 已回传结果，等待主 session 采纳",
             ),
             hook_payload.clone(),
         );

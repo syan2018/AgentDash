@@ -1,0 +1,47 @@
+{
+  "id": "cross-mount-shell-materialization",
+  "name": "cross-mount-shell-materialization",
+  "title": "跨 Mount Shell 访问：云端内容本地化",
+  "description": "解决 skill 等资源寄存于云端 mount 时，bash 执行层（本机）无法访问云端文件的问题。分层实现：skill 预取、显式 URI 路径重写、系统 prompt 指导。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/address_space/relay_service.rs",
+    "crates/agentdash-application/src/address_space/tools/fs.rs",
+    "crates/agentdash-application/src/address_space/path.rs",
+    "crates/agentdash-api/src/mount_providers/relay_fs.rs",
+    "crates/agentdash-injection/src/"
+  ],
+  "notes": "前置依赖：04-08-skill-discovery-injection（skill loader 是物化的入口点）；04-08-tool-execution-improvements（ShellExecInterceptor 是路径重写的执行点）"
+}

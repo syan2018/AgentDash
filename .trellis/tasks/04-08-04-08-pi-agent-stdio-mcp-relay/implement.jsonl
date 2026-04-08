@@ -1,0 +1,4 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": "docs/relay-protocol.md", "reason": "relay 消息协议规范，新增 MCP 命令时需遵循"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "crate 分层规则，McpProxyProvider 应放 agentdash-spi，适配器放 agentdash-executor"}

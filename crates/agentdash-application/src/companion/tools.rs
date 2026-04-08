@@ -186,10 +186,10 @@ impl CompanionRequestTool {
     async fn execute_sub_request(
         &self,
         _target: CompanionRequestTarget,
-        _wait: bool,
+        wait: bool,
         payload: &serde_json::Value,
         _tool_call_id: &str,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let prompt = payload
@@ -438,18 +438,81 @@ impl CompanionRequestTool {
         )
         .await;
 
-        // wait 语义通过 details 传递，是否追加 workflow 级别的 follow_up 由 hook 规则决定
-        // 工具不直接创建 pending action
+        if wait {
+            // wait=true: register in companion_wait_registry then block until result
+            let rx = session_hub
+                .companion_wait_registry
+                .register(
+                    &current_session_id,
+                    &dispatch_plan.dispatch_id,
+                    &self.current_turn_id,
+                    None,
+                )
+                .await;
 
+            let wait_result = tokio::select! {
+                result = rx => result.ok(),
+                _ = cancel.cancelled() => {
+                    session_hub.companion_wait_registry.remove(&dispatch_plan.dispatch_id).await;
+                    return Err(AgentToolError::ExecutionFailed("companion wait 被取消".to_string()));
+                }
+            };
+
+            if let Some(result_payload) = wait_result {
+                let summary = result_payload
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(无摘要)");
+                let status = result_payload
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let findings = result_payload
+                    .get("findings")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n- ")
+                    })
+                    .unwrap_or_default();
+
+                let mut text = format!(
+                    "Companion `{companion_label}` 已完成。\n- status: {status}\n- summary: {summary}",
+                );
+                if !findings.is_empty() {
+                    text.push_str(&format!("\n- findings:\n- {findings}"));
+                }
+
+                return Ok(AgentToolResult {
+                    content: vec![ContentPart::text(text)],
+                    is_error: false,
+                    details: Some(serde_json::json!({
+                        "request_id": dispatch_plan.dispatch_id,
+                        "wait": true,
+                        "companion_label": companion_label,
+                        "companion_session_id": target_binding.session_id,
+                        "status": status,
+                        "summary": summary,
+                        "result": result_payload,
+                    })),
+                });
+            }
+            // oneshot sender dropped without sending — companion may have errored
+            return Err(AgentToolError::ExecutionFailed(
+                "companion session 未返回结果（可能已异常终止）".to_string(),
+            ));
+        }
+
+        // wait=false: async dispatch
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "已派发到 companion session。\n- request_id: {}\n- label: {}\n- session_id: {}\n- turn_id: {}\n- slice_mode: {:?}\n- adoption_mode: {:?}\n- 当前为异步执行，可在对应会话中继续观察结果。",
+                "已派发到 companion session（异步）。\n- request_id: {}\n- label: {}\n- session_id: {}\n- turn_id: {}",
                 dispatch_plan.dispatch_id,
                 companion_label,
                 target_binding.session_id,
                 turn_id,
-                slice_mode,
-                adoption_mode
             ))],
             is_error: false,
             details: Some(serde_json::json!({
@@ -1209,6 +1272,71 @@ impl CompanionRespondTool {
         let _ = session_hub
             .inject_notification(current_session_id, child_notification)
             .await;
+
+        // Unblock wait=true callers or resume idle parent sessions
+        let wait_resolved = session_hub
+            .companion_wait_registry
+            .resolve(
+                &companion_context.parent_session_id,
+                &companion_context.dispatch_id,
+                hook_payload.clone(),
+            )
+            .await;
+
+        if wait_resolved.is_none() {
+            // wait=false path: parent is not blocking on this dispatch.
+            // Resume the parent session with the companion result as a follow-up.
+            let parent_running = session_hub
+                .has_live_runtime(&companion_context.parent_session_id)
+                .await;
+            if !parent_running {
+                let resume_prompt = format!(
+                    "[Companion Result]\nAgent `{result_agent_display}` (dispatch_id: {}) has completed with status={status}.\n\nSummary: {summary}\n\nPlease process this companion result and continue.",
+                    companion_context.dispatch_id,
+                );
+
+                // Read parent session meta for executor config
+                let parent_meta = session_hub
+                    .get_session_meta(&companion_context.parent_session_id)
+                    .await
+                    .ok()
+                    .flatten();
+                let resume_config = parent_meta
+                    .as_ref()
+                    .and_then(|m| m.executor_config.clone())
+                    .unwrap_or_else(|| AgentConfig::new("PI_AGENT"));
+
+                let parent_sid = companion_context.parent_session_id.clone();
+                let ws_root = session_hub.workspace_root().to_path_buf();
+                let hub_clone = session_hub.clone();
+                tokio::spawn(async move {
+                    let _ = hub_clone
+                        .start_prompt(
+                            &parent_sid,
+                            PromptSessionRequest {
+                                user_input: UserPromptInput {
+                                    prompt_blocks: Some(vec![serde_json::json!({
+                                        "type": "text",
+                                        "text": resume_prompt,
+                                    })]),
+                                    working_dir: None,
+                                    env: std::collections::HashMap::new(),
+                                    executor_config: Some(resume_config),
+                                },
+                                mcp_servers: vec![],
+                                workspace_root: Some(ws_root),
+                                address_space: None,
+                                flow_capabilities: None,
+                                system_context: None,
+                                bootstrap_action: crate::session::SessionBootstrapAction::None,
+                                identity: None,
+                                post_turn_handler: None,
+                            },
+                        )
+                        .await;
+                });
+            }
+        }
 
         Ok(Some(AgentToolResult {
             content: vec![ContentPart::text(format!(

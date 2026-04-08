@@ -10,7 +10,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -386,14 +386,12 @@ async function runStep0Cleanup() {
 async function detectProcessByName(name) {
   try {
     if (isWindows) {
-      const { execSync } = require('child_process');
       const out = execSync(
         `powershell -NoProfile -Command "(Get-Process -Name '${name}' -ErrorAction SilentlyContinue).Count"`,
         { encoding: 'utf8', timeout: 5000 }
       ).trim();
       return parseInt(out, 10) > 0;
     }
-    const { execSync } = require('child_process');
     execSync(`pgrep -f ${name}`, { timeout: 5000 });
     return true;
   } catch {
@@ -404,14 +402,12 @@ async function detectProcessByName(name) {
 async function detectEmbeddedPostgres() {
   try {
     if (isWindows) {
-      const { execSync } = require('child_process');
       const out = execSync(
         "powershell -NoProfile -Command \"(Get-Process -Name 'postgres' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\\.theseus\\*' }).Count\"",
         { encoding: 'utf8', timeout: 5000 }
       ).trim();
       return parseInt(out, 10) > 0;
     }
-    const { execSync } = require('child_process');
     execSync('pgrep -f ".theseus.*postgres"', { timeout: 5000 });
     return true;
   } catch {
@@ -421,7 +417,6 @@ async function detectEmbeddedPostgres() {
 
 async function detectOccupiedPorts(ports) {
   const occupied = [];
-  const { execSync } = require('child_process');
   for (const port of ports) {
     try {
       if (isWindows) {

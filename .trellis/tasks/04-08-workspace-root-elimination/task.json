@@ -1,0 +1,36 @@
+{
+  "id": "workspace-root-elimination",
+  "name": "workspace-root-elimination",
+  "title": "清除 workspace_root 冗余概念，统一走 Address Space",
+  "description": "workspace_root 是 address space 体系出现前的遗留字段，当前 245 处 / 40 文件使用。统一收敛到 mount root_ref，涉及 relay 协议变更和本机安全边界重设计。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    { "phase": 1, "action": "implement" },
+    { "phase": 2, "action": "check" },
+    { "phase": 3, "action": "finish" },
+    { "phase": 4, "action": "create-pr" }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-spi/src/connector.rs",
+    "crates/agentdash-local/src/tool_executor.rs",
+    "crates/agentdash-relay/src/protocol.rs",
+    "crates/agentdash-application/src/session/hub.rs",
+    "crates/agentdash-application/src/session/prompt_pipeline.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent/connector.rs"
+  ],
+  "notes": "245 处 / 40 文件，最大风险在 tool_executor(49处) 的安全边界和 relay protocol(12处) 的协议变更"
+}

@@ -74,6 +74,7 @@ impl SessionHub {
                     block_reason: resolution.block_reason,
                     completion: resolution.completion,
                     diagnostics: resolution.diagnostics,
+                    injections: resolution.injections,
                 };
                 hook_session.append_trace(trace.clone());
                 if let Some(notification) =

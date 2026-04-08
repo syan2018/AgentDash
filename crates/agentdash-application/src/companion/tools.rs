@@ -1501,20 +1501,28 @@ async fn record_subagent_trace(
         block_reason: resolution.block_reason.clone(),
         completion: resolution.completion.clone(),
         diagnostics: resolution.diagnostics.clone(),
+        injections: resolution.injections.clone(),
     };
     hook_session.append_trace(trace.clone());
 
-    if let (Some(session_hub), Some(turn_id)) = (session_hub, turn_id)
-        && let Some(notification) = build_hook_trace_notification(
-            hook_session.session_id(),
-            Some(turn_id),
-            hook_trace_source(),
-            &trace,
-        )
-    {
-        let _ = session_hub
-            .inject_notification(hook_session.session_id(), notification)
-            .await;
+    // Only inject notification when the session has NO active connector.
+    // Active connectors already receive traces via trace_broadcast → hook_trace_rx,
+    // so inject_notification would cause duplicate event cards.
+    if let (Some(session_hub), Some(turn_id)) = (session_hub, turn_id) {
+        let session_id = hook_session.session_id();
+        let has_live = session_hub.has_live_runtime(session_id).await;
+        if !has_live {
+            if let Some(notification) = build_hook_trace_notification(
+                session_id,
+                Some(turn_id),
+                hook_trace_source(),
+                &trace,
+            ) {
+                let _ = session_hub
+                    .inject_notification(session_id, notification)
+                    .await;
+            }
+        }
     }
 }
 

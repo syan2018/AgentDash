@@ -91,6 +91,7 @@ impl HookRuntimeDelegate {
             block_reason: evaluated.resolution.block_reason.clone(),
             completion: evaluated.resolution.completion.clone(),
             diagnostics: evaluated.resolution.diagnostics.clone(),
+            injections: evaluated.resolution.injections.clone(),
         };
         self.hook_session.append_trace(trace);
     }

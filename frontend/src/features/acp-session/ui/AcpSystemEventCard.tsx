@@ -52,6 +52,11 @@ interface HookEventData {
     detail?: string | null;
     source_summary?: string[];
   }>;
+  injections?: Array<{
+    slot?: string;
+    source?: string;
+    content?: string;
+  }>;
 }
 
 // ─── badge 样式（唯一颜色分叉点）─────────────────────────────────────────────
@@ -179,15 +184,32 @@ export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProp
     }
 
     // 信息型 → StripCard
-    // expandContent 放 completion，diagnostics 用 bodyExtra 渲染
-    const expandContent = completionLine
-      ? { sections: [{ lines: [completionLine] }] }
+    // expandContent: completion + injections content, diagnostics via bodyExtra
+    const expandSections: Array<{ title?: string; lines: string[] }> = [];
+    if (completionLine) {
+      expandSections.push({ lines: [completionLine] });
+    }
+    if (hookData?.injections?.length) {
+      for (const inj of hookData.injections) {
+        const title = inj.source
+          ? `${inj.slot ?? "injection"} (${inj.source})`
+          : (inj.slot ?? "injection");
+        const lines = (inj.content ?? "").split("\n").filter((l) => l.trim().length > 0);
+        if (lines.length > 0) {
+          expandSections.push({ title, lines });
+        }
+      }
+    }
+    const expandContent = expandSections.length > 0
+      ? { sections: expandSections }
       : undefined;
     const rightHint = hookData?.completion
       ? (hookData.completion.satisfied ? "已满足" : "未满足")
-      : hookData?.matched_rule_keys?.length
-        ? `${hookData.matched_rule_keys.length} 条规则`
-        : null;
+      : hookData?.injections?.length
+        ? `${hookData.injections.length} 项注入`
+        : hookData?.matched_rule_keys?.length
+          ? `${hookData.matched_rule_keys.length} 条规则`
+          : null;
     return (
       <EventStripCard
         badgeToken={token}
@@ -258,8 +280,14 @@ function resolveStripLabel(
 ): string {
   switch (decision) {
     case "context_injected": {
-      const count = hookData?.matched_rule_keys?.length ?? 0;
-      return count > 0 ? `已注入动态上下文（${count} 条规则生效）` : "已注入动态上下文";
+      const ruleCount = hookData?.matched_rule_keys?.length ?? 0;
+      const injCount = hookData?.injections?.length ?? 0;
+      const parts: string[] = [];
+      if (ruleCount > 0) parts.push(`${ruleCount} 条规则`);
+      if (injCount > 0) parts.push(`${injCount} 项注入`);
+      return parts.length > 0
+        ? `已注入动态上下文（${parts.join("，")}）`
+        : "已注入动态上下文";
     }
     case "steering_injected": return "已追加流程约束（steering）";
     case "step_advanced":     return "Workflow Step 已推进";

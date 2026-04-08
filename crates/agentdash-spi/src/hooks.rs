@@ -449,6 +449,8 @@ pub struct HookTraceEntry {
     pub completion: Option<HookCompletionStatus>,
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injections: Vec<HookInjection>,
 }
 
 /// A lifecycle execution log entry collected during hook evaluation.

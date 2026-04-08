@@ -27,6 +27,17 @@ pub fn build_hook_trace_notification(
         normalize_event_decision(&entry.decision)
     ));
     event.message = Some(describe_hook_trace(entry));
+    let injections_data: Vec<serde_json::Value> = entry
+        .injections
+        .iter()
+        .map(|inj| {
+            json!({
+                "slot": inj.slot,
+                "source": inj.source,
+                "content": inj.content,
+            })
+        })
+        .collect();
     event.data = Some(json!({
         "trigger": hook_trigger_key(&entry.trigger),
         "decision": entry.decision,
@@ -41,6 +52,7 @@ pub fn build_hook_trace_notification(
         "completion": entry.completion,
         "diagnostic_codes": entry.diagnostics.iter().map(|item| item.code.clone()).collect::<Vec<_>>(),
         "diagnostics": entry.diagnostics,
+        "injections": injections_data,
     }));
 
     let agentdash = AgentDashMetaV1::new()
@@ -58,19 +70,24 @@ pub fn build_hook_trace_notification(
 }
 
 fn should_emit_hook_trace_event(entry: &HookTraceEntry) -> bool {
-    // 纯静默决策：无任何实际效果时不产生事件流条目
-    // "规则命中了但什么都没做" 依然是无意义事件，不依赖 matched_rule_keys 判断
-    let is_silent_decision = matches!(
+    if matches!(
         entry.decision.as_str(),
-        "noop" | "allow" | "effects_applied" | "stop" | "terminal_observed" | "refresh_requested"
-    );
-
-    if is_silent_decision {
-        // 即使是静默决策，有阻塞原因或完成判定时仍需发射（对用户有意义）
-        return entry.block_reason.is_some() || entry.completion.is_some();
+        "deny" | "ask" | "rewrite" | "continue"
+    ) {
+        return true;
     }
 
-    true
+    if matches!(
+        entry.decision.as_str(),
+        "context_injected" | "steering_injected" | "step_advanced"
+    ) {
+        return true;
+    }
+
+    entry.block_reason.is_some()
+        || entry.completion.is_some()
+        || !entry.diagnostics.is_empty()
+        || !entry.matched_rule_keys.is_empty()
 }
 
 fn hook_event_severity(entry: &HookTraceEntry) -> &'static str {

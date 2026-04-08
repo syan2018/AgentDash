@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::session::SessionHub;
+use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
@@ -29,6 +30,8 @@ pub struct RelayRuntimeToolProvider {
     service: Arc<RelayAddressSpaceService>,
     canvas_repo: Arc<dyn CanvasRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
+    agent_repo: Arc<dyn AgentRepository>,
+    agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -41,6 +44,8 @@ impl RelayRuntimeToolProvider {
         service: Arc<RelayAddressSpaceService>,
         canvas_repo: Arc<dyn CanvasRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
+        agent_repo: Arc<dyn AgentRepository>,
+        agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -51,6 +56,8 @@ impl RelayRuntimeToolProvider {
             service,
             canvas_repo,
             session_binding_repo,
+            agent_repo,
+            agent_link_repo,
             workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
@@ -174,6 +181,8 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if clusters.contains(&ToolCluster::Collaboration) {
             tools.push(Arc::new(CompanionRequestTool::new(
                 self.session_binding_repo.clone(),
+                self.agent_repo.clone(),
+                self.agent_link_repo.clone(),
                 self.session_hub_handle.clone(),
                 context,
             )));

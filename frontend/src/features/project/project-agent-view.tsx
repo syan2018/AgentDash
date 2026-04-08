@@ -587,6 +587,12 @@ export function ProjectAgentView({
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-1.5">
+                    <span
+                      className="rounded-full border border-violet-400/30 bg-violet-500/10 px-2.5 py-0.5 text-[11px] text-violet-600 dark:text-violet-400"
+                      title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
+                    >
+                      Companion
+                    </span>
                     {link?.default_lifecycle_key && (
                       <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
                         Lifecycle: {link.default_lifecycle_key}

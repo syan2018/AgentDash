@@ -122,16 +122,18 @@ function OwnerLink({ session }: OwnerLinkProps) {
 
 interface ActiveSessionCardProps {
   session: ProjectSessionEntry;
-  companions: ProjectSessionEntry[]; // 该会话的 Companion 子会话
+  companions: ProjectSessionEntry[];
   isSelected: boolean;
+  selectedSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
-  depth?: number; // 嵌套深度，0 = 根，1 = companion
+  depth?: number;
 }
 
 function ActiveSessionCard({
   session,
   companions,
   isSelected,
+  selectedSessionId,
   onSelectSession,
   depth = 0,
 }: ActiveSessionCardProps) {
@@ -206,8 +208,9 @@ function ActiveSessionCard({
             <ActiveSessionCard
               key={companion.session_id}
               session={companion}
-              companions={[]} // 暂不支持三级嵌套
-              isSelected={isSelected && companion.session_id === companion.session_id}
+              companions={[]}
+              isSelected={selectedSessionId === companion.session_id}
+              selectedSessionId={selectedSessionId}
               onSelectSession={onSelectSession}
               depth={depth + 1}
             />
@@ -292,6 +295,7 @@ export function ActiveSessionList({
               session={session}
               companions={companionsByParent[session.session_id] ?? []}
               isSelected={selectedSessionId === session.session_id}
+              selectedSessionId={selectedSessionId}
               onSelectSession={onSelectSession}
             />
           ))}

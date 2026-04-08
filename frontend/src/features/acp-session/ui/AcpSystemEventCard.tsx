@@ -378,9 +378,11 @@ function buildGenericDetailLines(eventType: string, value: unknown): string[] {
     eventType === "companion_result_returned"
   ) {
     const label = typeof value.companion_label === "string" ? value.companion_label : null;
+    const agentName = typeof value.agent_name === "string" ? value.agent_name : null;
     const summary = typeof value.summary === "string" ? value.summary : null;
     const status = typeof value.status === "string" ? value.status : null;
     if (label) lines.push(`协作 Agent：${label}`);
+    if (agentName) lines.push(`Agent 配置：${agentName}`);
     if (status) lines.push(`状态：${status}`);
     if (summary) lines.push(`摘要：${summary}`);
     return lines;

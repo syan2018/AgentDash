@@ -10,15 +10,16 @@ use agent_client_protocol::{
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
+use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 use agentdash_spi::action_type as at;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
-    AddressSpace, AgentConfig, ExecutionContext, HookEvaluationQuery, HookPendingAction,
-    HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry, HookTrigger,
-    MountCapability, SessionHookRefreshQuery,
+    AddressSpace, AgentConfig, ExecutionContext, FlowCapabilities, HookEvaluationQuery,
+    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry,
+    HookTrigger, MountCapability, SessionHookRefreshQuery, ToolCluster,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -74,6 +75,8 @@ pub struct CompanionRequestParams {
 #[derive(Clone)]
 pub struct CompanionRequestTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
+    agent_repo: Arc<dyn AgentRepository>,
+    agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     session_hub_handle: SharedSessionHubHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
@@ -89,11 +92,15 @@ pub struct CompanionRequestTool {
 impl CompanionRequestTool {
     pub fn new(
         session_binding_repo: Arc<dyn SessionBindingRepository>,
+        agent_repo: Arc<dyn AgentRepository>,
+        agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
         session_hub_handle: SharedSessionHubHandle,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             session_binding_repo,
+            agent_repo,
+            agent_link_repo,
             session_hub_handle,
             current_session_id: context
                 .hook_session
@@ -120,10 +127,12 @@ impl AgentTool for CompanionRequestTool {
     fn description(&self) -> &str {
         "向 companion 信道发起请求。target 决定方向（sub/parent/human），wait 决定是否暂停等回应，payload 为自由结构。\n\n\
          payload 填写约定：\n\
-         ▸ target=sub 派发子任务：{\"type\":\"task\", \"prompt\":\"...\", \"label\":\"companion\", \"context_mode\":\"compact\"}\n\
+         ▸ target=sub 派发子任务：{\"type\":\"task\", \"prompt\":\"...\", \"label\":\"companion\", \"context_mode\":\"compact\", \"agent_key\":\"<agent name>\"}\n\
          ▸ target=parent 向上提审：{\"type\":\"review\", \"prompt\":\"...\"}\n\
          ▸ target=human 问用户：{\"type\":\"approval\", \"prompt\":\"...\", \"options\":[\"A\",\"B\"]}\n\
-         ▸ target=human 通知：{\"type\":\"notification\", \"message\":\"...\"}"
+         ▸ target=human 通知：{\"type\":\"notification\", \"message\":\"...\"}\n\n\
+         agent_key（仅 target=sub）：可选，指定执行子任务的 agent 名称（如 \"code-reviewer\"），必须是当前项目已关联的 agent。\
+         不指定则使用当前会话的执行器配置。可用 agent 列表见系统上下文中的 Companion Agents 章节。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -239,6 +248,14 @@ impl CompanionRequestTool {
             .get("max_constraints")
             .and_then(|v| v.as_u64())
             .map(|v| v as usize);
+        let agent_key = payload.get("agent_key").and_then(|v| v.as_str());
+
+        let companion_executor_config = if let Some(key) = agent_key {
+            self.resolve_companion_agent_config(hook_session.as_ref(), key)
+                .await?
+        } else {
+            self.current_executor_config.clone()
+        };
 
         let before_resolution = evaluate_subagent_hook(
             hook_session.as_ref(),
@@ -300,10 +317,12 @@ impl CompanionRequestTool {
         )
         .await;
 
+        let isolated_label =
+            format!("companion:{}:{}", current_session_id, companion_label);
         let target_binding = self
             .resolve_or_create_companion_binding(
                 hook_session.as_ref(),
-                &companion_label,
+                &isolated_label,
                 auto_create,
                 title,
             )
@@ -324,6 +343,7 @@ impl CompanionRequestTool {
             adoption_mode: companion_adoption_mode_key(adoption_mode).to_string(),
             inherited_fragment_labels: dispatch_plan.slice.inherited_fragment_labels.clone(),
             inherited_constraint_keys: dispatch_plan.slice.inherited_constraint_keys.clone(),
+            agent_name: agent_key.map(|s| s.to_string()),
         };
         let _ = session_hub
             .update_session_meta(&target_binding.session_id, |meta| {
@@ -350,14 +370,14 @@ impl CompanionRequestTool {
                         })]),
                         working_dir: Some(self.working_dir.clone()),
                         env: std::collections::HashMap::new(),
-                        executor_config: Some(self.current_executor_config.clone()),
+                        executor_config: Some(companion_executor_config),
                     },
                     mcp_servers: execution_slice.mcp_servers.clone(),
                     workspace_root: Some(self.workspace_root.clone()),
                     address_space: execution_slice.address_space.clone(),
-                    flow_capabilities: None,
+                    flow_capabilities: Some(build_companion_flow_capabilities(slice_mode)),
                     system_context: self.system_context.clone(),
-                    bootstrap_action: crate::session::SessionBootstrapAction::None,
+                    bootstrap_action: crate::session::SessionBootstrapAction::OwnerContext,
                     identity: None,
                     post_turn_handler: None,
                 },
@@ -375,6 +395,7 @@ impl CompanionRequestTool {
                 "parent_session_id": current_session_id,
                 "parent_turn_id": self.current_turn_id,
                 "companion_label": companion_label,
+                "agent_name": agent_key,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
                 "inherited_fragment_labels": dispatch_plan.slice.inherited_fragment_labels,
@@ -716,6 +737,56 @@ impl CompanionRequestTool {
                 })),
             })
         }
+    }
+
+    async fn resolve_companion_agent_config(
+        &self,
+        hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+        agent_name: &str,
+    ) -> Result<AgentConfig, AgentToolError> {
+        let snapshot = hook_session.snapshot();
+        let project_id = snapshot
+            .owners
+            .first()
+            .and_then(|o| o.project_id.as_deref())
+            .and_then(|id| id.parse::<Uuid>().ok())
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "无法从当前 session 确定 project_id，无法解析 agent_key".to_string(),
+                )
+            })?;
+
+        let links = self
+            .agent_link_repo
+            .list_by_project(project_id)
+            .await
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+
+        for link in &links {
+            if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
+                if agent.name.eq_ignore_ascii_case(agent_name) {
+                    let merged = link.merged_config(&agent.base_config);
+                    return Ok(build_agent_config_from_merged(
+                        &agent.agent_type,
+                        &merged,
+                    ));
+                }
+            }
+        }
+
+        let available: Vec<String> = {
+            let mut names = Vec::new();
+            for link in &links {
+                if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
+                    names.push(agent.name.clone());
+                }
+            }
+            names
+        };
+        Err(AgentToolError::InvalidArguments(format!(
+            "当前项目中未找到名为 `{agent_name}` 的 agent。可用 agent: [{}]",
+            available.join(", ")
+        )))
     }
 
     async fn resolve_or_create_companion_binding(
@@ -1632,6 +1703,67 @@ pub fn build_companion_execution_slice(
                 address_space: Some(AddressSpace::default()),
                 mcp_servers: Vec::new(),
             }
+        }
+    }
+}
+
+fn build_agent_config_from_merged(
+    agent_type: &str,
+    config: &serde_json::Value,
+) -> AgentConfig {
+    let mut ec = AgentConfig::new(agent_type.to_string());
+    if let Some(v) = config.get("provider_id").and_then(|v| v.as_str()) {
+        ec.provider_id = Some(v.to_string());
+    }
+    if let Some(v) = config.get("model_id").and_then(|v| v.as_str()) {
+        ec.model_id = Some(v.to_string());
+    }
+    if let Some(v) = config.get("agent_id").and_then(|v| v.as_str()) {
+        ec.agent_id = Some(v.to_string());
+    }
+    if let Some(v) = config.get("permission_policy").and_then(|v| v.as_str()) {
+        ec.permission_policy = Some(v.to_string());
+    }
+    if let Some(v) = config
+        .get("thinking_level")
+        .and_then(|v| serde_json::from_value::<agentdash_spi::ThinkingLevel>(v.clone()).ok())
+    {
+        ec.thinking_level = Some(v);
+    }
+    if let Some(arr) = config.get("tool_clusters").and_then(|v| v.as_array()) {
+        let clusters: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        if !clusters.is_empty() {
+            ec.tool_clusters = Some(clusters);
+        }
+    }
+    if let Some(v) = config.get("system_prompt").and_then(|v| v.as_str()) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            ec.system_prompt = Some(trimmed.to_string());
+        }
+    }
+    if let Some(v) = config
+        .get("system_prompt_mode")
+        .and_then(|v| serde_json::from_value::<agentdash_spi::SystemPromptMode>(v.clone()).ok())
+    {
+        ec.system_prompt_mode = Some(v);
+    }
+    ec
+}
+
+fn build_companion_flow_capabilities(mode: CompanionSliceMode) -> FlowCapabilities {
+    match mode {
+        CompanionSliceMode::Full => FlowCapabilities::all(),
+        CompanionSliceMode::Compact => FlowCapabilities::from_clusters([
+            ToolCluster::Read,
+            ToolCluster::Execute,
+            ToolCluster::Collaboration,
+        ]),
+        CompanionSliceMode::WorkflowOnly | CompanionSliceMode::ConstraintsOnly => {
+            FlowCapabilities::from_clusters([ToolCluster::Read, ToolCluster::Collaboration])
         }
     }
 }

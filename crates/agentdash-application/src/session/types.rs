@@ -186,6 +186,9 @@ pub struct CompanionSessionContext {
     pub inherited_fragment_labels: Vec<String>,
     #[serde(default)]
     pub inherited_constraint_keys: Vec<String>,
+    /// 指定的 companion agent 名称（如 "code-reviewer"），None 表示继承父会话执行器
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

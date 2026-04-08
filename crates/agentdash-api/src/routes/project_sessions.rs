@@ -397,13 +397,18 @@ fn resolve_agent_info(
     meta: &agentdash_application::session::SessionMeta,
 ) -> (Option<String>, Option<String>) {
     if binding.owner_type == agentdash_domain::session_binding::SessionOwnerType::Project {
-        let agent_key = parse_project_agent_session_label(&binding.label).map(str::to_string);
-        // display_name 从 session title 提取更实时（session title 已包含 agent 名称）
-        let agent_display_name = agent_key.as_ref().map(|_| meta.title.clone());
-        return (agent_key, agent_display_name);
+        if let Some(agent_key) = parse_project_agent_session_label(&binding.label) {
+            let display_name = Some(meta.title.clone());
+            return (Some(agent_key.to_string()), display_name);
+        }
+        // companion 会话: 优先用 companion_context.agent_name
+        if let Some(ctx) = &meta.companion_context {
+            if let Some(name) = &ctx.agent_name {
+                return (Some(name.clone()), Some(meta.title.clone()));
+            }
+        }
     }
 
-    // story/task 级：从 executor_config 推断 executor 名称
     let agent_key = meta.executor_config.as_ref().map(|c| c.executor.clone());
     (agent_key, None)
 }

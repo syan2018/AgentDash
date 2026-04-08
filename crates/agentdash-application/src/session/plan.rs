@@ -291,6 +291,7 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
             tools.push("present_canvas".to_string());
         }
         Some(SessionOwnerType::Project) => {
+            tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
             tools.push("canvases_list".to_string());
             tools.push("canvas_start".to_string());

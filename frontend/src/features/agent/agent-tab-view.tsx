@@ -11,12 +11,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { ProjectAgentSummary, SessionNavigationState } from "../../types";
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { useProjectStore } from "../../stores/projectStore";
 import { useActiveSessionsStore } from "../../stores/activeSessionsStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { SessionChatView } from "../acp-session";
 import { ActiveSessionList } from "./active-session-list";
 import { ProjectAgentView } from "../project/project-agent-view";
+
+const COMPANION_EVENT_TYPES = new Set([
+  "companion_dispatch_registered",
+  "companion_result_available",
+  "companion_result_returned",
+  "companion_review_request",
+  "companion_human_request",
+  "companion_human_response",
+]);
+
+const SESSION_LIST_POLL_INTERVAL = 8_000;
 
 export function AgentTabView() {
   const navigate = useNavigate();
@@ -85,7 +97,31 @@ export function AgentTabView() {
     void fetchDefinitions();
   }, [currentProjectId, fetchProjectAgents, loadForProject, clearForProject, fetchRunsByTarget, fetchLifecycles, fetchDefinitions]);
 
-  // TODO: 等待后端补充 session_status_changed SSE 事件后，此处接入实时状态更新
+  // ─── companion 事件驱动 + 周期轮询：保持 session 列表实时 ──────
+
+  const scheduleSessionRefresh = useCallback(() => {
+    if (!currentProjectId) return;
+    void loadForProject(currentProjectId);
+  }, [currentProjectId, loadForProject]);
+
+  const handleSystemEvent = useCallback(
+    (eventType: string, _update: SessionUpdate) => {
+      if (COMPANION_EVENT_TYPES.has(eventType)) {
+        scheduleSessionRefresh();
+      }
+    },
+    [scheduleSessionRefresh],
+  );
+
+  const handleTurnEnd = useCallback(() => {
+    scheduleSessionRefresh();
+  }, [scheduleSessionRefresh]);
+
+  useEffect(() => {
+    if (!currentProjectId || !selectedSessionId) return;
+    const timer = window.setInterval(scheduleSessionRefresh, SESSION_LIST_POLL_INTERVAL);
+    return () => window.clearInterval(timer);
+  }, [currentProjectId, selectedSessionId, scheduleSessionRefresh]);
 
   // ─── 打开 Agent 会话 → 在右栏展开 ──────────────────
 
@@ -207,6 +243,8 @@ export function AgentTabView() {
                 workspaceId={workspaceId}
                 showStatusBar={false}
                 showExecutorSelector
+                onSystemEvent={handleSystemEvent}
+                onTurnEnd={handleTurnEnd}
               />
             </div>
           </>

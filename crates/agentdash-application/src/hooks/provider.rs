@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
@@ -36,6 +37,8 @@ use super::{
 /// 对外仍实现 ExecutionHookProvider trait。
 pub struct AppExecutionHookProvider {
     pub(super) session_binding_repo: Arc<dyn SessionBindingRepository>,
+    pub(super) agent_repo: Arc<dyn AgentRepository>,
+    pub(super) agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     pub(super) owner_resolver: SessionOwnerResolver,
     pub(super) workflow_builder: WorkflowSnapshotBuilder,
     pub(super) script_engine: HookScriptEngine,
@@ -47,6 +50,8 @@ impl AppExecutionHookProvider {
         story_repo: Arc<dyn StoryRepository>,
         task_repo: Arc<dyn TaskRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
+        agent_repo: Arc<dyn AgentRepository>,
+        agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -54,6 +59,8 @@ impl AppExecutionHookProvider {
         let preset_scripts = builtin_preset_scripts();
         Self {
             session_binding_repo,
+            agent_repo,
+            agent_link_repo,
             owner_resolver: SessionOwnerResolver::new(project_repo, story_repo, task_repo),
             workflow_builder: WorkflowSnapshotBuilder::new(
                 workflow_definition_repo,
@@ -62,6 +69,51 @@ impl AppExecutionHookProvider {
             ),
             script_engine: HookScriptEngine::new(&preset_scripts),
         }
+    }
+
+    async fn build_companion_agents_injection(
+        &self,
+        snapshot: &SessionHookSnapshot,
+    ) -> Option<HookInjection> {
+        let project_id = snapshot
+            .owners
+            .iter()
+            .find_map(|o| o.project_id.as_deref())
+            .and_then(|id| id.parse::<uuid::Uuid>().ok())?;
+
+        let links = self.agent_link_repo.list_by_project(project_id).await.ok()?;
+        if links.is_empty() {
+            return None;
+        }
+
+        let mut lines = vec!["## Companion Agents\n以下 agent 已关联到当前项目，可通过 `companion_request` 工具的 `agent_key` 参数按名称指定：\n".to_string()];
+        for link in &links {
+            if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
+                let display = link
+                    .merged_config(&agent.base_config)
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(String::from)
+                    .unwrap_or_else(|| agent.name.clone());
+                lines.push(format!(
+                    "- **{}** (executor: `{}`): {}",
+                    agent.name,
+                    agent.agent_type,
+                    display,
+                ));
+            }
+        }
+
+        if lines.len() <= 1 {
+            return None;
+        }
+
+        Some(HookInjection {
+            slot: "companion_agents".to_string(),
+            content: lines.join("\n"),
+            source: "builtin:companion_agents".to_string(),
+        })
     }
 
     /// 验证 Rhai 脚本语法是否合法，不执行脚本。
@@ -265,6 +317,10 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
 
             snapshot.owners.push(owner);
+        }
+
+        if let Some(injection) = self.build_companion_agents_injection(&snapshot).await {
+            snapshot.injections.push(injection);
         }
 
         snapshot.tags = dedupe_tags(snapshot.tags);

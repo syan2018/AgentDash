@@ -81,14 +81,6 @@ pub(crate) fn workflow_step_key(snapshot: &SessionHookSnapshot) -> Option<&str> 
     active_workflow(snapshot)?.step_key.as_deref()
 }
 
-pub(crate) fn snapshot_default_mount_root_ref(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    snapshot
-        .metadata
-        .as_ref()?
-        .default_mount_root_ref
-        .as_deref()
-}
-
 pub(crate) fn active_workflow_locator(
     snapshot: &SessionHookSnapshot,
 ) -> Option<ActiveWorkflowLocator> {

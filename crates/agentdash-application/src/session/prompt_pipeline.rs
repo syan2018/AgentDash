@@ -4,7 +4,9 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use agentdash_acp_meta::AgentDashSourceV1;
-use agentdash_spi::hooks::{HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{
+    HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+};
 use agentdash_spi::{ConnectorError, ExecutionContext, RestoredSessionState};
 
 use super::event_bridge::HookTriggerInput;
@@ -120,7 +122,6 @@ impl SessionHub {
                         &turn_id,
                         executor_config.executor.as_str(),
                         executor_config.permission_policy.as_deref(),
-                        default_mount_root.as_path(),
                         working_directory.as_path(),
                     )
                     .await
@@ -157,9 +158,12 @@ impl SessionHub {
             }
         }
 
-        let runtime_delegate = hook_session
-            .as_ref()
-            .map(|hs| HookRuntimeDelegate::new(hs.clone()));
+        let runtime_delegate = hook_session.as_ref().map(|hs| {
+            HookRuntimeDelegate::new_with_mount_root(
+                hs.clone(),
+                Some(default_mount_root.to_string_lossy().replace('\\', "/")),
+            )
+        });
         let supports_repository_restore = self
             .connector
             .supports_repository_restore(executor_config.executor.as_str());
@@ -419,31 +423,29 @@ impl SessionHub {
         turn_id: &str,
         executor: &str,
         permission_policy: Option<&str>,
-        default_mount_root: &Path,
         working_directory: &Path,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
         let Some(provider) = self.hook_provider.as_ref() else {
             return Ok(None);
         };
 
-        let snapshot = provider
+        let mut snapshot = provider
             .load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: session_id.to_string(),
                 turn_id: Some(turn_id.to_string()),
-                connector_id: Some(self.connector.connector_id().to_string()),
-                executor: Some(executor.to_string()),
-                permission_policy: permission_policy.map(ToString::to_string),
-                working_directory: Some(working_directory.to_string_lossy().replace('\\', "/")),
-                default_mount_root_ref: Some(
-                    default_mount_root.to_string_lossy().replace('\\', "/"),
-                ),
-                owners: Vec::new(),
-                tags: Vec::new(),
             })
             .await
             .map_err(|error| {
                 ConnectorError::Runtime(format!("加载会话 Hook snapshot 失败: {error}"))
             })?;
+        enrich_hook_snapshot_runtime_metadata(
+            &mut snapshot,
+            turn_id,
+            self.connector.connector_id(),
+            executor,
+            permission_policy,
+            working_directory,
+        );
 
         Ok(Some(Arc::new(HookSessionRuntime::new(
             session_id.to_string(),
@@ -451,6 +453,24 @@ impl SessionHub {
             snapshot,
         ))))
     }
+}
+
+fn enrich_hook_snapshot_runtime_metadata(
+    snapshot: &mut SessionHookSnapshot,
+    turn_id: &str,
+    connector_id: &str,
+    executor: &str,
+    permission_policy: Option<&str>,
+    working_directory: &Path,
+) {
+    let metadata = snapshot
+        .metadata
+        .get_or_insert_with(agentdash_spi::SessionSnapshotMetadata::default);
+    metadata.turn_id = Some(turn_id.to_string());
+    metadata.connector_id = Some(connector_id.to_string());
+    metadata.executor = Some(executor.to_string());
+    metadata.permission_policy = permission_policy.map(ToString::to_string);
+    metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
 }
 
 fn resolve_working_dir(default_mount_root: &Path, working_dir: Option<&str>) -> PathBuf {

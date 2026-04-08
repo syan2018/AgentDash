@@ -1,7 +1,3 @@
-use agentdash_spi::SessionHookSnapshot;
-
-use super::snapshot_helpers::snapshot_default_mount_root_ref;
-
 pub(super) fn extract_tool_arg<'a>(
     payload: Option<&'a serde_json::Value>,
     key: &str,
@@ -13,10 +9,11 @@ pub(super) fn extract_tool_arg<'a>(
 }
 
 pub(super) fn shell_exec_rewritten_args(
-    snapshot: &SessionHookSnapshot,
     payload: Option<&serde_json::Value>,
 ) -> Option<serde_json::Value> {
-    let default_mount_root_ref = snapshot_default_mount_root_ref(snapshot)?;
+    let default_mount_root_ref = payload
+        .and_then(|value| value.get("default_mount_root_ref"))
+        .and_then(serde_json::Value::as_str)?;
     let cwd = extract_tool_arg(payload, "cwd")?;
     if !cwd.starts_with('/') && !std::path::Path::new(cwd).is_absolute() {
         return None;

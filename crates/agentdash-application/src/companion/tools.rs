@@ -20,7 +20,6 @@ use agentdash_spi::{
     AddressSpace, AgentConfig, ExecutionContext, FlowCapabilities, HookEvaluationQuery,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry,
     HookTrigger, MountCapability, SessionHookRefreshQuery, ToolCluster,
-    workspace_path_from_context,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -919,6 +918,8 @@ pub struct CompanionRespondTool {
     current_session_id: Option<String>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
+    address_space: Option<AddressSpace>,
+    mcp_servers: Vec<McpServer>,
 }
 
 impl CompanionRespondTool {
@@ -931,6 +932,8 @@ impl CompanionRespondTool {
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
+            address_space: context.address_space.clone(),
+            mcp_servers: context.mcp_servers.clone(),
         }
     }
 }
@@ -1297,6 +1300,8 @@ impl CompanionRespondTool {
 
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
+                let resume_address_space = self.address_space.clone();
+                let resume_mcp_servers = self.mcp_servers.clone();
                 tokio::spawn(async move {
                     let _ = hub_clone
                         .start_prompt(
@@ -1311,8 +1316,8 @@ impl CompanionRespondTool {
                                     env: std::collections::HashMap::new(),
                                     executor_config: Some(resume_config),
                                 },
-                                mcp_servers: vec![],
-                                address_space: None,
+                                mcp_servers: resume_mcp_servers,
+                                address_space: resume_address_space,
                                 flow_capabilities: None,
                                 system_context: None,
                                 bootstrap_action: crate::session::SessionBootstrapAction::None,
@@ -1416,21 +1421,39 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
 // ─── 以下为原有内部逻辑函数，保持不变 ──────────────────────────────
 
 pub fn relative_working_dir(context: &ExecutionContext) -> String {
-    let Ok(workspace_root) = workspace_path_from_context(context) else {
+    let Some(space) = context.address_space.as_ref() else {
         return ".".to_string();
     };
-    context
+    let Some(mount) = space.default_mount() else {
+        return ".".to_string();
+    };
+
+    // 这里刻意不做 Path 语义运算：只把两端都规范化成字符串路径后做前缀裁剪，
+    // 避免在业务层引入“云端理解本机路径”的依赖链路。
+    let root = mount
+        .root_ref
+        .trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    if root.is_empty() {
+        return ".".to_string();
+    }
+    let wd = context
         .working_directory
-        .strip_prefix(&workspace_root)
-        .ok()
-        .map(|relative| {
-            if relative.as_os_str().is_empty() {
-                ".".to_string()
-            } else {
-                relative.to_string_lossy().replace('\\', "/")
-            }
-        })
-        .unwrap_or_else(|| ".".to_string())
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+
+    if wd == root {
+        return ".".to_string();
+    }
+    let prefix = format!("{root}/");
+    wd.strip_prefix(&prefix)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(".")
+        .to_string()
 }
 
 async fn evaluate_subagent_hook(

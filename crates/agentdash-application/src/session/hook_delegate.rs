@@ -18,12 +18,24 @@ use agentdash_spi::hooks::{
 
 pub struct HookRuntimeDelegate {
     hook_session: SharedHookSessionRuntime,
+    default_mount_root_ref: Option<String>,
 }
 
 impl HookRuntimeDelegate {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(hook_session: SharedHookSessionRuntime) -> DynAgentRuntimeDelegate {
-        Arc::new(Self { hook_session })
+        Self::new_with_mount_root(hook_session, None)
+    }
+
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_with_mount_root(
+        hook_session: SharedHookSessionRuntime,
+        default_mount_root_ref: Option<String>,
+    ) -> DynAgentRuntimeDelegate {
+        Arc::new(Self {
+            hook_session,
+            default_mount_root_ref,
+        })
     }
 
     async fn evaluate(
@@ -152,15 +164,20 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
     ) -> Result<ToolCallDecision, AgentRuntimeError> {
         let tool_name = input.tool_call.name.clone();
         let tool_call_id = input.tool_call.id.clone();
+        let mut payload = serde_json::json!({
+            "args": input.args,
+        });
+        if let Some(default_mount_root_ref) = self.default_mount_root_ref.as_deref() {
+            payload["default_mount_root_ref"] =
+                serde_json::Value::String(default_mount_root_ref.to_string());
+        }
         let evaluated = self
             .evaluate(
                 HookTrigger::BeforeTool,
                 Some(tool_name.clone()),
                 Some(tool_call_id.clone()),
                 None,
-                Some(serde_json::json!({
-                    "args": input.args,
-                })),
+                Some(payload),
             )
             .await?;
 

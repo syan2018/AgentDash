@@ -143,6 +143,16 @@ impl CommandHandler {
 
         let session_id = payload.session_id.clone();
         let follow_up = payload.follow_up_session_id.clone();
+        let mount_root_ref = payload.mount_root_ref.trim();
+        if mount_root_ref.is_empty() {
+            return RelayMessage::ResponsePrompt {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(
+                    "command.prompt 缺少 mount_root_ref",
+                )),
+            };
+        }
 
         let executor_config = payload.executor_config.map(|c| {
             let mut cfg = agentdash_spi::AgentConfig::new(c.executor);
@@ -156,17 +166,14 @@ impl CommandHandler {
             cfg
         });
 
-        let workspace_root = match self
-            .tool_executor
-            .validate_workspace_root(&payload.workspace_root)
-        {
+        let workspace_root = match self.tool_executor.validate_workspace_root(mount_root_ref) {
             Ok(path) => path,
             Err(error) => {
                 return RelayMessage::ResponsePrompt {
                     id,
                     payload: None,
                     error: Some(RelayError::runtime_error(format!(
-                        "workspace_root 校验失败: {error}"
+                        "mount_root_ref 校验失败: {error}"
                     ))),
                 };
             }
@@ -199,7 +206,7 @@ impl CommandHandler {
 
         tracing::info!(
             session_id = %session_id,
-            workspace_root = %payload.workspace_root,
+            mount_root_ref = mount_root_ref,
             "收到 command.prompt，启动 Agent 执行"
         );
 
@@ -302,7 +309,7 @@ impl CommandHandler {
     ) -> RelayMessage {
         match self
             .tool_executor
-            .file_read(&payload.path, &payload.workspace_root)
+            .file_read(&payload.path, &payload.mount_root_ref)
             .await
         {
             Ok(content) => RelayMessage::ResponseToolFileRead {
@@ -329,7 +336,7 @@ impl CommandHandler {
     ) -> RelayMessage {
         match self
             .tool_executor
-            .file_write(&payload.path, &payload.content, &payload.workspace_root)
+            .file_write(&payload.path, &payload.content, &payload.mount_root_ref)
             .await
         {
             Ok(()) => RelayMessage::ResponseToolFileWrite {
@@ -355,7 +362,7 @@ impl CommandHandler {
     ) -> RelayMessage {
         match self
             .tool_executor
-            .file_delete(&payload.path, &payload.workspace_root)
+            .file_delete(&payload.path, &payload.mount_root_ref)
             .await
         {
             Ok(()) => RelayMessage::ResponseToolFileDelete {
@@ -384,7 +391,7 @@ impl CommandHandler {
             .file_rename(
                 &payload.from_path,
                 &payload.to_path,
-                &payload.workspace_root,
+                &payload.mount_root_ref,
             )
             .await
         {
@@ -411,7 +418,7 @@ impl CommandHandler {
     ) -> RelayMessage {
         match self
             .tool_executor
-            .apply_patch(&payload.patch, &payload.workspace_root)
+            .apply_patch(&payload.patch, &payload.mount_root_ref)
             .await
         {
             Ok(affected) => RelayMessage::ResponseToolApplyPatch {
@@ -442,7 +449,7 @@ impl CommandHandler {
             .tool_executor
             .shell_exec(
                 &payload.command,
-                &payload.workspace_root,
+                &payload.mount_root_ref,
                 payload.cwd.as_deref(),
                 payload.timeout_ms,
             )
@@ -475,7 +482,7 @@ impl CommandHandler {
             .tool_executor
             .file_list(
                 &payload.path,
-                &payload.workspace_root,
+                &payload.mount_root_ref,
                 payload.pattern.as_deref(),
                 payload.recursive,
             )
@@ -501,7 +508,7 @@ impl CommandHandler {
         match self
             .tool_executor
             .search(
-                &payload.workspace_root,
+                &payload.mount_root_ref,
                 &crate::tool_executor::SearchParams {
                     query: &payload.query,
                     path: payload.path.as_deref(),

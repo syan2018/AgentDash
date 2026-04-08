@@ -20,7 +20,7 @@ mod tests {
         SharedRuntimeAddressSpace, ShellExecTool,
     };
 
-    use agentdash_domain::common::MountCapability;
+    // `MountCapability` 统一使用 agentdash_spi 版本，避免重复导入
     use agentdash_domain::context_container::{
         ContextContainerDefinition, ContextContainerExposure, ContextContainerFile,
         ContextContainerProvider,
@@ -456,7 +456,7 @@ mod tests {
         let id = message.id().to_string();
         match message {
             RelayMessage::CommandToolFileRead { payload, .. } => {
-                assert_eq!(payload.workspace_root, "/workspace/repo");
+                assert_eq!(payload.mount_root_ref, "/workspace/repo");
                 assert_eq!(payload.path, "src/main.rs");
             }
             other => panic!("unexpected: {other:?}"),

@@ -418,7 +418,7 @@ pub struct CommandPromptPayload {
     pub follow_up_session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_blocks: Option<serde_json::Value>,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
     #[serde(default)]
@@ -482,7 +482,7 @@ pub struct CommandBrowseDirectoryPayload {
 pub struct ToolFileReadPayload {
     pub call_id: String,
     pub path: String,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -490,14 +490,14 @@ pub struct ToolFileWritePayload {
     pub call_id: String,
     pub path: String,
     pub content: String,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolFileDeletePayload {
     pub call_id: String,
     pub path: String,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -505,14 +505,14 @@ pub struct ToolFileRenamePayload {
     pub call_id: String,
     pub from_path: String,
     pub to_path: String,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolApplyPatchPayload {
     pub call_id: String,
     pub patch: String,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,12 +521,12 @@ pub struct ToolShellExecPayload {
     pub command: String,
     /// shell 允许访问的工作区根目录边界。
     /// 若未提供 `cwd`，执行器默认在该目录下启动命令。
-    pub workspace_root: String,
+    pub mount_root_ref: String,
     /// 可选执行目录。
     /// 当前约定：
-    /// - 允许为空，此时回退到 `workspace_root`
-    /// - 相对路径相对于 `workspace_root` 解析
-    /// - 绝对路径必须仍位于 `workspace_root` / accessible_roots 边界内
+    /// - 允许为空，此时回退到 `mount_root_ref`
+    /// - 相对路径相对于 `mount_root_ref` 解析
+    /// - 绝对路径必须仍位于 `mount_root_ref` / accessible_roots 边界内
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -537,7 +537,7 @@ pub struct ToolShellExecPayload {
 pub struct ToolFileListPayload {
     pub call_id: String,
     pub path: String,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
     #[serde(default)]
@@ -547,7 +547,7 @@ pub struct ToolFileListPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSearchPayload {
     pub call_id: String,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -736,4 +736,36 @@ pub struct DiscoverOptionsPatchPayload {
     pub patch: serde_json::Value,
     #[serde(default)]
     pub done: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommandPromptPayload;
+
+    #[test]
+    fn command_prompt_payload_requires_mount_root_ref() {
+        let payload: CommandPromptPayload = serde_json::from_value(serde_json::json!({
+            "session_id": "s1",
+            "mount_root_ref": "/workspace/repo"
+        }))
+        .expect("payload should deserialize");
+        assert_eq!(payload.mount_root_ref, "/workspace/repo");
+    }
+
+    #[test]
+    fn command_prompt_payload_serializes_mount_root_ref() {
+        let payload = CommandPromptPayload {
+            session_id: "s1".to_string(),
+            follow_up_session_id: None,
+            prompt_blocks: None,
+            mount_root_ref: "/new/workspace".to_string(),
+            working_dir: None,
+            env: std::collections::HashMap::new(),
+            executor_config: None,
+            mcp_servers: Vec::new(),
+        };
+
+        let value = serde_json::to_value(payload).expect("payload should serialize");
+        assert_eq!(value["mount_root_ref"], "/new/workspace");
+    }
 }

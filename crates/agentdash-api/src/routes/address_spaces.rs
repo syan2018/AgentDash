@@ -58,7 +58,7 @@ pub async fn list_address_spaces(
 
     let has_mcp = state.config.mcp_base_url.is_some();
     let ctx = AddressSpaceContext {
-        mount_root: workspace_available.then_some(std::path::Path::new(".")),
+        workspace_available,
         has_mcp,
     };
 

@@ -343,14 +343,9 @@ impl ContextContributor for DeclaredSourcesContributor {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let mount_root = input
-            .workspace
-            .and_then(selected_workspace_binding)
-            .map(|binding| std::path::PathBuf::from(binding.root_ref.as_str()));
 
         match resolve_declared_sources(ResolveSourcesRequest {
             sources: &resolvable_sources,
-            mount_root: mount_root.as_deref(),
             base_order: 82,
         }) {
             Ok(result) => {

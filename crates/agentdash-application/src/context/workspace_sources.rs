@@ -242,7 +242,7 @@ fn normalize_snapshot_locator(locator: &str) -> Result<Option<String>, String> {
 }
 
 pub fn build_workspace_snapshot_from_entries(
-    workspace_root: &str,
+    mount_root_ref: &str,
     sub_path: Option<&str>,
     files: &[RuntimeFileEntry],
     max_chars: Option<usize>,
@@ -276,8 +276,8 @@ pub fn build_workspace_snapshot_from_entries(
 
     let tech_stack = detect_tech_stack_from_entries(files);
     let root_display = sub_path
-        .map(|path| format!("{}/{}", workspace_root.trim_end_matches('/'), path))
-        .unwrap_or_else(|| workspace_root.to_string())
+        .map(|path| format!("{}/{}", mount_root_ref.trim_end_matches('/'), path))
+        .unwrap_or_else(|| mount_root_ref.to_string())
         .replace('\\', "/");
 
     truncate_text(

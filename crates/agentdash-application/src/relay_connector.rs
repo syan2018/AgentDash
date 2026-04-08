@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
-    ExecutionStream, PromptPayload, workspace_path_from_context,
+    ExecutionStream, PromptPayload,
 };
 
 use crate::backend_transport::{
@@ -94,11 +94,17 @@ impl AgentConnector for RelayAgentConnector {
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
         let executor_id = &context.executor_config.executor;
-        let workspace_root = workspace_path_from_context(&context)?;
-        let workspace_root_str = workspace_root.to_string_lossy();
+        let default_mount = default_mount_from_context(&context)?;
+        let mount_root_ref = default_mount.root_ref.trim();
+        if mount_root_ref.is_empty() {
+            return Err(ConnectorError::InvalidConfig(
+                "address_space.default_mount.root_ref 为空".to_string(),
+            ));
+        }
+        let preferred_backend_id = preferred_backend_id_from_context(&context);
         let backend_id = self
             .transport
-            .resolve_backend(executor_id, &workspace_root_str)
+            .resolve_backend(executor_id, preferred_backend_id.as_deref())
             .await
             .map_err(|e| ConnectorError::Runtime(format!("无法解析 relay 后端: {e}")))?;
 
@@ -131,15 +137,8 @@ impl AgentConnector for RelayAgentConnector {
             session_id: session_id.to_string(),
             follow_up_session_id: _follow_up_session_id.map(ToString::to_string),
             prompt_blocks,
-            workspace_root: workspace_root.to_string_lossy().to_string(),
-            working_dir: context
-                .working_directory
-                .strip_prefix(&workspace_root)
-                .ok()
-                .and_then(|p| {
-                    let s = p.to_string_lossy().replace('\\', "/");
-                    (!s.is_empty()).then_some(s)
-                }),
+            mount_root_ref: mount_root_ref.to_string(),
+            working_dir: relative_working_dir_string(&context.working_directory, mount_root_ref),
             env: context.environment_variables,
             executor_config: Some(relay_config),
             mcp_servers: context
@@ -230,6 +229,33 @@ impl AgentConnector for RelayAgentConnector {
     }
 }
 
+fn relative_working_dir_string(
+    working_directory: &std::path::Path,
+    mount_root_ref: &str,
+) -> Option<String> {
+    let root = mount_root_ref
+        .trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    if root.is_empty() {
+        return None;
+    }
+    let wd = working_directory
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+
+    if wd == root {
+        return None;
+    }
+    let prefix = format!("{root}/");
+    wd.strip_prefix(&prefix)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 /// 对远程执行器列表去重（同一 executor_id 可能被多个后端上报）。
 fn dedup_executors(executors: Vec<crate::backend_transport::RemoteExecutorInfo>) -> Vec<AgentInfo> {
     let mut seen = std::collections::HashSet::new();
@@ -245,4 +271,38 @@ fn dedup_executors(executors: Vec<crate::backend_transport::RemoteExecutorInfo>)
         }
     }
     result
+}
+
+fn default_mount_from_context(
+    context: &ExecutionContext,
+) -> Result<&agentdash_spi::Mount, ConnectorError> {
+    let address_space = context.address_space.as_ref().ok_or_else(|| {
+        ConnectorError::InvalidConfig("ExecutionContext 缺少 address_space".to_string())
+    })?;
+    address_space.default_mount().ok_or_else(|| {
+        ConnectorError::InvalidConfig("address_space 缺少 default_mount".to_string())
+    })
+}
+
+fn preferred_backend_id_from_context(context: &ExecutionContext) -> Option<String> {
+    let address_space = context.address_space.as_ref()?;
+    if let Some(default_mount) = address_space.default_mount() {
+        let backend_id = default_mount.backend_id.trim();
+        if !backend_id.is_empty() {
+            return Some(backend_id.to_string());
+        }
+    }
+
+    let unique_backend_ids = address_space
+        .mounts
+        .iter()
+        .filter_map(|mount| {
+            let backend_id = mount.backend_id.trim();
+            (!backend_id.is_empty()).then_some(backend_id.to_string())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    (unique_backend_ids.len() == 1)
+        .then(|| unique_backend_ids.into_iter().next())
+        .flatten()
 }

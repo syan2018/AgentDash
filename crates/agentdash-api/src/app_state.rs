@@ -22,7 +22,7 @@ use agentdash_application::context::{
 use agentdash_application::hooks::AppExecutionHookProvider;
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::scheduling::CronSchedulerHandle;
-use agentdash_application::session::{SessionHub, local_workspace_address_space};
+use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::TaskLifecycleService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
@@ -157,7 +157,6 @@ impl AppState {
 
         let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool));
 
-        let workspace_root = std::env::current_dir()?;
         let backend_registry = BackendRegistry::new();
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
@@ -234,7 +233,7 @@ impl AppState {
             workflow_repo.clone(),
         ));
         let session_hub = SessionHub::new_with_hooks_and_persistence(
-            Some(local_workspace_address_space(&workspace_root)),
+            None,
             connector.clone(),
             Some(hook_provider.clone()),
             session_repo,

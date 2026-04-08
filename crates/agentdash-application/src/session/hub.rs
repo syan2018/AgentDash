@@ -329,13 +329,6 @@ impl SessionHub {
             .load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: session_id.to_string(),
                 turn_id: turn_id.map(ToString::to_string),
-                connector_id: None,
-                executor: None,
-                permission_policy: None,
-                working_directory: None,
-                default_mount_root_ref: None,
-                owners: Vec::new(),
-                tags: Vec::new(),
             })
             .await
             .map_err(|error| {

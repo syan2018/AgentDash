@@ -19,7 +19,7 @@ impl AddressSpaceDiscoveryRegistry {
         self.providers.push(provider);
     }
 
-    pub fn available_spaces(&self, ctx: &AddressSpaceContext<'_>) -> Vec<AddressSpaceDescriptor> {
+    pub fn available_spaces(&self, ctx: &AddressSpaceContext) -> Vec<AddressSpaceDescriptor> {
         self.providers
             .iter()
             .filter_map(|p| p.descriptor(ctx))
@@ -39,8 +39,10 @@ impl Default for AddressSpaceDiscoveryRegistry {
 pub struct WorkspaceFileProvider;
 
 impl AddressSpaceDiscoveryProvider for WorkspaceFileProvider {
-    fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
-        ctx.mount_root?;
+    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
+        if !ctx.workspace_available {
+            return None;
+        }
         Some(AddressSpaceDescriptor {
             id: "workspace_file".to_string(),
             label: "工作空间文件".to_string(),
@@ -64,8 +66,10 @@ impl AddressSpaceDiscoveryProvider for WorkspaceFileProvider {
 pub struct WorkspaceSnapshotProvider;
 
 impl AddressSpaceDiscoveryProvider for WorkspaceSnapshotProvider {
-    fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
-        ctx.mount_root?;
+    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
+        if !ctx.workspace_available {
+            return None;
+        }
         Some(AddressSpaceDescriptor {
             id: "workspace_snapshot".to_string(),
             label: "项目结构快照".to_string(),
@@ -81,7 +85,7 @@ impl AddressSpaceDiscoveryProvider for WorkspaceSnapshotProvider {
 pub struct McpResourceProvider;
 
 impl AddressSpaceDiscoveryProvider for McpResourceProvider {
-    fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
+    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
         if !ctx.has_mcp {
             return None;
         }
@@ -105,7 +109,7 @@ impl AddressSpaceDiscoveryProvider for McpResourceProvider {
 pub struct LifecycleAddressSpaceProvider;
 
 impl AddressSpaceDiscoveryProvider for LifecycleAddressSpaceProvider {
-    fn descriptor(&self, _ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor> {
+    fn descriptor(&self, _ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
         Some(AddressSpaceDescriptor {
             id: "lifecycle".to_string(),
             label: "Lifecycle 执行记录".to_string(),
@@ -135,9 +139,8 @@ mod tests {
     #[test]
     fn workspace_file_available_with_workspace() {
         let registry = builtin_address_space_registry();
-        let tmp = tempfile::tempdir().unwrap();
         let ctx = AddressSpaceContext {
-            mount_root: Some(tmp.path()),
+            workspace_available: true,
             has_mcp: false,
         };
         let spaces = registry.available_spaces(&ctx);
@@ -150,7 +153,7 @@ mod tests {
     fn mcp_resource_available_with_mcp() {
         let registry = builtin_address_space_registry();
         let ctx = AddressSpaceContext {
-            mount_root: None,
+            workspace_available: false,
             has_mcp: true,
         };
         let spaces = registry.available_spaces(&ctx);
@@ -162,7 +165,7 @@ mod tests {
     fn lifecycle_space_always_advertised() {
         let registry = builtin_address_space_registry();
         let ctx = AddressSpaceContext {
-            mount_root: None,
+            workspace_available: false,
             has_mcp: false,
         };
         let spaces = registry.available_spaces(&ctx);

@@ -45,12 +45,13 @@ pub trait RelayPromptTransport: BackendTransport {
     /// 列出所有在线后端上报的执行器信息。
     async fn list_online_executors(&self) -> Vec<RemoteExecutorInfo>;
 
-    /// 根据 executor_id + workspace_root 解析应使用的后端。
-    /// 解析策略：找到同时满足「提供该 executor」且「能访问该 workspace root」的在线后端。
+    /// 根据 executor_id + 可选 backend 提示解析应使用的后端。
+    /// 优先策略：若提供 `preferred_backend_id`，要求该后端在线且提供对应 executor；
+    /// 否则退化为在在线后端中按 executor 唯一匹配。
     async fn resolve_backend(
         &self,
         executor_id: &str,
-        workspace_root: &str,
+        preferred_backend_id: Option<&str>,
     ) -> Result<String, TransportError>;
 
     /// 注册 per-session 通知接收端。
@@ -70,7 +71,7 @@ pub struct RelayPromptRequest {
     pub session_id: String,
     pub follow_up_session_id: Option<String>,
     pub prompt_blocks: Option<serde_json::Value>,
-    pub workspace_root: String,
+    pub mount_root_ref: String,
     pub working_dir: Option<String>,
     pub env: HashMap<String, String>,
     pub executor_config: Option<RelayExecutorConfig>,

@@ -110,12 +110,9 @@ pub trait ApplyPatchTarget: Send + Sync {
     async fn rename_text(&self, from_path: &str, to_path: &str) -> Result<(), ApplyPatchError>;
 }
 
-pub fn apply_patch_to_fs(
-    workspace_root: &Path,
-    patch: &str,
-) -> Result<AffectedPaths, ApplyPatchError> {
-    let workspace_root = std::fs::canonicalize(workspace_root)
-        .map_err(|e| ApplyPatchError::Apply(format!("解析 workspace_root 失败: {e}")))?;
+pub fn apply_patch_to_fs(mount_root: &Path, patch: &str) -> Result<AffectedPaths, ApplyPatchError> {
+    let mount_root = std::fs::canonicalize(mount_root)
+        .map_err(|e| ApplyPatchError::Apply(format!("解析 mount_root 失败: {e}")))?;
     let entries = parse_patch(patch)?;
     if entries.is_empty() {
         return Err(ApplyPatchError::Apply("没有检测到任何文件改动".to_string()));
@@ -130,7 +127,7 @@ pub fn apply_patch_to_fs(
     for entry in entries {
         match entry {
             PatchEntry::AddFile { path, contents } => {
-                let target = resolve_path_for_write(&workspace_root, &path)?;
+                let target = resolve_path_for_write(&mount_root, &path)?;
                 if target.exists() {
                     return Err(ApplyPatchError::Apply(format!(
                         "目标文件已存在: {}",
@@ -151,7 +148,7 @@ pub fn apply_patch_to_fs(
                 affected.added.push(display_relative(&path));
             }
             PatchEntry::DeleteFile { path } => {
-                let target = resolve_existing_path(&workspace_root, &path)?;
+                let target = resolve_existing_path(&mount_root, &path)?;
                 std::fs::remove_file(&target)
                     .map_err(|e| ApplyPatchError::Apply(format!("删除文件失败: {e}")))?;
                 affected.deleted.push(display_relative(&path));
@@ -161,7 +158,7 @@ pub fn apply_patch_to_fs(
                 move_path,
                 chunks,
             } => {
-                let source = resolve_existing_path(&workspace_root, &path)?;
+                let source = resolve_existing_path(&mount_root, &path)?;
                 let original_contents = std::fs::read_to_string(&source)
                     .map_err(|e| ApplyPatchError::Apply(format!("读取待更新文件失败: {e}")))?;
                 let source_label = display_relative(&path);
@@ -169,7 +166,7 @@ pub fn apply_patch_to_fs(
                     derive_new_contents_from_text(&source_label, &original_contents, &chunks)?;
 
                 if let Some(dest_rel) = move_path {
-                    let destination = resolve_path_for_write(&workspace_root, &dest_rel)?;
+                    let destination = resolve_path_for_write(&mount_root, &dest_rel)?;
                     if destination != source && destination.exists() {
                         return Err(ApplyPatchError::Apply(format!(
                             "目标文件已存在: {}",
@@ -799,12 +796,9 @@ fn normalize_for_match(input: &str) -> String {
         .collect()
 }
 
-fn resolve_existing_path(
-    workspace_root: &Path,
-    relative: &Path,
-) -> Result<PathBuf, ApplyPatchError> {
+fn resolve_existing_path(mount_root: &Path, relative: &Path) -> Result<PathBuf, ApplyPatchError> {
     let normalized = normalize_relative_path(relative)?;
-    let candidate = workspace_root.join(&normalized);
+    let candidate = mount_root.join(&normalized);
     if !candidate.exists() {
         return Err(ApplyPatchError::Apply(format!(
             "目标文件不存在: {}",
@@ -813,21 +807,18 @@ fn resolve_existing_path(
     }
     let canonical = std::fs::canonicalize(&candidate)
         .map_err(|e| ApplyPatchError::Apply(format!("解析目标路径失败: {e}")))?;
-    if !canonical.starts_with(workspace_root) {
+    if !canonical.starts_with(mount_root) {
         return Err(ApplyPatchError::InvalidPath(display_relative(&normalized)));
     }
     Ok(canonical)
 }
 
-fn resolve_path_for_write(
-    workspace_root: &Path,
-    relative: &Path,
-) -> Result<PathBuf, ApplyPatchError> {
+fn resolve_path_for_write(mount_root: &Path, relative: &Path) -> Result<PathBuf, ApplyPatchError> {
     let normalized = normalize_relative_path(relative)?;
     if normalized.as_os_str().is_empty() {
         return Err(ApplyPatchError::InvalidPath(relative.display().to_string()));
     }
-    let candidate = workspace_root.join(&normalized);
+    let candidate = mount_root.join(&normalized);
     let parent = candidate
         .parent()
         .ok_or_else(|| ApplyPatchError::InvalidPath(display_relative(&normalized)))?;
@@ -835,7 +826,7 @@ fn resolve_path_for_write(
         .map_err(|e| ApplyPatchError::Apply(format!("创建父目录失败: {e}")))?;
     let canonical_parent = std::fs::canonicalize(parent)
         .map_err(|e| ApplyPatchError::Apply(format!("解析父目录失败: {e}")))?;
-    if !canonical_parent.starts_with(workspace_root) {
+    if !canonical_parent.starts_with(mount_root) {
         return Err(ApplyPatchError::InvalidPath(display_relative(&normalized)));
     }
     Ok(candidate)

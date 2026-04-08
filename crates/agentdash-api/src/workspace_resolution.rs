@@ -101,7 +101,7 @@ impl RelayPromptTransport for BackendRegistry {
                 session_id: payload.session_id,
                 follow_up_session_id: payload.follow_up_session_id,
                 prompt_blocks: payload.prompt_blocks,
-                workspace_root: payload.workspace_root,
+                mount_root_ref: payload.mount_root_ref,
                 working_dir: payload.working_dir,
                 env: payload.env,
                 executor_config: relay_config,
@@ -192,31 +192,53 @@ impl RelayPromptTransport for BackendRegistry {
     async fn resolve_backend(
         &self,
         executor_id: &str,
-        workspace_root: &str,
+        preferred_backend_id: Option<&str>,
     ) -> Result<String, TransportError> {
         let online = self.list_online().await;
-        // 寻找同时满足：(1) 提供该 executor (2) 能访问该 workspace root 的后端
+
+        if let Some(backend_id) = preferred_backend_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            let backend = online
+                .iter()
+                .find(|item| item.backend_id == backend_id)
+                .ok_or_else(|| {
+                    TransportError::BackendOffline(format!(
+                        "mount 绑定的 backend `{backend_id}` 当前不在线"
+                    ))
+                })?;
+
+            let has_executor = backend.capabilities.executors.iter().any(|executor| {
+                executor.id.eq_ignore_ascii_case(executor_id) && executor.available
+            });
+            if has_executor {
+                return Ok(backend.backend_id.clone());
+            }
+            return Err(TransportError::OperationFailed(format!(
+                "mount 绑定的 backend `{backend_id}` 未提供可用执行器 `{executor_id}`"
+            )));
+        }
+
+        // 未提供 backend 绑定提示时，按 executor 在在线后端中做唯一匹配。
         let candidates: Vec<_> = online
             .iter()
             .filter(|b| {
-                let has_executor = b
-                    .capabilities
+                b.capabilities
                     .executors
                     .iter()
-                    .any(|ex| ex.id.eq_ignore_ascii_case(executor_id) && ex.available);
-                let can_access = b.accessible_roots.is_empty()
-                    || b.accessible_roots
-                        .iter()
-                        .any(|root| workspace_root.starts_with(root));
-                has_executor && can_access
+                    .any(|ex| ex.id.eq_ignore_ascii_case(executor_id) && ex.available)
             })
             .collect();
 
         match candidates.len() {
             0 => Err(TransportError::OperationFailed(format!(
-                "没有在线后端同时提供执行器 '{executor_id}' 且能访问 '{workspace_root}'"
+                "没有在线后端提供可用执行器 '{executor_id}'"
             ))),
-            _ => Ok(candidates[0].backend_id.clone()),
+            1 => Ok(candidates[0].backend_id.clone()),
+            _ => Err(TransportError::OperationFailed(format!(
+                "执行器 '{executor_id}' 在多个在线后端同时可用，且当前会话缺少明确 mount/backend 绑定信息"
+            ))),
         }
     }
 }

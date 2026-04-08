@@ -1,15 +1,8 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-
 use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
 use agentdash_spi::{
     ContextFragment, InjectionError, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest,
     SourceResolver,
 };
-use walkdir::WalkDir;
-
-const MAX_SOURCE_FILE_BYTES: u64 = 1_000_000;
-const DEFAULT_TRUNCATE_CHARS: usize = 12_000;
 
 /// 来源解析器注册表 — 按 ContextSourceKind 注册解析器
 ///
@@ -25,11 +18,6 @@ impl SourceResolverRegistry {
             resolvers: std::collections::HashMap::new(),
         };
         registry.register(ContextSourceKind::ManualText, Box::new(ManualTextResolver));
-        registry.register(ContextSourceKind::File, Box::new(FileResolver));
-        registry.register(
-            ContextSourceKind::ProjectSnapshot,
-            Box::new(ProjectSnapshotResolver),
-        );
         registry
     }
 
@@ -85,7 +73,7 @@ pub fn resolve_declared_sources_with_registry(
         let resolver = registry.get(&source.kind);
 
         let resolved = match resolver {
-            Some(r) => r.resolve(source, request.mount_root, order),
+            Some(r) => r.resolve(source, order),
             None => {
                 let msg = format!(
                     "source `{}` 的类型 {:?} 暂无已注册的解析器",
@@ -122,7 +110,6 @@ impl SourceResolver for ManualTextResolver {
     fn resolve(
         &self,
         source: &ContextSourceRef,
-        _mount_root: Option<&Path>,
         order: i32,
     ) -> Result<ContextFragment, InjectionError> {
         Ok(ContextFragment {
@@ -135,172 +122,9 @@ impl SourceResolver for ManualTextResolver {
     }
 }
 
-struct FileResolver;
-
-impl SourceResolver for FileResolver {
-    fn resolve(
-        &self,
-        source: &ContextSourceRef,
-        mount_root: Option<&Path>,
-        order: i32,
-    ) -> Result<ContextFragment, InjectionError> {
-        let path = resolve_path(&source.locator, mount_root)?;
-        let metadata = fs::metadata(&path)?;
-        if metadata.len() > MAX_SOURCE_FILE_BYTES {
-            return Err(InjectionError::SourceTooLarge {
-                path,
-                size: metadata.len(),
-            });
-        }
-
-        let raw = fs::read_to_string(&path)?;
-        let formatted = format_file_like_read_tool(&path, &raw, mount_root);
-
-        Ok(ContextFragment {
-            slot: fragment_slot(&source.slot),
-            label: fragment_label(&source.kind),
-            order,
-            strategy: MergeStrategy::Append,
-            content: render_source_section(source, truncate_text(formatted, source.max_chars)),
-        })
-    }
-}
-
-struct ProjectSnapshotResolver;
-
-impl SourceResolver for ProjectSnapshotResolver {
-    fn resolve(
-        &self,
-        source: &ContextSourceRef,
-        mount_root: Option<&Path>,
-        order: i32,
-    ) -> Result<ContextFragment, InjectionError> {
-        let root = mount_root.ok_or_else(|| {
-            InjectionError::MissingWorkspace(display_source_label(source).to_string())
-        })?;
-        let content = build_project_snapshot(root, source.max_chars);
-
-        Ok(ContextFragment {
-            slot: fragment_slot(&source.slot),
-            label: fragment_label(&source.kind),
-            order,
-            strategy: MergeStrategy::Append,
-            content: render_source_section(source, content),
-        })
-    }
-}
-
-fn resolve_path(locator: &str, mount_root: Option<&Path>) -> Result<PathBuf, InjectionError> {
-    let candidate = PathBuf::from(locator);
-    let path = if candidate.is_absolute() {
-        candidate
-    } else {
-        let root =
-            mount_root.ok_or_else(|| InjectionError::MissingWorkspace(locator.to_string()))?;
-        root.join(candidate)
-    };
-
-    if path.exists() {
-        Ok(path)
-    } else {
-        Err(InjectionError::PathNotFound(path))
-    }
-}
-
-fn build_project_snapshot(root: &Path, max_chars: Option<usize>) -> String {
-    let tech_stack = detect_tech_stack(root);
-    let entries = WalkDir::new(root)
-        .max_depth(2)
-        .into_iter()
-        .filter_entry(|entry| !is_ignored_dir(entry.path()))
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path() != root)
-        .take(48)
-        .map(|entry| {
-            let rel = entry
-                .path()
-                .strip_prefix(root)
-                .unwrap_or(entry.path())
-                .display()
-                .to_string();
-            let suffix = if entry.file_type().is_dir() { "/" } else { "" };
-            format!("- {}{}", rel.replace('\\', "/"), suffix)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let content = format!(
-        "## 项目快照\n- root: {}\n- tech_stack: {}\n\n## 目录摘要\n{}",
-        root.display(),
-        tech_stack.join(", "),
-        entries
-    );
-
-    truncate_text(content, max_chars)
-}
-
-fn detect_tech_stack(root: &Path) -> Vec<&'static str> {
-    let mut stack = Vec::new();
-    if root.join("Cargo.toml").exists() {
-        stack.push("Rust");
-    }
-    if root.join("package.json").exists() {
-        stack.push("Node.js");
-    }
-    if root.join("pnpm-lock.yaml").exists() {
-        stack.push("pnpm");
-    }
-    if root.join("playwright.config.ts").exists() {
-        stack.push("Playwright");
-    }
-    if stack.is_empty() {
-        stack.push("unknown");
-    }
-    stack
-}
-
-fn is_ignored_dir(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    matches!(name, "node_modules" | "target" | ".git" | ".next" | "dist")
-}
-
 fn render_source_section(source: &ContextSourceRef, content: String) -> String {
     let title = display_source_label(source);
     format!("## 来源: {title}\n{content}")
-}
-
-fn format_file_like_read_tool(path: &Path, content: &str, mount_root: Option<&Path>) -> String {
-    let display_path = mount_root
-        .and_then(|root| path.strip_prefix(root).ok())
-        .map(|rel| rel.display().to_string())
-        .unwrap_or_else(|| path.display().to_string())
-        .replace('\\', "/");
-
-    let numbered = content
-        .lines()
-        .enumerate()
-        .map(|(index, line)| format!("{:>4} | {}", index + 1, line))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    if numbered.is_empty() {
-        format!("file: {display_path}\n   1 | ")
-    } else {
-        format!("file: {display_path}\n{numbered}")
-    }
-}
-
-fn truncate_text(content: String, max_chars: Option<usize>) -> String {
-    let max = max_chars.unwrap_or(DEFAULT_TRUNCATE_CHARS);
-    if content.chars().count() <= max {
-        return content;
-    }
-
-    let truncated = content.chars().take(max).collect::<String>();
-    format!("{truncated}\n\n> 内容已截断")
 }
 
 fn display_source_label(source: &ContextSourceRef) -> &str {
@@ -330,8 +154,6 @@ fn fragment_slot(slot: &ContextSlot) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use agentdash_domain::context_source::{
         ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
     };
@@ -351,7 +173,6 @@ mod tests {
                 max_chars: None,
                 delivery: ContextDelivery::Resource,
             }],
-            mount_root: None,
             base_order: 10,
         })
         .expect("manual text should resolve");
@@ -359,93 +180,5 @@ mod tests {
         assert_eq!(result.fragments.len(), 1);
         assert!(result.fragments[0].content.contains("manual note"));
         assert!(result.fragments[0].content.contains("hello world"));
-    }
-
-    #[test]
-    fn resolves_file_source_relative_to_workspace() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        fs::write(temp.path().join("notes.md"), "# hello\nworld").expect("write source file");
-
-        let result = resolve_declared_sources(ResolveSourcesRequest {
-            sources: &[ContextSourceRef {
-                kind: ContextSourceKind::File,
-                locator: "notes.md".to_string(),
-                label: None,
-                slot: ContextSlot::References,
-                priority: 1,
-                required: true,
-                max_chars: None,
-                delivery: ContextDelivery::Resource,
-            }],
-            mount_root: Some(temp.path()),
-            base_order: 20,
-        })
-        .expect("file source should resolve");
-
-        assert!(result.fragments[0].content.contains("file: notes.md"));
-        assert!(result.fragments[0].content.contains("1 | # hello"));
-        assert!(result.fragments[0].content.contains("2 | world"));
-    }
-
-    #[test]
-    fn resolves_typescript_file_source_like_read_tool() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        fs::write(
-            temp.path().join("StoryPage.tsx"),
-            "export function StoryPage() {\n  return null;\n}\n",
-        )
-        .expect("write tsx source file");
-
-        let result = resolve_declared_sources(ResolveSourcesRequest {
-            sources: &[ContextSourceRef {
-                kind: ContextSourceKind::File,
-                locator: "StoryPage.tsx".to_string(),
-                label: Some("Story 页面".to_string()),
-                slot: ContextSlot::References,
-                priority: 10,
-                required: true,
-                max_chars: None,
-                delivery: ContextDelivery::Resource,
-            }],
-            mount_root: Some(temp.path()),
-            base_order: 20,
-        })
-        .expect("tsx source should resolve");
-
-        assert!(result.fragments[0].content.contains("file: StoryPage.tsx"));
-        assert!(
-            result.fragments[0]
-                .content
-                .contains("1 | export function StoryPage() {")
-        );
-        assert!(result.fragments[0].content.contains("2 |   return null;"));
-    }
-
-    #[test]
-    fn resolves_project_snapshot_source() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        fs::write(temp.path().join("Cargo.toml"), "[package]\nname='demo'\n").expect("write cargo");
-        fs::create_dir(temp.path().join("src")).expect("create src");
-        fs::write(temp.path().join("src/main.rs"), "fn main() {}\n").expect("write main");
-
-        let result = resolve_declared_sources(ResolveSourcesRequest {
-            sources: &[ContextSourceRef {
-                kind: ContextSourceKind::ProjectSnapshot,
-                locator: ".".to_string(),
-                label: Some("workspace snapshot".to_string()),
-                slot: ContextSlot::Codebase,
-                priority: 1,
-                required: true,
-                max_chars: None,
-                delivery: ContextDelivery::Resource,
-            }],
-            mount_root: Some(temp.path()),
-            base_order: 30,
-        })
-        .expect("project snapshot should resolve");
-
-        assert!(result.fragments[0].content.contains("workspace snapshot"));
-        assert!(result.fragments[0].content.contains("Rust"));
-        assert!(result.fragments[0].content.contains("src/"));
     }
 }

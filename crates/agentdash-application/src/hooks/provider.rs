@@ -198,16 +198,11 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             session_id: query.session_id.clone(),
             owners: Vec::new(),
             sources: Vec::new(),
-            tags: query.tags,
+            tags: Vec::new(),
             injections: Vec::new(),
             diagnostics: Vec::new(),
             metadata: Some(SessionSnapshotMetadata {
                 turn_id: query.turn_id,
-                connector_id: query.connector_id,
-                executor: query.executor,
-                permission_policy: query.permission_policy,
-                working_directory: query.working_directory,
-                default_mount_root_ref: query.default_mount_root_ref,
                 ..Default::default()
             }),
         };
@@ -383,13 +378,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         self.load_session_snapshot(SessionHookSnapshotQuery {
             session_id: query.session_id,
             turn_id: query.turn_id,
-            connector_id: None,
-            executor: None,
-            permission_policy: None,
-            working_directory: None,
-            default_mount_root_ref: None,
-            owners: Vec::new(),
-            tags: Vec::new(),
         })
         .await
     }
@@ -608,7 +596,10 @@ mod tests {
             Arc::new(RuleEngineTestProvider::new(snapshot.clone())),
             snapshot,
         ));
-        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+        let delegate = HookRuntimeDelegate::new_with_mount_root(
+            hook_session.clone(),
+            Some("/tmp/test-workspace".to_string()),
+        );
 
         let decision = delegate
             .before_tool_call(

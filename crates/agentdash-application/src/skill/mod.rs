@@ -4,8 +4,8 @@
 /// 验证格式后返回 `SkillRef` 列表。
 ///
 /// 扫描顺序（优先级从高到低）：
-/// 1. `{workspace_root}/.agents/skills/`（Codex convention）
-/// 2. `{workspace_root}/skills/`
+/// 1. `{mount_root_ref}/.agents/skills/`（Codex convention）
+/// 2. `{mount_root_ref}/skills/`
 /// 3. `~/.agents/skills/`（用户全局）
 ///
 /// 同名 skill 按发现顺序 first-wins，冲突记录为 `SkillDiagnostic`。

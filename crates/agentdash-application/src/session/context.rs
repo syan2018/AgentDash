@@ -125,11 +125,10 @@ pub fn extract_story_overrides(story: &Story) -> SessionStoryOverrides {
 // ─── Bootstrap helpers ───────────────────────────────
 
 use agentdash_domain::workspace::Workspace;
-use std::path::Path;
 
 use agentdash_spi::AddressSpace;
 
-use crate::address_space::selected_workspace_binding;
+use crate::address_space::build_workspace_address_space;
 
 /// 将 workspace 相关的默认值注入到 `PromptSessionRequest` 的可变字段中。
 /// 仅在字段为 None 时填充，不覆盖已有值。
@@ -142,13 +141,8 @@ pub fn apply_workspace_defaults(
         *working_dir = Some(".".to_string());
     }
     if address_space.is_none() {
-        if let Some(root_ref) = workspace
-            .and_then(selected_workspace_binding)
-            .map(|binding| binding.root_ref.clone())
-        {
-            *address_space = Some(super::local_workspace_address_space(Path::new(
-                root_ref.as_str(),
-            )));
+        if let Some(space) = workspace.and_then(|item| build_workspace_address_space(item).ok()) {
+            *address_space = Some(space);
         }
     }
 }

@@ -6,7 +6,7 @@
   "status": "done",
   "dev_type": "backend",
   "scope": "refactor",
-  "priority": "P2",
+  "priority": "P1",
   "creator": "claude-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-04-08",
@@ -35,7 +35,9 @@
     "crates/agentdash-executor/src/connectors/vibe_kanban.rs",
     "crates/agentdash-local/src/command_handler.rs",
     "crates/agentdash-api/src/bootstrap/turn_dispatcher.rs",
-    "crates/agentdash-api/src/app_state.rs"
+    "crates/agentdash-api/src/app_state.rs",
+    "crates/agentdash-api/src/workspace_resolution.rs",
+    "crates/agentdash-relay/src/protocol.rs"
   ],
-  "notes": "业务编排层清除完成。基础设施层（tool_executor/relay protocol/apply_patch）保持不动。新增 local_workspace_address_space() 和 workspace_path_from_context() 辅助函数。"
+  "notes": "任务从“删字段”升级为“边界收敛”，已完成 cloud 默认路径兜底清理、workspace 默认 address_space 语义修正、companion 回流 address_space 透传、relay backend 元数据路由、relay connector helper 解耦，以及 command.prompt 协议双字段兼容迁移（mount_root_ref/workspace_root）。"
 }

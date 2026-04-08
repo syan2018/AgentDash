@@ -155,15 +155,14 @@ pub(crate) fn rule_matches_shell_exec_absolute_cwd_rewrite(
         return false;
     };
     tool_name.ends_with("shell_exec")
-        && shell_exec_rewritten_args(ctx.snapshot, ctx.query.payload.as_ref()).is_some()
+        && shell_exec_rewritten_args(ctx.query.payload.as_ref()).is_some()
 }
 
 pub(crate) fn rule_apply_shell_exec_absolute_cwd_rewrite(
     ctx: &HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
 ) {
-    let Some(rewritten_args) = shell_exec_rewritten_args(ctx.snapshot, ctx.query.payload.as_ref())
-    else {
+    let Some(rewritten_args) = shell_exec_rewritten_args(ctx.query.payload.as_ref()) else {
         return;
     };
     let rewritten_cwd = rewritten_args
@@ -331,6 +330,7 @@ mod tests {
             subagent_type: None,
             snapshot: None,
             payload: Some(serde_json::json!({
+                "default_mount_root_ref": "/tmp/test-workspace",
                 "args": {
                     "cwd": "/tmp/test-workspace/crates/agentdash-agent",
                     "command": "cargo test"

@@ -75,7 +75,6 @@ pub fn snapshot_with_workflow_and_evidence(
         session_id: "sess-test".to_string(),
         sources: vec![workflow_source],
         metadata: Some(SessionSnapshotMetadata {
-            default_mount_root_ref: Some("/tmp/test-workspace".to_string()),
             active_workflow: Some(ActiveWorkflowMeta {
                 lifecycle_key: Some("trellis_dev_task".to_string()),
                 step_key: Some(step_key.to_string()),
@@ -98,7 +97,6 @@ pub fn snapshot_with_supervised_policy() -> SessionHookSnapshot {
     SessionHookSnapshot {
         session_id: "sess-supervised".to_string(),
         metadata: Some(SessionSnapshotMetadata {
-            default_mount_root_ref: Some("/tmp/test-workspace".to_string()),
             permission_policy: Some("SUPERVISED".to_string()),
             ..Default::default()
         }),

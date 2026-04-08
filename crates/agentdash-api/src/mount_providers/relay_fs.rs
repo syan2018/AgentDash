@@ -70,7 +70,7 @@ impl MountProvider for RelayFsMountProvider {
                     payload: ToolFileReadPayload {
                         call_id: RelayMessage::new_id("call"),
                         path: path.clone(),
-                        workspace_root: mount.root_ref.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
                     },
                 },
             )
@@ -115,7 +115,7 @@ impl MountProvider for RelayFsMountProvider {
                         call_id: RelayMessage::new_id("call"),
                         path,
                         content: content.to_string(),
-                        workspace_root: mount.root_ref.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
                     },
                 },
             )
@@ -151,7 +151,7 @@ impl MountProvider for RelayFsMountProvider {
                     payload: ToolFileDeletePayload {
                         call_id: RelayMessage::new_id("call"),
                         path,
-                        workspace_root: mount.root_ref.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
                     },
                 },
             )
@@ -191,7 +191,7 @@ impl MountProvider for RelayFsMountProvider {
                         call_id: RelayMessage::new_id("call"),
                         from_path,
                         to_path,
-                        workspace_root: mount.root_ref.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
                     },
                 },
             )
@@ -225,7 +225,7 @@ impl MountProvider for RelayFsMountProvider {
                     payload: ToolApplyPatchPayload {
                         call_id: RelayMessage::new_id("call"),
                         patch: request.patch.clone(),
-                        workspace_root: mount.root_ref.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
                     },
                 },
             )
@@ -269,7 +269,7 @@ impl MountProvider for RelayFsMountProvider {
                     payload: ToolFileListPayload {
                         call_id: RelayMessage::new_id("call"),
                         path,
-                        workspace_root: mount.root_ref.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
                         pattern: options.pattern.clone(),
                         recursive: options.recursive,
                     },
@@ -317,7 +317,7 @@ impl MountProvider for RelayFsMountProvider {
                     id: RelayMessage::new_id("mp-search"),
                     payload: ToolSearchPayload {
                         call_id: RelayMessage::new_id("call"),
-                        workspace_root: join_root_ref(&mount.root_ref, &base_path),
+                        mount_root_ref: join_root_ref(&mount.root_ref, &base_path),
                         query: query.pattern.clone(),
                         path: None,
                         is_regex: false,
@@ -374,7 +374,7 @@ impl MountProvider for RelayFsMountProvider {
                     payload: ToolShellExecPayload {
                         call_id: RelayMessage::new_id("call"),
                         command: request.command.clone(),
-                        workspace_root: mount.root_ref.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
                         cwd: if cwd.is_empty() { None } else { Some(cwd) },
                         timeout_ms: request.timeout_ms,
                     },

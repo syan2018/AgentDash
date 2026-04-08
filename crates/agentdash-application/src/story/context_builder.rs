@@ -139,14 +139,8 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
         .cloned()
         .collect::<Vec<_>>();
 
-    let mount_root = input
-        .address_space
-        .and_then(|space| space.default_mount())
-        .map(|mount| std::path::Path::new(mount.root_ref.as_str()));
-
     if let Ok(resolved) = resolve_declared_sources(ResolveSourcesRequest {
         sources: &resolvable_sources,
-        mount_root,
         base_order: 50,
     }) {
         for fragment in resolved.fragments {

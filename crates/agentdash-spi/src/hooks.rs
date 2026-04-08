@@ -100,8 +100,6 @@ pub struct SessionSnapshotMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_mount_root_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connector_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
@@ -276,20 +274,6 @@ pub struct SessionHookSnapshotQuery {
     pub session_id: String,
     #[serde(default)]
     pub turn_id: Option<String>,
-    #[serde(default)]
-    pub connector_id: Option<String>,
-    #[serde(default)]
-    pub executor: Option<String>,
-    #[serde(default)]
-    pub permission_policy: Option<String>,
-    #[serde(default)]
-    pub working_directory: Option<String>,
-    #[serde(default)]
-    pub default_mount_root_ref: Option<String>,
-    #[serde(default)]
-    pub owners: Vec<HookOwnerSummary>,
-    #[serde(default)]
-    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

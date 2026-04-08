@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use agentdash_domain::context_source::ContextSourceRef;
 use serde::Serialize;
@@ -53,18 +53,19 @@ pub struct SelectorHint {
     pub result_item_type: String,
 }
 
-pub struct AddressSpaceContext<'a> {
-    pub mount_root: Option<&'a Path>,
+pub struct AddressSpaceContext {
+    /// 是否存在可用 Workspace（仅用于能力发现的开关）。
+    /// 业务编排层不应依赖或传播任何本机路径。
+    pub workspace_available: bool,
     pub has_mcp: bool,
 }
 
 pub trait AddressSpaceDiscoveryProvider: Send + Sync {
-    fn descriptor(&self, ctx: &AddressSpaceContext<'_>) -> Option<AddressSpaceDescriptor>;
+    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor>;
 }
 
 pub struct ResolveSourcesRequest<'a> {
     pub sources: &'a [ContextSourceRef],
-    pub mount_root: Option<&'a Path>,
     pub base_order: i32,
 }
 
@@ -77,7 +78,6 @@ pub trait SourceResolver: Send + Sync {
     fn resolve(
         &self,
         source: &ContextSourceRef,
-        mount_root: Option<&Path>,
         order: i32,
     ) -> Result<ContextFragment, InjectionError>;
 }

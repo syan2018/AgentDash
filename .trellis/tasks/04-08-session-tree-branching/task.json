@@ -1,0 +1,41 @@
+{
+  "id": "session-tree-branching",
+  "name": "session-tree-branching",
+  "title": "Session Tree & Branching",
+  "description": "参考 pi-coding-agent session 树系统，将线性消息历史升级为带 id+parent 的树形结构，支持 Fork 和历史节点回溯",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P3",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": "大型架构任务，建议排期前先做 context-compaction。参考来源：references/pi-mono/packages/coding-agent/src/core/session-manager.ts, agent-session.ts"
+}

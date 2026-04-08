@@ -1,0 +1,45 @@
+{
+  "id": "context-compaction",
+  "name": "context-compaction",
+  "title": "Context Compaction 上下文压缩",
+  "description": "参考 pi-coding-agent compaction 系统，实现 token 计数感知的自动上下文压缩，含摘要生成、专用消息类型和压缩生命周期 hooks",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-agent/src/agent_loop.rs",
+    "crates/agentdash-spi/src/hooks.rs",
+    "crates/agentdash-application/src/session/hook_delegate.rs"
+  ],
+  "notes": "参考来源：references/pi-mono/packages/coding-agent/src/core/compaction/"
+}

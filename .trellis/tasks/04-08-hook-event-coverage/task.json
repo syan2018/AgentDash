@@ -1,0 +1,46 @@
+{
+  "id": "hook-event-coverage",
+  "name": "hook-event-coverage",
+  "title": "Hook 事件体系补全",
+  "description": "参考 pi-coding-agent extension 事件体系，补齐我们现有 HookTrigger 之外缺失的事件类型和 Plugin API 注册能力",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-spi/src/hooks.rs",
+    "crates/agentdash-application/src/session/hook_delegate.rs",
+    "crates/agentdash-plugin-api/src/lib.rs",
+    "crates/agentdash-agent/src/agent_loop.rs"
+  ],
+  "notes": "参考来源：references/pi-mono/packages/coding-agent/src/core/extensions/types.ts"
+}

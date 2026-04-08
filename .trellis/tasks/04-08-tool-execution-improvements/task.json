@@ -1,0 +1,46 @@
+{
+  "id": "tool-execution-improvements",
+  "name": "tool-execution-improvements",
+  "title": "工具执行层改进",
+  "description": "参考 pi-coding-agent 工具层，补齐并发写入序列化、spawn 级 cwd/env 注入、以及 address space 粒度的 Pluggable Operations 正式化",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-agent/src/agent_loop.rs",
+    "crates/agentdash-agent-types/src/decisions.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent/pi_agent_mcp.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs"
+  ],
+  "notes": "参考来源：references/pi-mono/packages/coding-agent/src/core/tools/bash.ts, file-mutation-queue.ts"
+}

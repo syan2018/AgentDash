@@ -175,7 +175,10 @@ impl SessionHub {
 
         // 扫描工作区 skill（first-wins，诊断信息输出到日志）
         let discovered_skills = {
-            let skill_result = load_skills_for_workspace(&workspace_root);
+            let skill_result = load_skills_for_workspace(
+                &workspace_root,
+                req.address_space.as_ref(),
+            );
             for diag in &skill_result.diagnostics {
                 tracing::warn!(
                     skill_name = %diag.name,

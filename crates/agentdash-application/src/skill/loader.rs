@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use agentdash_spi::SkillRef;
+use agentdash_spi::{AddressSpace, MountCapability, SkillRef};
 
 use super::{SkillDiagnostic, parse_skill_ref};
 
@@ -28,9 +28,50 @@ pub fn skill_scan_dirs(workspace_root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// 从工作区根目录加载 skill（便捷入口）
-pub fn load_skills_for_workspace(workspace_root: &Path) -> LoadSkillsResult {
-    let dirs = skill_scan_dirs(workspace_root);
+/// 从工作区根目录 + address space mounts 加载 skill（完整入口）
+///
+/// 扫描顺序（优先级从高到低）：
+/// 1. workspace_root 下的 `.agents/skills/` 和 `skills/`
+/// 2. 用户全局 `~/.agents/skills/`
+/// 3. address space 中可本地访问的 mount（含 Read + List 能力）
+pub fn load_skills_for_workspace(
+    workspace_root: &Path,
+    address_space: Option<&AddressSpace>,
+) -> LoadSkillsResult {
+    let mut dirs = skill_scan_dirs(workspace_root);
+
+    // 追加 address space 中可本地访问的 mount 路径
+    if let Some(as_ref) = address_space {
+        for mount in &as_ref.mounts {
+            let has_read = mount.capabilities.contains(&MountCapability::Read);
+            let has_list = mount.capabilities.contains(&MountCapability::List);
+            if !has_read || !has_list {
+                continue;
+            }
+
+            // 尝试将 mount root_ref 作为本地路径（跳过远程/虚拟 mount）
+            let root = PathBuf::from(&mount.root_ref);
+            if !root.is_absolute() || !root.exists() {
+                tracing::trace!(
+                    mount_id = %mount.id,
+                    root_ref = %mount.root_ref,
+                    "mount root_ref 不是本地可访问路径，跳过 skill 扫描"
+                );
+                continue;
+            }
+
+            // 避免与 workspace_root 已扫描的路径重复
+            let agents_skills = root.join(".agents").join("skills");
+            let skills = root.join("skills");
+            if !dirs.contains(&agents_skills) {
+                dirs.push(agents_skills);
+            }
+            if !dirs.contains(&skills) {
+                dirs.push(skills);
+            }
+        }
+    }
+
     load_skills(&dirs)
 }
 
@@ -222,8 +263,37 @@ mod tests {
     #[test]
     fn load_empty_workspace() {
         let tmp = TempDir::new().unwrap();
-        let result = load_skills_for_workspace(tmp.path());
+        let result = load_skills_for_workspace(tmp.path(), None);
         assert!(result.skills.is_empty());
         assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn address_space_mount_adds_scan_dirs() {
+        use agentdash_spi::Mount;
+
+        let tmp_ws = TempDir::new().unwrap();
+        let tmp_mount = TempDir::new().unwrap();
+        // 在 mount root 的 skills/ 下放一个 skill
+        write_skill(&tmp_mount.path().join("skills"), "mount-skill", "来自 mount");
+
+        let as_ref = AddressSpace {
+            mounts: vec![Mount {
+                id: "extra".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "local".to_string(),
+                root_ref: tmp_mount.path().to_string_lossy().to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "extra mount".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+        };
+        let result = load_skills_for_workspace(tmp_ws.path(), Some(&as_ref));
+        assert_eq!(result.skills.len(), 1);
+        assert_eq!(result.skills[0].name, "mount-skill");
     }
 }

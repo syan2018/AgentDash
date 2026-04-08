@@ -11,7 +11,7 @@
 /// 同名 skill 按发现顺序 first-wins，冲突记录为 `SkillDiagnostic`。
 mod loader;
 
-pub use loader::{LoadSkillsResult, load_skills_for_workspace, skill_scan_dirs};
+pub use loader::{LoadSkillsResult, load_skills_for_workspace};
 
 use std::path::{Path, PathBuf};
 

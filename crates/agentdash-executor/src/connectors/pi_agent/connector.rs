@@ -361,6 +361,80 @@ fn escape_xml(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+/// 从工作目录扫描 SKILL.md 文件，生成 slash command 列表。
+///
+/// 轻量实现：直接遍历本地 `.agents/skills/` 和 `skills/` 目录，
+/// 无需依赖 application 层的 skill loader。
+fn discover_skill_slash_commands(workspace_root: &Path) -> Vec<serde_json::Value> {
+    let mut commands = Vec::new();
+    let scan_dirs = [
+        workspace_root.join(".agents").join("skills"),
+        workspace_root.join("skills"),
+    ];
+    for dir in &scan_dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let subdir = entry.path();
+            if !subdir.is_dir() {
+                continue;
+            }
+            let skill_md = subdir.join("SKILL.md");
+            if !skill_md.exists() {
+                continue;
+            }
+            // 快速解析 frontmatter 提取 name 和 description
+            let content = match std::fs::read_to_string(&skill_md) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let (name, description) = parse_skill_frontmatter_lightweight(&content);
+            let name = name.unwrap_or_else(|| {
+                subdir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            });
+            commands.push(serde_json::json!({
+                "name": format!("/skill:{name}"),
+                "description": description.unwrap_or_default(),
+            }));
+        }
+    }
+    commands
+}
+
+/// 轻量 frontmatter 解析（仅提取 name 和 description，不依赖 serde_yaml）
+fn parse_skill_frontmatter_lightweight(content: &str) -> (Option<String>, Option<String>) {
+    let content = content.trim_start_matches('\u{feff}');
+    if !content.starts_with("---") {
+        return (None, None);
+    }
+    let after_open = &content[3..];
+    let close_pos = match after_open.find("\n---") {
+        Some(pos) => pos,
+        None => return (None, None),
+    };
+    let yaml_block = &after_open[..close_pos];
+    let mut name = None;
+    let mut description = None;
+    for line in yaml_block.lines() {
+        let line = line.trim();
+        if let Some(val) = line.strip_prefix("name:") {
+            name = Some(val.trim().trim_matches('"').trim_matches('\'').to_string());
+        } else if let Some(val) = line.strip_prefix("description:") {
+            description =
+                Some(val.trim().trim_matches('"').trim_matches('\'').to_string());
+        }
+    }
+    (name, description)
+}
+
 fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {
     path.strip_prefix(workspace_root)
         .ok()
@@ -494,13 +568,20 @@ impl AgentConnector for PiAgentConnector {
 
         let default_model = provider_state.default_model.clone();
 
+        // 从工作目录扫描 skill，注册为 slash commands
+        let slash_commands: Vec<serde_json::Value> = _working_dir
+            .as_deref()
+            .map(discover_skill_slash_commands)
+            .unwrap_or_default();
+
         let patch: json_patch::Patch = serde_json::from_value(serde_json::json!([
             { "op": "replace", "path": "/options/model_selector/providers", "value": all_providers },
             { "op": "replace", "path": "/options/model_selector/models", "value": all_models },
             { "op": "replace", "path": "/options/model_selector/default_model", "value": default_model },
             { "op": "replace", "path": "/options/loading_models", "value": false },
             { "op": "replace", "path": "/options/loading_agents", "value": false },
-            { "op": "replace", "path": "/options/loading_slash_commands", "value": false }
+            { "op": "replace", "path": "/options/loading_slash_commands", "value": false },
+            { "op": "replace", "path": "/options/slash_commands", "value": slash_commands }
         ])).expect("static patch must be valid");
 
         Ok(Box::pin(futures::stream::once(async move { patch })))

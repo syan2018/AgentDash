@@ -20,6 +20,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { extractAgentDashMetaFromUpdate, isRecord } from "../model/agentdashMeta";
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { AcpCompanionRequestCard } from "./AcpCompanionRequestCard";
+import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
 
 export interface AcpSystemEventCardProps {
   update: SessionUpdate;
@@ -119,6 +120,24 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
 
 const HIGH_PRIORITY_HOOK_DECISIONS = new Set(["deny", "ask", "rewrite", "continue"]);
 
+const SUBSTANTIVE_DECISIONS = new Set([
+  "deny", "ask", "rewrite", "continue",
+  "context_injected", "steering_injected", "step_advanced",
+]);
+
+function isHookEventSubstantive(
+  decision: string | null | undefined,
+  hookData: HookEventData | null,
+): boolean {
+  if (decision && SUBSTANTIVE_DECISIONS.has(decision)) return true;
+  if (hookData?.block_reason) return true;
+  if (hookData?.completion) return true;
+  if (hookData?.diagnostics?.length) return true;
+  if (hookData?.injections?.length) return true;
+  if (hookData?.matched_rule_keys?.length) return true;
+  return false;
+}
+
 function extractHookDecision(code: string | null | undefined): string | null {
   if (!code) return null;
   const parts = code.split(":");
@@ -153,23 +172,28 @@ export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProp
   // ── hook_event 路由 ──────────────────────────────────────────────────────
   if (eventType === "hook_event") {
     const decision = extractHookDecision(event?.code);
+    const hasSubstance = isHookEventSubstantive(decision, hookData);
+    if (!hasSubstance && !getDebugPrefs().hookVerbose) {
+      return null;
+    }
+
     const severity = event?.severity ?? "info";
-    const badge = SEVERITY_BADGE[severity] ?? DEFAULT_BADGE;
+    const badge = hasSubstance ? (SEVERITY_BADGE[severity] ?? DEFAULT_BADGE) : SEVERITY_BADGE.info!;
     const token = resolveDecisionToken(decision);
 
     // 两条路径共用同一份数据构建
     const { completionLine, diagnostics } = buildHookExpandData(hookData);
     const diagBody = buildDiagnosticsNode(diagnostics);
 
+    const verboseWrapper = (node: ReactNode) =>
+      hasSubstance ? node : <div className="opacity-50">{node}</div>;
+
     if (isHighPriorityHookEvent(hookData, event?.code)) {
-      // 高优先级 → FullCard
-      // detailLines 只放 block_reason + completion 判定（主要说明）
-      // diagnostics 和 debug meta 一起放进折叠区（次要详情）
       const detailLines: string[] = [];
       if (hookData?.block_reason) detailLines.push(`阻塞原因：${hookData.block_reason}`);
       if (completionLine) detailLines.push(completionLine);
 
-      return (
+      return verboseWrapper(
         <EventFullCard
           badgeToken={token}
           badgeClass={badge}
@@ -184,7 +208,6 @@ export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProp
     }
 
     // 信息型 → StripCard
-    // expandContent: completion + injections content, diagnostics via bodyExtra
     const expandSections: Array<{ title?: string; lines: string[] }> = [];
     if (completionLine) {
       expandSections.push({ lines: [completionLine] });
@@ -210,7 +233,7 @@ export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProp
         : hookData?.matched_rule_keys?.length
           ? `${hookData.matched_rule_keys.length} 条规则`
           : null;
-    return (
+    return verboseWrapper(
       <EventStripCard
         badgeToken={token}
         badgeClass={badge}

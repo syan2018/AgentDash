@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod connector;
+pub mod hook_trace_notification;
 pub mod hooks;
 pub mod lifecycle;
 pub mod mount;
@@ -32,6 +33,7 @@ pub use lifecycle::{
     TransformContextOutput, TurnControlDecision, now_millis,
 };
 pub use mount::MountEditCapabilities;
+pub use hook_trace_notification::build_hook_trace_notification;
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
     ToolUpdateCallback,

@@ -1,0 +1,7 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "DTO 命名约定 + 向后兼容检查"}
+{"file": ".trellis/spec/backend/streaming-protocol.md", "reason": "事件字段契约检查"}
+{"file": "crates/agentdash-agent-types/src/message.rs", "reason": "类型定义审查"}
+{"file": "crates/agentdash-application/src/session/continuation.rs", "reason": "Restore 逻辑审查"}
+{"file": "crates/agentdash-agent/src/compaction/mod.rs", "reason": "Compaction 逻辑审查"}

@@ -8,7 +8,10 @@ use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
     parse_agentdash_meta,
 };
-use agentdash_agent_types::{AgentMessage, ContentPart, StopReason, ToolCallInfo};
+use agentdash_agent_types::{
+    AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
+    StopReason, ToolCallInfo,
+};
 use agentdash_spi::content_block_to_text;
 
 use super::persistence::PersistedSessionEvent;
@@ -20,6 +23,7 @@ struct CompactionCheckpoint {
     summary: String,
     tokens_before: u64,
     messages_compacted: u32,
+    compacted_until_ref: Option<MessageRef>,
     timestamp_ms: Option<u64>,
 }
 
@@ -27,8 +31,8 @@ pub(super) fn build_continuation_system_context_from_events(
     owner_context: Option<&str>,
     events: &[PersistedSessionEvent],
 ) -> Option<String> {
-    let projected_messages = build_restored_session_messages_from_events(events);
-    if events.is_empty() && projected_messages.is_empty() {
+    let transcript = build_projected_transcript_from_events(events);
+    if events.is_empty() && transcript.is_empty() {
         return owner_context
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -49,11 +53,11 @@ pub(super) fn build_continuation_system_context_from_events(
             .to_string(),
     );
 
-    if !projected_messages.is_empty() {
+    if !transcript.is_empty() {
         history_lines.push(String::new());
         history_lines.push("### Transcript".to_string());
-        for message in projected_messages {
-            match message {
+        for entry in &transcript.entries {
+            match &entry.message {
                 AgentMessage::User { content, .. } => {
                     let text = content
                         .iter()
@@ -115,7 +119,7 @@ pub(super) fn build_continuation_system_context_from_events(
                         "#### 工具结果 ({})",
                         tool_name.as_deref().unwrap_or("tool_result")
                     ));
-                    if is_error {
+                    if *is_error {
                         history_lines.push(format!("[error]\n{text}"));
                     } else {
                         history_lines.push(text);
@@ -123,7 +127,7 @@ pub(super) fn build_continuation_system_context_from_events(
                 }
                 AgentMessage::CompactionSummary { summary, .. } => {
                     history_lines.push("#### 历史摘要".to_string());
-                    history_lines.push(summary);
+                    history_lines.push(summary.clone());
                 }
             }
             history_lines.push(String::new());
@@ -142,12 +146,16 @@ pub(super) fn build_continuation_system_context_from_events(
 #[derive(Debug, Clone)]
 struct RestoredUserMessageState {
     order: u64,
+    turn_id: Option<String>,
+    entry_index: Option<u32>,
     content: Vec<ContentPart>,
 }
 
 #[derive(Debug, Clone)]
 struct RestoredAssistantMessageState {
     order: u64,
+    turn_id: Option<String>,
+    entry_index: Option<u32>,
     content: Vec<ContentPart>,
     tool_calls: Vec<ToolCallInfo>,
     tool_call_ids: HashSet<String>,
@@ -156,6 +164,8 @@ struct RestoredAssistantMessageState {
 #[derive(Debug, Clone, Default)]
 struct RestoredToolResultState {
     order: u64,
+    turn_id: Option<String>,
+    entry_index: Option<u32>,
     tool_call_id: String,
     call_id: Option<String>,
     tool_name: Option<String>,
@@ -169,15 +179,18 @@ struct RestoredToolResultState {
 enum RestoredMessageEnvelope {
     User {
         order: u64,
+        message_ref: MessageRef,
         content: Vec<ContentPart>,
     },
     Assistant {
         order: u64,
+        message_ref: MessageRef,
         content: Vec<ContentPart>,
         tool_calls: Vec<ToolCallInfo>,
     },
     ToolResult {
         order: u64,
+        message_ref: MessageRef,
         tool_call_id: String,
         call_id: Option<String>,
         tool_name: Option<String>,
@@ -187,9 +200,17 @@ enum RestoredMessageEnvelope {
     },
 }
 
+/// 公共入口 — 返回 Vec<AgentMessage>，保持 hub.rs 等调用方不变。
 pub(super) fn build_restored_session_messages_from_events(
     events: &[PersistedSessionEvent],
 ) -> Vec<AgentMessage> {
+    build_projected_transcript_from_events(events).into_messages()
+}
+
+/// 内部入口 — 返回带身份的 ProjectedTranscript。
+pub(super) fn build_projected_transcript_from_events(
+    events: &[PersistedSessionEvent],
+) -> ProjectedTranscript {
     let mut user_messages: HashMap<String, RestoredUserMessageState> = HashMap::new();
     let mut assistant_messages: HashMap<String, RestoredAssistantMessageState> = HashMap::new();
     let mut tool_results: HashMap<String, RestoredToolResultState> = HashMap::new();
@@ -204,6 +225,8 @@ pub(super) fn build_restored_session_messages_from_events(
                             .entry(key)
                             .or_insert_with(|| RestoredUserMessageState {
                                 order: event.event_seq,
+                                turn_id: event.turn_id.clone(),
+                                entry_index: event.entry_index,
                                 content: Vec::new(),
                             });
                     state.content.push(part);
@@ -215,6 +238,8 @@ pub(super) fn build_restored_session_messages_from_events(
                     let state = assistant_messages.entry(key).or_insert_with(|| {
                         RestoredAssistantMessageState {
                             order: event.event_seq,
+                            turn_id: event.turn_id.clone(),
+                            entry_index: event.entry_index,
                             content: Vec::new(),
                             tool_calls: Vec::new(),
                             tool_call_ids: HashSet::new(),
@@ -229,6 +254,8 @@ pub(super) fn build_restored_session_messages_from_events(
                     let state = assistant_messages.entry(key).or_insert_with(|| {
                         RestoredAssistantMessageState {
                             order: event.event_seq,
+                            turn_id: event.turn_id.clone(),
+                            entry_index: event.entry_index,
                             content: Vec::new(),
                             tool_calls: Vec::new(),
                             tool_call_ids: HashSet::new(),
@@ -242,6 +269,8 @@ pub(super) fn build_restored_session_messages_from_events(
                 let state = assistant_messages.entry(key).or_insert_with(|| {
                     RestoredAssistantMessageState {
                         order: event.event_seq,
+                        turn_id: event.turn_id.clone(),
+                        entry_index: event.entry_index,
                         content: Vec::new(),
                         tool_calls: Vec::new(),
                         tool_call_ids: HashSet::new(),
@@ -257,7 +286,7 @@ pub(super) fn build_restored_session_messages_from_events(
                 update_restored_tool_result(
                     &mut tool_results,
                     call.tool_call_id.0.as_ref(),
-                    event.event_seq,
+                    event,
                     Some(call.title.as_str()),
                     call.raw_output.as_ref(),
                     Some(&call.content),
@@ -269,6 +298,8 @@ pub(super) fn build_restored_session_messages_from_events(
                 let state = assistant_messages.entry(key).or_insert_with(|| {
                     RestoredAssistantMessageState {
                         order: event.event_seq,
+                        turn_id: event.turn_id.clone(),
+                        entry_index: event.entry_index,
                         content: Vec::new(),
                         tool_calls: Vec::new(),
                         tool_call_ids: HashSet::new(),
@@ -284,7 +315,7 @@ pub(super) fn build_restored_session_messages_from_events(
                 update_restored_tool_result(
                     &mut tool_results,
                     update.tool_call_id.0.as_ref(),
-                    event.event_seq,
+                    event,
                     update.fields.title.as_deref(),
                     update.fields.raw_output.as_ref(),
                     update.fields.content.as_deref(),
@@ -302,6 +333,7 @@ pub(super) fn build_restored_session_messages_from_events(
         }
         envelopes.push(RestoredMessageEnvelope::User {
             order: state.order,
+            message_ref: make_message_ref(state.turn_id.as_deref(), state.entry_index, state.order),
             content: state.content,
         });
     }
@@ -311,6 +343,7 @@ pub(super) fn build_restored_session_messages_from_events(
         }
         envelopes.push(RestoredMessageEnvelope::Assistant {
             order: state.order,
+            message_ref: make_message_ref(state.turn_id.as_deref(), state.entry_index, state.order),
             content: state.content,
             tool_calls: state.tool_calls,
         });
@@ -321,6 +354,7 @@ pub(super) fn build_restored_session_messages_from_events(
         }
         envelopes.push(RestoredMessageEnvelope::ToolResult {
             order: state.order,
+            message_ref: make_message_ref(state.turn_id.as_deref(), state.entry_index, state.order),
             tool_call_id: state.tool_call_id,
             call_id: state.call_id,
             tool_name: state.tool_name,
@@ -331,11 +365,11 @@ pub(super) fn build_restored_session_messages_from_events(
     }
 
     envelopes.sort_by_key(restored_message_order);
-    let raw_messages = envelopes
+    let raw_entries: Vec<ProjectedEntry> = envelopes
         .into_iter()
-        .map(restored_envelope_to_message)
-        .collect::<Vec<_>>();
-    apply_compaction_checkpoint(raw_messages, latest_compaction_checkpoint(events))
+        .map(restored_envelope_to_projected_entry)
+        .collect();
+    apply_compaction_checkpoint_projected(raw_entries, latest_compaction_checkpoint(events))
 }
 
 // ─── Helper: companion notification ─────────────────────────
@@ -457,16 +491,19 @@ fn upsert_restored_tool_call(
 fn update_restored_tool_result(
     tool_results: &mut HashMap<String, RestoredToolResultState>,
     tool_call_id: &str,
-    order: u64,
+    event: &PersistedSessionEvent,
     title: Option<&str>,
     raw_output: Option<&serde_json::Value>,
     content: Option<&[ToolCallContent]>,
     status: Option<ToolCallStatus>,
 ) {
+    let order = event.event_seq;
     let state = tool_results
         .entry(tool_call_id.to_string())
         .or_insert_with(|| RestoredToolResultState {
             order,
+            turn_id: event.turn_id.clone(),
+            entry_index: event.entry_index,
             tool_call_id: tool_call_id.to_string(),
             call_id: Some(tool_call_id.to_string()),
             ..RestoredToolResultState::default()
@@ -484,6 +521,8 @@ fn update_restored_tool_result(
     }
 
     state.order = order;
+    state.turn_id = event.turn_id.clone();
+    state.entry_index = event.entry_index;
     state.terminal = true;
     state.is_error = matches!(status, ToolCallStatus::Failed);
 
@@ -519,29 +558,44 @@ fn restored_message_order(envelope: &RestoredMessageEnvelope) -> u64 {
     }
 }
 
-fn restored_envelope_to_message(envelope: RestoredMessageEnvelope) -> AgentMessage {
+/// 从 RestoredMessageEnvelope 构建 ProjectedEntry（带 MessageRef + ProjectionKind）。
+fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> ProjectedEntry {
     match envelope {
-        RestoredMessageEnvelope::User { content, .. } => AgentMessage::User {
+        RestoredMessageEnvelope::User {
+            message_ref,
             content,
-            timestamp: None,
+            ..
+        } => ProjectedEntry {
+            message_ref,
+            projection_kind: ProjectionKind::Transcript,
+            message: AgentMessage::User {
+                content,
+                timestamp: None,
+            },
         },
         RestoredMessageEnvelope::Assistant {
+            message_ref,
             content,
             tool_calls,
             ..
-        } => AgentMessage::Assistant {
-            content,
-            tool_calls: tool_calls.clone(),
-            stop_reason: Some(if tool_calls.is_empty() {
-                StopReason::Stop
-            } else {
-                StopReason::ToolUse
-            }),
-            error_message: None,
-            usage: None,
-            timestamp: None,
+        } => ProjectedEntry {
+            message_ref,
+            projection_kind: ProjectionKind::Transcript,
+            message: AgentMessage::Assistant {
+                content,
+                tool_calls: tool_calls.clone(),
+                stop_reason: Some(if tool_calls.is_empty() {
+                    StopReason::Stop
+                } else {
+                    StopReason::ToolUse
+                }),
+                error_message: None,
+                usage: None,
+                timestamp: None,
+            },
         },
         RestoredMessageEnvelope::ToolResult {
+            message_ref,
             tool_call_id,
             call_id,
             tool_name,
@@ -549,15 +603,30 @@ fn restored_envelope_to_message(envelope: RestoredMessageEnvelope) -> AgentMessa
             details,
             is_error,
             ..
-        } => AgentMessage::ToolResult {
-            tool_call_id,
-            call_id,
-            tool_name,
-            content,
-            details,
-            is_error,
-            timestamp: None,
+        } => ProjectedEntry {
+            message_ref,
+            projection_kind: ProjectionKind::Transcript,
+            message: AgentMessage::ToolResult {
+                tool_call_id,
+                call_id,
+                tool_name,
+                content,
+                details,
+                is_error,
+                timestamp: None,
+            },
         },
+    }
+}
+
+/// 从 turn_id + entry_index 构建 MessageRef。
+/// 当 turn_id 缺失时，用 event_seq 作为 fallback（保证唯一性）。
+fn make_message_ref(turn_id: Option<&str>, entry_index: Option<u32>, event_seq: u64) -> MessageRef {
+    MessageRef {
+        turn_id: turn_id
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("_seq:{event_seq}")),
+        entry_index: entry_index.unwrap_or(0),
     }
 }
 
@@ -575,6 +644,10 @@ fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<Compac
         return None;
     }
     let data = agent_event.data?;
+    // 解析 compacted_until_ref（新字段，向后兼容）
+    let compacted_until_ref = data.get("compacted_until_ref").and_then(|v| {
+        serde_json::from_value::<MessageRef>(v.clone()).ok()
+    });
     Some(CompactionCheckpoint {
         summary: data.get("summary")?.as_str()?.to_string(),
         tokens_before: data
@@ -586,33 +659,72 @@ fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<Compac
             .and_then(serde_json::Value::as_u64)
             .and_then(|value| u32::try_from(value).ok())
             .unwrap_or_default(),
+        compacted_until_ref,
         timestamp_ms: data
             .get("timestamp_ms")
             .and_then(serde_json::Value::as_u64),
     })
 }
 
-fn apply_compaction_checkpoint(
-    raw_messages: Vec<AgentMessage>,
+/// 在 ProjectedEntry 列表上应用 compaction checkpoint。
+///
+/// 优先使用 `compacted_until_ref` 做 ref-based cut，fallback 到 `messages_compacted` 计数。
+fn apply_compaction_checkpoint_projected(
+    raw_entries: Vec<ProjectedEntry>,
     checkpoint: Option<CompactionCheckpoint>,
-) -> Vec<AgentMessage> {
+) -> ProjectedTranscript {
     let Some(checkpoint) = checkpoint else {
-        return raw_messages;
+        return ProjectedTranscript {
+            entries: raw_entries,
+        };
     };
     if checkpoint.summary.trim().is_empty() || checkpoint.messages_compacted == 0 {
-        return raw_messages;
+        return ProjectedTranscript {
+            entries: raw_entries,
+        };
     }
 
-    let cut = usize::min(checkpoint.messages_compacted as usize, raw_messages.len());
-    let mut tail = raw_messages.into_iter().skip(cut).collect::<Vec<_>>();
-    let mut projected = vec![AgentMessage::CompactionSummary {
-        summary: checkpoint.summary,
-        tokens_before: checkpoint.tokens_before,
-        messages_compacted: checkpoint.messages_compacted,
-        timestamp: checkpoint.timestamp_ms,
-    }];
-    projected.append(&mut tail);
-    projected
+    // 优先 ref-based cut：找到 compacted_until_ref 对应的位置
+    let cut = if let Some(ref until_ref) = checkpoint.compacted_until_ref {
+        raw_entries
+            .iter()
+            .position(|e| e.message_ref == *until_ref)
+            .map(|pos| pos + 1) // 含这条消息本身
+            .unwrap_or_else(|| {
+                // ref 不匹配（数据迁移场景），fallback 到计数
+                usize::min(checkpoint.messages_compacted as usize, raw_entries.len())
+            })
+    } else {
+        // 旧数据没有 ref，用计数 fallback
+        usize::min(checkpoint.messages_compacted as usize, raw_entries.len())
+    };
+
+    // 从 cut boundary 回推 compacted_until_ref（即使原始 checkpoint 没有）
+    let derived_ref = if cut > 0 {
+        Some(raw_entries[cut - 1].message_ref.clone())
+    } else {
+        checkpoint.compacted_until_ref.clone()
+    };
+
+    let summary_ref = MessageRef {
+        turn_id: "_compaction_summary".to_string(),
+        entry_index: 0,
+    };
+    let summary_entry = ProjectedEntry {
+        message_ref: summary_ref,
+        projection_kind: ProjectionKind::CompactionSummary,
+        message: AgentMessage::CompactionSummary {
+            summary: checkpoint.summary,
+            tokens_before: checkpoint.tokens_before,
+            messages_compacted: checkpoint.messages_compacted,
+            compacted_until_ref: derived_ref,
+            timestamp: checkpoint.timestamp_ms,
+        },
+    };
+
+    let mut entries = vec![summary_entry];
+    entries.extend(raw_entries.into_iter().skip(cut));
+    ProjectedTranscript { entries }
 }
 
 fn content_block_to_message_part(block: &ContentBlock) -> Option<ContentPart> {

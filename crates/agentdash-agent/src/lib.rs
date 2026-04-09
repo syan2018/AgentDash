@@ -18,8 +18,9 @@ pub use types::{
     AgentRuntimeError, AgentState, AgentTool, AgentToolError, AgentToolResult,
     AssistantStreamEvent, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
     BeforeToolCallResult, CompactionParams, CompactionResult, CompactionTriggerStats,
-    ContentPart, DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, StopDecision,
-    StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision,
-    ToolCallInfo, ToolDefinition, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
-    TransformContextOutput, TurnControlDecision,
+    ContentPart, DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, MessageRef,
+    ProjectedEntry, ProjectedTranscript, ProjectionKind, StopDecision, StopReason, TokenUsage,
+    ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition,
+    ToolExecutionMode, ToolUpdateCallback, TransformContextInput, TransformContextOutput,
+    TurnControlDecision,
 };

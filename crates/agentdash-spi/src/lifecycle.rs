@@ -4,7 +4,8 @@ pub use agentdash_agent_types::{
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
     BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult,
     CompactionParams, CompactionResult, CompactionTriggerStats, EvaluateCompactionInput,
-    DynAgentRuntimeDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
-    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
-    TransformContextOutput, TurnControlDecision, now_millis,
+    DynAgentRuntimeDelegate, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
+    StopDecision, StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest,
+    ToolCallDecision, ToolCallInfo, TransformContextInput, TransformContextOutput,
+    TurnControlDecision, now_millis,
 };

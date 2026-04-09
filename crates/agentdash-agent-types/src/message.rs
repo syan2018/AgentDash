@@ -3,6 +3,17 @@ use serde::{Deserialize, Serialize};
 use crate::content::ContentPart;
 use crate::tool::AgentToolResult;
 
+// ─── MessageRef ────────────────────────────────────────────
+
+/// 消息稳定引用 — 对齐 PersistedSessionEvent 的 turn_id + entry_index。
+///
+/// 用于 compaction cut boundary、restore 对齐、branch lineage 继承。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MessageRef {
+    pub turn_id: String,
+    pub entry_index: u32,
+}
+
 /// 当前时间戳（毫秒）
 pub fn now_millis() -> u64 {
     std::time::SystemTime::now()
@@ -87,6 +98,10 @@ pub enum AgentMessage {
         tokens_before: u64,
         #[serde(default)]
         messages_compacted: u32,
+        /// 精准压缩边界 — 此摘要覆盖到这条消息（含）之前的所有内容。
+        /// 优先于 messages_compacted 计数，为 None 时 fallback 到计数。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compacted_until_ref: Option<MessageRef>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timestamp: Option<u64>,
     },
@@ -181,6 +196,7 @@ impl AgentMessage {
             summary: summary.into(),
             tokens_before,
             messages_compacted,
+            compacted_until_ref: None,
             timestamp: Some(now_millis()),
         }
     }

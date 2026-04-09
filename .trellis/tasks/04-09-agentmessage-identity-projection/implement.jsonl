@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "DTO 命名约定 + Session 状态持久化规则"}
+{"file": ".trellis/spec/backend/streaming-protocol.md", "reason": "SessionEventEnvelope 字段契约 (turn_id, entry_index)"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "类型化 payload serde 模式参考"}
+{"file": "crates/agentdash-agent-types/src/message.rs", "reason": "AgentMessage 定义，CompactionSummary 升级目标"}
+{"file": "crates/agentdash-agent-types/src/decisions.rs", "reason": "CompactionResult 定义，需要同步升级"}
+{"file": "crates/agentdash-application/src/session/continuation.rs", "reason": "Restore 核心，RestoredMessageEnvelope → ProjectedTranscript"}
+{"file": "crates/agentdash-agent/src/compaction/mod.rs", "reason": "Compaction 引擎，切换 ref-based cut"}
+{"file": "crates/agentdash-application/src/session/hook_delegate.rs", "reason": "after_compaction 事件构造"}

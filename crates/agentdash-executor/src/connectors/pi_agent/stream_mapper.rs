@@ -585,6 +585,7 @@ pub(super) fn convert_event_to_notifications(
                 summary,
                 tokens_before,
                 messages_compacted,
+                compacted_until_ref,
                 timestamp,
             }) = messages.first()
             else {
@@ -608,6 +609,7 @@ pub(super) fn convert_event_to_notifications(
                         "tokens_before": tokens_before,
                         "messages_compacted": messages_compacted,
                         "newly_compacted_messages": newly_compacted_messages,
+                        "compacted_until_ref": compacted_until_ref,
                         "timestamp_ms": timestamp,
                     }),
                 },

@@ -4,6 +4,7 @@ pub mod decisions;
 pub mod delegate;
 pub mod hooks_io;
 pub mod message;
+pub mod projection;
 pub mod tool;
 
 // ─── 集中 re-export ─────────────────────────────────────────
@@ -21,7 +22,8 @@ pub use hooks_io::{
     AfterToolCallContext, AfterToolCallResult, BeforeToolCallContext, BeforeToolCallResult,
     ToolApprovalOutcome, ToolApprovalRequest,
 };
-pub use message::{AgentMessage, StopReason, TokenUsage, ToolCallInfo, now_millis};
+pub use message::{AgentMessage, MessageRef, StopReason, TokenUsage, ToolCallInfo, now_millis};
+pub use projection::{ProjectedEntry, ProjectedTranscript, ProjectionKind};
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolDefinition, ToolUpdateCallback,
 };

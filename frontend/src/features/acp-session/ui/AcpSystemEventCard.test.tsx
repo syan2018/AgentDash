@@ -155,6 +155,135 @@ describe("AcpSystemEventCard", () => {
     expect(html).not.toContain("slice_mode");
   });
 
+  it("静默 allow / effects_applied / noop 等高频无信息量 hook 决策", () => {
+    for (const [trigger, decision] of [
+      ["before_tool", "allow"],
+      ["after_tool", "effects_applied"],
+      ["after_turn", "noop"],
+      ["before_compact", "noop"],
+      ["after_compact", "notified"],
+      ["session_start", "baseline_initialized"],
+      ["session_start", "baseline_refreshed"],
+    ] as const) {
+      const update = {
+        sessionUpdate: "session_info_update",
+        _meta: {
+          agentdash: {
+            v: 1,
+            trace: { turnId: "turn-silent-1" },
+            event: {
+              type: "hook_event",
+              severity: "info",
+              code: `hook:${trigger}:${decision}`,
+              message: `Hook 在 ${trigger} 阶段产生了 ${decision} 决策`,
+              data: {
+                trigger,
+                decision,
+                sequence: 1,
+                revision: 1,
+                matched_rule_keys: ["some_rule:key"],
+                diagnostics: [],
+                injections: [],
+              },
+            },
+          },
+        },
+      } as unknown as SessionUpdate;
+
+      expect(
+        isRenderableSystemEventUpdate(update),
+        `${trigger}:${decision} should be silent`,
+      ).toBe(false);
+    }
+  });
+
+  it("静默决策若携带 diagnostics 或 injections 则仍显示", () => {
+    const withDiagnostics = {
+      sessionUpdate: "session_info_update",
+      _meta: {
+        agentdash: {
+          v: 1,
+          trace: { turnId: "turn-diag-1" },
+          event: {
+            type: "hook_event",
+            severity: "info",
+            code: "hook:after_tool:effects_applied",
+            message: "Hook 在 after_tool 阶段产生了 effects_applied 决策",
+            data: {
+              trigger: "after_tool",
+              decision: "effects_applied",
+              sequence: 1,
+              revision: 1,
+              matched_rule_keys: [],
+              diagnostics: [{ code: "lint_warning", message: "发现潜在问题" }],
+              injections: [],
+            },
+          },
+        },
+      },
+    } as unknown as SessionUpdate;
+
+    expect(isRenderableSystemEventUpdate(withDiagnostics)).toBe(true);
+
+    const withInjections = {
+      sessionUpdate: "session_info_update",
+      _meta: {
+        agentdash: {
+          v: 1,
+          trace: { turnId: "turn-inj-1" },
+          event: {
+            type: "hook_event",
+            severity: "info",
+            code: "hook:before_tool:allow",
+            message: "Hook 放行了当前工具调用",
+            data: {
+              trigger: "before_tool",
+              decision: "allow",
+              sequence: 1,
+              revision: 1,
+              matched_rule_keys: [],
+              diagnostics: [],
+              injections: [{ slot: "context", source: "rule:x", content: "额外上下文" }],
+            },
+          },
+        },
+      },
+    } as unknown as SessionUpdate;
+
+    expect(isRenderableSystemEventUpdate(withInjections)).toBe(true);
+  });
+
+  it("静默决策仅携带 session_binding_found 诊断时仍应静默", () => {
+    const update = {
+      sessionUpdate: "session_info_update",
+      _meta: {
+        agentdash: {
+          v: 1,
+          trace: { turnId: "turn-noise-diag-1" },
+          event: {
+            type: "hook_event",
+            severity: "info",
+            code: "hook:before_tool:allow",
+            message: "Hook 放行了当前工具调用",
+            data: {
+              trigger: "before_tool",
+              decision: "allow",
+              sequence: 1,
+              revision: 1,
+              matched_rule_keys: [],
+              diagnostics: [
+                { code: "session_binding_found", message: "命中会话绑定 project:xxx" },
+              ],
+              injections: [],
+            },
+          },
+        },
+      },
+    } as unknown as SessionUpdate;
+
+    expect(isRenderableSystemEventUpdate(update)).toBe(false);
+  });
+
   it("展示 hook action 显式结案事件", () => {
     const update = {
       sessionUpdate: "session_info_update",

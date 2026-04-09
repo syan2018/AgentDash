@@ -49,6 +49,7 @@ interface HookEventData {
   diagnostic_codes?: string[];
   diagnostics?: Array<{
     code?: string;
+    message?: string;
     summary?: string;
     detail?: string | null;
     source_summary?: string[];
@@ -125,6 +126,31 @@ const SUBSTANTIVE_DECISIONS = new Set([
   "context_injected", "steering_injected", "step_advanced",
 ]);
 
+const NON_SUBSTANTIVE_DIAGNOSTIC_CODES = new Set([
+  "session_binding_found",
+  "active_workflow_resolved",
+]);
+
+type HookDiagnosticData = NonNullable<HookEventData["diagnostics"]>[number];
+
+function resolveDiagnosticSummary(diagnostic: HookDiagnosticData): string | null {
+  const summary = typeof diagnostic.summary === "string" ? diagnostic.summary.trim() : "";
+  if (summary.length > 0) return summary;
+  const message = typeof diagnostic.message === "string" ? diagnostic.message.trim() : "";
+  return message.length > 0 ? message : null;
+}
+
+function isSubstantiveDiagnostic(diagnostic: HookDiagnosticData): boolean {
+  const code = typeof diagnostic.code === "string" ? diagnostic.code : "";
+  if (code && NON_SUBSTANTIVE_DIAGNOSTIC_CODES.has(code)) {
+    return false;
+  }
+
+  const summary = resolveDiagnosticSummary(diagnostic);
+  const detail = typeof diagnostic.detail === "string" ? diagnostic.detail.trim() : "";
+  return summary !== null || detail.length > 0 || code.length > 0;
+}
+
 function isHookEventSubstantive(
   decision: string | null | undefined,
   hookData: HookEventData | null,
@@ -132,9 +158,8 @@ function isHookEventSubstantive(
   if (decision && SUBSTANTIVE_DECISIONS.has(decision)) return true;
   if (hookData?.block_reason) return true;
   if (hookData?.completion) return true;
-  if (hookData?.diagnostics?.length) return true;
+  if ((hookData?.diagnostics ?? []).some(isSubstantiveDiagnostic)) return true;
   if (hookData?.injections?.length) return true;
-  if (hookData?.matched_rule_keys?.length) return true;
   return false;
 }
 
@@ -338,9 +363,22 @@ function buildHookExpandData(hookData: HookEventData | null): {
     completionLine = `完成判定：${statusText}${modeText}${advancedText}${reasonText}`;
   }
 
-  const diagnostics = (hookData.diagnostics ?? [])
-    .filter((d) => d.summary)
-    .map((d) => ({ code: d.code, summary: d.summary!, detail: d.detail }));
+  const diagnostics: Array<{ code?: string; summary: string; detail?: string | null }> = [];
+  for (const diagnostic of hookData.diagnostics ?? []) {
+    if (!isSubstantiveDiagnostic(diagnostic)) continue;
+    const summary =
+      resolveDiagnosticSummary(diagnostic) ??
+      (typeof diagnostic.code === "string" && diagnostic.code.trim().length > 0
+        ? diagnostic.code
+        : null);
+    if (!summary) continue;
+    const detail = typeof diagnostic.detail === "string" ? diagnostic.detail.trim() : "";
+    diagnostics.push({
+      code: diagnostic.code,
+      summary,
+      detail: detail.length > 0 ? detail : null,
+    });
+  }
 
   return { completionLine, diagnostics };
 }

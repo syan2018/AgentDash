@@ -41,7 +41,36 @@ const SILENT_HOOK_DECISIONS = new Set<string>([
   "stop",              // 自然结束放行——turn 结束已由消息列表末尾表达
   "terminal_observed", // 纯技术终态记录，无用户感知价值
   "refresh_requested", // 内部快照刷新机制，用户无需感知
+  "allow",             // before_tool 放行——常规工具调用不需要在对话流占位
+  "effects_applied",   // after_tool 效果记录——高频且通常无用户可感知内容
+  "noop",              // 多个 trigger 的"无操作"决策——无实际效果
+  "notified",          // after_compact 通知——compaction 发生已由摘要消息表达
+  "baseline_initialized", // session_start baseline 初始化——一次性技术事件
+  "baseline_refreshed",   // session_start baseline 刷新——一次性技术事件
 ]);
+
+/**
+ * 这些 diagnostics 是快照绑定层的背景信息，默认不应把 hook_event 提升为“可见事件”。
+ * 例如 owner/session binding 已命中，这类信息更适合放在 runtime 面板而非会话流。
+ */
+const NON_SUBSTANTIVE_DIAGNOSTIC_CODES = new Set<string>([
+  "session_binding_found",
+  "active_workflow_resolved",
+]);
+
+function hasMeaningfulHookDiagnostic(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+
+  const code = typeof value.code === "string" ? value.code : "";
+  if (code && NON_SUBSTANTIVE_DIAGNOSTIC_CODES.has(code)) {
+    return false;
+  }
+
+  const summary = typeof value.summary === "string" ? value.summary.trim() : "";
+  const message = typeof value.message === "string" ? value.message.trim() : "";
+  const detail = typeof value.detail === "string" ? value.detail.trim() : "";
+  return summary.length > 0 || message.length > 0 || detail.length > 0 || code.length > 0;
+}
 
 /**
  * 从 event.code 中提取 hook decision。
@@ -78,8 +107,12 @@ function isSignificantHookEvent(event: {
   // 静默决策但携带重要附加信息 → 仍显示
   const data = event.data;
   if (isRecord(data)) {
-    if (data.block_reason) return true;
+    if (typeof data.block_reason === "string" && data.block_reason.trim().length > 0) return true;
     if (data.completion != null) return true;
+    if (Array.isArray(data.injections) && data.injections.length > 0) return true;
+    if (Array.isArray(data.diagnostics) && data.diagnostics.some(hasMeaningfulHookDiagnostic)) {
+      return true;
+    }
   }
 
   return false;
@@ -92,7 +125,6 @@ export function isRenderableSystemEventUpdate(update: SessionUpdate): boolean {
   if (!event) return false;
 
   if (typeof event.type === "string" && VISIBLE_SYSTEM_EVENT_TYPES.has(event.type)) {
-    // hook_event 做额外的 decision 级过滤
     if (event.type === "hook_event") {
       return isSignificantHookEvent(event);
     }

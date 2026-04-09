@@ -355,8 +355,18 @@ if (isTerminalToolCallStatus(incomingStatus)) {
 - `stop` — 自然结束放行，turn 结束已由消息列表末尾表达
 - `terminal_observed` — 纯技术终态记录，无用户感知价值
 - `refresh_requested` — 内部快照刷新机制，用户无需感知
+- `allow` — before_tool 放行，常规工具调用不需要在对话流占位
+- `effects_applied` — after_tool 效果记录，高频且通常无用户可感知内容
+- `noop` — 多个 trigger 的"无操作"决策，无实际效果
+- `notified` — after_compact 通知，compaction 发生已由摘要消息表达
+- `baseline_initialized` — session_start baseline 初始化，一次性技术事件
+- `baseline_refreshed` — session_start baseline 刷新，一次性技术事件
 
-**例外**：即使是静默决策，若携带 `block_reason` 或 `completion` 则仍显示。
+**例外**：即使是静默决策，若携带 `block_reason`、`completion`、非空 `injections`，或“有用户可读信息量”的 `diagnostics` 则仍显示。
+
+其中 diagnostics 的判定规则：
+- 仅有 `session_binding_found` / `active_workflow_resolved` 这类背景诊断，不应提升为会话流可见事件
+- 具备用户可读 `summary/message/detail` 且不属于上述背景码，才视为可见
 
 decision 通过解析 `event.code`（格式 `hook:{trigger}:{decision}`）获取。
 

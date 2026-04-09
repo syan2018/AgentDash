@@ -1,5 +1,4 @@
-import { buildApiPath } from "../api/origin";
-import { api, authenticatedFetch } from "../api/client";
+import { api, type ApiHttpError } from "../api/client";
 import { requireStringField, requireNumberField } from "../api/mappers";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type {
@@ -122,11 +121,9 @@ export async function fetchSessionEvents(
   const params = new URLSearchParams();
   params.set("after_seq", String(afterSeq));
   params.set("limit", String(limit));
-  const res = await authenticatedFetch(
-    `${buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/events`)}?${params.toString()}`,
+  const raw = await api.get<Record<string, unknown>>(
+    `/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`,
   );
-  if (!res.ok) throw new Error(`获取会话事件失败: HTTP ${res.status}`);
-  const raw = await res.json() as Record<string, unknown>;
   if (!Array.isArray(raw.events)) {
     throw new Error("会话事件响应缺少 events 数组");
   }
@@ -177,12 +174,13 @@ export interface SessionContextPayload {
 
 /** GET /sessions/{id}/context — 与旧版 task/story/project 分端点行为对齐（由后端按绑定解析） */
 export async function fetchSessionContext(sessionId: string): Promise<SessionContextPayload | null> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/context`));
-  if (res.status === 404) {
-    return null;
+  let raw: Record<string, unknown>;
+  try {
+    raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(sessionId)}/context`);
+  } catch (err) {
+    if ((err as ApiHttpError).status === 404) return null;
+    throw err;
   }
-  if (!res.ok) throw new Error(`获取会话上下文失败: HTTP ${res.status}`);
-  const raw = (await res.json()) as Record<string, unknown>;
   return {
     workspace_id: raw.workspace_id != null ? String(raw.workspace_id) : null,
     agent_binding: mapSessionContextAgentBinding(raw.agent_binding),
@@ -192,17 +190,17 @@ export async function fetchSessionContext(sessionId: string): Promise<SessionCon
 }
 
 export async function fetchSessionBindings(id: string): Promise<SessionBindingOwner[]> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/bindings`));
-  if (!res.ok) throw new Error(`获取会话绑定失败: HTTP ${res.status}`);
-  const raw = await res.json() as Record<string, unknown>[];
+  const raw = await api.get<Record<string, unknown>[]>(`/sessions/${encodeURIComponent(id)}/bindings`);
   return raw.map(mapSessionBindingOwner);
 }
 
 export async function fetchSessionHookRuntime(id: string): Promise<HookSessionRuntimeInfo | null> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/hook-runtime`));
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`获取 Hook Runtime 失败: HTTP ${res.status}`);
-  return res.json();
+  try {
+    return await api.get<HookSessionRuntimeInfo>(`/sessions/${encodeURIComponent(id)}/hook-runtime`);
+  } catch (err) {
+    if ((err as ApiHttpError).status === 404) return null;
+    throw err;
+  }
 }
 
 function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatus {
@@ -228,9 +226,7 @@ function mapSessionExecutionState(raw: Record<string, unknown>): SessionExecutio
 }
 
 export async function fetchSessionExecutionState(id: string): Promise<SessionExecutionState> {
-  const res = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(id)}/state`));
-  if (!res.ok) throw new Error(`获取会话运行状态失败: HTTP ${res.status}`);
-  const raw = await res.json() as Record<string, unknown>;
+  const raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/state`);
   return mapSessionExecutionState(raw);
 }
 
@@ -285,8 +281,6 @@ function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEnt
 }
 
 export async function fetchProjectSessions(projectId: string): Promise<ProjectSessionEntry[]> {
-  const res = await authenticatedFetch(buildApiPath(`/projects/${encodeURIComponent(projectId)}/sessions`));
-  if (!res.ok) throw new Error(`获取项目会话列表失败: HTTP ${res.status}`);
-  const raw = (await res.json()) as Record<string, unknown>[];
+  const raw = await api.get<Record<string, unknown>[]>(`/projects/${encodeURIComponent(projectId)}/sessions`);
   return raw.map(mapProjectSessionEntry);
 }

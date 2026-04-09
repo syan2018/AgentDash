@@ -95,7 +95,7 @@
 
 ## Acceptance Criteria
 
-- [ ] P0 清理项全部完成
-- [ ] P1 清理项全部完成
-- [ ] P2 至少完成超大文件拆分
-- [ ] 清理后 `pnpm run check` 全通过
+- [x] P0 清理项全部完成
+- [x] P1 清理项全部完成
+- [x] P2 至少完成超大文件拆分
+- [x] 清理后 `pnpm run check` 全通过

@@ -46,6 +46,7 @@ impl SessionHub {
                 subagent_type: None,
                 snapshot: Some(hook_session.snapshot()),
                 payload: payload.clone(),
+                token_stats: None,
             })
             .await
         {

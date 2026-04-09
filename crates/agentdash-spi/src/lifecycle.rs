@@ -3,6 +3,7 @@ pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
     BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult,
+    CompactionParams, CompactionResult, CompactionTriggerStats, EvaluateCompactionInput,
     DynAgentRuntimeDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
     ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
     TransformContextOutput, TurnControlDecision, now_millis,

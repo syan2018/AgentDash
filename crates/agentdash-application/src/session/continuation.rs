@@ -6,6 +6,7 @@ use agent_client_protocol::{
 };
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+    parse_agentdash_meta,
 };
 use agentdash_agent_types::{AgentMessage, ContentPart, StopReason, ToolCallInfo};
 use agentdash_spi::content_block_to_text;
@@ -15,130 +16,24 @@ use super::persistence::PersistedSessionEvent;
 // ─── Continuation transcript 构建 ─────────────────────────────
 
 #[derive(Debug, Clone)]
-struct ContinuationTranscriptEntry {
-    order: u64,
-    role: &'static str,
-    turn_id: Option<String>,
-    text: String,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ContinuationToolState {
-    order: u64,
-    turn_id: Option<String>,
-    title: Option<String>,
-    status: Option<String>,
-    raw_input: Option<String>,
-    raw_output: Option<String>,
-    content_preview: Option<String>,
+struct CompactionCheckpoint {
+    summary: String,
+    tokens_before: u64,
+    messages_compacted: u32,
+    timestamp_ms: Option<u64>,
 }
 
 pub(super) fn build_continuation_system_context_from_events(
     owner_context: Option<&str>,
     events: &[PersistedSessionEvent],
 ) -> Option<String> {
-    if events.is_empty() {
+    let projected_messages = build_restored_session_messages_from_events(events);
+    if events.is_empty() && projected_messages.is_empty() {
         return owner_context
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
     }
-
-    let mut transcript_entries: Vec<ContinuationTranscriptEntry> = Vec::new();
-    let mut message_index: HashMap<String, usize> = HashMap::new();
-    let mut tool_states: HashMap<String, ContinuationToolState> = HashMap::new();
-
-    for event in events {
-        match &event.notification.update {
-            SessionUpdate::UserMessageChunk(chunk) => {
-                if let Some(text) = content_block_to_transcript_text(&chunk.content) {
-                    merge_transcript_chunk(
-                        &mut transcript_entries,
-                        &mut message_index,
-                        message_key("user", event, chunk.message_id.as_deref()),
-                        event.event_seq,
-                        "用户",
-                        event.turn_id.clone(),
-                        &text,
-                    );
-                }
-            }
-            SessionUpdate::AgentMessageChunk(chunk) => {
-                if let Some(text) = content_block_to_transcript_text(&chunk.content) {
-                    merge_transcript_chunk(
-                        &mut transcript_entries,
-                        &mut message_index,
-                        message_key("assistant", event, chunk.message_id.as_deref()),
-                        event.event_seq,
-                        "助手",
-                        event.turn_id.clone(),
-                        &text,
-                    );
-                }
-            }
-            SessionUpdate::AgentThoughtChunk(chunk) => {
-                if let Some(text) = content_block_to_transcript_text(&chunk.content) {
-                    merge_transcript_chunk(
-                        &mut transcript_entries,
-                        &mut message_index,
-                        message_key("thought", event, chunk.message_id.as_deref()),
-                        event.event_seq,
-                        "助手思考",
-                        event.turn_id.clone(),
-                        &text,
-                    );
-                }
-            }
-            SessionUpdate::ToolCall(call) => {
-                tool_states.insert(
-                    call.tool_call_id.to_string(),
-                    ContinuationToolState {
-                        order: event.event_seq,
-                        turn_id: event.turn_id.clone(),
-                        title: Some(call.title.clone()),
-                        status: Some(format!("{:?}", call.status).to_ascii_lowercase()),
-                        raw_input: call.raw_input.as_ref().map(json_preview),
-                        raw_output: call.raw_output.as_ref().map(json_preview),
-                        content_preview: (!call.content.is_empty())
-                            .then(|| json_preview(&serde_json::json!(call.content))),
-                    },
-                );
-            }
-            SessionUpdate::ToolCallUpdate(update) => {
-                let tool_state = tool_states
-                    .entry(update.tool_call_id.to_string())
-                    .or_insert_with(|| ContinuationToolState {
-                        order: event.event_seq,
-                        turn_id: event.turn_id.clone(),
-                        ..ContinuationToolState::default()
-                    });
-                tool_state.order = tool_state.order.min(event.event_seq);
-                if tool_state.turn_id.is_none() {
-                    tool_state.turn_id = event.turn_id.clone();
-                }
-                if let Some(title) = update.fields.title.clone() {
-                    tool_state.title = Some(title);
-                }
-                if let Some(status) = update.fields.status {
-                    tool_state.status = Some(format!("{status:?}").to_ascii_lowercase());
-                }
-                if let Some(raw_input) = update.fields.raw_input.as_ref() {
-                    tool_state.raw_input = Some(json_preview(raw_input));
-                }
-                if let Some(raw_output) = update.fields.raw_output.as_ref() {
-                    tool_state.raw_output = Some(json_preview(raw_output));
-                }
-                if let Some(content) = update.fields.content.as_ref() {
-                    tool_state.content_preview = Some(json_preview(&serde_json::json!(content)));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    transcript_entries.sort_by_key(|entry| entry.order);
-    let mut ordered_tool_states = tool_states.into_iter().collect::<Vec<_>>();
-    ordered_tool_states.sort_by_key(|(_, state)| state.order);
 
     let mut sections = Vec::new();
     if let Some(owner) = owner_context
@@ -154,41 +49,84 @@ pub(super) fn build_continuation_system_context_from_events(
             .to_string(),
     );
 
-    if !transcript_entries.is_empty() {
+    if !projected_messages.is_empty() {
         history_lines.push(String::new());
         history_lines.push("### Transcript".to_string());
-        for entry in transcript_entries {
-            let turn_line = entry
-                .turn_id
-                .as_deref()
-                .map(|turn_id| format!(" ({turn_id})"))
-                .unwrap_or_default();
-            history_lines.push(format!("#### {}{}", entry.role, turn_line));
-            history_lines.push(entry.text);
+        for message in projected_messages {
+            match message {
+                AgentMessage::User { content, .. } => {
+                    let text = content
+                        .iter()
+                        .filter_map(ContentPart::extract_text)
+                        .collect::<Vec<_>>()
+                        .join("");
+                    history_lines.push("#### 用户".to_string());
+                    history_lines.push(text);
+                }
+                AgentMessage::Assistant {
+                    content,
+                    tool_calls,
+                    ..
+                } => {
+                    let mut text = content
+                        .iter()
+                        .filter_map(ContentPart::extract_text)
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if !tool_calls.is_empty() {
+                        let tool_lines = tool_calls
+                            .iter()
+                            .map(|tool_call| {
+                                format!(
+                                    "- {}({})",
+                                    tool_call.name,
+                                    json_preview(&tool_call.arguments)
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !text.is_empty() {
+                            text.push_str("\n\n");
+                        }
+                        text.push_str("工具调用：\n");
+                        text.push_str(&tool_lines);
+                    }
+                    history_lines.push("#### 助手".to_string());
+                    history_lines.push(text);
+                }
+                AgentMessage::ToolResult {
+                    tool_name,
+                    content,
+                    details,
+                    is_error,
+                    ..
+                } => {
+                    let mut text = content
+                        .iter()
+                        .filter_map(ContentPart::extract_text)
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if text.is_empty()
+                        && let Some(details) = details.as_ref()
+                    {
+                        text = json_preview(details);
+                    }
+                    history_lines.push(format!(
+                        "#### 工具结果 ({})",
+                        tool_name.as_deref().unwrap_or("tool_result")
+                    ));
+                    if is_error {
+                        history_lines.push(format!("[error]\n{text}"));
+                    } else {
+                        history_lines.push(text);
+                    }
+                }
+                AgentMessage::CompactionSummary { summary, .. } => {
+                    history_lines.push("#### 历史摘要".to_string());
+                    history_lines.push(summary);
+                }
+            }
             history_lines.push(String::new());
-        }
-    }
-
-    if !ordered_tool_states.is_empty() {
-        history_lines.push("### Tool State".to_string());
-        for (tool_call_id, state) in ordered_tool_states {
-            let mut lines = vec![format!(
-                "- tool_call_id: {tool_call_id}\n  title: {}\n  status: {}",
-                state.title.as_deref().unwrap_or("-"),
-                state.status.as_deref().unwrap_or("-"),
-            )];
-            if let Some(turn_id) = state.turn_id.as_deref() {
-                lines.push(format!("  turn_id: {turn_id}"));
-            }
-            if let Some(raw_input) = state.raw_input.as_deref() {
-                lines.push(format!("  raw_input: {raw_input}"));
-            }
-            if let Some(raw_output) = state.raw_output.as_deref() {
-                lines.push(format!("  raw_output: {raw_output}"));
-            } else if let Some(content_preview) = state.content_preview.as_deref() {
-                lines.push(format!("  content: {content_preview}"));
-            }
-            history_lines.push(lines.join("\n"));
         }
     }
 
@@ -393,10 +331,11 @@ pub(super) fn build_restored_session_messages_from_events(
     }
 
     envelopes.sort_by_key(restored_message_order);
-    envelopes
+    let raw_messages = envelopes
         .into_iter()
         .map(restored_envelope_to_message)
-        .collect()
+        .collect::<Vec<_>>();
+    apply_compaction_checkpoint(raw_messages, latest_compaction_checkpoint(events))
 }
 
 // ─── Helper: companion notification ─────────────────────────
@@ -622,53 +561,58 @@ fn restored_envelope_to_message(envelope: RestoredMessageEnvelope) -> AgentMessa
     }
 }
 
-fn message_key(role: &str, event: &PersistedSessionEvent, message_id: Option<&str>) -> String {
-    if let Some(message_id) = message_id.map(str::trim).filter(|value| !value.is_empty()) {
-        return format!("{role}:msg:{message_id}");
-    }
-    if let (Some(turn_id), Some(entry_index)) = (event.turn_id.as_deref(), event.entry_index) {
-        return format!("{role}:turn:{turn_id}:{entry_index}");
-    }
-    format!("{role}:event:{}", event.event_seq)
+fn latest_compaction_checkpoint(events: &[PersistedSessionEvent]) -> Option<CompactionCheckpoint> {
+    events.iter().rev().find_map(extract_compaction_checkpoint)
 }
 
-fn merge_transcript_chunk(
-    entries: &mut Vec<ContinuationTranscriptEntry>,
-    index: &mut HashMap<String, usize>,
-    key: String,
-    order: u64,
-    role: &'static str,
-    turn_id: Option<String>,
-    incoming_text: &str,
-) {
-    if let Some(existing_index) = index.get(&key).copied() {
-        if let Some(entry) = entries.get_mut(existing_index) {
-            entry.text = merge_continuation_text(&entry.text, incoming_text);
-            return;
-        }
+fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<CompactionCheckpoint> {
+    let SessionUpdate::SessionInfoUpdate(info) = &event.notification.update else {
+        return None;
+    };
+    let parsed = parse_agentdash_meta(info.meta.as_ref()?)?;
+    let agent_event = parsed.event?;
+    if agent_event.r#type != "context_compacted" {
+        return None;
     }
-    index.insert(key, entries.len());
-    entries.push(ContinuationTranscriptEntry {
-        order,
-        role,
-        turn_id,
-        text: incoming_text.to_string(),
-    });
+    let data = agent_event.data?;
+    Some(CompactionCheckpoint {
+        summary: data.get("summary")?.as_str()?.to_string(),
+        tokens_before: data
+            .get("tokens_before")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+        messages_compacted: data
+            .get("messages_compacted")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or_default(),
+        timestamp_ms: data
+            .get("timestamp_ms")
+            .and_then(serde_json::Value::as_u64),
+    })
 }
 
-fn merge_continuation_text(previous: &str, incoming: &str) -> String {
-    if incoming.is_empty() || incoming == previous {
-        return previous.to_string();
-    }
-    if previous.is_empty() || incoming.starts_with(previous) {
-        return incoming.to_string();
+fn apply_compaction_checkpoint(
+    raw_messages: Vec<AgentMessage>,
+    checkpoint: Option<CompactionCheckpoint>,
+) -> Vec<AgentMessage> {
+    let Some(checkpoint) = checkpoint else {
+        return raw_messages;
+    };
+    if checkpoint.summary.trim().is_empty() || checkpoint.messages_compacted == 0 {
+        return raw_messages;
     }
 
-    format!("{previous}{incoming}")
-}
-
-fn content_block_to_transcript_text(block: &ContentBlock) -> Option<String> {
-    content_block_to_rendered_text(block)
+    let cut = usize::min(checkpoint.messages_compacted as usize, raw_messages.len());
+    let mut tail = raw_messages.into_iter().skip(cut).collect::<Vec<_>>();
+    let mut projected = vec![AgentMessage::CompactionSummary {
+        summary: checkpoint.summary,
+        tokens_before: checkpoint.tokens_before,
+        messages_compacted: checkpoint.messages_compacted,
+        timestamp: checkpoint.timestamp_ms,
+    }];
+    projected.append(&mut tail);
+    projected
 }
 
 fn content_block_to_message_part(block: &ContentBlock) -> Option<ContentPart> {

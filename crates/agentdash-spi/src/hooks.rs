@@ -260,6 +260,11 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
         turn_id: Option<String>,
     ) -> Option<HookPendingAction>;
 
+    /// 更新实时 token 统计。
+    fn update_token_stats(&self, stats: ContextTokenStats);
+    /// 读取当前 token 统计。
+    fn token_stats(&self) -> ContextTokenStats;
+
     /// 订阅实时 trace 事件流。返回 None 表示此实现不支持 trace 广播。
     fn subscribe_traces(&self) -> Option<broadcast::Receiver<HookTraceEntry>> {
         None
@@ -299,6 +304,8 @@ pub enum HookTrigger {
     BeforeSubagentDispatch,
     AfterSubagentDispatch,
     SubagentResult,
+    BeforeCompact,
+    AfterCompact,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -318,6 +325,9 @@ pub struct HookEvaluationQuery {
     pub snapshot: Option<SessionHookSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
+    /// 实时 token 统计（由 runtime 自动注入）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_stats: Option<ContextTokenStats>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -359,6 +369,9 @@ pub struct HookResolution {
     /// 载荷由 kind 消费方定义，SPI 层不对 payload 做类型约束。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<HookEffect>,
+    /// 压缩决策。由 BeforeCompact hook 设置。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<HookCompactionDecision>,
 }
 
 /// Hook 评估产出的通用副作用声明。
@@ -376,6 +389,40 @@ pub struct HookEffect {
     pub kind: String,
     #[serde(default)]
     pub payload: serde_json::Value,
+}
+
+/// Agent loop 的实时 token 统计。
+/// 由 HookSessionRuntime 维护，自动注入到每次 hook 评估的 query 中。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextTokenStats {
+    /// 最近一次 LLM 调用的 input token 数（来自 usage data）
+    #[serde(default)]
+    pub last_input_tokens: u64,
+    /// 模型 context window 上限
+    #[serde(default)]
+    pub context_window: u64,
+}
+
+/// Hook 层的压缩决策
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookCompactionDecision {
+    /// 取消压缩
+    #[serde(default)]
+    pub cancel: bool,
+    /// 覆盖 reserve_tokens 参数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_tokens: Option<u64>,
+    /// 覆盖 keep_last_n 参数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_last_n: Option<u32>,
+    /// 提供自定义摘要（跳过 LLM 调用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_summary: Option<String>,
+    /// 覆盖默认摘要 prompt
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

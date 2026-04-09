@@ -220,6 +220,7 @@ pub struct WorkflowCompletionSpec {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowHookTrigger {
+    UserPromptSubmit,
     BeforeTool,
     AfterTool,
     AfterTurn,
@@ -228,6 +229,8 @@ pub enum WorkflowHookTrigger {
     BeforeSubagentDispatch,
     AfterSubagentDispatch,
     SubagentResult,
+    BeforeCompact,
+    AfterCompact,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

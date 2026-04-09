@@ -116,6 +116,27 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             source: PresetSource::Builtin,
         },
         HookRulePreset {
+            key: "context_compaction_trigger",
+            trigger: WorkflowHookTrigger::BeforeCompact,
+            label: "上下文压缩触发",
+            description: "当 token 使用超过阈值时自动触发上下文压缩。可通过 params 调整 reserve_tokens 和 keep_last_n",
+            param_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "reserve_tokens": {
+                        "type": "integer",
+                        "description": "预留 token 数（默认 16384）"
+                    },
+                    "keep_last_n": {
+                        "type": "integer",
+                        "description": "保留最近 N 条消息不压缩（默认 20）"
+                    }
+                }
+            })),
+            script: include_str!("../../scripts/hook-presets/context_compaction_trigger.rhai"),
+            source: PresetSource::Builtin,
+        },
+        HookRulePreset {
             key: "task_session_terminal",
             trigger: WorkflowHookTrigger::SessionTerminal,
             label: "Task 终态状态转换",
@@ -138,6 +159,7 @@ pub fn builtin_preset_scripts() -> Vec<(&'static str, &'static str)> {
 
 pub fn domain_trigger_to_spi(trigger: WorkflowHookTrigger) -> HookTrigger {
     match trigger {
+        WorkflowHookTrigger::UserPromptSubmit => HookTrigger::UserPromptSubmit,
         WorkflowHookTrigger::BeforeTool => HookTrigger::BeforeTool,
         WorkflowHookTrigger::AfterTool => HookTrigger::AfterTool,
         WorkflowHookTrigger::AfterTurn => HookTrigger::AfterTurn,
@@ -146,5 +168,7 @@ pub fn domain_trigger_to_spi(trigger: WorkflowHookTrigger) -> HookTrigger {
         WorkflowHookTrigger::BeforeSubagentDispatch => HookTrigger::BeforeSubagentDispatch,
         WorkflowHookTrigger::AfterSubagentDispatch => HookTrigger::AfterSubagentDispatch,
         WorkflowHookTrigger::SubagentResult => HookTrigger::SubagentResult,
+        WorkflowHookTrigger::BeforeCompact => HookTrigger::BeforeCompact,
+        WorkflowHookTrigger::AfterCompact => HookTrigger::AfterCompact,
     }
 }

@@ -608,10 +608,13 @@ mod tests {
     use crate::session::MemorySessionPersistence;
     use crate::session::local_workspace_address_space;
     use agent_client_protocol::{
-        ContentBlock, ContentChunk, SessionId, TextContent, ToolCall, ToolCallId, ToolCallStatus,
-        ToolCallUpdate, ToolCallUpdateFields,
+        ContentBlock, ContentChunk, SessionId, SessionInfoUpdate, SessionNotification,
+        SessionUpdate, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
+        ToolCallUpdateFields,
     };
-    use agentdash_acp_meta::{AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta};
+    use agentdash_acp_meta::{
+        AgentDashEventV1, AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta,
+    };
     use agentdash_spi::PromptPayload;
     use agentdash_spi::StopReason;
     use agentdash_spi::hooks::HookTrigger;
@@ -676,6 +679,31 @@ mod tests {
                 .trace(Some(trace)),
         )
         .expect("test meta should build")
+    }
+
+    fn test_event_meta(
+        source: &AgentDashSourceV1,
+        turn_id: &str,
+        entry_index: u32,
+        event_type: &str,
+        data: serde_json::Value,
+    ) -> agent_client_protocol::Meta {
+        let mut trace = AgentDashTraceV1::new();
+        trace.turn_id = Some(turn_id.to_string());
+        trace.entry_index = Some(entry_index);
+
+        let mut event = AgentDashEventV1::new(event_type);
+        event.severity = Some("info".to_string());
+        event.data = Some(data);
+
+        merge_agentdash_meta(
+            None,
+            &AgentDashMetaV1::new()
+                .source(Some(source.clone()))
+                .trace(Some(trace))
+                .event(Some(event)),
+        )
+        .expect("test event meta should build")
     }
 
     #[derive(Default)]
@@ -1336,6 +1364,150 @@ mod tests {
             }
             other => panic!("unexpected tool result: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn build_restored_session_messages_applies_latest_compaction_checkpoint() {
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            Some(local_workspace_address_space(&base.path().to_path_buf())),
+            Arc::new(SessionStartAwareConnector::default()),
+            None,
+            persistence,
+        );
+        let session = hub.create_session("test").await.expect("create session");
+        let source = AgentDashSourceV1::new("test", "unit");
+
+        for (turn_id, entry_index, text) in [
+            ("t-1", 0_u32, "历史用户消息 1"),
+            ("t-2", 0_u32, "历史用户消息 2"),
+            ("t-3", 0_u32, "最近用户消息"),
+        ] {
+            hub.inject_notification(
+                &session.id,
+                SessionNotification::new(
+                    SessionId::new(session.id.clone()),
+                    SessionUpdate::UserMessageChunk(
+                        ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                            .meta(Some(test_meta(&source, turn_id, entry_index))),
+                    ),
+                ),
+            )
+            .await
+            .expect("inject user notification");
+        }
+
+        let compaction_meta = test_event_meta(
+            &source,
+            "t-3",
+            0,
+            "context_compacted",
+            serde_json::json!({
+                "summary": "## 历史摘要\n- 已完成旧分析",
+                "tokens_before": 42000,
+                "messages_compacted": 2,
+                "newly_compacted_messages": 2,
+                "timestamp_ms": 1710000000000_u64,
+            }),
+        );
+        hub.inject_notification(
+            &session.id,
+            SessionNotification::new(
+                SessionId::new(session.id.clone()),
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(compaction_meta)),
+            ),
+        )
+        .await
+        .expect("inject compaction checkpoint");
+
+        let restored = hub
+            .build_restored_session_messages(&session.id)
+            .await
+            .expect("messages should build");
+
+        assert_eq!(restored.len(), 2);
+        match &restored[0] {
+            agentdash_spi::AgentMessage::CompactionSummary {
+                summary,
+                tokens_before,
+                messages_compacted,
+                ..
+            } => {
+                assert!(summary.contains("历史摘要"));
+                assert_eq!(*tokens_before, 42_000);
+                assert_eq!(*messages_compacted, 2);
+            }
+            other => panic!("unexpected first message: {other:?}"),
+        }
+        assert_eq!(restored[1].first_text(), Some("最近用户消息"));
+    }
+
+    #[tokio::test]
+    async fn build_continuation_system_context_uses_compacted_projection() {
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            Some(local_workspace_address_space(&base.path().to_path_buf())),
+            Arc::new(SessionStartAwareConnector::default()),
+            None,
+            persistence,
+        );
+        let session = hub.create_session("test").await.expect("create session");
+        let source = AgentDashSourceV1::new("test", "unit");
+
+        for (turn_id, entry_index, text) in [
+            ("t-1", 0_u32, "第一段旧历史"),
+            ("t-2", 0_u32, "第二段旧历史"),
+            ("t-3", 0_u32, "保留的新历史"),
+        ] {
+            hub.inject_notification(
+                &session.id,
+                SessionNotification::new(
+                    SessionId::new(session.id.clone()),
+                    SessionUpdate::UserMessageChunk(
+                        ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                            .meta(Some(test_meta(&source, turn_id, entry_index))),
+                    ),
+                ),
+            )
+            .await
+            .expect("inject user notification");
+        }
+
+        let compaction_meta = test_event_meta(
+            &source,
+            "t-3",
+            0,
+            "context_compacted",
+            serde_json::json!({
+                "summary": "压缩后的历史摘要",
+                "tokens_before": 38000,
+                "messages_compacted": 2,
+                "newly_compacted_messages": 2,
+                "timestamp_ms": 1710000000000_u64,
+            }),
+        );
+        hub.inject_notification(
+            &session.id,
+            SessionNotification::new(
+                SessionId::new(session.id.clone()),
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(compaction_meta)),
+            ),
+        )
+        .await
+        .expect("inject compaction checkpoint");
+
+        let context = hub
+            .build_continuation_system_context(&session.id, None)
+            .await
+            .expect("context should build")
+            .expect("continuation context should exist");
+
+        assert!(context.contains("压缩后的历史摘要"));
+        assert!(context.contains("保留的新历史"));
+        assert!(!context.contains("第一段旧历史"));
+        assert!(!context.contains("第二段旧历史"));
     }
 
     #[tokio::test]

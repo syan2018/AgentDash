@@ -4,8 +4,8 @@ use std::sync::{
 };
 
 use agentdash_spi::hooks::{
-    ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookPendingAction,
-    HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
+    ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery,
+    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
     HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry, SessionHookRefreshQuery,
     SessionHookSnapshot, SessionSnapshotMetadata,
 };
@@ -21,6 +21,7 @@ pub struct HookSessionRuntime {
     diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
     trace: RwLock<Vec<HookTraceEntry>>,
     pending_actions: RwLock<Vec<HookPendingAction>>,
+    token_stats: RwLock<ContextTokenStats>,
     revision: AtomicU64,
     trace_sequence: AtomicU64,
     trace_broadcast: broadcast::Sender<HookTraceEntry>,
@@ -53,6 +54,7 @@ impl HookSessionRuntime {
             diagnostics: RwLock::new(diagnostics),
             trace: RwLock::new(Vec::new()),
             pending_actions: RwLock::new(Vec::new()),
+            token_stats: RwLock::new(ContextTokenStats::default()),
             revision: AtomicU64::new(1),
             trace_sequence: AtomicU64::new(0),
             trace_broadcast,
@@ -166,7 +168,25 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
         Ok(snapshot)
     }
 
+    fn update_token_stats(&self, stats: ContextTokenStats) {
+        *self
+            .token_stats
+            .write()
+            .expect("token stats write lock poisoned") = stats;
+    }
+
+    fn token_stats(&self) -> ContextTokenStats {
+        self.token_stats
+            .read()
+            .expect("token stats read lock poisoned")
+            .clone()
+    }
+
     async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
+        // 注入 runtime 状态到 query
+        let mut query = query;
+        query.token_stats = Some(self.token_stats());
+
         let mut resolution = self.provider.evaluate_hook(query).await?;
 
         if let Some(advance_request) = resolution.pending_advance.take() {

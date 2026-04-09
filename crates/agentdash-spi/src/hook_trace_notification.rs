@@ -106,6 +106,8 @@ pub fn hook_trigger_key(trigger: &HookTrigger) -> &'static str {
         HookTrigger::BeforeSubagentDispatch => "before_subagent_dispatch",
         HookTrigger::AfterSubagentDispatch => "after_subagent_dispatch",
         HookTrigger::SubagentResult => "subagent_result",
+        HookTrigger::BeforeCompact => "before_compact",
+        HookTrigger::AfterCompact => "after_compact",
     }
 }
 

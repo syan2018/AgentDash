@@ -24,8 +24,9 @@ use crate::types::{
     AfterToolCallContext, AfterToolCallInput, AfterToolCallResult, AfterTurnInput, AgentContext,
     AgentError, AgentEvent, AgentMessage, AgentToolResult, AssistantStreamEvent, BeforeStopInput,
     BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, ContentPart,
-    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
-    ToolCallDecision, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
+    DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, StopDecision,
+    ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolExecutionMode,
+    ToolUpdateCallback, TransformContextInput,
 };
 
 const DEFAULT_MAX_TURNS: usize = 25;
@@ -519,6 +520,35 @@ async fn stream_assistant_response(
     emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<AgentMessage, AgentError> {
+    if let Some(delegate) = config.runtime_delegate.as_ref()
+        && let Some(params) = delegate
+            .evaluate_compaction(
+                EvaluateCompactionInput {
+                    context: context.clone(),
+                },
+                cancel.clone(),
+            )
+            .await
+            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?
+        && let Some(result) =
+            crate::compaction::execute_compaction(&context.messages, &params, bridge, cancel)
+                .await?
+    {
+        context.messages = result.messages.clone();
+        emit_event(
+            emit,
+            AgentEvent::ContextCompacted {
+                messages: result.messages.clone(),
+                newly_compacted_messages: result.newly_compacted_messages,
+            },
+        )
+        .await;
+        delegate
+            .after_compaction(result, cancel.clone())
+            .await
+            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+    }
+
     // delegate / transform_context 可在发送前裁剪或注入消息
     let messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
         delegate

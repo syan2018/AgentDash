@@ -7,7 +7,8 @@ pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError, AgentTool,
     AgentToolError, AgentToolResult, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
-    BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool, StopDecision,
+    BeforeToolCallResult, CompactionParams, CompactionResult, CompactionTriggerStats, ContentPart,
+    DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, StopDecision,
     StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision,
     ToolCallInfo, ToolDefinition, ToolUpdateCallback, TransformContextInput,
     TransformContextOutput, TurnControlDecision, now_millis,
@@ -49,6 +50,10 @@ pub enum AgentEvent {
     },
     MessageEnd {
         message: AgentMessage,
+    },
+    ContextCompacted {
+        messages: Vec<AgentMessage>,
+        newly_compacted_messages: u32,
     },
     ToolExecutionStart {
         tool_call_id: String,

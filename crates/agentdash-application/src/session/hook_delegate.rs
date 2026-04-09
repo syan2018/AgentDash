@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use agentdash_spi::lifecycle::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
-    AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, DynAgentRuntimeDelegate, StopDecision,
-    ToolCallDecision, TransformContextInput, TransformContextOutput, TurnControlDecision,
+    AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, CompactionParams, CompactionResult,
+    CompactionTriggerStats, DynAgentRuntimeDelegate, EvaluateCompactionInput, StopDecision,
+    StopReason, ToolCallDecision, TransformContextInput, TransformContextOutput,
+    TurnControlDecision,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -11,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use super::hook_messages as msg;
 
 use agentdash_spi::hooks::{
-    HookDiagnosticEntry, HookEvaluationQuery, HookInjection, HookPendingAction,
+    ContextTokenStats, HookDiagnosticEntry, HookEvaluationQuery, HookInjection, HookPendingAction,
     HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SharedHookSessionRuntime,
 };
@@ -58,6 +60,7 @@ impl HookRuntimeDelegate {
                 subagent_type,
                 snapshot: Some(snapshot.clone()),
                 payload,
+                token_stats: None,
             })
             .await
             .map_err(map_runtime_error)?;
@@ -78,6 +81,36 @@ impl HookRuntimeDelegate {
             resolution,
             runtime: self.hook_session.runtime_snapshot(),
         })
+    }
+
+    /// 从消息中提取最新的 LLM usage 并更新 session runtime 的 token stats
+    fn update_token_stats_from_messages(&self, messages: &[AgentMessage]) {
+        let last_usage = messages.iter().rev().find_map(|m| match m {
+            AgentMessage::Assistant {
+                usage: Some(usage),
+                stop_reason,
+                ..
+            } if !matches!(
+                stop_reason,
+                Some(StopReason::Error | StopReason::Aborted)
+            ) => Some(usage.clone()),
+            _ => None,
+        });
+
+        if let Some(usage) = last_usage {
+            let snapshot = self.hook_session.snapshot();
+            let context_window = snapshot
+                .metadata
+                .as_ref()
+                .and_then(|m| m.extra.get("model_context_window"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            self.hook_session.update_token_stats(ContextTokenStats {
+                last_input_tokens: usage.input,
+                context_window,
+            });
+        }
     }
 
     fn record_trace(
@@ -111,11 +144,147 @@ impl HookRuntimeDelegate {
 
 #[async_trait]
 impl AgentRuntimeDelegate for HookRuntimeDelegate {
+    async fn evaluate_compaction(
+        &self,
+        input: EvaluateCompactionInput,
+        _cancel: CancellationToken,
+    ) -> Result<Option<CompactionParams>, AgentRuntimeError> {
+        self.update_token_stats_from_messages(&input.context.messages);
+
+        let last_usage = self.hook_session.token_stats();
+        let default_keep_last_n = 20_u32;
+        let default_reserve_tokens = 16_384_u64;
+        let evaluated = self
+            .evaluate(
+                HookTrigger::BeforeCompact,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "message_count": input.context.messages.len(),
+                    "has_existing_summary": input.context.messages.iter().any(|m| matches!(m, AgentMessage::CompactionSummary { .. })),
+                    "default_decision": {
+                        "reserve_tokens": default_reserve_tokens,
+                        "keep_last_n": default_keep_last_n,
+                    },
+                })),
+            )
+            .await?;
+
+        let snapshot = self.hook_session.snapshot();
+        let context_window = snapshot
+            .metadata
+            .as_ref()
+            .and_then(|m| m.extra.get("model_context_window"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(last_usage.context_window);
+
+        let decision = match evaluated.resolution.compaction.as_ref() {
+            Some(compaction) if compaction.cancel => {
+                self.record_trace(
+                    HookTrigger::BeforeCompact,
+                    "cancel",
+                    None,
+                    None,
+                    None,
+                    &evaluated,
+                );
+                None
+            }
+            Some(compaction) => {
+                self.record_trace(
+                    HookTrigger::BeforeCompact,
+                    "compact",
+                    None,
+                    None,
+                    None,
+                    &evaluated,
+                );
+                Some(CompactionParams {
+                    keep_last_n: compaction.keep_last_n.unwrap_or(default_keep_last_n),
+                    reserve_tokens: compaction
+                        .reserve_tokens
+                        .unwrap_or(default_reserve_tokens),
+                    custom_summary: compaction.custom_summary.clone(),
+                    custom_prompt: compaction.custom_prompt.clone(),
+                    trigger_stats: CompactionTriggerStats {
+                        input_tokens: last_usage.last_input_tokens,
+                        context_window,
+                        reserve_tokens: compaction
+                            .reserve_tokens
+                            .unwrap_or(default_reserve_tokens),
+                    },
+                })
+            }
+            None => {
+                self.record_trace(
+                    HookTrigger::BeforeCompact,
+                    "noop",
+                    None,
+                    None,
+                    None,
+                    &evaluated,
+                );
+                None
+            }
+        };
+
+        Ok(decision)
+    }
+
+    async fn after_compaction(
+        &self,
+        result: CompactionResult,
+        _cancel: CancellationToken,
+    ) -> Result<(), AgentRuntimeError> {
+        let summary_length = match &result.summary_message {
+            AgentMessage::CompactionSummary { summary, .. } => summary.chars().count(),
+            _ => 0,
+        };
+        let total_compacted_messages = match &result.summary_message {
+            AgentMessage::CompactionSummary {
+                messages_compacted, ..
+            } => *messages_compacted,
+            _ => 0,
+        };
+
+        let evaluated = self
+            .evaluate(
+                HookTrigger::AfterCompact,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "tokens_before": result.trigger_stats.input_tokens,
+                    "messages_compacted": result.newly_compacted_messages,
+                    "messages_compacted_total": total_compacted_messages,
+                    "summary_length": summary_length,
+                    "used_custom_summary": result.used_custom_summary,
+                })),
+            )
+            .await?;
+
+        self.record_trace(
+            HookTrigger::AfterCompact,
+            "notified",
+            None,
+            None,
+            None,
+            &evaluated,
+        );
+
+        Ok(())
+    }
+
     async fn transform_context(
         &self,
         input: TransformContextInput,
         _cancel: CancellationToken,
     ) -> Result<TransformContextOutput, AgentRuntimeError> {
+        // 1. 提取最新 token 使用数据并更新 session runtime
+        self.update_token_stats_from_messages(&input.context.messages);
+
+        // 2. 评估 UserPromptSubmit hook
         let evaluated = self
             .evaluate(
                 HookTrigger::UserPromptSubmit,
@@ -127,6 +296,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
+
         let pending_messages = collect_pending_hook_messages(
             self.hook_session.as_ref(),
             &evaluated.snapshot,
@@ -144,6 +314,8 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             None,
             &evaluated,
         );
+
+        // 3. 构建消息列表
         let mut messages = input.context.messages;
         if let Some(message) = build_hook_injection_message(
             &evaluated.snapshot,
@@ -154,6 +326,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         }
         messages.extend(pending_messages.steering);
         messages.extend(pending_messages.follow_up);
+
         Ok(TransformContextOutput { messages })
     }
 
@@ -433,6 +606,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             allow_empty: allow_empty_continue,
         })
     }
+
 }
 
 struct EvaluatedResolution {
@@ -658,18 +832,22 @@ fn pending_action_status_label(status: HookPendingActionStatus) -> &'static str 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::Mutex;
 
-    use agentdash_spi::lifecycle::{AgentContext, StopDecision};
+    use agentdash_spi::lifecycle::{
+        AgentContext, AgentMessage, CompactionResult, StopDecision, StopReason, TokenUsage,
+    };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
     use super::HookRuntimeDelegate;
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
-        ExecutionHookProvider, HookCompletionStatus, HookError, HookEvaluationQuery, HookInjection,
-        HookPendingAction, HookPendingActionResolutionKind, HookResolution,
-        HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-        SessionHookSnapshot, SessionHookSnapshotQuery,
+        ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
+        HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
+        HookPendingActionResolutionKind, HookResolution, HookSessionRuntimeAccess, HookTrigger,
+        NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+        SessionHookSnapshotQuery, SessionSnapshotMetadata,
     };
 
     #[derive(Clone)]
@@ -677,6 +855,12 @@ mod tests {
 
     #[derive(Clone)]
     struct CompletionBlockedProvider;
+
+    #[derive(Clone, Default)]
+    struct RecordingCompactionProvider {
+        triggers: Arc<Mutex<Vec<HookTrigger>>>,
+        after_payloads: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
 
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
@@ -754,6 +938,75 @@ mod tests {
                     },
                 ),
                 ..HookResolution::default()
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ExecutionHookProvider for RecordingCompactionProvider {
+        async fn load_session_snapshot(
+            &self,
+            query: SessionHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                metadata: Some(SessionSnapshotMetadata {
+                    active_workflow: None,
+                    turn_id: None,
+                    permission_policy: None,
+                    working_directory: None,
+                    connector_id: None,
+                    executor: None,
+                    extra: serde_json::Map::from_iter([(
+                        "model_context_window".to_string(),
+                        serde_json::json!(64_000_u64),
+                    )]),
+                }),
+                ..SessionHookSnapshot::default()
+            })
+        }
+
+        async fn refresh_session_snapshot(
+            &self,
+            query: SessionHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: query.session_id,
+                turn_id: query.turn_id,
+            })
+            .await
+        }
+
+        async fn evaluate_hook(
+            &self,
+            query: HookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            self.triggers
+                .lock()
+                .expect("recording provider lock poisoned")
+                .push(query.trigger.clone());
+
+            Ok(match query.trigger {
+                HookTrigger::BeforeCompact => HookResolution {
+                    compaction: Some(HookCompactionDecision {
+                        cancel: false,
+                        reserve_tokens: Some(8_000),
+                        keep_last_n: Some(12),
+                        custom_summary: None,
+                        custom_prompt: Some("自定义摘要 prompt".to_string()),
+                    }),
+                    ..HookResolution::default()
+                },
+                HookTrigger::AfterCompact => {
+                    if let Some(payload) = query.payload.clone() {
+                        self.after_payloads
+                            .lock()
+                            .expect("after payload lock poisoned")
+                            .push(payload);
+                    }
+                    HookResolution::default()
+                }
+                _ => HookResolution::default(),
             })
         }
     }
@@ -888,6 +1141,132 @@ mod tests {
             }
             StopDecision::Stop => panic!("completion 未满足时不应允许 stop"),
         }
+    }
+
+    #[tokio::test]
+    async fn evaluate_compaction_uses_before_compact_hook_decision() {
+        let provider = RecordingCompactionProvider::default();
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(provider.clone()),
+            provider
+                .load_session_snapshot(SessionHookSnapshotQuery {
+                    session_id: "sess-hook".to_string(),
+                    turn_id: None,
+                })
+                .await
+                .expect("snapshot should load"),
+        ));
+        hook_session.update_token_stats(ContextTokenStats {
+            last_input_tokens: 50_000,
+            context_window: 64_000,
+        });
+        let delegate = HookRuntimeDelegate::new(hook_session);
+
+        let decision = delegate
+            .evaluate_compaction(
+                agentdash_spi::EvaluateCompactionInput {
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![
+                            AgentMessage::user("旧消息"),
+                            AgentMessage::Assistant {
+                                content: vec![agentdash_spi::ContentPart::text("旧回复")],
+                                tool_calls: vec![],
+                                stop_reason: Some(StopReason::Stop),
+                                error_message: None,
+                                usage: Some(TokenUsage {
+                                    input: 50_000,
+                                    output: 1_200,
+                                }),
+                                timestamp: None,
+                            },
+                        ],
+                        tools: vec![],
+                    },
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("evaluate_compaction should succeed")
+            .expect("before_compact should request compaction");
+
+        assert_eq!(decision.keep_last_n, 12);
+        assert_eq!(decision.reserve_tokens, 8_000);
+        assert_eq!(decision.custom_prompt.as_deref(), Some("自定义摘要 prompt"));
+        assert_eq!(decision.trigger_stats.input_tokens, 50_000);
+        assert_eq!(decision.trigger_stats.context_window, 64_000);
+        assert_eq!(
+            provider
+                .triggers
+                .lock()
+                .expect("triggers lock poisoned")
+                .last(),
+            Some(&HookTrigger::BeforeCompact)
+        );
+    }
+
+    #[tokio::test]
+    async fn after_compaction_emits_after_compact_hook_payload() {
+        let provider = RecordingCompactionProvider::default();
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(provider.clone()),
+            provider
+                .load_session_snapshot(SessionHookSnapshotQuery {
+                    session_id: "sess-hook".to_string(),
+                    turn_id: None,
+                })
+                .await
+                .expect("snapshot should load"),
+        ));
+        let delegate = HookRuntimeDelegate::new(hook_session);
+
+        delegate
+            .after_compaction(
+                CompactionResult {
+                    messages: vec![AgentMessage::compaction_summary("summary body", 48_000, 6)],
+                    summary_message: AgentMessage::compaction_summary(
+                        "summary body",
+                        48_000,
+                        6,
+                    ),
+                    trigger_stats: agentdash_spi::CompactionTriggerStats {
+                        input_tokens: 48_000,
+                        context_window: 64_000,
+                        reserve_tokens: 16_384,
+                    },
+                    newly_compacted_messages: 3,
+                    used_custom_summary: true,
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("after_compaction should succeed");
+
+        let payloads = provider
+            .after_payloads
+            .lock()
+            .expect("after payload lock poisoned");
+        let payload = payloads.last().expect("after_compact payload should exist");
+        assert_eq!(
+            payload
+                .get("messages_compacted")
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            payload
+                .get("messages_compacted_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(6)
+        );
+        assert_eq!(
+            payload
+                .get("used_custom_summary")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod agent_loop;
 pub mod bridge;
+pub mod compaction;
 pub mod event_stream;
 pub mod tools;
 pub mod types;
@@ -16,7 +17,8 @@ pub use types::{
     AfterTurnInput, AgentContext, AgentError, AgentEvent, AgentMessage, AgentRuntimeDelegate,
     AgentRuntimeError, AgentState, AgentTool, AgentToolError, AgentToolResult,
     AssistantStreamEvent, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
-    BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool, StopDecision,
+    BeforeToolCallResult, CompactionParams, CompactionResult, CompactionTriggerStats,
+    ContentPart, DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, StopDecision,
     StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision,
     ToolCallInfo, ToolDefinition, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
     TransformContextOutput, TurnControlDecision,

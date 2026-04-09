@@ -6,8 +6,8 @@ use rhai::{AST, Dynamic, Engine, Scope};
 
 use agentdash_domain::workflow::WorkflowConstraintKind;
 use agentdash_spi::{
-    HookApprovalRequest, HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookInjection,
-    HookTrigger,
+    HookApprovalRequest, HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry,
+    HookEffect, HookInjection, HookTrigger,
 };
 
 use super::snapshot_helpers::*;
@@ -25,6 +25,7 @@ pub(crate) struct ScriptDecision {
     pub rewrite_input: Option<serde_json::Value>,
     pub diagnostics: Vec<HookDiagnosticEntry>,
     pub effects: Vec<HookEffect>,
+    pub compaction: Option<HookCompactionDecision>,
 }
 
 impl ScriptDecision {
@@ -37,6 +38,7 @@ impl ScriptDecision {
             && self.rewrite_input.is_none()
             && self.diagnostics.is_empty()
             && self.effects.is_empty()
+            && self.compaction.is_none()
     }
 }
 
@@ -283,6 +285,8 @@ impl HookScriptEngine {
             HookTrigger::BeforeSubagentDispatch => "before_subagent_dispatch",
             HookTrigger::AfterSubagentDispatch => "after_subagent_dispatch",
             HookTrigger::SubagentResult => "subagent_result",
+            HookTrigger::BeforeCompact => "before_compact",
+            HookTrigger::AfterCompact => "after_compact",
         };
 
         let wf_source = active_workflow_source_from_snapshot(ctx.snapshot);
@@ -329,6 +333,11 @@ impl HookScriptEngine {
                 "task_status": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_status")),
                 "task_id": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_id")),
             },
+
+            "token_stats": ctx.query.token_stats.as_ref().map(|ts| serde_json::json!({
+                "last_input_tokens": ts.last_input_tokens,
+                "context_window": ts.context_window,
+            })).unwrap_or(serde_json::Value::Null),
 
             "params": params.unwrap_or(&serde_json::Value::Null),
 
@@ -452,6 +461,10 @@ impl HookScriptEngine {
             })
             .unwrap_or_default();
 
+        let compaction = obj.get("compaction").and_then(|v| {
+            serde_json::from_value::<HookCompactionDecision>(v.clone()).ok()
+        });
+
         Ok(ScriptDecision {
             block,
             inject,
@@ -461,6 +474,7 @@ impl HookScriptEngine {
             rewrite_input,
             diagnostics,
             effects,
+            compaction,
         })
     }
 
@@ -579,6 +593,7 @@ fn empty_decision() -> ScriptDecision {
         rewrite_input: None,
         diagnostics: Vec::new(),
         effects: Vec::new(),
+        compaction: None,
     }
 }
 
@@ -605,6 +620,7 @@ mod tests {
             subagent_type: None,
             snapshot: None,
             payload: None,
+            token_stats: None,
         };
         (snapshot, query)
     }

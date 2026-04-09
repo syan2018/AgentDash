@@ -81,6 +81,15 @@ pub enum AgentMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timestamp: Option<u64>,
     },
+    CompactionSummary {
+        summary: String,
+        #[serde(default)]
+        tokens_before: u64,
+        #[serde(default)]
+        messages_compacted: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<u64>,
+    },
 }
 
 impl AgentMessage {
@@ -163,6 +172,19 @@ impl AgentMessage {
         }
     }
 
+    pub fn compaction_summary(
+        summary: impl Into<String>,
+        tokens_before: u64,
+        messages_compacted: u32,
+    ) -> Self {
+        Self::CompactionSummary {
+            summary: summary.into(),
+            tokens_before,
+            messages_compacted,
+            timestamp: Some(now_millis()),
+        }
+    }
+
     pub fn tool_result_from_agent(
         tool_call_id: impl Into<String>,
         call_id: Option<String>,
@@ -186,6 +208,7 @@ impl AgentMessage {
             | Self::ToolResult { content, .. } => {
                 content.iter().find_map(ContentPart::extract_text)
             }
+            Self::CompactionSummary { summary, .. } => Some(summary.as_str()),
         }
     }
 }

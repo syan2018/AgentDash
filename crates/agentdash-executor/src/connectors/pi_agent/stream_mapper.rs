@@ -577,6 +577,43 @@ pub(super) fn convert_event_to_notifications(
             Vec::new()
         }
 
+        AgentEvent::ContextCompacted {
+            messages,
+            newly_compacted_messages,
+        } => {
+            let Some(AgentMessage::CompactionSummary {
+                summary,
+                tokens_before,
+                messages_compacted,
+                timestamp,
+            }) = messages.first()
+            else {
+                return Vec::new();
+            };
+
+            vec![make_event_notification(
+                session_id,
+                source,
+                turn_id,
+                *entry_index,
+                EventDescription {
+                    event_type: "context_compacted",
+                    severity: "info",
+                    message: format!(
+                        "已压缩 {} 条历史消息，保留最新摘要进入模型窗口",
+                        newly_compacted_messages
+                    ),
+                    data: serde_json::json!({
+                        "summary": summary,
+                        "tokens_before": tokens_before,
+                        "messages_compacted": messages_compacted,
+                        "newly_compacted_messages": newly_compacted_messages,
+                        "timestamp_ms": timestamp,
+                    }),
+                },
+            )]
+        }
+
         AgentEvent::ToolExecutionStart {
             tool_call_id,
             tool_name,

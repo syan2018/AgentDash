@@ -3,7 +3,8 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::decisions::{
-    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeStopInput, BeforeToolCallInput,
+    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeStopInput,
+    BeforeToolCallInput, CompactionParams, CompactionResult, EvaluateCompactionInput,
     StopDecision, ToolCallDecision, TransformContextInput, TransformContextOutput,
     TurnControlDecision,
 };
@@ -22,6 +23,18 @@ pub enum AgentRuntimeError {
 /// 工具调用拦截、轮次控制和停止决策等编排能力。
 #[async_trait]
 pub trait AgentRuntimeDelegate: Send + Sync {
+    async fn evaluate_compaction(
+        &self,
+        input: EvaluateCompactionInput,
+        cancel: CancellationToken,
+    ) -> Result<Option<CompactionParams>, AgentRuntimeError>;
+
+    async fn after_compaction(
+        &self,
+        result: CompactionResult,
+        cancel: CancellationToken,
+    ) -> Result<(), AgentRuntimeError>;
+
     async fn transform_context(
         &self,
         input: TransformContextInput,

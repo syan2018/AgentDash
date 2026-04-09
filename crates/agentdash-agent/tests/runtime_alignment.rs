@@ -164,6 +164,7 @@ fn event_kind(event: &AgentEvent) -> &'static str {
         AgentEvent::MessageStart { .. } => "message_start",
         AgentEvent::MessageUpdate { .. } => "message_update",
         AgentEvent::MessageEnd { .. } => "message_end",
+        AgentEvent::ContextCompacted { .. } => "context_compacted",
         AgentEvent::ToolExecutionStart { .. } => "tool_execution_start",
         AgentEvent::ToolExecutionUpdate { .. } => "tool_execution_update",
         AgentEvent::ToolExecutionPendingApproval { .. } => "tool_execution_pending_approval",
@@ -750,6 +751,22 @@ struct EmptyContinueDelegate {
 
 #[async_trait]
 impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
+    async fn evaluate_compaction(
+        &self,
+        _input: agentdash_agent::EvaluateCompactionInput,
+        _cancel: CancellationToken,
+    ) -> Result<Option<agentdash_agent::CompactionParams>, agentdash_agent::AgentRuntimeError> {
+        Ok(None)
+    }
+
+    async fn after_compaction(
+        &self,
+        _result: agentdash_agent::CompactionResult,
+        _cancel: CancellationToken,
+    ) -> Result<(), agentdash_agent::AgentRuntimeError> {
+        Ok(())
+    }
+
     async fn transform_context(
         &self,
         input: agentdash_agent::TransformContextInput,
@@ -799,6 +816,22 @@ impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
 
 #[async_trait]
 impl agentdash_agent::AgentRuntimeDelegate for EmptyContinueDelegate {
+    async fn evaluate_compaction(
+        &self,
+        _input: agentdash_agent::EvaluateCompactionInput,
+        _cancel: CancellationToken,
+    ) -> Result<Option<agentdash_agent::CompactionParams>, agentdash_agent::AgentRuntimeError> {
+        Ok(None)
+    }
+
+    async fn after_compaction(
+        &self,
+        _result: agentdash_agent::CompactionResult,
+        _cancel: CancellationToken,
+    ) -> Result<(), agentdash_agent::AgentRuntimeError> {
+        Ok(())
+    }
+
     async fn transform_context(
         &self,
         input: agentdash_agent::TransformContextInput,

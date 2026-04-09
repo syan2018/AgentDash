@@ -1473,6 +1473,7 @@ async fn evaluate_subagent_hook(
             subagent_type: Some(subagent_type.to_string()),
             snapshot: Some(hook_session.snapshot()),
             payload,
+            token_stats: None,
         })
         .await
         .map_err(|error| error.to_string())?;

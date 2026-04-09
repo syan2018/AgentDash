@@ -1,0 +1,5 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".trellis/spec/backend/execution-hook-runtime.md", "reason": "验证 Hook 契约"}
+{"file": ".trellis/spec/backend/hook-script-engine.md", "reason": "验证 Rhai 脚本契约"}
+{"file": "crates/agentdash-spi/src/hooks.rs", "reason": "验证 HookTrigger 扩展正确性"}

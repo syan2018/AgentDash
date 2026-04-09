@@ -255,6 +255,16 @@ fn agent_to_llm(msg: &AgentMessage) -> Option<Message> {
                 text,
             ))
         }
+        AgentMessage::CompactionSummary { summary, .. } => {
+            if summary.is_empty() {
+                return None;
+            }
+            Some(Message::User {
+                content: OneOrMany::one(UserContent::Text(Text {
+                    text: format!("<summary>\n{summary}\n</summary>"),
+                })),
+            })
+        }
     }
 }
 

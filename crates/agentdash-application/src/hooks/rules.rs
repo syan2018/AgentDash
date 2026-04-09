@@ -123,6 +123,9 @@ pub(crate) fn merge_script_decision(
     }
     resolution.diagnostics.extend(decision.diagnostics);
     resolution.effects.extend(decision.effects);
+    if let Some(compaction) = decision.compaction {
+        resolution.compaction = Some(compaction);
+    }
 }
 
 fn global_hook_rule_registry() -> &'static [NormalizedHookRule] {
@@ -294,6 +297,7 @@ mod tests {
                     "artifact_type": "session_summary"
                 }
             })),
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -336,6 +340,7 @@ mod tests {
                     "command": "cargo test"
                 }
             })),
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -382,6 +387,7 @@ mod tests {
             subagent_type: None,
             snapshot: None,
             payload: None,
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -418,6 +424,7 @@ mod tests {
             subagent_type: None,
             snapshot: None,
             payload: None,
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -454,6 +461,7 @@ mod tests {
             subagent_type: None,
             snapshot: None,
             payload: None,
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -489,6 +497,7 @@ mod tests {
                 },
                 "tool_results": []
             })),
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -543,6 +552,7 @@ mod tests {
                     "command": "cargo test"
                 }
             })),
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -629,6 +639,7 @@ mod tests {
             payload: Some(serde_json::json!({
                 "prompt": "请帮我 review"
             })),
+            token_stats: None,
         };
 
         let engine = test_script_engine();
@@ -687,6 +698,7 @@ mod tests {
                 "status": "completed",
                 "summary": "子 agent 已完成 review，并附带后续建议"
             })),
+            token_stats: None,
         };
 
         let engine = test_script_engine();

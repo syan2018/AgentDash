@@ -1,0 +1,11 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/execution-hook-runtime.md", "reason": "Hook 触发/Resolution 跨层契约"}
+{"file": ".trellis/spec/backend/hook-script-engine.md", "reason": "Rhai 脚本引擎 preset 编写指南"}
+{"file": ".trellis/spec/backend/streaming-protocol.md", "reason": "流式协议，摘要消息转换参考"}
+{"file": "crates/agentdash-spi/src/hooks.rs", "reason": "HookTrigger/HookResolution 定义"}
+{"file": "crates/agentdash-agent-types/src/delegate.rs", "reason": "AgentRuntimeDelegate trait"}
+{"file": "crates/agentdash-agent-types/src/decisions.rs", "reason": "TransformContextInput/Output 等决策类型"}
+{"file": "crates/agentdash-agent/src/agent_loop.rs", "reason": "Agent loop 主循环，集成点"}
+{"file": "crates/agentdash-application/src/session/hook_delegate.rs", "reason": "HookRuntimeDelegate 实现"}
+{"file": "crates/agentdash-application/src/hooks/presets.rs", "reason": "Preset 注册表"}

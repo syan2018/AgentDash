@@ -24,18 +24,20 @@ pub use context_injection::{
 };
 pub use hook_trace_notification::build_hook_trace_notification;
 pub use hooks::{
-    ActiveWorkflowMeta, ExecutionHookProvider, HookApprovalRequest, HookCompletionStatus,
-    HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookInjection,
-    HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest,
-    HookTraceEntry, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
-    SharedHookSessionRuntime, action_type,
+    ActiveWorkflowMeta, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
+    HookCompactionDecision,
+    HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery,
+    HookInjection, HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
+    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess,
+    HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry, HookTrigger,
+    NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
 };
 pub use lifecycle::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
     BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult,
+    CompactionParams, CompactionResult, CompactionTriggerStats, EvaluateCompactionInput,
     DynAgentRuntimeDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
     ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
     TransformContextOutput, TurnControlDecision, now_millis,

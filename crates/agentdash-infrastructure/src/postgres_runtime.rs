@@ -43,8 +43,11 @@ impl PostgresRuntime {
 
         // ── Embedded PostgreSQL ──────────────────────────────────────────
         let database_name = service_name.replace('-', "_");
-        let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let service_dir = workspace_root
+        let data_root = match std::env::var("AGENTDASH_DATA_ROOT") {
+            Ok(val) if !val.trim().is_empty() => PathBuf::from(val.trim()),
+            _ => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        };
+        let service_dir = data_root
             .join(".agentdash")
             .join("embedded-postgres")
             .join(service_name);

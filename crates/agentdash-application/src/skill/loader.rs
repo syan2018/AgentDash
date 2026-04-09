@@ -10,7 +10,7 @@ use agentdash_spi::{AddressSpace, MountCapability, SkillRef};
 use crate::address_space::types::ResourceRef;
 use crate::address_space::{ListOptions, RelayAddressSpaceService};
 
-use super::{SkillDiagnostic, SkillFrontmatter, parse_skill_file};
+use super::{SkillDiagnostic, SkillFrontmatter, parse_skill_file, MAX_NAME_LENGTH};
 
 // ─── 公共 API ──────────────────────────────────────────────────────────────
 
@@ -173,10 +173,10 @@ fn validate_and_collect(
             file_path: PathBuf::from(path),
         });
     }
-    if name.len() > 64 {
+    if name.len() > MAX_NAME_LENGTH {
         diags.push(SkillDiagnostic {
             name: name.to_string(),
-            message: format!("name 超过 64 字符（当前 {} 字符）", name.len()),
+            message: format!("name 超过 {MAX_NAME_LENGTH} 字符（当前 {} 字符）", name.len()),
             file_path: PathBuf::from(path),
         });
     }

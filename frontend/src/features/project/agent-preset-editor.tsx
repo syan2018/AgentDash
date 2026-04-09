@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
+import type { AgentPreset, CronSessionMode, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
@@ -22,6 +22,9 @@ export interface PresetFormState {
   permission_policy: string;
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
+  max_turns: string;
+  cron_schedule: string;
+  cron_session_mode: CronSessionMode | "";
   mcp_servers: McpServerDecl[];
   tool_clusters: ToolCluster[];
   allowed_companions: string[];
@@ -44,6 +47,12 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
+    max_turns: cfg.max_turns != null ? String(cfg.max_turns) : "",
+    cron_schedule: String(((cfg.scheduling as Record<string, unknown> | undefined)?.cron_schedule) ?? ""),
+    cron_session_mode: (() => {
+      const v = (cfg.scheduling as Record<string, unknown> | undefined)?.cron_session_mode;
+      return v === "reuse" || v === "fresh" ? v : "";
+    })(),
     mcp_servers: rawMcps,
     tool_clusters: rawClusters,
     allowed_companions: rawCompanions,
@@ -61,6 +70,15 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
+  if (form.max_turns.trim()) {
+    const n = Number(form.max_turns.trim());
+    if (Number.isFinite(n) && n > 0) config.max_turns = n;
+  }
+  if (form.cron_schedule.trim()) {
+    const scheduling: Record<string, unknown> = { cron_schedule: form.cron_schedule.trim() };
+    if (form.cron_session_mode) scheduling.cron_session_mode = form.cron_session_mode;
+    config.scheduling = scheduling;
+  }
   if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
   if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
   if (form.allowed_companions.length > 0) config.allowed_companions = form.allowed_companions;
@@ -407,6 +425,46 @@ function ToolCapabilitiesField({
   );
 }
 
+// ─── Form Section ───────────────────────────────────────
+
+function FormSection({
+  title,
+  badge,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  badge?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-[12px] border border-border/70 bg-secondary/15">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-secondary/25"
+      >
+        <svg
+          className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+          viewBox="0 0 16 16"
+          fill="currentColor"
+        >
+          <path d="M6 3l5 5-5 5V3z" />
+        </svg>
+        <span className="text-xs font-semibold uppercase tracking-[0.1em] text-foreground/80">{title}</span>
+        {badge && (
+          <span className="ml-auto rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+            {badge}
+          </span>
+        )}
+      </button>
+      {open && <div className="space-y-3 px-4 pb-4 pt-1">{children}</div>}
+    </div>
+  );
+}
+
 // ─── Preset Form ─────────────────────────────────────────
 
 export function PresetFormFields({
@@ -495,57 +553,60 @@ export function PresetFormFields({
     patchForm({ provider_id: nextProviderId, model_id: nextModelId });
   };
 
+  const companionCount = siblingAgents?.filter((a) => a.name !== form.name).length ?? 0;
+
   return (
-    <>
-      <div>
-        <label className="agentdash-form-label">预设名称 (key)</label>
-        <input
-          value={form.name}
-          onChange={(e) => patchForm({ name: e.target.value })}
-          placeholder="唯一标识，例如 code-review"
-          className="agentdash-form-input"
-        />
-        <p className="mt-0.5 text-[10px] text-muted-foreground/60">
-          用作内部标识，不会直接展示给用户
-        </p>
-      </div>
-
-      <div>
-        <label className="agentdash-form-label">显示名称</label>
-        <input
-          value={form.display_name}
-          onChange={(e) => patchForm({ display_name: e.target.value })}
-          placeholder="留空则使用预设名称"
-          className="agentdash-form-input"
-        />
-      </div>
-
-      <div className="sm:col-span-2">
-        <label className="agentdash-form-label">描述</label>
-        <textarea
-          value={form.description}
-          onChange={(e) => patchForm({ description: e.target.value })}
-          rows={2}
-          placeholder="这个 Agent 的职责和用途"
-          className="agentdash-form-textarea"
-        />
-      </div>
-
-      <div className="sm:col-span-2">
-        <div className="flex items-end gap-2">
-          <div className="flex-1">
-            <label className="agentdash-form-label">System Prompt</label>
-            <textarea
-              value={form.system_prompt}
-              onChange={(e) => patchForm({ system_prompt: e.target.value })}
-              rows={3}
-              placeholder="留空则仅使用全局 System Prompt"
-              className="agentdash-form-textarea"
+    <div className="space-y-2.5">
+      {/* ── Section 1: 基本信息 ── */}
+      <FormSection title="基本信息">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <div>
+            <label className="agentdash-form-label">预设名称 (key)</label>
+            <input
+              value={form.name}
+              onChange={(e) => patchForm({ name: e.target.value })}
+              placeholder="唯一标识，例如 code-review"
+              className="agentdash-form-input"
+            />
+            <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+              用作内部标识，不会直接展示给用户
+            </p>
+          </div>
+          <div>
+            <label className="agentdash-form-label">显示名称</label>
+            <input
+              value={form.display_name}
+              onChange={(e) => patchForm({ display_name: e.target.value })}
+              placeholder="留空则使用预设名称"
+              className="agentdash-form-input"
             />
           </div>
         </div>
+        <div>
+          <label className="agentdash-form-label">描述</label>
+          <textarea
+            value={form.description}
+            onChange={(e) => patchForm({ description: e.target.value })}
+            rows={2}
+            placeholder="这个 Agent 的职责和用途"
+            className="agentdash-form-textarea"
+          />
+        </div>
+      </FormSection>
+
+      {/* ── Section 2: System Prompt ── */}
+      <FormSection title="System Prompt">
+        <div>
+          <textarea
+            value={form.system_prompt}
+            onChange={(e) => patchForm({ system_prompt: e.target.value })}
+            rows={3}
+            placeholder="留空则仅使用全局 System Prompt"
+            className="agentdash-form-textarea"
+          />
+        </div>
         {form.system_prompt.trim() && (
-          <div className="mt-1.5 flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-muted-foreground">注入模式</span>
             {(["append", "override"] as const).map((mode) => {
               const active = (form.system_prompt_mode || "append") === mode;
@@ -571,91 +632,88 @@ export function PresetFormFields({
             </span>
           </div>
         )}
-      </div>
+      </FormSection>
 
-      <div className="sm:col-span-2">
-        <label className="agentdash-form-label">Agent 类型</label>
-        <select
-          value={form.agent_type}
-          onChange={(e) => handleAgentTypeChange(e.target.value)}
-          className="agentdash-form-select"
-        >
-          <option value="">
-            {isDiscoveryLoading ? "加载执行器列表..." : "选择 Agent 类型"}
-          </option>
-          {agentTypeOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-          {form.agent_type && !agentTypeOptions.some((o) => o.value === form.agent_type) && (
-            <option value={form.agent_type}>{form.agent_type} (当前值)</option>
-          )}
-        </select>
-      </div>
-
-      {/* 模型选择 + 推理级别 — 同行并排 */}
-      <div className="sm:col-span-2 grid grid-cols-[1fr_auto] gap-2">
+      {/* ── Section 3: 执行器 & 模型 ── */}
+      <FormSection title="执行器 & 模型">
         <div>
-          <label className="agentdash-form-label">模型</label>
+          <label className="agentdash-form-label">Agent 类型</label>
           <select
-            value={selectedModelOptionValue}
-            onChange={(e) => handleModelChange(e.target.value)}
-            disabled={!form.agent_type || (isModelLoading && [...modelsByProvider.values()].flat().length === 0)}
+            value={form.agent_type}
+            onChange={(e) => handleAgentTypeChange(e.target.value)}
             className="agentdash-form-select"
           >
             <option value="">
-              {!form.agent_type
-                ? "先选择 Agent 类型"
-                : isModelLoading && [...modelsByProvider.values()].flat().length === 0
-                  ? "加载模型中..."
-                  : "不指定模型"}
+              {isDiscoveryLoading ? "加载执行器列表..." : "选择 Agent 类型"}
             </option>
-            {[...modelsByProvider.entries()].map(([pid, models]) => {
-              const label = pid && providersById.get(pid)
-                ? providersById.get(pid)
-                : pid || "Other";
-              return (
-                <optgroup key={pid || "default"} label={label}>
-                  {models.map((m) => (
-                    <option key={`${pid || "default"}::${m.id}`} value={`${pid}::${m.id}`}>
-                      {m.name}
-                    </option>
-                  ))}
-                </optgroup>
-              );
-            })}
-            {selectedModelOptionValue && !hasModelInDiscovery && (
-              <option value={selectedModelOptionValue}>
-                {form.model_id} (当前值)
+            {agentTypeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
               </option>
+            ))}
+            {form.agent_type && !agentTypeOptions.some((o) => o.value === form.agent_type) && (
+              <option value={form.agent_type}>{form.agent_type} (当前值)</option>
             )}
           </select>
         </div>
-        {showThinkingSelector && (
-          <div className="w-[130px]">
-            <label className="agentdash-form-label">推理级别</label>
+
+        <div className="grid grid-cols-[1fr_auto] gap-2">
+          <div>
+            <label className="agentdash-form-label">模型</label>
             <select
-              value={form.thinking_level}
-              onChange={(e) => patchForm({ thinking_level: (e.target.value as ThinkingLevel) || "" })}
+              value={selectedModelOptionValue}
+              onChange={(e) => handleModelChange(e.target.value)}
+              disabled={!form.agent_type || (isModelLoading && [...modelsByProvider.values()].flat().length === 0)}
               className="agentdash-form-select"
             >
-              <option value="">不设置</option>
-              {THINKING_LEVEL_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
+              <option value="">
+                {!form.agent_type
+                  ? "先选择 Agent 类型"
+                  : isModelLoading && [...modelsByProvider.values()].flat().length === 0
+                    ? "加载模型中..."
+                    : "不指定模型"}
+              </option>
+              {[...modelsByProvider.entries()].map(([pid, models]) => {
+                const label = pid && providersById.get(pid)
+                  ? providersById.get(pid)
+                  : pid || "Other";
+                return (
+                  <optgroup key={pid || "default"} label={label}>
+                    {models.map((m) => (
+                      <option key={`${pid || "default"}::${m.id}`} value={`${pid}::${m.id}`}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+              {selectedModelOptionValue && !hasModelInDiscovery && (
+                <option value={selectedModelOptionValue}>
+                  {form.model_id} (当前值)
                 </option>
-              ))}
+              )}
             </select>
           </div>
-        )}
-      </div>
+          {showThinkingSelector && (
+            <div className="w-[130px]">
+              <label className="agentdash-form-label">推理级别</label>
+              <select
+                value={form.thinking_level}
+                onChange={(e) => patchForm({ thinking_level: (e.target.value as ThinkingLevel) || "" })}
+                className="agentdash-form-select"
+              >
+                <option value="">不设置</option>
+                {THINKING_LEVEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
 
-      <details className="sm:col-span-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
-          执行器高级配置
-        </summary>
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {(agents.length > 0 || form.agent_id) && (
             <div>
               <label className="agentdash-form-label">Agent</label>
@@ -685,7 +743,6 @@ export function PresetFormFields({
               )}
             </div>
           )}
-
           <div>
             <label className="agentdash-form-label">权限策略</label>
             <select
@@ -713,30 +770,92 @@ export function PresetFormFields({
             </select>
           </div>
         </div>
-      </details>
+      </FormSection>
 
-      <details className="sm:col-span-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
-          工具能力 {form.tool_clusters.length > 0 ? `(已启用 ${form.tool_clusters.length}/${TOOL_CLUSTER_OPTIONS.length})` : "(全部启用)"}
-        </summary>
-        <div className="mt-3">
-          <ToolCapabilitiesField clusters={form.tool_clusters} onChange={(v) => patchForm({ tool_clusters: v })} />
+      {/* ── Section 4: 调度 & 限制 ── */}
+      <FormSection
+        title="调度 & 限制"
+        defaultOpen={false}
+        badge={form.cron_schedule.trim() ? "已配置" : undefined}
+      >
+        <div>
+          <label className="agentdash-form-label">最大 Turn 数</label>
+          <input
+            type="number"
+            value={form.max_turns}
+            onChange={(e) => patchForm({ max_turns: e.target.value })}
+            placeholder="默认 25，留空则使用系统默认值"
+            min={1}
+            className="agentdash-form-input"
+          />
+          <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+            单次执行最大对话轮数，防止 Agent 失控循环
+          </p>
         </div>
-      </details>
+        <div>
+          <label className="agentdash-form-label">Cron 定时调度</label>
+          <input
+            value={form.cron_schedule}
+            onChange={(e) => patchForm({ cron_schedule: e.target.value })}
+            placeholder="例如 */10 * * * * (每 10 分钟)"
+            className="agentdash-form-input font-mono"
+          />
+          <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+            标准 5 字段 cron 表达式，留空则不启用定时调度
+          </p>
+        </div>
+        {form.cron_schedule.trim() && (
+          <div>
+            <label className="agentdash-form-label">触发时 Session 模式</label>
+            <div className="flex gap-1.5">
+              {(["reuse", "fresh"] as const).map((mode) => {
+                const active = (form.cron_session_mode || "reuse") === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => patchForm({ cron_session_mode: mode })}
+                    className={`rounded-[8px] border px-3 py-1.5 text-[11px] font-medium transition-all duration-160 ${
+                      active
+                        ? "border-primary/30 bg-primary/8 text-primary"
+                        : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                    }`}
+                  >
+                    {mode === "reuse" ? "复用已有 Session" : "每次新建 Session"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </FormSection>
 
-      {siblingAgents && siblingAgents.length > 0 && (
-        <details className="sm:col-span-2" open={form.allowed_companions.length > 0}>
-          <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
-            可用 Companion Agents {form.allowed_companions.length > 0
-              ? `(已选 ${form.allowed_companions.length}/${siblingAgents.length})`
-              : `(全部 ${siblingAgents.length} 个)`}
-          </summary>
-          <div className="mt-2 space-y-1">
+      {/* ── Section 5: 工具 & 协作 ── */}
+      <FormSection
+        title="工具 & 协作"
+        defaultOpen={false}
+        badge={
+          form.tool_clusters.length > 0
+            ? `${form.tool_clusters.length}/${TOOL_CLUSTER_OPTIONS.length}`
+            : companionCount > 0 && form.allowed_companions.length > 0
+              ? `${form.allowed_companions.length} companion`
+              : undefined
+        }
+      >
+        <ToolCapabilitiesField clusters={form.tool_clusters} onChange={(v) => patchForm({ tool_clusters: v })} />
+
+        {companionCount > 0 && (
+          <div className="space-y-1 border-t border-border/50 pt-3">
+            <label className="agentdash-form-label">
+              可用 Companion Agents {form.allowed_companions.length > 0
+                ? `(已选 ${form.allowed_companions.length}/${companionCount})`
+                : `(全部 ${companionCount} 个)`}
+            </label>
             <p className="text-[10px] text-muted-foreground/60">
               勾选此 Agent 可调用的 companion，不选则默认可调用全部项目 Agent
             </p>
             <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-0.5">
-              {siblingAgents.filter((a) => a.name !== form.name).map((agent) => {
+              {siblingAgents!.filter((a) => a.name !== form.name).map((agent) => {
                 const checked = form.allowed_companions.includes(agent.name);
                 return (
                   <label
@@ -769,21 +888,21 @@ export function PresetFormFields({
               })}
             </div>
           </div>
-        </details>
-      )}
+        )}
+      </FormSection>
 
-      <details className="sm:col-span-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground">
-          MCP Servers 配置 ({form.mcp_servers.length} 个)
-        </summary>
-        <div className="mt-2">
-          <McpServersEditor
-            servers={form.mcp_servers}
-            onChange={(mcp_servers) => patchForm({ mcp_servers })}
-          />
-        </div>
-      </details>
-    </>
+      {/* ── Section 6: MCP Servers ── */}
+      <FormSection
+        title="MCP Servers"
+        defaultOpen={false}
+        badge={form.mcp_servers.length > 0 ? `${form.mcp_servers.length} 个` : undefined}
+      >
+        <McpServersEditor
+          servers={form.mcp_servers}
+          onChange={(mcp_servers) => patchForm({ mcp_servers })}
+        />
+      </FormSection>
+    </div>
   );
 }
 
@@ -919,17 +1038,15 @@ export function AgentPresetEditor({ presets, onSave, isSaving = false }: AgentPr
             {isCreating ? "新建 Agent 预设" : `编辑预设: ${presets[editingIndex!]?.name}`}
           </p>
 
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <PresetFormFields
-              form={form}
-              patchForm={patchForm}
-              agentTypeOptions={agentTypeOptions}
-              isDiscoveryLoading={isDiscoveryLoading}
-            />
-          </div>
+          <PresetFormFields
+            form={form}
+            patchForm={patchForm}
+            agentTypeOptions={agentTypeOptions}
+            isDiscoveryLoading={isDiscoveryLoading}
+          />
 
           {validationError && (
-            <p className="text-xs text-destructive">{validationError}</p>
+            <p className="mt-2 text-xs text-destructive">{validationError}</p>
           )}
 
           <div className="flex justify-end gap-2 border-t border-border pt-3">
@@ -1004,7 +1121,7 @@ export function SinglePresetDialog({
     <>
       <div className="fixed inset-0 z-[90] bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-lg rounded-[16px] border border-border bg-background shadow-2xl">
+        <div className="w-full max-w-2xl rounded-[16px] border border-border bg-background shadow-2xl">
           <div className="border-b border-border px-5 py-4">
             <span className="agentdash-panel-header-tag">Agent</span>
             <h4 className="text-base font-semibold text-foreground">
@@ -1015,19 +1132,17 @@ export function SinglePresetDialog({
             </p>
           </div>
 
-          <div className="max-h-[70vh] space-y-3 overflow-y-auto p-5">
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <PresetFormFields
-                form={form}
-                patchForm={patchForm}
-                agentTypeOptions={agentTypeOptions}
-                isDiscoveryLoading={isDiscoveryLoading}
-                siblingAgents={siblingAgents}
-              />
-            </div>
+          <div className="max-h-[70vh] overflow-y-auto p-5">
+            <PresetFormFields
+              form={form}
+              patchForm={patchForm}
+              agentTypeOptions={agentTypeOptions}
+              isDiscoveryLoading={isDiscoveryLoading}
+              siblingAgents={siblingAgents}
+            />
 
             {validationError && (
-              <p className="text-xs text-destructive">{validationError}</p>
+              <p className="mt-2 text-xs text-destructive">{validationError}</p>
             )}
           </div>
 

@@ -81,6 +81,18 @@ export const TOOL_CLUSTER_OPTIONS: ToolClusterOption[] = [
 
 export type SystemPromptMode = "append" | "override";
 
+export type CronSessionMode = "reuse" | "fresh";
+
+export interface AgentSchedulingConfig {
+  cron_schedule?: string | null;
+  cron_session_mode?: CronSessionMode;
+}
+
+export interface ProjectSchedulingConfig {
+  stall_timeout_ms?: number | null;
+  max_turns_per_task?: number | null;
+}
+
 // ─── 登录 / 认证 ──────────────────────────────────────
 
 export interface LoginFieldDescriptor {
@@ -202,6 +214,7 @@ export interface ProjectConfig {
   default_workspace_id?: string | null;
   agent_presets?: AgentPreset[];
   context_containers: ContextContainerDefinition[];
+  scheduling?: ProjectSchedulingConfig;
 }
 
 export interface Project {

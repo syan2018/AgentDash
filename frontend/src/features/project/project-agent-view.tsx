@@ -136,6 +136,146 @@ function SessionHistoryPanel({
   );
 }
 
+// ─── Config Override 内联面板 ───
+
+function ConfigOverridePanel({
+  projectId,
+  agentId,
+  configOverride,
+  onClose,
+  onSaved,
+}: {
+  projectId: string;
+  agentId: string;
+  configOverride: Record<string, unknown> | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { updateProjectAgentLink } = useProjectStore();
+  const scheduling = (configOverride?.scheduling ?? {}) as Record<string, unknown>;
+
+  const [cronSchedule, setCronSchedule] = useState(String(scheduling.cron_schedule ?? ""));
+  const [cronSessionMode, setCronSessionMode] = useState<string>(
+    String(scheduling.cron_session_mode ?? "reuse"),
+  );
+  const [maxTurns, setMaxTurns] = useState(
+    configOverride?.max_turns != null ? String(configOverride.max_turns) : "",
+  );
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const override: Record<string, unknown> = { ...(configOverride ?? {}) };
+      // max_turns
+      if (maxTurns.trim()) {
+        const n = Number(maxTurns.trim());
+        if (Number.isFinite(n) && n > 0) override.max_turns = n;
+      } else {
+        delete override.max_turns;
+      }
+      // scheduling
+      if (cronSchedule.trim()) {
+        override.scheduling = {
+          cron_schedule: cronSchedule.trim(),
+          cron_session_mode: cronSessionMode || "reuse",
+        };
+      } else {
+        delete override.scheduling;
+      }
+      await updateProjectAgentLink(projectId, agentId, {
+        config_override: Object.keys(override).length > 0 ? override : undefined,
+      });
+      onSaved();
+      onClose();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleClear = async () => {
+    setIsSaving(true);
+    try {
+      await updateProjectAgentLink(projectId, agentId, { config_override: undefined });
+      onSaved();
+      onClose();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-3 rounded-[10px] border border-amber-400/30 bg-amber-500/5 p-4">
+      <p className="text-[11px] font-medium uppercase tracking-[0.1em] text-amber-700 dark:text-amber-400">
+        项目级覆盖配置
+      </p>
+
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div>
+          <label className="agentdash-form-label">Cron 定时调度</label>
+          <input
+            value={cronSchedule}
+            onChange={(e) => setCronSchedule(e.target.value)}
+            placeholder="例如 */10 * * * *"
+            className="agentdash-form-input font-mono"
+          />
+        </div>
+        <div>
+          <label className="agentdash-form-label">触发时 Session 模式</label>
+          <select
+            value={cronSessionMode}
+            onChange={(e) => setCronSessionMode(e.target.value)}
+            className="agentdash-form-select"
+          >
+            <option value="reuse">复用已有 Session</option>
+            <option value="fresh">每次新建 Session</option>
+          </select>
+        </div>
+        <div>
+          <label className="agentdash-form-label">最大 Turn 数 (覆盖)</label>
+          <input
+            type="number"
+            value={maxTurns}
+            onChange={(e) => setMaxTurns(e.target.value)}
+            placeholder="留空则使用预设值"
+            min={1}
+            className="agentdash-form-input"
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
+        {configOverride && Object.keys(configOverride).length > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleClear()}
+            disabled={isSaving}
+            className="rounded-[8px] border border-destructive/30 px-2.5 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+          >
+            清除覆盖
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={isSaving}
+          className="agentdash-button-secondary"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={isSaving}
+          className="agentdash-button-primary"
+        >
+          {isSaving ? "保存中..." : "保存覆盖"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Agent 创建/链接对话框 ───
 
 function CreateAgentDialog({
@@ -200,7 +340,7 @@ function CreateAgentDialog({
     <>
       <div className="fixed inset-0 z-[90] bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-lg rounded-[16px] border border-border bg-background shadow-2xl">
+        <div className="w-full max-w-2xl rounded-[16px] border border-border bg-background shadow-2xl">
           <div className="border-b border-border px-5 py-4">
             <span className="agentdash-panel-header-tag">Agent</span>
             <h3 className="text-base font-semibold text-foreground">新建 Agent 并关联到项目</h3>
@@ -210,15 +350,13 @@ function CreateAgentDialog({
           </div>
 
           <div className="max-h-[70vh] space-y-3 overflow-y-auto p-5">
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <PresetFormFields
-                form={form}
-                patchForm={patchForm}
-                agentTypeOptions={agentTypeOptions}
-                isDiscoveryLoading={isDiscoveryLoading}
-                siblingAgents={siblingAgents}
-              />
-            </div>
+            <PresetFormFields
+              form={form}
+              patchForm={patchForm}
+              agentTypeOptions={agentTypeOptions}
+              isDiscoveryLoading={isDiscoveryLoading}
+              siblingAgents={siblingAgents}
+            />
 
             {/* 工作流绑定 */}
             <div className="border-t border-border/50 pt-3">
@@ -429,6 +567,7 @@ export function ProjectAgentView({
   const [isLinkOpen, setIsLinkOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<{ agentId: string; preset: AgentPreset } | null>(null);
   const [isEditSaving, setIsEditSaving] = useState(false);
+  const [overrideAgentKey, setOverrideAgentKey] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchLinks(project.id);
@@ -580,6 +719,20 @@ export function ProjectAgentView({
                       </button>
                       <button
                         type="button"
+                        onClick={() => setOverrideAgentKey(overrideAgentKey === agent.key ? null : agent.key)}
+                        className={`rounded-[6px] border px-2 py-0.5 text-[10px] transition-colors ${
+                          overrideAgentKey === agent.key
+                            ? "border-amber-400/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            : link?.config_override && Object.keys(link.config_override).length > 0
+                              ? "border-amber-400/30 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                              : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        }`}
+                        title="项目级覆盖配置"
+                      >
+                        覆盖{link?.config_override && Object.keys(link.config_override).length > 0 ? " *" : ""}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void handleUnlink(agent.key)}
                         className="rounded-[6px] border border-destructive/30 px-2 py-0.5 text-[10px] text-destructive transition-colors hover:bg-destructive/10"
                         title="解除关联"
@@ -626,6 +779,19 @@ export function ProjectAgentView({
                       Task 默认
                     </button>
                   </div>
+
+                  {overrideAgentKey === agent.key && link && (
+                    <ConfigOverridePanel
+                      projectId={project.id}
+                      agentId={agent.key}
+                      configOverride={link.config_override}
+                      onClose={() => setOverrideAgentKey(null)}
+                      onSaved={() => {
+                        void fetchLinks(project.id);
+                        void fetchProjectAgents(project.id);
+                      }}
+                    />
+                  )}
 
                   <div className="mt-auto pt-4">
                     {agent.session && (

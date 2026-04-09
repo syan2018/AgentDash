@@ -1902,6 +1902,11 @@ fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) 
     {
         ec.system_prompt_mode = Some(v);
     }
+    if let Some(v) = config.get("max_turns").and_then(|v| v.as_u64()) {
+        if v > 0 {
+            ec.max_turns = Some(v as u32);
+        }
+    }
     ec
 }
 

@@ -373,6 +373,8 @@ export function ProjectSettingsPage() {
   const [grantRole, setGrantRole] = useState<ProjectRole>("viewer");
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [stallTimeoutMs, setStallTimeoutMs] = useState("");
+  const [maxTurnsPerTask, setMaxTurnsPerTask] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -401,6 +403,8 @@ export function ProjectSettingsPage() {
     setTemplateVisibility(project.visibility);
     setTemplateFlag(project.is_template);
     setCloneName(`${project.name}（副本）`);
+    setStallTimeoutMs(project.config.scheduling?.stall_timeout_ms != null ? String(project.config.scheduling.stall_timeout_ms) : "");
+    setMaxTurnsPerTask(project.config.scheduling?.max_turns_per_task != null ? String(project.config.scheduling.max_turns_per_task) : "");
     setDeleteConfirmValue("");
     setShareTargetType("user");
     setSelectedUserId("");
@@ -500,6 +504,34 @@ export function ProjectSettingsPage() {
     }
     setError(null);
     setMessage("已保存基础信息");
+  };
+
+  const saveScheduling = async () => {
+    if (!canEditProject) {
+      setError("当前权限不允许修改调度配置");
+      return;
+    }
+    const scheduling: Record<string, unknown> = {};
+    if (stallTimeoutMs.trim()) {
+      const n = Number(stallTimeoutMs.trim());
+      if (!Number.isFinite(n) || n < 0) { setError("超时值必须是非负整数"); return; }
+      scheduling.stall_timeout_ms = n;
+    }
+    if (maxTurnsPerTask.trim()) {
+      const n = Number(maxTurnsPerTask.trim());
+      if (!Number.isFinite(n) || n < 1) { setError("Turn 限制必须 >= 1"); return; }
+      scheduling.max_turns_per_task = n;
+    }
+    const result = await updateProjectConfig(project.id, {
+      default_agent_type: project.config.default_agent_type ?? null,
+      default_workspace_id: project.config.default_workspace_id ?? null,
+      agent_presets: project.config.agent_presets ?? [],
+      context_containers: contextContainers,
+      scheduling,
+    });
+    if (!result) { setError("调度配置保存失败"); return; }
+    setError(null);
+    setMessage("已保存调度配置");
   };
 
   const saveDefaultWorkspace = async (workspaceId: string | null) => {
@@ -737,6 +769,48 @@ export function ProjectSettingsPage() {
                       <span className="rounded-full border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
                         grants: {grants.length}
                       </span>
+                    </div>
+                  </ContentGroup>
+
+                  <ContentGroup
+                    title="调度安全网"
+                    description="平台级安全限制，防止 Agent 失控运行。留空则使用系统默认值。"
+                  >
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label className="agentdash-form-label">Session 无活动超时 (毫秒)</label>
+                        <input
+                          type="number"
+                          value={stallTimeoutMs}
+                          onChange={(e) => setStallTimeoutMs(e.target.value)}
+                          disabled={!canEditProject}
+                          placeholder="默认 300000 (5 分钟)，0 = 禁用"
+                          min={0}
+                          className="agentdash-form-input disabled:cursor-not-allowed disabled:opacity-70"
+                        />
+                      </div>
+                      <div>
+                        <label className="agentdash-form-label">单 Task 最大 Turn 数</label>
+                        <input
+                          type="number"
+                          value={maxTurnsPerTask}
+                          onChange={(e) => setMaxTurnsPerTask(e.target.value)}
+                          disabled={!canEditProject}
+                          placeholder="默认 25"
+                          min={1}
+                          className="agentdash-form-input disabled:cursor-not-allowed disabled:opacity-70"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void saveScheduling()}
+                        disabled={!canEditProject}
+                        className="agentdash-button-secondary"
+                      >
+                        保存调度配置
+                      </button>
                     </div>
                   </ContentGroup>
                 </SectionCard>

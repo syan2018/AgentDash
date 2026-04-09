@@ -302,18 +302,29 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             &evaluated.snapshot,
             &self.hook_session.runtime_snapshot(),
         );
-        self.record_trace(
-            HookTrigger::UserPromptSubmit,
-            if evaluated.resolution.injections.is_empty() && pending_messages.consumed == 0 {
-                "noop"
-            } else {
-                "context_injected"
-            },
-            None,
-            None,
-            None,
-            &evaluated,
-        );
+        if should_trace_user_prompt_context_injection(
+            &evaluated.runtime,
+            &evaluated.resolution.injections,
+            pending_messages.consumed,
+        ) {
+            self.record_trace(
+                HookTrigger::UserPromptSubmit,
+                "context_injected",
+                None,
+                None,
+                None,
+                &evaluated,
+            );
+        } else if evaluated.resolution.injections.is_empty() && pending_messages.consumed == 0 {
+            self.record_trace(
+                HookTrigger::UserPromptSubmit,
+                "noop",
+                None,
+                None,
+                None,
+                &evaluated,
+            );
+        }
 
         // 3. 构建消息列表
         let mut messages = input.context.messages;
@@ -622,6 +633,30 @@ struct PendingHookMessages {
     consumed: usize,
 }
 
+fn should_trace_user_prompt_context_injection(
+    runtime: &HookSessionRuntimeSnapshot,
+    injections: &[HookInjection],
+    pending_consumed: usize,
+) -> bool {
+    if pending_consumed > 0 {
+        return true;
+    }
+    if injections.is_empty() {
+        return false;
+    }
+
+    let previous = runtime
+        .trace
+        .iter()
+        .rev()
+        .find(|entry| matches!(entry.trigger, HookTrigger::UserPromptSubmit));
+
+    match previous {
+        Some(entry) => entry.injections != injections,
+        None => true,
+    }
+}
+
 fn collect_pending_hook_messages(
     hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
     snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
@@ -844,7 +879,7 @@ mod tests {
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
-        HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
+        HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
         HookPendingActionResolutionKind, HookResolution, HookSessionRuntimeAccess, HookTrigger,
         NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
         SessionHookSnapshotQuery, SessionSnapshotMetadata,
@@ -861,6 +896,9 @@ mod tests {
         triggers: Arc<Mutex<Vec<HookTrigger>>>,
         after_payloads: Arc<Mutex<Vec<serde_json::Value>>>,
     }
+
+    #[derive(Clone)]
+    struct StaticCompanionContextProvider;
 
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
@@ -1007,6 +1045,52 @@ mod tests {
                     HookResolution::default()
                 }
                 _ => HookResolution::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ExecutionHookProvider for StaticCompanionContextProvider {
+        async fn load_session_snapshot(
+            &self,
+            query: SessionHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                ..SessionHookSnapshot::default()
+            })
+        }
+
+        async fn refresh_session_snapshot(
+            &self,
+            query: SessionHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: query.session_id,
+                turn_id: query.turn_id,
+            })
+            .await
+        }
+
+        async fn evaluate_hook(
+            &self,
+            query: HookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            if !matches!(query.trigger, HookTrigger::UserPromptSubmit) {
+                return Ok(HookResolution::default());
+            }
+
+            Ok(HookResolution {
+                diagnostics: vec![HookDiagnosticEntry {
+                    code: "session_binding_found".to_string(),
+                    message: "命中会话绑定".to_string(),
+                }],
+                injections: vec![HookInjection {
+                    slot: "companion_agents".to_string(),
+                    content: "## Companion Agents\n- agent".to_string(),
+                    source: "builtin:companion_agents".to_string(),
+                }],
+                ..HookResolution::default()
             })
         }
     }
@@ -1267,6 +1351,53 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[tokio::test]
+    async fn transform_context_deduplicates_static_companion_injection_trace() {
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(StaticCompanionContextProvider),
+            SessionHookSnapshot {
+                session_id: "sess-hook".to_string(),
+                ..SessionHookSnapshot::default()
+            },
+        ));
+        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+
+        let input = agentdash_spi::lifecycle::TransformContextInput {
+            context: AgentContext {
+                system_prompt: "test".to_string(),
+                messages: vec![AgentMessage::user("hello")],
+                tools: vec![],
+            },
+        };
+
+        let first = delegate
+            .transform_context(input.clone(), CancellationToken::new())
+            .await
+            .expect("first transform_context should succeed");
+        let second = delegate
+            .transform_context(input, CancellationToken::new())
+            .await
+            .expect("second transform_context should succeed");
+
+        // 注入消息仍会参与每次 LLM 请求，但 trace 不应重复刷屏。
+        assert!(first.messages.len() > 1);
+        assert!(second.messages.len() > 1);
+
+        let submit_traces = hook_session
+            .runtime_snapshot()
+            .trace
+            .into_iter()
+            .filter(|trace| matches!(trace.trigger, HookTrigger::UserPromptSubmit))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            submit_traces.len(),
+            1,
+            "static companion injection should not produce duplicate trace events"
+        );
+        assert_eq!(submit_traces[0].decision, "context_injected");
     }
 
     #[test]

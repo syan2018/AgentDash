@@ -136,6 +136,201 @@ function SessionHistoryPanel({
   );
 }
 
+// ─── Cron 分段选择器 ───
+
+type CronFrequency = "none" | "every_n_min" | "every_n_hour" | "daily" | "weekday";
+
+const CRON_FREQ_OPTIONS: Array<{ value: CronFrequency; label: string }> = [
+  { value: "none", label: "不启用" },
+  { value: "every_n_min", label: "每隔 N 分钟" },
+  { value: "every_n_hour", label: "每隔 N 小时" },
+  { value: "daily", label: "每天指定时间" },
+  { value: "weekday", label: "工作日指定时间" },
+];
+
+function cronToSegments(cron: string): { freq: CronFrequency; interval: number; hour: number; minute: number } {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return { freq: "none", interval: 10, hour: 9, minute: 0 };
+  const [mm, hh, , , dow] = parts;
+  // */N * * * *
+  if (mm.startsWith("*/") && hh === "*") {
+    const n = Number(mm.slice(2));
+    if (Number.isFinite(n) && n > 0) return { freq: "every_n_min", interval: n, hour: 9, minute: 0 };
+  }
+  // 0 */N * * *
+  if (hh.startsWith("*/") && /^\d+$/.test(mm)) {
+    const n = Number(hh.slice(2));
+    if (Number.isFinite(n) && n > 0) return { freq: "every_n_hour", interval: n, hour: 9, minute: Number(mm) };
+  }
+  // M H * * * or M H * * 1-5
+  if (/^\d+$/.test(mm) && /^\d+$/.test(hh)) {
+    const h = Number(hh);
+    const m = Number(mm);
+    if (dow === "1-5") return { freq: "weekday", interval: 10, hour: h, minute: m };
+    if (dow === "*") return { freq: "daily", interval: 10, hour: h, minute: m };
+  }
+  return { freq: "none", interval: 10, hour: 9, minute: 0 };
+}
+
+function segmentsToCron(freq: CronFrequency, interval: number, hour: number, minute: number): string {
+  switch (freq) {
+    case "every_n_min": return `*/${Math.max(1, interval)} * * * *`;
+    case "every_n_hour": return `${minute} */${Math.max(1, interval)} * * *`;
+    case "daily": return `${minute} ${hour} * * *`;
+    case "weekday": return `${minute} ${hour} * * 1-5`;
+    default: return "";
+  }
+}
+
+function describeCron(freq: CronFrequency, interval: number, hour: number, minute: number): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  switch (freq) {
+    case "every_n_min": return `每 ${interval} 分钟执行一次`;
+    case "every_n_hour": return `每 ${interval} 小时执行一次（在第 ${minute} 分钟）`;
+    case "daily": return `每天 ${pad(hour)}:${pad(minute)} 执行`;
+    case "weekday": return `工作日 ${pad(hour)}:${pad(minute)} 执行`;
+    default: return "";
+  }
+}
+
+function CronScheduleSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (cron: string) => void;
+}) {
+  const parsed = useMemo(() => cronToSegments(value), [value]);
+  const isCustom = value.trim() !== "" && parsed.freq === "none";
+
+  const [freq, setFreq] = useState<CronFrequency>(parsed.freq);
+  const [interval, setInterval] = useState(parsed.interval);
+  const [hour, setHour] = useState(parsed.hour);
+  const [minute, setMinute] = useState(parsed.minute);
+  const [showRaw, setShowRaw] = useState(isCustom);
+
+  const handleFreqChange = (f: CronFrequency) => {
+    setFreq(f);
+    setShowRaw(false);
+    onChange(segmentsToCron(f, interval, hour, minute));
+  };
+
+  const handleParamChange = (newInterval: number, newHour: number, newMinute: number) => {
+    setInterval(newInterval);
+    setHour(newHour);
+    setMinute(newMinute);
+    onChange(segmentsToCron(freq, newInterval, newHour, newMinute));
+  };
+
+  const generatedCron = segmentsToCron(freq, interval, hour, minute);
+
+  return (
+    <div className="space-y-2.5">
+      <div>
+        <label className="agentdash-form-label">定时频率</label>
+        <select
+          value={showRaw ? "none" : freq}
+          onChange={(e) => handleFreqChange(e.target.value as CronFrequency)}
+          className="agentdash-form-select"
+        >
+          {CRON_FREQ_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {freq === "every_n_min" && !showRaw && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">每隔</span>
+          <input
+            type="number"
+            value={interval}
+            onChange={(e) => handleParamChange(Math.max(1, Number(e.target.value) || 1), hour, minute)}
+            min={1}
+            max={59}
+            className="agentdash-form-input w-20"
+          />
+          <span className="text-xs text-muted-foreground">分钟</span>
+        </div>
+      )}
+
+      {freq === "every_n_hour" && !showRaw && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">每隔</span>
+          <input
+            type="number"
+            value={interval}
+            onChange={(e) => handleParamChange(Math.max(1, Number(e.target.value) || 1), hour, minute)}
+            min={1}
+            max={23}
+            className="agentdash-form-input w-20"
+          />
+          <span className="text-xs text-muted-foreground">小时</span>
+        </div>
+      )}
+
+      {(freq === "daily" || freq === "weekday") && !showRaw && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">时间</span>
+          <input
+            type="number"
+            value={hour}
+            onChange={(e) => handleParamChange(interval, Math.min(23, Math.max(0, Number(e.target.value) || 0)), minute)}
+            min={0}
+            max={23}
+            className="agentdash-form-input w-16"
+          />
+          <span className="text-xs text-muted-foreground">:</span>
+          <input
+            type="number"
+            value={minute}
+            onChange={(e) => handleParamChange(interval, hour, Math.min(59, Math.max(0, Number(e.target.value) || 0)))}
+            min={0}
+            max={59}
+            className="agentdash-form-input w-16"
+          />
+        </div>
+      )}
+
+      {showRaw && (
+        <div>
+          <label className="agentdash-form-label">Cron 表达式</label>
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="* * * * *"
+            className="agentdash-form-input font-mono"
+          />
+        </div>
+      )}
+
+      {freq !== "none" && !showRaw && (
+        <div className="flex items-center gap-2">
+          <code className="rounded-[6px] bg-secondary/50 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {generatedCron}
+          </code>
+          <span className="text-[10px] text-muted-foreground/70">
+            {describeCron(freq, interval, hour, minute)}
+          </span>
+        </div>
+      )}
+
+      {isCustom && !showRaw && (
+        <p className="text-[10px] text-amber-600 dark:text-amber-400">
+          当前为自定义表达式：<code className="font-mono">{value}</code>
+          <button
+            type="button"
+            onClick={() => setShowRaw(true)}
+            className="ml-1 underline hover:no-underline"
+          >
+            手动编辑
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Config Override 内联面板 ───
 
 function ConfigOverridePanel({
@@ -167,14 +362,12 @@ function ConfigOverridePanel({
     setIsSaving(true);
     try {
       const override: Record<string, unknown> = { ...(configOverride ?? {}) };
-      // max_turns
       if (maxTurns.trim()) {
         const n = Number(maxTurns.trim());
         if (Number.isFinite(n) && n > 0) override.max_turns = n;
       } else {
         delete override.max_turns;
       }
-      // scheduling
       if (cronSchedule.trim()) {
         override.scheduling = {
           cron_schedule: cronSchedule.trim(),
@@ -207,37 +400,33 @@ function ConfigOverridePanel({
   return (
     <div className="mt-2 space-y-3 rounded-[10px] border border-amber-400/30 bg-amber-500/5 p-4">
       <p className="text-[11px] font-medium uppercase tracking-[0.1em] text-amber-700 dark:text-amber-400">
-        项目级覆盖配置
+        实例配置
       </p>
 
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        <div>
-          <label className="agentdash-form-label">Cron 定时调度</label>
-          <input
-            value={cronSchedule}
-            onChange={(e) => setCronSchedule(e.target.value)}
-            placeholder="例如 */10 * * * *"
-            className="agentdash-form-input font-mono"
-          />
-        </div>
-        <div>
-          <label className="agentdash-form-label">触发时 Session 模式</label>
-          <select
-            value={cronSessionMode}
-            onChange={(e) => setCronSessionMode(e.target.value)}
-            className="agentdash-form-select"
-          >
-            <option value="reuse">复用已有 Session</option>
-            <option value="fresh">每次新建 Session</option>
-          </select>
-        </div>
+      <div className="space-y-3">
+        <CronScheduleSelector value={cronSchedule} onChange={setCronSchedule} />
+
+        {cronSchedule.trim() && (
+          <div>
+            <label className="agentdash-form-label">触发时 Session 模式</label>
+            <select
+              value={cronSessionMode}
+              onChange={(e) => setCronSessionMode(e.target.value)}
+              className="agentdash-form-select"
+            >
+              <option value="reuse">复用已有 Session</option>
+              <option value="fresh">每次新建 Session</option>
+            </select>
+          </div>
+        )}
+
         <div>
           <label className="agentdash-form-label">最大 Turn 数 (覆盖)</label>
           <input
             type="number"
             value={maxTurns}
             onChange={(e) => setMaxTurns(e.target.value)}
-            placeholder="留空则使用预设值"
+            placeholder="留空则使用 Agent 配置值"
             min={1}
             className="agentdash-form-input"
           />
@@ -272,6 +461,73 @@ function ConfigOverridePanel({
           {isSaving ? "保存中..." : "保存覆盖"}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── CardMenu 下拉菜单 ───
+
+function CardMenu({
+  items,
+}: {
+  items: Array<{ key: string; label: string; danger?: boolean; badge?: string; onSelect: () => void }>;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] border border-border bg-background text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        title="操作菜单"
+      >
+        &#x22EF;
+      </button>
+      {open && (
+        <div className="absolute right-0 top-9 z-[80] min-w-[9rem] rounded-[10px] border border-border bg-background p-1 shadow-xl">
+          {items.map((item) =>
+            item.key === "---" ? (
+              <div key={item.key} className="my-1 border-t border-border/60" />
+            ) : (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => { setOpen(false); item.onSelect(); }}
+                className={`flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  item.danger
+                    ? "text-destructive hover:bg-destructive/10"
+                    : "text-foreground hover:bg-secondary"
+                }`}
+              >
+                {item.label}
+                {item.badge && (
+                  <span className="ml-auto rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] text-amber-600 dark:text-amber-400">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -709,36 +965,17 @@ export function ProjectAgentView({
                       <span className="rounded-full border border-border bg-secondary px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                         {agent.executor.executor}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditConfig(agent)}
-                        className="rounded-[6px] border border-border px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                        title="编辑 Agent 配置"
-                      >
-                        配置
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setOverrideAgentKey(overrideAgentKey === agent.key ? null : agent.key)}
-                        className={`rounded-[6px] border px-2 py-0.5 text-[10px] transition-colors ${
-                          overrideAgentKey === agent.key
-                            ? "border-amber-400/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                            : link?.config_override && Object.keys(link.config_override).length > 0
-                              ? "border-amber-400/30 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                              : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
-                        }`}
-                        title="项目级覆盖配置"
-                      >
-                        覆盖{link?.config_override && Object.keys(link.config_override).length > 0 ? " *" : ""}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleUnlink(agent.key)}
-                        className="rounded-[6px] border border-destructive/30 px-2 py-0.5 text-[10px] text-destructive transition-colors hover:bg-destructive/10"
-                        title="解除关联"
-                      >
-                        解除
-                      </button>
+                      <CardMenu items={[
+                        { key: "config", label: "编辑配置", onSelect: () => handleOpenEditConfig(agent) },
+                        {
+                          key: "override",
+                          label: "实例配置",
+                          badge: link?.config_override && Object.keys(link.config_override).length > 0 ? "已覆盖" : undefined,
+                          onSelect: () => setOverrideAgentKey(overrideAgentKey === agent.key ? null : agent.key),
+                        },
+                        { key: "---", label: "", onSelect: () => {} },
+                        { key: "unlink", label: "解除关联", danger: true, onSelect: () => void handleUnlink(agent.key) },
+                      ]} />
                     </div>
                   </div>
 

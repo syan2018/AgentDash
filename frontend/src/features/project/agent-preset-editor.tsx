@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import type { AgentPreset, CronSessionMode, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
+import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
@@ -23,8 +23,6 @@ export interface PresetFormState {
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
   max_turns: string;
-  cron_schedule: string;
-  cron_session_mode: CronSessionMode | "";
   mcp_servers: McpServerDecl[];
   tool_clusters: ToolCluster[];
   allowed_companions: string[];
@@ -48,11 +46,6 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
     max_turns: cfg.max_turns != null ? String(cfg.max_turns) : "",
-    cron_schedule: String(((cfg.scheduling as Record<string, unknown> | undefined)?.cron_schedule) ?? ""),
-    cron_session_mode: (() => {
-      const v = (cfg.scheduling as Record<string, unknown> | undefined)?.cron_session_mode;
-      return v === "reuse" || v === "fresh" ? v : "";
-    })(),
     mcp_servers: rawMcps,
     tool_clusters: rawClusters,
     allowed_companions: rawCompanions,
@@ -73,11 +66,6 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.max_turns.trim()) {
     const n = Number(form.max_turns.trim());
     if (Number.isFinite(n) && n > 0) config.max_turns = n;
-  }
-  if (form.cron_schedule.trim()) {
-    const scheduling: Record<string, unknown> = { cron_schedule: form.cron_schedule.trim() };
-    if (form.cron_session_mode) scheduling.cron_session_mode = form.cron_session_mode;
-    config.scheduling = scheduling;
   }
   if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
   if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
@@ -772,11 +760,11 @@ export function PresetFormFields({
         </div>
       </FormSection>
 
-      {/* ── Section 4: 调度 & 限制 ── */}
+      {/* ── Section 4: 运行限制 ── */}
       <FormSection
-        title="调度 & 限制"
+        title="运行限制"
         defaultOpen={false}
-        badge={form.cron_schedule.trim() ? "已配置" : undefined}
+        badge={form.max_turns.trim() ? `${form.max_turns.trim()} turns` : undefined}
       >
         <div>
           <label className="agentdash-form-label">最大 Turn 数</label>
@@ -792,42 +780,6 @@ export function PresetFormFields({
             单次执行最大对话轮数，防止 Agent 失控循环
           </p>
         </div>
-        <div>
-          <label className="agentdash-form-label">Cron 定时调度</label>
-          <input
-            value={form.cron_schedule}
-            onChange={(e) => patchForm({ cron_schedule: e.target.value })}
-            placeholder="例如 */10 * * * * (每 10 分钟)"
-            className="agentdash-form-input font-mono"
-          />
-          <p className="mt-0.5 text-[10px] text-muted-foreground/60">
-            标准 5 字段 cron 表达式，留空则不启用定时调度
-          </p>
-        </div>
-        {form.cron_schedule.trim() && (
-          <div>
-            <label className="agentdash-form-label">触发时 Session 模式</label>
-            <div className="flex gap-1.5">
-              {(["reuse", "fresh"] as const).map((mode) => {
-                const active = (form.cron_session_mode || "reuse") === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => patchForm({ cron_session_mode: mode })}
-                    className={`rounded-[8px] border px-3 py-1.5 text-[11px] font-medium transition-all duration-160 ${
-                      active
-                        ? "border-primary/30 bg-primary/8 text-primary"
-                        : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
-                    }`}
-                  >
-                    {mode === "reuse" ? "复用已有 Session" : "每次新建 Session"}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </FormSection>
 
       {/* ── Section 5: 工具 & 协作 ── */}

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
@@ -20,6 +21,7 @@ pub(crate) struct PluginHostRegistration {
     pub connectors: Vec<Arc<dyn AgentConnector>>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
+    pub extra_skill_dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Error)]
@@ -55,6 +57,7 @@ pub(crate) fn collect_plugin_registration(
     let mut auth_provider_plugin: Option<String> = None;
     let mut executor_owners: HashMap<String, String> = HashMap::new();
     let mut mount_providers = Vec::new();
+    let mut extra_skill_dirs = Vec::new();
 
     for plugin in plugins {
         let plugin_name = plugin.name().to_string();
@@ -77,6 +80,16 @@ pub(crate) fn collect_plugin_registration(
                 mp.len()
             );
             mount_providers.extend(mp);
+        }
+
+        let skill_dirs = plugin.extra_skill_dirs();
+        if !skill_dirs.is_empty() {
+            tracing::info!(
+                "  插件 `{}` 注册了 {} 个 skill 扫描目录",
+                plugin_name,
+                skill_dirs.len()
+            );
+            extra_skill_dirs.extend(skill_dirs);
         }
 
         for connector in plugin.agent_connectors() {
@@ -111,6 +124,7 @@ pub(crate) fn collect_plugin_registration(
         connectors,
         auth_provider,
         mount_providers,
+        extra_skill_dirs,
     })
 }
 

@@ -190,7 +190,7 @@ impl SessionHub {
         };
 
         // 通过 address space service 扫描所有 mount 的 skill
-        let discovered_skills = if let Some(service) = &self.address_space_service {
+        let mut discovered_skills = if let Some(service) = &self.address_space_service {
             let skill_result =
                 crate::skill::load_skills_from_address_space(service, &effective_address_space)
                     .await;
@@ -206,6 +206,25 @@ impl SessionHub {
         } else {
             Vec::new()
         };
+
+        // 合并插件提供的额外 skill 目录（优先级低于 mount 内发现的同名 skill）
+        if !self.extra_skill_dirs.is_empty() {
+            let existing_names: std::collections::HashMap<String, String> = discovered_skills
+                .iter()
+                .map(|s| (s.name.clone(), s.file_path.to_string_lossy().to_string()))
+                .collect();
+            let plugin_result =
+                crate::skill::load_skills_from_local_dirs(&self.extra_skill_dirs, &existing_names);
+            for diag in &plugin_result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "skill 诊断 (plugin): {}",
+                    diag.message
+                );
+            }
+            discovered_skills.extend(plugin_result.skills);
+        }
 
         let context = ExecutionContext {
             turn_id: turn_id.clone(),

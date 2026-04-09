@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io, sync::Arc};
+use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
 
 use agent_client_protocol::{SessionNotification, SessionUpdate};
 use agentdash_acp_meta::AgentDashSourceV1;
@@ -29,6 +29,7 @@ pub struct SessionHub {
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
     pub(super) persistence: Arc<dyn SessionPersistence>,
     pub(crate) address_space_service: Option<Arc<crate::address_space::RelayAddressSpaceService>>,
+    pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub companion_wait_registry: CompanionWaitRegistry,
 }
 
@@ -46,6 +47,7 @@ impl SessionHub {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             persistence,
             address_space_service: None,
+            extra_skill_dirs: Vec::new(),
             companion_wait_registry: CompanionWaitRegistry::default(),
         }
     }
@@ -56,6 +58,12 @@ impl SessionHub {
         service: Arc<crate::address_space::RelayAddressSpaceService>,
     ) -> Self {
         self.address_space_service = Some(service);
+        self
+    }
+
+    /// 注入插件提供的额外 Skill 扫描目录
+    pub fn with_extra_skill_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.extra_skill_dirs = dirs;
         self
     }
 

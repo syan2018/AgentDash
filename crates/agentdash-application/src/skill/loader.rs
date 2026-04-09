@@ -21,6 +21,87 @@ pub struct LoadSkillsResult {
     pub diagnostics: Vec<SkillDiagnostic>,
 }
 
+/// 扫描插件提供的本地文件系统目录中的 skill
+///
+/// 对每个目录，遍历一级子目录并查找 SKILL.md，解析规则与 mount 扫描一致。
+/// 不经过 address space mount 系统，直接使用 `std::fs`。
+pub fn load_skills_from_local_dirs(
+    dirs: &[PathBuf],
+    existing_names: &HashMap<String, String>,
+) -> LoadSkillsResult {
+    let mut result = LoadSkillsResult::default();
+    let mut name_map: HashMap<String, String> = existing_names.clone();
+
+    for dir in dirs {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue, // 目录不存在或不可读，静默跳过
+        };
+
+        for entry in entries.filter_map(|e| e.ok()) {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+
+            let skill_md = entry.path().join("SKILL.md");
+            let content = match std::fs::read_to_string(&skill_md) {
+                Ok(c) => c,
+                Err(_) => continue, // 无 SKILL.md，跳过
+            };
+
+            let (fm, _body) = parse_skill_file(&content);
+            let fm = fm.unwrap_or_default();
+
+            let parent_dir_name = entry
+                .file_name()
+                .to_string_lossy()
+                .to_string();
+
+            let name = fm
+                .name
+                .clone()
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| parent_dir_name.clone());
+
+            let mut diags = Vec::new();
+            diags.extend(validate_and_collect(
+                &name,
+                &parent_dir_name,
+                &fm,
+                &skill_md.to_string_lossy(),
+            ));
+
+            if !diags.is_empty() {
+                result.diagnostics.extend(diags);
+                continue;
+            }
+
+            let key = skill_md.to_string_lossy().to_string();
+            if let Some(existing) = name_map.get(&name) {
+                result.diagnostics.push(SkillDiagnostic {
+                    name: name.clone(),
+                    message: format!(
+                        "skill \"{}\" 与 {} 冲突（plugin 路径），忽略 {}",
+                        name, existing, key
+                    ),
+                    file_path: skill_md,
+                });
+            } else {
+                name_map.insert(name.clone(), key);
+                result.skills.push(SkillRef {
+                    name,
+                    description: fm.description.unwrap_or_default(),
+                    file_path: skill_md,
+                    base_dir: entry.path(),
+                    disable_model_invocation: fm.disable_model_invocation,
+                });
+            }
+        }
+    }
+
+    result
+}
+
 /// 通过 address space service 从所有 mount 扫描 skill（主入口）
 ///
 /// 对每个有 Read + List 能力的 mount，扫描 `.agents/skills/` 和 `skills/` 目录。

@@ -238,7 +238,8 @@ impl AppState {
             Some(hook_provider.clone()),
             session_repo,
         )
-        .with_address_space_service(address_space_service.clone());
+        .with_address_space_service(address_space_service.clone())
+        .with_extra_skill_dirs(plugin_registration.extra_skill_dirs);
         session_hub_handle.set(session_hub.clone()).await;
 
         let restart_tracker = Arc::new(RestartTracker::default());

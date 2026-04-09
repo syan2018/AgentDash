@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
@@ -90,6 +91,15 @@ pub trait AgentDashPlugin: Send + Sync {
     /// 使 `ExternalService` 类型的 context container 能通过标准 mount 链路
     /// 完成 read / write / list / search 操作。
     fn mount_providers(&self) -> Vec<Arc<dyn MountProvider>> {
+        vec![]
+    }
+
+    /// 注册额外的 Skill 扫描目录（绝对路径）。
+    ///
+    /// 宿主会扫描这些目录下的 SKILL.md 文件，发现规则与 address space mount 一致
+    /// （一级子目录 + SKILL.md frontmatter 解析）。
+    /// 插件提供的 skill 优先级低于 address space mount 内发现的同名 skill。
+    fn extra_skill_dirs(&self) -> Vec<PathBuf> {
         vec![]
     }
 

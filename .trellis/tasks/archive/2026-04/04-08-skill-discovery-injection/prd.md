@@ -1,6 +1,6 @@
 # Skill 发现与注入系统
 
-> 状态：planning
+> 状态：done
 > 参考：`references/pi-mono/packages/coding-agent/src/core/skills.ts`
 
 ## 背景

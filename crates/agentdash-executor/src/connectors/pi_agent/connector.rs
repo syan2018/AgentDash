@@ -204,11 +204,33 @@ impl PiAgentConnector {
             }
         }
 
-        // ── 2. Project Context: 会话级 owner 上下文 ──
+        // ── 2. Project Context: 会话级 owner 业务上下文 ──
         if let Some(ref ctx) = context.system_context
             && !ctx.trim().is_empty()
         {
             sections.push(format!("## Project Context\n\n{ctx}"));
+        }
+
+        // ── 2b. Companion Agents: 从 session capabilities 注入 ──
+        if let Some(ref caps) = context.session_capabilities {
+            if !caps.companion_agents.is_empty() {
+                let lines = caps
+                    .companion_agents
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "- **{}** (executor: `{}`): {}",
+                            a.name, a.executor, a.display_name
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                sections.push(format!(
+                    "## Companion Agents\n\n\
+                     以下 agent 已关联到当前项目，可通过 `companion_request` 工具的 `agent_key` 参数按名称指定：\n\n\
+                     {lines}"
+                ));
+            }
         }
 
         // ── 3. Workspace: 地址空间 / 工作目录 ──
@@ -289,31 +311,30 @@ Paths may use `mount_id://path` to target a specific mount; paths without a pref
             }
         }
 
-        // ── 7. Skills：懒加载指针，模型按需 read 加载 ──
-        if let Some(skills_block) = format_skills_for_prompt(&context.skills, tool_names) {
-            sections.push(skills_block);
+        // ── 7. Skills：从 session capabilities 渲染 ──
+        if let Some(ref caps) = context.session_capabilities {
+            if let Some(skills_block) =
+                format_skills_from_capabilities(caps, tool_names)
+            {
+                sections.push(skills_block);
+            }
         }
 
         sections.join("\n\n")
     }
 }
 
-/// 将 skill 列表格式化为 `<available_skills>` XML 块注入 system prompt。
-///
-/// 仅包含 `disable_model_invocation = false` 的 skill；
-/// 仅在会话有文件读取工具（fs_read / read_file）时生成。
-fn format_skills_for_prompt(
-    skills: &[agentdash_spi::SkillRef],
+/// 从 `SessionBaselineCapabilities` 渲染 skills XML 块。
+/// 同样依赖 tool_names 中存在 fs_read / read_file 才生成。
+fn format_skills_from_capabilities(
+    caps: &agentdash_spi::SessionBaselineCapabilities,
     tool_names: &[String],
 ) -> Option<String> {
     let read_tool = tool_names
         .iter()
         .find(|t| *t == "fs_read" || *t == "read_file")?;
 
-    let visible: Vec<_> = skills
-        .iter()
-        .filter(|s| !s.disable_model_invocation)
-        .collect();
+    let visible = caps.visible_skills();
     if visible.is_empty() {
         return None;
     }
@@ -336,7 +357,7 @@ fn format_skills_for_prompt(
         ));
         lines.push(format!(
             "    <location>{}</location>",
-            escape_xml(&skill.file_path.to_string_lossy())
+            escape_xml(&skill.file_path)
         ));
         lines.push("  </skill>".to_string());
     }
@@ -1863,7 +1884,7 @@ mod tests {
             runtime_delegate: None,
             identity: None,
             restored_session_state: None,
-            skills: vec![],
+            session_capabilities: None,
         };
 
         let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
@@ -1873,6 +1894,78 @@ mod tests {
         assert!(prompt.contains("/tmp/test-workspace"));
         assert!(prompt.contains("Available address-space tools"));
         assert!(prompt.contains("mounts_list"));
+    }
+
+    #[test]
+    fn runtime_system_prompt_renders_session_capabilities() {
+        use agentdash_spi::session_capabilities::{
+            CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry,
+        };
+
+        let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
+        let context = ExecutionContext {
+            turn_id: "turn-cap".to_string(),
+            working_directory: PathBuf::from("/tmp/ws"),
+            environment_variables: HashMap::new(),
+            executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            mcp_servers: vec![],
+            address_space: Some(test_address_space("/tmp/ws")),
+            hook_session: None,
+            flow_capabilities: Default::default(),
+            system_context: None,
+            runtime_delegate: None,
+            identity: None,
+            restored_session_state: None,
+            session_capabilities: Some(SessionBaselineCapabilities {
+                companion_agents: vec![CompanionAgentEntry {
+                    name: "reviewer".to_string(),
+                    executor: "PI_AGENT".to_string(),
+                    display_name: "Code Reviewer".to_string(),
+                }],
+                skills: vec![
+                    SkillEntry {
+                        name: "test-skill".to_string(),
+                        description: "A testing skill".to_string(),
+                        file_path: "/ws/skills/test/SKILL.md".to_string(),
+                        disable_model_invocation: false,
+                    },
+                    SkillEntry {
+                        name: "hidden-skill".to_string(),
+                        description: "Should not appear".to_string(),
+                        file_path: "/ws/skills/hidden/SKILL.md".to_string(),
+                        disable_model_invocation: true,
+                    },
+                ],
+            }),
+        };
+
+        let tools = ["fs_read".to_string(), "shell".to_string()];
+        let prompt = connector.build_runtime_system_prompt(&context, &tools);
+
+        assert!(
+            prompt.contains("Companion Agents"),
+            "should render companion agents section"
+        );
+        assert!(
+            prompt.contains("reviewer"),
+            "should include agent name"
+        );
+        assert!(
+            prompt.contains("Code Reviewer"),
+            "should include display name"
+        );
+        assert!(
+            prompt.contains("available_skills"),
+            "should render skills block"
+        );
+        assert!(
+            prompt.contains("test-skill"),
+            "should include visible skill"
+        );
+        assert!(
+            !prompt.contains("hidden-skill"),
+            "should exclude disabled skill"
+        );
     }
 
     #[tokio::test]
@@ -1982,7 +2075,7 @@ mod tests {
                     runtime_delegate: None,
                     identity: None,
                     restored_session_state: None,
-                    skills: vec![],
+                    session_capabilities: None,
                 },
             )
             .await;
@@ -2025,7 +2118,7 @@ mod tests {
                             agentdash_spi::AgentMessage::assistant("历史助手消息"),
                         ],
                     }),
-                    skills: vec![],
+                    session_capabilities: None,
                 },
             )
             .await

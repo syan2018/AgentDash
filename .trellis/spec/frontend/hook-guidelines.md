@@ -370,11 +370,15 @@ if (isTerminalToolCallStatus(incomingStatus)) {
 
 decision 通过解析 `event.code`（格式 `hook:{trigger}:{decision}`）获取。
 
-### Companion Agents 上下文归属
+### Session Baseline Capabilities 分层
 
-- `companion_agents` 属于会话级静态能力描述，不应在每轮 `UserPromptSubmit` 以动态注入消息重复追加
-- 该信息应并入 session 级 `system_context` / system prompt 基线，仅在会话初始化（或关联关系变更）时更新
+- `companion_agents` 和 `skills` 属于会话级稳定能力描述，统一收入 `SessionBaselineCapabilities` 数据契约
+- 这些信息不应在每轮 `UserPromptSubmit` 以动态注入消息重复追加
+- 后端在首轮 prompt 时以 `agentdash://session-capabilities/{session_id}` 资源块注入会话流
+- 前端通过 `AcpSessionCapabilityCard` 将资源块解析为可展开的交互面板（companion agent chips + skill rows）
 - `context_injected` 事件主要承载真正的动态治理信息（workflow 约束、pending action 等），避免被静态能力清单淹没
+- Session context 页面通过 `SessionCapabilitiesSurfaceCard` 展示 capability 详情
+- `SessionContextResponse.session_capabilities` 在 API 层动态构建，支持实时反映 hook runtime 和 address space 变更
 
 ### hook_event 渲染分级
 

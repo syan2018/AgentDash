@@ -15,6 +15,7 @@ import type {
   ExecutionAddressSpace,
   HookSessionRuntimeInfo,
   ProjectSessionAgentContext,
+  SessionBaselineCapabilities,
   SessionBindingOwner,
   SessionContextSnapshot,
   SessionNavigationState,
@@ -48,6 +49,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     task_agent_binding: AgentBinding | null;
     address_space: ExecutionAddressSpace | null;
     context_snapshot: SessionContextSnapshot | null;
+    session_capabilities: SessionBaselineCapabilities | null;
   } | null>(null);
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
@@ -192,6 +194,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         task_agent_binding: ctx?.agent_binding ?? null,
         address_space: ctx?.address_space ?? null,
         context_snapshot: ctx?.context_snapshot ?? null,
+        session_capabilities: ctx?.session_capabilities ?? null,
       });
     })();
     return () => {
@@ -208,6 +211,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
   const sessionAddressSpace = activeSessionContext?.address_space ?? null;
   const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
+  const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
   const taskExecutorSummary = sessionContextSnapshot?.executor ?? null;
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
@@ -446,6 +450,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           contextSnapshot={sessionContextSnapshot}
           addressSpace={sessionAddressSpace}
           hookRuntime={activeHookRuntime}
+          sessionCapabilities={sessionCapabilities}
           ownerType={sessionOwnerBinding?.owner_type}
           ownerId={sessionOwnerBinding?.owner_id}
           isOpen={isContextPanelOpen}
@@ -464,6 +469,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           executorSummary={taskExecutorSummary}
           addressSpace={sessionAddressSpace}
           hookRuntime={activeHookRuntime}
+          sessionCapabilities={sessionCapabilities}
           ownerType={sessionOwnerBinding?.owner_type}
           ownerId={sessionOwnerBinding?.owner_id}
           isOpen={isContextPanelOpen}

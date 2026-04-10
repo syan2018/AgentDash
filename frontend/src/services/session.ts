@@ -7,6 +7,7 @@ import type {
   ExecutionAddressSpace,
   HookSessionRuntimeInfo,
   ProjectSessionEntry,
+  SessionBaselineCapabilities,
   SessionBindingOwner,
   SessionContextSnapshot,
   SessionExecutionState,
@@ -170,6 +171,7 @@ export interface SessionContextPayload {
   agent_binding: AgentBinding | null;
   address_space: ExecutionAddressSpace | null;
   context_snapshot: SessionContextSnapshot | null;
+  session_capabilities: SessionBaselineCapabilities | null;
 }
 
 /** GET /sessions/{id}/context — 与旧版 task/story/project 分端点行为对齐（由后端按绑定解析） */
@@ -186,6 +188,7 @@ export async function fetchSessionContext(sessionId: string): Promise<SessionCon
     agent_binding: mapSessionContextAgentBinding(raw.agent_binding),
     address_space: (raw.address_space as ExecutionAddressSpace | undefined) ?? null,
     context_snapshot: (raw.context_snapshot as SessionContextSnapshot | undefined) ?? null,
+    session_capabilities: (raw.session_capabilities as SessionBaselineCapabilities | undefined) ?? null,
   };
 }
 

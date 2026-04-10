@@ -1,3 +1,4 @@
+pub mod baseline_capabilities;
 pub mod bootstrap;
 pub mod companion_wait;
 pub mod context;

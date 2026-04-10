@@ -541,6 +541,47 @@ pub struct SessionContextResponse {
     pub address_space: Option<agentdash_spi::AddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_capabilities: Option<agentdash_spi::SessionBaselineCapabilities>,
+}
+
+async fn try_build_session_capabilities(
+    state: &AppState,
+    session_id: &str,
+    address_space: Option<&agentdash_spi::AddressSpace>,
+) -> Option<agentdash_spi::SessionBaselineCapabilities> {
+    let hook_runtime = state
+        .services
+        .session_hub
+        .ensure_hook_session_runtime(session_id, None)
+        .await
+        .ok()
+        .flatten();
+
+    let skills = if let Some(space) = address_space {
+        let result = agentdash_application::skill::load_skills_from_address_space(
+            &state.services.address_space_service,
+            space,
+        )
+        .await;
+        result.skills
+    } else {
+        Vec::new()
+    };
+
+    let caps =
+        agentdash_application::session::baseline_capabilities::build_session_baseline_capabilities(
+            hook_runtime
+                .as_ref()
+                .map(|rt| rt.as_ref() as &dyn agentdash_spi::hooks::HookSessionRuntimeAccess),
+            &skills,
+        );
+
+    if caps.is_empty() {
+        None
+    } else {
+        Some(caps)
+    }
 }
 
 /// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / address_space / snapshot
@@ -563,6 +604,7 @@ pub async fn get_session_context(
             agent_binding: None,
             address_space: None,
             context_snapshot: None,
+            session_capabilities: None,
         }));
     };
 
@@ -601,13 +643,21 @@ pub async fn get_session_context(
                     session_meta.as_ref(),
                 )
                 .await;
+            let resolved_address_space = built_context
+                .as_ref()
+                .and_then(|context| context.address_space.clone());
+            let capabilities = try_build_session_capabilities(
+                &state,
+                &session_id,
+                resolved_address_space.as_ref(),
+            )
+            .await;
             Ok(Json(SessionContextResponse {
                 workspace_id: task.workspace_id.map(|id| id.to_string()),
                 agent_binding: Some(result.agent_binding),
-                address_space: built_context
-                    .as_ref()
-                    .and_then(|context| context.address_space.clone()),
+                address_space: resolved_address_space,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
+                session_capabilities: capabilities,
             }))
         }
         SessionOwnerType::Story => {
@@ -622,13 +672,21 @@ pub async fn get_session_context(
             let built_context =
                 story_sessions::build_story_session_context_response(&state, &story, &session_id)
                     .await?;
+            let resolved_address_space = built_context
+                .as_ref()
+                .and_then(|context| context.address_space.clone());
+            let capabilities = try_build_session_capabilities(
+                &state,
+                &session_id,
+                resolved_address_space.as_ref(),
+            )
+            .await;
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
-                address_space: built_context
-                    .as_ref()
-                    .and_then(|context| context.address_space.clone()),
+                address_space: resolved_address_space,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
+                session_capabilities: capabilities,
             }))
         }
         SessionOwnerType::Project => {
@@ -647,11 +705,18 @@ pub async fn get_session_context(
                 &primary.label,
             )
             .await?;
+            let capabilities = try_build_session_capabilities(
+                &state,
+                &session_id,
+                built_context.address_space.as_ref(),
+            )
+            .await;
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
                 address_space: built_context.address_space.clone(),
                 context_snapshot: built_context.context_snapshot,
+                session_capabilities: capabilities,
             }))
         }
     }

@@ -5,64 +5,17 @@ use futures::StreamExt;
 
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
-    HookSessionRuntimeAccess, HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery,
-    SharedHookSessionRuntime,
+    HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 use agentdash_spi::{ConnectorError, ExecutionContext, RestoredSessionState};
 
+use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::event_bridge::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub_support::*;
 pub use super::types::*;
-
-const COMPANION_AGENTS_SLOT: &str = "companion_agents";
-
-fn companion_agents_baseline_context(
-    hook_session: Option<&dyn HookSessionRuntimeAccess>,
-) -> Option<String> {
-    let hook_session = hook_session?;
-    let snapshot = hook_session.snapshot();
-    let mut blocks = snapshot
-        .injections
-        .iter()
-        .filter(|injection| injection.slot == COMPANION_AGENTS_SLOT)
-        .map(|injection| injection.content.trim().to_string())
-        .filter(|content| !content.is_empty())
-        .collect::<Vec<_>>();
-    blocks.dedup();
-    if blocks.is_empty() {
-        None
-    } else {
-        Some(blocks.join("\n\n"))
-    }
-}
-
-fn merge_session_context(
-    system_context: Option<String>,
-    companion_agents_context: Option<String>,
-) -> Option<String> {
-    let base = system_context
-        .map(|ctx| ctx.trim().to_string())
-        .filter(|ctx| !ctx.is_empty());
-    let companion = companion_agents_context
-        .map(|ctx| ctx.trim().to_string())
-        .filter(|ctx| !ctx.is_empty());
-
-    match (base, companion) {
-        (Some(base), Some(companion)) => {
-            if base.contains(companion.as_str()) {
-                Some(base)
-            } else {
-                Some(format!("{base}\n\n{companion}"))
-            }
-        }
-        (Some(base), None) => Some(base),
-        (None, Some(companion)) => Some(companion),
-        (None, None) => None,
-    }
-}
 
 impl SessionHub {
     /// 多轮对话（支持底层执行器 follow-up 会话续跑）。
@@ -274,9 +227,9 @@ impl SessionHub {
             discovered_skills.extend(plugin_result.skills);
         }
 
-        let system_context = merge_session_context(
-            req.system_context,
-            companion_agents_baseline_context(hook_session.as_deref()),
+        let session_capabilities = build_session_baseline_capabilities(
+            hook_session.as_deref(),
+            &discovered_skills,
         );
 
         let context = ExecutionContext {
@@ -288,11 +241,11 @@ impl SessionHub {
             address_space: Some(effective_address_space),
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
-            system_context,
+            system_context: req.system_context,
             runtime_delegate,
             identity: req.identity,
             restored_session_state,
-            skills: discovered_skills,
+            session_capabilities: Some(session_capabilities),
         };
 
         session_meta.updated_at = now;
@@ -327,11 +280,33 @@ impl SessionHub {
         };
         let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
         source.executor_id = Some(context.executor_config.executor.to_string());
+
+        let is_first_prompt = session_meta.last_event_seq == 0;
+        let mut user_blocks_with_capabilities = resolved_payload.user_blocks.clone();
+        if is_first_prompt || is_owner_bootstrap {
+            if let Some(ref caps) = context.session_capabilities {
+                if !caps.is_empty() {
+                    if let Ok(block) = serde_json::from_value::<agent_client_protocol::ContentBlock>(
+                        serde_json::json!({
+                            "type": "resource",
+                            "resource": {
+                                "uri": format!("agentdash://session-capabilities/{}", session_id),
+                                "mimeType": "application/json",
+                                "text": serde_json::to_string(caps).unwrap_or_default(),
+                            }
+                        }),
+                    ) {
+                        user_blocks_with_capabilities.insert(0, block);
+                    }
+                }
+            }
+        }
+
         let user_notifications = build_user_message_notifications(
             session_id,
             &source,
             &turn_id,
-            &resolved_payload.user_blocks,
+            &user_blocks_with_capabilities,
         );
         for notification in user_notifications {
             let _ = self.persist_notification(&sid, notification).await;
@@ -561,45 +536,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn merge_session_context_appends_companion_block() {
-        let merged = merge_session_context(
-            Some("## Owner\nproject=a".to_string()),
-            Some("## Companion Agents\n- agent".to_string()),
-        )
-        .expect("应返回合并后的 context");
-        assert!(merged.contains("## Owner"));
-        assert!(merged.contains("## Companion Agents"));
-    }
-
-    #[test]
-    fn merge_session_context_avoids_duplicate_companion_block() {
-        let base = "## Owner\nproject=a\n\n## Companion Agents\n- agent".to_string();
-        let merged = merge_session_context(
-            base.clone().into(),
-            Some("## Companion Agents\n- agent".into()),
-        )
-        .expect("应返回 context");
-        assert_eq!(merged, base);
-    }
-
-    #[test]
-    fn companion_agents_baseline_context_reads_from_hook_snapshot() {
+    fn baseline_capabilities_built_and_attached_to_context() {
         let snapshot = SessionHookSnapshot {
-            session_id: "sess-companion".to_string(),
+            session_id: "sess-pipeline".to_string(),
             injections: vec![HookInjection {
-                slot: COMPANION_AGENTS_SLOT.to_string(),
-                content: "## Companion Agents\n- code-reviewer".to_string(),
+                slot: "companion_agents".to_string(),
+                content: "## Companion Agents\n\n- **agent** (executor: `PI_AGENT`): Agent"
+                    .to_string(),
                 source: "builtin:companion_agents".to_string(),
             }],
             ..SessionHookSnapshot::default()
         };
         let runtime = HookSessionRuntime::new(
-            "sess-companion".to_string(),
+            "sess-pipeline".to_string(),
             Arc::new(NoopExecutionHookProvider),
             snapshot,
         );
-        let context = companion_agents_baseline_context(Some(&runtime))
-            .expect("应提取到 companion agents context");
-        assert_eq!(context, "## Companion Agents\n- code-reviewer");
+        let caps = build_session_baseline_capabilities(
+            Some(&runtime as &dyn agentdash_spi::hooks::HookSessionRuntimeAccess),
+            &[agentdash_spi::SkillRef {
+                name: "my-skill".to_string(),
+                description: "test".to_string(),
+                file_path: "/ws/SKILL.md".into(),
+                base_dir: "/ws".into(),
+                disable_model_invocation: false,
+            }],
+        );
+        assert_eq!(caps.companion_agents.len(), 1);
+        assert_eq!(caps.skills.len(), 1);
+        assert_eq!(caps.companion_agents[0].name, "agent");
     }
 }

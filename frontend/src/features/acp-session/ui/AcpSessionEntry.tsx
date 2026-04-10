@@ -33,6 +33,7 @@ import { ContentBlockCard } from "./ContentBlockCard";
 import { AcpTaskContextCard } from "./AcpTaskContextCard";
 import { isAgentDashTaskContextBlock } from "./AcpTaskContextGuard";
 import { AcpOwnerContextCard } from "./AcpOwnerContextCard";
+import { AcpSessionCapabilityCard, isSessionCapabilitiesBlock } from "./AcpSessionCapabilityCard";
 import { AcpTaskEventCard } from "./AcpTaskEventCard";
 import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 import { AcpSystemEventCard } from "./AcpSystemEventCard";
@@ -89,6 +90,9 @@ function SingleEntry({
           uri.startsWith("agentdash://story-context/")
         )) {
           return <AcpOwnerContextCard block={content} />;
+        }
+        if (isSessionCapabilitiesBlock(content)) {
+          return <AcpSessionCapabilityCard block={content} />;
         }
         return <ContentBlockCard block={content} variant="compact" />;
       }

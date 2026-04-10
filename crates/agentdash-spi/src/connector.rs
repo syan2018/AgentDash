@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
 use crate::lifecycle::DynAgentRuntimeDelegate;
-use crate::skill::SkillRef;
+use crate::session_capabilities::SessionBaselineCapabilities;
 
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -64,9 +64,9 @@ pub struct ExecutionContext {
     /// 当 session 生命周期层判定为”冷启动仓储恢复”且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
-    /// 当前会话发现的 skill 列表（由 Application 层从工作区扫描构建）。
-    /// Connector 将可见 skill 注入 system prompt 的 `<available_skills>` 块。
-    pub skills: Vec<SkillRef>,
+    /// 会话级 baseline capabilities（companion agents + skills），
+    /// 由 prompt pipeline 统一组装。
+    pub session_capabilities: Option<SessionBaselineCapabilities>,
 }
 
 impl std::fmt::Debug for ExecutionContext {

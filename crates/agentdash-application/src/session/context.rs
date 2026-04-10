@@ -3,6 +3,8 @@ use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
 use serde::Serialize;
 
+use agentdash_spi::session_capabilities::SessionBaselineCapabilities;
+
 use super::plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
 use crate::runtime::{AgentConfig, ThinkingLevel};
 
@@ -15,6 +17,8 @@ pub struct SessionContextSnapshot {
     pub project_defaults: SessionProjectDefaults,
     pub effective: SessionEffectiveContext,
     pub owner_context: SessionOwnerContext,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_capabilities: Option<SessionBaselineCapabilities>,
 }
 
 #[derive(Debug, Clone, Serialize)]

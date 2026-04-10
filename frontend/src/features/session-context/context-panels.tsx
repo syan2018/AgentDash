@@ -4,6 +4,7 @@ import type {
   ContextContainerDefinition,
   ExecutionAddressSpace,
   HookSessionRuntimeInfo,
+  SessionBaselineCapabilities,
   SessionComposition,
   SessionContextSnapshot,
   SessionStoryOverrides,
@@ -412,6 +413,77 @@ function TechnicalOverviewCard({
   );
 }
 
+// ─── Session Capabilities Card ─────────────────────────
+
+function SessionCapabilitiesSurfaceCard({
+  capabilities,
+}: {
+  capabilities: SessionBaselineCapabilities;
+}) {
+  const companionCount = capabilities.companion_agents.length;
+  const visibleSkills = capabilities.skills.filter((s) => !s.disable_model_invocation);
+  const skillCount = visibleSkills.length;
+
+  if (companionCount === 0 && skillCount === 0) return null;
+
+  return (
+    <SurfaceCard
+      eyebrow="Session 能力基线"
+      title={[
+        companionCount > 0 ? `${companionCount} 个关联 Agent` : "",
+        skillCount > 0 ? `${skillCount} 个可用 Skill` : "",
+      ].filter(Boolean).join(" · ")}
+    >
+      {companionCount > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            Companion Agents
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {capabilities.companion_agents.map((agent) => (
+              <span
+                key={agent.name}
+                className="flex items-center gap-1.5 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-1.5"
+              >
+                <span className="text-xs font-medium text-foreground">{agent.display_name}</span>
+                <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                  {agent.executor}
+                </span>
+                <span className="text-[10px] text-muted-foreground/50">key: {agent.name}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {skillCount > 0 && (
+        <div className={companionCount > 0 ? "mt-3" : ""}>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            Skills ({skillCount})
+          </p>
+          <div className="space-y-1">
+            {visibleSkills.map((skill) => (
+              <div
+                key={skill.name}
+                className="flex items-start gap-2 rounded-[6px] border border-border/70 bg-secondary/25 px-2.5 py-1.5"
+              >
+                <span className="shrink-0 text-xs font-medium text-foreground">{skill.name}</span>
+                <span className="flex-1 truncate text-[11px] text-muted-foreground">
+                  {skill.description.length > 100
+                    ? `${skill.description.slice(0, 100)}…`
+                    : skill.description}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+        这些能力在会话开始时注入，整个会话周期保持稳定。Companion Agents 可通过 companion_request 工具调用，Skills 在匹配任务时由 Agent 自动加载。
+      </p>
+    </SurfaceCard>
+  );
+}
+
 // ─── Story Session Context Panel ───────────────────────
 
 export function StorySessionContextPanel({
@@ -420,6 +492,7 @@ export function StorySessionContextPanel({
   executorSummary,
   addressSpace,
   hookRuntime,
+  sessionCapabilities,
   ownerType,
   ownerId,
   isOpen,
@@ -430,6 +503,7 @@ export function StorySessionContextPanel({
   executorSummary?: TaskSessionExecutorSummary | null;
   addressSpace?: ExecutionAddressSpace | null;
   hookRuntime?: HookSessionRuntimeInfo | null;
+  sessionCapabilities?: SessionBaselineCapabilities | null;
   ownerType?: string;
   ownerId?: string;
   isOpen: boolean;
@@ -474,6 +548,7 @@ export function StorySessionContextPanel({
         />
       </div>
 
+      {sessionCapabilities && <SessionCapabilitiesSurfaceCard capabilities={sessionCapabilities} />}
       <StorySourceSummaryCard story={story} contextSnapshot={contextSnapshot} />
       {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
       {hookRuntime && <HookRuntimePendingActionsCard hookRuntime={hookRuntime} />}
@@ -544,6 +619,7 @@ export function ProjectSessionContextPanel({
   contextSnapshot,
   addressSpace,
   hookRuntime,
+  sessionCapabilities,
   ownerType,
   ownerId,
   isOpen,
@@ -556,6 +632,7 @@ export function ProjectSessionContextPanel({
   ownerType?: string;
   ownerId?: string;
   hookRuntime?: HookSessionRuntimeInfo | null;
+  sessionCapabilities?: SessionBaselineCapabilities | null;
   isOpen: boolean;
   onToggle: () => void;
 }) {
@@ -589,6 +666,8 @@ export function ProjectSessionContextPanel({
           preview={{ projectId, ownerType, ownerId, target: "project" }}
         />
       </div>
+
+      {sessionCapabilities && <SessionCapabilitiesSurfaceCard capabilities={sessionCapabilities} />}
 
       <SurfaceCard eyebrow="使用定位" title="项目级知识维护入口">
         <p className="text-xs leading-6 text-muted-foreground">

@@ -174,6 +174,7 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
             runtime_policy: plan.runtime_policy.clone(),
         },
         owner_context,
+        session_capabilities: None,
     }
 }
 

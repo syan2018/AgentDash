@@ -702,6 +702,122 @@ before_stop / phase advance / frontend 展示使用同一事实来源
 
 ---
 
+## Scenario: Session Baseline Capabilities（Prompt 分层统一）
+
+### 1. Scope / Trigger
+
+- Trigger: 需要把 companion agents、skills 等"会话级稳定能力描述"统一注入执行上下文
+- Trigger: 需要区分"session baseline 层"和"per-turn dynamic injection 层"
+- Trigger: 前端会话流需要解析 capability 资源块为交互卡片
+- Trigger: 前端 session context 页需要展示 capability 详情
+
+### 2. Data Contract
+
+#### Rust 契约
+
+```rust
+pub struct SessionBaselineCapabilities {
+    pub companion_agents: Vec<CompanionAgentEntry>,
+    pub skills: Vec<SkillEntry>,
+}
+
+pub struct CompanionAgentEntry {
+    pub name: String,
+    pub executor: String,
+    pub display_name: String,
+}
+
+pub struct SkillEntry {
+    pub name: String,
+    pub description: String,
+    pub file_path: String,
+    pub disable_model_invocation: bool,
+}
+```
+
+位置：`agentdash-spi::session_capabilities`
+
+#### TypeScript 契约
+
+```typescript
+interface SessionBaselineCapabilities {
+  companion_agents: CompanionAgentEntry[];
+  skills: SkillEntry[];
+}
+```
+
+位置：`frontend/src/types/context.ts`
+
+### 3. Prompt 分层契约
+
+#### 3.1 Session Baseline 层（一次性构建，会话周期稳定）
+
+- **companion_agents**：从 hook snapshot 的 `companion_agents` injection slot 解析
+- **skills**：从 address space 发现的 `SkillRef` 映射
+- 构建时机：`prompt_pipeline::start_prompt_with_follow_up` 内，与 `ExecutionContext` 同步构建
+- 持有位置：`ExecutionContext.session_capabilities`
+
+#### 3.2 Connector 消费（PI_AGENT 为例）
+
+- companion_agents → system prompt `## Companion Agents` section
+- skills → system prompt `<available_skills>` XML block
+- 两者均从 `context.session_capabilities` 读取，无 fallback 路径
+- `ExecutionContext` 不再持有独立的 `skills` 字段，skill 信息只通过 `session_capabilities` 传递
+
+#### 3.3 Chat-flow 资源块
+
+- 首轮 prompt（`last_event_seq == 0` 或 owner bootstrap）时，pipeline 在 `user_blocks` 头部注入：
+  - URI: `agentdash://session-capabilities/{session_id}`
+  - MIME: `application/json`
+  - Content: JSON 序列化的 `SessionBaselineCapabilities`
+- 前端 `AcpSessionCapabilityCard` 解析该资源块，渲染为可展开的交互面板
+
+#### 3.4 Session Context API
+
+- `GET /sessions/{id}/context` 返回的 `SessionContextResponse` 包含 `session_capabilities`
+- 该字段在 API 层动态构建（从 hook runtime + address space 实时读取），而非从静态快照复用
+- 前端 context panel 通过 `SessionCapabilitiesSurfaceCard` 渲染详情
+
+#### 3.5 Hook Injection 边界
+
+- `companion_agents` 已从 `UserPromptSubmit` 的 per-turn injection 中排除
+- `AppExecutionHookProvider::filter_user_prompt_injections` 负责过滤
+- `SESSION_BASELINE_INJECTION_SLOTS` 定义了属于 baseline 层的 slot 名单
+- `UserPromptSubmit` 只应注入真正的动态治理内容（workflow constraints、pending actions 等）
+
+### 4. Validation & Error Matrix
+
+| 场景 | 预期行为 |
+|---|---|
+| session 无 hook runtime 且无 skills | `session_capabilities` 为空，不注入资源块 |
+| session 有 companion_agents 但无 skills | 仅渲染 companion agents section |
+| skills 中有 `disable_model_invocation=true` | 该 skill 不进入 system prompt，不在 chat-flow 卡片中展示 |
+| 非首轮 prompt | 不重复注入 capabilities 资源块 |
+| `UserPromptSubmit` hook 评估 | 不包含 `companion_agents` injection |
+
+### 5. Wrong vs Correct
+
+#### Wrong
+
+```text
+companion_agents 在每轮 UserPromptSubmit 作为 dynamic injection 注入
+→ 前端每次工具调用都出现"已注入动态上下文 (1 项注入)"
+→ session 事件流被 companion_agents 的重复注入消息淹没
+```
+
+#### Correct
+
+```text
+companion_agents + skills 在 session 开始时构建为 SessionBaselineCapabilities
+→ 写入 ExecutionContext.session_capabilities
+→ connector 从 session_capabilities 读取并渲染到 system prompt
+→ 首轮 prompt 注入 agentdash://session-capabilities/ 资源块
+→ 前端解析为交互卡片 + context panel 详情
+→ UserPromptSubmit 只注入真正的动态治理内容
+```
+
+---
+
 ## Design Decision
 
 ### 决策：Hook 信息获取在 loop 外，Hook 控制决策在 loop 边界同步发生

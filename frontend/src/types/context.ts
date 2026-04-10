@@ -130,6 +130,26 @@ export interface SessionContextSnapshot {
   owner_context: SessionOwnerContext;
 }
 
+// ─── Session Baseline Capabilities ──────────────────
+
+export interface CompanionAgentEntry {
+  name: string;
+  executor: string;
+  display_name: string;
+}
+
+export interface SkillEntry {
+  name: string;
+  description: string;
+  file_path: string;
+  disable_model_invocation?: boolean;
+}
+
+export interface SessionBaselineCapabilities {
+  companion_agents: CompanionAgentEntry[];
+  skills: SkillEntry[];
+}
+
 export interface StorySessionInfo {
   binding_id: string;
   session_id: string;

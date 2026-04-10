@@ -6,6 +6,7 @@ pub mod hooks;
 pub mod lifecycle;
 pub mod mount;
 pub mod schema;
+pub mod session_capabilities;
 pub mod skill;
 pub mod tool;
 
@@ -44,6 +45,7 @@ pub use lifecycle::{
     TurnControlDecision, now_millis,
 };
 pub use mount::MountEditCapabilities;
+pub use session_capabilities::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
 pub use skill::SkillRef;
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,

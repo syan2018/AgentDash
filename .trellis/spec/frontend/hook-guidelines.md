@@ -370,6 +370,12 @@ if (isTerminalToolCallStatus(incomingStatus)) {
 
 decision 通过解析 `event.code`（格式 `hook:{trigger}:{decision}`）获取。
 
+### Companion Agents 上下文归属
+
+- `companion_agents` 属于会话级静态能力描述，不应在每轮 `UserPromptSubmit` 以动态注入消息重复追加
+- 该信息应并入 session 级 `system_context` / system prompt 基线，仅在会话初始化（或关联关系变更）时更新
+- `context_injected` 事件主要承载真正的动态治理信息（workflow 约束、pending action 等），避免被静态能力清单淹没
+
 ### hook_event 渲染分级
 
 后端 `should_emit_hook_trace_event` 是第一道过滤，前端 Guard 是第二道。

@@ -44,6 +44,23 @@ pub struct AppExecutionHookProvider {
     pub(super) script_engine: HookScriptEngine,
 }
 
+const SESSION_BASELINE_INJECTION_SLOTS: &[&str] = &["companion_agents"];
+
+fn is_session_baseline_injection(injection: &HookInjection) -> bool {
+    SESSION_BASELINE_INJECTION_SLOTS
+        .iter()
+        .any(|slot| injection.slot == *slot)
+}
+
+fn filter_user_prompt_injections(snapshot: &SessionHookSnapshot) -> Vec<HookInjection> {
+    snapshot
+        .injections
+        .iter()
+        .filter(|injection| !is_session_baseline_injection(injection))
+        .cloned()
+        .collect()
+}
+
 impl AppExecutionHookProvider {
     pub fn new(
         project_repo: Arc<dyn ProjectRepository>,
@@ -406,8 +423,11 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         };
 
         match query.trigger {
-            HookTrigger::SessionStart | HookTrigger::UserPromptSubmit => {
+            HookTrigger::SessionStart => {
                 resolution.injections = snapshot.injections.clone();
+            }
+            HookTrigger::UserPromptSubmit => {
+                resolution.injections = filter_user_prompt_injections(&snapshot);
             }
             HookTrigger::BeforeTool | HookTrigger::AfterTool | HookTrigger::AfterTurn => {
                 apply_hook_rules(
@@ -530,7 +550,9 @@ mod tests {
 
     use crate::session::{HookRuntimeDelegate, HookSessionRuntime};
     use agentdash_spi::hooks::HookSessionRuntimeAccess;
-    use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
+    use agentdash_spi::hooks::{
+        HookEvaluationQuery, HookInjection, HookResolution, SessionHookSnapshot,
+    };
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
     };
@@ -545,6 +567,47 @@ mod tests {
     use super::super::rules::{HookEvaluationContext, apply_hook_rules};
     use super::super::script_engine::HookScriptEngine;
     use super::super::test_fixtures::snapshot_with_workflow;
+    use super::{filter_user_prompt_injections, is_session_baseline_injection};
+
+    #[test]
+    fn session_baseline_slot_marks_companion_agents_only() {
+        let companion = HookInjection {
+            slot: "companion_agents".to_string(),
+            content: "companions".to_string(),
+            source: "builtin:companion_agents".to_string(),
+        };
+        let workflow = HookInjection {
+            slot: "workflow".to_string(),
+            content: "workflow-step".to_string(),
+            source: "workflow:test".to_string(),
+        };
+        assert!(is_session_baseline_injection(&companion));
+        assert!(!is_session_baseline_injection(&workflow));
+    }
+
+    #[test]
+    fn user_prompt_injection_filter_excludes_companion_agents() {
+        let snapshot = SessionHookSnapshot {
+            session_id: "sess-filter".to_string(),
+            injections: vec![
+                HookInjection {
+                    slot: "companion_agents".to_string(),
+                    content: "## Companion Agents\n- agent".to_string(),
+                    source: "builtin:companion_agents".to_string(),
+                },
+                HookInjection {
+                    slot: "workflow".to_string(),
+                    content: "当前 workflow step: implement".to_string(),
+                    source: "workflow:example".to_string(),
+                },
+            ],
+            ..SessionHookSnapshot::default()
+        };
+
+        let filtered = filter_user_prompt_injections(&snapshot);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].slot, "workflow");
+    }
 
     struct RuleEngineTestProvider {
         snapshot: SessionHookSnapshot,

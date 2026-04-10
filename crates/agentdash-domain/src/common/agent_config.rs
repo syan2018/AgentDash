@@ -53,9 +53,6 @@ pub struct AgentConfig {
     /// system_prompt 注入模式。None 时默认 Append。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_mode: Option<SystemPromptMode>,
-    /// 单次执行最大 turn 数。None 时使用运行时默认值。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<u32>,
 }
 
 /// 已注册的云端原生 Agent executor ID 列表。
@@ -74,7 +71,6 @@ impl AgentConfig {
             tool_clusters: None,
             system_prompt: None,
             system_prompt_mode: None,
-            max_turns: None,
         }
     }
 

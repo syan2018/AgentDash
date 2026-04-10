@@ -202,8 +202,6 @@ pub enum AgentError {
     },
     #[error("Agent 已被取消")]
     Cancelled,
-    #[error("超过最大循环轮数: {0}")]
-    MaxTurnsExceeded(usize),
     #[error("Continue 错误: {0}")]
     ContinueError(String),
     #[error("{0}")]

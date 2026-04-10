@@ -90,7 +90,6 @@ export interface AgentSchedulingConfig {
 
 export interface ProjectSchedulingConfig {
   stall_timeout_ms?: number | null;
-  max_turns_per_task?: number | null;
 }
 
 // ─── 登录 / 认证 ──────────────────────────────────────

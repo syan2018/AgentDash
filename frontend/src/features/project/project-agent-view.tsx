@@ -353,21 +353,12 @@ function ConfigOverridePanel({
   const [cronSessionMode, setCronSessionMode] = useState<string>(
     String(scheduling.cron_session_mode ?? "reuse"),
   );
-  const [maxTurns, setMaxTurns] = useState(
-    configOverride?.max_turns != null ? String(configOverride.max_turns) : "",
-  );
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
     setIsSaving(true);
     try {
       const override: Record<string, unknown> = { ...(configOverride ?? {}) };
-      if (maxTurns.trim()) {
-        const n = Number(maxTurns.trim());
-        if (Number.isFinite(n) && n > 0) override.max_turns = n;
-      } else {
-        delete override.max_turns;
-      }
       if (cronSchedule.trim()) {
         override.scheduling = {
           cron_schedule: cronSchedule.trim(),
@@ -420,17 +411,6 @@ function ConfigOverridePanel({
           </div>
         )}
 
-        <div>
-          <label className="agentdash-form-label">最大 Turn 数 (覆盖)</label>
-          <input
-            type="number"
-            value={maxTurns}
-            onChange={(e) => setMaxTurns(e.target.value)}
-            placeholder="留空则使用 Agent 配置值"
-            min={1}
-            className="agentdash-form-input"
-          />
-        </div>
       </div>
 
       <div className="flex items-center justify-end gap-2">

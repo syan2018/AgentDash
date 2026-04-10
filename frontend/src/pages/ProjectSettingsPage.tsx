@@ -374,7 +374,6 @@ export function ProjectSettingsPage() {
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [stallTimeoutMs, setStallTimeoutMs] = useState("");
-  const [maxTurnsPerTask, setMaxTurnsPerTask] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -404,7 +403,6 @@ export function ProjectSettingsPage() {
     setTemplateFlag(project.is_template);
     setCloneName(`${project.name}（副本）`);
     setStallTimeoutMs(project.config.scheduling?.stall_timeout_ms != null ? String(project.config.scheduling.stall_timeout_ms) : "");
-    setMaxTurnsPerTask(project.config.scheduling?.max_turns_per_task != null ? String(project.config.scheduling.max_turns_per_task) : "");
     setDeleteConfirmValue("");
     setShareTargetType("user");
     setSelectedUserId("");
@@ -516,11 +514,6 @@ export function ProjectSettingsPage() {
       const n = Number(stallTimeoutMs.trim());
       if (!Number.isFinite(n) || n < 0) { setError("超时值必须是非负整数"); return; }
       scheduling.stall_timeout_ms = n;
-    }
-    if (maxTurnsPerTask.trim()) {
-      const n = Number(maxTurnsPerTask.trim());
-      if (!Number.isFinite(n) || n < 1) { setError("Turn 限制必须 >= 1"); return; }
-      scheduling.max_turns_per_task = n;
     }
     const result = await updateProjectConfig(project.id, {
       default_agent_type: project.config.default_agent_type ?? null,
@@ -786,18 +779,6 @@ export function ProjectSettingsPage() {
                           disabled={!canEditProject}
                           placeholder="默认 300000 (5 分钟)，0 = 禁用"
                           min={0}
-                          className="agentdash-form-input disabled:cursor-not-allowed disabled:opacity-70"
-                        />
-                      </div>
-                      <div>
-                        <label className="agentdash-form-label">单 Task 最大 Turn 数</label>
-                        <input
-                          type="number"
-                          value={maxTurnsPerTask}
-                          onChange={(e) => setMaxTurnsPerTask(e.target.value)}
-                          disabled={!canEditProject}
-                          placeholder="默认 25"
-                          min={1}
                           className="agentdash-form-input disabled:cursor-not-allowed disabled:opacity-70"
                         />
                       </div>

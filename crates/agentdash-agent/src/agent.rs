@@ -48,7 +48,6 @@ pub enum QueueMode {
 /// Agent 配置 — 对齐 Pi `AgentOptions`
 pub struct AgentConfig {
     pub system_prompt: String,
-    pub max_turns: usize,
 
     /// 思考/推理级别 — 对齐 Pi `AgentState.thinkingLevel`
     pub thinking_level: ThinkingLevel,
@@ -79,7 +78,6 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             system_prompt: String::new(),
-            max_turns: 25,
             thinking_level: ThinkingLevel::default(),
             transform_context: None,
             steering_mode: QueueMode::default(),
@@ -449,7 +447,6 @@ impl Agent {
         };
 
         let config = AgentLoopConfig {
-            max_turns: self.config.max_turns,
             transform_context: self.config.transform_context.clone(),
             tool_execution: self.config.tool_execution,
             before_tool_call: self.config.before_tool_call.clone(),

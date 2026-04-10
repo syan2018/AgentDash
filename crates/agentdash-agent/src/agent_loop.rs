@@ -29,8 +29,6 @@ use crate::types::{
     ToolUpdateCallback, TransformContextInput,
 };
 
-const DEFAULT_MAX_TURNS: usize = 25;
-
 // ─── 回调类型别名 ───────────────────────────────────────────
 
 /// 上下文变换回调：AgentMessage[] → AgentMessage[]
@@ -88,8 +86,6 @@ pub type AgentEventSink =
 
 /// Agent Loop 配置 — 对齐 Pi `AgentLoopConfig`
 pub struct AgentLoopConfig {
-    pub max_turns: usize,
-
     /// 上下文变换管线（每次 LLM 调用前执行）
     /// 对齐 Pi `transformContext`：用于上下文裁剪、外部信息注入等。
     pub transform_context: Option<TransformContextFn>,
@@ -122,7 +118,6 @@ pub struct AgentLoopConfig {
 impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
-            max_turns: DEFAULT_MAX_TURNS,
             transform_context: None,
             get_steering_messages: None,
             get_follow_up_messages: None,
@@ -235,7 +230,6 @@ async fn run_loop(
     emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
-    let mut turn_count: usize = 0;
     let mut first_turn = true;
     let mut pending_messages = poll_steering(config);
     let mut pending_follow_up_messages: Vec<AgentMessage> = Vec::new();
@@ -246,11 +240,6 @@ async fn run_loop(
         while has_more_tool_calls || !pending_messages.is_empty() {
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
-            }
-
-            turn_count += 1;
-            if turn_count > config.max_turns {
-                return Err(AgentError::MaxTurnsExceeded(config.max_turns));
             }
 
             if first_turn {

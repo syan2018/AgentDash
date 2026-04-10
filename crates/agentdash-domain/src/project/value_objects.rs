@@ -32,8 +32,6 @@ pub struct SchedulingConfig {
     /// Session 无活动超时（毫秒）。超时后平台自动取消 session。
     /// 默认 300_000 (5 分钟)。设为 0 则禁用 stall 检测。
     pub stall_timeout_ms: Option<u64>,
-    /// 单 Task 最大 turn 数。超限后平台拒绝继续执行（防失控）。
-    pub max_turns_per_task: Option<u32>,
 }
 
 /// Agent 预设配置

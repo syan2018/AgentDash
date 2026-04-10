@@ -22,7 +22,6 @@ export interface PresetFormState {
   permission_policy: string;
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
-  max_turns: string;
   mcp_servers: McpServerDecl[];
   tool_clusters: ToolCluster[];
   allowed_companions: string[];
@@ -45,7 +44,6 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
-    max_turns: cfg.max_turns != null ? String(cfg.max_turns) : "",
     mcp_servers: rawMcps,
     tool_clusters: rawClusters,
     allowed_companions: rawCompanions,
@@ -63,10 +61,6 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
-  if (form.max_turns.trim()) {
-    const n = Number(form.max_turns.trim());
-    if (Number.isFinite(n) && n > 0) config.max_turns = n;
-  }
   if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
   if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
   if (form.allowed_companions.length > 0) config.allowed_companions = form.allowed_companions;
@@ -761,27 +755,6 @@ export function PresetFormFields({
       </FormSection>
 
       {/* ── Section 4: 运行限制 ── */}
-      <FormSection
-        title="运行限制"
-        defaultOpen={false}
-        badge={form.max_turns.trim() ? `${form.max_turns.trim()} turns` : undefined}
-      >
-        <div>
-          <label className="agentdash-form-label">最大 Turn 数</label>
-          <input
-            type="number"
-            value={form.max_turns}
-            onChange={(e) => patchForm({ max_turns: e.target.value })}
-            placeholder="默认 25，留空则使用系统默认值"
-            min={1}
-            className="agentdash-form-input"
-          />
-          <p className="mt-0.5 text-[10px] text-muted-foreground/60">
-            单次执行最大对话轮数，防止 Agent 失控循环
-          </p>
-        </div>
-      </FormSection>
-
       {/* ── Section 5: 工具 & 协作 ── */}
       <FormSection
         title="工具 & 协作"

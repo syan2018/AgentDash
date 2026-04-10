@@ -96,11 +96,6 @@ pub fn executor_config_from_preset(
                 config.system_prompt_mode = Some(mode);
             }
         }
-        if let Some(v) = obj.get("max_turns").and_then(|v| v.as_u64()) {
-            if v > 0 {
-                config.max_turns = Some(v as u32);
-            }
-        }
     }
 
     Ok(config)

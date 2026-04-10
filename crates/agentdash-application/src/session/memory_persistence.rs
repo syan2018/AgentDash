@@ -271,6 +271,7 @@ pub(super) fn apply_notification_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::types::TitleSource;
     use agent_client_protocol::{SessionId, SessionInfoUpdate};
     use agentdash_acp_meta::{
         AgentDashEventV1, AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta,
@@ -303,6 +304,7 @@ mod tests {
         let meta = SessionMeta {
             id: "sess-memory".to_string(),
             title: "测试".to_string(),
+            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

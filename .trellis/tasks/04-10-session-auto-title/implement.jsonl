@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": "crates/agentdash-application/src/session/types.rs", "reason": "SessionMeta struct and TitleSource enum"}
+{"file": "crates/agentdash-application/src/session/hub.rs", "reason": "SessionHub create/update session logic"}
+{"file": "crates/agentdash-application/src/session/prompt_pipeline.rs", "reason": "First turn detection and title generation trigger"}
+{"file": "crates/agentdash-infrastructure/src/persistence/postgres/session_repository.rs", "reason": "PostgreSQL persistence for title_source"}
+{"file": "crates/agentdash-api/src/routes/acp_sessions.rs", "reason": "PATCH /sessions/{id}/meta endpoint"}

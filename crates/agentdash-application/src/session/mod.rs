@@ -17,6 +17,7 @@ pub mod post_turn_handler;
 mod prompt_address_space;
 mod prompt_pipeline;
 pub mod stall_detector;
+pub mod title_generator;
 pub mod turn_processor;
 pub mod types;
 
@@ -32,8 +33,9 @@ pub use persistence::{
 pub use post_turn_handler::PostTurnHandler;
 pub use prompt_address_space::local_workspace_address_space;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
+pub use title_generator::SessionTitleGenerator;
 pub use types::{
     CompanionSessionContext, PromptSessionRequest, ResolvedPromptPayload, SessionBootstrapAction,
     SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, UserPromptInput, resolve_session_prompt_lifecycle,
+    SessionRepositoryRehydrateMode, TitleSource, UserPromptInput, resolve_session_prompt_lifecycle,
 };

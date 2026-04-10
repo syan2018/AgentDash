@@ -64,6 +64,16 @@ pub enum SessionBootstrapAction {
     OwnerContext,
 }
 
+/// 会话标题来源：区分 LLM 自动生成 vs 用户手动设定。
+/// `User` 标题不会被自动覆盖；`Auto` 标题可在下次生成时更新。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleSource {
+    #[default]
+    Auto,
+    User,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionBootstrapState {
@@ -194,6 +204,8 @@ pub struct CompanionSessionContext {
 pub struct SessionMeta {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub title_source: TitleSource,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]

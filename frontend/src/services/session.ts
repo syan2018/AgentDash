@@ -51,9 +51,12 @@ function mapSessionBindingOwner(raw: Record<string, unknown>): SessionBindingOwn
   };
 }
 
+export type TitleSource = "auto" | "user";
+
 export interface SessionMeta {
   id: string;
   title: string;
+  title_source?: TitleSource;
   createdAt: number;
   updatedAt: number;
   lastEventSeq?: number;
@@ -139,6 +142,10 @@ export async function fetchSessionEvents(
 
 export async function deleteSession(id: string): Promise<void> {
   await api.delete<void>(`/sessions/${encodeURIComponent(id)}`);
+}
+
+export async function updateSessionTitle(id: string, title: string): Promise<SessionMeta> {
+  return api.patch<SessionMeta>(`/sessions/${encodeURIComponent(id)}/meta`, { title });
 }
 
 function mapSessionContextAgentBinding(raw: unknown): AgentBinding | null {

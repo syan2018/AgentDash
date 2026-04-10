@@ -4,7 +4,7 @@ use agent_client_protocol::{SessionNotification, SessionUpdate};
 use agentdash_acp_meta::parse_agentdash_meta;
 use agentdash_application::session::{
     PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog, SessionEventPage,
-    SessionMeta, SessionPersistence,
+    SessionMeta, SessionPersistence, TitleSource,
 };
 use sqlx::{Row, SqlitePool};
 
@@ -23,6 +23,7 @@ impl SqliteSessionRepository {
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
+                title_source TEXT NOT NULL DEFAULT 'auto',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 last_event_seq INTEGER NOT NULL DEFAULT 0,
@@ -69,6 +70,10 @@ impl SqliteSessionRepository {
         Ok(SessionMeta {
             id: row.get::<String, _>("id"),
             title: row.get::<String, _>("title"),
+            title_source: parse_title_source(
+                row.get::<String, _>("title_source"),
+                "sessions.title_source",
+            )?,
             created_at: row.get::<i64, _>("created_at"),
             updated_at: row.get::<i64, _>("updated_at"),
             last_event_seq: parse_non_negative_u64(
@@ -157,15 +162,16 @@ impl SessionPersistence for SqliteSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, created_at, updated_at, last_event_seq, last_execution_status,
+                id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&meta.id)
         .bind(&meta.title)
+        .bind(title_source_to_str(meta.title_source))
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
@@ -186,7 +192,7 @@ impl SessionPersistence for SqliteSessionRepository {
     async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>> {
         let row = sqlx::query(
             r#"
-            SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
+            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
                    bootstrap_state
@@ -204,7 +210,7 @@ impl SessionPersistence for SqliteSessionRepository {
     async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, title, created_at, updated_at, last_event_seq, last_execution_status,
+            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
                    bootstrap_state
@@ -231,13 +237,14 @@ impl SessionPersistence for SqliteSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, created_at, updated_at, last_event_seq, last_execution_status,
+                id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
+                title_source = excluded.title_source,
                 created_at = excluded.created_at,
                 updated_at = MAX(sessions.updated_at, excluded.updated_at),
                 last_event_seq = MAX(sessions.last_event_seq, excluded.last_event_seq),
@@ -269,6 +276,7 @@ impl SessionPersistence for SqliteSessionRepository {
         )
         .bind(&meta.id)
         .bind(&meta.title)
+        .bind(title_source_to_str(meta.title_source))
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
@@ -518,6 +526,24 @@ fn optional_json_string<T: serde::Serialize>(
     column: &str,
 ) -> io::Result<Option<String>> {
     value.map(|inner| json_string(inner, column)).transpose()
+}
+
+fn title_source_to_str(source: TitleSource) -> &'static str {
+    match source {
+        TitleSource::Auto => "auto",
+        TitleSource::User => "user",
+    }
+}
+
+fn parse_title_source(value: String, field: &str) -> io::Result<TitleSource> {
+    match value.as_str() {
+        "auto" => Ok(TitleSource::Auto),
+        "user" => Ok(TitleSource::User),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{field} 非法: {other}"),
+        )),
+    }
 }
 
 fn bootstrap_state_to_str(state: SessionBootstrapState) -> &'static str {

@@ -5,7 +5,7 @@ import { SessionChatView } from "../features/acp-session";
 import { extractAgentDashMetaFromUpdate, isRecord } from "../features/acp-session/model/agentdashMeta";
 import { CanvasSessionPanel } from "../features/canvas-panel";
 import { hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";
-import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime } from "../services/session";
+import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime, fetchSessionMeta } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
@@ -38,8 +38,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const selectProject = useProjectStore((state) => state.selectProject);
   const projects = useProjectStore((state) => state.projects);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
-  const { createNew, setActiveSessionId, reload: reloadSessions } = useSessionHistoryStore();
+  const { createNew, setActiveSessionId, reload: reloadSessions, updateTitle, patchSessionLocally } = useSessionHistoryStore();
   const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
+
+  const [sessionTitle, setSessionTitle] = useState<string>("");
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editingTitleValue, setEditingTitleValue] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   const [loadedSessionBindings, setLoadedSessionBindings] = useState<SessionBindingOwner[]>([]);
   const [loadedHookRuntime, setLoadedHookRuntime] = useState<HookSessionRuntimeInfo | null>(null);
@@ -98,6 +103,23 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   useEffect(() => {
     setActiveSessionId(propSessionId ?? null);
   }, [propSessionId, setActiveSessionId]);
+
+  // ─── 加载初始标题 ──────────────────────────────────────
+
+  useEffect(() => {
+    if (!propSessionId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const meta = await fetchSessionMeta(propSessionId);
+        if (!cancelled) setSessionTitle(meta.title);
+      } catch { /* 加载失败保留空标题 */ }
+    })();
+    return () => {
+      cancelled = true;
+      setSessionTitle("");
+    };
+  }, [propSessionId]);
 
   // ─── session bindings（用于 owner 展示） ──────────────
 
@@ -318,6 +340,20 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       case "companion_result_returned":
         scheduleHookRuntimeRefresh(eventType);
         break;
+      case "session_meta_updated": {
+        const event = extractAgentDashMetaFromUpdate(update)?.event;
+        const data = isRecord(event?.data) ? event.data : null;
+        const newTitle = typeof data?.title === "string" ? data.title.trim() : "";
+        const newTitleSource = typeof data?.title_source === "string" ? data.title_source : undefined;
+        if (newTitle && currentSessionId) {
+          setSessionTitle(newTitle);
+          patchSessionLocally(currentSessionId, {
+            title: newTitle,
+            title_source: newTitleSource === "auto" || newTitleSource === "user" ? newTitleSource : undefined,
+          });
+        }
+        break;
+      }
       case "canvas_presented": {
         const event = extractAgentDashMetaFromUpdate(update)?.event;
         const data = isRecord(event?.data) ? event.data : null;
@@ -334,7 +370,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       default:
         break;
     }
-  }, [scheduleHookRuntimeRefresh]);
+  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally]);
 
   const handleNewSession = useCallback(() => {
     setActiveSessionId(null);
@@ -360,6 +396,22 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     if (!currentSessionId) return;
     try { await navigator.clipboard.writeText(currentSessionId); } catch { /* noop */ }
   }, [currentSessionId]);
+
+  const handleStartEditTitle = useCallback(() => {
+    setEditingTitleValue(sessionTitle);
+    setIsEditingTitle(true);
+    requestAnimationFrame(() => titleInputRef.current?.select());
+  }, [sessionTitle]);
+
+  const handleCommitTitle = useCallback(async () => {
+    setIsEditingTitle(false);
+    const trimmed = editingTitleValue.trim();
+    if (!trimmed || !currentSessionId || trimmed === sessionTitle) return;
+    setSessionTitle(trimmed);
+    try {
+      await updateTitle(currentSessionId, trimmed);
+    } catch { /* store 内已记录 error */ }
+  }, [currentSessionId, editingTitleValue, sessionTitle, updateTitle]);
 
   const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
     ? "返回项目"
@@ -410,7 +462,27 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             CHAT
           </span>
-          <h2 className="text-sm font-semibold text-foreground">会话</h2>
+          {hasSession && isEditingTitle ? (
+            <input
+              ref={titleInputRef}
+              className="min-w-[120px] max-w-[320px] rounded-[6px] border border-primary/40 bg-background px-2 py-0.5 text-sm font-semibold text-foreground outline-none focus:ring-1 focus:ring-primary/40"
+              value={editingTitleValue}
+              onChange={(e) => setEditingTitleValue(e.target.value)}
+              onBlur={() => void handleCommitTitle()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCommitTitle();
+                if (e.key === "Escape") setIsEditingTitle(false);
+              }}
+            />
+          ) : (
+            <h2
+              className={`truncate text-sm font-semibold text-foreground ${hasSession ? "cursor-pointer hover:text-primary" : ""}`}
+              onClick={hasSession ? handleStartEditTitle : undefined}
+              title={hasSession ? "点击编辑标题" : undefined}
+            >
+              {sessionTitle || "会话"}
+            </h2>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {effectiveReturnTarget && (

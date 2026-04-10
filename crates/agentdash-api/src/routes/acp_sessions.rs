@@ -399,7 +399,7 @@ pub struct SessionBindingOwnerResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_application::session::SessionBootstrapState;
+    use agentdash_application::session::{SessionBootstrapState, TitleSource};
 
     #[test]
     fn session_binding_owner_response_serializes_as_snake_case() {
@@ -430,6 +430,7 @@ mod tests {
         let meta = SessionMeta {
             id: "sess-1".to_string(),
             title: "测试".to_string(),
+            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -454,6 +455,7 @@ mod tests {
         let meta = SessionMeta {
             id: "sess-2".to_string(),
             title: "测试".to_string(),
+            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 12,
@@ -484,6 +486,7 @@ mod tests {
         let meta = SessionMeta {
             id: "sess-3".to_string(),
             title: "测试".to_string(),
+            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 5,
@@ -508,6 +511,7 @@ mod tests {
         let meta = SessionMeta {
             id: "sess-4".to_string(),
             title: "测试".to_string(),
+            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 7,
@@ -816,6 +820,42 @@ pub async fn get_session_bindings(
     }
 
     Ok(Json(responses))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSessionMetaRequest {
+    pub title: String,
+}
+
+/// PATCH /sessions/{id}/meta — 用户手动修改会话标题
+pub async fn update_session_meta(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+    Json(req): Json<UpdateSessionMetaRequest>,
+) -> Result<Json<SessionMeta>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let title = req.title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest("标题不能为空".to_string()));
+    }
+
+    let meta = state
+        .services
+        .session_hub
+        .set_user_title(&session_id, title)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
+
+    Ok(Json(meta))
 }
 
 pub async fn delete_session(

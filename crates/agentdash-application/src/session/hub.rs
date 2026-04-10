@@ -31,6 +31,7 @@ pub struct SessionHub {
     pub(crate) address_space_service: Option<Arc<crate::address_space::RelayAddressSpaceService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub companion_wait_registry: CompanionWaitRegistry,
+    pub(super) title_generator: Option<Arc<dyn super::title_generator::SessionTitleGenerator>>,
 }
 
 impl SessionHub {
@@ -49,6 +50,7 @@ impl SessionHub {
             address_space_service: None,
             extra_skill_dirs: Vec::new(),
             companion_wait_registry: CompanionWaitRegistry::default(),
+            title_generator: None,
         }
     }
 
@@ -64,6 +66,15 @@ impl SessionHub {
     /// 注入插件提供的额外 Skill 扫描目录
     pub fn with_extra_skill_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
         self.extra_skill_dirs = dirs;
+        self
+    }
+
+    /// 注入会话标题自动生成器（可选；未注入时不触发自动标题生成）
+    pub fn with_title_generator(
+        mut self,
+        generator: Arc<dyn super::title_generator::SessionTitleGenerator>,
+    ) -> Self {
+        self.title_generator = Some(generator);
         self
     }
 
@@ -97,6 +108,17 @@ impl SessionHub {
     }
 
     pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
+        self.create_session_with_title_source(title, super::types::TitleSource::Auto)
+            .await
+    }
+
+    /// 创建会话并显式指定标题来源。
+    /// Task 绑定的会话应使用 `TitleSource::User` 以阻止自动覆盖。
+    pub async fn create_session_with_title_source(
+        &self,
+        title: &str,
+        title_source: super::types::TitleSource,
+    ) -> std::io::Result<SessionMeta> {
         let id = format!(
             "sess-{}-{}",
             chrono::Utc::now().timestamp_millis(),
@@ -106,6 +128,7 @@ impl SessionHub {
         let meta = SessionMeta {
             id: id.clone(),
             title: title.to_string(),
+            title_source,
             created_at: now,
             updated_at: now,
             last_event_seq: 0,

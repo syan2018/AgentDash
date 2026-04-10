@@ -10,6 +10,7 @@ import {
   fetchSessions,
   createSession,
   deleteSession as apiDeleteSession,
+  updateSessionTitle as apiUpdateSessionTitle,
   type SessionMeta,
 } from "../services/session";
 
@@ -23,6 +24,10 @@ interface SessionHistoryState {
   reload: () => Promise<void>;
   createNew: (title?: string) => Promise<SessionMeta>;
   removeSession: (id: string) => Promise<void>;
+  /** 用户手动修改标题 */
+  updateTitle: (id: string, title: string) => Promise<void>;
+  /** SSE 事件驱动的本地标题补丁（不触发 API 调用） */
+  patchSessionLocally: (id: string, patch: Partial<SessionMeta>) => void;
 }
 
 export type { SessionMeta };
@@ -68,5 +73,30 @@ export const useSessionHistoryStore = create<SessionHistoryState>()((set, get) =
       });
       throw e;
     }
+  },
+
+  updateTitle: async (id: string, title: string) => {
+    try {
+      const updated = await apiUpdateSessionTitle(id, title);
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, title: updated.title, title_source: updated.title_source } : s,
+        ),
+        error: null,
+      }));
+    } catch (e) {
+      set({
+        error: e instanceof Error ? e.message : "更新标题失败",
+      });
+      throw e;
+    }
+  },
+
+  patchSessionLocally: (id: string, patch: Partial<SessionMeta>) => {
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id ? { ...s, ...patch } : s,
+      ),
+    }));
   },
 }));

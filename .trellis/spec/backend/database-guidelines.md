@@ -172,6 +172,48 @@ latest_state_change_id(...)
 
 ---
 
+## Schema 变更与迁移（必读）
+
+### 核心规则
+
+**新增列 ≠ 只改 `CREATE TABLE IF NOT EXISTS`。**
+
+`CREATE TABLE IF NOT EXISTS` 只在表**首次创建**时生效。如果数据库中**表已存在**，新增列不会被自动添加。必须同时提供显式的迁移语句。
+
+### PostgreSQL（sqlx migrate）
+
+在 `crates/agentdash-infrastructure/migrations/` 下新建递增编号的 `.sql` 文件：
+
+```sql
+-- 0004_sessions_title_source.sql
+ALTER TABLE sessions
+ADD COLUMN IF NOT EXISTS title_source TEXT NOT NULL DEFAULT 'auto';
+```
+
+sqlx migrate 在应用启动时自动执行尚未应用的迁移。
+
+### SQLite（手动 initialize）
+
+SQLite 不支持 `ADD COLUMN IF NOT EXISTS` 语法。在对应 Repository 的 `initialize()` 方法中，于 `CREATE TABLE IF NOT EXISTS` 之后追加 `ALTER TABLE ADD COLUMN`，并**忽略错误**（列已存在时 SQLite 会报 duplicate column error）：
+
+```rust
+let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT 'auto'")
+    .execute(&self.pool)
+    .await;
+```
+
+### Checklist
+
+每次为已有表添加新列时，必须完成以下步骤：
+
+- [ ] 更新 `CREATE TABLE IF NOT EXISTS` 语句（保证新建库的 schema 完整）
+- [ ] **PostgreSQL**: 新增 `migrations/NNNN_xxx.sql` 迁移文件
+- [ ] **SQLite**: 在 `initialize()` 中追加 `ALTER TABLE ADD COLUMN`（忽略 duplicate 错误）
+- [ ] 更新所有 `INSERT`/`SELECT`/`UPSERT` 语句和 `map_*_row` 映射函数
+- [ ] 更新所有手动构造该 struct 的测试代码
+
+---
+
 ## 常见错误
 
 | 错误 | 正确 |

@@ -1,0 +1,2 @@
+ALTER TABLE sessions
+ADD COLUMN IF NOT EXISTS title_source TEXT NOT NULL DEFAULT 'auto';

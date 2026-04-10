@@ -13,6 +13,17 @@ import type { ProjectSessionEntry } from "../../types";
 
 // ─── 工具函数 ──────────────────────────────────────────────────────────────
 
+/** 去掉 agent_display_name 中与 owner_title 重复的前缀 */
+function getAgentLabel(session: ProjectSessionEntry): string {
+  const raw = session.agent_display_name ?? session.agent_key ?? "—";
+  if (session.owner_type === "project" && session.owner_title && raw.startsWith(session.owner_title)) {
+    const rest = raw.slice(session.owner_title.length).replace(/^[\s·\-–—]+/, "").trim();
+    if (rest) return rest;
+    return session.agent_key ?? raw;
+  }
+  return raw;
+}
+
 function formatRelativeTime(timestamp: number | null): string {
   if (timestamp == null) return "无活动";
   const ts = timestamp < 1e12 ? timestamp * 1000 : timestamp;
@@ -67,9 +78,13 @@ interface OwnerLinkProps {
 function OwnerLink({ session }: OwnerLinkProps) {
   const navigate = useNavigate();
 
-  // project 层级无归属，不渲染链接
+  // project 层级：显示项目名
   if (session.owner_type === "project") {
-    return <span className="text-[11px] text-muted-foreground/50">直接对话</span>;
+    return (
+      <span className="truncate text-[11px] text-muted-foreground/50">
+        {session.owner_title ?? "Project"}
+      </span>
+    );
   }
 
   // story 层级：链接到 Story 页
@@ -148,30 +163,41 @@ function ActiveSessionCard({
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") onSelectSession(session.session_id);
         }}
-        className={`cursor-pointer rounded-[12px] border transition-colors ${
-          isSelected
-            ? "border-primary/30 bg-primary/5"
-            : "border-border bg-background/80 hover:border-border/80 hover:bg-background"
-        } ${isCompanion ? "border-dashed" : ""}`}
+        className={`cursor-pointer transition-colors ${
+          isCompanion
+            ? `rounded-[8px] border border-dashed ${
+                isSelected
+                  ? "border-primary/25 bg-primary/3"
+                  : "border-border/40 bg-transparent hover:border-border/60 hover:bg-background/50"
+              }`
+            : `rounded-[12px] border ${
+                isSelected
+                  ? "border-primary/30 bg-primary/5"
+                  : "border-border bg-background/80 hover:border-border/80 hover:bg-background"
+              }`
+        }`}
       >
-        <div className="px-3.5 py-3">
+        <div className={isCompanion ? "px-2.5 py-2" : "px-3.5 py-3"}>
           {/* ── 顶行：状态 + 标题 + 时间 ── */}
           <div className="flex items-center gap-2">
             <StatusDot status={session.execution_status} />
-            <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+            <p className={`min-w-0 flex-1 truncate font-medium text-foreground ${isCompanion ? "text-xs" : "text-sm"}`}>
               {session.session_title ?? "无标题会话"}
             </p>
-            <span className="shrink-0 text-[11px] text-muted-foreground/50">
+            <span className={`shrink-0 text-muted-foreground/50 ${isCompanion ? "text-[10px]" : "text-[11px]"}`}>
               {formatRelativeTime(session.last_activity)}
             </span>
           </div>
 
-          {/* ── 底行：归属链接 + Agent + 状态标签 ── */}
-          <div className="mt-1.5 flex items-center gap-2">
-            <OwnerLink session={session} />
+          {/* ── 底行：归属 · Agent · 状态 ── */}
+          <div className={isCompanion ? "mt-1 flex items-center gap-1.5" : "mt-1.5 flex items-center gap-2"}>
+            {isCompanion
+              ? <span className="shrink-0 text-[11px] text-violet-400/60">↳</span>
+              : <OwnerLink session={session} />
+            }
             <span className="shrink-0 text-muted-foreground/25">·</span>
-            <span className="shrink-0 text-[11px] text-muted-foreground/50">
-              {session.agent_display_name ?? session.agent_key ?? "—"}
+            <span className={`shrink-0 text-muted-foreground/50 ${isCompanion ? "text-[10px]" : "text-[11px]"}`}>
+              {getAgentLabel(session)}
             </span>
             <span className="ml-auto shrink-0">
               <span
@@ -189,21 +215,12 @@ function ActiveSessionCard({
               </span>
             </span>
           </div>
-
-          {/* Companion 标记（仅子会话显示） */}
-          {isCompanion && (
-            <div className="mt-1.5">
-              <span className="rounded-full border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                Companion
-              </span>
-            </div>
-          )}
         </div>
       </div>
 
       {/* 嵌套 Companion 子会话 */}
       {companions.length > 0 && (
-        <div className="ml-4 mt-1.5 space-y-1.5 border-l border-border/50 pl-3">
+        <div className="ml-3 mt-1 space-y-1 border-l border-border/30 pl-2.5">
           {companions.map((companion) => (
             <ActiveSessionCard
               key={companion.session_id}

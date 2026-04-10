@@ -7,7 +7,9 @@ import type {
   ProjectAgentSession,
   ProjectAgentSummary,
   SessionNavigationState,
+  ToolCluster,
 } from "../../types";
+import { TOOL_CLUSTER_OPTIONS, THINKING_LEVEL_OPTIONS } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import {
@@ -924,6 +926,21 @@ export function ProjectAgentView({
             {sortedAgents.map((agent) => {
               const activity = getActivityLevel(agent.session?.last_activity);
               const link = findLinkForAgent(agent);
+              const mergedConfig = link?.merged_config ?? {};
+              const toolClusters = Array.isArray(mergedConfig.tool_clusters)
+                ? (mergedConfig.tool_clusters as ToolCluster[])
+                : [];
+              const allowedCompanions = Array.isArray(mergedConfig.allowed_companions)
+                ? (mergedConfig.allowed_companions as string[])
+                : [];
+              const isCompanionTarget = agentLinks.some(
+                (otherLink) =>
+                  otherLink.agent_id !== agent.key &&
+                  Array.isArray(otherLink.merged_config?.allowed_companions) &&
+                  (otherLink.merged_config.allowed_companions as string[]).includes(
+                    agent.preset_name ?? agent.display_name,
+                  ),
+              );
 
               return (
                 <article
@@ -959,13 +976,71 @@ export function ProjectAgentView({
                     </div>
                   </div>
 
+                  {/* ── Executor 详情 ── */}
+                  {(agent.executor.model_id || (agent.executor.thinking_level && agent.executor.thinking_level !== "off") || agent.executor.permission_policy) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                      {agent.executor.model_id && (
+                        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-muted-foreground" title="模型">
+                          {agent.executor.model_id}
+                        </span>
+                      )}
+                      {agent.executor.thinking_level && agent.executor.thinking_level !== "off" && (
+                        <span className="rounded-[6px] border border-amber-400/30 bg-amber-500/8 px-1.5 py-0.5 text-amber-600 dark:text-amber-400" title="推理级别">
+                          思考: {THINKING_LEVEL_OPTIONS.find((o) => o.value === agent.executor.thinking_level)?.label ?? agent.executor.thinking_level}
+                        </span>
+                      )}
+                      {agent.executor.permission_policy && (
+                        <span
+                          className={`rounded-[6px] border px-1.5 py-0.5 ${
+                            agent.executor.permission_policy === "AUTO"
+                              ? "border-emerald-400/30 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
+                              : agent.executor.permission_policy === "SUPERVISED"
+                                ? "border-blue-400/30 bg-blue-500/8 text-blue-600 dark:text-blue-400"
+                                : "border-border bg-secondary/40 text-muted-foreground"
+                          }`}
+                          title="权限策略"
+                        >
+                          {agent.executor.permission_policy}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── 能力标签 ── */}
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    <span
-                      className="rounded-full border border-violet-400/30 bg-violet-500/10 px-2.5 py-0.5 text-[11px] text-violet-600 dark:text-violet-400"
-                      title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
-                    >
-                      Companion
-                    </span>
+                    {isCompanionTarget && (
+                      <span
+                        className="rounded-full border border-violet-400/30 bg-violet-500/10 px-2.5 py-0.5 text-[11px] text-violet-600 dark:text-violet-400"
+                        title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
+                      >
+                        Companion
+                      </span>
+                    )}
+                    {toolClusters.length > 0 ? toolClusters.map((cluster) => {
+                      const opt = TOOL_CLUSTER_OPTIONS.find((o) => o.value === cluster);
+                      if (!opt) return null;
+                      const colorCls =
+                        cluster === "read" ? "border-sky-400/30 bg-sky-500/8 text-sky-600 dark:text-sky-400"
+                        : cluster === "write" ? "border-orange-400/30 bg-orange-500/8 text-orange-600 dark:text-orange-400"
+                        : cluster === "execute" ? "border-red-400/30 bg-red-500/8 text-red-600 dark:text-red-400"
+                        : cluster === "collaboration" ? "border-violet-400/30 bg-violet-500/8 text-violet-600 dark:text-violet-400"
+                        : "border-border bg-secondary/40 text-muted-foreground";
+                      return (
+                        <span key={cluster} className={`rounded-full border px-2 py-0.5 text-[10px] ${colorCls}`} title={opt.description}>
+                          {opt.label}
+                        </span>
+                      );
+                    }) : (
+                      <span className="rounded-full border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground/40" title="未限制工具集（全部可用）">全部工具</span>
+                    )}
+                    {allowedCompanions.length > 0 && (
+                      <span
+                        className="rounded-full border border-violet-400/20 bg-violet-500/5 px-2 py-0.5 text-[10px] text-violet-500/70"
+                        title={`可调用: ${allowedCompanions.join(", ")}`}
+                      >
+                        → {allowedCompanions.length} companion{allowedCompanions.length > 1 ? "s" : ""}
+                      </span>
+                    )}
                     {link?.default_lifecycle_key && (
                       <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
                         Lifecycle: {link.default_lifecycle_key}

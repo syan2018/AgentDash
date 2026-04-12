@@ -65,7 +65,7 @@ pub fn build_hook_trace_notification(
 }
 
 fn hook_event_severity(entry: &HookTraceEntry) -> &'static str {
-    if entry.block_reason.is_some() || matches!(entry.decision.as_str(), "deny") {
+    if entry.block_reason.is_some() || matches!(entry.decision.as_str(), "deny" | "blocked") {
         return "error";
     }
     if matches!(
@@ -108,6 +108,7 @@ pub fn hook_trigger_key(trigger: &HookTrigger) -> &'static str {
         HookTrigger::SubagentResult => "subagent_result",
         HookTrigger::BeforeCompact => "before_compact",
         HookTrigger::AfterCompact => "after_compact",
+        HookTrigger::BeforeProviderRequest => "before_provider_request",
     }
 }
 
@@ -157,6 +158,12 @@ fn describe_hook_trace(entry: &HookTraceEntry) -> String {
         }
         (HookTrigger::AfterSubagentDispatch, _) => "Hook 已记录 subagent 派发结果".to_string(),
         (HookTrigger::SubagentResult, _) => "Hook 已接收 subagent 返回结果".to_string(),
+        (HookTrigger::UserPromptSubmit, "blocked") => {
+            "Hook 阻止了当前用户输入".to_string()
+        }
+        (HookTrigger::BeforeProviderRequest, "observed") => {
+            "Hook 已观测到 LLM API 请求即将发出".to_string()
+        }
         _ => format!(
             "Hook 在 {} 阶段产生了 {} 决策",
             hook_trigger_key(&entry.trigger),

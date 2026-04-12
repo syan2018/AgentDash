@@ -231,6 +231,7 @@ pub enum WorkflowHookTrigger {
     SubagentResult,
     BeforeCompact,
     AfterCompact,
+    BeforeProviderRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

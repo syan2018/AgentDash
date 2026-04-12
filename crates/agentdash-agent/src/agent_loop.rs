@@ -22,11 +22,11 @@ use tokio_util::sync::CancellationToken;
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk, ToolCallDeltaContent};
 use crate::types::{
     AfterToolCallContext, AfterToolCallInput, AfterToolCallResult, AfterTurnInput, AgentContext,
-    AgentError, AgentEvent, AgentMessage, AgentToolResult, AssistantStreamEvent, BeforeStopInput,
-    BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, ContentPart,
-    DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, StopDecision,
-    ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolExecutionMode,
-    ToolUpdateCallback, TransformContextInput,
+    AgentError, AgentEvent, AgentMessage, AgentToolResult, AssistantStreamEvent,
+    BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
+    BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool,
+    EvaluateCompactionInput, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
+    ToolCallDecision, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
 };
 
 // ─── 回调类型别名 ───────────────────────────────────────────
@@ -540,7 +540,7 @@ async fn stream_assistant_response(
 
     // delegate / transform_context 可在发送前裁剪或注入消息
     let messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
-        delegate
+        let output = delegate
             .transform_context(
                 TransformContextInput {
                     context: context.clone(),
@@ -548,8 +548,14 @@ async fn stream_assistant_response(
                 cancel.clone(),
             )
             .await
-            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?
-            .messages
+            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+        if let Some(reason) = output.blocked {
+            return Ok(AgentMessage::error_assistant(
+                format!("输入被 Hook 规则阻止: {reason}"),
+                false,
+            ));
+        }
+        output.messages
     } else if let Some(ref transform) = config.transform_context {
         transform(context.messages.clone(), cancel.clone()).await
     } else {
@@ -558,9 +564,23 @@ async fn stream_assistant_response(
 
     let request = BridgeRequest {
         system_prompt: Some(context.system_prompt.clone()),
-        messages: messages_for_llm,
+        messages: messages_for_llm.clone(),
         tools: context.tools.clone(),
     };
+
+    // BeforeProviderRequest 观测 hook
+    if let Some(delegate) = config.runtime_delegate.as_ref() {
+        let _ = delegate
+            .on_before_provider_request(
+                BeforeProviderRequestInput {
+                    system_prompt_len: context.system_prompt.len(),
+                    message_count: messages_for_llm.len(),
+                    tool_count: context.tools.len(),
+                },
+                cancel.clone(),
+            )
+            .await;
+    }
 
     let mut partial = PartialAssistantState::new();
     let mut stream = bridge.stream_complete(request).await;

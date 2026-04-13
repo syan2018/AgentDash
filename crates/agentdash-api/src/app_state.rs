@@ -187,6 +187,7 @@ impl AppState {
         );
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
+        let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
 
         if let Some(pi_connector) = build_pi_agent_connector(PiAgentConnectorDeps {
             settings_repo: settings_repo.clone(),
@@ -204,6 +205,7 @@ impl AppState {
         })
         .await
         {
+            title_bridge = Some(pi_connector.default_bridge());
             sub_connectors.push(Arc::new(pi_connector));
         }
         // relay connector — 将远程后端上报的执行器纳入统一路由
@@ -232,7 +234,7 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
         ));
-        let session_hub = SessionHub::new_with_hooks_and_persistence(
+        let mut session_hub = SessionHub::new_with_hooks_and_persistence(
             None,
             connector.clone(),
             Some(hook_provider.clone()),
@@ -240,6 +242,11 @@ impl AppState {
         )
         .with_address_space_service(address_space_service.clone())
         .with_extra_skill_dirs(plugin_registration.extra_skill_dirs);
+        if let Some(bridge) = title_bridge {
+            session_hub = session_hub.with_title_generator(Arc::new(
+                crate::title_generator::LlmTitleGenerator::new(bridge),
+            ));
+        }
         session_hub_handle.set(session_hub.clone()).await;
 
         let restart_tracker = Arc::new(RestartTracker::default());

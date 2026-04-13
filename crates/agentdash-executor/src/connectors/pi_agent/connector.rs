@@ -69,6 +69,10 @@ impl PiAgentConnector {
         }
     }
 
+    pub fn default_bridge(&self) -> Arc<dyn LlmBridge> {
+        self.bridge.clone()
+    }
+
     pub fn set_runtime_tool_provider(&mut self, provider: Arc<dyn RuntimeToolProvider>) {
         self.runtime_tool_provider = Some(provider);
     }

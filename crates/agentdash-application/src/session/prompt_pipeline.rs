@@ -262,25 +262,14 @@ impl SessionHub {
         let _ = persistence.save_session_meta(&session_meta).await;
 
         // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成
-        let is_first_turn = session_meta.last_event_seq <= 1; // append_event 后 seq >= 1
+        let is_first_turn = session_meta.last_event_seq <= 1;
         if is_first_turn
             && session_meta.title_source != super::types::TitleSource::User
             && self.title_generator.is_some()
         {
-            let title_generating = {
-                let sessions = self.sessions.lock().await;
-                sessions
-                    .get(session_id)
-                    .map(|_| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)))
-                    .unwrap_or_else(|| {
-                        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true))
-                    })
-            };
             self.spawn_title_generation(
                 session_id.to_string(),
                 resolved_payload.text_prompt.clone(),
-                context.executor_config.clone(),
-                title_generating,
             );
         }
 

@@ -12,6 +12,7 @@ pub mod rpc;
 pub mod runtime_bridge;
 pub mod stream;
 pub mod task_agent_context;
+pub mod title_generator;
 pub mod workspace_resolution;
 
 use anyhow::Result;

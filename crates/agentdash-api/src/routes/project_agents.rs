@@ -297,11 +297,10 @@ pub async fn open_project_agent_session(
         }
     }
 
-    let title = format!("{} · {}", project.name.trim(), agent.display_name.trim());
     let meta = state
         .services
         .session_hub
-        .create_session(title.trim())
+        .create_session("")
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let binding = SessionBinding::new(

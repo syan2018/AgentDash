@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -287,13 +288,38 @@ pub async fn list_project_sessions(
             .list_by_project(project_uuid),
     );
 
-    let project = project_result?;
+    let _project = project_result?;
 
     let project_bindings = bindings_result.map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if project_bindings.is_empty() {
         return Ok(Json(vec![]));
     }
+
+    // ── Step 1.5: 构建 agent_id → display_name 映射 ─────────────────────────
+    let agent_display_map = {
+        let links = state
+            .repos
+            .agent_link_repo
+            .list_by_project(project_uuid)
+            .await
+            .unwrap_or_default();
+        let mut map = HashMap::new();
+        for link in &links {
+            if let Ok(Some(agent)) = state.repos.agent_repo.get_by_id(link.agent_id).await {
+                let merged = link.merged_config(&agent.base_config);
+                let name = merged
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(&agent.name)
+                    .to_string();
+                map.insert(agent.id.to_string(), name);
+            }
+        }
+        map
+    };
 
     // ── Step 2: 批量并发读取所有 session meta ────────────────────────────────
     let session_ids: Vec<String> = project_bindings
@@ -345,7 +371,7 @@ pub async fn list_project_sessions(
                 .as_ref()
                 .map(|c| c.parent_session_id.clone());
 
-            let (agent_key, agent_display_name) = resolve_agent_info(&pb.binding, &project, meta);
+            let (agent_key, agent_display_name) = resolve_agent_info(&pb.binding, meta, &agent_display_map);
 
             let story_id = pb.story_id.map(|id| id.to_string());
 
@@ -389,21 +415,22 @@ fn execution_state_to_str(state: Option<&SessionExecutionState>) -> &'static str
     }
 }
 
-/// 从 binding label 或 session meta 推断 agent_key 和 display_name
+/// 从 binding label 或 agent 配置推断 agent_key 和 display_name。
+/// `agent_display_map` 由 list_project_sessions 预加载，key 为 agent UUID 字符串。
 fn resolve_agent_info(
     binding: &SessionBinding,
-    _project: &agentdash_domain::project::Project,
     meta: &agentdash_application::session::SessionMeta,
+    agent_display_map: &HashMap<String, String>,
 ) -> (Option<String>, Option<String>) {
     if binding.owner_type == agentdash_domain::session_binding::SessionOwnerType::Project {
         if let Some(agent_key) = parse_project_agent_session_label(&binding.label) {
-            let display_name = Some(meta.title.clone());
+            let display_name = agent_display_map.get(agent_key).cloned();
             return (Some(agent_key.to_string()), display_name);
         }
-        // companion 会话: 优先用 companion_context.agent_name
+        // companion 会话: 用 companion_context.agent_name（真实 agent 名）
         if let Some(ctx) = &meta.companion_context {
             if let Some(name) = &ctx.agent_name {
-                return (Some(name.clone()), Some(meta.title.clone()));
+                return (Some(name.clone()), Some(name.clone()));
             }
         }
     }

@@ -10,21 +10,28 @@ use super::registry::BackendRegistry;
 
 #[async_trait]
 impl McpRelayProvider for BackendRegistry {
-    async fn list_relay_tools(&self) -> Vec<RelayMcpToolInfo> {
-        let all_servers = self.list_all_mcp_servers().await;
+    async fn list_relay_tools(
+        &self,
+        requested_servers: &[String],
+    ) -> Vec<RelayMcpToolInfo> {
         let mut result = Vec::new();
 
-        for (_, server_info) in &all_servers {
-            // 向 backend 发 list_tools 获取工具列表
-            let backend_id = match self.find_backend_for_mcp_server(&server_info.name).await {
+        for server_name in requested_servers {
+            let backend_id = match self.find_backend_for_mcp_server(server_name).await {
                 Some(id) => id,
-                None => continue,
+                None => {
+                    tracing::debug!(
+                        server = %server_name,
+                        "无在线 backend 提供该 MCP server，跳过"
+                    );
+                    continue;
+                }
             };
 
             let cmd = RelayMessage::CommandMcpListTools {
                 id: RelayMessage::new_id("mcp-list"),
                 payload: agentdash_relay::CommandMcpListToolsPayload {
-                    server_name: server_info.name.clone(),
+                    server_name: server_name.clone(),
                 },
             };
 
@@ -43,7 +50,7 @@ impl McpRelayProvider for BackendRegistry {
                 }) => {
                     for tool in &resp.tools {
                         result.push(RelayMcpToolInfo {
-                            server_name: server_info.name.clone(),
+                            server_name: server_name.clone(),
                             tool_name: tool.name.clone(),
                             description: tool.description.clone(),
                             parameters_schema: tool.parameters_schema.clone(),
@@ -54,20 +61,20 @@ impl McpRelayProvider for BackendRegistry {
                     error: Some(err), ..
                 }) => {
                     tracing::warn!(
-                        server = %server_info.name,
+                        server = %server_name,
                         error = %err.message,
                         "relay MCP list_tools 失败"
                     );
                 }
                 Ok(_) => {
                     tracing::warn!(
-                        server = %server_info.name,
+                        server = %server_name,
                         "relay MCP list_tools 返回意外消息类型"
                     );
                 }
                 Err(e) => {
                     tracing::warn!(
-                        server = %server_info.name,
+                        server = %server_name,
                         error = %e,
                         "relay MCP list_tools 通信失败"
                     );

@@ -31,6 +31,14 @@ use agentdash_spi::{
     workspace_path_from_context,
 };
 
+/// 从 McpServer（外部类型）提取 server name
+fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String {
+    serde_json::to_value(server)
+        .ok()
+        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 // ─── PiAgentConnector ───────────────────────────────────────────
 
 pub struct PiAgentConnector {
@@ -94,6 +102,29 @@ impl PiAgentConnector {
 
     fn add_provider(&mut self, provider: ProviderEntry) {
         self.providers.push(provider);
+    }
+
+    /// 将 Agent 配置的 MCP servers 按 relay 标记分为两组。
+    /// relay 标记来自配置层（`relay_mcp_server_names`），不做运行时探测。
+    fn partition_mcp_servers(
+        &self,
+        servers: &[agent_client_protocol::McpServer],
+        relay_names_set: &std::collections::HashSet<String>,
+    ) -> (Vec<String>, Vec<agent_client_protocol::McpServer>) {
+        let mut relay_names = Vec::new();
+        let mut direct = Vec::new();
+
+        for server in servers {
+            let name = extract_mcp_server_name(server);
+            if relay_names_set.contains(&name) {
+                tracing::info!(server = %name, "MCP server 走 relay 路径（配置标记）");
+                relay_names.push(name);
+            } else {
+                direct.push(server.clone());
+            }
+        }
+
+        (relay_names, direct)
     }
 
     async fn load_provider_runtime_state(&self) -> ProviderRuntimeState {
@@ -641,17 +672,25 @@ impl AgentConnector for PiAgentConnector {
         // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
         // 只更新 runtime delegate（hook session 每轮刷新）。
         if is_new_agent {
-            let mcp_tools = match discover_mcp_tools(&context.mcp_servers).await {
+            // 将 Agent 配置的 MCP servers 分流：
+            // - 匹配 backend 上报能力的 → relay 路径（经本机转发）
+            // - 其余 → 直连路径（云端直接 HTTP 连接）
+            let (relay_server_names, direct_servers) =
+                self.partition_mcp_servers(&context.mcp_servers, &context.relay_mcp_server_names);
+
+            let mcp_tools = match discover_mcp_tools(&direct_servers).await {
                 Ok(tools) => tools,
                 Err(error) => {
-                    tracing::warn!("发现 MCP 工具失败，继续使用本地工具: {error}");
+                    tracing::warn!("发现直连 MCP 工具失败，继续使用本地工具: {error}");
                     Vec::new()
                 }
             };
-            // relay MCP 工具（来自远程 backend 上报的 MCP server）
             let relay_mcp_tools = if let Some(relay) = &self.mcp_relay_provider {
-                crate::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(relay.clone())
-                    .await
+                crate::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(
+                    relay.clone(),
+                    &relay_server_names,
+                )
+                .await
             } else {
                 Vec::new()
             };
@@ -1896,6 +1935,7 @@ mod tests {
             environment_variables: HashMap::new(),
             executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
+            relay_mcp_server_names: Default::default(),
             address_space: Some(test_address_space("/tmp/test-workspace")),
             hook_session: None,
             flow_capabilities: Default::default(),
@@ -1928,6 +1968,7 @@ mod tests {
             environment_variables: HashMap::new(),
             executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
+            relay_mcp_server_names: Default::default(),
             address_space: Some(test_address_space("/tmp/ws")),
             hook_session: None,
             flow_capabilities: Default::default(),
@@ -2087,6 +2128,7 @@ mod tests {
                     environment_variables: HashMap::new(),
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
+                    relay_mcp_server_names: Default::default(),
                     address_space: Some(test_address_space("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),
@@ -2125,6 +2167,7 @@ mod tests {
                     environment_variables: HashMap::new(),
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
+                    relay_mcp_server_names: Default::default(),
                     address_space: Some(test_address_space("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),

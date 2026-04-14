@@ -670,6 +670,7 @@ mod tests {
                 ..UserPromptInput::from_text(prompt)
             },
             mcp_servers: vec![],
+            relay_mcp_server_names: Default::default(),
             address_space: None,
             flow_capabilities: None,
             system_context: None,
@@ -1667,6 +1668,7 @@ mod tests {
                     executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
                 },
                 mcp_servers: vec![],
+                relay_mcp_server_names: Default::default(),
                 address_space: Some(local_workspace_address_space(workspace.path())),
                 flow_capabilities: None,
                 system_context: None,

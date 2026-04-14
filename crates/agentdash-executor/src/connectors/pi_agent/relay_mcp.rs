@@ -30,7 +30,7 @@ impl RelayMcpToolAdapter {
     pub fn from_info(info: &RelayMcpToolInfo, provider: Arc<dyn McpRelayProvider>) -> Self {
         let runtime_name = namespaced_tool_name(&info.server_name, &info.tool_name);
         let description = format!(
-            "MCP relay 工具（server={}, tool={}）: {}",
+            "MCP 工具（server={}, original={}）: {}",
             info.server_name, info.tool_name, info.description
         );
         let parameters_schema = sanitize_tool_schema(info.parameters_schema.clone());
@@ -71,7 +71,7 @@ impl AgentTool for RelayMcpToolAdapter {
             serde_json::Value::Object(map) => Some(map),
             other => {
                 return Err(AgentToolError::InvalidArguments(format!(
-                    "MCP relay 工具参数必须是 JSON object，实际为: {}",
+                    "MCP 工具参数必须是 JSON object，实际为: {}",
                     other
                 )));
             }
@@ -85,7 +85,7 @@ impl AgentTool for RelayMcpToolAdapter {
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "MCP relay server: {}\nMCP tool: {}\n\n{}",
+                "MCP server: {}\nMCP tool: {}\n\n{}",
                 self.server_name, self.original_tool_name, result.content
             ))],
             is_error: result.is_error,
@@ -94,11 +94,16 @@ impl AgentTool for RelayMcpToolAdapter {
     }
 }
 
-/// 从 relay provider 发现所有远程 MCP 工具并包装为 AgentTool
+/// 从 relay provider 发现指定 server 的 MCP 工具并包装为 AgentTool。
+/// `server_names` 是 Agent 配置中声明且匹配 backend 能力的 server name 列表。
 pub async fn discover_relay_mcp_tools(
     provider: Arc<dyn McpRelayProvider>,
+    server_names: &[String],
 ) -> Vec<DynAgentTool> {
-    let tools = provider.list_relay_tools().await;
+    if server_names.is_empty() {
+        return Vec::new();
+    }
+    let tools = provider.list_relay_tools(server_names).await;
     tools
         .iter()
         .map(|info| {

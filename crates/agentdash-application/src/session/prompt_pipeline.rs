@@ -238,6 +238,7 @@ impl SessionHub {
             environment_variables: req.user_input.env,
             executor_config,
             mcp_servers: req.mcp_servers,
+            relay_mcp_server_names: req.relay_mcp_server_names,
             address_space: Some(effective_address_space),
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),

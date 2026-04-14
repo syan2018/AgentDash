@@ -211,6 +211,7 @@ impl CommandHandler {
                 executor_config,
             },
             mcp_servers: parse_relay_mcp_servers(&payload.mcp_servers),
+            relay_mcp_server_names: Default::default(),
             address_space: Some(address_space),
             flow_capabilities: None,
             system_context: None,

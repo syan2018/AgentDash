@@ -27,8 +27,11 @@ pub struct RelayMcpCallResult {
 /// 由 API 层实现（基于 BackendRegistry），由 executor 层消费（RelayMcpToolAdapter）。
 #[async_trait]
 pub trait McpRelayProvider: Send + Sync {
-    /// 列出所有在线 backend 上报的 MCP 工具
-    async fn list_relay_tools(&self) -> Vec<RelayMcpToolInfo>;
+    /// 列出指定 server 的 MCP 工具（通过 relay 信道）
+    async fn list_relay_tools(
+        &self,
+        requested_servers: &[String],
+    ) -> Vec<RelayMcpToolInfo>;
 
     /// 调用指定 MCP server 上的工具
     async fn call_relay_tool(

@@ -26,6 +26,8 @@ pub struct UserPromptInput {
 pub struct PromptSessionRequest {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<McpServer>,
+    /// 配置中显式标记为 relay 的 MCP server name 集合
+    pub relay_mcp_server_names: std::collections::HashSet<String>,
     pub address_space: Option<AddressSpace>,
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
     pub system_context: Option<String>,
@@ -47,6 +49,7 @@ impl PromptSessionRequest {
         Self {
             user_input: input,
             mcp_servers: Vec::new(),
+            relay_mcp_server_names: Default::default(),
             address_space: None,
             flow_capabilities: None,
             system_context: None,

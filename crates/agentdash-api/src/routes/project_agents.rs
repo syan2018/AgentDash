@@ -37,6 +37,8 @@ pub(crate) struct ProjectAgentBridge {
     pub source: String,
     /// MCP servers parsed from preset config — injected into ExecutionContext for project-agent sessions
     pub preset_mcp_servers: Vec<McpServer>,
+    /// 配置中显式标记为 relay 的 MCP server name 集合
+    pub relay_mcp_server_names: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -579,13 +581,16 @@ pub async fn list_project_agent_sessions(
 ///   Http:  { "type": "http",  "name": "...", "url": "...", "headers": [...] }
 ///   SSE:   { "type": "sse",   "name": "...", "url": "...", "headers": [...] }
 ///   Stdio: { "type": "stdio", "name": "...", "command": "...", "args": [...], "env": [...] }
-fn parse_preset_mcp_servers(config: &serde_json::Value) -> Result<Vec<McpServer>, String> {
+fn parse_preset_mcp_servers(
+    config: &serde_json::Value,
+) -> Result<(Vec<McpServer>, std::collections::HashSet<String>), String> {
     let raw_list = match config.get("mcp_servers").and_then(|v| v.as_array()) {
         Some(list) => list,
-        None => return Ok(vec![]),
+        None => return Ok((vec![], Default::default())),
     };
 
     let mut mcp_servers = Vec::new();
+    let mut relay_names = std::collections::HashSet::new();
 
     for (index, entry) in raw_list.iter().enumerate() {
         let obj = entry
@@ -604,6 +609,15 @@ fn parse_preset_mcp_servers(config: &serde_json::Value) -> Result<Vec<McpServer>
             .get("type")
             .and_then(|v| v.as_str())
             .ok_or_else(|| format!("mcp_servers[{index}].type 缺失或不是字符串"))?;
+
+        // relay 标记：stdio 默认 true，http/sse 默认 false，显式 relay 字段可覆盖
+        let is_relay = obj
+            .get("relay")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(effective_type == "stdio");
+        if is_relay {
+            relay_names.insert(name.clone());
+        }
 
         match effective_type {
             "http" | "sse" => {
@@ -731,7 +745,7 @@ fn parse_preset_mcp_servers(config: &serde_json::Value) -> Result<Vec<McpServer>
         }
     }
 
-    Ok(mcp_servers)
+    Ok((mcp_servers, relay_names))
 }
 
 fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
@@ -1102,12 +1116,13 @@ pub(crate) fn build_agent_bridge(
         .map(String::from)
         .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
 
-    let preset_mcp_servers = parse_preset_mcp_servers(&merged_config).map_err(|error| {
-        ApiError::Internal(format!(
-            "Agent `{}` 的 mcp_servers 配置非法: {error}",
-            agent.id
-        ))
-    })?;
+    let (preset_mcp_servers, relay_mcp_server_names) =
+        parse_preset_mcp_servers(&merged_config).map_err(|error| {
+            ApiError::Internal(format!(
+                "Agent `{}` 的 mcp_servers 配置非法: {error}",
+                agent.id
+            ))
+        })?;
 
     Ok(ProjectAgentBridge {
         key: agent.id.to_string(),
@@ -1117,6 +1132,7 @@ pub(crate) fn build_agent_bridge(
         preset_name: Some(agent.name.clone()),
         source: format!("agents[{}]", agent.id),
         preset_mcp_servers,
+        relay_mcp_server_names,
     })
 }
 

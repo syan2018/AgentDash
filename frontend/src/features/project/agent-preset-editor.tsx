@@ -208,6 +208,15 @@ function McpServerEntry({
           placeholder="服务名称"
           className="agentdash-form-input flex-1"
         />
+        <label className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={server.relay ?? (server.type === "stdio")}
+            onChange={(e) => onChange({ ...server, relay: e.target.checked })}
+            className="h-3 w-3"
+          />
+          Relay
+        </label>
         <button
           type="button"
           onClick={onRemove}

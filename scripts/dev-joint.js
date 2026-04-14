@@ -7,6 +7,7 @@
  * 3. 统一接管 Ctrl+C，确保子进程树被一并清理
  */
 
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -339,18 +340,39 @@ async function runStep0Cleanup() {
   console.log('[0/4] 启动前环境检测...');
 
   if (!config.skipServer) {
+    // 先杀残留 agentdash-server — 它是 embedded postgres 的父进程，
+    // 杀父进程比杀子进程更可靠，也能释放端口和文件句柄。
+    const serverConflict = await detectProcessByName('agentdash-server');
+    if (serverConflict) {
+      console.log('  [warn] 检测到残留 agentdash-server，正在强制终止...');
+      await forceKillProcessByName('agentdash-server');
+      await sleep(1000);
+    }
+
+    // 再杀残留 embedded PostgreSQL 子进程
     const pgConflict = await detectEmbeddedPostgres();
     if (pgConflict) {
-      console.log('  [warn] 检测到残留 embedded PostgreSQL，正在终止以释放数据目录锁...');
+      console.log('  [warn] 检测到残留 embedded PostgreSQL，正在强制终止...');
       await killEmbeddedPostgres();
+      // 等待 Windows 释放文件句柄，然后验证是否真的死了
+      await sleep(1500);
+      const stillAlive = await detectEmbeddedPostgres();
+      if (stillAlive) {
+        console.log('  [warn] postgres 仍存活，二次强制终止...');
+        await killEmbeddedPostgres();
+        await sleep(1500);
+      }
     }
+
+    // 清理 postmaster.pid 和锁文件，避免新实例启动时被卡住
+    cleanupPostgresLockFiles();
   }
 
   if (!config.skipLocal) {
     const localConflict = await detectProcessByName('agentdash-local');
     if (localConflict) {
       console.log('  [warn] 检测到残留 agentdash-local 进程，正在终止以避免重复注册...');
-      await killProcessByName('agentdash-local');
+      await forceKillProcessByName('agentdash-local');
     }
   } else {
     console.log('  [skip] 保留现有 agentdash-local（--skip-local）');
@@ -402,9 +424,12 @@ async function detectProcessByName(name) {
 async function detectEmbeddedPostgres() {
   try {
     if (isWindows) {
+      // 匹配 .theseus 和 .agentdash 路径；
+      // CommandLine 可能用正斜杠 (/) 或反斜杠 (\)，两种都要匹配。
+      const psScript = `@(Get-CimInstance Win32_Process -Filter "Name = 'postgres.exe'" -ErrorAction SilentlyContinue | Where-Object { $cl = $_.CommandLine + ' ' + $_.ExecutablePath; ($cl -match '\\.theseus[/\\\\]') -or ($cl -match '\\.agentdash[/\\\\]') }).Count`;
       const out = execSync(
-        "powershell -NoProfile -Command \"(Get-Process -Name 'postgres' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\\.theseus\\*' }).Count\"",
-        { encoding: 'utf8', timeout: 5000 }
+        `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`,
+        { encoding: 'utf8', timeout: 8000 }
       ).trim();
       return parseInt(out, 10) > 0;
     }
@@ -437,51 +462,102 @@ async function detectOccupiedPorts(ports) {
 }
 
 async function killProcessByName(name) {
+  await forceKillProcessByName(name);
+}
+
+/**
+ * 强制杀掉按名称匹配的进程及其整个进程树。
+ * Windows 上使用 Get-CimInstance + taskkill /F /T 确保子进程一并清理。
+ */
+async function forceKillProcessByName(name) {
   if (isWindows) {
+    // 使用 Get-CimInstance Win32_Process 获取 PID，再用 taskkill /F /T 杀进程树
+    // 比 Stop-Process 更可靠，能杀子进程
+    const psScript = [
+      `$procs = Get-CimInstance Win32_Process -Filter "Name = '${name}.exe'" -ErrorAction SilentlyContinue`,
+      `foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null }`
+    ].join('; ');
     await runCommand(
       'powershell',
-      [
-        '-NoProfile',
-        '-Command',
-        `Get-Process -Name '${name}' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`
-      ],
-      {
-        cwd: root,
-        label: `kill-${name}`,
-        allowNonZeroExit: true
-      }
+      ['-NoProfile', '-Command', psScript],
+      { cwd: root, label: `kill-${name}`, allowNonZeroExit: true }
     );
-    console.log(`  [run] 已尝试清理进程名 ${name}`);
+    console.log(`  [run] 已强制终止进程树 ${name}`);
     return;
   }
 
-  await runCommand('pkill', ['-f', name], {
+  // Unix: SIGKILL 直接强杀
+  await runCommand('pkill', ['-9', '-f', name], {
     cwd: root,
     label: `kill-${name}`,
     allowNonZeroExit: true
   });
-  console.log(`  [run] 已尝试清理进程名 ${name}`);
+  console.log(`  [run] 已强制终止进程 ${name}`);
 }
 
 async function killEmbeddedPostgres() {
   if (isWindows) {
+    // 使用 Get-CimInstance + taskkill /F /T 杀掉 postgres 进程树
+    // 用 -match 正则同时匹配正斜杠和反斜杠路径（CommandLine 两种都可能出现）
+    const psScript = [
+      `$procs = Get-CimInstance Win32_Process -Filter "Name = 'postgres.exe'" -ErrorAction SilentlyContinue`,
+      `| Where-Object { $cl = $_.CommandLine + ' ' + $_.ExecutablePath; ($cl -match '\\.theseus[/\\\\]') -or ($cl -match '\\.agentdash[/\\\\]') }`,
+      `; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null }`
+    ].join(' ');
     await runCommand(
       'powershell',
-      [
-        '-NoProfile',
-        '-Command',
-        "Get-Process -Name 'postgres' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\\.theseus\\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
-      ],
+      ['-NoProfile', '-Command', psScript],
       { cwd: root, label: 'kill-embedded-postgres', allowNonZeroExit: true }
     );
   } else {
-    await runCommand('pkill', ['-f', '.theseus.*postgres'], {
+    await runCommand('pkill', ['-9', '-f', '.theseus.*postgres'], {
       cwd: root,
       label: 'kill-embedded-postgres',
       allowNonZeroExit: true
     });
   }
-  console.log('  [run] 已尝试清理 embedded PostgreSQL 残留进程');
+  console.log('  [run] 已强制终止 embedded PostgreSQL 进程树');
+}
+
+/**
+ * 清理 embedded PostgreSQL 的 postmaster.pid 和锁文件。
+ * 这些文件在进程被强杀后可能残留，导致新实例启动卡住。
+ */
+function cleanupPostgresLockFiles() {
+  const dataRoot = process.env.AGENTDASH_DATA_ROOT
+    ? path.resolve(process.env.AGENTDASH_DATA_ROOT)
+    : root;
+  const embeddedDir = path.join(dataRoot, '.agentdash', 'embedded-postgres');
+
+  let serviceDirs;
+  try {
+    serviceDirs = fs.readdirSync(embeddedDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => path.join(embeddedDir, d.name, 'data'));
+  } catch {
+    // embedded-postgres 目录不存在，无需清理
+    return;
+  }
+
+  const lockFiles = ['postmaster.pid', 'postmaster.opts'];
+  let cleaned = 0;
+
+  for (const dataDir of serviceDirs) {
+    for (const lockFile of lockFiles) {
+      const lockPath = path.join(dataDir, lockFile);
+      try {
+        fs.unlinkSync(lockPath);
+        cleaned += 1;
+        console.log(`  [clean] 已删除 ${path.relative(root, lockPath)}`);
+      } catch {
+        // 文件不存在或无权限，跳过
+      }
+    }
+  }
+
+  if (cleaned === 0) {
+    console.log('  [ok] 无残留 PostgreSQL 锁文件');
+  }
 }
 
 function resolveBinary(name) {

@@ -265,11 +265,12 @@ fn kill_process(pid: u32) {
 fn kill_all_embedded_postgres() {
     #[cfg(windows)]
     {
+        // 用 -match 正则同时匹配正斜杠和反斜杠路径（子进程 CommandLine 可能用 /）
         let _ = std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
-                "$procs = Get-CimInstance Win32_Process -Filter \"Name = 'postgres.exe'\" | Where-Object { ($_.ExecutablePath -like '*\\.theseus\\postgresql\\*') -or ($_.CommandLine -like '*\\.theseus\\postgresql\\*') }; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId | Out-Null }",
+                "$procs = Get-CimInstance Win32_Process -Filter \"Name = 'postgres.exe'\" | Where-Object { $cl = $_.CommandLine + ' ' + $_.ExecutablePath; ($cl -match '\\.theseus[/\\\\]') -or ($cl -match '\\.agentdash[/\\\\]') }; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId | Out-Null }",
             ])
             .output();
     }

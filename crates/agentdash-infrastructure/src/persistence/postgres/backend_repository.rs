@@ -24,6 +24,7 @@ impl PostgresBackendRepository {
                 auth_token TEXT,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 backend_type TEXT NOT NULL DEFAULT 'local',
+                owner_user_id TEXT,
                 created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
             );
 
@@ -54,14 +55,15 @@ impl PostgresBackendRepository {
 impl BackendRepository for PostgresBackendRepository {
     async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO backends (id, name, endpoint, auth_token, enabled, backend_type)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            "INSERT INTO backends (id, name, endpoint, auth_token, enabled, backend_type, owner_user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                endpoint = excluded.endpoint,
                auth_token = excluded.auth_token,
                enabled = excluded.enabled,
-               backend_type = excluded.backend_type",
+               backend_type = excluded.backend_type,
+               owner_user_id = excluded.owner_user_id",
         )
         .bind(&config.id)
         .bind(&config.name)
@@ -69,6 +71,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(&config.auth_token)
         .bind(config.enabled)
         .bind(serde_json::to_string(&config.backend_type)?.trim_matches('"'))
+        .bind(&config.owner_user_id)
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
@@ -78,7 +81,7 @@ impl BackendRepository for PostgresBackendRepository {
 
     async fn list_backends(&self) -> Result<Vec<BackendConfig>, DomainError> {
         let rows = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type FROM backends ORDER BY name",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await
@@ -89,7 +92,7 @@ impl BackendRepository for PostgresBackendRepository {
 
     async fn get_backend(&self, id: &str) -> Result<BackendConfig, DomainError> {
         let row = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type FROM backends WHERE id = $1",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -102,7 +105,7 @@ impl BackendRepository for PostgresBackendRepository {
 
     async fn get_backend_by_auth_token(&self, token: &str) -> Result<BackendConfig, DomainError> {
         let rows = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type FROM backends WHERE auth_token = $1",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends WHERE auth_token = $1",
         )
         .bind(token)
         .fetch_all(&self.pool)
@@ -205,6 +208,7 @@ struct BackendRow {
     auth_token: Option<String>,
     enabled: bool,
     backend_type: String,
+    owner_user_id: Option<String>,
 }
 
 impl TryFrom<BackendRow> for BackendConfig {
@@ -218,6 +222,7 @@ impl TryFrom<BackendRow> for BackendConfig {
             auth_token: row.auth_token,
             enabled: row.enabled,
             backend_type: parse_backend_type(&row.backend_type)?,
+            owner_user_id: row.owner_user_id,
         })
     }
 }
@@ -276,6 +281,7 @@ mod tests {
             auth_token: token.map(str::to_string),
             enabled: true,
             backend_type: BackendType::Local,
+            owner_user_id: None,
         }
     }
 

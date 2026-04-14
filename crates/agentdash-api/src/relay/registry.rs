@@ -180,6 +180,76 @@ impl BackendRegistry {
     pub fn has_session_sink(&self, session_id: &str) -> bool {
         self.session_sinks.read().unwrap().contains_key(session_id)
     }
+
+    // ── MCP Relay 支持 ──
+
+    /// 更新指定 backend 的能力信息（含 MCP server 列表）
+    pub async fn update_capabilities(
+        &self,
+        backend_id: &str,
+        capabilities: CapabilitiesPayload,
+    ) {
+        let mut backends = self.backends.write().await;
+        if let Some(backend) = backends.get_mut(backend_id) {
+            backend.capabilities = capabilities;
+            tracing::info!(backend_id = %backend_id, "后端能力已更新");
+        }
+    }
+
+    /// 查找提供指定 MCP server 的在线 backend
+    pub async fn find_backend_for_mcp_server(&self, server_name: &str) -> Option<String> {
+        let backends = self.backends.read().await;
+        backends
+            .values()
+            .find(|b| b.capabilities.mcp_servers.iter().any(|s| s.name == server_name))
+            .map(|b| b.backend_id.clone())
+    }
+
+    /// 列出所有在线 backend 上报的 MCP server 信息
+    pub async fn list_all_mcp_servers(
+        &self,
+    ) -> Vec<(String, agentdash_relay::McpServerInfoRelay)> {
+        let backends = self.backends.read().await;
+        let mut result = Vec::new();
+        for backend in backends.values() {
+            for server in &backend.capabilities.mcp_servers {
+                result.push((backend.backend_id.clone(), server.clone()));
+            }
+        }
+        result
+    }
+
+    /// 向指定后端发送命令并等待响应（可指定超时）
+    pub async fn send_command_with_timeout(
+        &self,
+        backend_id: &str,
+        msg: RelayMessage,
+        timeout: std::time::Duration,
+    ) -> Result<RelayMessage, anyhow::Error> {
+        let msg_id = msg.id().to_string();
+
+        let sender = {
+            let backends = self.backends.read().await;
+            let backend = backends
+                .get(backend_id)
+                .ok_or_else(|| anyhow::anyhow!("Backend 不在线: {backend_id}"))?;
+            backend.sender.clone()
+        };
+
+        let (tx, rx) = oneshot::channel();
+        self.pending.write().await.insert(msg_id.clone(), tx);
+
+        if sender.send(msg).is_err() {
+            self.pending.write().await.remove(&msg_id);
+            anyhow::bail!("发送至本机后端失败");
+        }
+
+        let resp = tokio::time::timeout(timeout, rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("MCP 命令超时"))??;
+
+        Ok(resp)
+    }
 }
 
 #[cfg(test)]
@@ -196,6 +266,7 @@ mod tests {
                 executors: Vec::new(),
                 supports_cancel: true,
                 supports_discover_options: true,
+                mcp_servers: Vec::new(),
             },
             accessible_roots: Vec::new(),
             sender,

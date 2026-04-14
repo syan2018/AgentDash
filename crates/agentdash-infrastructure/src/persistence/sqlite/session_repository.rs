@@ -787,6 +787,7 @@ mod tests {
         let meta = SessionMeta {
             id: "sess-1".to_string(),
             title: "测试".to_string(),
+            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -837,6 +838,7 @@ mod tests {
         let meta = SessionMeta {
             id: "sess-stale".to_string(),
             title: "测试".to_string(),
+            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

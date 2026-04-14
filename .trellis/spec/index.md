@@ -34,7 +34,7 @@
 
 主要规范：
 - 目录结构（整洁架构分层、15 个 crate）
-- 数据库指南（SQLite + SQLx + JSONL）
+- 数据库指南（PostgreSQL + SQLite + SQLx）
 - Repository 模式
 - 错误处理 + 流式协议
 - ACP Meta Warp 跨层契约
@@ -88,6 +88,8 @@
 
 | 日期 | 更新内容 |
 |------|---------|
+| 2026-04-14 | 项目审计（第二轮）：修正 DomainError/ConnectorError 变体、更新 LLM 配置文件路径、补全 Rhai preset 清单、精简 ctx 对象复述、去重 database/repository 模板 |
+| 2026-04-14 | 项目审计（第一轮）：修正数据库为 PostgreSQL、更新连接器架构、修复文件路径引用、精简 hook-runtime/hook-guidelines/quality-guidelines 过度规范、归档已完成任务 |
 | 2026-03-29 | 全量审查与修复：tech-stack/database/quality/directory/state 等对齐实际代码 |
 | 2026-03-29 | 拆分 directory-structure 演进日志、流式协议独立文件 |
 | 2026-03-27 | 新增 API God Module 分解记录 |

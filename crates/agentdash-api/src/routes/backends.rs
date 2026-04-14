@@ -68,6 +68,7 @@ pub async fn list_backends(
                 auth_token: None,
                 enabled: true,
                 backend_type: BackendType::Remote,
+                owner_user_id: None,
             },
         });
     }
@@ -132,6 +133,7 @@ pub async fn add_backend(
             Some("remote") => BackendType::Remote,
             _ => BackendType::Local,
         },
+        owner_user_id: None, // TODO: 从 CurrentUser 提取
     };
     state.repos.backend_repo.add_backend(&config).await?;
     Ok(Json(config))
@@ -232,6 +234,7 @@ mod tests {
             auth_token: token.map(str::to_string),
             enabled: true,
             backend_type: BackendType::Local,
+            owner_user_id: None,
         }
     }
 

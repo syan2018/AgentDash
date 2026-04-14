@@ -120,4 +120,4 @@ Use this template when recording sessions:
 
 ---
 
-**Language**: All documentation must be written in **English**.
+**语言要求**：所有文档必须使用**中文**编写（参见 `spec/communication.md`）。

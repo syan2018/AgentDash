@@ -11,7 +11,7 @@
 | 旧架构 | 新架构 | 状态 |
 |--------|--------|------|
 | `agentdash-state` | `agentdash-domain` + `agentdash-infrastructure` | ✅ 已迁移 |
-| `agentdash-coordinator` | （已废弃） | ⏭️ 遗留 |
+| `agentdash-coordinator` | （已废弃、已移除） | ✅ 已清理 |
 | `agentdash-api/executor/` | `agentdash-executor` | ✅ 已提取 |
 
 关键变更：
@@ -99,6 +99,6 @@
 
 ## 待办
 
-- [ ] 整合或废弃 `agentdash-coordinator` 遗留引用
+- [x] 整合或废弃 `agentdash-coordinator` 遗留引用 — ✅ 已废弃，crate 已从 workspace 移除（2026-04-14 确认）
 - [ ] 补充领域层单元测试
 - [ ] Phase 6: SessionExecutor trait 解耦 application → executor（延伸目标）

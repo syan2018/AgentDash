@@ -1,0 +1,29 @@
+{
+  "id": "04-13-local-dashboard-ui",
+  "name": "04-13-local-dashboard-ui",
+  "title": "Local Backend 轻量管理界面",
+  "description": "为 agentdash-local 提供一个本地 Web 界面，支持快速配置和状态管理（MCP servers 配置、backend 连接状态、进程监控等）",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P3",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-13",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    { "phase": 1, "action": "implement" },
+    { "phase": 2, "action": "check" },
+    { "phase": 3, "action": "finish" },
+    { "phase": 4, "action": "create-pr" }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": "从 04-08-pi-agent-stdio-mcp-relay 讨论中拆出。MCP 配置管理是首要场景，但界面应设计为通用的 local backend 管理入口。"
+}

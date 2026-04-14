@@ -26,7 +26,7 @@
 ### 后端定义
 
 ```rust
-// crates/agentdash-executor/src/connector.rs
+// crates/agentdash-domain/src/common/agent_config.rs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevel {
@@ -62,17 +62,20 @@ reasoning_id: self.thinking_level.map(|level| match level {
 
 ---
 
-## 3. AgentDashExecutorConfig 契约
+## 3. AgentConfig 契约
 
 ```rust
-// crates/agentdash-executor/src/connector.rs
-pub struct AgentDashExecutorConfig {
+// crates/agentdash-domain/src/common/agent_config.rs
+pub struct AgentConfig {
     pub executor: String,
-    pub variant: Option<String>,
+    pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub agent_id: Option<String>,
-    pub thinking_level: Option<ThinkingLevel>,   // ← 替代旧的 reasoning_id: Option<String>
+    pub thinking_level: Option<ThinkingLevel>,
     pub permission_policy: Option<String>,
+    pub tool_clusters: Option<Vec<String>>,
+    pub system_prompt: Option<String>,
+    pub system_prompt_mode: Option<SystemPromptMode>,
 }
 ```
 

@@ -51,6 +51,10 @@ pub struct ExecutionContext {
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
     pub mcp_servers: Vec<McpServer>,
+    /// 配置中显式标记为 relay 的 MCP server name 集合。
+    /// connector 根据此集合决定走 relay 路径还是直连路径。
+    #[allow(dead_code)]
+    pub relay_mcp_server_names: std::collections::HashSet<String>,
     pub address_space: Option<AddressSpace>,
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
     #[allow(clippy::type_complexity)]

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod connector;
 pub mod context_injection;
+pub mod mcp_relay;
 pub mod hook_trace_notification;
 pub mod hooks;
 pub mod lifecycle;
@@ -47,6 +48,7 @@ pub use lifecycle::{
 pub use mount::MountEditCapabilities;
 pub use session_capabilities::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
 pub use skill::SkillRef;
+pub use mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
 pub use tool::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
     ToolUpdateCallback,

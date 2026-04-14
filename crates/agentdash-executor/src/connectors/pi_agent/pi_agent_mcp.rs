@@ -233,7 +233,7 @@ fn parse_http_server(server: &McpServer) -> Option<McpHttpServerSpec> {
     })
 }
 
-fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
+pub(crate) fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
     format!(
         "mcp_{}_{}",
         sanitize_identifier(server_name),
@@ -241,7 +241,7 @@ fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
     )
 }
 
-fn sanitize_identifier(input: &str) -> String {
+pub(crate) fn sanitize_identifier(input: &str) -> String {
     let sanitized = input
         .chars()
         .map(|ch| {

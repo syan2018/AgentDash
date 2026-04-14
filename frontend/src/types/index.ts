@@ -172,9 +172,9 @@ export interface McpEnvVar {
 }
 
 export type McpServerDecl =
-  | { type: 'http'; name: string; url: string; headers?: McpHttpHeader[] }
-  | { type: 'sse'; name: string; url: string; headers?: McpHttpHeader[] }
-  | { type: 'stdio'; name: string; command: string; args?: string[]; env?: McpEnvVar[] }
+  | { type: 'http'; name: string; url: string; headers?: McpHttpHeader[]; relay?: boolean }
+  | { type: 'sse'; name: string; url: string; headers?: McpHttpHeader[]; relay?: boolean }
+  | { type: 'stdio'; name: string; command: string; args?: string[]; env?: McpEnvVar[]; relay?: boolean }
 
 export interface AgentPreset {
   name: string;

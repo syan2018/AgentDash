@@ -53,47 +53,8 @@ session_repository.rs
 
 ## SQLx 使用约定
 
-### Repository / Command Port 实现模板
-
-```rust
-pub struct PostgresStoryRepository {
-    pool: PgPool,
-}
-
-impl PostgresStoryRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-
-    pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS stories (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                title TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        Ok(())
-    }
-}
-```
-
-### 错误转换
-
-基础设施层错误必须转换为领域错误：
-
-```rust
-.map_err(|e| DomainError::InvalidConfig(e.to_string()))
-```
-
-不要把 `sqlx::Error` 直接泄露到上层。
+- Repository 实现模式详见 [Repository Pattern](./repository-pattern.md)
+- 基础设施层错误必须转换为 `DomainError`，不要把 `sqlx::Error` 直接泄露到上层
 
 ---
 

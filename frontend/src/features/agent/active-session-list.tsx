@@ -13,15 +13,8 @@ import type { ProjectSessionEntry } from "../../types";
 
 // ─── 工具函数 ──────────────────────────────────────────────────────────────
 
-/** 去掉 agent_display_name 中与 owner_title 重复的前缀 */
 function getAgentLabel(session: ProjectSessionEntry): string {
-  const raw = session.agent_display_name ?? session.agent_key ?? "—";
-  if (session.owner_type === "project" && session.owner_title && raw.startsWith(session.owner_title)) {
-    const rest = raw.slice(session.owner_title.length).replace(/^[\s·\-–—]+/, "").trim();
-    if (rest) return rest;
-    return session.agent_key ?? raw;
-  }
-  return raw;
+  return session.agent_display_name ?? session.agent_key ?? "—";
 }
 
 function formatRelativeTime(timestamp: number | null): string {

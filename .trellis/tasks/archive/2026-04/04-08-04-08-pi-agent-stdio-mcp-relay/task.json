@@ -1,0 +1,41 @@
+{
+  "id": "04-08-pi-agent-stdio-mcp-relay",
+  "name": "04-08-pi-agent-stdio-mcp-relay",
+  "title": "云端 Pi Agent MCP Relay 信道",
+  "description": "通过 WebSocket relay 使云端 Pi Agent 透明调用本机 MCP server（stdio/HTTP），支持配置显式 relay 标记、backend 能力上报、前端 relay 勾选",
+  "status": "done",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-04-08",
+  "completedAt": "2026-04-14",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": "ae541a0",
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": ""
+}

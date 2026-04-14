@@ -3,9 +3,6 @@
 //! 定义 `SessionTitleGenerator` trait 供外部注入 LLM 实现。
 //! SessionHub 在首轮 prompt 时异步 spawn 标题生成任务。
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
 use async_trait::async_trait;
 
 use super::hub::SessionHub;
@@ -16,42 +13,25 @@ use super::types::TitleSource;
 pub trait SessionTitleGenerator: Send + Sync {
     /// 根据用户首轮 prompt 文本生成简短会话标题。
     /// 返回 Ok(title) 或 Err(原因) — 失败时调用方保留原标题。
-    async fn generate_title(
-        &self,
-        user_prompt: &str,
-        executor_config: &agentdash_spi::AgentConfig,
-    ) -> Result<String, String>;
+    async fn generate_title(&self, user_prompt: &str) -> Result<String, String>;
 }
 
 impl SessionHub {
     /// 首轮 prompt 后异步触发标题生成。
     /// 不阻塞主 prompt 流程；失败仅打 warn 日志。
-    pub(super) fn spawn_title_generation(
-        &self,
-        session_id: String,
-        user_prompt: String,
-        executor_config: agentdash_spi::AgentConfig,
-        title_generating: Arc<AtomicBool>,
-    ) {
+    pub(super) fn spawn_title_generation(&self, session_id: String, user_prompt: String) {
         let Some(generator) = self.title_generator.clone() else {
             return;
         };
         let hub = self.clone();
 
         tokio::spawn(async move {
-            let result = generator
-                .generate_title(&user_prompt, &executor_config)
-                .await;
-
-            title_generating.store(false, Ordering::Release);
+            let result = generator.generate_title(&user_prompt).await;
 
             match result {
                 Ok(title) if !title.trim().is_empty() => {
                     let title = title.trim().to_string();
-                    if let Err(error) = hub
-                        .apply_auto_title(&session_id, &title)
-                        .await
-                    {
+                    if let Err(error) = hub.apply_auto_title(&session_id, &title).await {
                         tracing::warn!(
                             session_id = %session_id,
                             error = %error,

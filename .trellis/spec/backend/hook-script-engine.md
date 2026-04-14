@@ -127,74 +127,22 @@ pub struct HookRulePreset {
 
 #### 3.1 脚本上下文契约 (`ctx` 对象)
 
-每个 Rhai 脚本在执行时都会收到一个 `ctx` 变量，结构如下：
+每个 Rhai 脚本收到 `ctx` 变量，顶层 key：
 
-```javascript
-ctx = {
-    // ── 触发信息 ──
-    trigger: "before_tool" | "after_tool" | "before_stop" | "session_start" | ...,
-    tool_name: "shell_exec" | null,
-    tool_call_id: "call-xxx" | null,
-    subagent_type: "companion" | null,
-    turn_id: "turn-xxx" | null,
-    session_id: "sess-xxx",
-    payload: { ... } | null,            // 原始 HookEvaluationQuery.payload
+| Key | 说明 |
+|-----|------|
+| `trigger` / `tool_name` / `tool_call_id` / `turn_id` / `session_id` | 触发信息 |
+| `snapshot` | Session Snapshot 切片（owners / tags / injections） |
+| `workflow` | Workflow 元数据（lifecycle_key / step_key / transition_policy 等） |
+| `contract` | Contract 切片（hook_rules / constraints / checks） |
+| `meta` | Session 元数据（permission_policy / workspace_root 等） |
+| `params` | `WorkflowHookRuleSpec.params` 透传 |
+| `signals` | Rust 侧预计算的便利信号（避免脚本重复实现 snapshot 查询） |
 
-    // ── Session Snapshot 切片 ──
-    snapshot: {
-        owners: [...],
-        tags: [...],
-        injections: [{ slot, content, source }, ...],
-    },
-
-    // ── Workflow 元数据 ──
-    workflow: {
-        lifecycle_key: "trellis_dev_task" | null,
-        step_key: "implement" | null,
-        workflow_key: "trellis_dev_task_implement" | null,
-        transition_policy: "auto" | "manual" | "session_terminal_matches" | null,
-        run_status: "active" | null,
-        run_id: "uuid" | null,
-        checklist_evidence_present: true | false,
-        auto_completion: true | false,
-        source: "workflow:key:step" | "",
-    },
-
-    // ── Contract 切片 ──
-    contract: {
-        hook_rules: [...],
-        constraints: [...],
-        checks: [...],
-    },
-
-    // ── Session 元数据 ──
-    meta: {
-        permission_policy: "SUPERVISED" | "AUTONOMOUS" | null,
-        working_directory: "/path" | null,
-        workspace_root: "/path" | null,
-        connector_id: "..." | null,
-        executor: "..." | null,
-    },
-
-    // ── 规则参数 ──
-    params: { ... },                    // WorkflowHookRuleSpec.params 透传
-
-    // ── 预计算信号 ──
-    signals: {
-        auto_completion: bool,
-        completion_satisfied: bool,
-        has_block_stop_constraint: bool,
-        checklist_evidence_present: bool,
-        tool_call_failed: bool,
-        is_artifact_report_tool: bool,
-        denied_artifact_types: ["session_summary", ...],
-    },
-}
-```
+> 完整字段定义见 `application::hooks::provider.rs` 中的 `build_script_context()`。
 
 **关键约定**：
 - 不存在的字段值为 `()`（Rhai 的 unit 类型），脚本中用 `== ()` 判空
-- `params` 直接透传 `WorkflowHookRuleSpec.params`，若未配置则为 `null`
 - `signals` 是 Rust 侧预计算的便利信号，避免脚本重复实现复杂的 snapshot 查询逻辑
 
 #### 3.2 脚本返回值契约
@@ -493,6 +441,8 @@ if tool == () || !requires_supervised_approval(tool) {
 | `session_terminal_advance` | `BeforeStop` | Session 终态自动推进 lifecycle step | 无 |
 | `stop_gate_checks_pending` | `BeforeStop` | 完成条件门禁（checks 未满足时阻止结束） | 无 |
 | `manual_step_notice` | `BeforeStop` | 通知 Agent 当前 step 使用手动推进 | 无 |
+| `task_session_terminal` | `SessionTerminal` | Task session 终态处理（状态回写 + step 推进） | 无 |
+| `context_compaction_trigger` | `AfterCompaction` | 上下文压缩触发后刷新 snapshot | 无 |
 | `subagent_inherit_context` | `BeforeSubagentDispatch` | 子 Agent 继承当前 session 注入和约束 | 无 |
 | `subagent_record_result` | `AfterSubagentDispatch` | 记录子 Agent 派发结果 | 无 |
 | `subagent_result_channel` | `SubagentResult` | 处理子 Agent 回流，按 adoption_mode 注入 | 无 |

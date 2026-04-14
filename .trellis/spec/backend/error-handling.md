@@ -4,15 +4,13 @@
 
 ---
 
-## 概览
+## 分层错误体系
 
-后端使用分层错误体系：
-
-| 层级 | 错误类型 | 用途 |
-|------|---------|------|
-| Domain | `DomainError` | 领域层统一错误（NotFound、Storage、Validation 等） |
-| Connector | `ConnectorError` | 执行器相关错误 |
-| API | `ApiError` | HTTP 语义映射（自动转 HTTP 状态码） |
+| 层级 | 错误类型 | 位置 | 用途 |
+|------|---------|------|------|
+| Domain | `DomainError` | `agentdash-domain/src/common/error.rs` | 领域层统一错误 |
+| Connector | `ConnectorError` | `agentdash-spi/src/connector.rs` | 执行器相关错误 |
+| API | `ApiError` | `agentdash-api/src/rpc.rs` | HTTP 语义映射 |
 
 使用 `thiserror` 实现错误枚举，配合 `?` 操作符自动转换。
 
@@ -20,89 +18,39 @@
 
 ## 错误类型
 
-### DomainError（领域层）
+### DomainError
 
 ```rust
-// agentdash-domain/src/common/error.rs
-#[derive(Debug, thiserror::Error)]
 pub enum DomainError {
-    #[error("not found: {0}")]
-    NotFound(String),
-    #[error("already exists: {0}")]
-    AlreadyExists(String),
-    #[error("invalid data: {0}")]
-    InvalidData(String),
-    #[error("invalid config: {0}")]
+    NotFound { entity: &'static str, id: String },
+    InvalidTransition { from: String, to: String },
+    Serialization(#[from] serde_json::Error),
     InvalidConfig(String),
-    #[error("storage error: {0}")]
-    Storage(String),
 }
 ```
 
-### ConnectorError（执行器层）
+### ConnectorError
 
 ```rust
-// agentdash-executor/src/connector.rs
-#[derive(Debug, thiserror::Error)]
 pub enum ConnectorError {
-    #[error("execution failed: {0}")]
-    Execution(String),
-    #[error("connection failed: {0}")]
-    Connection(String),
-    #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    SpawnFailed(String),
+    Runtime(String),
+    ConnectionFailed(String),
+    Io(#[from] std::io::Error),
+    Json(#[from] serde_json::Error),
 }
 ```
 
-### ApiError（接口层）
+### ApiError HTTP 映射
 
-```rust
-// agentdash-api/src/rpc.rs
-pub struct ApiError { ... }
-```
-
-ApiError 自动映射 HTTP 状态码：
 - `DomainError::NotFound` → 404
-- `DomainError::AlreadyExists` → 409
-- `DomainError::InvalidData` / `InvalidConfig` → 400
-- `ConnectorError` → 500 / 502
+- `DomainError::InvalidTransition` → 400
+- `DomainError::InvalidConfig` → 400
+- `DomainError::Serialization` → 400
+- `ConnectorError::InvalidConfig` → 400
+- `ConnectorError::*` (其他) → 502
 - 其他 → 500
-
----
-
-## 错误处理模式
-
-### 路由层：使用 `?` 自动转换
-
-```rust
-pub async fn get_story(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
-) -> Result<Json<StoryResponse>, ApiError> {
-    let story = state.repos.story_repo
-        .get_by_id(id)
-        .await?
-        .ok_or_else(|| DomainError::NotFound(format!("story {id}")))?;
-    Ok(Json(StoryResponse::from(story)))
-}
-```
-
-### 流处理：记录并继续
-
-```rust
-while let Some(next) = stream.next().await {
-    match next {
-        Ok(notification) => {
-            let _ = store.append(&session_id, &notification).await;
-            let _ = tx.send(notification);
-        }
-        Err(e) => {
-            tracing::error!("执行流错误 session_id={}: {}", session_id, e);
-            break;
-        }
-    }
-}
-```
 
 ---
 
@@ -124,16 +72,8 @@ while let Some(next) = stream.next().await {
 | `unwrap()` 直接 panic | 使用 `?` 或 `match` 处理 |
 | 吞掉错误（空 match arm） | 至少记录错误信息 |
 | 返回 `String` 作为错误 | 定义具体的错误枚举 |
-| 在领域层引用 `sqlx::Error` | 转换为 `DomainError::Storage` |
+| 在领域层引用 `sqlx::Error` | 转换为 `DomainError::InvalidConfig` |
 
 ---
 
-## 相关规范
-
-- [流式协议](./streaming-protocol.md) — SSE/NDJSON 流式推送契约
-- [领域类型化标准](./domain-payload-typing.md) — 结构化错误边界标准
-- [Quality Guidelines](./quality-guidelines.md) — Session 执行状态持久化
-
----
-
-*更新：2026-03-29 — 充实错误体系，流式协议已拆分到独立文件*
+*更新：2026-04-14 — 对齐实际 DomainError/ConnectorError 变体和文件位置*

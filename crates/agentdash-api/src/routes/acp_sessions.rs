@@ -1302,6 +1302,8 @@ async fn build_project_owner_prompt_request(
     effective_mcp_servers
         .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
+    req.relay_mcp_server_names
+        .extend(project_agent.relay_mcp_server_names.iter().cloned());
     let runtime_address_space = address_space.clone();
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 

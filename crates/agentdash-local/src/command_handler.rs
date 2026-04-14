@@ -6,6 +6,7 @@ use agent_client_protocol::{
 use agentdash_relay::*;
 use tokio::sync::mpsc;
 
+use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
 use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
 use agentdash_spi::AgentConnector;
@@ -16,6 +17,7 @@ pub struct CommandHandler {
     tool_executor: ToolExecutor,
     session_hub: Option<SessionHub>,
     connector: Option<Arc<dyn AgentConnector>>,
+    mcp_manager: Option<Arc<McpClientManager>>,
     /// 异步事件发送通道（用于 SessionNotification 等流式推送）
     event_tx: mpsc::UnboundedSender<RelayMessage>,
 }
@@ -25,12 +27,14 @@ impl CommandHandler {
         tool_executor: ToolExecutor,
         session_hub: Option<SessionHub>,
         connector: Option<Arc<dyn AgentConnector>>,
+        mcp_manager: Option<Arc<McpClientManager>>,
         event_tx: mpsc::UnboundedSender<RelayMessage>,
     ) -> Self {
         Self {
             tool_executor,
             session_hub,
             connector,
+            mcp_manager,
             event_tx,
         }
     }
@@ -120,6 +124,17 @@ impl CommandHandler {
                 vec![self.handle_browse_directory(id, payload).await]
             }
 
+            // ── MCP Relay 命令 ──
+            RelayMessage::CommandMcpListTools { id, payload } => {
+                vec![self.handle_mcp_list_tools(id, payload).await]
+            }
+            RelayMessage::CommandMcpCallTool { id, payload } => {
+                vec![self.handle_mcp_call_tool(id, payload).await]
+            }
+            RelayMessage::CommandMcpClose { id, payload } => {
+                vec![self.handle_mcp_close(id, payload).await]
+            }
+
             other => {
                 tracing::debug!(msg_id = %other.id(), "忽略非命令消息");
                 vec![]
@@ -196,6 +211,7 @@ impl CommandHandler {
                 executor_config,
             },
             mcp_servers: parse_relay_mcp_servers(&payload.mcp_servers),
+            relay_mcp_server_names: Default::default(),
             address_space: Some(address_space),
             flow_capabilities: None,
             system_context: None,
@@ -762,6 +778,106 @@ fn normalize_display_path(path: &std::path::Path) -> String {
         }
     }
     raw.to_string()
+}
+
+// ─── MCP Relay 命令处理 ──────────────────────────────────
+
+impl CommandHandler {
+    async fn handle_mcp_list_tools(
+        &self,
+        id: String,
+        payload: CommandMcpListToolsPayload,
+    ) -> RelayMessage {
+        let mgr = match &self.mcp_manager {
+            Some(m) => m,
+            None => {
+                return RelayMessage::ResponseMcpListTools {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error("MCP 管理器未初始化")),
+                };
+            }
+        };
+        match mgr.list_tools(&payload.server_name).await {
+            Ok(tools) => RelayMessage::ResponseMcpListTools {
+                id,
+                payload: Some(ResponseMcpListToolsPayload {
+                    server_name: payload.server_name,
+                    tools,
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseMcpListTools {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e.to_string())),
+            },
+        }
+    }
+
+    async fn handle_mcp_call_tool(
+        &self,
+        id: String,
+        payload: CommandMcpCallToolPayload,
+    ) -> RelayMessage {
+        let mgr = match &self.mcp_manager {
+            Some(m) => m,
+            None => {
+                return RelayMessage::ResponseMcpCallTool {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error("MCP 管理器未初始化")),
+                };
+            }
+        };
+        match mgr
+            .call_tool(&payload.server_name, &payload.tool_name, payload.arguments)
+            .await
+        {
+            Ok(result) => RelayMessage::ResponseMcpCallTool {
+                id,
+                payload: Some(result),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseMcpCallTool {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e.to_string())),
+            },
+        }
+    }
+
+    async fn handle_mcp_close(
+        &self,
+        id: String,
+        payload: CommandMcpClosePayload,
+    ) -> RelayMessage {
+        let mgr = match &self.mcp_manager {
+            Some(m) => m,
+            None => {
+                return RelayMessage::ResponseMcpClose {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error("MCP 管理器未初始化")),
+                };
+            }
+        };
+        match mgr.close(&payload.server_name).await {
+            Ok(()) => RelayMessage::ResponseMcpClose {
+                id,
+                payload: Some(ResponseMcpClosePayload {
+                    server_name: payload.server_name,
+                    status: "closed".to_string(),
+                }),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseMcpClose {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e.to_string())),
+            },
+        }
+    }
 }
 
 // ─── MCP Server 解析 ─────────────────────────────────────

@@ -90,10 +90,25 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
   const cancelTaskExecution = useStoryStore((s) => s.cancelTaskExecution);
   const refreshTask = useStoryStore((s) => s.refreshTask);
 
+  const fetchTaskSession = useStoryStore((s) => s.fetchTaskSession);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
-  const hasSession = Boolean(task.session_id);
-  const sessionId = task.session_id ?? null;
+  // 从 SessionBinding 解析 Task 的 execution session
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const info = await fetchTaskSession(task.id);
+        if (!cancelled) setSessionId(info?.session_id ?? null);
+      } catch {
+        if (!cancelled) setSessionId(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [fetchTaskSession, task.id, task.status, task.updated_at]);
+
+  const hasSession = sessionId !== null;
   const executionLocked = task.status === "running";
 
   const onTaskUpdatedRef = useRef(onTaskUpdated);

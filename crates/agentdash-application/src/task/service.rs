@@ -101,7 +101,7 @@ impl TaskLifecycleService {
         task_id: Uuid,
     ) -> Result<TaskSessionResult, TaskExecutionError> {
         let task = gw_get_task(&self.repos, task_id).await?;
-        let session_id = task.session_id.clone();
+        let session_id = self.resolve_execution_session_id(task_id).await?;
 
         let (session_title, last_activity, session_execution_status) =
             if let Some(sid) = session_id.as_deref() {
@@ -144,7 +144,8 @@ impl TaskLifecycleService {
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         let mut task = gw_get_task(&self.repos, cmd.task_id).await?;
 
-        if task.session_id.is_some() {
+        let existing_session = self.resolve_execution_session_id(task.id).await?;
+        if existing_session.is_some() {
             return Err(TaskExecutionError::Conflict(
                 "Task 已绑定 Session，请使用 continue 接口继续执行".into(),
             ));
@@ -156,7 +157,10 @@ impl TaskLifecycleService {
         let session_id = session_meta.id;
         let previous_status = task.status.clone();
 
-        task.session_id = Some(session_id.clone());
+        // SessionBinding 是 session 归属的唯一事实来源
+        self.bind_session_to_owner(&session_id, "task", task.id, "execution")
+            .await?;
+
         task.executor_session_id = None;
         task.status = TaskStatus::Running;
         self.repos
@@ -164,16 +168,6 @@ impl TaskLifecycleService {
             .update(&task)
             .await
             .map_err(map_domain_error)?;
-
-        if let Err(err) = self
-            .bind_session_to_owner(&session_id, "task", task.id, "execution")
-            .await
-        {
-            tracing::warn!(
-                task_id = %task.id, session_id = %session_id,
-                "写入 session_binding 失败（不阻塞执行流）: {}", err
-            );
-        }
 
         gw_append_task_change(
             &self.repos,
@@ -183,7 +177,7 @@ impl TaskLifecycleService {
             json!({
                 "reason": "task_session_bound",
                 "task_id": task.id, "story_id": task.story_id,
-                "session_id": task.session_id,
+                "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
             }),
         )
@@ -199,7 +193,7 @@ impl TaskLifecycleService {
                 json!({
                     "reason": "task_start_accepted",
                     "task_id": task.id, "story_id": task.story_id,
-                    "session_id": task.session_id,
+                    "session_id": session_id,
                     "executor_session_id": task.executor_session_id,
                     "from": previous_status.clone(), "to": task.status.clone(),
                 }),
@@ -211,6 +205,7 @@ impl TaskLifecycleService {
         let started_turn = match self
             .dispatch_prepared_turn(
                 &task,
+                &session_id,
                 ExecutionPhase::Start,
                 cmd.prompt.as_deref(),
                 None,
@@ -232,7 +227,7 @@ impl TaskLifecycleService {
                     json!({
                         "reason": "task_start_failed",
                         "task_id": fail_task.id, "story_id": fail_task.story_id,
-                        "session_id": fail_task.session_id,
+                        "session_id": session_id,
                         "executor_session_id": fail_task.executor_session_id,
                         "from": TaskStatus::Running, "to": TaskStatus::Failed,
                         "error": err.to_string(),
@@ -272,9 +267,12 @@ impl TaskLifecycleService {
         cmd: TaskExecutionCommand,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         let mut task = gw_get_task(&self.repos, cmd.task_id).await?;
-        let session_id = task.session_id.clone().ok_or_else(|| {
-            TaskExecutionError::UnprocessableEntity("Task 尚未启动，请先执行 start".into())
-        })?;
+        let session_id = self
+            .resolve_execution_session_id(task.id)
+            .await?
+            .ok_or_else(|| {
+                TaskExecutionError::UnprocessableEntity("Task 尚未启动，请先执行 start".into())
+            })?;
 
         if self.is_task_session_running(&session_id).await? {
             return Err(TaskExecutionError::Conflict("该任务已有执行进行中".into()));
@@ -286,6 +284,7 @@ impl TaskLifecycleService {
         let started_turn = self
             .dispatch_prepared_turn(
                 &task,
+                &session_id,
                 ExecutionPhase::Continue,
                 None,
                 cmd.prompt.as_deref(),
@@ -311,7 +310,7 @@ impl TaskLifecycleService {
                 json!({
                     "reason": "task_continue_accepted",
                     "task_id": task.id, "story_id": task.story_id,
-                    "session_id": task.session_id,
+                    "session_id": session_id,
                     "executor_session_id": task.executor_session_id,
                     "from": previous_status.clone(), "to": task.status.clone(),
                 }),
@@ -346,9 +345,12 @@ impl TaskLifecycleService {
 
     async fn cancel_task_inner(&self, task_id: Uuid) -> Result<Task, TaskExecutionError> {
         let mut task = gw_get_task(&self.repos, task_id).await?;
-        let session_id = task.session_id.clone().ok_or_else(|| {
-            TaskExecutionError::UnprocessableEntity("Task 尚未启动，无法取消执行".into())
-        })?;
+        let session_id = self
+            .resolve_execution_session_id(task.id)
+            .await?
+            .ok_or_else(|| {
+                TaskExecutionError::UnprocessableEntity("Task 尚未启动，无法取消执行".into())
+            })?;
         let session_was_running = self.is_task_session_running(&session_id).await?;
 
         self.dispatcher.cancel_session(&session_id).await?;
@@ -373,7 +375,7 @@ impl TaskLifecycleService {
                 json!({
                     "reason": "task_cancel_requested",
                     "task_id": task.id, "story_id": task.story_id,
-                    "session_id": task.session_id,
+                    "session_id": session_id,
                     "executor_session_id": task.executor_session_id,
                     "from": previous_status, "to": task.status,
                 }),
@@ -390,17 +392,13 @@ impl TaskLifecycleService {
     async fn dispatch_prepared_turn(
         &self,
         task: &Task,
+        session_id: &str,
         phase: ExecutionPhase,
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
         executor_config: Option<&AgentConfig>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Result<StartedTurn, TaskExecutionError> {
-        let session_id = task
-            .session_id
-            .as_deref()
-            .ok_or_else(|| TaskExecutionError::Internal("Task 未绑定 session".into()))?;
-
         let svc = TaskTurnServices {
             repos: &self.repos,
             availability: self.backend_availability.as_ref(),
@@ -418,7 +416,6 @@ impl TaskLifecycleService {
         )
         .await?;
         if let Some(address_space) = ctx.address_space.as_mut()
-            && let Some(session_id) = task.session_id.as_deref()
             && let Ok(Some(meta)) = self.hub.get_session_meta(session_id).await
         {
             append_visible_canvas_mounts(
@@ -432,7 +429,6 @@ impl TaskLifecycleService {
         }
         ctx.identity = identity;
 
-        // 所有路径统一注入 TaskHookEffectExecutor 作为 PostTurnHandler
         {
             let backend_id =
                 resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), task)
@@ -450,6 +446,18 @@ impl TaskLifecycleService {
         }
 
         self.dispatcher.dispatch_turn(session_id, ctx).await
+    }
+
+    async fn resolve_execution_session_id(
+        &self,
+        task_id: Uuid,
+    ) -> Result<Option<String>, TaskExecutionError> {
+        super::find_task_execution_session_id(
+            self.repos.session_binding_repo.as_ref(),
+            task_id,
+        )
+        .await
+        .map_err(map_domain_error)
     }
 
     async fn bind_session_to_owner(

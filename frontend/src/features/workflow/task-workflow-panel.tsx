@@ -13,6 +13,7 @@ import type {
   WorkflowStepState,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
+import { useStoryStore } from "../../stores/storyStore";
 import { fetchSessionBindings } from "../../services/session";
 import {
   ARTIFACT_TYPE_LABEL,
@@ -347,43 +348,41 @@ export function TaskWorkflowPanel({
   const [taskSessionBinding, setTaskSessionBinding] = useState<SessionBindingOwner | null>(null);
   const [isResolvingBinding, setIsResolvingBinding] = useState(false);
 
+  const fetchTaskSession = useStoryStore((s) => s.fetchTaskSession);
+
   useEffect(() => {
     void fetchDefinitions("task");
     void fetchLifecycles("task");
     void fetchRunsByTarget("task", task.id);
-  }, [fetchDefinitions, fetchLifecycles, fetchRunsByTarget, projectId, task.id, task.status, task.session_id]);
+  }, [fetchDefinitions, fetchLifecycles, fetchRunsByTarget, projectId, task.id, task.status]);
 
+  // 通过 Task session API 查询 execution session，再解析对应 SessionBinding
   useEffect(() => {
-    if (!task.session_id) {
-      setTaskSessionBinding(null);
-      return;
-    }
-
     let cancelled = false;
     setIsResolvingBinding(true);
     void (async () => {
       try {
-        const bindings = await fetchSessionBindings(task.session_id ?? "");
+        const sessionInfo = await fetchTaskSession(task.id);
+        const sid = sessionInfo?.session_id;
+        if (cancelled) return;
+        if (!sid) {
+          setTaskSessionBinding(null);
+          return;
+        }
+        const bindings = await fetchSessionBindings(sid);
         if (cancelled) return;
         const binding = bindings.find(
           (item) => item.owner_type === "task" && item.task_id === task.id,
         ) ?? null;
         setTaskSessionBinding(binding);
       } catch {
-        if (!cancelled) {
-          setTaskSessionBinding(null);
-        }
+        if (!cancelled) setTaskSessionBinding(null);
       } finally {
-        if (!cancelled) {
-          setIsResolvingBinding(false);
-        }
+        if (!cancelled) setIsResolvingBinding(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [task.id, task.session_id]);
+    return () => { cancelled = true; };
+  }, [fetchTaskSession, task.id, task.status]);
 
   const activeRun = useMemo(() => selectPreferredRun(runs), [runs]);
   const activeLifecycle = useMemo(
@@ -494,7 +493,7 @@ export function TaskWorkflowPanel({
               无活跃 Lifecycle
             </span>
           )}
-          {task.session_id ? (
+          {taskSessionBinding ? (
             <span className="rounded-full border border-emerald-300/40 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-700">
               Task Session 已存在
             </span>

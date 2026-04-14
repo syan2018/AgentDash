@@ -270,6 +270,22 @@ pub enum WorkflowSessionTerminalState {
     Interrupted,
 }
 
+/// Lifecycle node 类型：Agent Node 创建独立 session，Phase Node 在前一个 session 内切换 contract
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleNodeType {
+    /// 创建独立 agent session 执行工作
+    AgentNode,
+    /// 不创建新 session，在前一个 session 内切换 workflow contract
+    PhaseNode,
+}
+
+impl Default for LifecycleNodeType {
+    fn default() -> Self {
+        Self::PhaseNode
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct LifecycleStepDefinition {
     pub key: String,
@@ -277,6 +293,9 @@ pub struct LifecycleStepDefinition {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_key: Option<String>,
+    /// Node 类型：AgentNode 或 PhaseNode（默认 PhaseNode，向后兼容已有定义）
+    #[serde(default)]
+    pub node_type: LifecycleNodeType,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -306,6 +325,9 @@ pub enum LifecycleStepExecutionStatus {
 pub struct LifecycleStepState {
     pub step_key: String,
     pub status: LifecycleStepExecutionStatus,
+    /// 该 node 创建的 agent session ID（仅 AgentNode 有值）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -567,6 +589,7 @@ mod tests {
             key: "start".to_string(),
             description: String::new(),
             workflow_key: Some("wf_start".to_string()),
+            node_type: Default::default(),
         }];
 
         let error =

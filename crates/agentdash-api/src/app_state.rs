@@ -202,6 +202,7 @@ impl AppState {
             lifecycle_run_repo: workflow_repo.clone(),
             session_hub_handle: session_hub_handle.clone(),
             inline_persister: Some(inline_persister),
+            mcp_relay_provider: backend_registry.clone(),
         })
         .await
         {
@@ -444,6 +445,7 @@ struct PiAgentConnectorDeps {
     inline_persister: Option<
         Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister>,
     >,
+    mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
 }
 
 async fn build_pi_agent_connector(
@@ -468,5 +470,6 @@ async fn build_pi_agent_connector(
         deps.session_hub_handle,
         deps.inline_persister,
     )));
+    connector.set_mcp_relay_provider(deps.mcp_relay_provider);
     Some(connector)
 }

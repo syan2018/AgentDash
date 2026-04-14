@@ -221,7 +221,10 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         | RelayMessage::ResponseToolShellExec { .. }
         | RelayMessage::ResponseToolFileList { .. }
         | RelayMessage::ResponseToolSearch { .. }
-        | RelayMessage::ResponseBrowseDirectory { .. } => {
+        | RelayMessage::ResponseBrowseDirectory { .. }
+        | RelayMessage::ResponseMcpListTools { .. }
+        | RelayMessage::ResponseMcpCallTool { .. }
+        | RelayMessage::ResponseMcpClose { .. } => {
             if !state.services.backend_registry.resolve_response(&msg).await {
                 tracing::warn!(
                     backend_id = %backend_id,
@@ -293,8 +296,13 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        RelayMessage::EventCapabilitiesChanged { .. } => {
+        RelayMessage::EventCapabilitiesChanged { payload, .. } => {
             tracing::info!(backend_id = %backend_id, "收到能力变更通知");
+            state
+                .services
+                .backend_registry
+                .update_capabilities(backend_id, payload.clone())
+                .await;
         }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
             tracing::debug!(backend_id = %backend_id, "收到选项发现 patch");
@@ -499,6 +507,7 @@ mod tests {
             auth_token: Some("secret".to_string()),
             enabled,
             backend_type: BackendType::Local,
+            owner_user_id: None,
         }
     }
 
@@ -511,6 +520,7 @@ mod tests {
                 executors: Vec::new(),
                 supports_cancel: true,
                 supports_discover_options: true,
+                mcp_servers: Vec::new(),
             },
             accessible_roots: vec!["/tmp/project".to_string()],
         }

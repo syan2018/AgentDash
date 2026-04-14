@@ -287,6 +287,58 @@ pub enum RelayMessage {
         payload: DiscoverOptionsPatchPayload,
     },
 
+    // ── MCP Relay 命令（云端 → 本机）──
+
+    /// 列举本机 MCP server 提供的工具
+    #[serde(rename = "command.mcp_list_tools")]
+    CommandMcpListTools {
+        id: String,
+        payload: CommandMcpListToolsPayload,
+    },
+
+    /// 调用本机 MCP server 的工具
+    #[serde(rename = "command.mcp_call_tool")]
+    CommandMcpCallTool {
+        id: String,
+        payload: CommandMcpCallToolPayload,
+    },
+
+    /// 关闭本机 MCP server 连接（可选，会话结束清理）
+    #[serde(rename = "command.mcp_close")]
+    CommandMcpClose {
+        id: String,
+        payload: CommandMcpClosePayload,
+    },
+
+    // ── MCP Relay 响应（本机 → 云端）──
+
+    #[serde(rename = "response.mcp_list_tools")]
+    ResponseMcpListTools {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseMcpListToolsPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.mcp_call_tool")]
+    ResponseMcpCallTool {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseMcpCallToolPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.mcp_close")]
+    ResponseMcpClose {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseMcpClosePayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
     // ── 通用错误 ──
     #[serde(rename = "error")]
     Error { id: String, error: RelayError },
@@ -327,6 +379,12 @@ impl RelayMessage {
             | Self::ResponseToolShellExec { id, .. }
             | Self::ResponseToolFileList { id, .. }
             | Self::ResponseToolSearch { id, .. }
+            | Self::CommandMcpListTools { id, .. }
+            | Self::CommandMcpCallTool { id, .. }
+            | Self::CommandMcpClose { id, .. }
+            | Self::ResponseMcpListTools { id, .. }
+            | Self::ResponseMcpCallTool { id, .. }
+            | Self::ResponseMcpClose { id, .. }
             | Self::EventCapabilitiesChanged { id, .. }
             | Self::EventSessionNotification { id, .. }
             | Self::EventSessionStateChanged { id, .. }
@@ -393,6 +451,27 @@ pub struct CapabilitiesPayload {
     pub supports_cancel: bool,
     #[serde(default)]
     pub supports_discover_options: bool,
+    /// 该 backend 实例可提供的 MCP server 列表（relay 用）
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerInfoRelay>,
+}
+
+/// backend 上报的 MCP server 能力描述
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerInfoRelay {
+    pub name: String,
+    /// "stdio" | "http" | "sse"
+    pub transport: String,
+}
+
+/// MCP 工具描述（用于 relay 协议传输）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolInfoRelay {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub parameters_schema: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -736,6 +815,47 @@ pub struct DiscoverOptionsPatchPayload {
     pub patch: serde_json::Value,
     #[serde(default)]
     pub done: bool,
+}
+
+// ─── MCP Relay Payload ────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandMcpListToolsPayload {
+    pub server_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandMcpCallToolPayload {
+    pub server_name: String,
+    pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandMcpClosePayload {
+    pub server_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseMcpListToolsPayload {
+    pub server_name: String,
+    pub tools: Vec<McpToolInfoRelay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseMcpCallToolPayload {
+    pub server_name: String,
+    pub tool_name: String,
+    pub content: String,
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseMcpClosePayload {
+    pub server_name: String,
+    pub status: String,
 }
 
 #[cfg(test)]

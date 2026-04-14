@@ -1,4 +1,5 @@
 mod command_handler;
+mod mcp_client_manager;
 mod tool_executor;
 mod ws_client;
 
@@ -82,6 +83,16 @@ async fn main() -> anyhow::Result<()> {
 
     let tool_exec = tool_executor::ToolExecutor::new(accessible_roots.clone());
 
+    // 加载本机 MCP server 配置
+    let mcp_config = mcp_client_manager::McpClientManager::load_config(&accessible_roots);
+    let mcp_manager = if mcp_config.is_empty() {
+        None
+    } else {
+        Some(Arc::new(mcp_client_manager::McpClientManager::new(
+            mcp_config,
+        )))
+    };
+
     let (session_hub, connector) = if !cli.no_executor {
         let workspace_root = accessible_roots
             .first()
@@ -132,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         tool_executor: tool_exec,
         session_hub,
         connector,
+        mcp_manager,
     })
     .await
 }

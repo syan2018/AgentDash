@@ -14,6 +14,8 @@ pub struct BackendConfig {
     pub enabled: bool,
     /// 后端类型标识
     pub backend_type: BackendType,
+    /// 注册此后端的用户标识（None 表示共享/系统级后端）
+    pub owner_user_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

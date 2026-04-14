@@ -24,6 +24,7 @@ use crate::connectors::pi_agent::pi_agent_provider_registry::{
 };
 use crate::hook_events::build_hook_trace_notification;
 use agentdash_spi::connector::RuntimeToolProvider;
+use agentdash_spi::mcp_relay::McpRelayProvider;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload, SystemPromptMode,
@@ -38,6 +39,7 @@ pub struct PiAgentConnector {
     /// 已注册的 provider 列表（按注册顺序，首个命中的 provider 优先）
     providers: Vec<ProviderEntry>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
+    mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     llm_provider_repo: Option<Arc<dyn LlmProviderRepository>>,
     system_prompt: String,
@@ -62,6 +64,7 @@ impl PiAgentConnector {
             bridge,
             providers: Vec::new(),
             runtime_tool_provider: None,
+            mcp_relay_provider: None,
             settings_repo: None,
             llm_provider_repo: None,
             system_prompt: system_prompt.into(),
@@ -75,6 +78,10 @@ impl PiAgentConnector {
 
     pub fn set_runtime_tool_provider(&mut self, provider: Arc<dyn RuntimeToolProvider>) {
         self.runtime_tool_provider = Some(provider);
+    }
+
+    pub fn set_mcp_relay_provider(&mut self, provider: Arc<dyn McpRelayProvider>) {
+        self.mcp_relay_provider = Some(provider);
     }
 
     pub fn set_settings_repository(&mut self, settings_repo: Arc<dyn SettingsRepository>) {
@@ -641,6 +648,13 @@ impl AgentConnector for PiAgentConnector {
                     Vec::new()
                 }
             };
+            // relay MCP 工具（来自远程 backend 上报的 MCP server）
+            let relay_mcp_tools = if let Some(relay) = &self.mcp_relay_provider {
+                crate::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(relay.clone())
+                    .await
+            } else {
+                Vec::new()
+            };
             let mut runtime_tools: Vec<DynAgentTool> = Vec::new();
             let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
                 ConnectorError::InvalidConfig(
@@ -649,6 +663,7 @@ impl AgentConnector for PiAgentConnector {
             })?;
             runtime_tools.extend(provider.build_tools(&context).await?);
             runtime_tools.extend(mcp_tools);
+            runtime_tools.extend(relay_mcp_tools);
             let tool_names = runtime_tools
                 .iter()
                 .map(|tool| tool.name().to_string())

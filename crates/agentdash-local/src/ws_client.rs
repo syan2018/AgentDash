@@ -12,6 +12,7 @@ use std::sync::Arc;
 use agentdash_relay::*;
 
 use crate::command_handler::CommandHandler;
+use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
 use agentdash_application::session::SessionHub;
 use agentdash_spi::AgentConnector;
@@ -25,6 +26,7 @@ pub struct Config {
     pub tool_executor: ToolExecutor,
     pub session_hub: Option<SessionHub>,
     pub connector: Option<Arc<dyn AgentConnector>>,
+    pub mcp_manager: Option<Arc<McpClientManager>>,
 }
 
 /// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连
@@ -71,6 +73,7 @@ async fn run_session(
         config.tool_executor.clone(),
         config.session_hub.clone(),
         config.connector.clone(),
+        config.mcp_manager.clone(),
         event_tx,
     );
 
@@ -81,7 +84,7 @@ async fn run_session(
             backend_id: config.backend_id.clone(),
             name: config.name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities: build_capabilities(&handler),
+            capabilities: build_capabilities(&handler, &config.mcp_manager),
             accessible_roots: config
                 .accessible_roots
                 .iter()
@@ -167,12 +170,20 @@ async fn run_session(
     Ok(())
 }
 
-fn build_capabilities(handler: &CommandHandler) -> CapabilitiesPayload {
+fn build_capabilities(
+    handler: &CommandHandler,
+    mcp_manager: &Option<Arc<McpClientManager>>,
+) -> CapabilitiesPayload {
     let executors = handler.list_executors();
+    let mcp_servers = mcp_manager
+        .as_ref()
+        .map(|m| m.capability_entries())
+        .unwrap_or_default();
     CapabilitiesPayload {
         executors,
         supports_cancel: true,
         supports_discover_options: false,
+        mcp_servers,
     }
 }
 

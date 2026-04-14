@@ -123,7 +123,7 @@ Workspace (1) → (*) WorkspaceBinding
 | [目录结构](./directory-structure.md) | 整洁架构分层、Crate 布局、添加模块步骤 | ✅ 已更新 |
 | [架构演进](./architecture-evolution.md) | 历次重大架构变更记录 | ✅ 已拆分 |
 | [Repository 模式](./repository-pattern.md) | Repository trait 定义、依赖注入、测试 | ✅ 已更新 |
-| [数据库指南](./database-guidelines.md) | SQLite + SQLx + JSONL 存储规范 | ✅ 已更新 |
+| [数据库指南](./database-guidelines.md) | PostgreSQL + SQLite + SQLx 存储规范 | ✅ 已更新 |
 | [错误处理](./error-handling.md) | 分层错误体系、错误边界规则 | ✅ 已更新 |
 | [流式协议](./streaming-protocol.md) | SSE/NDJSON 流式推送跨层契约 | ✅ 已拆分 |
 | [ACP Meta Warp](./acp-meta-warp.md) | ACP `_meta.agentdash` 跨层契约 | ✅ 已更新 |

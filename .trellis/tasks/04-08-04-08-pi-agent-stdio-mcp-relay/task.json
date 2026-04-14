@@ -3,7 +3,7 @@
   "name": "04-08-pi-agent-stdio-mcp-relay",
   "title": "云端 Pi Agent stdio MCP 转发信道",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "priority": "P2",

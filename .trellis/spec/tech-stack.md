@@ -9,7 +9,7 @@
 | 层级 | 技术 | 说明 |
 |------|------|------|
 | 后端 | Rust + Axum + Tokio + SQLx | 云端 + 本机双 binary |
-| 数据库 | SQLite | 预研阶段，单文件便于备份 |
+| 数据库 | PostgreSQL（embedded）+ SQLite | 云端：嵌入式 PostgreSQL；本机：SQLite 仅限会话缓存 |
 | 前端 | React 19 + TypeScript 5.9 | 组件化、类型安全 |
 | 构建 | Vite 7 | 开发体验好，HMR 快 |
 | 样式 | Tailwind CSS v4 | 主题变量驱动 |
@@ -36,15 +36,16 @@
   - 编译期 SQL 检查
   - 无需代码生成，简化构建流程
 
-- **数据库：SQLite**
-  - 预研阶段单文件便于备份
-  - 远程数据库（PostgreSQL 等）预留接口，待验证需求
+- **数据库：PostgreSQL（embedded）+ SQLite**
+  - 云端业务数据：嵌入式 PostgreSQL（`postgresql_embedded` crate，开发期零运维）
+  - 本机会话缓存：SQLite（仅 `agentdash-local` 使用）
+  - 所有 migration 位于 `agentdash-infrastructure/migrations/`
 
 ### 待定 / 预留讨论空间
 
 | 事项 | 当前状态 | 待决策内容 |
 |------|---------|-----------|
-| 远程数据库存储 | 预留接口 | PostgreSQL / D1 / 其他，待验证需求后再定 |
+| 生产级 PostgreSQL | 嵌入式 | 上线后可切换为外部 PostgreSQL 实例 |
 | 缓存层 | 无 | 是否需要 Redis 等缓存，视性能测试结果 |
 | 消息队列 | 无 | 编排层任务调度是否需要独立队列 |
 
@@ -110,7 +111,7 @@ crates/
 ├── agentdash-agent/             # Agent Loop 引擎（纯 loop + bridge trait）
 ├── agentdash-domain/            # 领域层（实体、值对象、Repository trait）
 ├── agentdash-application/       # 应用层（用例编排、hooks、context、address space）
-├── agentdash-infrastructure/    # 基础设施层（SQLite Repository 实现）
+├── agentdash-infrastructure/    # 基础设施层（PostgreSQL + SQLite Repository 实现）
 ├── agentdash-executor/          # 执行器（连接器、RigBridge、hook runtime）
 ├── agentdash-spi/               # SPI（re-export agent-types + Connector/Hook trait）
 ├── agentdash-api/               # 接口层（HTTP 路由、DTO、中间件）
@@ -131,6 +132,7 @@ crates/
 |------|------|------|
 | 2026-02-25 | 技术栈选定为 Rust + React | 类型安全、编译期检查 |
 | 2026-02-25 | 数据库先用 SQLite | 本地优先，简单可靠 |
+| 2026-04-01 | 云端切换到嵌入式 PostgreSQL | 支持完整 SQL 能力 + 多表关系 |
 | 2026-02-25 | 通信用 REST + NDJSON | 满足状态恢复与实时推送需求 |
 | 2026-02-26 | 前端选定 React 19 + Zustand + Tailwind v4 | 生态成熟，团队熟悉 |
 | 2026-02-26 | 前端路由选定 React Router | SPA 路由标准方案 |
@@ -138,4 +140,5 @@ crates/
 
 ---
 
+*更新：2026-04-14 — 修正数据库为 PostgreSQL（embedded）+ SQLite，对齐实际技术栈*
 *更新：2026-03-29 — 对齐项目实际技术栈和 crate 结构*

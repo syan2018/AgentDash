@@ -149,33 +149,48 @@ crates/
 │   └── src/
 │       ├── lib.rs
 │       └── persistence/
-│           └── sqlite/
+│           ├── mod.rs
+│           ├── postgres/            # 云端业务数据（嵌入式 PostgreSQL）
+│           │   ├── mod.rs
+│           │   ├── project_repository.rs
+│           │   ├── workspace_repository.rs
+│           │   ├── story_repository.rs
+│           │   ├── task_repository.rs
+│           │   ├── backend_repository.rs
+│           │   ├── session_repository.rs
+│           │   ├── session_binding_repository.rs
+│           │   ├── agent_repository.rs
+│           │   ├── canvas_repository.rs
+│           │   ├── llm_provider_repository.rs
+│           │   ├── settings_repository.rs
+│           │   ├── auth_session_repository.rs
+│           │   ├── user_directory_repository.rs
+│           │   ├── workflow_repository.rs
+│           │   ├── state_change_repository.rs
+│           │   └── state_change_store.rs
+│           └── sqlite/              # 本机会话缓存（仅 agentdash-local）
 │               ├── mod.rs
-│               ├── project_repository.rs
-│               ├── workspace_repository.rs
-│               ├── story_repository.rs
-│               ├── task_repository.rs
-│               ├── backend_repository.rs
-│               ├── session_binding_repository.rs
-│               └── settings_repository.rs
+│               └── session_repository.rs
 │
 ├── agentdash-executor/          # Infrastructure Layer (执行引擎)
 │   └── src/
 │       ├── lib.rs
-│       ├── connector.rs         # AgentConnector trait
-│       ├── hub.rs               # ExecutorHub
 │       ├── hooks.rs             # Hook runtime port / snapshot / resolution
-│       ├── runtime_delegate.rs  # HookSessionRuntime -> AgentRuntimeDelegate 适配
+│       ├── hook_events.rs       # Hook trace notification builder
 │       ├── adapters/
 │       │   └── normalized_to_acp.rs
 │       └── connectors/
 │           ├── mod.rs
-│           ├── pi_agent.rs      # 内置 AI Agent 连接器
-│           ├── pi_agent_mcp.rs  # MCP 工具桥接
-│           ├── pi_agent_provider_registry.rs  # LLM Provider 注册
-│           ├── rig_bridge.rs    # RigBridge<M> — rig-core LlmBridge 实现 + AgentMessage ↔ rig::Message 转换
-│           ├── composite.rs     # 多连接器组合
-│           └── remote_acp.rs
+│           ├── pi_agent/                    # 云端原生 PiAgent 连接器（多文件模块）
+│           │   ├── mod.rs                   # 模块声明
+│           │   ├── connector.rs             # PiAgentConnector 实现
+│           │   ├── pi_agent_mcp.rs          # MCP 工具桥接
+│           │   ├── pi_agent_provider_registry.rs  # LLM Provider 注册
+│           │   ├── relay_mcp.rs             # MCP Relay 工具（云端→本机 MCP 透传）
+│           │   ├── rig_bridge.rs            # RigBridge<M> — rig-core LlmBridge 实现
+│           │   └── stream_mapper.rs         # Agent event → ACP notification 映射
+│           ├── vibe_kanban.rs   # 第三方 Agent 连接器（Claude Code / Codex 等子进程）
+│           └── composite.rs     # 多连接器路由组合
 │
 ├── agentdash-injection/         # Context Injection (声明式上下文解析)
 ├── agentdash-mcp/               # MCP Server 实现
@@ -208,17 +223,17 @@ crates/
 ### 连接器架构
 
 ```
-AgentConnector trait
+AgentConnector trait（定义于 agentdash-spi）
 ├── connector_id()          → &str
-├── connector_type()        → ConnectorType (LocalExecutor | RemoteAcpBackend)
+├── list_executors()        → Vec<ExecutorInfo>
 ├── capabilities()          → ConnectorCapabilities
-├── get_preset_configs()    → Vec<PresetConfig>
-├── prompt()                → ExecutionStream
+├── start_turn()            → ExecutionStream
 └── cancel()                → ()
 
-实现：
-├── VibeKanbanExecutorsConnector  → LocalExecutor（通过 vibe-kanban executors crate）
-└── RemoteAcpConnector            → RemoteAcpBackend（骨架，待实现）
+实现（三种连接器）：
+├── PiAgentConnector          → 云端原生 Agent Loop（直接调 LLM API，tool call 路由到本机）
+├── VibeKanbanExecutorsConnector → 本地第三方 Agent 子进程（Claude Code / Codex 等）
+└── CompositeConnector        → 多连接器路由组合（按 executor_id 分发）
 ```
 
 ---
@@ -296,11 +311,11 @@ pub trait StoryRepository: Send + Sync {
 
 **基础设施层实现（Adapter）**：
 ```rust
-// agentdash-infrastructure/src/persistence/sqlite/story_repository.rs
-pub struct SqliteStoryRepository { pool: SqlitePool }
+// agentdash-infrastructure/src/persistence/postgres/story_repository.rs
+pub struct PostgresStoryRepository { pool: PgPool }
 
 #[async_trait]
-impl StoryRepository for SqliteStoryRepository {
+impl StoryRepository for PostgresStoryRepository {
     async fn create(&self, story: &Story) -> Result<(), DomainError> { ... }
 }
 ```
@@ -330,8 +345,8 @@ pub struct AppState {
 
 2. **Infrastructure Layer**：
    ```
-   agentdash-infrastructure/src/persistence/sqlite/
-   └── <module>_repository.rs   # impl Repository trait
+   agentdash-infrastructure/src/persistence/postgres/
+   └── <module>_repository.rs   # impl Repository trait（云端）
    ```
 
 3. **Interface Layer**（当前方式，简单业务）：
@@ -361,7 +376,7 @@ pub struct AppState {
 
 - **实体**：PascalCase，如 `Story`, `Task`, `BackendConfig`
 - **Repository trait**：`<Entity>Repository`，如 `StoryRepository`
-- **Repository 实现**：`<技术><Entity>Repository`，如 `SqliteStoryRepository`
+- **Repository 实现**：`<技术><Entity>Repository`，如 `PostgresStoryRepository`（云端）、`SqliteSessionRepository`（本机）
 - **值对象**：PascalCase 描述性名称，如 `StoryStatus`, `StoryId`
 
 ### 目录命名
@@ -372,7 +387,7 @@ agentdash-domain/src/<entity>/           # 小写，单数
 ├── repository.rs                      # Repository trait
 └── value_objects.rs                   # 值对象
 
-agentdash-infrastructure/src/persistence/<db_type>/  # 如 sqlite/
+agentdash-infrastructure/src/persistence/<db_type>/  # postgres/ 或 sqlite/
 └── <entity>_repository.rs                         # 如 story_repository.rs
 ```
 ---

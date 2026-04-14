@@ -15,7 +15,7 @@
 
 ### 发信层契约（Pi Agent）
 
-`crates/agentdash-executor/src/connectors/pi_agent.rs::convert_event_to_notifications` 必须遵循：
+`crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs::convert_event_to_notifications` 必须遵循：
 
 1. **TextDelta / ThinkingDelta**
    - 按增量发 chunk；
@@ -48,5 +48,5 @@
 
 ### 关键文件
 
-- `crates/agentdash-executor/src/connectors/pi_agent.rs` — 发信层拆分与 messageId
+- `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` — 发信层拆分与 messageId
 - `frontend/src/features/acp-session/model/useAcpStream.ts` — chunk 合并消费策略

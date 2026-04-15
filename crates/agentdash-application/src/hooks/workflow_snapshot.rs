@@ -1,18 +1,17 @@
 use std::sync::Arc;
 
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowBindingKind,
-    WorkflowDefinitionRepository, WorkflowRecordArtifactType,
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    WorkflowRecordArtifactType,
 };
-use agentdash_spi::{
-    HookError, HookOwnerSummary, HookStepAdvanceRequest, hooks::PendingExecutionLogEntry,
-};
+use agentdash_spi::{HookError, HookStepAdvanceRequest, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
 
 use crate::workflow::execution_log as workflow_recording;
 use crate::workflow::{
     ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
-    WorkflowRecordArtifactDraft, resolve_active_workflow_projection,
+    WorkflowRecordArtifactDraft, resolve_active_workflow_projection_for_session,
 };
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
@@ -21,6 +20,7 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 
 /// 根据 owner 信息构建 ActiveWorkflowProjection，以及 workflow 推进与日志写入。
 pub struct WorkflowSnapshotBuilder {
+    session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -28,11 +28,13 @@ pub struct WorkflowSnapshotBuilder {
 
 impl WorkflowSnapshotBuilder {
     pub fn new(
+        session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
+            session_binding_repo,
             workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
@@ -49,24 +51,14 @@ impl WorkflowSnapshotBuilder {
             .map_err(map_hook_error)
     }
 
+    /// 通过 session_id 查找关联的活跃 lifecycle run 并构建 workflow projection。
     pub async fn resolve_active_workflow(
         &self,
-        owner: &HookOwnerSummary,
+        session_id: &str,
     ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
-        let owner_id = Uuid::parse_str(owner.owner_id.as_str())
-            .map_err(|error| HookError::Runtime(format!("owner_id 不是有效 UUID: {error}")))?;
-        let binding_kind = WorkflowBindingKind::from_owner_type(owner.owner_type.as_str())
-            .ok_or_else(|| {
-                HookError::Runtime(format!(
-                    "未知 session owner_type，无法映射 workflow 绑定对象: {}",
-                    owner.owner_type
-                ))
-            })?;
-
-        resolve_active_workflow_projection(
-            binding_kind,
-            owner_id,
-            owner.label.clone(),
+        resolve_active_workflow_projection_for_session(
+            session_id,
+            self.session_binding_repo.as_ref(),
             self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),

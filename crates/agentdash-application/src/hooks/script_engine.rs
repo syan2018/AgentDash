@@ -310,6 +310,8 @@ impl HookScriptEngine {
             "workflow": {
                 "lifecycle_key": aw.and_then(|a| a.lifecycle_key.as_deref()),
                 "step_key": aw.and_then(|a| a.step_key.as_deref()),
+                "step_status": aw.and_then(|a| a.step_status.as_deref()),
+                "node_type": aw.and_then(|a| a.node_type.as_deref()),
                 "workflow_key": aw.and_then(|a| a.workflow_key.as_deref()),
                 "transition_policy": aw.and_then(|a| a.transition_policy.as_deref()),
                 "run_status": aw.and_then(|a| a.run_status.as_ref().map(|s| format!("{s:?}").to_ascii_lowercase())),

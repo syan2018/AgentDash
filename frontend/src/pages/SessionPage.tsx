@@ -4,11 +4,13 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { SessionChatView } from "../features/acp-session";
 import { extractAgentDashMetaFromUpdate, isRecord } from "../features/acp-session/model/agentdashMeta";
 import { CanvasSessionPanel } from "../features/canvas-panel";
+import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
 import { hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";
 import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime, fetchSessionMeta } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
+import { useWorkflowStore } from "../stores/workflowStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type {
   AgentBinding,
@@ -39,6 +41,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const projects = useProjectStore((state) => state.projects);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const { createNew, setActiveSessionId, reload: reloadSessions, updateTitle, patchSessionLocally } = useSessionHistoryStore();
+  const runsBySessionId = useWorkflowStore((state) => state.runsBySessionId);
+  const fetchRunsBySession = useWorkflowStore((state) => state.fetchRunsBySession);
   const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
 
   const [sessionTitle, setSessionTitle] = useState<string>("");
@@ -63,6 +67,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const [isContextPanelOpen, setIsContextPanelOpen] = useState(false);
   const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
   const [isCanvasPanelOpen, setIsCanvasPanelOpen] = useState(false);
+  const [sessionViewMode, setSessionViewMode] = useState<"chat" | "lifecycle">("chat");
 
   const routeState = useMemo(
     () => (location.state as SessionNavigationState | null) ?? null,
@@ -103,6 +108,19 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   useEffect(() => {
     setActiveSessionId(propSessionId ?? null);
   }, [propSessionId, setActiveSessionId]);
+
+  useEffect(() => {
+    if (!currentSessionId) return;
+    void fetchRunsBySession(currentSessionId);
+  }, [currentSessionId, fetchRunsBySession]);
+
+  useEffect(() => {
+    if (!currentSessionId) return;
+    const timer = window.setInterval(() => {
+      void fetchRunsBySession(currentSessionId);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [currentSessionId, fetchRunsBySession]);
 
   // ─── 加载初始标题 ──────────────────────────────────────
 
@@ -419,6 +437,20 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       ? "返回任务"
       : "返回 Story";
   const hasSession = currentSessionId !== null;
+  const lifecycleRuns = useMemo(
+    () => (currentSessionId ? runsBySessionId[currentSessionId] ?? [] : []),
+    [currentSessionId, runsBySessionId],
+  );
+  const hasLifecycleGraph = useMemo(
+    () =>
+      lifecycleRuns.some((run) =>
+        run.step_states.some((step) => Boolean(step.session_id))
+        || (run.active_node_keys?.length ?? 0) > 0
+      ),
+    [lifecycleRuns],
+  );
+  const canShowLifecycleView = hasSession && hasLifecycleGraph;
+  const showLifecycleView = canShowLifecycleView && sessionViewMode === "lifecycle";
 
   // ─── owner binding 信息条（作为 inputPrefix 传入 ChatView）
 
@@ -500,6 +532,32 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               </button>
             </>
           )}
+          {canShowLifecycleView && (
+            <div className="hidden items-center gap-1 rounded-[10px] border border-border bg-secondary/40 p-0.5 md:flex">
+              <button
+                type="button"
+                onClick={() => setSessionViewMode("chat")}
+                className={`rounded-[8px] px-2.5 py-1 text-xs transition-colors ${
+                  sessionViewMode === "chat"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                聊天
+              </button>
+              <button
+                type="button"
+                onClick={() => setSessionViewMode("lifecycle")}
+                className={`rounded-[8px] px-2.5 py-1 text-xs transition-colors ${
+                  sessionViewMode === "lifecycle"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Lifecycle
+              </button>
+            </div>
+          )}
           <button type="button" onClick={handleNewSession} className="rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
             新会话
           </button>
@@ -552,19 +610,23 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       {/* 复用的聊天视图 + Canvas 侧栏 */}
       <div className="flex flex-1 overflow-hidden">
         <div className="min-w-0 flex-1 overflow-hidden">
-          <SessionChatView
-            sessionId={currentSessionId}
-            workspaceId={chatWorkspaceId}
-            onCreateSession={handleCreateSession}
-            onSessionIdChange={handleSessionIdChange}
-            onMessageSent={handleMessageSent}
-            onTurnEnd={handleTurnEnd}
-            onSystemEvent={handleSystemEvent}
-            executorHint={executorHint}
-            inputPrefix={ownerBindingBar}
-          />
+          {showLifecycleView && currentSessionId ? (
+            <LifecycleSessionView sessionId={currentSessionId} />
+          ) : (
+            <SessionChatView
+              sessionId={currentSessionId}
+              workspaceId={chatWorkspaceId}
+              onCreateSession={handleCreateSession}
+              onSessionIdChange={handleSessionIdChange}
+              onMessageSent={handleMessageSent}
+              onTurnEnd={handleTurnEnd}
+              onSystemEvent={handleSystemEvent}
+              executorHint={executorHint}
+              inputPrefix={ownerBindingBar}
+            />
+          )}
         </div>
-        {isCanvasPanelOpen && activeCanvasId && (
+        {!showLifecycleView && isCanvasPanelOpen && activeCanvasId && (
           <div className="w-[55vw] max-w-[1100px] min-w-[680px] shrink-0 border-l border-border">
             <CanvasSessionPanel
               canvasId={activeCanvasId}

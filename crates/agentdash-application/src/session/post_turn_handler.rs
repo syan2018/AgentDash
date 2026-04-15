@@ -37,3 +37,17 @@ pub trait PostTurnHandler: Send + Sync + 'static {
 }
 
 pub type DynPostTurnHandler = Arc<dyn PostTurnHandler>;
+
+/// Session 进入终态后的全局回调。
+///
+/// 与 `PostTurnHandler`（per-session、由调用方传入）不同，
+/// `SessionTerminalCallback` 是平台级基础设施，由 `SessionHub` 持有。
+/// 典型用途：LifecycleOrchestrator 在 session 终止后评估后继 node 并启动新 session。
+#[async_trait::async_trait]
+pub trait SessionTerminalCallback: Send + Sync + 'static {
+    /// session 完全终止后（hook 评估、effect 执行、running 状态清理之后）调用。
+    /// 实现方可安全地创建新 session、修改 lifecycle run 等。
+    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str);
+}
+
+pub type DynSessionTerminalCallback = Arc<dyn SessionTerminalCallback>;

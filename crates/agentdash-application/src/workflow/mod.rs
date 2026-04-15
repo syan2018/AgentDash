@@ -3,8 +3,10 @@ mod completion;
 mod definition;
 mod error;
 pub mod execution_log;
+pub mod orchestrator;
 pub mod projection;
-mod run;
+pub(crate) mod run;
+mod session_association;
 pub mod tools;
 
 pub use agentdash_domain::workflow::WorkflowSessionTerminalState;
@@ -16,17 +18,19 @@ pub use completion::{
 };
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,
-    BuiltinWorkflowTemplateBundle, TRELLIS_DEV_PROJECT_TEMPLATE_KEY,
+    BuiltinWorkflowTemplateBundle, TRELLIS_DAG_TASK_TEMPLATE_KEY, TRELLIS_DEV_PROJECT_TEMPLATE_KEY,
     TRELLIS_DEV_STORY_TEMPLATE_KEY, TRELLIS_DEV_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,
     get_builtin_workflow_template, list_builtin_workflow_templates,
 };
 pub use error::WorkflowApplicationError;
+pub use orchestrator::LifecycleOrchestrator;
 pub use projection::{
-    ActiveWorkflowProjection, WorkflowBindingSummary, resolve_active_workflow_projection,
-    resolve_workflow_projection_by_run,
+    ActiveWorkflowProjection, resolve_active_workflow_projection,
+    resolve_active_workflow_projection_for_session, resolve_workflow_projection_by_run,
 };
 pub use run::{
     ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand,
     CompleteLifecycleStepCommand, LifecycleRunService, StartLifecycleRunCommand,
     WorkflowRecordArtifactDraft, build_step_completion_artifact_drafts, select_active_run,
 };
+pub use session_association::LIFECYCLE_NODE_LABEL_PREFIX;

@@ -63,7 +63,7 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    use crate::workflow::{ActiveWorkflowProjection, WorkflowBindingSummary};
+    use crate::workflow::ActiveWorkflowProjection;
     use agentdash_domain::workflow::{
         LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowBindingKind,
         WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
@@ -107,12 +107,10 @@ mod tests {
         )
         .expect("lifecycle definition should build");
         let project_id = Uuid::new_v4();
-        let binding_id = Uuid::new_v4();
         let mut run = LifecycleRun::new(
             project_id,
             lifecycle.id,
-            WorkflowBindingKind::Task,
-            binding_id,
+            "sess-test-contribution",
             &lifecycle.steps,
             &lifecycle.entry_step_key,
         )
@@ -127,11 +125,6 @@ mod tests {
             active_step,
             primary_workflow: Some(definition),
             effective_contract,
-            binding: WorkflowBindingSummary {
-                binding_kind: WorkflowBindingKind::Task,
-                binding_id,
-                binding_label: Some("Task A".to_string()),
-            },
         }
     }
 

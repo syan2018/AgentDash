@@ -220,6 +220,15 @@ impl SessionTurnProcessor {
             }
         }
 
+        // SessionTerminalCallback — 平台级 session 终态回调（如 LifecycleOrchestrator）
+        {
+            let cb_guard = hub.terminal_callback.read().await;
+            if let Some(cb) = cb_guard.as_ref() {
+                let state_tag = terminal_kind.state_tag();
+                cb.on_session_terminal(&session_id, state_tag).await;
+            }
+        }
+
         if can_auto_resume {
             tracing::info!(
                 session_id = %session_id,

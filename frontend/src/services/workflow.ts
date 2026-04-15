@@ -187,6 +187,8 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
     key: requireStringField(value, "key"),
     description: requireStringField(value, "description"),
     workflow_key: typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
+    node_type: (value.node_type as LifecycleStepDefinition["node_type"]) ?? undefined,
+    depends_on: Array.isArray(value.depends_on) ? (value.depends_on as string[]) : undefined,
   };
 }
 
@@ -194,6 +196,7 @@ function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
   return {
     step_key: requireStringField(raw, "step_key"),
     status: normalizeEnum<WorkflowStepExecutionStatus>(raw.status, WORKFLOW_STEP_STATUSES, "workflow step status"),
+    session_id: optString(raw.session_id),
     started_at: optString(raw.started_at),
     completed_at: optString(raw.completed_at),
     summary: optString(raw.summary),
@@ -304,12 +307,10 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
     lifecycle_id: requireStringField(raw, "lifecycle_id"),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow run target kind"),
-    target_id: typeof raw.binding_id === "string" && raw.binding_id.trim()
-      ? raw.binding_id
-      : requireStringField(raw, "target_id"),
+    session_id: requireStringField(raw, "session_id"),
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     current_step_key: optString(raw.current_step_key),
+    active_node_keys: asStringArray(raw.active_node_keys),
     step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
     record_artifacts: asRecordArray(raw.record_artifacts).map(mapWorkflowRecordArtifact),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
@@ -459,12 +460,11 @@ export async function assignProjectLifecycle(input: {
   return mapWorkflowAssignment(raw);
 }
 
-export async function fetchWorkflowRunsByTarget(
-  targetKind: WorkflowTargetKind,
-  targetId: string,
+export async function fetchWorkflowRunsBySession(
+  sessionId: string,
 ): Promise<WorkflowRun[]> {
   const raw = await api.get<Record<string, unknown>[]>(
-    `/lifecycle-runs/bindings/${targetKind}/${targetId}`,
+    `/lifecycle-runs/by-session/${sessionId}`,
   );
   return raw.map(mapWorkflowRun);
 }
@@ -472,14 +472,14 @@ export async function fetchWorkflowRunsByTarget(
 export async function startWorkflowRun(input: {
   lifecycle_id?: string;
   lifecycle_key?: string;
-  target_kind: WorkflowTargetKind;
-  target_id: string;
+  session_id: string;
+  project_id: string;
 }): Promise<WorkflowRun> {
   const raw = await api.post<Record<string, unknown>>("/lifecycle-runs", {
     lifecycle_id: input.lifecycle_id,
     lifecycle_key: input.lifecycle_key,
-    binding_kind: input.target_kind,
-    binding_id: input.target_id,
+    session_id: input.session_id,
+    project_id: input.project_id,
   });
   return mapWorkflowRun(raw);
 }

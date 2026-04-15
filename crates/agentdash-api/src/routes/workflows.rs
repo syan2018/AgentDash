@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{
     Json,
@@ -10,9 +10,9 @@ use uuid::Uuid;
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
     ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand, AssignLifecycleCommand,
-    BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand, LifecycleRunService,
-    StartLifecycleRunCommand, WorkflowCatalogService, WorkflowRecordArtifactDraft,
-    build_builtin_workflow_bundle, list_builtin_workflow_templates,
+    BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand, LifecycleOrchestrator,
+    LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
+    WorkflowRecordArtifactDraft, build_builtin_workflow_bundle, list_builtin_workflow_templates,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
@@ -26,6 +26,7 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::WorkflowValidationResponse;
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
+use tracing::warn;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {
@@ -45,8 +46,10 @@ pub struct CreateWorkflowAssignmentRequest {
 pub struct StartWorkflowRunRequest {
     pub lifecycle_id: Option<String>,
     pub lifecycle_key: Option<String>,
-    pub binding_kind: WorkflowBindingKind,
-    pub binding_id: String,
+    /// 父 session ID — lifecycle run 直接关联 session。
+    pub session_id: String,
+    /// project_id 显式传入，因为 session 本身不直接携带 project 信息。
+    pub project_id: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -289,9 +292,7 @@ pub async fn start_lifecycle_run(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<StartWorkflowRunRequest>,
 ) -> Result<Json<LifecycleRun>, ApiError> {
-    let binding_id = parse_uuid_required(&req.binding_id, "binding_id")?;
-    let project_id =
-        resolve_project_id_for_workflow_binding(&state, req.binding_kind, binding_id).await?;
+    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
@@ -309,11 +310,35 @@ pub async fn start_lifecycle_run(
             project_id,
             lifecycle_id: parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?,
             lifecycle_key: req.lifecycle_key.and_then(normalize_string),
-            binding_kind: req.binding_kind,
-            binding_id,
+            session_id: req.session_id,
         })
         .await?;
-    Ok(Json(run.into()))
+    let orchestrator = LifecycleOrchestrator::new(
+        state.services.session_hub.clone(),
+        state.repos.session_binding_repo.clone(),
+        state.repos.workflow_definition_repo.clone(),
+        state.repos.lifecycle_definition_repo.clone(),
+        state.repos.lifecycle_run_repo.clone(),
+    );
+    if let Err(error) = orchestrator
+        .after_node_advanced(run.id, run.project_id)
+        .await
+    {
+        warn!(
+            run_id = %run.id,
+            project_id = %run.project_id,
+            error = %error,
+            "start_lifecycle_run 已创建 run，但触发首批 node 编排失败"
+        );
+    }
+
+    let latest_run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(run.id)
+        .await?
+        .unwrap_or(run);
+    Ok(Json(latest_run.into()))
 }
 
 pub async fn get_lifecycle_run(
@@ -333,27 +358,29 @@ pub async fn get_lifecycle_run(
     Ok(Json(run.into()))
 }
 
-pub async fn list_lifecycle_runs_by_binding(
+/// 按 session_id 查询关联的 lifecycle runs。
+pub async fn list_lifecycle_runs_by_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((binding_kind_raw, binding_id_raw)): Path<(String, String)>,
+    Path(session_id): Path<String>,
 ) -> Result<Json<Vec<LifecycleRun>>, ApiError> {
-    let binding_kind = parse_binding_kind(&binding_kind_raw)?;
-    let binding_id = parse_uuid(&binding_id_raw, "binding_id")?;
-    let project_id =
-        resolve_project_id_for_workflow_binding(&state, binding_kind, binding_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::View,
-    )
-    .await?;
     let runs = state
         .repos
         .lifecycle_run_repo
-        .list_by_binding(binding_kind, binding_id)
+        .list_by_session(&session_id)
         .await?;
+    let mut checked_projects = HashSet::new();
+    for run in &runs {
+        if checked_projects.insert(run.project_id) {
+            load_project_with_permission(
+                state.as_ref(),
+                &current_user,
+                run.project_id,
+                ProjectPermission::View,
+            )
+            .await?;
+        }
+    }
     Ok(Json(runs.into_iter().map(Into::into).collect()))
 }
 
@@ -818,38 +845,6 @@ impl From<WorkflowRecordArtifactDraftRequest> for WorkflowRecordArtifactDraft {
     }
 }
 
-async fn resolve_project_id_for_workflow_binding(
-    state: &Arc<AppState>,
-    binding_kind: WorkflowBindingKind,
-    binding_id: Uuid,
-) -> Result<Uuid, ApiError> {
-    let project_id = match binding_kind {
-        WorkflowBindingKind::Project => state
-            .repos
-            .project_repo
-            .get_by_id(binding_id)
-            .await?
-            .map(|project| project.id),
-        WorkflowBindingKind::Story => state
-            .repos
-            .story_repo
-            .get_by_id(binding_id)
-            .await?
-            .map(|story| story.project_id),
-        WorkflowBindingKind::Task => state
-            .repos
-            .task_repo
-            .get_by_id(binding_id)
-            .await?
-            .map(|task| task.project_id),
-    };
-    project_id.ok_or_else(|| {
-        ApiError::NotFound(format!(
-            "workflow 绑定对象不存在: kind={binding_kind:?}, id={binding_id}"
-        ))
-    })
-}
-
 async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {
     state
         .repos
@@ -883,11 +878,6 @@ fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, A
         Some(value) => parse_uuid(value, field).map(Some),
         None => Ok(None),
     }
-}
-
-fn parse_binding_kind(raw: &str) -> Result<WorkflowBindingKind, ApiError> {
-    WorkflowBindingKind::from_binding_scope(raw)
-        .ok_or_else(|| ApiError::BadRequest(format!("无效的 binding_kind: {raw}")))
 }
 
 pub async fn list_hook_presets() -> Result<Json<serde_json::Value>, ApiError> {

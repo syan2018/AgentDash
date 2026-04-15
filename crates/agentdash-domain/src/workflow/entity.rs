@@ -184,8 +184,8 @@ pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
-    pub binding_kind: WorkflowBindingKind,
-    pub binding_id: Uuid,
+    /// 父 session ID — lifecycle run 跟着 session 走，不绑定 Task/Story。
+    pub session_id: String,
     pub status: LifecycleRunStatus,
     /// 兼容字段：线性推进时指向当前唯一活跃 step。
     /// DAG 模式下此字段仅保留第一个 active node key（向后兼容读取方），
@@ -210,8 +210,7 @@ impl LifecycleRun {
     pub fn new(
         project_id: Uuid,
         lifecycle_id: Uuid,
-        binding_kind: WorkflowBindingKind,
-        binding_id: Uuid,
+        session_id: impl Into<String>,
         steps: &[LifecycleStepDefinition],
         entry_step_key: &str,
     ) -> Result<Self, String> {
@@ -260,8 +259,7 @@ impl LifecycleRun {
             id: Uuid::new_v4(),
             project_id,
             lifecycle_id,
-            binding_kind,
-            binding_id,
+            session_id: session_id.into(),
             status: LifecycleRunStatus::Ready,
             current_step_key,
             active_node_keys,
@@ -643,8 +641,7 @@ mod tests {
         let mut run = LifecycleRun::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
-            WorkflowBindingKind::Task,
-            Uuid::new_v4(),
+            "sess-test-linear",
             &steps,
             "start",
         )
@@ -670,8 +667,7 @@ mod tests {
         let mut run = LifecycleRun::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
-            WorkflowBindingKind::Task,
-            Uuid::new_v4(),
+            "sess-test-dag",
             &steps,
             "research",
         )

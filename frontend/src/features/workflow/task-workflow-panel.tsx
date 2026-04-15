@@ -331,14 +331,11 @@ export function TaskWorkflowPanel({
 }) {
   const definitions = useWorkflowStore((state) => state.definitions);
   const lifecycleDefinitions = useWorkflowStore((state) => state.lifecycleDefinitions);
-  const runs = useWorkflowStore(
-    (state) => state.runsByTargetKey[`task:${task.id}`] ?? EMPTY_RUNS,
-  );
   const isLoading = useWorkflowStore((state) => state.isLoading);
   const error = useWorkflowStore((state) => state.error);
   const fetchDefinitions = useWorkflowStore((state) => state.fetchDefinitions);
   const fetchLifecycles = useWorkflowStore((state) => state.fetchLifecycles);
-  const fetchRunsByTarget = useWorkflowStore((state) => state.fetchRunsByTarget);
+  const fetchRunsBySession = useWorkflowStore((state) => state.fetchRunsBySession);
   const startRun = useWorkflowStore((state) => state.startRun);
   const activateStep = useWorkflowStore((state) => state.activateStep);
   const completeStep = useWorkflowStore((state) => state.completeStep);
@@ -347,14 +344,18 @@ export function TaskWorkflowPanel({
   const [stepSummary, setStepSummary] = useState("");
   const [taskSessionBinding, setTaskSessionBinding] = useState<SessionBindingOwner | null>(null);
   const [isResolvingBinding, setIsResolvingBinding] = useState(false);
+  const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(null);
 
   const fetchTaskSession = useStoryStore((s) => s.fetchTaskSession);
+
+  const runs = useWorkflowStore(
+    (state) => (resolvedSessionId ? state.runsBySessionId[resolvedSessionId] ?? EMPTY_RUNS : EMPTY_RUNS),
+  );
 
   useEffect(() => {
     void fetchDefinitions("task");
     void fetchLifecycles("task");
-    void fetchRunsByTarget("task", task.id);
-  }, [fetchDefinitions, fetchLifecycles, fetchRunsByTarget, projectId, task.id, task.status]);
+  }, [fetchDefinitions, fetchLifecycles, projectId, task.id, task.status]);
 
   // 通过 Task session API 查询 execution session，再解析对应 SessionBinding
   useEffect(() => {
@@ -367,8 +368,11 @@ export function TaskWorkflowPanel({
         if (cancelled) return;
         if (!sid) {
           setTaskSessionBinding(null);
+          setResolvedSessionId(null);
           return;
         }
+        setResolvedSessionId(sid);
+        void fetchRunsBySession(sid);
         const bindings = await fetchSessionBindings(sid);
         if (cancelled) return;
         const binding = bindings.find(
@@ -376,13 +380,16 @@ export function TaskWorkflowPanel({
         ) ?? null;
         setTaskSessionBinding(binding);
       } catch {
-        if (!cancelled) setTaskSessionBinding(null);
+        if (!cancelled) {
+          setTaskSessionBinding(null);
+          setResolvedSessionId(null);
+        }
       } finally {
         if (!cancelled) setIsResolvingBinding(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [fetchTaskSession, task.id, task.status]);
+  }, [fetchTaskSession, fetchRunsBySession, task.id, task.status]);
 
   const activeRun = useMemo(() => selectPreferredRun(runs), [runs]);
   const activeLifecycle = useMemo(
@@ -410,6 +417,10 @@ export function TaskWorkflowPanel({
   );
 
   const handleStartRun = async () => {
+    if (!resolvedSessionId) {
+      setMessage("Task 尚无执行 session，请先启动 Agent。");
+      return;
+    }
     const taskLifecycle = lifecycleDefinitions.find(
       (l) => l.status === "active" && l.recommended_roles?.includes("task"),
     );
@@ -421,8 +432,8 @@ export function TaskWorkflowPanel({
     setMessage(null);
     const run = await startRun({
       lifecycle_id: taskLifecycle.id,
-      target_kind: "task",
-      target_id: task.id,
+      session_id: resolvedSessionId,
+      project_id: projectId,
     });
     if (run) {
       setStepSummary("");

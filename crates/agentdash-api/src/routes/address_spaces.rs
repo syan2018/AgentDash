@@ -810,6 +810,7 @@ async fn resolve_task_workspace(
         })
 }
 
+/// 通过 owner 的 session binding 查找关联的活跃 lifecycle run 并注入 mount。
 async fn inject_lifecycle_mount(
     state: &Arc<AppState>,
     binding_kind: WorkflowBindingKind,
@@ -818,36 +819,52 @@ async fn inject_lifecycle_mount(
 ) {
     use agentdash_application::address_space::build_lifecycle_mount;
     use agentdash_application::workflow::select_active_run;
+    use agentdash_domain::session_binding::SessionOwnerType;
 
-    let runs = match state
+    let owner_type = match binding_kind {
+        WorkflowBindingKind::Project => SessionOwnerType::Project,
+        WorkflowBindingKind::Story => SessionOwnerType::Story,
+        WorkflowBindingKind::Task => SessionOwnerType::Task,
+    };
+
+    let bindings = match state
         .repos
-        .lifecycle_run_repo
-        .list_by_binding(binding_kind, binding_id)
+        .session_binding_repo
+        .list_by_owner(owner_type, binding_id)
         .await
     {
-        Ok(runs) => runs,
+        Ok(b) => b,
         Err(e) => {
-            tracing::warn!(%binding_id, "inject_lifecycle_mount: 查询失败 {e}");
+            tracing::warn!(%binding_id, "inject_lifecycle_mount: session binding 查询失败 {e}");
             return;
         }
     };
 
-    let Some(active_run) = select_active_run(runs) else {
-        return;
-    };
-
-    let lifecycle_key = match state
-        .repos
-        .lifecycle_definition_repo
-        .get_by_id(active_run.lifecycle_id)
-        .await
-    {
-        Ok(Some(def)) => def.key,
-        _ => "unknown".to_string(),
-    };
-
-    let runtime_mount = build_lifecycle_mount(active_run.id, &lifecycle_key);
-    address_space.mounts.push(runtime_mount);
+    for binding in &bindings {
+        let runs = match state
+            .repos
+            .lifecycle_run_repo
+            .list_by_session(&binding.session_id)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if let Some(active_run) = select_active_run(runs) {
+            let lifecycle_key = match state
+                .repos
+                .lifecycle_definition_repo
+                .get_by_id(active_run.lifecycle_id)
+                .await
+            {
+                Ok(Some(def)) => def.key,
+                _ => "unknown".to_string(),
+            };
+            let runtime_mount = build_lifecycle_mount(active_run.id, &lifecycle_key);
+            address_space.mounts.push(runtime_mount);
+            return;
+        }
+    }
 }
 
 async fn load_workspace(

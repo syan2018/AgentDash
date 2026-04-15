@@ -54,8 +54,8 @@ export function AgentTabView() {
     sessionId: null,
   });
 
-  const runsByTargetKey = useWorkflowStore((s) => s.runsByTargetKey);
-  const fetchRunsByTarget = useWorkflowStore((s) => s.fetchRunsByTarget);
+  const runsBySessionId = useWorkflowStore((s) => s.runsBySessionId);
+  const fetchRunsBySession = useWorkflowStore((s) => s.fetchRunsBySession);
   const lifecycleDefinitions = useWorkflowStore((s) => s.lifecycleDefinitions);
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
   const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
@@ -66,10 +66,14 @@ export function AgentTabView() {
     ? (agentsByProjectId[currentProjectId] ?? [])
     : [];
 
-  const projectRuns = currentProjectId
-    ? (runsByTargetKey[`project:${currentProjectId}`] ?? [])
+  // 通过当前选中的 session（或首个 session）查找活跃 lifecycle run
+  const primarySessionId = (selectedSession.projectId === currentProjectId
+    ? selectedSession.sessionId
+    : null) ?? sessions[0]?.session_id ?? null;
+  const sessionRuns = primarySessionId
+    ? (runsBySessionId[primarySessionId] ?? [])
     : [];
-  const activeRun = projectRuns.find(
+  const activeRun = sessionRuns.find(
     (r) => r.status === "ready" || r.status === "running" || r.status === "blocked",
   );
   const activeLifecycleName = activeRun
@@ -92,10 +96,14 @@ export function AgentTabView() {
     clearForProject(currentProjectId);
     void fetchProjectAgents(currentProjectId);
     void loadForProject(currentProjectId);
-    void fetchRunsByTarget("project", currentProjectId);
     void fetchLifecycles();
     void fetchDefinitions();
-  }, [currentProjectId, fetchProjectAgents, loadForProject, clearForProject, fetchRunsByTarget, fetchLifecycles, fetchDefinitions]);
+  }, [currentProjectId, fetchProjectAgents, loadForProject, clearForProject, fetchLifecycles, fetchDefinitions]);
+
+  // session 关联的 lifecycle runs（session 就绪后加载）
+  useEffect(() => {
+    if (primarySessionId) void fetchRunsBySession(primarySessionId);
+  }, [primarySessionId, fetchRunsBySession]);
 
   // ─── companion 事件驱动 + 周期轮询：保持 session 列表实时 ──────
 

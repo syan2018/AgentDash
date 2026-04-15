@@ -295,8 +295,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/lifecycle-runs", post(workflows::start_lifecycle_run))
         .route("/lifecycle-runs/{id}", get(workflows::get_lifecycle_run))
         .route(
-            "/lifecycle-runs/bindings/{binding_kind}/{binding_id}",
-            get(workflows::list_lifecycle_runs_by_binding),
+            "/lifecycle-runs/by-session/{session_id}",
+            get(workflows::list_lifecycle_runs_by_session),
         )
         .route(
             "/lifecycle-runs/{id}/steps/{step_key}/activate",

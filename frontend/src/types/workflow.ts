@@ -252,8 +252,8 @@ export interface WorkflowRun {
   id: string;
   project_id: string;
   lifecycle_id: string;
-  target_kind: WorkflowTargetKind;
-  target_id: string;
+  /** 父 session ID — lifecycle run 跟着 session 走 */
+  session_id: string;
   status: WorkflowRunStatus;
   /** 兼容字段：线性模式下的当前活跃 step key */
   current_step_key?: string | null;

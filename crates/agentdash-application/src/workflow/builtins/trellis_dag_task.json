@@ -1,0 +1,82 @@
+{
+  "key": "trellis_dag_task",
+  "name": "Trellis DAG Lifecycle / Task",
+  "description": "DAG 编排示例：research (AgentNode) → implement (AgentNode)，每个 node 创建独立 session。",
+  "binding_kind": "task",
+  "recommended_binding_roles": ["task"],
+  "workflows": [
+    {
+      "key": "trellis_dag_task_research",
+      "name": "DAG Task / Research",
+      "description": "调研与方案设计阶段。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Research 阶段（agent_node），负责需求分析、技术调研和方案设计。",
+            "完成后必须调用 advance_lifecycle_node 工具声明完成，并附上调研摘要。"
+          ]
+        },
+        "hook_rules": [
+          {
+            "key": "lifecycle_advance_gate",
+            "trigger": "before_stop",
+            "description": "必须调用 advance_lifecycle_node 后才允许结束 session",
+            "preset": "stop_gate_lifecycle_advance",
+            "enabled": true
+          }
+        ],
+        "completion": {
+          "default_artifact_type": "phase_note",
+          "default_artifact_title": "调研记录"
+        }
+      }
+    },
+    {
+      "key": "trellis_dag_task_implement",
+      "name": "DAG Task / Implement",
+      "description": "基于调研结论执行实现。",
+      "contract": {
+        "injection": {
+          "instructions": [
+            "当前处于 Implement 阶段（agent_node），基于前一阶段的调研结论执行编码实现。",
+            "完成后必须调用 advance_lifecycle_node 工具声明完成，并附上实现摘要。"
+          ]
+        },
+        "hook_rules": [
+          {
+            "key": "lifecycle_advance_gate",
+            "trigger": "before_stop",
+            "description": "必须调用 advance_lifecycle_node 后才允许结束 session",
+            "preset": "stop_gate_lifecycle_advance",
+            "enabled": true
+          }
+        ],
+        "completion": {
+          "default_artifact_type": "phase_note",
+          "default_artifact_title": "实现记录"
+        }
+      }
+    }
+  ],
+  "lifecycle": {
+    "key": "trellis_dag_task",
+    "name": "Trellis DAG Lifecycle / Task",
+    "description": "DAG 编排示例：research → implement，每个 node 为独立 Agent Session。",
+    "entry_step_key": "research",
+    "steps": [
+      {
+        "key": "research",
+        "description": "需求分析与技术调研（独立 Agent Session）",
+        "workflow_key": "trellis_dag_task_research",
+        "node_type": "agent_node"
+      },
+      {
+        "key": "implement",
+        "description": "基于调研结论执行实现（独立 Agent Session）",
+        "workflow_key": "trellis_dag_task_implement",
+        "node_type": "agent_node",
+        "depends_on": ["research"]
+      }
+    ]
+  }
+}

@@ -8,6 +8,7 @@ use agentdash_domain::workflow::{
 pub const TRELLIS_DEV_PROJECT_TEMPLATE_KEY: &str = "trellis_dev_project";
 pub const TRELLIS_DEV_STORY_TEMPLATE_KEY: &str = "trellis_dev_story";
 pub const TRELLIS_DEV_TASK_TEMPLATE_KEY: &str = "trellis_dev_task";
+pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BuiltinWorkflowTemplateBundle {
@@ -88,6 +89,7 @@ pub fn list_builtin_workflow_templates() -> Result<Vec<BuiltinWorkflowTemplateBu
         include_str!("builtins/trellis_dev_project.json"),
         include_str!("builtins/trellis_dev_story.json"),
         include_str!("builtins/trellis_dev_task.json"),
+        include_str!("builtins/trellis_dag_task.json"),
     ]
     .into_iter()
     .map(parse_builtin_workflow_template)
@@ -124,7 +126,7 @@ mod tests {
     fn builtin_workflow_templates_are_unique_and_loadable() {
         let templates = list_builtin_workflow_templates().expect("load templates");
 
-        assert_eq!(templates.len(), 3);
+        assert_eq!(templates.len(), 4);
         let keys = templates
             .iter()
             .map(|item| item.key.as_str())
@@ -134,6 +136,7 @@ mod tests {
         assert!(keys.contains(TRELLIS_DEV_PROJECT_TEMPLATE_KEY));
         assert!(keys.contains(TRELLIS_DEV_STORY_TEMPLATE_KEY));
         assert!(keys.contains(TRELLIS_DEV_TASK_TEMPLATE_KEY));
+        assert!(keys.contains(TRELLIS_DAG_TASK_TEMPLATE_KEY));
     }
 
     #[test]

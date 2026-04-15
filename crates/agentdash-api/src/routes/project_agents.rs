@@ -327,7 +327,8 @@ pub async fn open_project_agent_session(
 
     // 自动启动 Lifecycle Run（如果 Agent Link 配置了 default_lifecycle_key）
     if let Some(lifecycle_key) = resolve_agent_default_lifecycle(&state, project.id, agent_id).await
-        && let Err(err) = auto_start_lifecycle_run(&state, project.id, &lifecycle_key).await
+        && let Err(err) =
+            auto_start_lifecycle_run(&state, project.id, &meta.id, &lifecycle_key).await
     {
         tracing::warn!(
             project_id = %project.id,
@@ -1195,10 +1196,10 @@ async fn resolve_agent_default_lifecycle(
 async fn auto_start_lifecycle_run(
     state: &Arc<AppState>,
     project_id: Uuid,
+    session_id: &str,
     lifecycle_key: &str,
 ) -> Result<(), String> {
     use agentdash_application::workflow::{LifecycleRunService, StartLifecycleRunCommand};
-    use agentdash_domain::workflow::WorkflowBindingKind;
 
     let service = LifecycleRunService::new(
         state.repos.workflow_definition_repo.as_ref(),
@@ -1210,8 +1211,7 @@ async fn auto_start_lifecycle_run(
         project_id,
         lifecycle_id: None,
         lifecycle_key: Some(lifecycle_key.to_string()),
-        binding_kind: WorkflowBindingKind::Project,
-        binding_id: project_id,
+        session_id: session_id.to_string(),
     };
 
     let run = service

@@ -22,6 +22,7 @@ use crate::address_space::tools::fs::{
 };
 use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
+use crate::workflow::tools::advance_node::AdvanceLifecycleNodeTool;
 use crate::workflow::tools::artifact_report::WorkflowArtifactReportTool;
 use uuid::Uuid;
 
@@ -122,6 +123,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let clusters = &effective_clusters;
 
         let mut tools: Vec<DynAgentTool> = Vec::new();
+        let session_hub = self.session_hub_handle.get().await;
 
         // Read 簇：只读文件系统访问
         if clusters.contains(&ToolCluster::Read) {
@@ -167,12 +169,20 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             )));
         }
 
-        // Workflow 簇：工作流产出汇报
+        // Workflow 簇：工作流产出汇报 + lifecycle node 推进
         if clusters.contains(&ToolCluster::Workflow) {
             tools.push(Arc::new(WorkflowArtifactReportTool::new(
                 self.workflow_definition_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
                 self.lifecycle_run_repo.clone(),
+                context,
+            )));
+            tools.push(Arc::new(AdvanceLifecycleNodeTool::new(
+                self.session_binding_repo.clone(),
+                self.workflow_definition_repo.clone(),
+                self.lifecycle_definition_repo.clone(),
+                self.lifecycle_run_repo.clone(),
+                session_hub.clone(),
                 context,
             )));
         }

@@ -264,6 +264,19 @@ impl AppState {
                 crate::title_generator::LlmTitleGenerator::new(bridge),
             ));
         }
+        // Lifecycle DAG Orchestrator — 在 session 终态后评估后继 node 并启动新 session
+        {
+            let orchestrator =
+                Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
+                    session_hub.clone(),
+                    session_binding_repo.clone(),
+                    workflow_repo.clone(),
+                    workflow_repo.clone(),
+                    workflow_repo.clone(),
+                ));
+            session_hub.set_terminal_callback(orchestrator).await;
+        }
+
         session_hub_handle.set(session_hub.clone()).await;
 
         let restart_tracker = Arc::new(RestartTracker::default());

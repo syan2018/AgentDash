@@ -74,12 +74,14 @@ impl AppExecutionHookProvider {
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         let preset_scripts = builtin_preset_scripts();
+        let workflow_binding_repo = session_binding_repo.clone();
         Self {
             session_binding_repo,
             agent_repo,
             agent_link_repo,
             owner_resolver: SessionOwnerResolver::new(project_repo, story_repo, task_repo),
             workflow_builder: WorkflowSnapshotBuilder::new(
+                workflow_binding_repo,
                 workflow_definition_repo,
                 lifecycle_definition_repo,
                 lifecycle_run_repo,
@@ -280,7 +282,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 
             if let Some(workflow) = self
                 .workflow_builder
-                .resolve_active_workflow(&owner)
+                .resolve_active_workflow(&query.session_id)
                 .await?
             {
                 let wf_source = workflow_source(&workflow);
@@ -301,6 +303,20 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     } else {
                         workflow.active_step.description.clone()
                     };
+                    let step_status = workflow
+                        .run
+                        .step_states
+                        .iter()
+                        .find(|s| s.step_key == workflow.active_step.key)
+                        .map(|s| format!("{:?}", s.status).to_ascii_lowercase());
+                    let node_type = Some(match workflow.active_step.node_type {
+                        agentdash_domain::workflow::LifecycleNodeType::AgentNode => {
+                            "agent_node".to_string()
+                        }
+                        agentdash_domain::workflow::LifecycleNodeType::PhaseNode => {
+                            "phase_node".to_string()
+                        }
+                    });
                     meta.active_workflow = Some(ActiveWorkflowMeta {
                         lifecycle_id: Some(workflow.lifecycle.id),
                         lifecycle_key: Some(workflow.lifecycle.key.clone()),
@@ -309,6 +325,8 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         run_status: Some(workflow.run.status),
                         step_key: Some(workflow.active_step.key.clone()),
                         step_title: Some(step_title),
+                        step_status,
+                        node_type,
                         workflow_key: workflow.active_step.workflow_key.clone(),
                         transition_policy: Some(transition_policy.to_string()),
                         primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),

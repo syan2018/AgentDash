@@ -142,6 +142,10 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_contract: Option<EffectiveSessionContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checklist_evidence_present: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checklist_evidence_artifact_type: Option<WorkflowRecordArtifactType>,

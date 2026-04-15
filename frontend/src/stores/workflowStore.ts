@@ -29,7 +29,7 @@ import {
   enableWorkflowDefinition,
   fetchLifecycleDefinitions,
   fetchWorkflowDefinitions,
-  fetchWorkflowRunsByTarget,
+  fetchWorkflowRunsBySession,
   fetchHookPresets,
   fetchWorkflowTemplates,
   getLifecycleDefinition,
@@ -157,21 +157,17 @@ function upsert<T extends { id: string }>(list: T[], next: T): T[] {
   return [next, ...list];
 }
 
-function targetKey(targetKind: WorkflowTargetKind, targetId: string): string {
-  return `${targetKind}:${targetId}`;
-}
-
 function upsertRun(
-  runsByTargetKey: Record<string, WorkflowRun[]>,
+  runsBySessionId: Record<string, WorkflowRun[]>,
   run: WorkflowRun,
 ): Record<string, WorkflowRun[]> {
-  const key = targetKey(run.target_kind, run.target_id);
-  const existing = runsByTargetKey[key] ?? [];
+  const key = run.session_id;
+  const existing = runsBySessionId[key] ?? [];
   const nextRuns = existing.some((item) => item.id === run.id)
     ? existing.map((item) => (item.id === run.id ? run : item))
     : [run, ...existing];
   nextRuns.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-  return { ...runsByTargetKey, [key]: nextRuns };
+  return { ...runsBySessionId, [key]: nextRuns };
 }
 
 // ─── Store ───────────────────────────────────────────────
@@ -180,7 +176,7 @@ interface WorkflowState {
   templates: WorkflowTemplate[];
   definitions: WorkflowDefinition[];
   lifecycleDefinitions: LifecycleDefinition[];
-  runsByTargetKey: Record<string, WorkflowRun[]>;
+  runsBySessionId: Record<string, WorkflowRun[]>;
   hookPresets: HookRulePreset[];
   isLoading: boolean;
   error: string | null;
@@ -193,12 +189,12 @@ interface WorkflowState {
   fetchDefinitions: (targetKind?: WorkflowTargetKind) => Promise<WorkflowDefinition[]>;
   fetchLifecycles: (targetKind?: WorkflowTargetKind) => Promise<LifecycleDefinition[]>;
   bootstrapTemplate: (builtinKey: string) => Promise<LifecycleDefinition | null>;
-  fetchRunsByTarget: (targetKind: WorkflowTargetKind, targetId: string) => Promise<WorkflowRun[]>;
+  fetchRunsBySession: (sessionId: string) => Promise<WorkflowRun[]>;
   startRun: (input: {
     lifecycle_id?: string;
     lifecycle_key?: string;
-    target_kind: WorkflowTargetKind;
-    target_id: string;
+    session_id: string;
+    project_id: string;
   }) => Promise<WorkflowRun | null>;
   activateStep: (input: { run_id: string; step_key: string }) => Promise<WorkflowRun | null>;
   completeStep: (input: {
@@ -248,7 +244,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   templates: [],
   definitions: [],
   lifecycleDefinitions: [],
-  runsByTargetKey: {},
+  runsBySessionId: {},
   hookPresets: [],
   isLoading: false,
   error: null,
@@ -328,11 +324,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  fetchRunsByTarget: async (targetKind, targetId) => {
+  fetchRunsBySession: async (sessionId) => {
     try {
-      const runs = await fetchWorkflowRunsByTarget(targetKind, targetId);
+      const runs = await fetchWorkflowRunsBySession(sessionId);
       set((state) => ({
-        runsByTargetKey: { ...state.runsByTargetKey, [targetKey(targetKind, targetId)]: runs },
+        runsBySessionId: { ...state.runsBySessionId, [sessionId]: runs },
       }));
       return runs;
     } catch (error) {
@@ -345,7 +341,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const run = await startWorkflowRun(input);
-      set((state) => ({ runsByTargetKey: upsertRun(state.runsByTargetKey, run) }));
+      set((state) => ({ runsBySessionId: upsertRun(state.runsBySessionId, run) }));
       return run;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -357,7 +353,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const run = await activateWorkflowStep(input);
-      set((state) => ({ runsByTargetKey: upsertRun(state.runsByTargetKey, run) }));
+      set((state) => ({ runsBySessionId: upsertRun(state.runsBySessionId, run) }));
       return run;
     } catch (error) {
       set({ error: (error as Error).message });
@@ -369,7 +365,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const run = await completeWorkflowStep(input);
-      set((state) => ({ runsByTargetKey: upsertRun(state.runsByTargetKey, run) }));
+      set((state) => ({ runsBySessionId: upsertRun(state.runsBySessionId, run) }));
       return run;
     } catch (error) {
       set({ error: (error as Error).message });

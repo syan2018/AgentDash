@@ -1,9 +1,10 @@
+use super::session_association::resolve_node_session_association;
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleStepDefinition, WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
+    LifecycleStepDefinition, WorkflowDefinition, WorkflowDefinitionRepository,
     build_effective_contract,
 };
-use serde::Serialize;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -13,28 +14,17 @@ pub struct ActiveWorkflowProjection {
     pub active_step: LifecycleStepDefinition,
     pub primary_workflow: Option<WorkflowDefinition>,
     pub effective_contract: agentdash_domain::workflow::EffectiveSessionContract,
-    /// 当前 projection 绑定到的 owner 摘要。
-    pub binding: WorkflowBindingSummary,
 }
 
-#[derive(Debug, Clone, Serialize)]
-/// Workflow 当前绑定对象摘要。
-pub struct WorkflowBindingSummary {
-    pub binding_kind: WorkflowBindingKind,
-    pub binding_id: Uuid,
-    pub binding_label: Option<String>,
-}
-
+/// 通过 session_id 查找该 session 关联的活跃 lifecycle run 并构建 projection。
 pub async fn resolve_active_workflow_projection(
-    binding_kind: WorkflowBindingKind,
-    binding_id: Uuid,
-    binding_label: Option<String>,
+    session_id: &str,
     definition_repo: &dyn WorkflowDefinitionRepository,
     lifecycle_repo: &dyn LifecycleDefinitionRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let runs = run_repo
-        .list_by_binding(binding_kind, binding_id)
+        .list_by_session(session_id)
         .await
         .map_err(|e| format!("加载 lifecycle runs 失败: {e}"))?;
 
@@ -92,12 +82,37 @@ pub async fn resolve_active_workflow_projection(
         active_step,
         primary_workflow,
         effective_contract,
-        binding: WorkflowBindingSummary {
-            binding_kind,
-            binding_id,
-            binding_label,
-        },
     }))
+}
+
+/// 解析任意 session 的 active workflow projection（兼容 lifecycle node 子 session）。
+///
+/// - 对普通 owner session，走 `lifecycle_runs.session_id` 直接解析；
+/// - 对 lifecycle node 子 session，走 `session_binding(label=lifecycle_node:*)` 反查 run + node_key。
+pub async fn resolve_active_workflow_projection_for_session(
+    session_id: &str,
+    session_binding_repo: &dyn SessionBindingRepository,
+    definition_repo: &dyn WorkflowDefinitionRepository,
+    lifecycle_repo: &dyn LifecycleDefinitionRepository,
+    run_repo: &dyn LifecycleRunRepository,
+) -> Result<Option<ActiveWorkflowProjection>, String> {
+    if let Some(node_assoc) =
+        resolve_node_session_association(session_id, session_binding_repo, run_repo).await?
+    {
+        if let Some(projection) = resolve_workflow_projection_by_run(
+            node_assoc.run.id,
+            &node_assoc.node_key,
+            definition_repo,
+            lifecycle_repo,
+            run_repo,
+        )
+        .await?
+        {
+            return Ok(Some(projection));
+        }
+    }
+
+    resolve_active_workflow_projection(session_id, definition_repo, lifecycle_repo, run_repo).await
 }
 
 /// 解析 lifecycle run 中所有当前活跃 node 的 workflow projection 列表。
@@ -217,10 +232,5 @@ pub async fn resolve_workflow_projection_by_run(
         active_step,
         primary_workflow,
         effective_contract,
-        binding: WorkflowBindingSummary {
-            binding_kind: WorkflowBindingKind::Task,
-            binding_id: Uuid::nil(),
-            binding_label: Some(format!("lifecycle_node:{node_key}")),
-        },
     }))
 }

@@ -275,6 +275,7 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
     match owner_type {
         Some(SessionOwnerType::Task) => {
             tools.push("report_workflow_artifact".to_string());
+            tools.push("advance_lifecycle_node".to_string());
             tools.push("companion_respond".to_string());
             tools.push("canvases_list".to_string());
             tools.push("canvas_start".to_string());
@@ -283,6 +284,7 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
         }
         Some(SessionOwnerType::Story) => {
             tools.push("report_workflow_artifact".to_string());
+            tools.push("advance_lifecycle_node".to_string());
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
             tools.push("canvases_list".to_string());
@@ -300,6 +302,7 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
         }
         None => {
             tools.push("report_workflow_artifact".to_string());
+            tools.push("advance_lifecycle_node".to_string());
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
             tools.push("canvases_list".to_string());

@@ -9,7 +9,6 @@ use super::provider::{
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
-use agentdash_domain::workflow::WorkflowBindingKind;
 use agentdash_domain::workflow::{
     LifecycleRun, LifecycleRunRepository, LifecycleRunStatus, WorkflowRecordArtifact,
     WorkflowRecordArtifactType,
@@ -33,8 +32,7 @@ struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
     lifecycle_id: Uuid,
-    binding_kind: WorkflowBindingKind,
-    binding_id: Uuid,
+    session_id: &'a str,
     status: &'a LifecycleRunStatus,
     current_step_key: Option<&'a str>,
     step_count: usize,
@@ -50,8 +48,7 @@ fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
         id: run.id,
         project_id: run.project_id,
         lifecycle_id: run.lifecycle_id,
-        binding_kind: run.binding_kind,
-        binding_id: run.binding_id,
+        session_id: &run.session_id,
         status: &run.status,
         current_step_key: run.current_step_key.as_deref(),
         step_count: run.step_states.len(),
@@ -77,69 +74,8 @@ fn parse_run_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
         .map_err(|e| MountError::OperationFailed(format!("run_id 无效: {e}")))
 }
 
-#[derive(Debug, Clone, Copy)]
-enum LifecycleRoot {
-    Binding {
-        kind: WorkflowBindingKind,
-        binding_id: Uuid,
-    },
-    RunAnchor,
-    Unknown,
-}
-
-fn parse_lifecycle_root(root_ref: &str) -> LifecycleRoot {
-    let s = root_ref.trim();
-    let prefix = "lifecycle://";
-    if !s.starts_with(prefix) {
-        return LifecycleRoot::Unknown;
-    }
-    let rest = &s[prefix.len()..];
-    let mut parts = rest.split('/').filter(|p| !p.is_empty());
-    let Some(kind) = parts.next() else {
-        return LifecycleRoot::Unknown;
-    };
-    match kind {
-        "binding" => {
-            let Some(k) = parts.next() else {
-                return LifecycleRoot::Unknown;
-            };
-            let Some(id_str) = parts.next() else {
-                return LifecycleRoot::Unknown;
-            };
-            let Ok(binding_id) = Uuid::parse_str(id_str) else {
-                return LifecycleRoot::Unknown;
-            };
-            let Some(tk) = WorkflowBindingKind::from_binding_scope(k) else {
-                return LifecycleRoot::Unknown;
-            };
-            LifecycleRoot::Binding {
-                kind: tk,
-                binding_id,
-            }
-        }
-        "run" => {
-            let Some(id_str) = parts.next() else {
-                return LifecycleRoot::Unknown;
-            };
-            if Uuid::parse_str(id_str).is_err() {
-                return LifecycleRoot::Unknown;
-            }
-            LifecycleRoot::RunAnchor
-        }
-        _ => LifecycleRoot::Unknown,
-    }
-}
-
-fn resolve_binding_for_runs(
-    mount: &Mount,
-    active_run: &LifecycleRun,
-) -> (WorkflowBindingKind, Uuid) {
-    match parse_lifecycle_root(&mount.root_ref) {
-        LifecycleRoot::Binding { kind, binding_id } => (kind, binding_id),
-        LifecycleRoot::RunAnchor | LifecycleRoot::Unknown => {
-            (active_run.binding_kind, active_run.binding_id)
-        }
-    }
+fn resolve_session_id_for_runs(_mount: &Mount, active_run: &LifecycleRun) -> String {
+    active_run.session_id.clone()
 }
 
 async fn load_active_run(
@@ -242,10 +178,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["active", "log"] => to_json_pretty(&active.execution_log)?,
             ["runs"] => {
-                let (tk, tid) = resolve_binding_for_runs(mount, &active);
+                let sid = resolve_session_id_for_runs(mount, &active);
                 let runs = self
                     .lifecycle_run_repo
-                    .list_by_binding(tk, tid)
+                    .list_by_session(&sid)
                     .await
                     .map_err(map_domain_err)?;
                 let summaries: Vec<_> = runs.iter().map(run_overview).collect();
@@ -442,10 +378,10 @@ impl MountProvider for LifecycleMountProvider {
                     .collect()
             }
             ["runs"] => {
-                let (tk, tid) = resolve_binding_for_runs(mount, &active);
+                let sid = resolve_session_id_for_runs(mount, &active);
                 let runs = self
                     .lifecycle_run_repo
-                    .list_by_binding(tk, tid)
+                    .list_by_session(&sid)
                     .await
                     .map_err(map_domain_err)?;
                 runs.iter()

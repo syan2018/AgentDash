@@ -137,6 +137,15 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             source: PresetSource::Builtin,
         },
         HookRulePreset {
+            key: "stop_gate_lifecycle_advance",
+            trigger: WorkflowHookTrigger::BeforeStop,
+            label: "Lifecycle Node 推进门禁",
+            description: "Agent Node 必须调用 advance_lifecycle_node 后才允许结束 session（D2/D8）",
+            param_schema: None,
+            script: include_str!("../../scripts/hook-presets/stop_gate_lifecycle_advance.rhai"),
+            source: PresetSource::Builtin,
+        },
+        HookRulePreset {
             key: "task_session_terminal",
             trigger: WorkflowHookTrigger::SessionTerminal,
             label: "Task 终态状态转换",

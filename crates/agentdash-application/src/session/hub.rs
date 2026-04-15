@@ -32,6 +32,8 @@ pub struct SessionHub {
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub companion_wait_registry: CompanionWaitRegistry,
     pub(super) title_generator: Option<Arc<dyn super::title_generator::SessionTitleGenerator>>,
+    pub(super) terminal_callback:
+        Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
 }
 
 impl SessionHub {
@@ -51,6 +53,7 @@ impl SessionHub {
             extra_skill_dirs: Vec::new(),
             companion_wait_registry: CompanionWaitRegistry::default(),
             title_generator: None,
+            terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -76,6 +79,18 @@ impl SessionHub {
     ) -> Self {
         self.title_generator = Some(generator);
         self
+    }
+
+    /// 注入 session 终态全局回调（如 LifecycleOrchestrator）。
+    ///
+    /// 可在 SessionHub 构造完成后调用（支持延迟注入解决循环依赖）。
+    /// 由于 `terminal_callback` 是共享状态（`Arc<RwLock<...>>`），
+    /// 调用后所有已 clone 的 hub 实例都会生效。
+    pub async fn set_terminal_callback(
+        &self,
+        callback: super::post_turn_handler::DynSessionTerminalCallback,
+    ) {
+        *self.terminal_callback.write().await = Some(callback);
     }
 
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。

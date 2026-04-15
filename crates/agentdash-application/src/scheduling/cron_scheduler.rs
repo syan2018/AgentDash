@@ -68,7 +68,9 @@ pub async fn spawn_cron_scheduler(
     };
 
     if entries.is_empty() {
-        tracing::info!("未发现配置了 cron_schedule 的 Routine，调度器以空列表启动，等待 Routine 创建");
+        tracing::info!(
+            "未发现配置了 cron_schedule 的 Routine，调度器以空列表启动，等待 Routine 创建"
+        );
         // 即使初始无条目也继续监听，这样后续新增 Routine 能动态生效
     }
 

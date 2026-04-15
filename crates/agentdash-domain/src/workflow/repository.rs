@@ -4,6 +4,9 @@ use super::entity::{LifecycleDefinition, LifecycleRun, WorkflowAssignment, Workf
 use super::value_objects::{WorkflowBindingKind, WorkflowBindingRole, WorkflowDefinitionStatus};
 use crate::common::error::DomainError;
 
+// NOTE: WorkflowBindingKind 仍然用于 Definition/Assignment 层（定义模板的目标类型标签）。
+// LifecycleRun 已改为通过 session_id 关联运行上下文。
+
 #[async_trait::async_trait]
 pub trait WorkflowDefinitionRepository: Send + Sync {
     async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError>;
@@ -64,11 +67,7 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_lifecycle(&self, lifecycle_id: Uuid)
     -> Result<Vec<LifecycleRun>, DomainError>;
-    async fn list_by_binding(
-        &self,
-        binding_kind: WorkflowBindingKind,
-        binding_id: Uuid,
-    ) -> Result<Vec<LifecycleRun>, DomainError>;
+    async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }

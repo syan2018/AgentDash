@@ -35,8 +35,8 @@ pub struct WorkflowArtifactReportParams {
 }
 
 pub struct ActiveWorkflowLocator {
-    run_id: Uuid,
-    step_key: String,
+    pub run_id: Uuid,
+    pub step_key: String,
 }
 
 impl WorkflowArtifactReportTool {

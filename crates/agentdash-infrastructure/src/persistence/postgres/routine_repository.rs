@@ -154,8 +154,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         trigger_type: &str,
     ) -> Result<Vec<Routine>, DomainError> {
         // 使用 PostgreSQL JSONB 包含运算符，比 TEXT LIKE 更可靠
-        let containment =
-            serde_json::json!({"type": trigger_type}).to_string();
+        let containment = serde_json::json!({"type": trigger_type}).to_string();
         let rows: Vec<RoutineRow> = sqlx::query_as(
             "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE enabled = TRUE AND trigger_config::jsonb @> $1::jsonb",
@@ -203,8 +202,7 @@ impl RoutineRepository for PostgresRoutineRepository {
 
     async fn find_by_endpoint_id(&self, endpoint_id: &str) -> Result<Option<Routine>, DomainError> {
         // 使用 PostgreSQL JSONB 包含运算符精确匹配 endpoint_id
-        let containment =
-            serde_json::json!({"endpoint_id": endpoint_id}).to_string();
+        let containment = serde_json::json!({"endpoint_id": endpoint_id}).to_string();
         let row: Option<RoutineRow> = sqlx::query_as(
             "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE trigger_config::jsonb @> $1::jsonb LIMIT 1",
@@ -248,10 +246,12 @@ impl PostgresRoutineExecutionRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routine_exec_routine ON routine_executions(routine_id)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_routine_exec_routine ON routine_executions(routine_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_routine_exec_status ON routine_executions(routine_id, status)")
             .execute(&self.pool)

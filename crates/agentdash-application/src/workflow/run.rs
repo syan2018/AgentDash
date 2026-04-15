@@ -2,9 +2,8 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowBindingKind,
-    WorkflowDefinition, WorkflowDefinitionRepository, WorkflowRecordArtifact,
-    WorkflowRecordArtifactType,
+    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowDefinition,
+    WorkflowDefinitionRepository, WorkflowRecordArtifact, WorkflowRecordArtifactType,
 };
 
 use super::completion::WorkflowCompletionDecision;
@@ -15,8 +14,8 @@ pub struct StartLifecycleRunCommand {
     pub project_id: Uuid,
     pub lifecycle_id: Option<Uuid>,
     pub lifecycle_key: Option<String>,
-    pub binding_kind: WorkflowBindingKind,
-    pub binding_id: Uuid,
+    /// 父 session ID — lifecycle run 直接关联 session。
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -164,17 +163,9 @@ where
                 lifecycle.key, lifecycle.status
             )));
         }
-        if lifecycle.binding_kind != cmd.binding_kind {
-            return Err(WorkflowApplicationError::BadRequest(format!(
-                "lifecycle `{}` 仅支持 binding_kind={:?}，收到 {:?}",
-                lifecycle.key, lifecycle.binding_kind, cmd.binding_kind
-            )));
-        }
 
-        let existing_runs = self
-            .run_repo
-            .list_by_binding(cmd.binding_kind, cmd.binding_id)
-            .await?;
+        // 同一 session 不能同时有多个活跃 run
+        let existing_runs = self.run_repo.list_by_session(&cmd.session_id).await?;
         let conflicting_run = existing_runs.iter().find(|run| {
             matches!(
                 run.status,
@@ -185,16 +176,15 @@ where
         });
         if let Some(conflicting) = conflicting_run {
             return Err(WorkflowApplicationError::Conflict(format!(
-                "目标对象 {} 已存在进行中的 lifecycle run（lifecycle_id={}）",
-                cmd.binding_id, conflicting.lifecycle_id
+                "session {} 已存在进行中的 lifecycle run（lifecycle_id={}）",
+                cmd.session_id, conflicting.lifecycle_id
             )));
         }
 
         let run = LifecycleRun::new(
             cmd.project_id,
             lifecycle.id,
-            cmd.binding_kind,
-            cmd.binding_id,
+            &cmd.session_id,
             &lifecycle.steps,
             &lifecycle.entry_step_key,
         )

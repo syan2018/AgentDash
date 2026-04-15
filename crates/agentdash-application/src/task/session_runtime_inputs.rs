@@ -1,5 +1,6 @@
 use agentdash_domain::{
-    project::Project, story::Story, task::Task, workflow::WorkflowBindingKind, workspace::Workspace,
+    project::Project, session_binding::SessionOwnerType, story::Story, task::Task,
+    workspace::Workspace,
 };
 
 use crate::address_space::{
@@ -10,7 +11,7 @@ use crate::repository_set::RepositorySet;
 use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
 use crate::task::config::resolve_task_executor_config;
 use crate::task::execution::TaskExecutionError;
-use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection};
+use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
 
 #[derive(Debug, Clone)]
 pub struct TaskSessionRuntimeInputs {
@@ -43,16 +44,8 @@ pub async fn build_task_session_runtime_inputs(
             Err(err) => (None, Some(err.to_string())),
         };
 
-    let workflow = resolve_active_workflow_projection(
-        WorkflowBindingKind::Task,
-        task.id,
-        Some(task.title.clone()),
-        repos.workflow_definition_repo.as_ref(),
-        repos.lifecycle_definition_repo.as_ref(),
-        repos.lifecycle_run_repo.as_ref(),
-    )
-    .await
-    .map_err(TaskExecutionError::Internal)?;
+    // 通过 task 的 session binding 查找是否有关联 lifecycle run
+    let workflow = resolve_workflow_via_task_sessions(repos, task).await?;
 
     let mcp_servers = mcp_base_url
         .map(|base_url| {
@@ -152,4 +145,32 @@ pub fn resolve_task_executor_source(
         return "project.config.default_agent_type".to_string();
     }
     "unresolved".to_string()
+}
+
+/// 通过 task 的 session binding 查找是否有 session 关联了活跃的 lifecycle run。
+async fn resolve_workflow_via_task_sessions(
+    repos: &RepositorySet,
+    task: &Task,
+) -> Result<Option<ActiveWorkflowProjection>, TaskExecutionError> {
+    let bindings = repos
+        .session_binding_repo
+        .list_by_owner(SessionOwnerType::Task, task.id)
+        .await
+        .map_err(|e| TaskExecutionError::Internal(e.to_string()))?;
+
+    for binding in &bindings {
+        if let Some(projection) = resolve_active_workflow_projection_for_session(
+            &binding.session_id,
+            repos.session_binding_repo.as_ref(),
+            repos.workflow_definition_repo.as_ref(),
+            repos.lifecycle_definition_repo.as_ref(),
+            repos.lifecycle_run_repo.as_ref(),
+        )
+        .await
+        .map_err(TaskExecutionError::Internal)?
+        {
+            return Ok(Some(projection));
+        }
+    }
+    Ok(None)
 }

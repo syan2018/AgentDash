@@ -114,7 +114,6 @@ mod tests {
     use super::super::contributor::TaskExecutionPhase;
     use super::*;
     use crate::address_space::{ResolveBindingsOutput, ResolvedBinding};
-    use crate::workflow::WorkflowBindingSummary;
     use agentdash_domain::workflow::{
         EffectiveSessionContract, LifecycleDefinition, LifecycleRun, LifecycleStepDefinition,
         WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionSource,
@@ -148,12 +147,10 @@ mod tests {
             vec![step.clone()],
         )
         .expect("lifecycle definition");
-        let binding_id = Uuid::new_v4();
         let run = LifecycleRun::new(
             Uuid::new_v4(),
             lifecycle.id,
-            WorkflowBindingKind::Task,
-            binding_id,
+            "sess-test-bindings",
             &lifecycle.steps,
             &lifecycle.entry_step_key,
         )
@@ -176,11 +173,6 @@ mod tests {
                     ..Default::default()
                 },
                 ..Default::default()
-            },
-            binding: WorkflowBindingSummary {
-                binding_kind: WorkflowBindingKind::Task,
-                binding_id,
-                binding_label: Some("Task".to_string()),
             },
         }
     }

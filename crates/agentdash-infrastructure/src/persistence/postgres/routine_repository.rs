@@ -19,9 +19,9 @@ impl PostgresRoutineRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
+        // PostgreSQL 不允许一个 prepared statement 中放多条命令，逐条执行
         sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS routines (
+            "CREATE TABLE IF NOT EXISTS routines (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 name TEXT NOT NULL,
@@ -34,15 +34,21 @@ impl PostgresRoutineRepository {
                 updated_at TEXT NOT NULL,
                 last_fired_at TEXT,
                 UNIQUE(project_id, name)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_routines_project ON routines(project_id);
-            CREATE INDEX IF NOT EXISTS idx_routines_enabled ON routines(enabled);
-            "#,
+            )",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routines_project ON routines(project_id)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routines_enabled ON routines(enabled)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(())
     }
@@ -224,8 +230,7 @@ impl PostgresRoutineExecutionRepository {
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
         sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS routine_executions (
+            "CREATE TABLE IF NOT EXISTS routine_executions (
                 id TEXT PRIMARY KEY,
                 routine_id TEXT NOT NULL,
                 trigger_source TEXT NOT NULL,
@@ -237,16 +242,26 @@ impl PostgresRoutineExecutionRepository {
                 completed_at TEXT,
                 error TEXT,
                 entity_key TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_routine_exec_routine ON routine_executions(routine_id);
-            CREATE INDEX IF NOT EXISTS idx_routine_exec_status ON routine_executions(routine_id, status);
-            CREATE INDEX IF NOT EXISTS idx_routine_exec_entity ON routine_executions(routine_id, entity_key);
-            "#,
+            )",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routine_exec_routine ON routine_executions(routine_id)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routine_exec_status ON routine_executions(routine_id, status)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routine_exec_entity ON routine_executions(routine_id, entity_key)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(())
     }

@@ -74,7 +74,8 @@ export type ToolAggregationType =
   | "command_run_read"
   | "command_run_search"
   | "command_run_edit"
-  | "command_run_fetch";
+  | "command_run_fetch"
+  | "info_gather";
 
 /**
  * ACP 显示条目 — entries 数组中的基本单元。

@@ -51,23 +51,32 @@ function getToolAggregationType(update: SessionUpdate): ToolAggregationType | nu
   const kind = "kind" in update ? update.kind : undefined;
   const title = "title" in update ? (update.title ?? "") : "";
 
-  if (kind === "read") return "file_read";
-  if (kind === "search") return "search";
-  if (kind === "fetch") return "web_fetch";
+  // 读取类操作统一归为 info_gather
+  if (kind === "read") return "info_gather";
+  if (kind === "search") return "info_gather";
+  if (kind === "fetch") return "info_gather";
+
+  // 编辑类保持独立（按文件路径分组）
   if (kind === "edit") return "file_edit";
+
+  // 命令执行：按 title 启发式判断子类型
   if (kind === "execute") {
     const lowerTitle = (title as string).toLowerCase();
+    // 读取类命令 → info_gather
     if (lowerTitle.includes("read") || lowerTitle.includes("cat") || lowerTitle.includes("less")) {
-      return "command_run_read";
+      return "info_gather";
     }
+    // 搜索类命令 → info_gather
     if (lowerTitle.includes("search") || lowerTitle.includes("grep") || lowerTitle.includes("find")) {
-      return "command_run_search";
+      return "info_gather";
     }
+    // 获取类命令 → info_gather
+    if (lowerTitle.includes("fetch") || lowerTitle.includes("curl") || lowerTitle.includes("wget")) {
+      return "info_gather";
+    }
+    // 编辑类命令保持独立
     if (lowerTitle.includes("edit") || lowerTitle.includes("sed") || lowerTitle.includes("awk")) {
       return "command_run_edit";
-    }
-    if (lowerTitle.includes("fetch") || lowerTitle.includes("curl") || lowerTitle.includes("wget")) {
-      return "command_run_fetch";
     }
   }
   return null;
@@ -196,7 +205,22 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
 
   flushGroups();
 
-  return result;
+  // 单条条目不需要聚合壳，还原为独立条目以保留完整的卡片渲染
+  return result.map((item) => {
+    if (
+      (item as AggregatedEntryGroup).type === "aggregated_group" &&
+      (item as AggregatedEntryGroup).entries.length === 1
+    ) {
+      return (item as AggregatedEntryGroup).entries[0]!;
+    }
+    if (
+      (item as AggregatedThinkingGroup).type === "aggregated_thinking" &&
+      (item as AggregatedThinkingGroup).entries.length === 1
+    ) {
+      return (item as AggregatedThinkingGroup).entries[0]!;
+    }
+    return item;
+  });
 }
 
 export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {

@@ -50,7 +50,7 @@ export function AcpSessionEntry({ item, streamingEntryId, sessionId }: AcpSessio
     if (item.aggregationType === "file_edit") {
       return <AggregatedDiffGroupEntry group={item} sessionId={sessionId} />;
     }
-    return <AggregatedToolGroupEntry group={item} />;
+    return <AggregatedToolGroupEntry group={item} sessionId={sessionId} />;
   }
 
   if (isAggregatedThinkingGroup(item)) {
@@ -160,10 +160,17 @@ function SingleEntry({
   }
 }
 
-function AggregatedToolGroupEntry({ group }: { group: AggregatedEntryGroup }) {
+function AggregatedToolGroupEntry({
+  group,
+  sessionId,
+}: {
+  group: AggregatedEntryGroup;
+  sessionId?: string | null;
+}) {
   const [expanded, setExpanded] = useState(false);
   const { aggregationType, entries } = group;
   const badge = getAggregationBadgeConfig(aggregationType);
+  const summary = buildKindSummary(entries);
 
   return (
     <div className="rounded-[12px] border border-border bg-background overflow-hidden">
@@ -177,26 +184,20 @@ function AggregatedToolGroupEntry({ group }: { group: AggregatedEntryGroup }) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-foreground">{badge.label}</p>
-          <p className="text-xs text-muted-foreground">
-            {entries.length} 次同类工具操作已聚合
-          </p>
+          <p className="text-xs text-muted-foreground">{summary}</p>
         </div>
         <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
       </button>
       {expanded && (
         <div className="space-y-1.5 border-t border-border px-3 py-2.5">
           {entries.map((entry) => (
-            <div
+            <AcpToolCallCard
               key={entry.id}
-              className="rounded-[10px] border border-border/70 bg-secondary/25 px-3 py-2"
-            >
-              <p className="truncate text-sm text-foreground/90">
-                {resolveAggregatedToolTitle(entry)}
-              </p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {entry.update.sessionUpdate === "tool_call_update" ? "工具更新" : "工具调用"}
-              </p>
-            </div>
+              update={entry.update}
+              isPendingApproval={entry.isPendingApproval}
+              compact
+              sessionId={sessionId ?? undefined}
+            />
           ))}
         </div>
       )}
@@ -287,6 +288,8 @@ function getAggregationBadgeConfig(aggregationType: AggregatedEntryGroup["aggreg
   label: string;
 } {
   switch (aggregationType) {
+    case "info_gather":
+      return { token: "INFO", label: "信息获取" };
     case "file_read":
       return { token: "READ", label: "读取文件" };
     case "search":
@@ -308,14 +311,28 @@ function getAggregationBadgeConfig(aggregationType: AggregatedEntryGroup["aggreg
   }
 }
 
-function resolveAggregatedToolTitle(entry: AggregatedEntryGroup["entries"][number]): string {
-  if (entry.update.sessionUpdate === "tool_call") {
-    return entry.update.title;
+/** 根据条目的 kind 生成分类摘要，如 "12 次读取 · 4 次搜索 · 2 次网页获取" */
+function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
+  const kindLabels: Record<string, string> = {
+    read: "读取",
+    search: "搜索",
+    fetch: "网页获取",
+    execute: "命令执行",
+  };
+
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const kind = "kind" in entry.update ? (entry.update.kind as string) ?? "other" : "other";
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
   }
-  if (entry.update.sessionUpdate === "tool_call_update") {
-    return entry.update.title ?? "工具更新";
+
+  const parts: string[] = [];
+  for (const [kind, count] of counts) {
+    const label = kindLabels[kind] ?? "工具调用";
+    parts.push(`${count} 次${label}`);
   }
-  return "工具更新";
+
+  return parts.join(" · ");
 }
 
 export default AcpSessionEntry;

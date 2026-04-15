@@ -1,0 +1,6 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量规范"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Repository 模式"}
+{"file": ".trellis/tasks/04-13-lifecycle-dag-orchestration/prd.md", "reason": "PRD 需求文档"}

@@ -251,7 +251,7 @@ where
                 ))
             })?;
 
-        run.complete_step(&cmd.step_key, cmd.summary)
+        run.complete_step(&cmd.step_key, cmd.summary, &lifecycle.steps)
             .map_err(WorkflowApplicationError::Conflict)?;
         for artifact in cmd.record_artifacts {
             run.append_record_artifact(artifact.into_artifact(&cmd.step_key));
@@ -278,7 +278,12 @@ where
                 ))
             })?;
 
-        if run.current_step_key.as_deref() != Some(cmd.step_key.as_str()) {
+        let is_active = if !run.active_node_keys.is_empty() {
+            run.active_node_keys.contains(&cmd.step_key)
+        } else {
+            run.current_step_key.as_deref() == Some(cmd.step_key.as_str())
+        };
+        if !is_active {
             return Err(WorkflowApplicationError::Conflict(format!(
                 "当前活跃 step 不是 `{}`，不能向其追加记录产物",
                 cmd.step_key

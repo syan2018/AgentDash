@@ -187,7 +187,14 @@ pub struct LifecycleRun {
     pub binding_kind: WorkflowBindingKind,
     pub binding_id: Uuid,
     pub status: LifecycleRunStatus,
+    /// 兼容字段：线性推进时指向当前唯一活跃 step。
+    /// DAG 模式下此字段仅保留第一个 active node key（向后兼容读取方），
+    /// 完整的活跃 node 集合请使用 `active_node_keys`。
     pub current_step_key: Option<String>,
+    /// DAG 模式下当前所有可执行（Ready/Running）的 node key 集合。
+    /// 线性 lifecycle 中此集合始终只有 0 或 1 个元素，与 `current_step_key` 一致。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_node_keys: Vec<String>,
     #[serde(default)]
     pub step_states: Vec<LifecycleStepState>,
     #[serde(default)]
@@ -215,23 +222,39 @@ impl LifecycleRun {
             return Err(format!("entry_step_key `{entry_step_key}` 不存在"));
         }
 
+        let has_dag_deps = steps.iter().any(|s| !s.depends_on.is_empty());
+
         let now = Utc::now();
         let step_states = steps
             .iter()
-            .map(|step| LifecycleStepState {
-                step_key: step.key.clone(),
-                status: if step.key == entry_step_key {
+            .map(|step| {
+                let status = if step.key == entry_step_key {
+                    LifecycleStepExecutionStatus::Ready
+                } else if has_dag_deps && step.depends_on.is_empty() && step.key != entry_step_key {
+                    // DAG 模式：无依赖且非入口 node 也标记为 Ready
                     LifecycleStepExecutionStatus::Ready
                 } else {
                     LifecycleStepExecutionStatus::Pending
-                },
-                session_id: None,
-                started_at: None,
-                completed_at: None,
-                summary: None,
-                context_snapshot: None,
+                };
+                LifecycleStepState {
+                    step_key: step.key.clone(),
+                    status,
+                    session_id: None,
+                    started_at: None,
+                    completed_at: None,
+                    summary: None,
+                    context_snapshot: None,
+                }
             })
             .collect::<Vec<_>>();
+
+        let active_node_keys: Vec<String> = step_states
+            .iter()
+            .filter(|s| s.status == LifecycleStepExecutionStatus::Ready)
+            .map(|s| s.step_key.clone())
+            .collect();
+
+        let current_step_key = active_node_keys.first().cloned();
 
         Ok(Self {
             id: Uuid::new_v4(),
@@ -240,7 +263,8 @@ impl LifecycleRun {
             binding_kind,
             binding_id,
             status: LifecycleRunStatus::Ready,
-            current_step_key: Some(entry_step_key.to_string()),
+            current_step_key,
+            active_node_keys,
             step_states,
             record_artifacts: Vec::new(),
             execution_log: Vec::new(),
@@ -258,7 +282,13 @@ impl LifecycleRun {
         else {
             return Err(format!("lifecycle run 不存在 step: {step_key}"));
         };
-        if self.current_step_key.as_deref() != Some(step_key) {
+
+        // DAG 模式：检查 step 是否在 active_node_keys 中；线性兼容：检查 current_step_key
+        if !self.active_node_keys.is_empty() {
+            if !self.active_node_keys.contains(&step_key.to_string()) {
+                return Err(format!("step 不在当前可激活集合中: {step_key}"));
+            }
+        } else if self.current_step_key.as_deref() != Some(step_key) {
             return Err(format!("当前可激活的 step 不是 {step_key}"));
         }
 
@@ -290,7 +320,15 @@ impl LifecycleRun {
         Ok(())
     }
 
-    pub fn complete_step(&mut self, step_key: &str, summary: Option<String>) -> Result<(), String> {
+    /// 完成指定 step 并计算后继 node 的就绪状态。
+    ///
+    /// `step_definitions` 用于 DAG 依赖解析。如果传入空切片，退化为线性推进（向后兼容）。
+    pub fn complete_step(
+        &mut self,
+        step_key: &str,
+        summary: Option<String>,
+        step_definitions: &[LifecycleStepDefinition],
+    ) -> Result<(), String> {
         let Some(current_idx) = self
             .step_states
             .iter()
@@ -298,7 +336,13 @@ impl LifecycleRun {
         else {
             return Err(format!("lifecycle run 不存在 step: {step_key}"));
         };
-        if self.current_step_key.as_deref() != Some(step_key) {
+
+        // DAG 模式：检查 step 是否在 active_node_keys 中；线性兼容：检查 current_step_key
+        if !self.active_node_keys.is_empty() {
+            if !self.active_node_keys.contains(&step_key.to_string()) {
+                return Err(format!("step 不在当前可完成集合中: {step_key}"));
+            }
+        } else if self.current_step_key.as_deref() != Some(step_key) {
             return Err(format!("当前可完成的 step 不是 {step_key}"));
         }
 
@@ -324,20 +368,104 @@ impl LifecycleRun {
         self.step_states[current_idx].completed_at = Some(now);
         self.step_states[current_idx].summary = summary;
 
-        if current_idx + 1 < self.step_states.len() {
-            let next_idx = current_idx + 1;
-            let next_key = self.step_states[next_idx].step_key.clone();
-            self.step_states[next_idx].status = LifecycleStepExecutionStatus::Ready;
-            self.current_step_key = Some(next_key);
-            self.status = LifecycleRunStatus::Ready;
+        // 从 active_node_keys 中移除已完成的 step
+        self.active_node_keys.retain(|k| k != step_key);
+
+        let has_dag_deps = !step_definitions.is_empty()
+            && step_definitions.iter().any(|s| !s.depends_on.is_empty());
+
+        if has_dag_deps {
+            // DAG 模式：找到所有依赖于已完成 step 的后继 node，检查其全部前驱是否已完成
+            self.advance_dag_successors(step_key, step_definitions, now);
         } else {
-            self.current_step_key = None;
-            self.status = LifecycleRunStatus::Completed;
+            // 线性兼容模式：按数组顺序推进
+            if current_idx + 1 < self.step_states.len() {
+                let next_idx = current_idx + 1;
+                let next_key = self.step_states[next_idx].step_key.clone();
+                self.step_states[next_idx].status = LifecycleStepExecutionStatus::Ready;
+                self.active_node_keys = vec![next_key.clone()];
+                self.current_step_key = Some(next_key);
+                self.status = LifecycleRunStatus::Ready;
+            } else {
+                self.active_node_keys.clear();
+                self.current_step_key = None;
+                self.status = LifecycleRunStatus::Completed;
+            }
+        }
+
+        // DAG 模式下更新 current_step_key 兼容字段
+        if has_dag_deps {
+            if self.active_node_keys.is_empty() {
+                // 检查是否所有 step 都完成
+                let all_done = self
+                    .step_states
+                    .iter()
+                    .all(|s| matches!(s.status, LifecycleStepExecutionStatus::Completed | LifecycleStepExecutionStatus::Skipped));
+                if all_done {
+                    self.current_step_key = None;
+                    self.status = LifecycleRunStatus::Completed;
+                } else {
+                    self.current_step_key = None;
+                    self.status = LifecycleRunStatus::Blocked;
+                }
+            } else {
+                self.current_step_key = self.active_node_keys.first().cloned();
+                self.status = LifecycleRunStatus::Ready;
+            }
         }
 
         self.updated_at = now;
         self.last_activity_at = now;
         Ok(())
+    }
+
+    /// DAG 后继解析：找出因当前 step 完成而变为 Ready 的 node
+    fn advance_dag_successors(
+        &mut self,
+        completed_key: &str,
+        step_definitions: &[LifecycleStepDefinition],
+        _now: DateTime<Utc>,
+    ) {
+        let completed_keys: std::collections::HashSet<String> = self
+            .step_states
+            .iter()
+            .filter(|s| s.status == LifecycleStepExecutionStatus::Completed)
+            .map(|s| s.step_key.clone())
+            .collect();
+
+        // 收集需要变为 Ready 的 node key
+        let mut newly_ready: Vec<String> = Vec::new();
+        for step_def in step_definitions {
+            if !step_def.depends_on.contains(&completed_key.to_string()) {
+                continue;
+            }
+            // 检查该 node 的所有前驱是否都已完成（all-complete join，D4）
+            let all_deps_met = step_def
+                .depends_on
+                .iter()
+                .all(|dep| completed_keys.contains(dep));
+            if !all_deps_met {
+                continue;
+            }
+            // 检查当前状态是否为 Pending
+            let is_pending = self
+                .step_states
+                .iter()
+                .any(|s| s.step_key == step_def.key && s.status == LifecycleStepExecutionStatus::Pending);
+            if is_pending {
+                newly_ready.push(step_def.key.clone());
+            }
+        }
+
+        // 应用状态变更
+        for key in &newly_ready {
+            if let Some(state) = self.step_states.iter_mut().find(|s| s.step_key == *key) {
+                state.status = LifecycleStepExecutionStatus::Ready;
+            }
+            if !self.active_node_keys.contains(key) {
+                self.active_node_keys.push(key.clone());
+            }
+        }
     }
 
     pub fn append_record_artifact(&mut self, artifact: WorkflowRecordArtifact) {
@@ -493,26 +621,88 @@ mod tests {
             description: String::new(),
             workflow_key: Some(workflow_key.to_string()),
             node_type: Default::default(),
+            depends_on: Vec::new(),
+        }
+    }
+
+    fn step_with_deps(key: &str, workflow_key: &str, deps: &[&str]) -> LifecycleStepDefinition {
+        LifecycleStepDefinition {
+            key: key.to_string(),
+            description: String::new(),
+            workflow_key: Some(workflow_key.to_string()),
+            node_type: Default::default(),
+            depends_on: deps.iter().map(|s| s.to_string()).collect(),
         }
     }
 
     #[test]
-    fn lifecycle_run_completes_and_advances() {
+    fn lifecycle_run_completes_and_advances_linear() {
+        let steps = [step("start", "wf_start"), step("check", "wf_check")];
         let mut run = LifecycleRun::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
             WorkflowBindingKind::Task,
             Uuid::new_v4(),
-            &[step("start", "wf_start"), step("check", "wf_check")],
+            &steps,
             "start",
         )
         .expect("run");
 
-        run.complete_step("start", Some("done".to_string()))
+        // 线性模式：传空 step_definitions 退化为顺序推进
+        run.complete_step("start", Some("done".to_string()), &[])
             .expect("complete");
 
         assert_eq!(run.current_step_key.as_deref(), Some("check"));
         assert_eq!(run.status, LifecycleRunStatus::Ready);
+    }
+
+    #[test]
+    fn lifecycle_run_dag_all_complete_join() {
+        // DAG: research + analyze → implement → check
+        let steps = [
+            step("research", "wf_research"),
+            step("analyze", "wf_analyze"),
+            step_with_deps("implement", "wf_impl", &["research", "analyze"]),
+            step_with_deps("check", "wf_check", &["implement"]),
+        ];
+        let mut run = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            WorkflowBindingKind::Task,
+            Uuid::new_v4(),
+            &steps,
+            "research",
+        )
+        .expect("run");
+
+        // research 和 analyze 都无 depends_on → 都应为 Ready
+        assert_eq!(run.active_node_keys.len(), 2);
+        assert!(run.active_node_keys.contains(&"research".to_string()));
+        assert!(run.active_node_keys.contains(&"analyze".to_string()));
+
+        // 完成 research，implement 还不应 Ready（analyze 未完成）
+        run.complete_step("research", Some("done".to_string()), &steps)
+            .expect("complete research");
+        assert!(!run.active_node_keys.contains(&"implement".to_string()));
+        assert!(run.active_node_keys.contains(&"analyze".to_string()));
+
+        // 完成 analyze，implement 应变为 Ready（all-complete join）
+        run.complete_step("analyze", Some("done".to_string()), &steps)
+            .expect("complete analyze");
+        assert!(run.active_node_keys.contains(&"implement".to_string()));
+        assert_eq!(run.active_node_keys.len(), 1);
+
+        // 完成 implement → check Ready
+        run.complete_step("implement", Some("done".to_string()), &steps)
+            .expect("complete implement");
+        assert!(run.active_node_keys.contains(&"check".to_string()));
+
+        // 完成 check → 全部完成
+        run.complete_step("check", Some("done".to_string()), &steps)
+            .expect("complete check");
+        assert!(run.active_node_keys.is_empty());
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
+        assert!(run.current_step_key.is_none());
     }
 
     #[test]

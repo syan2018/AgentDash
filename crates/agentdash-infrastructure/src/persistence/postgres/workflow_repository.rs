@@ -487,6 +487,20 @@ struct LifecycleRunRow {
 impl TryFrom<LifecycleRunRow> for LifecycleRun {
     type Error = DomainError;
     fn try_from(row: LifecycleRunRow) -> Result<Self, Self::Error> {
+        let step_states: Vec<agentdash_domain::workflow::LifecycleStepState> =
+            serde_json::from_str(&row.step_states)?;
+        // active_node_keys 从 step_states 中 Ready/Running 状态的 step 派生
+        let active_node_keys: Vec<String> = step_states
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.status,
+                    agentdash_domain::workflow::LifecycleStepExecutionStatus::Ready
+                        | agentdash_domain::workflow::LifecycleStepExecutionStatus::Running
+                )
+            })
+            .map(|s| s.step_key.clone())
+            .collect();
         Ok(LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
@@ -495,7 +509,8 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             binding_id: parse_uuid(&row.binding_id, "workflow_binding")?,
             status: serde_json::from_str(&row.status)?,
             current_step_key: row.current_step_key,
-            step_states: serde_json::from_str(&row.step_states)?,
+            active_node_keys,
+            step_states,
             record_artifacts: serde_json::from_str(&row.record_artifacts)?,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
             created_at: parse_time(&row.created_at)?,

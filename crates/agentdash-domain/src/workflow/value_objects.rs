@@ -296,6 +296,11 @@ pub struct LifecycleStepDefinition {
     /// Node 类型：AgentNode 或 PhaseNode（默认 PhaseNode，向后兼容已有定义）
     #[serde(default)]
     pub node_type: LifecycleNodeType,
+    /// DAG 依赖：当前 node 的前驱 node key 列表。
+    /// 空列表表示无依赖（入口 node 或无约束 node）。
+    /// 线性 lifecycle 中此字段为空，推进仍按数组顺序（向后兼容）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -452,6 +457,12 @@ pub fn validate_lifecycle_definition(
         ));
     }
 
+    // DAG 拓扑校验：depends_on 引用有效性 + 环检测
+    let has_dag_deps = steps.iter().any(|s| !s.depends_on.is_empty());
+    if has_dag_deps {
+        validate_dag_topology(steps, entry_step_key)?;
+    }
+
     Ok(())
 }
 
@@ -517,6 +528,83 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
                 check.key
             ));
         }
+    }
+
+    Ok(())
+}
+
+/// DAG 拓扑校验：
+/// 1. depends_on 中引用的 key 必须存在于 steps 中
+/// 2. 入口 node 不应有 depends_on
+/// 3. 不得存在循环依赖
+fn validate_dag_topology(
+    steps: &[LifecycleStepDefinition],
+    entry_step_key: &str,
+) -> Result<(), String> {
+    let step_keys: std::collections::BTreeSet<&str> =
+        steps.iter().map(|s| s.key.as_str()).collect();
+
+    // 校验 depends_on 引用有效性
+    for step in steps {
+        for dep in &step.depends_on {
+            if !step_keys.contains(dep.as_str()) {
+                return Err(format!(
+                    "lifecycle.steps[{}].depends_on 引用了不存在的 step: {dep}",
+                    step.key
+                ));
+            }
+            if dep == &step.key {
+                return Err(format!(
+                    "lifecycle.steps[{}].depends_on 不能依赖自身",
+                    step.key
+                ));
+            }
+        }
+    }
+
+    // 入口 node 不应有 depends_on
+    if let Some(entry) = steps.iter().find(|s| s.key == entry_step_key) {
+        if !entry.depends_on.is_empty() {
+            return Err(format!(
+                "entry_step_key `{entry_step_key}` 不应有 depends_on 依赖"
+            ));
+        }
+    }
+
+    // 环检测：拓扑排序（Kahn's algorithm）
+    let mut in_degree: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut adj: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for step in steps {
+        in_degree.entry(step.key.as_str()).or_insert(0);
+        for dep in &step.depends_on {
+            adj.entry(dep.as_str()).or_default().push(step.key.as_str());
+            *in_degree.entry(step.key.as_str()).or_insert(0) += 1;
+        }
+    }
+
+    let mut queue: std::collections::VecDeque<&str> = in_degree
+        .iter()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(&k, _)| k)
+        .collect();
+    let mut visited = 0usize;
+
+    while let Some(node) = queue.pop_front() {
+        visited += 1;
+        if let Some(successors) = adj.get(node) {
+            for &succ in successors {
+                if let Some(deg) = in_degree.get_mut(succ) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(succ);
+                    }
+                }
+            }
+        }
+    }
+
+    if visited != steps.len() {
+        return Err("lifecycle DAG 存在循环依赖".to_string());
     }
 
     Ok(())
@@ -590,6 +678,7 @@ mod tests {
             description: String::new(),
             workflow_key: Some("wf_start".to_string()),
             node_type: Default::default(),
+            depends_on: Vec::new(),
         }];
 
         let error =

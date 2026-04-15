@@ -166,6 +166,56 @@ pub async fn resolve_active_workflow_projection(
     }))
 }
 
+/// 解析 lifecycle run 中所有当前活跃 node 的 workflow projection 列表。
+///
+/// 用于 Lifecycle Orchestrator 在 DAG 中获取全部可执行 node 的 contract。
+/// 返回的列表按 `active_node_keys` 顺序排列。
+pub async fn resolve_active_workflow_projections_for_run(
+    run_id: Uuid,
+    definition_repo: &dyn WorkflowDefinitionRepository,
+    lifecycle_repo: &dyn LifecycleDefinitionRepository,
+    run_repo: &dyn LifecycleRunRepository,
+) -> Result<Vec<ActiveWorkflowProjection>, String> {
+    let run = run_repo
+        .get_by_id(run_id)
+        .await
+        .map_err(|e| format!("加载 lifecycle run 失败: {e}"))?;
+    let Some(run) = run else {
+        return Ok(Vec::new());
+    };
+
+    let node_keys: Vec<String> = if !run.active_node_keys.is_empty() {
+        run.active_node_keys.clone()
+    } else {
+        // 线性兼容：使用 current_step_key
+        run.current_step_key
+            .as_deref()
+            .map(|k| vec![k.to_string()])
+            .unwrap_or_default()
+    };
+
+    if node_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut projections = Vec::new();
+    for node_key in &node_keys {
+        if let Some(proj) = resolve_workflow_projection_by_run(
+            run_id,
+            node_key,
+            definition_repo,
+            lifecycle_repo,
+            run_repo,
+        )
+        .await?
+        {
+            projections.push(proj);
+        }
+    }
+
+    Ok(projections)
+}
+
 /// 通过 run_id 和 node_key 直接解析 workflow projection。
 ///
 /// 与 `resolve_active_workflow_projection` 不同，此函数不依赖 binding 查询，

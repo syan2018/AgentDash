@@ -1074,6 +1074,7 @@ async fn resolve_lifecycle_key_for_link(
                     description: String::new(),
                     workflow_key: Some(wk),
                     node_type: Default::default(),
+                    depends_on: Vec::new(),
                 }],
                 entry_step_key: "main".to_string(),
                 created_at: chrono::Utc::now(),

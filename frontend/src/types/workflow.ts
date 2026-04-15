@@ -151,6 +151,8 @@ export interface LifecycleStepDefinition {
   description: string;
   workflow_key?: string | null;
   node_type?: LifecycleNodeType;
+  /** DAG 依赖：前驱 node key 列表。空数组表示无依赖。 */
+  depends_on?: string[];
 }
 
 export interface WorkflowTemplate {
@@ -253,7 +255,10 @@ export interface WorkflowRun {
   target_kind: WorkflowTargetKind;
   target_id: string;
   status: WorkflowRunStatus;
+  /** 兼容字段：线性模式下的当前活跃 step key */
   current_step_key?: string | null;
+  /** DAG 模式下所有当前可执行的 node key 集合 */
+  active_node_keys?: string[];
   step_states: WorkflowStepState[];
   record_artifacts: WorkflowRecordArtifact[];
   execution_log: LifecycleExecutionEntry[];

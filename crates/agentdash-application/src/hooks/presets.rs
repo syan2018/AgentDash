@@ -146,6 +146,15 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             source: PresetSource::Builtin,
         },
         HookRulePreset {
+            key: "port_output_gate",
+            trigger: WorkflowHookTrigger::BeforeStop,
+            label: "Port Output 交付门禁",
+            description: "Agent Node 的 output port 必须全部写入后才允许推进（Existence 策略）",
+            param_schema: None,
+            script: include_str!("../../scripts/hook-presets/port_output_gate.rhai"),
+            source: PresetSource::Builtin,
+        },
+        HookRulePreset {
             key: "task_session_terminal",
             trigger: WorkflowHookTrigger::SessionTerminal,
             label: "Task 终态状态转换",

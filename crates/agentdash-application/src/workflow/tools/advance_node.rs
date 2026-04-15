@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use super::artifact_report::active_workflow_locator_from_snapshot;
+use super::active_workflow_locator_from_snapshot;
 use crate::session::SessionHub;
 use crate::workflow::{
     CompleteLifecycleStepCommand, LifecycleOrchestrator, LifecycleRunService,
@@ -110,6 +110,135 @@ impl AgentTool for AdvanceLifecycleNodeTool {
                     "当前 session 没有关联 active workflow，无法推进 lifecycle node".to_string(),
                 )
             })?;
+
+        // ── gate collision 检查：output port 是否已交付 ──
+        let current_run = self
+            .lifecycle_run_repo
+            .get_by_id(locator.run_id)
+            .await
+            .map_err(|e| AgentToolError::ExecutionFailed(format!("加载 run 失败: {e}")))?
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(format!("run 不存在: {}", locator.run_id))
+            })?;
+        let lifecycle_def = self
+            .lifecycle_definition_repo
+            .get_by_id(current_run.lifecycle_id)
+            .await
+            .map_err(|e| {
+                AgentToolError::ExecutionFailed(format!("加载 lifecycle definition 失败: {e}"))
+            })?
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(format!(
+                    "lifecycle definition 不存在: {}",
+                    current_run.lifecycle_id
+                ))
+            })?;
+        let step_def = lifecycle_def
+            .steps
+            .iter()
+            .find(|s| s.key == locator.step_key);
+        // 从 workflow definition 获取 output port keys
+        let required_output_keys: Vec<String> = if let Some(wk) = step_def
+            .and_then(|s| s.workflow_key.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            match self.workflow_definition_repo.get_by_key(wk).await {
+                Ok(Some(wf)) => wf
+                    .contract
+                    .output_ports
+                    .iter()
+                    .map(|p| p.key.clone())
+                    .collect(),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        if !required_output_keys.is_empty() {
+            let missing: Vec<&String> = required_output_keys
+                .iter()
+                .filter(|key| {
+                    !current_run
+                        .port_outputs
+                        .get(key.as_str())
+                        .is_some_and(|v| !v.trim().is_empty())
+                })
+                .collect();
+
+            if !missing.is_empty() {
+                // 递增 gate_collision_count
+                let mut updated_run = current_run.clone();
+                if let Some(state) = updated_run
+                    .step_states
+                    .iter_mut()
+                    .find(|s| s.step_key == locator.step_key)
+                {
+                    state.gate_collision_count += 1;
+                    let collision = state.gate_collision_count;
+
+                    if collision >= 3 {
+                        state.status = LifecycleStepExecutionStatus::Failed;
+                        state.completed_at = Some(chrono::Utc::now());
+                        updated_run.last_activity_at = chrono::Utc::now();
+                        self.lifecycle_run_repo
+                            .update(&updated_run)
+                            .await
+                            .map_err(|e| {
+                                AgentToolError::ExecutionFailed(format!(
+                                    "更新 gate collision 失败: {e}"
+                                ))
+                            })?;
+
+                        return Ok(AgentToolResult {
+                            content: vec![ContentPart::text(format!(
+                                "Node `{}` 因连续 {collision} 次门禁碰撞已标记为 **Failed**。\n\
+                                 未交付的 output port: [{}]",
+                                locator.step_key,
+                                missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                            ))],
+                            is_error: true,
+                            details: Some(serde_json::json!({
+                                "run_id": current_run.id,
+                                "step_key": locator.step_key,
+                                "gate_collision_count": collision,
+                                "missing_ports": missing,
+                                "status": "failed",
+                            })),
+                        });
+                    }
+
+                    updated_run.last_activity_at = chrono::Utc::now();
+                    self.lifecycle_run_repo
+                        .update(&updated_run)
+                        .await
+                        .map_err(|e| {
+                            AgentToolError::ExecutionFailed(format!(
+                                "更新 gate collision 失败: {e}"
+                            ))
+                        })?;
+
+                    return Ok(AgentToolResult {
+                        content: vec![ContentPart::text(format!(
+                            "**门禁拒绝**（碰撞 {collision}/3）：Node `{}` 尚有 {} 个 output port 未交付。\n\
+                             缺失: [{}]\n\n\
+                             请通过 `write_file` 写入 `lifecycle://artifacts/{{port_key}}` 完成交付后重试。",
+                            locator.step_key,
+                            missing.len(),
+                            missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                        ))],
+                        is_error: true,
+                        details: Some(serde_json::json!({
+                            "run_id": current_run.id,
+                            "step_key": locator.step_key,
+                            "gate_collision_count": collision,
+                            "missing_ports": missing,
+                        })),
+                    });
+                }
+            }
+        }
 
         let record_artifacts: Vec<WorkflowRecordArtifactDraft> = params
             .artifacts

@@ -1,8 +1,9 @@
 # Scenario: 统一 Address Space / Runtime Access Layer（跨层契约）
 
 ### 1. Scope / Trigger
+
 - **Trigger**: 当功能同时涉及云端上下文注入、本机文件访问、Agent 运行时工具调用、多 workspace 挂载或非物理 workspace（KM / Snapshot / 资源库）时，必须使用统一的 Address Space 抽象，而不是继续新增独立访问链路。
-- **影响面**: `task_agent_context`、`declared sources`、relay `workspace_files` / `tool.*`、本机 `ToolExecutor`、PiAgent runtime tools、`Project / Story` 级上下文容器、未来 KM warp。
+- **影响面**: `task_agent_context`、`declared sources`、relay `workspace_files` / `tool.`*、本机 `ToolExecutor`、PiAgent runtime tools、`Project / Story` 级上下文容器、未来 KM warp。
 
 ---
 
@@ -79,12 +80,14 @@ trait AddressSpaceProvider {
 ### 3. Contracts（字段、能力、边界）
 
 #### 3.1 资源定位契约
+
 - Agent 和上层用例**不应直接感知** `backend_id + absolute path`。
 - 统一定位方式为 `mount + relative path`。
 - `mount` 是会话级挂载 ID，例如 `main / spec / km / snapshot`。
 - `path` 必须是相对 mount 根的路径。
 
 #### 3.2 Session Mount Table 契约
+
 - 每个 Task / Story / Session 启动时必须生成一份 mount table。
 - mount table 至少包含：
   - `id`
@@ -98,16 +101,19 @@ trait AddressSpaceProvider {
 
 #### 3.3 Provider 能力契约
 
-| 能力 | 说明 | 物理 workspace | KM / Snapshot |
-|------|------|----------------|---------------|
-| `read` | 读取文本/资源内容 | 必须支持 | 必须支持 |
-| `write` | 写入资源 | 可支持 | 按 provider 决定 |
-| `list` | 列出目录或条目 | 必须支持 | 必须支持 |
-| `search` | 搜索内容/路径 | 推荐支持 | 推荐支持 |
-| `stat` | 查询元信息 | 推荐支持 | 推荐支持 |
-| `exec` | 执行命令 | 仅物理可执行 mount 支持 | 默认不支持 |
+
+| 能力       | 说明        | 物理 workspace    | KM / Snapshot |
+| -------- | --------- | --------------- | ------------- |
+| `read`   | 读取文本/资源内容 | 必须支持            | 必须支持          |
+| `write`  | 写入资源      | 可支持             | 按 provider 决定 |
+| `list`   | 列出目录或条目   | 必须支持            | 必须支持          |
+| `search` | 搜索内容/路径   | 推荐支持            | 推荐支持          |
+| `stat`   | 查询元信息     | 推荐支持            | 推荐支持          |
+| `exec`   | 执行命令      | 仅物理可执行 mount 支持 | 默认不支持         |
+
 
 补充说明：
+
 - 当前已落地的 provider 至少包括：
   - `relay_fs`：通过 relay 访问本机物理工作空间（实现位于 `application::address_space::relay_service`）
   - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器（实现位于 `application::address_space::inline_persistence`）
@@ -125,18 +131,21 @@ trait AddressSpaceProvider {
   - provider 只在需要原生优化时覆盖自己的 `apply_patch`
 
 #### 3.4 relay 契约
+
 - relay 是访问本机 provider 的 transport，不是 mount 模型本身。
 - 上层逻辑不应直接在 `context resolver` 或 runtime tool 中拼接 `RelayMessage`。
 - 物理 workspace 的 cloud 访问可由 `relay_fs_provider` 实现，内部再使用：
-  - `command.workspace_files.*`
+  - `command.workspace_files.`*
   - `command.tool.*`
 
 #### 3.5 context provider / runtime tool 一致性契约
+
 - 声明式来源解析与运行时工具访问必须共享同一套 provider 底座。
 - `File / ProjectSnapshot` 不应长期保留专属实现路径。
 - 如果某资源可被 context 注入读取，也应能在 runtime tool 中以相同 mount/path 访问。
 
 #### 3.6 非物理 workspace warp 契约
+
 - KM / Snapshot / 资源库应呈现为“受限 VFS”。
 - 暂不承诺完整 POSIX 语义。
 - 默认不支持：
@@ -151,18 +160,21 @@ trait AddressSpaceProvider {
 
 ### 4. Validation & Error Matrix
 
-| 条件 | 预期行为 | 错误语义 |
-|------|----------|----------|
-| `mount` 不存在 | 拒绝执行 | `NotFound` |
-| `path` 为绝对路径 | 拒绝执行 | `InvalidPath` |
-| `path` 含 `..` 越界 | 拒绝执行 | `PathEscapesMount` |
-| mount 不支持该能力 | 拒绝执行 | `CapabilityDenied` |
-| 目标 backend 不在线 | 拒绝执行 | `BackendOffline` |
-| provider 不可用 | 拒绝执行 | `ProviderUnavailable` |
-| relay 超时 | 标记为 transport 失败 | `Timeout` |
-| KM / Snapshot 请求 `exec` | 直接拒绝 | `CapabilityDenied` |
+
+| 条件                      | 预期行为             | 错误语义                  |
+| ----------------------- | ---------------- | --------------------- |
+| `mount` 不存在             | 拒绝执行             | `NotFound`            |
+| `path` 为绝对路径            | 拒绝执行             | `InvalidPath`         |
+| `path` 含 `..` 越界        | 拒绝执行             | `PathEscapesMount`    |
+| mount 不支持该能力            | 拒绝执行             | `CapabilityDenied`    |
+| 目标 backend 不在线          | 拒绝执行             | `BackendOffline`      |
+| provider 不可用            | 拒绝执行             | `ProviderUnavailable` |
+| relay 超时                | 标记为 transport 失败 | `Timeout`             |
+| KM / Snapshot 请求 `exec` | 直接拒绝             | `CapabilityDenied`    |
+
 
 补充规则：
+
 - `shell.exec` 只允许在声明了 `exec` 能力的 mount 上执行。
 - `fs.write` 默认只允许写入 `default_write = true` 的 mount，除非上层显式授权。
 - `fs.apply_patch` 同样受 `write` 能力约束；patch 内所有路径都必须是相对 mount 根目录的路径。
@@ -195,6 +207,7 @@ trait AddressSpaceProvider {
 ### 5. Good / Base / Bad Cases
 
 #### Good
+
 - Task session 同时挂载物理工作空间、Project 级规范容器和 Story 级 brief 容器：
 
 ```json
@@ -204,9 +217,11 @@ trait AddressSpaceProvider {
 ```
 
 #### Base
+
 - 当前阶段 provider 内部仍可暂时复用现有 relay `workspace_files` 协议，只要上层接口已统一到 provider。
 
 #### Bad
+
 - 直接把 `backend_id` 和绝对路径暴露给 Agent：
 
 ```json
@@ -218,6 +233,7 @@ trait AddressSpaceProvider {
 ```
 
 问题：
+
 - Agent 需要理解部署细节
 - 多 mount / 非物理空间无法统一
 - 上下文注入和 runtime tool 无法共享同一定位模型
@@ -227,21 +243,51 @@ trait AddressSpaceProvider {
 ### 6. Tests Required（断言点）
 
 #### Provider 层
+
 - 给定 `mount=main, path=foo/bar.rs`，能正确路由到目标 provider。
 - `path` 为绝对路径或含 `..` 时必须被拒绝。
 - provider 能力矩阵正确生效：无 `exec` 的 mount 不允许执行命令。
 - `inline_fs` 至少支持 `read / list / search`，且结果与 mount/path 模型一致。
+- `lifecycle_vfs` 支持 `read / list / search / write`（写入仅限 `artifacts/{port_key}` 子路径）。
+
+#### Lifecycle VFS Provider（`lifecycle_vfs`）
+
+`LifecycleMountProvider` 负责将 `LifecycleRun` 暴露为虚拟文件系统。
+
+**读写路径**：
+
+
+| 路径                                                             | 操作         | 说明                                                |
+| -------------------------------------------------------------- | ---------- | ------------------------------------------------- |
+| `artifacts/{port_key}`                                         | read/write | Port output 产出，写入持久化到 `LifecycleRun.port_outputs` |
+| `active`, `active/steps/`*, `active/artifacts/*`, `active/log` | read       | Run 概览/步骤/旧产物/日志                                  |
+| `nodes/*`, `runs/*`                                            | read       | Node 状态视图和历史 run                                  |
+
+
+**写入约束**：
+
+- 仅 `artifacts/{port_key}` 路径可写
+- 可写范围由 mount metadata 中的 `writable_port_keys` 控制（即当前 node 的 output port keys）
+- 无 `writable_port_keys` 时整个 mount 为只读
+
+**构建函数**：
+
+- `build_lifecycle_mount(run_id, lifecycle_key)` — 只读模式（兼容旧调用）
+- `build_lifecycle_mount_with_ports(run_id, lifecycle_key, &writable_port_keys)` — 写入模式
 
 #### relay / local provider
+
 - `Task.workspace_id -> Workspace.backend_id` 路由正确。
 - `workspace_root` 真正影响本机执行根目录，而非仅记录日志。
 - 本机路径写入不会逃逸出 mount 根目录。
 
 #### context resolver
+
 - `File / ProjectSnapshot` 来源通过 provider 成功读取。
 - provider 失败时 required source 直接报错，optional source 产生 warning。
 
 #### runtime tools
+
 - `mounts.list` 返回当前会话可访问的 mount 清单。
 - `fs.read/write/list/search` 使用统一的 `mount + path` 参数模型。
 - `fs.apply_patch` 使用统一的 `mount + patch` 参数模型，patch 内文件路径相对 mount 根目录解析。
@@ -252,6 +298,7 @@ trait AddressSpaceProvider {
 ### 7. Wrong vs Correct
 
 #### Wrong：为每种访问场景单独长一套协议
+
 ```text
 context source -> command.workspace_files.*
 PiAgent runtime -> BuiltinToolset::for_workspace(...)
@@ -260,11 +307,13 @@ future snapshot -> snapshot_tool.*
 ```
 
 问题：
+
 - 四套定位模型
 - 权限和错误语义无法统一
 - 多 workspace / 非物理空间难以复用
 
 #### Correct：先统一到底层 Address Space，再暴露稳定工具面
+
 ```text
 declared source
 runtime tool
@@ -276,6 +325,7 @@ relay_fs / local_fs / km / snapshot
 ```
 
 优势：
+
 - 定位模型统一
 - 安全边界统一
 - transport 与领域抽象解耦
@@ -283,6 +333,7 @@ relay_fs / local_fs / km / snapshot
 ---
 
 ### 8. First Implementation Slice
+
 - 先修复本机 prompt 执行真正 honor `workspace_root`
 - 先补强本机路径边界
 - 再抽 `AddressSpaceProvider`
@@ -296,15 +347,19 @@ relay_fs / local_fs / km / snapshot
 #### 决策：采用“统一 provider + 小工具集合”，不采用“万能工具”
 
 **Context**:
-- 当前系统已存在 `workspace_files`、`tool.*`、内置工具三套访问路径
+
+- 当前系统已存在 `workspace_files`、`tool.`*、内置工具三套访问路径
 - 后续还需要支持多 workspace 和非物理 workspace
 
 **Decision**:
+
 - 底层统一为 Address Space Provider
 - 上层统一为 `mount + relative path`
 - Agent 工具保持小而稳定
 
 **Why**:
+
 - 更利于模型稳定调用
 - 更利于权限控制和错误矩阵定义
 - 更适合与 context provider 共享实现
+

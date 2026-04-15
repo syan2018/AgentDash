@@ -4,8 +4,8 @@ use agentdash_domain::{
 };
 
 use crate::address_space::{
-    RelayAddressSpaceService, ResolveBindingsOutput, SessionMountTarget, build_lifecycle_mount,
-    resolve_context_bindings,
+    RelayAddressSpaceService, ResolveBindingsOutput, SessionMountTarget,
+    build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::repository_set::RepositorySet;
 use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
@@ -74,9 +74,15 @@ pub async fn build_task_session_runtime_inputs(
             .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
 
         if let Some(active_workflow) = workflow.as_ref() {
-            space.mounts.push(build_lifecycle_mount(
+            let writable_port_keys: Vec<String> = active_workflow
+                .primary_workflow
+                .as_ref()
+                .map(|w| w.contract.output_ports.iter().map(|p| p.key.clone()).collect())
+                .unwrap_or_default();
+            space.mounts.push(build_lifecycle_mount_with_ports(
                 active_workflow.run.id,
                 &active_workflow.lifecycle.key,
+                &writable_port_keys,
             ));
         }
         Some(space)

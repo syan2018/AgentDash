@@ -155,6 +155,16 @@ pub struct ActiveWorkflowMeta {
     pub checklist_evidence_artifact_ids: Option<Vec<Uuid>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checklist_evidence_titles: Option<Vec<String>>,
+
+    /// 当前 node 的 output port key 列表（来自 WorkflowContract）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_port_keys: Option<Vec<String>>,
+    /// 当前 lifecycle run 中已写入的 port output key 列表
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fulfilled_port_keys: Option<Vec<String>>,
+    /// 当前 node 的 gate collision 次数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_collision_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

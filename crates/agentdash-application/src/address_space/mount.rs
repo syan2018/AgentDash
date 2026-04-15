@@ -392,29 +392,47 @@ pub fn normalize_inline_files(
 }
 
 pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
+    build_lifecycle_mount_with_ports(run_id, lifecycle_key, &[])
+}
+
+/// 构建带 output port 写入权限的 lifecycle mount。
+/// `writable_port_keys` 非空时启用 Write capability，agent 可写入 `artifacts/{port_key}`。
+pub fn build_lifecycle_mount_with_ports(
+    run_id: Uuid,
+    lifecycle_key: &str,
+    writable_port_keys: &[String],
+) -> Mount {
+    let mut capabilities = vec![
+        MountCapability::Read,
+        MountCapability::List,
+        MountCapability::Search,
+    ];
+    if !writable_port_keys.is_empty() {
+        capabilities.push(MountCapability::Write);
+    }
+
     Mount {
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
         backend_id: String::new(),
         root_ref: format!("lifecycle://run/{run_id}"),
-        capabilities: vec![
-            MountCapability::Read,
-            MountCapability::List,
-            MountCapability::Search,
-        ],
+        capabilities,
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),
         metadata: serde_json::json!({
             "run_id": run_id.to_string(),
             "lifecycle_key": lifecycle_key,
+            "writable_port_keys": writable_port_keys,
             "directory_hint": {
-                "description": "Lifecycle 执行记录，包含当前 run 的步骤状态和产物",
+                "description": "Lifecycle 执行记录，包含当前 run 的步骤状态、port 产出和产物",
                 "index": [
                     { "path": "active", "description": "当前活跃 run 的概览（JSON）" },
                     { "path": "active/steps", "description": "各步骤执行状态，子路径为 step_key" },
                     { "path": "active/steps/{step_key}", "description": "单步骤详情（JSON）" },
-                    { "path": "active/artifacts", "description": "产物列表，子路径为 artifact UUID" },
-                    { "path": "active/artifacts/{id}", "description": "产物内容（纯文本）" },
+                    { "path": "artifacts", "description": "Port output 产出，子路径为 port_key" },
+                    { "path": "artifacts/{port_key}", "description": "指定 port 的产出内容（纯文本）" },
+                    { "path": "active/artifacts", "description": "Legacy 产物列表，子路径为 artifact UUID" },
+                    { "path": "active/artifacts/{id}", "description": "Legacy 产物内容（纯文本）" },
                     { "path": "active/log", "description": "执行日志（JSON 数组）" },
                     { "path": "runs", "description": "历史 run 列表" }
                 ]

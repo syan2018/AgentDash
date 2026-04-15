@@ -319,6 +319,9 @@ impl HookScriptEngine {
                 "checklist_evidence_present": evidence_present,
                 "auto_completion": auto_completion,
                 "source": wf_source,
+                "output_port_keys": aw.and_then(|a| a.output_port_keys.as_ref()),
+                "fulfilled_port_keys": aw.and_then(|a| a.fulfilled_port_keys.as_ref()),
+                "gate_collision_count": aw.and_then(|a| a.gate_collision_count),
             },
 
             "contract": {

@@ -15,6 +15,7 @@ use agentdash_domain::workflow::{
 };
 use async_trait::async_trait;
 use serde::Serialize;
+use tracing::info;
 use uuid::Uuid;
 
 pub struct LifecycleMountProvider {
@@ -198,6 +199,15 @@ impl MountProvider for LifecycleMountProvider {
                     .ok_or_else(|| MountError::NotFound(format!("run 不存在: {rid}")))?;
                 to_json_pretty(&run_overview(&run))?
             }
+            // ── artifacts/{port_key}: port output 内容（扁平，无 node_key）
+            ["artifacts"] => to_json_pretty(&active.port_outputs)?,
+            ["artifacts", port_key] => active
+                .port_outputs
+                .get(*port_key)
+                .cloned()
+                .ok_or_else(|| {
+                    MountError::NotFound(format!("port output 不存在: {port_key}"))
+                })?,
             // ── nodes/ 路径族 ──────────────────────────────────
             ["nodes", key, "state"] => {
                 let step = active
@@ -249,14 +259,56 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn write_text(
         &self,
-        _mount: &Mount,
-        _path: &str,
-        _content: &str,
+        mount: &Mount,
+        path: &str,
+        content: &str,
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
-        Err(MountError::NotSupported(
-            "lifecycle_vfs 不支持写入".to_string(),
-        ))
+        let path_norm =
+            normalize_mount_relative_path(path, true).map_err(MountError::OperationFailed)?;
+        let segs = segments_from_path(&path_norm);
+
+        match segs.as_slice() {
+            ["artifacts", port_key] => {
+                let allowed_keys = mount
+                    .metadata
+                    .get("writable_port_keys")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                if !allowed_keys.is_empty() && !allowed_keys.contains(port_key) {
+                    return Err(MountError::OperationFailed(format!(
+                        "当前 node 没有名为 `{port_key}` 的 output port，可写 port: {:?}",
+                        allowed_keys
+                    )));
+                }
+
+                let mut run = load_active_run(&self.lifecycle_run_repo, mount).await?;
+                run.port_outputs
+                    .insert(port_key.to_string(), content.to_string());
+                run.last_activity_at = chrono::Utc::now();
+                self.lifecycle_run_repo
+                    .update(&run)
+                    .await
+                    .map_err(map_domain_err)?;
+
+                info!(
+                    run_id = %run.id,
+                    port_key = %port_key,
+                    content_len = content.len(),
+                    "lifecycle VFS: wrote port output"
+                );
+                Ok(())
+            }
+            _ => Err(MountError::NotSupported(format!(
+                "lifecycle_vfs 仅支持写入 artifacts/{{port_key}} 路径，收到: `{path_norm}`"
+            ))),
+        }
     }
 
     async fn list(
@@ -274,6 +326,12 @@ impl MountProvider for LifecycleMountProvider {
             [] => vec![
                 RuntimeFileEntry {
                     path: "active".to_string(),
+                    size: None,
+                    modified_at: None,
+                    is_dir: true,
+                },
+                RuntimeFileEntry {
+                    path: "artifacts".to_string(),
                     size: None,
                     modified_at: None,
                     is_dir: true,
@@ -331,6 +389,17 @@ impl MountProvider for LifecycleMountProvider {
                 .map(|a| RuntimeFileEntry {
                     path: format!("active/artifacts/{}", a.id),
                     size: Some(a.content.len() as u64),
+                    modified_at: None,
+                    is_dir: false,
+                })
+                .collect(),
+            // ── artifacts/: port output 文件列表 ──────────────────
+            ["artifacts"] => active
+                .port_outputs
+                .iter()
+                .map(|(key, content)| RuntimeFileEntry {
+                    path: format!("artifacts/{key}"),
+                    size: Some(content.len() as u64),
                     modified_at: None,
                     is_dir: false,
                 })

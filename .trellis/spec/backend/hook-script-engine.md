@@ -63,6 +63,7 @@ pub struct WorkflowHookRuleSpec {
 ```
 
 **规则分发逻辑**：
+
 - `preset` 有值 → `HookScriptEngine::eval_preset(preset_key, ctx, params)`
 - `script` 有值 → `HookScriptEngine::eval_script(script, ctx, params)`
 - 两者都无 → 跳过该规则
@@ -102,12 +103,14 @@ pub(crate) struct ScriptDecision {
 
 #### API 层 — 管理端点
 
-| 方法 | 路径 | 功能 |
-|------|------|------|
-| `POST` | `/hook-scripts/validate` | 验证 Rhai 脚本语法 |
-| `POST` | `/hook-presets/custom` | 注册自定义 preset |
-| `DELETE` | `/hook-presets/custom/{key}` | 删除自定义 preset |
-| `GET` | `/hook-presets` | 列出所有 preset（含 script 源码和 source 标记） |
+
+| 方法       | 路径                           | 功能                                  |
+| -------- | ---------------------------- | ----------------------------------- |
+| `POST`   | `/hook-scripts/validate`     | 验证 Rhai 脚本语法                        |
+| `POST`   | `/hook-presets/custom`       | 注册自定义 preset                        |
+| `DELETE` | `/hook-presets/custom/{key}` | 删除自定义 preset                        |
+| `GET`    | `/hook-presets`              | 列出所有 preset（含 script 源码和 source 标记） |
+
 
 #### Preset 注册表
 
@@ -129,19 +132,22 @@ pub struct HookRulePreset {
 
 每个 Rhai 脚本收到 `ctx` 变量，顶层 key：
 
-| Key | 说明 |
-|-----|------|
-| `trigger` / `tool_name` / `tool_call_id` / `turn_id` / `session_id` | 触发信息 |
-| `snapshot` | Session Snapshot 切片（owners / tags / injections） |
-| `workflow` | Workflow 元数据（lifecycle_key / step_key / transition_policy 等） |
-| `contract` | Contract 切片（hook_rules / constraints / checks） |
-| `meta` | Session 元数据（permission_policy / workspace_root 等） |
-| `params` | `WorkflowHookRuleSpec.params` 透传 |
-| `signals` | Rust 侧预计算的便利信号（避免脚本重复实现 snapshot 查询） |
+
+| Key                                                                 | 说明                                                                                                                           |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `trigger` / `tool_name` / `tool_call_id` / `turn_id` / `session_id` | 触发信息                                                                                                                         |
+| `snapshot`                                                          | Session Snapshot 切片（owners / tags / injections）                                                                              |
+| `workflow`                                                          | Workflow 元数据（lifecycle_key / step_key / transition_policy / output_port_keys / fulfilled_port_keys / gate_collision_count 等） |
+| `contract`                                                          | Contract 切片（hook_rules / constraints / checks）                                                                               |
+| `meta`                                                              | Session 元数据（permission_policy / workspace_root 等）                                                                            |
+| `params`                                                            | `WorkflowHookRuleSpec.params` 透传                                                                                             |
+| `signals`                                                           | Rust 侧预计算的便利信号（避免脚本重复实现 snapshot 查询）                                                                                         |
+
 
 > 完整字段定义见 `application::hooks::provider.rs` 中的 `build_script_context()`。
 
 **关键约定**：
+
 - 不存在的字段值为 `()`（Rhai 的 unit 类型），脚本中用 `== ()` 判空
 - `signals` 是 Rust 侧预计算的便利信号，避免脚本重复实现复杂的 snapshot 查询逻辑
 
@@ -149,15 +155,17 @@ pub struct HookRulePreset {
 
 脚本必须返回一个 Rhai map (`#{ ... }`)，字段全部可选：
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `block` | `string` | 阻止当前操作的原因文本 |
-| `inject` | `array<{ slot, content, source }>` | 注入列表 |
-| `approval` | `{ reason, details? }` | 请求用户审批 |
-| `completion` | `{ mode, satisfied, reason }` | 完成状态信号 |
-| `refresh` | `bool` | 是否请求刷新 snapshot |
-| `rewrite_input` | `any` | 改写工具输入 |
-| `diagnostics` | `array<{ code, message }>` | 诊断条目 |
+
+| 字段              | 类型                                 | 说明              |
+| --------------- | ---------------------------------- | --------------- |
+| `block`         | `string`                           | 阻止当前操作的原因文本     |
+| `inject`        | `array<{ slot, content, source }>` | 注入列表            |
+| `approval`      | `{ reason, details? }`             | 请求用户审批          |
+| `completion`    | `{ mode, satisfied, reason }`      | 完成状态信号          |
+| `refresh`       | `bool`                             | 是否请求刷新 snapshot |
+| `rewrite_input` | `any`                              | 改写工具输入          |
+| `diagnostics`   | `array<{ code, message }>`         | 诊断条目            |
+
 
 **空决策**：返回 `#{}` 表示该规则不匹配/无操作，不会被记录到 `matched_rule_keys`。
 
@@ -167,31 +175,36 @@ pub struct HookRulePreset {
 
 引擎注册了以下 Rhai 全局函数，脚本可直接调用：
 
-| 函数 | 签名 | 返回值 | 用途 |
-|------|------|--------|------|
-| `make_injection` | `(slot, content, source) -> Map` | `{ slot, content, source }` | 构造注入条目 |
-| `make_diagnostic` | `(code, message) -> Map` | `{ code, message }` | 构造诊断条目 |
-| `block` | `(reason) -> Map` | `{ block: reason }` | 快捷阻止 |
-| `inject` | `(slot, content, source) -> Map` | `{ inject: [...] }` | 快捷注入（单条） |
-| `approve` | `(reason) -> Map` | `{ approval: { reason } }` | 快捷审批请求 |
-| `complete` | `(mode, satisfied, reason) -> Map` | `{ completion: { ... } }` | 快捷完成信号 |
-| `log` | `(message) -> Map` | `{ diagnostics: [...] }` | 快捷诊断日志 |
-| `is_workflow_artifact_tool` | `(name) -> bool` | — | 判断是否为 artifact 上报工具 |
-| `requires_supervised_approval` | `(name) -> bool` | — | 判断是否需要监管审批 |
+
+| 函数                             | 签名                                 | 返回值                         | 用途                  |
+| ------------------------------ | ---------------------------------- | --------------------------- | ------------------- |
+| `make_injection`               | `(slot, content, source) -> Map`   | `{ slot, content, source }` | 构造注入条目              |
+| `make_diagnostic`              | `(code, message) -> Map`           | `{ code, message }`         | 构造诊断条目              |
+| `block`                        | `(reason) -> Map`                  | `{ block: reason }`         | 快捷阻止                |
+| `inject`                       | `(slot, content, source) -> Map`   | `{ inject: [...] }`         | 快捷注入（单条）            |
+| `approve`                      | `(reason) -> Map`                  | `{ approval: { reason } }`  | 快捷审批请求              |
+| `complete`                     | `(mode, satisfied, reason) -> Map` | `{ completion: { ... } }`   | 快捷完成信号              |
+| `log`                          | `(message) -> Map`                 | `{ diagnostics: [...] }`    | 快捷诊断日志              |
+| `is_workflow_artifact_tool`    | `(name) -> bool`                   | —                           | 判断是否为 artifact 上报工具 |
+| `requires_supervised_approval` | `(name) -> bool`                   | —                           | 判断是否需要监管审批          |
+
 
 **快捷函数 vs 完整 map**：
+
 - 快捷函数（`block`、`inject`、`approve`、`complete`、`log`）返回的是完整的决策 map，可直接作为脚本返回值
 - `make_injection`、`make_diagnostic` 返回的是条目对象，需要嵌入到 `inject` / `diagnostics` 数组中
 
 #### 3.4 沙箱安全契约
 
-| 限制项 | 值 | 说明 |
-|--------|-----|------|
-| `max_operations` | 10,000 | 防止无限循环 |
-| `max_call_levels` | 32 | 防止深递归 |
-| `max_string_size` | 1 MB | 防止内存爆炸 |
-| `max_array_size` | 1,000 | 防止大数组 |
-| `max_map_size` | 500 | 防止大 map |
+
+| 限制项               | 值      | 说明      |
+| ----------------- | ------ | ------- |
+| `max_operations`  | 10,000 | 防止无限循环  |
+| `max_call_levels` | 32     | 防止深递归   |
+| `max_string_size` | 1 MB   | 防止内存爆炸  |
+| `max_array_size`  | 1,000  | 防止大数组   |
+| `max_map_size`    | 500    | 防止大 map |
+
 
 脚本无法访问文件系统、网络、进程等系统资源。
 
@@ -210,18 +223,20 @@ pub enum PresetSource {
 
 ### 4. Validation & Error Matrix
 
-| 场景 | 预期行为 | 错误/结果 |
-|------|----------|----------|
-| 脚本语法错误（编译期） | `validate_script` 返回错误列表 | `Err(vec!["..."])` |
-| preset 脚本编译失败（启动时） | 日志 error，该 preset 不注册 | 运行时 `eval_preset` 返回"未知 preset" |
-| 脚本运行时错误（除零、类型错误等） | 返回 `Err(String)` | 写入 diagnostics `hook_script_error` |
-| 脚本超过 `max_operations` | Rhai 引擎中断 | 返回 `Err("...")` |
-| 脚本返回非 map 值（如 `42`） | 视为空决策 | `ScriptDecision::is_empty() == true` |
-| 脚本返回空 map `#{}` | 视为不匹配 | 不记录到 `matched_rule_keys` |
-| 脚本返回 `()` (unit) | 视为空决策 | 同上 |
-| 引用未知 preset key | 返回 `Err("未知 preset: xxx")` | 写入 diagnostics |
-| 自定义脚本首次执行 | 编译并缓存 AST | 后续执行直接使用缓存 |
-| 注册同名 preset | 覆盖已有 AST | 新脚本立即生效 |
+
+| 场景                    | 预期行为                       | 错误/结果                                |
+| --------------------- | -------------------------- | ------------------------------------ |
+| 脚本语法错误（编译期）           | `validate_script` 返回错误列表   | `Err(vec!["..."])`                   |
+| preset 脚本编译失败（启动时）    | 日志 error，该 preset 不注册      | 运行时 `eval_preset` 返回"未知 preset"      |
+| 脚本运行时错误（除零、类型错误等）     | 返回 `Err(String)`           | 写入 diagnostics `hook_script_error`   |
+| 脚本超过 `max_operations` | Rhai 引擎中断                  | 返回 `Err("...")`                      |
+| 脚本返回非 map 值（如 `42`）   | 视为空决策                      | `ScriptDecision::is_empty() == true` |
+| 脚本返回空 map `#{}`       | 视为不匹配                      | 不记录到 `matched_rule_keys`             |
+| 脚本返回 `()` (unit)      | 视为空决策                      | 同上                                   |
+| 引用未知 preset key       | 返回 `Err("未知 preset: xxx")` | 写入 diagnostics                       |
+| 自定义脚本首次执行             | 编译并缓存 AST                  | 后续执行直接使用缓存                           |
+| 注册同名 preset           | 覆盖已有 AST                   | 新脚本立即生效                              |
+
 
 ### 5. Good / Base / Bad Cases
 
@@ -419,7 +434,7 @@ if tool == () || !requires_supervised_approval(tool) {
 
 1. 在 `scripts/hook-presets/` 下创建 `.rhai` 文件
 2. 在 `presets.rs` 的 `PRESET_REGISTRY` 中添加 `HookRulePreset` 条目：
-   ```rust
+  ```rust
    HookRulePreset {
        key: "my_new_preset",
        trigger: WorkflowHookTrigger::BeforeTool,
@@ -429,24 +444,26 @@ if tool == () || !requires_supervised_approval(tool) {
        script: include_str!("../../scripts/hook-presets/my_new_preset.rhai"),
        source: PresetSource::Builtin,
    },
-   ```
+  ```
 3. 无需修改 `rules.rs`——引擎会自动编译并注册
 4. 在相关 workflow definition 的 `hook_rules` 中引用 `preset: "my_new_preset"`
 
 ### 当前 Builtin Preset 清单
 
-| Key | Trigger | 功能 | 参数 |
-|-----|---------|------|------|
-| `block_record_artifact` | `BeforeTool` | 禁止上报特定类型的 workflow artifact | `artifact_types: string[]` |
-| `session_terminal_advance` | `BeforeStop` | Session 终态自动推进 lifecycle step | 无 |
-| `stop_gate_checks_pending` | `BeforeStop` | 完成条件门禁（checks 未满足时阻止结束） | 无 |
-| `manual_step_notice` | `BeforeStop` | 通知 Agent 当前 step 使用手动推进 | 无 |
-| `task_session_terminal` | `SessionTerminal` | Task session 终态处理（状态回写 + step 推进） | 无 |
-| `context_compaction_trigger` | `AfterCompaction` | 上下文压缩触发后刷新 snapshot | 无 |
-| `subagent_inherit_context` | `BeforeSubagentDispatch` | 子 Agent 继承当前 session 注入和约束 | 无 |
-| `subagent_record_result` | `AfterSubagentDispatch` | 记录子 Agent 派发结果 | 无 |
-| `subagent_result_channel` | `SubagentResult` | 处理子 Agent 回流，按 adoption_mode 注入 | 无 |
-| `supervised_tool_gate` | `BeforeTool` | SUPERVISED 策略下工具审批门禁 | `allowlist?: string[]` |
+
+| Key                          | Trigger                  | 功能                                | 参数                         |
+| ---------------------------- | ------------------------ | --------------------------------- | -------------------------- |
+| `block_record_artifact`      | `BeforeTool`             | 禁止上报特定类型的 workflow artifact       | `artifact_types: string[]` |
+| `session_terminal_advance`   | `BeforeStop`             | Session 终态自动推进 lifecycle step     | 无                          |
+| `stop_gate_checks_pending`   | `BeforeStop`             | 完成条件门禁（checks 未满足时阻止结束）           | 无                          |
+| `manual_step_notice`         | `BeforeStop`             | 通知 Agent 当前 step 使用手动推进           | 无                          |
+| `task_session_terminal`      | `SessionTerminal`        | Task session 终态处理（状态回写 + step 推进） | 无                          |
+| `context_compaction_trigger` | `AfterCompaction`        | 上下文压缩触发后刷新 snapshot               | 无                          |
+| `subagent_inherit_context`   | `BeforeSubagentDispatch` | 子 Agent 继承当前 session 注入和约束        | 无                          |
+| `subagent_record_result`     | `AfterSubagentDispatch`  | 记录子 Agent 派发结果                    | 无                          |
+| `subagent_result_channel`    | `SubagentResult`         | 处理子 Agent 回流，按 adoption_mode 注入   | 无                          |
+| `supervised_tool_gate`       | `BeforeTool`             | SUPERVISED 策略下工具审批门禁              | `allowlist?: string[]`     |
+
 
 ---
 
@@ -455,12 +472,14 @@ if tool == () || !requires_supervised_approval(tool) {
 **Context**: Hook 规则需要从硬编码 Rust 函数迁移到可配置的脚本，以支持用户自定义行为。
 
 **Options Considered**:
+
 1. **Lua (mlua)** — 生态成熟，但 FFI 边界复杂，沙箱配置不如 Rhai 原生
 2. **Rhai** — Rust 原生嵌入式脚本，语法类 Rust/JS，沙箱内建，`serde` 互操作良好
 3. **WASM** — 隔离性最强，但编写/调试门槛高，不适合短小的规则脚本
 4. **JSON DSL** — 最简单，但表达力不足，复杂条件需要大量嵌套
 
 **Decision**: 选择 Rhai，因为：
+
 - 与 Rust 类型系统天然互操作（`rhai::serde`）
 - 内建沙箱（operations/call levels/memory 限制）
 - 语法对前端/后端开发者都友好

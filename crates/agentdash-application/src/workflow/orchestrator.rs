@@ -14,8 +14,9 @@ use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleNodeType, LifecycleRunRepository,
-    LifecycleStepExecutionStatus, WorkflowDefinitionRepository,
+    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleNodeType, LifecycleRun,
+    LifecycleRunRepository, LifecycleStepExecutionStatus, WorkflowDefinition,
+    WorkflowDefinitionRepository,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -23,6 +24,8 @@ use uuid::Uuid;
 use super::session_association::{
     LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_node_session_association,
 };
+use crate::address_space::build_lifecycle_mount_with_ports;
+use crate::runtime::AddressSpace;
 use crate::session::SessionTerminalCallback;
 use crate::session::{PromptSessionRequest, SessionHub, UserPromptInput};
 use crate::workflow::{ActivateLifecycleStepCommand, LifecycleRunService};
@@ -149,14 +152,30 @@ impl LifecycleOrchestrator {
 
             match step_def.node_type {
                 LifecycleNodeType::AgentNode => {
+                    // 尝试加载 node 关联的 workflow definition（用于 port 定义）
+                    let node_workflow = if let Some(wk) = step_def
+                        .workflow_key
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        self.workflow_definition_repo
+                            .get_by_key(wk)
+                            .await
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
+
                     match self
                         .create_agent_node_session(
-                            run_id,
+                            &run,
+                            &lifecycle,
                             project_id,
-                            &run.session_id,
                             &node_state.step_key,
-                            &lifecycle.key,
                             &step_def.description,
+                            node_workflow.as_ref(),
                         )
                         .await
                     {
@@ -211,13 +230,17 @@ impl LifecycleOrchestrator {
     /// 为 AgentNode 创建独立 session 并通过 SessionBinding 标记归属 lifecycle run。
     async fn create_agent_node_session(
         &self,
-        run_id: Uuid,
+        run: &LifecycleRun,
+        lifecycle: &LifecycleDefinition,
         project_id: Uuid,
-        parent_session_id: &str,
         node_key: &str,
-        lifecycle_key: &str,
         node_description: &str,
+        node_workflow: Option<&WorkflowDefinition>,
     ) -> Result<String, String> {
+        let run_id = run.id;
+        let parent_session_id = &run.session_id;
+        let lifecycle_key = &lifecycle.key;
+
         let session_title = format!("[{lifecycle_key}] {node_key}");
         let meta = self
             .session_hub
@@ -226,16 +249,12 @@ impl LifecycleOrchestrator {
             .map_err(|e| format!("创建 session 失败: {e}"))?;
         let session_id = meta.id.clone();
 
-        // SessionBinding: 关联到父 session 的 owner（间接通过 parent binding 查找）
-        // 首先尝试从父 session 的 binding 中获取 owner 信息
         let parent_bindings = self
             .session_binding_repo
             .list_by_session(parent_session_id)
             .await
             .map_err(|e| format!("查询父 session binding 失败: {e}"))?;
 
-        // 从父 session 的 binding 继承 owner_type / owner_id（维持 Task/Story 间接关联）
-        // 同时附加 lifecycle_node 标签
         if let Some(parent_binding) = parent_bindings
             .iter()
             .find(|binding| !binding.label.starts_with(LIFECYCLE_NODE_LABEL_PREFIX))
@@ -253,7 +272,6 @@ impl LifecycleOrchestrator {
                 .await
                 .map_err(|e| format!("创建 session binding 失败: {e}"))?;
         } else {
-            // 父 session 没有 binding（理论上不应发生），创建 project 级 binding
             let binding = SessionBinding::new(
                 project_id,
                 session_id.clone(),
@@ -268,14 +286,14 @@ impl LifecycleOrchestrator {
         }
 
         // 更新 LifecycleRun.step_states[node_key].session_id 并 activate
-        let run = self
+        let latest_run = self
             .lifecycle_run_repo
             .get_by_id(run_id)
             .await
             .map_err(|e| format!("加载 lifecycle run 失败: {e}"))?
             .ok_or_else(|| format!("lifecycle run 不存在: {run_id}"))?;
 
-        let mut updated_run = run;
+        let mut updated_run = latest_run;
         if let Some(state) = updated_run
             .step_states
             .iter_mut()
@@ -291,8 +309,6 @@ impl LifecycleOrchestrator {
             .await
             .map_err(|e| format!("更新 lifecycle run 失败: {e}"))?;
 
-        // 子 session 的执行器配置默认继承父 session，并标记 owner bootstrap。
-        // 这样后续 `start_prompt` 会自动注入 owner context / workflow context。
         let parent_executor_config = self
             .session_hub
             .get_session_meta(parent_session_id)
@@ -308,13 +324,14 @@ impl LifecycleOrchestrator {
                 .map_err(|e| format!("继承执行器配置失败: {e}"))?;
         }
 
-        // 自动拉起子 session，驱动 AgentNode 执行闭环。
         if let Err(error) = self
             .start_agent_node_prompt(
                 &session_id,
-                lifecycle_key,
+                run,
+                lifecycle,
                 node_key,
                 node_description,
+                node_workflow,
                 parent_executor_config,
             )
             .await
@@ -338,12 +355,15 @@ impl LifecycleOrchestrator {
         Ok(session_id)
     }
 
+    /// 构建 kickoff prompt，附带 input port 上下文引用和 output port 交付要求。
     async fn start_agent_node_prompt(
         &self,
         session_id: &str,
-        lifecycle_key: &str,
+        run: &LifecycleRun,
+        lifecycle: &LifecycleDefinition,
         node_key: &str,
         node_description: &str,
+        node_workflow: Option<&WorkflowDefinition>,
         executor_config: Option<agentdash_spi::AgentConfig>,
     ) -> Result<(), String> {
         self.session_hub
@@ -351,18 +371,101 @@ impl LifecycleOrchestrator {
             .await
             .map_err(|e| format!("标记 owner bootstrap pending 失败: {e}"))?;
 
+        let lifecycle_key = &lifecycle.key;
         let node_title = if node_description.trim().is_empty() {
             format!("`{node_key}`")
         } else {
             format!("`{node_key}`（{}）", node_description.trim())
         };
+
+        // ── output port 交付要求 ──
+        let output_ports: Vec<_> = node_workflow
+            .map(|w| w.contract.output_ports.clone())
+            .unwrap_or_default();
+        let writable_port_keys: Vec<String> =
+            output_ports.iter().map(|p| p.key.clone()).collect();
+
+        let output_section = if output_ports.is_empty() {
+            String::new()
+        } else {
+            let items: Vec<String> = output_ports
+                .iter()
+                .map(|p| {
+                    format!(
+                        "- `lifecycle://artifacts/{}` — {}",
+                        p.key, p.description
+                    )
+                })
+                .collect();
+            format!(
+                "\n\n## 必须交付的产出\n\
+                 请将以下产出通过 `write_file` 写入对应路径：\n{}\n\n\
+                 **所有 output port 写入完成后**再调用 `advance_lifecycle_node`。",
+                items.join("\n")
+            )
+        };
+
+        // ── input port 上下文引用（基于 edge 推导前驱 port output） ──
+        let input_ports: Vec<_> = node_workflow
+            .map(|w| w.contract.input_ports.clone())
+            .unwrap_or_default();
+        let input_section = if input_ports.is_empty() {
+            String::new()
+        } else {
+            let mut items = Vec::new();
+            for ip in &input_ports {
+                // 从 edges 中找到连入当前 node + port 的边
+                let source_edges: Vec<_> = lifecycle
+                    .edges
+                    .iter()
+                    .filter(|e| e.to_node == node_key && e.to_port == ip.key)
+                    .collect();
+                if source_edges.is_empty() {
+                    items.push(format!(
+                        "- **{}**（{}）— 无前驱连接",
+                        ip.key, ip.description
+                    ));
+                } else {
+                    for edge in source_edges {
+                        let content = run.port_outputs.get(&edge.from_port);
+                        let status = if content.is_some_and(|c| !c.trim().is_empty()) {
+                            "已就绪"
+                        } else {
+                            "未就绪"
+                        };
+                        items.push(format!(
+                            "- **{}**（{}）← `lifecycle://artifacts/{}` [{status}]",
+                            ip.key, ip.description, edge.from_port
+                        ));
+                    }
+                }
+            }
+            format!(
+                "\n\n## 输入上下文\n以下是来自前驱节点的产出，可通过 `read_file` 读取：\n{}",
+                items.join("\n")
+            )
+        };
+
         let kickoff_prompt = format!(
             "你正在执行 lifecycle `{lifecycle_key}` 的 node {node_title}。\n\
-请先完成当前阶段工作，并在完成后调用 `advance_lifecycle_node` 工具提交总结与产物。"
+             请先完成当前阶段工作，并在完成后调用 `advance_lifecycle_node` 工具提交总结与产物。\
+             {output_section}{input_section}"
         );
+
+        // ── 构建带 port 写入权限的 lifecycle mount ──
+        let lifecycle_mount =
+            build_lifecycle_mount_with_ports(run.id, lifecycle_key, &writable_port_keys);
+        let address_space = AddressSpace {
+            mounts: vec![lifecycle_mount],
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+        };
+
         let mut req =
             PromptSessionRequest::from_user_input(UserPromptInput::from_text(kickoff_prompt));
         req.user_input.executor_config = executor_config;
+        req.address_space = Some(address_space);
 
         self.session_hub
             .start_prompt(session_id, req)

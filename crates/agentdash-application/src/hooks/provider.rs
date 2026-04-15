@@ -355,6 +355,44 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             checklist_evidence.artifact_ids.clone(),
                         ),
                         checklist_evidence_titles: Some(checklist_evidence.titles.clone()),
+                        output_port_keys: {
+                            let port_keys: Vec<String> = workflow
+                                .primary_workflow
+                                .as_ref()
+                                .map(|w| {
+                                    w.contract
+                                        .output_ports
+                                        .iter()
+                                        .map(|p| p.key.clone())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            if port_keys.is_empty() {
+                                None
+                            } else {
+                                Some(port_keys)
+                            }
+                        },
+                        fulfilled_port_keys: {
+                            let fulfilled: Vec<String> = workflow
+                                .run
+                                .port_outputs
+                                .iter()
+                                .filter(|(_, v)| !v.trim().is_empty())
+                                .map(|(k, _)| k.clone())
+                                .collect();
+                            if fulfilled.is_empty() {
+                                None
+                            } else {
+                                Some(fulfilled)
+                            }
+                        },
+                        gate_collision_count: workflow
+                            .run
+                            .step_states
+                            .iter()
+                            .find(|s| s.step_key == workflow.active_step.key)
+                            .map(|s| s.gate_collision_count),
                     });
                 }
 

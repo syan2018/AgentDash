@@ -1,0 +1,2 @@
+ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS edges TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS port_outputs TEXT NOT NULL DEFAULT '{}';

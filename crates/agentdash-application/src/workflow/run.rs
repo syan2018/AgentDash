@@ -187,6 +187,7 @@ where
             &cmd.session_id,
             &lifecycle.steps,
             &lifecycle.entry_step_key,
+            &lifecycle.edges,
         )
         .map_err(WorkflowApplicationError::BadRequest)?;
         self.run_repo.create(&run).await?;
@@ -241,7 +242,7 @@ where
                 ))
             })?;
 
-        run.complete_step(&cmd.step_key, cmd.summary, &lifecycle.steps)
+        run.complete_step(&cmd.step_key, cmd.summary, &lifecycle.edges)
             .map_err(WorkflowApplicationError::Conflict)?;
         for artifact in cmd.record_artifacts {
             run.append_record_artifact(artifact.into_artifact(&cmd.step_key));

@@ -11,12 +11,14 @@ pub use repository::{
     WorkflowDefinitionRepository,
 };
 pub use value_objects::{
-    EffectiveSessionContract, LifecycleExecutionEntry, LifecycleExecutionEventKind,
-    LifecycleNodeType, LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus,
-    LifecycleStepState, ValidationIssue, ValidationSeverity, WorkflowBindingKind,
+    ContextStrategy, EffectiveSessionContract, GateStrategy, InputPortDefinition, LifecycleEdge,
+    LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
+    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
+    OutputPortDefinition, ValidationIssue, ValidationSeverity, WorkflowBindingKind,
     WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
     WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContract,
     WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookRuleSpec, WorkflowHookTrigger,
     WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType,
-    WorkflowSessionTerminalState, validate_lifecycle_definition, validate_workflow_definition,
+    WorkflowSessionTerminalState, node_deps_from_edges, validate_lifecycle_definition,
+    validate_workflow_definition,
 };

@@ -106,11 +106,38 @@ export interface HookRulePreset {
   source?: "builtin" | "user_defined";
 }
 
+export type GateStrategy = "existence" | "schema" | "llm_judge";
+
+export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
+
+export interface OutputPortDefinition {
+  key: string;
+  description: string;
+  gate_strategy?: GateStrategy;
+  gate_params?: Record<string, unknown> | null;
+}
+
+export interface InputPortDefinition {
+  key: string;
+  description: string;
+  context_strategy?: ContextStrategy;
+  context_template?: string | null;
+}
+
+export interface LifecycleEdge {
+  from_node: string;
+  from_port: string;
+  to_node: string;
+  to_port: string;
+}
+
 export interface WorkflowContract {
   injection: WorkflowInjectionSpec;
   hook_rules: WorkflowHookRuleSpec[];
   constraints: WorkflowConstraintSpec[];
   completion: WorkflowCompletionSpec;
+  output_ports?: OutputPortDefinition[];
+  input_ports?: InputPortDefinition[];
 }
 
 export type WorkflowDefinitionSource =
@@ -151,8 +178,6 @@ export interface LifecycleStepDefinition {
   description: string;
   workflow_key?: string | null;
   node_type?: LifecycleNodeType;
-  /** DAG 依赖：前驱 node key 列表。空数组表示无依赖。 */
-  depends_on?: string[];
 }
 
 export interface WorkflowTemplate {
@@ -168,6 +193,7 @@ export interface WorkflowTemplate {
     description: string;
     entry_step_key: string;
     steps: LifecycleStepDefinition[];
+    edges?: LifecycleEdge[];
   };
 }
 
@@ -198,6 +224,7 @@ export interface LifecycleDefinition {
   version: number;
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
+  edges?: LifecycleEdge[];
   created_at: string;
   updated_at: string;
 }
@@ -221,6 +248,7 @@ export interface WorkflowStepState {
   completed_at?: string | null;
   summary?: string | null;
   context_snapshot?: Record<string, unknown> | null;
+  gate_collision_count?: number;
 }
 
 export interface WorkflowRecordArtifact {
@@ -262,6 +290,7 @@ export interface WorkflowRun {
   step_states: WorkflowStepState[];
   record_artifacts: WorkflowRecordArtifact[];
   execution_log: LifecycleExecutionEntry[];
+  port_outputs?: Record<string, string>;
   created_at: string;
   updated_at: string;
   last_activity_at: string;

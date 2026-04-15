@@ -13,7 +13,8 @@
         "injection": {
           "instructions": [
             "当前处于 Research 阶段（agent_node），负责需求分析、技术调研和方案设计。",
-            "完成后必须调用 advance_lifecycle_node 工具声明完成，并附上调研摘要。"
+            "完成后必须调用 advance_lifecycle_node 工具声明完成，并附上调研摘要。",
+            "你需要将调研报告写入 lifecycle://artifacts/research_report 路径。"
           ]
         },
         "hook_rules": [
@@ -28,7 +29,14 @@
         "completion": {
           "default_artifact_type": "phase_note",
           "default_artifact_title": "调研记录"
-        }
+        },
+        "output_ports": [
+          {
+            "key": "research_report",
+            "description": "调研报告——包含需求分析、技术选型和方案设计",
+            "gate_strategy": "existence"
+          }
+        ]
       }
     },
     {
@@ -39,7 +47,8 @@
         "injection": {
           "instructions": [
             "当前处于 Implement 阶段（agent_node），基于前一阶段的调研结论执行编码实现。",
-            "完成后必须调用 advance_lifecycle_node 工具声明完成，并附上实现摘要。"
+            "完成后必须调用 advance_lifecycle_node 工具声明完成，并附上实现摘要。",
+            "你需要将实现报告写入 lifecycle://artifacts/implementation_report 路径。"
           ]
         },
         "hook_rules": [
@@ -54,7 +63,21 @@
         "completion": {
           "default_artifact_type": "phase_note",
           "default_artifact_title": "实现记录"
-        }
+        },
+        "input_ports": [
+          {
+            "key": "research_input",
+            "description": "来自 Research 阶段的调研报告",
+            "context_strategy": "full"
+          }
+        ],
+        "output_ports": [
+          {
+            "key": "implementation_report",
+            "description": "实现报告——包含实现方案、变更摘要和测试结果",
+            "gate_strategy": "existence"
+          }
+        ]
       }
     }
   ],
@@ -74,8 +97,15 @@
         "key": "implement",
         "description": "基于调研结论执行实现（独立 Agent Session）",
         "workflow_key": "trellis_dag_task_implement",
-        "node_type": "agent_node",
-        "depends_on": ["research"]
+        "node_type": "agent_node"
+      }
+    ],
+    "edges": [
+      {
+        "from_node": "research",
+        "from_port": "research_report",
+        "to_node": "implement",
+        "to_port": "research_input"
       }
     ]
   }

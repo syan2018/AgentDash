@@ -116,9 +116,10 @@
   - Active node 脉动动画
 - 运行时状态叠加为只读，不影响编辑操作
 
-### R6: 从线性 Lifecycle 迁移
+### R6: 便捷线性 Edge 生成
 
-- 对于没有 edges 字段的旧线性 lifecycle，自动生成 node-level edges（按 steps 数组顺序串联）
+- 项目未上线，不存在旧数据迁移需求。`depends_on` 已直接移除，edges 是唯一拓扑数据源
+- 编辑器提供 "按当前 steps 顺序自动生成线性 edges" 的便捷操作（类似 auto-wire）
 - Auto-layout 将线性 topology 渲染为从左到右的链式布局
 - 用户可在此基础上添加并行分支、调整拓扑
 
@@ -132,7 +133,7 @@
 - Input port 可选择上下文构建策略，Custom 策略可编辑 prompt 模板
 - 保存操作正确持久化到后端 LifecycleDefinition + WorkflowDefinition
 - 运行时状态正确叠加到 DAG 图上
-- 旧线性 lifecycle 可自动迁移为 DAG 图布局
+- 编辑器支持按 steps 顺序自动生成线性 edges 的便捷操作
 - Auto-layout 功能正常（dagre 算法）
 - 环检测和 edge 验证规则正确执行
 
@@ -163,7 +164,7 @@
 - Draft 状态管理 + 保存/重置
 - 后端 API 调用
 - 运行时状态叠加渲染
-- 线性 lifecycle 自动迁移
+- 线性 edge 自动生成便捷操作
 
 ## Technical Notes
 

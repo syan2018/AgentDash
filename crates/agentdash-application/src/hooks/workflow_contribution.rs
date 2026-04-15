@@ -94,7 +94,6 @@ mod tests {
             description: "实现并记录结果".to_string(),
             workflow_key: Some(definition.key.clone()),
             node_type: Default::default(),
-            depends_on: Vec::new(),
         };
         let lifecycle = LifecycleDefinition::new(
             "trellis_dev_task",
@@ -104,6 +103,7 @@ mod tests {
             WorkflowDefinitionSource::BuiltinSeed,
             "implement",
             vec![active_step.clone()],
+            vec![],
         )
         .expect("lifecycle definition should build");
         let project_id = Uuid::new_v4();
@@ -113,6 +113,7 @@ mod tests {
             "sess-test-contribution",
             &lifecycle.steps,
             &lifecycle.entry_step_key,
+            &lifecycle.edges,
         )
         .expect("workflow run should build");
         run.activate_step("implement")

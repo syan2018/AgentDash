@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleStepDefinition, WorkflowBindingKind, WorkflowBindingRole,
-    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    LifecycleDefinition, LifecycleEdge, LifecycleStepDefinition, WorkflowBindingKind,
+    WorkflowBindingRole, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
 };
 
 pub const TRELLIS_DEV_PROJECT_TEMPLATE_KEY: &str = "trellis_dev_project";
@@ -39,6 +39,8 @@ pub struct BuiltinLifecycleTemplate {
     pub entry_step_key: String,
     #[serde(default)]
     pub steps: Vec<LifecycleStepDefinition>,
+    #[serde(default)]
+    pub edges: Vec<LifecycleEdge>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +76,7 @@ impl BuiltinWorkflowTemplateBundle {
             WorkflowDefinitionSource::BuiltinSeed,
             self.lifecycle.entry_step_key.clone(),
             self.lifecycle.steps.clone(),
+            self.lifecycle.edges.clone(),
         )?;
         lifecycle.recommended_binding_roles = self.recommended_binding_roles.clone();
 

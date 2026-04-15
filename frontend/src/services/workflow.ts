@@ -188,7 +188,6 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
     description: requireStringField(value, "description"),
     workflow_key: typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
     node_type: (value.node_type as LifecycleStepDefinition["node_type"]) ?? undefined,
-    depends_on: Array.isArray(value.depends_on) ? (value.depends_on as string[]) : undefined,
   };
 }
 

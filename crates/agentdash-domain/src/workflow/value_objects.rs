@@ -260,6 +260,10 @@ pub struct WorkflowContract {
     pub constraints: Vec<WorkflowConstraintSpec>,
     #[serde(default)]
     pub completion: WorkflowCompletionSpec,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_ports: Vec<OutputPortDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_ports: Vec<InputPortDefinition>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -286,6 +290,68 @@ impl Default for LifecycleNodeType {
     }
 }
 
+/// 门禁策略：定义 output port 交付检查的严格程度。
+/// 实际检查逻辑由对应的 Rhai Hook Preset 实现。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GateStrategy {
+    Existence,
+    Schema,
+    LlmJudge,
+}
+
+impl Default for GateStrategy {
+    fn default() -> Self {
+        Self::Existence
+    }
+}
+
+/// Input port 上下文构建策略：控制前驱 output artifact 如何注入后继 session。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextStrategy {
+    Full,
+    Summary,
+    MetadataOnly,
+    Custom,
+}
+
+impl Default for ContextStrategy {
+    fn default() -> Self {
+        Self::Full
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct OutputPortDefinition {
+    pub key: String,
+    pub description: String,
+    #[serde(default)]
+    pub gate_strategy: GateStrategy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_params: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct InputPortDefinition {
+    pub key: String,
+    pub description: String,
+    #[serde(default)]
+    pub context_strategy: ContextStrategy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_template: Option<String>,
+}
+
+/// Port 级别的 DAG 边——唯一的拓扑数据源。
+/// node 级别依赖通过 `node_deps_from_edges()` 运行时计算。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct LifecycleEdge {
+    pub from_node: String,
+    pub from_port: String,
+    pub to_node: String,
+    pub to_port: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct LifecycleStepDefinition {
     pub key: String,
@@ -293,14 +359,8 @@ pub struct LifecycleStepDefinition {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_key: Option<String>,
-    /// Node 类型：AgentNode 或 PhaseNode（默认 PhaseNode，向后兼容已有定义）
     #[serde(default)]
     pub node_type: LifecycleNodeType,
-    /// DAG 依赖：当前 node 的前驱 node key 列表。
-    /// 空列表表示无依赖（入口 node 或无约束 node）。
-    /// 线性 lifecycle 中此字段为空，推进仍按数组顺序（向后兼容）。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -330,7 +390,6 @@ pub enum LifecycleStepExecutionStatus {
 pub struct LifecycleStepState {
     pub step_key: String,
     pub status: LifecycleStepExecutionStatus,
-    /// 该 node 创建的 agent session ID（仅 AgentNode 有值）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -341,6 +400,8 @@ pub struct LifecycleStepState {
     pub summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<Value>,
+    #[serde(default)]
+    pub gate_collision_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -424,6 +485,7 @@ pub fn validate_lifecycle_definition(
     name: &str,
     entry_step_key: &str,
     steps: &[LifecycleStepDefinition],
+    edges: &[LifecycleEdge],
 ) -> Result<(), String> {
     validate_identity("lifecycle.key", key)?;
     validate_non_empty("lifecycle.name", name)?;
@@ -457,10 +519,8 @@ pub fn validate_lifecycle_definition(
         ));
     }
 
-    // DAG 拓扑校验：depends_on 引用有效性 + 环检测
-    let has_dag_deps = steps.iter().any(|s| !s.depends_on.is_empty());
-    if has_dag_deps {
-        validate_dag_topology(steps, entry_step_key)?;
+    if !edges.is_empty() {
+        validate_edge_topology(steps, edges, entry_step_key)?;
     }
 
     Ok(())
@@ -530,55 +590,111 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
         }
     }
 
+    let mut seen_output_port_keys = std::collections::BTreeSet::new();
+    for (index, port) in contract.output_ports.iter().enumerate() {
+        validate_identity(
+            &format!("{field_path}.output_ports[{index}].key"),
+            &port.key,
+        )?;
+        validate_non_empty(
+            &format!("{field_path}.output_ports[{index}].description"),
+            &port.description,
+        )?;
+        if !seen_output_port_keys.insert(port.key.clone()) {
+            return Err(format!(
+                "{field_path}.output_ports[{index}].key 重复: {}",
+                port.key
+            ));
+        }
+    }
+
+    let mut seen_input_port_keys = std::collections::BTreeSet::new();
+    for (index, port) in contract.input_ports.iter().enumerate() {
+        validate_identity(
+            &format!("{field_path}.input_ports[{index}].key"),
+            &port.key,
+        )?;
+        validate_non_empty(
+            &format!("{field_path}.input_ports[{index}].description"),
+            &port.description,
+        )?;
+        if !seen_input_port_keys.insert(port.key.clone()) {
+            return Err(format!(
+                "{field_path}.input_ports[{index}].key 重复: {}",
+                port.key
+            ));
+        }
+    }
+
     Ok(())
 }
 
-/// DAG 拓扑校验：
-/// 1. depends_on 中引用的 key 必须存在于 steps 中
-/// 2. 入口 node 不应有 depends_on
-/// 3. 不得存在循环依赖
-fn validate_dag_topology(
+/// 从 port-level edges 计算 node 级别依赖关系。
+/// 返回 `{ to_node -> Set<from_node> }`，多条连同一对 node 的 edge 自动去重。
+pub fn node_deps_from_edges(edges: &[LifecycleEdge]) -> std::collections::HashMap<&str, std::collections::BTreeSet<&str>> {
+    let mut deps: std::collections::HashMap<&str, std::collections::BTreeSet<&str>> =
+        std::collections::HashMap::new();
+    for edge in edges {
+        deps.entry(edge.to_node.as_str())
+            .or_default()
+            .insert(edge.from_node.as_str());
+    }
+    deps
+}
+
+/// Edge-based DAG 拓扑校验：
+/// 1. edge 引用的 node key 必须存在于 steps 中
+/// 2. 不允许自连接
+/// 3. entry node 不应有入边
+/// 4. 不得存在循环依赖（Kahn's algorithm，node 级别去重）
+fn validate_edge_topology(
     steps: &[LifecycleStepDefinition],
+    edges: &[LifecycleEdge],
     entry_step_key: &str,
 ) -> Result<(), String> {
     let step_keys: std::collections::BTreeSet<&str> =
         steps.iter().map(|s| s.key.as_str()).collect();
 
-    // 校验 depends_on 引用有效性
-    for step in steps {
-        for dep in &step.depends_on {
-            if !step_keys.contains(dep.as_str()) {
-                return Err(format!(
-                    "lifecycle.steps[{}].depends_on 引用了不存在的 step: {dep}",
-                    step.key
-                ));
-            }
-            if dep == &step.key {
-                return Err(format!(
-                    "lifecycle.steps[{}].depends_on 不能依赖自身",
-                    step.key
-                ));
-            }
-        }
-    }
-
-    // 入口 node 不应有 depends_on
-    if let Some(entry) = steps.iter().find(|s| s.key == entry_step_key) {
-        if !entry.depends_on.is_empty() {
+    for (i, edge) in edges.iter().enumerate() {
+        if !step_keys.contains(edge.from_node.as_str()) {
             return Err(format!(
-                "entry_step_key `{entry_step_key}` 不应有 depends_on 依赖"
+                "lifecycle.edges[{i}].from_node 引用了不存在的 step: {}",
+                edge.from_node
+            ));
+        }
+        if !step_keys.contains(edge.to_node.as_str()) {
+            return Err(format!(
+                "lifecycle.edges[{i}].to_node 引用了不存在的 step: {}",
+                edge.to_node
+            ));
+        }
+        if edge.from_node == edge.to_node {
+            return Err(format!(
+                "lifecycle.edges[{i}] 不能自连接: {}",
+                edge.from_node
             ));
         }
     }
 
-    // 环检测：拓扑排序（Kahn's algorithm）
+    let node_deps = node_deps_from_edges(edges);
+
+    if node_deps.contains_key(entry_step_key) {
+        return Err(format!(
+            "entry_step_key `{entry_step_key}` 不应有入边"
+        ));
+    }
+
+    // Kahn's algorithm — node 级别
     let mut in_degree: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    let mut adj: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    let mut adj: std::collections::HashMap<&str, std::collections::BTreeSet<&str>> =
+        std::collections::HashMap::new();
     for step in steps {
         in_degree.entry(step.key.as_str()).or_insert(0);
-        for dep in &step.depends_on {
-            adj.entry(dep.as_str()).or_default().push(step.key.as_str());
-            *in_degree.entry(step.key.as_str()).or_insert(0) += 1;
+    }
+    for (to_node, from_nodes) in &node_deps {
+        *in_degree.entry(to_node).or_insert(0) += from_nodes.len();
+        for from_node in from_nodes {
+            adj.entry(from_node).or_default().insert(to_node);
         }
     }
 
@@ -678,12 +794,87 @@ mod tests {
             description: String::new(),
             workflow_key: Some("wf_start".to_string()),
             node_type: Default::default(),
-            depends_on: Vec::new(),
         }];
 
         let error =
-            validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps).expect_err("fail");
+            validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
+                .expect_err("fail");
         assert!(error.contains("entry_step_key"));
+    }
+
+    #[test]
+    fn validate_edge_topology_detects_cycle() {
+        let steps = vec![
+            LifecycleStepDefinition {
+                key: "a".to_string(),
+                description: String::new(),
+                workflow_key: None,
+                node_type: Default::default(),
+            },
+            LifecycleStepDefinition {
+                key: "b".to_string(),
+                description: String::new(),
+                workflow_key: None,
+                node_type: Default::default(),
+            },
+            LifecycleStepDefinition {
+                key: "c".to_string(),
+                description: String::new(),
+                workflow_key: None,
+                node_type: Default::default(),
+            },
+        ];
+        // a → b → c → b（b-c 形成环，a 是入口无入边）
+        let edges = vec![
+            LifecycleEdge {
+                from_node: "a".into(),
+                from_port: "out".into(),
+                to_node: "b".into(),
+                to_port: "in".into(),
+            },
+            LifecycleEdge {
+                from_node: "b".into(),
+                from_port: "out".into(),
+                to_node: "c".into(),
+                to_port: "in".into(),
+            },
+            LifecycleEdge {
+                from_node: "c".into(),
+                from_port: "out".into(),
+                to_node: "b".into(),
+                to_port: "in2".into(),
+            },
+        ];
+        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
+            .expect_err("should detect cycle");
+        assert!(err.contains("循环"));
+    }
+
+    #[test]
+    fn validate_edge_topology_rejects_entry_with_incoming() {
+        let steps = vec![
+            LifecycleStepDefinition {
+                key: "a".to_string(),
+                description: String::new(),
+                workflow_key: None,
+                node_type: Default::default(),
+            },
+            LifecycleStepDefinition {
+                key: "b".to_string(),
+                description: String::new(),
+                workflow_key: None,
+                node_type: Default::default(),
+            },
+        ];
+        let edges = vec![LifecycleEdge {
+            from_node: "b".into(),
+            from_port: "out".into(),
+            to_node: "a".into(),
+            to_port: "in".into(),
+        }];
+        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
+            .expect_err("entry should not have incoming");
+        assert!(err.contains("入边"));
     }
 
     #[test]

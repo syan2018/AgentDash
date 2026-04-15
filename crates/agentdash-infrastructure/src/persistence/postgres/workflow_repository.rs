@@ -29,7 +29,8 @@ impl PostgresWorkflowRepository {
             id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '', binding_kind TEXT NOT NULL, recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
             source TEXT NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL,
-            entry_step_key TEXT NOT NULL, steps TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            entry_step_key TEXT NOT NULL, steps TEXT NOT NULL, edges TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         )"#)
         .execute(&self.pool).await.map_err(db_err)?;
 
@@ -50,6 +51,7 @@ impl PostgresWorkflowRepository {
             session_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
             current_step_key TEXT, step_states TEXT NOT NULL,
             record_artifacts TEXT NOT NULL, execution_log TEXT NOT NULL DEFAULT '[]',
+            port_outputs TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             last_activity_at TEXT NOT NULL
         )"#,
@@ -140,31 +142,32 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
 #[async_trait::async_trait]
 impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
-        sqlx::query("INSERT INTO lifecycle_definitions (id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
+        sqlx::query("INSERT INTO lifecycle_definitions (id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,edges,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
             .bind(lifecycle.id.to_string()).bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
             .bind(serde_json::to_string(&lifecycle.binding_kind)?)
             .bind(serde_json::to_string(&lifecycle.recommended_binding_roles)?)
             .bind(serde_json::to_string(&lifecycle.source)?).bind(serde_json::to_string(&lifecycle.status)?)
             .bind(lifecycle.version).bind(&lifecycle.entry_step_key).bind(serde_json::to_string(&lifecycle.steps)?)
+            .bind(serde_json::to_string(&lifecycle.edges)?)
             .bind(lifecycle.created_at.to_rfc3339()).bind(lifecycle.updated_at.to_rfc3339())
             .execute(&self.pool).await.map_err(db_err)?;
         Ok(())
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at FROM lifecycle_definitions WHERE id = $1")
+        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,edges,created_at,updated_at FROM lifecycle_definitions WHERE id = $1")
             .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(db_err)?
             .map(TryInto::try_into).transpose()
     }
 
     async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at FROM lifecycle_definitions WHERE key = $1")
+        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,edges,created_at,updated_at FROM lifecycle_definitions WHERE key = $1")
             .bind(key).fetch_optional(&self.pool).await.map_err(db_err)?
             .map(TryInto::try_into).transpose()
     }
 
     async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at FROM lifecycle_definitions ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,edges,created_at,updated_at FROM lifecycle_definitions ORDER BY created_at DESC")
             .fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
@@ -173,7 +176,7 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
         &self,
         status: WorkflowDefinitionStatus,
     ) -> Result<Vec<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at FROM lifecycle_definitions WHERE status = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,edges,created_at,updated_at FROM lifecycle_definitions WHERE status = $1 ORDER BY created_at DESC")
             .bind(serde_json::to_string(&status)?).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
@@ -182,18 +185,19 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
         &self,
         binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,created_at,updated_at FROM lifecycle_definitions WHERE binding_kind = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleDefinitionRow>("SELECT id,key,name,description,binding_kind,recommended_binding_roles,source,status,version,entry_step_key,steps,edges,created_at,updated_at FROM lifecycle_definitions WHERE binding_kind = $1 ORDER BY created_at DESC")
             .bind(serde_json::to_string(&binding_kind)?).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_definitions SET key=$1,name=$2,description=$3,binding_kind=$4,recommended_binding_roles=$5,source=$6,status=$7,version=$8,entry_step_key=$9,steps=$10,updated_at=$11 WHERE id=$12")
+        let result = sqlx::query("UPDATE lifecycle_definitions SET key=$1,name=$2,description=$3,binding_kind=$4,recommended_binding_roles=$5,source=$6,status=$7,version=$8,entry_step_key=$9,steps=$10,edges=$11,updated_at=$12 WHERE id=$13")
             .bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
             .bind(serde_json::to_string(&lifecycle.binding_kind)?)
             .bind(serde_json::to_string(&lifecycle.recommended_binding_roles)?)
             .bind(serde_json::to_string(&lifecycle.source)?).bind(serde_json::to_string(&lifecycle.status)?)
             .bind(lifecycle.version).bind(&lifecycle.entry_step_key).bind(serde_json::to_string(&lifecycle.steps)?)
+            .bind(serde_json::to_string(&lifecycle.edges)?)
             .bind(chrono::Utc::now().to_rfc3339()).bind(lifecycle.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(
@@ -275,18 +279,19 @@ impl WorkflowAssignmentRepository for PostgresWorkflowRepository {
 #[async_trait::async_trait]
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
+        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
             .bind(run.id.to_string()).bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
             .bind(&run.session_id).bind(serde_json::to_string(&run.status)?)
             .bind(&run.current_step_key).bind(serde_json::to_string(&run.step_states)?)
             .bind(serde_json::to_string(&run.record_artifacts)?).bind(serde_json::to_string(&run.execution_log)?)
+            .bind(serde_json::to_string(&run.port_outputs)?)
             .bind(run.created_at.to_rfc3339()).bind(run.updated_at.to_rfc3339()).bind(run.last_activity_at.to_rfc3339())
             .execute(&self.pool).await.map_err(db_err)?;
         Ok(())
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE id = $1")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE id = $1")
             .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(db_err)?
             .map(TryInto::try_into).transpose()
     }
@@ -295,7 +300,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         &self,
         project_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE project_id = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE project_id = $1 ORDER BY created_at DESC")
             .bind(project_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
@@ -304,23 +309,23 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         &self,
         lifecycle_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE lifecycle_id = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE lifecycle_id = $1 ORDER BY created_at DESC")
             .bind(lifecycle_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE session_id = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE session_id = $1 ORDER BY created_at DESC")
             .bind(session_id).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,current_step_key=$5,step_states=$6,record_artifacts=$7,execution_log=$8,updated_at=$9,last_activity_at=$10 WHERE id=$11")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,current_step_key=$5,step_states=$6,record_artifacts=$7,execution_log=$8,port_outputs=$9,updated_at=$10,last_activity_at=$11 WHERE id=$12")
             .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(&run.session_id)
             .bind(serde_json::to_string(&run.status)?).bind(&run.current_step_key)
             .bind(serde_json::to_string(&run.step_states)?).bind(serde_json::to_string(&run.record_artifacts)?)
-            .bind(serde_json::to_string(&run.execution_log)?)
+            .bind(serde_json::to_string(&run.execution_log)?).bind(serde_json::to_string(&run.port_outputs)?)
             .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
@@ -407,6 +412,7 @@ struct LifecycleDefinitionRow {
     version: i32,
     entry_step_key: String,
     steps: String,
+    edges: String,
     created_at: String,
     updated_at: String,
 }
@@ -429,6 +435,7 @@ impl TryFrom<LifecycleDefinitionRow> for LifecycleDefinition {
             version: row.version,
             entry_step_key: row.entry_step_key,
             steps: serde_json::from_str(&row.steps)?,
+            edges: parse_json_column(&row.edges, "lifecycle_definitions.edges")?,
             created_at: parse_time(&row.created_at)?,
             updated_at: parse_time(&row.updated_at)?,
         })
@@ -474,6 +481,7 @@ struct LifecycleRunRow {
     step_states: String,
     record_artifacts: String,
     execution_log: String,
+    port_outputs: String,
     created_at: String,
     updated_at: String,
     last_activity_at: String,
@@ -506,6 +514,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             step_states,
             record_artifacts: serde_json::from_str(&row.record_artifacts)?,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
+            port_outputs: parse_json_column(&row.port_outputs, "lifecycle_runs.port_outputs")?,
             created_at: parse_time(&row.created_at)?,
             updated_at: parse_time(&row.updated_at)?,
             last_activity_at: parse_time(&row.last_activity_at)?,

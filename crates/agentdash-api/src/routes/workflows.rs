@@ -15,7 +15,7 @@ use agentdash_application::workflow::{
     WorkflowRecordArtifactDraft, build_builtin_workflow_bundle, list_builtin_workflow_templates,
 };
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
+    LifecycleDefinition, LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
     WorkflowAssignment, WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
     WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
     WorkflowRecordArtifactType,
@@ -113,6 +113,8 @@ pub struct CreateLifecycleDefinitionRequest {
     pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
+    #[serde(default)]
+    pub edges: Vec<LifecycleEdge>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,6 +137,8 @@ pub struct ValidateLifecycleDefinitionRequest {
     pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
+    #[serde(default)]
+    pub edges: Vec<LifecycleEdge>,
 }
 
 pub async fn list_workflows(
@@ -197,6 +201,7 @@ pub async fn create_lifecycle_definition(
         WorkflowDefinitionSource::UserAuthored,
         req.entry_step_key,
         req.steps,
+        req.edges,
     )
     .map_err(ApiError::BadRequest)?;
     definition.recommended_binding_roles = req.recommended_binding_roles;
@@ -681,6 +686,7 @@ pub async fn validate_lifecycle_definition(
         WorkflowDefinitionSource::UserAuthored,
         req.entry_step_key,
         req.steps,
+        req.edges,
     ) {
         Ok(mut definition) => {
             definition.recommended_binding_roles = req.recommended_binding_roles;

@@ -1,8 +1,8 @@
 {
   "id": "lifecycle-vfs-typed-access",
   "name": "lifecycle-vfs-typed-access",
-  "title": "Lifecycle VFS 按类型访问语法扩展",
-  "description": "",
+  "title": "Lifecycle VFS 按类型访问 + 统一 Locator Resolver",
+  "description": "扩展 lifecycle_vfs nodes/ 路径族，新增 context_vfs provider，统一 context_bindings locator → VFS read 解析链路",
   "status": "planning",
   "dev_type": null,
   "scope": null,

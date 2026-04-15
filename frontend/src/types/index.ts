@@ -81,13 +81,6 @@ export const TOOL_CLUSTER_OPTIONS: ToolClusterOption[] = [
 
 export type SystemPromptMode = "append" | "override";
 
-export type CronSessionMode = "reuse" | "fresh";
-
-export interface AgentSchedulingConfig {
-  cron_schedule?: string | null;
-  cron_session_mode?: CronSessionMode;
-}
-
 export interface ProjectSchedulingConfig {
   stall_timeout_ms?: number | null;
 }

@@ -288,7 +288,6 @@ pub enum RelayMessage {
     },
 
     // ── MCP Relay 命令（云端 → 本机）──
-
     /// 列举本机 MCP server 提供的工具
     #[serde(rename = "command.mcp_list_tools")]
     CommandMcpListTools {
@@ -311,7 +310,6 @@ pub enum RelayMessage {
     },
 
     // ── MCP Relay 响应（本机 → 云端）──
-
     #[serde(rename = "response.mcp_list_tools")]
     ResponseMcpListTools {
         id: String,

@@ -227,10 +227,8 @@ impl SessionHub {
             discovered_skills.extend(plugin_result.skills);
         }
 
-        let session_capabilities = build_session_baseline_capabilities(
-            hook_session.as_deref(),
-            &discovered_skills,
-        );
+        let session_capabilities =
+            build_session_baseline_capabilities(hook_session.as_deref(), &discovered_skills);
 
         let context = ExecutionContext {
             turn_id: turn_id.clone(),

@@ -7,6 +7,7 @@ use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
@@ -42,4 +43,6 @@ pub struct RepositorySet {
     pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub routine_repo: Arc<dyn RoutineRepository>,
+    pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
 }

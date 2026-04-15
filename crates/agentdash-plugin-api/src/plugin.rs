@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
+use agentdash_spi::RoutineTriggerProvider;
 use agentdash_spi::mount::MountProvider;
 use agentdash_spi::{AddressSpaceDiscoveryProvider, SourceResolver};
 
@@ -91,6 +92,13 @@ pub trait AgentDashPlugin: Send + Sync {
     /// 使 `ExternalService` 类型的 context container 能通过标准 mount 链路
     /// 完成 read / write / list / search 操作。
     fn mount_providers(&self) -> Vec<Arc<dyn MountProvider>> {
+        vec![]
+    }
+
+    /// 注册 Routine 触发器提供者（自定义事件源）。
+    ///
+    /// 宿主会在运行时启动阶段完成 `provider_key` 冲突检测。
+    fn routine_trigger_providers(&self) -> Vec<Arc<dyn RoutineTriggerProvider>> {
         vec![]
     }
 

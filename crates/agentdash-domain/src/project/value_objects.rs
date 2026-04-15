@@ -25,8 +25,7 @@ pub struct ProjectConfig {
 ///
 /// 所有字段均为 Option，未设置时使用系统默认值。
 /// 这些配置由平台强制执行，与 Agent 行为偏好解耦。
-/// Agent 级调度配置（如 cron_schedule）存储在 Agent.base_config /
-/// ProjectAgentLink.config_override 中，参见 `AgentSchedulingConfig`。
+/// Agent 级调度配置现已迁移为 Routine 实体，参见 `agentdash_domain::routine::Routine`。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SchedulingConfig {
     /// Session 无活动超时（毫秒）。超时后平台自动取消 session。

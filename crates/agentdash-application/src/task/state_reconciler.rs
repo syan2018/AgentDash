@@ -206,12 +206,10 @@ pub async fn reconcile_running_tasks_on_boot(
                 continue;
             }
 
-            let session_id = super::find_task_execution_session_id(
-                session_binding_repo.as_ref(),
-                task.id,
-            )
-            .await
-            .unwrap_or(None);
+            let session_id =
+                super::find_task_execution_session_id(session_binding_repo.as_ref(), task.id)
+                    .await
+                    .unwrap_or(None);
 
             let execution_state = match session_id.as_deref() {
                 None => TaskSessionState::Interrupted {
@@ -224,9 +222,12 @@ pub async fn reconcile_running_tasks_on_boot(
                     .map_err(TaskStateReconcileError::SessionState)?,
             };
 
-            let Some(plan) =
-                plan_for_running_task(&task, session_id.as_deref(), execution_state, restart_tracker)
-            else {
+            let Some(plan) = plan_for_running_task(
+                &task,
+                session_id.as_deref(),
+                execution_state,
+                restart_tracker,
+            ) else {
                 continue;
             };
 

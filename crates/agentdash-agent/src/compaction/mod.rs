@@ -123,8 +123,7 @@ fn find_cut_point(messages: &[AgentMessage], start_index: usize, keep_last_n: us
                 // 需要把 Assistant 和它的 ToolResults 一起保留
                 cut -= 1;
                 // 继续向前找到这组 Assistant+ToolResults 的起始
-                while cut > start_index
-                    && matches!(messages[cut], AgentMessage::ToolResult { .. })
+                while cut > start_index && matches!(messages[cut], AgentMessage::ToolResult { .. })
                 {
                     cut -= 1;
                 }
@@ -257,9 +256,7 @@ async fn generate_summary(
 
     let (system_prompt, user_content) = if let Some(prev) = previous_summary {
         let system = custom_prompt.unwrap_or(UPDATE_SUMMARIZATION_PROMPT);
-        let user = format!(
-            "## 已有摘要\n\n{prev}\n\n## 新增对话历史\n\n{conversation_text}"
-        );
+        let user = format!("## 已有摘要\n\n{prev}\n\n## 新增对话历史\n\n{conversation_text}");
         (system, user)
     } else {
         let system = custom_prompt.unwrap_or(SUMMARIZATION_SYSTEM_PROMPT);

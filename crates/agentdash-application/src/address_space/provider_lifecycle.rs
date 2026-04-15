@@ -190,9 +190,8 @@ fn artifacts_by_type<'a>(
     node_key: &str,
     type_str: &str,
 ) -> Result<Vec<&'a WorkflowRecordArtifact>, MountError> {
-    let artifact_type = parse_artifact_type(type_str).ok_or_else(|| {
-        MountError::NotFound(format!("未知 artifact_type: {type_str}"))
-    })?;
+    let artifact_type = parse_artifact_type(type_str)
+        .ok_or_else(|| MountError::NotFound(format!("未知 artifact_type: {type_str}")))?;
     let mut matched: Vec<&WorkflowRecordArtifact> = run
         .record_artifacts
         .iter()
@@ -279,9 +278,7 @@ impl MountProvider for LifecycleMountProvider {
             ["nodes", key, "artifacts", "by-type", type_str] => {
                 let matched = artifacts_by_type(&active, key, type_str)?;
                 let latest = matched.first().ok_or_else(|| {
-                    MountError::NotFound(format!(
-                        "node `{key}` 无 `{type_str}` 类型 artifact"
-                    ))
+                    MountError::NotFound(format!("node `{key}` 无 `{type_str}` 类型 artifact"))
                 })?;
                 latest.content.clone()
             }
@@ -297,9 +294,7 @@ impl MountProvider for LifecycleMountProvider {
                     .iter()
                     .find(|a| a.id == aid && a.step_key == *key)
                     .ok_or_else(|| {
-                        MountError::NotFound(format!(
-                            "node `{key}` 下 artifact 不存在: {aid}"
-                        ))
+                        MountError::NotFound(format!("node `{key}` 下 artifact 不存在: {aid}"))
                     })?;
                 art.content.clone()
             }

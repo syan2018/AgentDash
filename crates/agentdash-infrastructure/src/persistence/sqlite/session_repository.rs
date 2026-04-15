@@ -64,12 +64,16 @@ impl SqliteSessionRepository {
         .map_err(sqlx_to_io)?;
 
         // 为已有表补列（SQLite 不支持 ADD COLUMN IF NOT EXISTS，忽略 duplicate 错误）
-        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN bootstrap_state TEXT NOT NULL DEFAULT 'plain'")
-            .execute(&self.pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT 'auto'")
-            .execute(&self.pool)
-            .await;
+        let _ = sqlx::query(
+            "ALTER TABLE sessions ADD COLUMN bootstrap_state TEXT NOT NULL DEFAULT 'plain'",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT 'auto'",
+        )
+        .execute(&self.pool)
+        .await;
 
         Ok(())
     }

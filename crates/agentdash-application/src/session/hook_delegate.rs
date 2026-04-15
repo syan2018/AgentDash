@@ -90,10 +90,9 @@ impl HookRuntimeDelegate {
                 usage: Some(usage),
                 stop_reason,
                 ..
-            } if !matches!(
-                stop_reason,
-                Some(StopReason::Error | StopReason::Aborted)
-            ) => Some(usage.clone()),
+            } if !matches!(stop_reason, Some(StopReason::Error | StopReason::Aborted)) => {
+                Some(usage.clone())
+            }
             _ => None,
         });
 
@@ -202,17 +201,13 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 );
                 Some(CompactionParams {
                     keep_last_n: compaction.keep_last_n.unwrap_or(default_keep_last_n),
-                    reserve_tokens: compaction
-                        .reserve_tokens
-                        .unwrap_or(default_reserve_tokens),
+                    reserve_tokens: compaction.reserve_tokens.unwrap_or(default_reserve_tokens),
                     custom_summary: compaction.custom_summary.clone(),
                     custom_prompt: compaction.custom_prompt.clone(),
                     trigger_stats: CompactionTriggerStats {
                         input_tokens: last_usage.last_input_tokens,
                         context_window,
-                        reserve_tokens: compaction
-                            .reserve_tokens
-                            .unwrap_or(default_reserve_tokens),
+                        reserve_tokens: compaction.reserve_tokens.unwrap_or(default_reserve_tokens),
                     },
                 })
             }
@@ -1365,11 +1360,7 @@ mod tests {
             .after_compaction(
                 CompactionResult {
                     messages: vec![AgentMessage::compaction_summary("summary body", 48_000, 6)],
-                    summary_message: AgentMessage::compaction_summary(
-                        "summary body",
-                        48_000,
-                        6,
-                    ),
+                    summary_message: AgentMessage::compaction_summary("summary body", 48_000, 6),
                     trigger_stats: agentdash_spi::CompactionTriggerStats {
                         input_tokens: 48_000,
                         context_window: 64_000,

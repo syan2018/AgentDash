@@ -67,8 +67,7 @@ impl SessionHub {
             .await?;
 
         if let Some(meta) = updated {
-            self.broadcast_session_meta_updated(session_id, &meta)
-                .await;
+            self.broadcast_session_meta_updated(session_id, &meta).await;
         }
         Ok(())
     }
@@ -98,8 +97,12 @@ impl SessionHub {
         session_id: &str,
         meta: &super::types::SessionMeta,
     ) {
-        use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
-        use agentdash_acp_meta::{AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, merge_agentdash_meta};
+        use agent_client_protocol::{
+            SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
+        };
+        use agentdash_acp_meta::{
+            AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, merge_agentdash_meta,
+        };
 
         let source = AgentDashSourceV1::new("agentdash-server", "system");
         let mut event = AgentDashEventV1::new("session_meta_updated");

@@ -16,6 +16,7 @@ pub use apply_patch::{
     ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_fs,
     apply_patch_to_inline_files, apply_patch_to_target, parse_patch as parse_patch_text,
 };
+pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     SessionMountTarget, append_canvas_mounts, build_canvas_mount, build_canvas_mount_id,
@@ -33,7 +34,6 @@ pub use provider::{
     MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch, SearchQuery,
     SearchResult,
 };
-pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use provider_canvas::CanvasFsMountProvider;
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;

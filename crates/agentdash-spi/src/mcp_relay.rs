@@ -28,10 +28,7 @@ pub struct RelayMcpCallResult {
 #[async_trait]
 pub trait McpRelayProvider: Send + Sync {
     /// 列出指定 server 的 MCP 工具（通过 relay 信道）
-    async fn list_relay_tools(
-        &self,
-        requested_servers: &[String],
-    ) -> Vec<RelayMcpToolInfo>;
+    async fn list_relay_tools(&self, requested_servers: &[String]) -> Vec<RelayMcpToolInfo>;
 
     /// 调用指定 MCP server 上的工具
     async fn call_relay_tool(

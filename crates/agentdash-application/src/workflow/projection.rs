@@ -1,7 +1,7 @@
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleStepDefinition, WorkflowBindingKind, WorkflowDefinition,
-    WorkflowDefinitionRepository, build_effective_contract,
+    LifecycleStepDefinition, WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
+    build_effective_contract,
 };
 use serde::Serialize;
 use uuid::Uuid;

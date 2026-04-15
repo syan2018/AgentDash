@@ -8,6 +8,7 @@ pub mod context_source;
 pub mod identity;
 pub mod llm_provider;
 pub mod project;
+pub mod routine;
 pub mod session_binding;
 pub mod session_composition;
 pub mod settings;

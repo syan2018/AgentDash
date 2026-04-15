@@ -3,17 +3,14 @@
 use async_trait::async_trait;
 
 use agentdash_relay::RelayMessage;
-use agentdash_spi::mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
 use agentdash_spi::ConnectorError;
+use agentdash_spi::mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
 
 use super::registry::BackendRegistry;
 
 #[async_trait]
 impl McpRelayProvider for BackendRegistry {
-    async fn list_relay_tools(
-        &self,
-        requested_servers: &[String],
-    ) -> Vec<RelayMcpToolInfo> {
+    async fn list_relay_tools(&self, requested_servers: &[String]) -> Vec<RelayMcpToolInfo> {
         let mut result = Vec::new();
 
         for server_name in requested_servers {
@@ -36,11 +33,7 @@ impl McpRelayProvider for BackendRegistry {
             };
 
             match self
-                .send_command_with_timeout(
-                    &backend_id,
-                    cmd,
-                    std::time::Duration::from_secs(30),
-                )
+                .send_command_with_timeout(&backend_id, cmd, std::time::Duration::from_secs(30))
                 .await
             {
                 Ok(RelayMessage::ResponseMcpListTools {
@@ -110,11 +103,7 @@ impl McpRelayProvider for BackendRegistry {
         };
 
         let resp = self
-            .send_command_with_timeout(
-                &backend_id,
-                cmd,
-                std::time::Duration::from_secs(120),
-            )
+            .send_command_with_timeout(&backend_id, cmd, std::time::Duration::from_secs(120))
             .await
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 

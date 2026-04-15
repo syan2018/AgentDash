@@ -5,9 +5,8 @@ use crate::address_space::RelayAddressSpaceService;
 use crate::context::{
     BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
     StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
-    WorkflowContextBindingsContributor,
-    build_declared_source_warning_fragment, build_task_agent_context,
-    resolve_workspace_declared_sources,
+    WorkflowContextBindingsContributor, build_declared_source_warning_fragment,
+    build_task_agent_context, resolve_workspace_declared_sources,
 };
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpBinding;

@@ -397,10 +397,13 @@ impl LifecycleRun {
         if has_dag_deps {
             if self.active_node_keys.is_empty() {
                 // 检查是否所有 step 都完成
-                let all_done = self
-                    .step_states
-                    .iter()
-                    .all(|s| matches!(s.status, LifecycleStepExecutionStatus::Completed | LifecycleStepExecutionStatus::Skipped));
+                let all_done = self.step_states.iter().all(|s| {
+                    matches!(
+                        s.status,
+                        LifecycleStepExecutionStatus::Completed
+                            | LifecycleStepExecutionStatus::Skipped
+                    )
+                });
                 if all_done {
                     self.current_step_key = None;
                     self.status = LifecycleRunStatus::Completed;
@@ -448,10 +451,9 @@ impl LifecycleRun {
                 continue;
             }
             // 检查当前状态是否为 Pending
-            let is_pending = self
-                .step_states
-                .iter()
-                .any(|s| s.step_key == step_def.key && s.status == LifecycleStepExecutionStatus::Pending);
+            let is_pending = self.step_states.iter().any(|s| {
+                s.step_key == step_def.key && s.status == LifecycleStepExecutionStatus::Pending
+            });
             if is_pending {
                 newly_ready.push(step_def.key.clone());
             }

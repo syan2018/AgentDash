@@ -371,7 +371,8 @@ pub async fn list_project_sessions(
                 .as_ref()
                 .map(|c| c.parent_session_id.clone());
 
-            let (agent_key, agent_display_name) = resolve_agent_info(&pb.binding, meta, &agent_display_map);
+            let (agent_key, agent_display_name) =
+                resolve_agent_info(&pb.binding, meta, &agent_display_map);
 
             let story_id = pb.story_id.map(|id| id.to_string());
 

@@ -8,6 +8,7 @@ license.workspace = true
 agentdash-agent-types = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }
+agentdash-mcp = { workspace = true }
 walkdir = "2.5"
 agent-client-protocol = { workspace = true }
 agentdash-acp-meta = { workspace = true }
@@ -30,6 +31,7 @@ globset = "0.4"
 serde_yaml = "0.9"
 sha2 = "0.10"
 cron = "0.15"
+tera = "1"
 
 [dev-dependencies]
 tempfile = "3.18"

@@ -32,8 +32,8 @@ pub use persistence::{
 };
 pub use post_turn_handler::PostTurnHandler;
 pub use prompt_address_space::local_workspace_address_space;
-pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use title_generator::SessionTitleGenerator;
+pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
     CompanionSessionContext, PromptSessionRequest, ResolvedPromptPayload, SessionBootstrapAction,
     SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,

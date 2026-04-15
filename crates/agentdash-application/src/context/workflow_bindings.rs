@@ -111,6 +111,7 @@ fn enum_tag<T: serde::Serialize>(value: &T) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::contributor::TaskExecutionPhase;
     use super::*;
     use crate::address_space::{ResolveBindingsOutput, ResolvedBinding};
     use crate::workflow::WorkflowBindingSummary;
@@ -118,7 +119,6 @@ mod tests {
         EffectiveSessionContract, LifecycleDefinition, LifecycleRun, LifecycleStepDefinition,
         WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionSource,
     };
-    use super::super::contributor::TaskExecutionPhase;
     use uuid::Uuid;
 
     fn sample_workflow() -> ActiveWorkflowProjection {
@@ -223,11 +223,15 @@ mod tests {
         });
 
         assert_eq!(contribution.context_fragments.len(), 2);
-        assert!(contribution.context_fragments[0]
-            .content
-            .contains("resolved_binding_count: 1"));
-        assert!(contribution.context_fragments[1]
-            .content
-            .contains("Workflow 总规则"));
+        assert!(
+            contribution.context_fragments[0]
+                .content
+                .contains("resolved_binding_count: 1")
+        );
+        assert!(
+            contribution.context_fragments[1]
+                .content
+                .contains("Workflow 总规则")
+        );
     }
 }

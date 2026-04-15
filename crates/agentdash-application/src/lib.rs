@@ -9,6 +9,7 @@ pub mod project;
 pub mod reconcile;
 pub mod relay_connector;
 pub mod repository_set;
+pub mod routine;
 pub mod runtime;
 pub mod runtime_bridge;
 pub mod scheduling;

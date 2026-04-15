@@ -847,11 +847,7 @@ impl CommandHandler {
         }
     }
 
-    async fn handle_mcp_close(
-        &self,
-        id: String,
-        payload: CommandMcpClosePayload,
-    ) -> RelayMessage {
+    async fn handle_mcp_close(&self, id: String, payload: CommandMcpClosePayload) -> RelayMessage {
         let mgr = match &self.mcp_manager {
             Some(m) => m,
             None => {

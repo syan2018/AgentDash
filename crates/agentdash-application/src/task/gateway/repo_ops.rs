@@ -296,11 +296,7 @@ pub async fn clear_task_session_binding(
         if let Some(binding) = &execution_binding {
             repos
                 .session_binding_repo
-                .delete_by_session_and_owner(
-                    &binding.session_id,
-                    SessionOwnerType::Task,
-                    task_id,
-                )
+                .delete_by_session_and_owner(&binding.session_id, SessionOwnerType::Task, task_id)
                 .await?;
         }
 

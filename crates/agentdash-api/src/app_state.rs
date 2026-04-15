@@ -21,6 +21,7 @@ use agentdash_application::context::{
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
 pub use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::TaskLifecycleService;
@@ -40,6 +41,7 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
     PostgresCanvasRepository, PostgresLlmProviderRepository, PostgresProjectRepository,
+    PostgresRoutineExecutionRepository, PostgresRoutineRepository,
     PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
     PostgresStateChangeRepository, PostgresStoryRepository, PostgresTaskRepository,
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
@@ -72,6 +74,8 @@ pub struct ServiceSet {
     pub runtime_reconciler: Arc<agentdash_application::reconcile::runtime::RuntimeReconciler>,
     /// Cron 调度器句柄 — 配置变更时调用 `notify_config_changed()` 触发热重载
     pub cron_scheduler: CronSchedulerHandle,
+    /// Routine 执行器 — 统一处理定时/Webhook/插件触发
+    pub routine_executor: Option<Arc<RoutineExecutor>>,
 }
 
 /// Task 执行运行时状态 — 并发锁与重试控制
@@ -145,6 +149,18 @@ impl AppState {
         let settings_repo = Arc::new(PostgresSettingsRepository::new(pool.clone()));
 
         let agent_repo = Arc::new(PostgresAgentRepository::new(pool.clone()));
+
+        let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
+        routine_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("routines 表初始化失败: {e}"))?;
+        let routine_execution_repo =
+            Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
+        routine_execution_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("routine_executions 表初始化失败: {e}"))?;
 
         let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
         llm_provider_repo
@@ -320,6 +336,8 @@ impl AppState {
             lifecycle_definition_repo: workflow_repo.clone(),
             workflow_assignment_repo: workflow_repo.clone(),
             lifecycle_run_repo: workflow_repo,
+            routine_repo: routine_repo.clone(),
+            routine_execution_repo: routine_execution_repo.clone(),
         };
 
         let runtime_reconciler = Arc::new(
@@ -362,6 +380,7 @@ impl AppState {
                 auth_session_service,
                 runtime_reconciler,
                 cron_scheduler: CronSchedulerHandle::new(),
+                routine_executor: None,
             },
             task_runtime: TaskRuntime {
                 lock_map,
@@ -374,24 +393,33 @@ impl AppState {
             auth_provider: plugin_registration.auth_provider,
         };
 
-        let state = Arc::new(state);
+        let mut state = Arc::new(state);
         // 后台 session stall 检测：定期扫描 running session，超时自动取消
         agentdash_application::session::stall_detector::spawn_stall_detector(
             state.services.session_hub.clone(),
             agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
         );
 
-        // 后台 cron 调度器：按 Agent 配置的 cron 表达式定期触发 session
+        // 后台 cron 调度器：从 Routine 表加载 scheduled 类型条目，按 cron 表达式触发
         {
-            let cron_target = Arc::new(crate::bootstrap::cron_target::AppCronTriggerTarget {
-                session_hub: state.services.session_hub.clone(),
-            });
+            let routine_executor = Arc::new(RoutineExecutor::new(
+                state.repos.clone(),
+                state.services.session_hub.clone(),
+                state.services.address_space_service.clone(),
+                state.services.connector.clone(),
+                state.config.mcp_base_url.clone(),
+            ));
+            // 将 executor 注入 ServiceSet（通过 Arc::get_mut 安全修改）
+            // SAFETY: 此时 state 的 Arc 引用计数为 1，get_mut 保证成功
+            if let Some(s) = Arc::get_mut(&mut state) {
+                s.services.routine_executor = Some(routine_executor.clone());
+            }
             let cron_repos = state.repos.clone();
             let cron_handle = state.services.cron_scheduler.clone();
             tokio::spawn(async move {
                 agentdash_application::scheduling::cron_scheduler::spawn_cron_scheduler(
                     cron_repos,
-                    cron_target,
+                    routine_executor,
                     &cron_handle,
                 )
                 .await;

@@ -128,11 +128,7 @@ impl McpClientManager {
             .into_iter()
             .map(|tool| McpToolInfoRelay {
                 name: tool.name.to_string(),
-                description: tool
-                    .description
-                    .as_deref()
-                    .unwrap_or("")
-                    .to_string(),
+                description: tool.description.as_deref().unwrap_or("").to_string(),
                 parameters_schema: serde_json::Value::Object((*tool.input_schema).clone()),
             })
             .collect())
@@ -248,9 +244,10 @@ impl McpClientManager {
         let transport = TokioChildProcess::new(cmd)
             .map_err(|e| anyhow::anyhow!("spawn stdio MCP 进程失败: {e}"))?;
 
-        let client = ().serve(transport)
-            .await
-            .map_err(|e| anyhow::anyhow!("stdio MCP 握手失败: {e}"))?;
+        let client =
+            ().serve(transport)
+                .await
+                .map_err(|e| anyhow::anyhow!("stdio MCP 握手失败: {e}"))?;
 
         Ok(client)
     }
@@ -269,9 +266,7 @@ impl McpClientManager {
             StreamableHttpClientTransportConfig::with_uri(url.to_string()),
         );
 
-        let client = ().serve(worker)
-            .await
-            .map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?;
+        let client = ().serve(worker).await.map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?;
 
         Ok(client)
     }

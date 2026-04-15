@@ -452,12 +452,9 @@ impl TaskLifecycleService {
         &self,
         task_id: Uuid,
     ) -> Result<Option<String>, TaskExecutionError> {
-        super::find_task_execution_session_id(
-            self.repos.session_binding_repo.as_ref(),
-            task_id,
-        )
-        .await
-        .map_err(map_domain_error)
+        super::find_task_execution_session_id(self.repos.session_binding_repo.as_ref(), task_id)
+            .await
+            .map_err(map_domain_error)
     }
 
     async fn bind_session_to_owner(

@@ -355,9 +355,7 @@ Paths may use `mount_id://path` to target a specific mount; paths without a pref
 
         // ── 7. Skills：从 session capabilities 渲染 ──
         if let Some(ref caps) = context.session_capabilities {
-            if let Some(skills_block) =
-                format_skills_from_capabilities(caps, tool_names)
-            {
+            if let Some(skills_block) = format_skills_from_capabilities(caps, tool_names) {
                 sections.push(skills_block);
             }
         }
@@ -2006,10 +2004,7 @@ mod tests {
             prompt.contains("Companion Agents"),
             "should render companion agents section"
         );
-        assert!(
-            prompt.contains("reviewer"),
-            "should include agent name"
-        );
+        assert!(prompt.contains("reviewer"), "should include agent name");
         assert!(
             prompt.contains("Code Reviewer"),
             "should include display name"

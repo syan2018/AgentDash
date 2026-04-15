@@ -43,6 +43,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 walkdir = "2.5"
 executors = { workspace = true }
 schemars = { workspace = true }
+bcrypt = "0.16"
 
 # Agent 类型（RuntimeToolProvider 使用 AgentTool trait）
 agentdash-agent = { workspace = true }

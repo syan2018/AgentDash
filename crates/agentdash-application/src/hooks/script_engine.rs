@@ -462,9 +462,9 @@ impl HookScriptEngine {
             })
             .unwrap_or_default();
 
-        let compaction = obj.get("compaction").and_then(|v| {
-            serde_json::from_value::<HookCompactionDecision>(v.clone()).ok()
-        });
+        let compaction = obj
+            .get("compaction")
+            .and_then(|v| serde_json::from_value::<HookCompactionDecision>(v.clone()).ok());
 
         Ok(ScriptDecision {
             block,

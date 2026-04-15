@@ -270,8 +270,8 @@ pub(super) fn apply_notification_projection(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::TitleSource;
+    use super::*;
     use agent_client_protocol::{SessionId, SessionInfoUpdate};
     use agentdash_acp_meta::{
         AgentDashEventV1, AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta,

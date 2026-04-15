@@ -7,28 +7,14 @@ use cron::Schedule;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::config::{AgentSchedulingConfig, CronSessionMode};
 use crate::repository_set::RepositorySet;
-
-/// Cron 调度器在触发时刻回调的目标 —— 由 API/Host 层实现具体的 session 创建 / prompt 发送。
-#[async_trait::async_trait]
-pub trait CronTriggerTarget: Send + Sync + 'static {
-    /// 唤醒指定 project 下的指定 agent。
-    /// 实现方负责：查找/创建 session、构建 prompt、处理重入（agent 仍在运行时跳过）。
-    async fn trigger_agent_session(
-        &self,
-        project_id: Uuid,
-        agent_id: Uuid,
-        session_mode: CronSessionMode,
-    ) -> Result<(), String>;
-}
+use crate::routine::RoutineExecutor;
+use agentdash_domain::routine::RoutineTriggerConfig;
 
 /// Cron 调度器的外部控制句柄。
 ///
-/// 当 Agent 的 cron 配置发生变更（新增 / 修改 / 删除 ProjectAgentLink 或 Agent base_config），
+/// 当 Routine 的 cron 配置发生变更（新增 / 修改 / 删除 Routine），
 /// 调用 `notify_config_changed()` 即可触发调度器重新加载条目并做 diff merge。
-///
-/// 句柄始终可用——即使调度器因初始无条目而未启动，通知也只是被丢弃（无 listener）。
 #[derive(Clone)]
 pub struct CronSchedulerHandle {
     notify: Arc<Notify>,
@@ -41,150 +27,118 @@ impl CronSchedulerHandle {
         }
     }
 
-    /// 通知调度器 Agent cron 配置已变更，触发异步重新加载。
+    /// 通知调度器 Routine cron 配置已变更，触发异步重新加载。
     pub fn notify_config_changed(&self) {
         self.notify.notify_one();
     }
 }
 
 struct CronEntry {
-    project_id: Uuid,
-    agent_id: Uuid,
+    routine_id: Uuid,
     /// 原始 cron 表达式，用于 reload 时比对是否变更
     cron_expr: String,
     schedule: Schedule,
-    session_mode: CronSessionMode,
     next_fire: chrono::DateTime<Utc>,
 }
 
-/// 用于 diff merge 的 entry 唯一键
-type EntryKey = (Uuid, Uuid);
+/// 用于 diff merge 的 entry 唯一键（以 routine_id 为唯一标识）
+type EntryKey = Uuid;
 
 fn entry_key(entry: &CronEntry) -> EntryKey {
-    (entry.project_id, entry.agent_id)
+    entry.routine_id
 }
 
 /// 启动 cron 调度器后台任务。
 ///
-/// 启动时扫描所有 Agent 配置，找出带 cron_schedule 的条目，
-/// 然后在后台 loop 中按 cron 表达式触发对应 Project Agent session。
+/// 从 Routine 表加载所有 `trigger_config.type = "scheduled"` 且 `enabled = true` 的条目，
+/// 在后台 loop 中按 cron 表达式触发对应 Routine 执行。
 ///
-/// 当 `handle` 收到配置变更通知时，调度器会重新加载条目并 diff merge，
-/// 已有且表达式未变的条目保留 `next_fire` 时间，避免重复触发。
-///
-/// 如果初始无条目，调度器不启动（后续新增的条目需重启服务才能生效）。
+/// 当 `handle` 收到配置变更通知时，调度器会重新加载条目并 diff merge。
 pub async fn spawn_cron_scheduler(
     repos: RepositorySet,
-    target: Arc<dyn CronTriggerTarget>,
+    executor: Arc<RoutineExecutor>,
     handle: &CronSchedulerHandle,
 ) {
     let entries = match load_cron_entries(&repos).await {
         Ok(entries) => entries,
         Err(err) => {
-            tracing::error!("加载 cron 调度条目失败，调度器不启动: {err}");
+            tracing::error!("加载 Routine cron 调度条目失败，调度器不启动: {err}");
             return;
         }
     };
 
     if entries.is_empty() {
-        tracing::info!("未发现配置了 cron_schedule 的 Agent，调度器休眠");
-        return;
+        tracing::info!("未发现配置了 cron_schedule 的 Routine，调度器休眠");
+        // 即使初始无条目也继续监听，这样后续新增 Routine 能动态生效
     }
 
     tracing::info!(
         count = entries.len(),
-        "Cron 调度器已加载 {} 条调度条目，启动后台循环",
+        "Cron 调度器已加载 {} 条 Routine 调度条目，启动后台循环",
         entries.len()
     );
 
     let notify = handle.notify.clone();
     tokio::spawn(async move {
-        run_cron_loop(entries, repos, target, notify).await;
+        run_cron_loop(entries, repos, executor, notify).await;
     });
 }
 
 async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, String> {
-    let agents = repos
-        .agent_repo
-        .list_all()
+    let routines = repos
+        .routine_repo
+        .list_enabled_by_trigger_type("scheduled")
         .await
-        .map_err(|e| format!("查询 agents 失败: {e}"))?;
-
-    let agent_map: HashMap<Uuid, _> = agents.into_iter().map(|a| (a.id, a)).collect();
-
-    let projects = repos
-        .project_repo
-        .list_all()
-        .await
-        .map_err(|e| format!("查询 projects 失败: {e}"))?;
+        .map_err(|e| format!("查询 scheduled routines 失败: {e}"))?;
 
     let mut entries = Vec::new();
 
-    for project in &projects {
-        let links = repos
-            .agent_link_repo
-            .list_by_project(project.id)
-            .await
-            .map_err(|e| format!("查询 project {} 的 agent links 失败: {e}", project.id))?;
+    for routine in &routines {
+        let RoutineTriggerConfig::Scheduled {
+            ref cron_expression,
+            ..
+        } = routine.trigger_config
+        else {
+            continue;
+        };
 
-        for link in &links {
-            let Some(agent) = agent_map.get(&link.agent_id) else {
-                continue;
-            };
-            let merged_config = link.merged_config(&agent.base_config);
-            let Some(scheduling) = AgentSchedulingConfig::from_merged_config(&merged_config) else {
-                continue;
-            };
-            if !scheduling.has_cron() {
+        let schedule = match Schedule::from_str(cron_expression) {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(
+                    routine_id = %routine.id,
+                    routine_name = %routine.name,
+                    cron = cron_expression,
+                    "无效的 cron 表达式，跳过: {err}"
+                );
                 continue;
             }
+        };
 
-            let cron_expr = scheduling.cron_schedule.as_deref().unwrap();
-            let schedule = match Schedule::from_str(cron_expr) {
-                Ok(s) => s,
-                Err(err) => {
-                    tracing::warn!(
-                        project_id = %project.id,
-                        agent_id = %agent.id,
-                        cron = cron_expr,
-                        "无效的 cron 表达式，跳过: {err}"
-                    );
-                    continue;
-                }
-            };
+        let next_fire = match schedule.upcoming(Utc).next() {
+            Some(t) => t,
+            None => continue,
+        };
 
-            let next_fire = match schedule.upcoming(Utc).next() {
-                Some(t) => t,
-                None => continue,
-            };
+        tracing::info!(
+            routine_id = %routine.id,
+            routine_name = %routine.name,
+            cron = cron_expression,
+            next_fire = %next_fire,
+            "注册 Routine cron 调度条目"
+        );
 
-            tracing::info!(
-                project_id = %project.id,
-                agent_name = %agent.name,
-                cron = cron_expr,
-                next_fire = %next_fire,
-                "注册 cron 调度条目"
-            );
-
-            entries.push(CronEntry {
-                project_id: project.id,
-                agent_id: agent.id,
-                cron_expr: cron_expr.to_string(),
-                schedule,
-                session_mode: scheduling.cron_session_mode,
-                next_fire,
-            });
-        }
+        entries.push(CronEntry {
+            routine_id: routine.id,
+            cron_expr: cron_expression.clone(),
+            schedule,
+            next_fire,
+        });
     }
 
     Ok(entries)
 }
 
-/// 将新加载的条目与现有条目做 diff merge：
-/// - cron 表达式未变的条目保留 `next_fire`（避免重复触发）
-/// - cron 表达式变更的条目使用新的 `next_fire`
-/// - 新增的条目直接加入
-/// - 不再存在的条目自动移除
 fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEntry> {
     let mut existing_map: HashMap<EntryKey, CronEntry> =
         existing.into_iter().map(|e| (entry_key(&e), e)).collect();
@@ -197,7 +151,7 @@ fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEnt
     for mut new_entry in fresh {
         let key = entry_key(&new_entry);
         if let Some(old) = existing_map.remove(&key) {
-            if old.cron_expr == new_entry.cron_expr && old.session_mode == new_entry.session_mode {
+            if old.cron_expr == new_entry.cron_expr {
                 new_entry.next_fire = old.next_fire;
                 kept += 1;
             } else {
@@ -216,7 +170,7 @@ fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEnt
         added,
         removed,
         total = result.len(),
-        "Cron 调度条目 diff merge 完成"
+        "Routine cron 调度条目 diff merge 完成"
     );
 
     result
@@ -227,7 +181,7 @@ const TICK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 async fn run_cron_loop(
     mut entries: Vec<CronEntry>,
     repos: RepositorySet,
-    target: Arc<dyn CronTriggerTarget>,
+    executor: Arc<RoutineExecutor>,
     notify: Arc<Notify>,
 ) {
     let mut tick = tokio::time::interval(TICK_INTERVAL);
@@ -242,7 +196,7 @@ async fn run_cron_loop(
                         entries = merge_entries(entries, fresh);
                     }
                     Err(err) => {
-                        tracing::warn!("热更新 cron 条目失败，保持现有调度: {err}");
+                        tracing::warn!("热更新 Routine cron 条目失败，保持现有调度: {err}");
                     }
                 }
             }
@@ -255,25 +209,18 @@ async fn run_cron_loop(
             }
 
             tracing::info!(
-                project_id = %entry.project_id,
-                agent_id = %entry.agent_id,
-                "Cron 触发: 唤醒 Agent session"
+                routine_id = %entry.routine_id,
+                "Routine cron 触发"
             );
 
-            let target = target.clone();
-            let project_id = entry.project_id;
-            let agent_id = entry.agent_id;
-            let mode = entry.session_mode;
+            let executor = executor.clone();
+            let routine_id = entry.routine_id;
 
             tokio::spawn(async move {
-                if let Err(err) = target
-                    .trigger_agent_session(project_id, agent_id, mode)
-                    .await
-                {
+                if let Err(err) = executor.fire_scheduled(routine_id).await {
                     tracing::warn!(
-                        project_id = %project_id,
-                        agent_id = %agent_id,
-                        "Cron 触发失败: {err}"
+                        routine_id = %routine_id,
+                        "Routine cron 触发失败: {err}"
                     );
                 }
             });

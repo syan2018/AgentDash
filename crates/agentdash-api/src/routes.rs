@@ -14,6 +14,7 @@ pub mod me;
 pub mod project_agents;
 pub mod project_sessions;
 pub mod projects;
+pub mod routines;
 pub mod settings;
 pub mod stories;
 pub mod story_sessions;
@@ -128,6 +129,19 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{id}/agent-links/{agent_id}/sessions",
             get(project_agents::list_project_agent_sessions),
         )
+        // Routine CRUD（嵌套在 Project 下）
+        .route(
+            "/projects/{id}/routines",
+            get(routines::list_routines).post(routines::create_routine),
+        )
+        .route(
+            "/routines/{id}",
+            get(routines::get_routine)
+                .put(routines::update_routine)
+                .delete(routines::delete_routine),
+        )
+        .route("/routines/{id}/enable", patch(routines::enable_routine))
+        .route("/routines/{id}/executions", get(routines::list_executions))
         .route(
             "/projects/{id}/sessions",
             get(project_sessions::list_project_sessions),
@@ -422,6 +436,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/health", get(health::health_check))
         .route("/auth/login", post(auth_routes::login))
         .route("/auth/metadata", get(auth_routes::metadata))
+        // Routine Webhook 触发端点（不走 session auth，中间件外单独 Bearer 校验）
+        .route(
+            "/routine-triggers/{endpoint_id}/fire",
+            post(routines::fire_webhook),
+        )
         .merge(secured_api)
         .with_state(state.clone());
 

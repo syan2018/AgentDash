@@ -184,11 +184,7 @@ impl BackendRegistry {
     // ── MCP Relay 支持 ──
 
     /// 更新指定 backend 的能力信息（含 MCP server 列表）
-    pub async fn update_capabilities(
-        &self,
-        backend_id: &str,
-        capabilities: CapabilitiesPayload,
-    ) {
+    pub async fn update_capabilities(&self, backend_id: &str, capabilities: CapabilitiesPayload) {
         let mut backends = self.backends.write().await;
         if let Some(backend) = backends.get_mut(backend_id) {
             backend.capabilities = capabilities;
@@ -201,14 +197,17 @@ impl BackendRegistry {
         let backends = self.backends.read().await;
         backends
             .values()
-            .find(|b| b.capabilities.mcp_servers.iter().any(|s| s.name == server_name))
+            .find(|b| {
+                b.capabilities
+                    .mcp_servers
+                    .iter()
+                    .any(|s| s.name == server_name)
+            })
             .map(|b| b.backend_id.clone())
     }
 
     /// 列出所有在线 backend 上报的 MCP server 信息
-    pub async fn list_all_mcp_servers(
-        &self,
-    ) -> Vec<(String, agentdash_relay::McpServerInfoRelay)> {
+    pub async fn list_all_mcp_servers(&self) -> Vec<(String, agentdash_relay::McpServerInfoRelay)> {
         let backends = self.backends.read().await;
         let mut result = Vec::new();
         for backend in backends.values() {

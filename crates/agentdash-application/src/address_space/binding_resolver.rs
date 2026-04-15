@@ -92,10 +92,9 @@ pub async fn resolve_context_bindings(
                         locator
                     ));
                 }
-                output.warnings.push(format!(
-                    "context_binding `{}` 已跳过: {err}",
-                    locator
-                ));
+                output
+                    .warnings
+                    .push(format!("context_binding `{}` 已跳过: {err}", locator));
             }
         }
     }

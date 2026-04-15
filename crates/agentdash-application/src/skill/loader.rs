@@ -10,7 +10,7 @@ use agentdash_spi::{AddressSpace, MountCapability, SkillRef};
 use crate::address_space::types::ResourceRef;
 use crate::address_space::{ListOptions, RelayAddressSpaceService};
 
-use super::{SkillDiagnostic, SkillFrontmatter, parse_skill_file, MAX_NAME_LENGTH};
+use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
 
 // ─── 公共 API ──────────────────────────────────────────────────────────────
 
@@ -52,10 +52,7 @@ pub fn load_skills_from_local_dirs(
             let (fm, _body) = parse_skill_file(&content);
             let fm = fm.unwrap_or_default();
 
-            let parent_dir_name = entry
-                .file_name()
-                .to_string_lossy()
-                .to_string();
+            let parent_dir_name = entry.file_name().to_string_lossy().to_string();
 
             let name = fm
                 .name
@@ -257,7 +254,10 @@ fn validate_and_collect(
     if name.len() > MAX_NAME_LENGTH {
         diags.push(SkillDiagnostic {
             name: name.to_string(),
-            message: format!("name 超过 {MAX_NAME_LENGTH} 字符（当前 {} 字符）", name.len()),
+            message: format!(
+                "name 超过 {MAX_NAME_LENGTH} 字符（当前 {} 字符）",
+                name.len()
+            ),
             file_path: PathBuf::from(path),
         });
     }

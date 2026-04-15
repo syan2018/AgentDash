@@ -581,11 +581,7 @@ async fn try_build_session_capabilities(
             &skills,
         );
 
-    if caps.is_empty() {
-        None
-    } else {
-        Some(caps)
-    }
+    if caps.is_empty() { None } else { Some(caps) }
 }
 
 /// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / address_space / snapshot

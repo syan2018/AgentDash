@@ -1118,8 +1118,8 @@ pub(crate) fn build_agent_bridge(
         .map(String::from)
         .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
 
-    let (preset_mcp_servers, relay_mcp_server_names) =
-        parse_preset_mcp_servers(&merged_config).map_err(|error| {
+    let (preset_mcp_servers, relay_mcp_server_names) = parse_preset_mcp_servers(&merged_config)
+        .map_err(|error| {
             ApiError::Internal(format!(
                 "Agent `{}` 的 mcp_servers 配置非法: {error}",
                 agent.id

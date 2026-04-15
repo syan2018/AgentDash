@@ -136,9 +136,8 @@ mod tests {
         let entries = parse_companion_agents_from_markdown("no companion lines here");
         assert!(entries.is_empty());
 
-        let entries = parse_companion_agents_from_markdown(
-            "- **solo** (executor: `CODEX`): Solo Agent",
-        );
+        let entries =
+            parse_companion_agents_from_markdown("- **solo** (executor: `CODEX`): Solo Agent");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "solo");
         assert_eq!(entries[0].executor, "CODEX");

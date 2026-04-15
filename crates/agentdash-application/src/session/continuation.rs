@@ -645,9 +645,9 @@ fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<Compac
     }
     let data = agent_event.data?;
     // 解析 compacted_until_ref（新字段，向后兼容）
-    let compacted_until_ref = data.get("compacted_until_ref").and_then(|v| {
-        serde_json::from_value::<MessageRef>(v.clone()).ok()
-    });
+    let compacted_until_ref = data
+        .get("compacted_until_ref")
+        .and_then(|v| serde_json::from_value::<MessageRef>(v.clone()).ok());
     Some(CompactionCheckpoint {
         summary: data.get("summary")?.as_str()?.to_string(),
         tokens_before: data
@@ -660,9 +660,7 @@ fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<Compac
             .and_then(|value| u32::try_from(value).ok())
             .unwrap_or_default(),
         compacted_until_ref,
-        timestamp_ms: data
-            .get("timestamp_ms")
-            .and_then(serde_json::Value::as_u64),
+        timestamp_ms: data.get("timestamp_ms").and_then(serde_json::Value::as_u64),
     })
 }
 

@@ -3,13 +3,16 @@ use agentdash_domain::{
 };
 
 use crate::address_space::{
-    RelayAddressSpaceService, ResolveBindingsOutput, SessionMountTarget, build_lifecycle_mount,
-    resolve_context_bindings,
+    RelayAddressSpaceService, ResolveBindingsOutput, SessionMountTarget, build_context_mount,
+    build_lifecycle_mount, resolve_context_bindings,
 };
 use crate::repository_set::RepositorySet;
 use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
 use crate::task::config::resolve_task_executor_config;
 use crate::task::execution::TaskExecutionError;
+use crate::task::runtime_context_entries::{
+    build_task_execution_snapshot, build_task_runtime_context_entries,
+};
 use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection};
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,15 @@ pub async fn build_task_session_runtime_inputs(
     .await
     .map_err(TaskExecutionError::Internal)?;
 
+    let mcp_servers = mcp_base_url
+        .map(|base_url| {
+            vec![
+                RuntimeMcpBinding::for_task(base_url, task.project_id, task.story_id, task.id)
+                    .to_runtime_server(),
+            ]
+        })
+        .unwrap_or_default();
+
     let use_address_space = resolved_config
         .as_ref()
         .is_some_and(|config| config.is_cloud_native());
@@ -77,6 +89,30 @@ pub async fn build_task_session_runtime_inputs(
                 &active_workflow.lifecycle.key,
             ));
         }
+
+        let execution_snapshot = build_task_execution_snapshot(
+            task,
+            story,
+            project,
+            workspace,
+            resolved_config.as_ref(),
+            executor_source.as_str(),
+            executor_resolution_error.clone(),
+            &space,
+            &mcp_servers,
+            workflow.as_ref(),
+        );
+        let context_entries = build_task_runtime_context_entries(
+            task,
+            story,
+            project,
+            workspace,
+            &execution_snapshot,
+            workflow.as_ref(),
+        );
+        if !context_entries.is_empty() {
+            space.mounts.push(build_context_mount(context_entries));
+        }
         Some(space)
     } else {
         None
@@ -89,30 +125,15 @@ pub async fn build_task_session_runtime_inputs(
             if bindings.is_empty() {
                 None
             } else {
-                match resolve_context_bindings(bindings, space, address_space_service).await {
-                    Ok(output) => Some(output),
-                    Err(err) => {
-                        tracing::warn!(
-                            task_id = %task.id,
-                            error = %err,
-                            "context_bindings 解析失败，跳过注入"
-                        );
-                        None
-                    }
-                }
+                Some(
+                    resolve_context_bindings(bindings, space, address_space_service)
+                        .await
+                        .map_err(TaskExecutionError::UnprocessableEntity)?,
+                )
             }
         }
         _ => None,
     };
-
-    let mcp_servers = mcp_base_url
-        .map(|base_url| {
-            vec![
-                RuntimeMcpBinding::for_task(base_url, task.project_id, task.story_id, task.id)
-                    .to_runtime_server(),
-            ]
-        })
-        .unwrap_or_default();
 
     Ok(TaskSessionRuntimeInputs {
         resolved_config,

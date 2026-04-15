@@ -5,6 +5,7 @@ use crate::address_space::RelayAddressSpaceService;
 use crate::context::{
     BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
     StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
+    WorkflowContextBindingsContributor,
     build_declared_source_warning_fragment, build_task_agent_context,
     resolve_workspace_declared_sources,
 };
@@ -107,6 +108,15 @@ pub async fn prepare_task_turn_context(
         true,
     )
     .await?;
+    if let (Some(workflow), Some(resolved_bindings)) = (
+        session_runtime_inputs.workflow.clone(),
+        session_runtime_inputs.resolved_bindings.clone(),
+    ) {
+        extra_contributors.push(Box::new(WorkflowContextBindingsContributor::new(
+            workflow,
+            resolved_bindings,
+        )));
+    }
     let resolved_config = session_runtime_inputs.resolved_config.clone();
     let use_cloud_native_agent = resolved_config
         .as_ref()

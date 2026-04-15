@@ -4,6 +4,7 @@ mod builtins;
 pub mod context_composer;
 mod contributor;
 pub mod source_resolver;
+mod workflow_bindings;
 pub mod workspace_sources;
 
 pub use address_space_discovery::{AddressSpaceDiscoveryRegistry, builtin_address_space_registry};
@@ -19,4 +20,5 @@ pub use contributor::{
 pub use source_resolver::{
     SourceResolverRegistry, resolve_declared_sources, resolve_declared_sources_with_registry,
 };
+pub use workflow_bindings::WorkflowContextBindingsContributor;
 pub use workspace_sources::resolve_workspace_declared_sources;

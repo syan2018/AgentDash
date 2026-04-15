@@ -7,6 +7,7 @@ pub mod lock;
 pub mod management;
 pub mod meta;
 pub mod restart_tracker;
+mod runtime_context_entries;
 pub mod service;
 pub mod session_runtime_inputs;
 pub mod state_reconciler;

@@ -22,8 +22,8 @@ pub use definition::{
 };
 pub use error::WorkflowApplicationError;
 pub use projection::{
-    ActiveWorkflowProjection, WorkflowBindingSummary, WorkflowProjectionSnapshot,
-    resolve_active_workflow_projection, resolve_workflow_projection_by_run,
+    ActiveWorkflowProjection, WorkflowBindingSummary, resolve_active_workflow_projection,
+    resolve_workflow_projection_by_run,
 };
 pub use run::{
     ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand,

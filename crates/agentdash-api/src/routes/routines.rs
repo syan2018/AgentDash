@@ -17,6 +17,26 @@ use crate::{
 
 // ────────────────────────── Response DTOs ──────────────────────────
 
+/// 创建 Routine 的响应 — 包含一次性可见的 webhook_token
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RoutineCreationResponse {
+    #[serde(flatten)]
+    pub routine: RoutineResponse,
+    /// 仅在创建 Webhook 类型时返回，且只此一次可见
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_token: Option<String>,
+}
+
+/// Webhook token 重新生成响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RegenerateTokenResponse {
+    pub endpoint_id: String,
+    /// 新生成的明文 token（仅此一次可见）
+    pub webhook_token: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RoutineResponse {
@@ -163,7 +183,7 @@ pub async fn create_routine(
     CurrentUser(current_user): CurrentUser,
     Path(project_id): Path<String>,
     Json(req): Json<CreateRoutineRequest>,
-) -> Result<Json<RoutineResponse>, ApiError> {
+) -> Result<Json<RoutineCreationResponse>, ApiError> {
     let project_id = parse_uuid(&project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -182,6 +202,23 @@ pub async fn create_routine(
 
     let trigger_config: RoutineTriggerConfig = serde_json::from_value(req.trigger_config)
         .map_err(|e| ApiError::BadRequest(format!("trigger_config 格式错误: {e}")))?;
+
+    // Webhook 类型：服务端自动生成 endpoint_id 和 auth_token_hash
+    let mut webhook_plaintext_token: Option<String> = None;
+    let trigger_config = match trigger_config {
+        RoutineTriggerConfig::Webhook { .. } => {
+            let endpoint_id = format!("trig_{}", Uuid::new_v4().simple());
+            let token = Uuid::new_v4().to_string();
+            let hash = bcrypt::hash(&token, bcrypt::DEFAULT_COST)
+                .map_err(|e| ApiError::Internal(format!("bcrypt hash 失败: {e}")))?;
+            webhook_plaintext_token = Some(token);
+            RoutineTriggerConfig::Webhook {
+                endpoint_id,
+                auth_token_hash: hash,
+            }
+        }
+        other => other,
+    };
 
     let session_strategy: SessionStrategy = match req.session_strategy {
         Some(v) => serde_json::from_value(v)
@@ -208,7 +245,10 @@ pub async fn create_routine(
     // 通知 cron 调度器配置变更
     state.services.cron_scheduler.notify_config_changed();
 
-    Ok(Json(RoutineResponse::from(routine)))
+    Ok(Json(RoutineCreationResponse {
+        routine: RoutineResponse::from(routine),
+        webhook_token: webhook_plaintext_token,
+    }))
 }
 
 pub async fn get_routine(
@@ -343,6 +383,45 @@ pub async fn list_executions(
             .map(RoutineExecutionResponse::from)
             .collect(),
     ))
+}
+
+pub async fn regenerate_webhook_token(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<RegenerateTokenResponse>, ApiError> {
+    let mut routine =
+        load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
+            .await?;
+
+    let RoutineTriggerConfig::Webhook { endpoint_id, .. } = &routine.trigger_config else {
+        return Err(ApiError::BadRequest(
+            "只有 Webhook 类型的 Routine 才能重新生成 token".into(),
+        ));
+    };
+    let endpoint_id = endpoint_id.clone();
+
+    let token = Uuid::new_v4().to_string();
+    let hash = bcrypt::hash(&token, bcrypt::DEFAULT_COST)
+        .map_err(|e| ApiError::Internal(format!("bcrypt hash 失败: {e}")))?;
+
+    routine.trigger_config = RoutineTriggerConfig::Webhook {
+        endpoint_id: endpoint_id.clone(),
+        auth_token_hash: hash,
+    };
+    routine.updated_at = chrono::Utc::now();
+
+    state
+        .repos
+        .routine_repo
+        .update(&routine)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(RegenerateTokenResponse {
+        endpoint_id,
+        webhook_token: token,
+    }))
 }
 
 pub async fn fire_webhook(

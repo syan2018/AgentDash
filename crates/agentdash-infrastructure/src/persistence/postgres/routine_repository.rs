@@ -147,13 +147,14 @@ impl RoutineRepository for PostgresRoutineRepository {
         &self,
         trigger_type: &str,
     ) -> Result<Vec<Routine>, DomainError> {
-        // trigger_config is JSON with a "type" field; use LIKE for TEXT column matching.
-        let pattern = format!("%\"type\":\"{trigger_type}\"%");
+        // 使用 PostgreSQL JSONB 包含运算符，比 TEXT LIKE 更可靠
+        let containment =
+            serde_json::json!({"type": trigger_type}).to_string();
         let rows: Vec<RoutineRow> = sqlx::query_as(
             "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
-             FROM routines WHERE enabled = TRUE AND trigger_config LIKE $1",
+             FROM routines WHERE enabled = TRUE AND trigger_config::jsonb @> $1::jsonb",
         )
-        .bind(pattern)
+        .bind(containment)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
@@ -195,12 +196,14 @@ impl RoutineRepository for PostgresRoutineRepository {
     }
 
     async fn find_by_endpoint_id(&self, endpoint_id: &str) -> Result<Option<Routine>, DomainError> {
-        let pattern = format!("%\"endpoint_id\":\"{endpoint_id}\"%");
+        // 使用 PostgreSQL JSONB 包含运算符精确匹配 endpoint_id
+        let containment =
+            serde_json::json!({"endpoint_id": endpoint_id}).to_string();
         let row: Option<RoutineRow> = sqlx::query_as(
             "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
-             FROM routines WHERE trigger_config LIKE $1 LIMIT 1",
+             FROM routines WHERE trigger_config::jsonb @> $1::jsonb LIMIT 1",
         )
-        .bind(pattern)
+        .bind(containment)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;

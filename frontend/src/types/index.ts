@@ -420,6 +420,67 @@ export interface Task {
   updated_at: string;
 }
 
+// ─── Routine ─────────────────────────────────────────────
+
+export type RoutineTriggerType = "scheduled" | "webhook" | "plugin";
+export type RoutineSessionMode = "fresh" | "reuse" | "per_entity";
+export type RoutineExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+export interface RoutineTriggerConfig {
+  type: RoutineTriggerType;
+  // Scheduled
+  cron_expression?: string;
+  timezone?: string | null;
+  // Webhook
+  endpoint_id?: string;
+  auth_token_hash?: string;
+  // Plugin
+  provider_key?: string;
+  provider_config?: Record<string, unknown>;
+}
+
+export interface RoutineSessionStrategy {
+  mode: RoutineSessionMode;
+  entity_key_path?: string;
+}
+
+export interface Routine {
+  id: string;
+  project_id: string;
+  name: string;
+  prompt_template: string;
+  agent_id: string;
+  trigger_config: RoutineTriggerConfig;
+  session_strategy: RoutineSessionStrategy;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_fired_at: string | null;
+}
+
+export interface RoutineCreationResponse extends Routine {
+  webhook_token?: string | null;
+}
+
+export interface RoutineExecution {
+  id: string;
+  routine_id: string;
+  trigger_source: string;
+  trigger_payload: Record<string, unknown> | null;
+  resolved_prompt: string | null;
+  session_id: string | null;
+  status: RoutineExecutionStatus;
+  started_at: string;
+  completed_at: string | null;
+  error: string | null;
+  entity_key: string | null;
+}
+
+export interface RegenerateTokenResponse {
+  endpoint_id: string;
+  webhook_token: string;
+}
+
 // ─── Re-exports from domain-split files ──────────────────
 
 export * from "./context";

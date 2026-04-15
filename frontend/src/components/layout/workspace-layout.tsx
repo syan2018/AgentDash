@@ -54,6 +54,7 @@ export function WorkspaceLayout() {
   const workflowDashboardMatch = useMatch("/dashboard/workflow");
   const workflowEditorMatch = useMatch("/workflow-editor/:definitionId");
   const lifecycleEditorMatch = useMatch("/lifecycle-editor/:definitionId");
+  const routineDashboardMatch = useMatch("/dashboard/routine");
 
   const isAgentActive =
     !!agentDashboardMatch ||
@@ -67,6 +68,7 @@ export function WorkspaceLayout() {
     !!workflowDashboardMatch ||
     !!workflowEditorMatch ||
     !!lifecycleEditorMatch;  // Workflow / Lifecycle 编辑器页也高亮 Workflow Tab
+  const isRoutineActive = !!routineDashboardMatch;
 
   const agentNavTarget = useMemo(() => {
     if (!isSettingsRoute) return "/dashboard/agent";
@@ -108,6 +110,14 @@ export function WorkspaceLayout() {
       return rememberedPath;
     }
     return "/dashboard/canvas";
+  }, [isSettingsRoute, rememberedPath]);
+
+  const routineNavTarget = useMemo(() => {
+    if (!isSettingsRoute) return "/dashboard/routine";
+    if (rememberedPath.startsWith("/dashboard/routine")) {
+      return rememberedPath;
+    }
+    return "/dashboard/routine";
   }, [isSettingsRoute, rememberedPath]);
 
   return (
@@ -185,6 +195,18 @@ export function WorkspaceLayout() {
                 }
               >
                 Canvas
+              </NavLink>
+              <NavLink
+                to={routineNavTarget}
+                className={() =>
+                  `flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
+                    isRoutineActive
+                      ? "border-primary/20 bg-background font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:border-border hover:bg-background/80 hover:text-foreground"
+                  }`
+                }
+              >
+                Routine
               </NavLink>
             </div>
           </div>

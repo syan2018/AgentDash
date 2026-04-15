@@ -141,6 +141,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .delete(routines::delete_routine),
         )
         .route("/routines/{id}/enable", patch(routines::enable_routine))
+        .route(
+            "/routines/{id}/regenerate-token",
+            post(routines::regenerate_webhook_token),
+        )
         .route("/routines/{id}/executions", get(routines::list_executions))
         .route(
             "/projects/{id}/sessions",

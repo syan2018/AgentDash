@@ -56,6 +56,11 @@ const CanvasTabView = lazy(async () => {
   return { default: m.CanvasTabView };
 });
 
+const RoutineTabView = lazy(async () => {
+  const m = await import("./features/routine/routine-tab-view");
+  return { default: m.RoutineTabView };
+});
+
 const WorkflowEditorPage = lazy(async () => {
   const m = await import("./pages/WorkflowEditorPage");
   return { default: m.WorkflowEditorPage };
@@ -224,6 +229,7 @@ function AppContent() {
             <Route path="story" element={<StoryTabView />} />
             <Route path="canvas" element={<CanvasTabView />} />
             <Route path="workflow" element={<WorkflowTabView />} />
+            <Route path="routine" element={<RoutineTabView />} />
           </Route>
 
           <Route path="/story/:storyId" element={<StoryPage />} />

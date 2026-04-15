@@ -202,6 +202,9 @@ impl RoutineExecutor {
             .await
             .map_err(|e| format!("发送 prompt 失败: {e}"))?;
 
+        // NOTE: mark_completed 追踪的是「prompt 已成功派发到 session」，
+        // 而非「Agent 已执行完毕」。完整的 Agent 完成追踪需要 session turn 完成回调，
+        // 当前阶段以 dispatch 级别审计为主，后续按需扩展。
         execution.mark_completed();
 
         Ok(())

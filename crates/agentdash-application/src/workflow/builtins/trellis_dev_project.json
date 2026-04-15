@@ -14,14 +14,6 @@
           "instructions": [
             "当前处于 Project Start workflow，优先建立项目级基线上下文。",
             "关注默认 Agent、共享上下文和挂载策略是否可被后续 Story/Task 消费。"
-          ],
-          "context_bindings": [
-            {
-              "locator": "context://project_session_context",
-              "reason": "项目级会话上下文",
-              "required": true,
-              "title": "Project Session Context"
-            }
           ]
         },
         "completion": {
@@ -38,14 +30,6 @@
         "injection": {
           "instructions": [
             "当前处于 Project Record workflow，重点沉淀可被多个 Story/Task 复用的项目级规则。"
-          ],
-          "context_bindings": [
-            {
-              "locator": "context://workspace_journal",
-              "reason": "共享记录沉淀位置",
-              "required": false,
-              "title": "Workspace Journal"
-            }
           ]
         },
         "completion": {

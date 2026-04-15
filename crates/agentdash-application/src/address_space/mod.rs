@@ -5,7 +5,6 @@ pub mod mount;
 pub mod path;
 pub mod provider;
 pub mod provider_canvas;
-pub mod provider_context;
 pub mod provider_inline;
 pub mod provider_lifecycle;
 pub mod relay_service;
@@ -18,11 +17,9 @@ pub use apply_patch::{
     apply_patch_to_inline_files, apply_patch_to_target, parse_patch as parse_patch_text,
 };
 pub use mount::{
-    PROVIDER_CANVAS_FS, PROVIDER_CONTEXT_VFS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,
-    PROVIDER_RELAY_FS,
+    PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     SessionMountTarget, append_canvas_mounts, build_canvas_mount, build_canvas_mount_id,
-    build_context_container_mount, build_context_mount, build_derived_address_space,
-    build_lifecycle_mount,
+    build_context_container_mount, build_derived_address_space, build_lifecycle_mount,
     build_workspace_address_space, container_visible_for_target, effective_context_containers,
     inline_files_from_mount, list_inline_entries, normalize_inline_files,
     selected_workspace_binding, workspace_mount,
@@ -38,7 +35,6 @@ pub use provider::{
 };
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use provider_canvas::CanvasFsMountProvider;
-pub use provider_context::ContextMountProvider;
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
 pub use relay_service::{RelayAddressSpaceService, TextSearchParams};

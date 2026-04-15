@@ -14,20 +14,6 @@
           "instructions": [
             "当前处于 Story Start workflow，优先整理 PRD、背景和执行边界。",
             "如果 Story 缺少关键规范，应先补全上下文再继续拆解。"
-          ],
-          "context_bindings": [
-            {
-              "locator": "context://story_context_snapshot",
-              "reason": "Story 上下文快照",
-              "required": true,
-              "title": "Story Context Snapshot"
-            },
-            {
-              "locator": "context://story_prd",
-              "reason": "Story PRD",
-              "required": false,
-              "title": "Story PRD"
-            }
           ]
         },
         "completion": {
@@ -44,14 +30,6 @@
         "injection": {
           "instructions": [
             "当前处于 Story Align workflow，重点检查 Story 的目标、任务拆解和资源准备是否一致。"
-          ],
-          "context_bindings": [
-            {
-              "locator": "context://story_review_checklist",
-              "reason": "Story 对齐检查清单",
-              "required": true,
-              "title": "Story Review Checklist"
-            }
           ]
         },
         "completion": {
@@ -78,14 +56,6 @@
         "injection": {
           "instructions": [
             "当前处于 Story Record workflow，重点沉淀结构化总结和后续建议。"
-          ],
-          "context_bindings": [
-            {
-              "locator": "context://workspace_journal",
-              "reason": "工作区日志",
-              "required": false,
-              "title": "Workspace Journal"
-            }
           ]
         },
         "completion": {

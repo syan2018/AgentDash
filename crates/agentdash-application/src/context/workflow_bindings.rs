@@ -168,10 +168,10 @@ mod tests {
                 active_step_key: Some("implement".to_string()),
                 injection: agentdash_domain::workflow::WorkflowInjectionSpec {
                     context_bindings: vec![agentdash_domain::workflow::WorkflowContextBinding {
-                        locator: "context://execution_context".to_string(),
-                        reason: "执行上下文".to_string(),
+                        locator: ".trellis/workflow.md".to_string(),
+                        reason: "workflow 总规则".to_string(),
                         required: true,
-                        title: Some("Execution Context".to_string()),
+                        title: Some("Workflow 总规则".to_string()),
                     }],
                     ..Default::default()
                 },
@@ -191,10 +191,10 @@ mod tests {
             sample_workflow(),
             ResolveBindingsOutput {
                 resolved: vec![ResolvedBinding {
-                    locator: "context://execution_context".to_string(),
-                    title: Some("Execution Context".to_string()),
-                    reason: "当前绑定对象的执行上下文".to_string(),
-                    content: "- task_id: `task-1`".to_string(),
+                    locator: ".trellis/workflow.md".to_string(),
+                    title: Some("Workflow 总规则".to_string()),
+                    reason: "workflow 总规则".to_string(),
+                    content: "## Workflow\n- rule: read before write".to_string(),
                 }],
                 warnings: vec![],
             },
@@ -228,6 +228,6 @@ mod tests {
             .contains("resolved_binding_count: 1"));
         assert!(contribution.context_fragments[1]
             .content
-            .contains("Execution Context"));
+            .contains("Workflow 总规则"));
     }
 }

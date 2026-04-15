@@ -1,3 +1,5 @@
+import type { AgentBinding } from "./index";
+
 // ─── SessionBinding ─────────────────────────────────
 
 export type SessionOwnerType = "project" | "story" | "task";

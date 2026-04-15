@@ -44,7 +44,7 @@ interface RoutineState {
   ) => Promise<void>;
 }
 
-export const useRoutineStore = create<RoutineState>((set, get) => ({
+export const useRoutineStore = create<RoutineState>((set) => ({
   routinesByProjectId: {},
   executionsByRoutineId: {},
   isLoading: false,

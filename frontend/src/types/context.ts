@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "./index";
+import type { ProjectAgentMount, ThinkingLevel } from "./index";
 
 // ─── 上下文容器 / 挂载策略 / 会话编排 ──────────────────
 

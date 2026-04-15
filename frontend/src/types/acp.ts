@@ -1,3 +1,5 @@
+import type { BackendType } from "./index";
+
 // ─── Artifact / ACP 展示类型 ──────────────────────────
 
 export type ContentBlock =

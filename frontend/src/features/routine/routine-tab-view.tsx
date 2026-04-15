@@ -2,11 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type {
   Routine,
-  RoutineCreationResponse,
-  RoutineExecution,
   RoutineExecutionStatus,
   RoutineSessionMode,
-  RoutineTriggerConfig,
   RoutineTriggerType,
   ProjectAgentLink,
 } from "../../types";
@@ -283,7 +280,7 @@ function RoutineCard({
 }) {
   const badge = TRIGGER_TYPE_BADGE[routine.trigger_config.type];
   const agentLink = agentLinks.find((l) => l.agent_id === routine.agent_id);
-  const agentName = agentLink?.display_name || agentLink?.agent_name || routine.agent_id;
+  const agentName = agentLink?.agent_name || routine.agent_id;
 
   const triggerDetail = (() => {
     switch (routine.trigger_config.type) {
@@ -523,7 +520,7 @@ function RoutineDialog({
                 <option value="">请选择 Agent</option>
                 {agentLinks.map((link) => (
                   <option key={link.agent_id} value={link.agent_id}>
-                    {link.display_name || link.agent_name}
+                    {link.agent_name}
                   </option>
                 ))}
               </select>

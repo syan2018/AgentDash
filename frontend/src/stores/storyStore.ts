@@ -342,16 +342,6 @@ const mapStory = (raw: Record<string, unknown>): Story => {
   };
 };
 
-const defaultBinding: AgentBinding = {
-  agent_type: null,
-  agent_pid: null,
-  preset_name: null,
-  prompt_template: null,
-  initial_context: null,
-  thinking_level: null,
-  context_sources: [],
-};
-
 const mapAgentBinding = (raw: unknown): AgentBinding => {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Task 缺少 agent_binding');
@@ -507,7 +497,6 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     project_id: requireStringField(raw, 'project_id'),
     story_id: requireStringField(raw, 'story_id'),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
-    session_id: raw.session_id ? String(raw.session_id) : null,
     executor_session_id: raw.executor_session_id ? String(raw.executor_session_id) : null,
     title: requireStringField(raw, 'title'),
     description: raw.description ? String(raw.description) : '',

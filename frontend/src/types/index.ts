@@ -1,3 +1,10 @@
+import type { Artifact } from "./acp";
+import type {
+  ContextContainerCapability,
+  ContextContainerDefinition,
+  SessionComposition,
+} from "./context";
+
 // ─── 基础枚举 ─────────────────────────────────────────
 
 export type StoryStatus =

@@ -9,7 +9,7 @@ import { useProjectStore } from "../stores/projectStore";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
 import type { ModelInfo } from "../features/executor-selector/model/types";
 import type { SettingEntry, SettingUpdate, SettingsScopeRequest } from "../api/settings";
-import type { LlmProvider, CreateLlmProviderRequest, UpdateLlmProviderRequest } from "../api/llmProviders";
+import type { LlmProvider, UpdateLlmProviderRequest } from "../api/llmProviders";
 import type { BackendConfig } from "../types";
 
 // ---------------------------------------------------------------------------

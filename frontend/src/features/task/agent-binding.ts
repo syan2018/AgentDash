@@ -5,7 +5,7 @@ function normalizeText(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-export function createDefaultAgentBinding(projectConfig?: ProjectConfig): AgentBinding {
+export function createDefaultAgentBinding(_projectConfig?: ProjectConfig): AgentBinding {
   return {
     agent_type: null,
     agent_pid: null,

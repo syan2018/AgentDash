@@ -1,4 +1,8 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "python .claude/hooks/statusline.py"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -35,6 +39,16 @@
     "PreToolUse": [
       {
         "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/inject-subagent-context.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
         "hooks": [
           {
             "type": "command",

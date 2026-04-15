@@ -1,6 +1,6 @@
 ---
 name: improve-ut
-description: "Improve Unit Test Coverage for New Changes"
+description: "Analyzes changed files and improves unit test coverage using project-specific testing conventions from .trellis/spec/ unit-test specs. Determines test scope (unit vs integration vs regression), adds or updates tests following existing patterns, and runs validation. Use when code changes need test coverage, after implementing a feature, after fixing a bug, or when test gaps are identified."
 ---
 
 # Improve Unit Tests (UT)
@@ -15,12 +15,14 @@ $improve-ut
 
 ## Source of Truth
 
-Read and follow these specs first:
+Discover and read unit-test specs dynamically:
 
-1. `.trellis/spec/unit-test/index.md`
-2. `.trellis/spec/unit-test/conventions.md`
-3. `.trellis/spec/unit-test/integration-patterns.md`
-4. `.trellis/spec/unit-test/mock-strategies.md`
+```bash
+# Discover available packages and their spec layers
+python3 ./.trellis/scripts/get_context.py --mode packages
+```
+
+Look for packages with `unit-test` spec layer in the output. For each discovered `unit-test/` directory, read all relevant spec files inside it (for example `index.md`, `conventions.md`, `integration-patterns.md`, `mock-strategies.md`).
 
 > If this skill conflicts with the unit-test specs, the specs win.
 

@@ -1,0 +1,48 @@
+{
+  "id": "routine-trigger-framework",
+  "name": "routine-trigger-framework",
+  "title": "Routine 触发框架 — 定时 / Webhook / 可插拔事件源",
+  "description": "将 Agent 触发机制从 cron config 字段提升为 Routine 一等实体，支持 Scheduled / Webhook / Plugin 三类触发源，通过 RoutineTriggerProvider SPI 实现可插拔事件源扩展",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-04-15",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [
+    "crates/agentdash-application/src/scheduling/cron_scheduler.rs",
+    "crates/agentdash-application/src/scheduling/config.rs",
+    "crates/agentdash-api/src/bootstrap/cron_target.rs",
+    "crates/agentdash-spi/src/hooks.rs",
+    "crates/agentdash-plugin-api/src/plugin.rs",
+    ".trellis/tasks/03-30-hook-external-triggers/prd.md"
+  ],
+  "notes": ""
+}

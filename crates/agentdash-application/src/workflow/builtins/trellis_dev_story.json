@@ -17,15 +17,13 @@
           ],
           "context_bindings": [
             {
-              "kind": "runtime_context",
-              "locator": "story_context_snapshot",
+              "locator": "context://story_context_snapshot",
               "reason": "Story 上下文快照",
               "required": true,
               "title": "Story Context Snapshot"
             },
             {
-              "kind": "runtime_context",
-              "locator": "story_prd",
+              "locator": "context://story_prd",
               "reason": "Story PRD",
               "required": false,
               "title": "Story PRD"
@@ -49,8 +47,7 @@
           ],
           "context_bindings": [
             {
-              "kind": "checklist",
-              "locator": "story_review_checklist",
+              "locator": "context://story_review_checklist",
               "reason": "Story 对齐检查清单",
               "required": true,
               "title": "Story Review Checklist"
@@ -84,8 +81,7 @@
           ],
           "context_bindings": [
             {
-              "kind": "journal_target",
-              "locator": "workspace_journal",
+              "locator": "context://workspace_journal",
               "reason": "工作区日志",
               "required": false,
               "title": "Workspace Journal"

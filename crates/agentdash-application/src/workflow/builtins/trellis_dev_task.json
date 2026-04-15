@@ -17,14 +17,12 @@
           ],
           "context_bindings": [
             {
-              "kind": "document_path",
               "locator": ".trellis/workflow.md",
               "reason": "workflow 总规则",
               "required": true,
               "title": "Workflow 总规则"
             },
             {
-              "kind": "document_path",
               "locator": ".trellis/spec/backend/index.md",
               "reason": "后端开发规范入口",
               "required": true,
@@ -50,8 +48,7 @@
           ],
           "context_bindings": [
             {
-              "kind": "runtime_context",
-              "locator": "execution_context",
+              "locator": "context://execution_context",
               "reason": "当前绑定对象的执行上下文",
               "required": true,
               "title": "Execution Context"
@@ -87,15 +84,13 @@
           ],
           "context_bindings": [
             {
-              "kind": "checklist",
-              "locator": "review_checklist",
+              "locator": "context://review_checklist",
               "reason": "当前绑定对象的检查清单",
               "required": true,
               "title": "Review Checklist"
             },
             {
-              "kind": "runtime_context",
-              "locator": "execution_context",
+              "locator": "context://execution_context",
               "reason": "当前绑定对象的执行上下文",
               "required": true,
               "title": "Execution Context"
@@ -134,15 +129,13 @@
           ],
           "context_bindings": [
             {
-              "kind": "journal_target",
-              "locator": "workspace_journal",
+              "locator": "context://workspace_journal",
               "reason": "历史记录沉淀位置",
               "required": false,
               "title": "Workspace Journal"
             },
             {
-              "kind": "action_ref",
-              "locator": "workflow_archive_action",
+              "locator": "context://workflow_archive_action",
               "reason": "归档建议与归档动作",
               "required": false,
               "title": "Archive Action"

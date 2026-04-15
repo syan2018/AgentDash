@@ -2,7 +2,10 @@ use agentdash_domain::{
     project::Project, story::Story, task::Task, workflow::WorkflowBindingKind, workspace::Workspace,
 };
 
-use crate::address_space::{RelayAddressSpaceService, SessionMountTarget, build_lifecycle_mount};
+use crate::address_space::{
+    RelayAddressSpaceService, ResolveBindingsOutput, SessionMountTarget, build_lifecycle_mount,
+    resolve_context_bindings,
+};
 use crate::repository_set::RepositorySet;
 use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
 use crate::task::config::resolve_task_executor_config;
@@ -16,6 +19,8 @@ pub struct TaskSessionRuntimeInputs {
     pub executor_resolution_error: Option<String>,
     pub address_space: Option<AddressSpace>,
     pub workflow: Option<ActiveWorkflowProjection>,
+    /// context_bindings 预解析结果（session 创建时通过 VFS read 解析）
+    pub resolved_bindings: Option<ResolveBindingsOutput>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
@@ -77,6 +82,29 @@ pub async fn build_task_session_runtime_inputs(
         None
     };
 
+    // 解析 workflow context_bindings（如果有 address_space 和 workflow）
+    let resolved_bindings = match (&address_space, &workflow) {
+        (Some(space), Some(wf)) => {
+            let bindings = &wf.effective_contract.injection.context_bindings;
+            if bindings.is_empty() {
+                None
+            } else {
+                match resolve_context_bindings(bindings, space, address_space_service).await {
+                    Ok(output) => Some(output),
+                    Err(err) => {
+                        tracing::warn!(
+                            task_id = %task.id,
+                            error = %err,
+                            "context_bindings 解析失败，跳过注入"
+                        );
+                        None
+                    }
+                }
+            }
+        }
+        _ => None,
+    };
+
     let mcp_servers = mcp_base_url
         .map(|base_url| {
             vec![
@@ -92,6 +120,7 @@ pub async fn build_task_session_runtime_inputs(
         executor_resolution_error,
         address_space,
         workflow,
+        resolved_bindings,
         mcp_servers,
     })
 }

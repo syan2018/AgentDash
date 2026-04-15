@@ -15,6 +15,7 @@ pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
 pub const PROVIDER_LIFECYCLE_VFS: &str = "lifecycle_vfs";
 pub const PROVIDER_CANVAS_FS: &str = "canvas_fs";
+pub const PROVIDER_CONTEXT_VFS: &str = "context_vfs";
 pub(crate) const CONTEXT_OWNER_SCOPE_METADATA_KEY: &str = "agentdash_context_owner_scope";
 pub(crate) const CONTEXT_OWNER_SCOPE_PROJECT: &str = "project";
 pub(crate) const CONTEXT_OWNER_SCOPE_STORY: &str = "story";
@@ -418,6 +419,34 @@ pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
                     { "path": "active/log", "description": "执行日志（JSON 数组）" },
                     { "path": "runs", "description": "历史 run 列表" }
                 ]
+            }
+        }),
+    }
+}
+
+/// 构建 context_vfs mount，携带预解析的运行时上下文 entries。
+///
+/// `entries`: key = 虚拟路径（如 "execution_context"），value = 内容文本。
+/// session 创建时将各来源数据填充到 entries 中，provider 按 path 查表返回。
+pub fn build_context_mount(entries: serde_json::Map<String, serde_json::Value>) -> Mount {
+    let keys: Vec<String> = entries.keys().cloned().collect();
+    Mount {
+        id: "context".to_string(),
+        provider: PROVIDER_CONTEXT_VFS.to_string(),
+        backend_id: String::new(),
+        root_ref: "context://".to_string(),
+        capabilities: vec![
+            MountCapability::Read,
+            MountCapability::List,
+            MountCapability::Search,
+        ],
+        default_write: false,
+        display_name: "运行时上下文".to_string(),
+        metadata: serde_json::json!({
+            "entries": entries,
+            "directory_hint": {
+                "description": "运行时上下文数据，包含 session 关联实体的预解析内容",
+                "available_keys": keys
             }
         }),
     }

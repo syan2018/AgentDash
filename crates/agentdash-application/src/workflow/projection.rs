@@ -48,6 +48,14 @@ pub struct WorkflowProjectionSnapshot {
 
 impl ActiveWorkflowProjection {
     pub fn to_snapshot(&self) -> WorkflowProjectionSnapshot {
+        self.to_snapshot_with_resolved_count(0)
+    }
+
+    /// 带有实际解析成功数的 snapshot（由 session 创建时提供）
+    pub fn to_snapshot_with_resolved_count(
+        &self,
+        resolved_binding_count: usize,
+    ) -> WorkflowProjectionSnapshot {
         let step_title = if self.active_step.description.trim().is_empty() {
             self.active_step.key.clone()
         } else {
@@ -67,7 +75,7 @@ impl ActiveWorkflowProjection {
             binding: self.binding.clone(),
             instruction_count: self.effective_contract.injection.instructions.len(),
             binding_count: self.effective_contract.injection.context_bindings.len(),
-            resolved_binding_count: 0,
+            resolved_binding_count,
             attachment_count: 0,
             constraint_count: self.effective_contract.constraints.len(),
             check_count: self.effective_contract.completion.checks.len(),

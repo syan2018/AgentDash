@@ -10,7 +10,10 @@ use super::provider::{
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
 use agentdash_domain::workflow::WorkflowBindingKind;
-use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository, LifecycleRunStatus};
+use agentdash_domain::workflow::{
+    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus, WorkflowRecordArtifact,
+    WorkflowRecordArtifactType,
+};
 use async_trait::async_trait;
 use serde::Serialize;
 use uuid::Uuid;
@@ -164,6 +167,41 @@ fn segments_from_path(path: &str) -> Vec<&str> {
     }
 }
 
+/// 按 step_key 过滤 artifact
+fn artifacts_for_node<'a>(
+    run: &'a LifecycleRun,
+    node_key: &str,
+) -> Vec<&'a WorkflowRecordArtifact> {
+    run.record_artifacts
+        .iter()
+        .filter(|a| a.step_key == node_key)
+        .collect()
+}
+
+/// 解析 artifact_type snake_case 字符串
+fn parse_artifact_type(s: &str) -> Option<WorkflowRecordArtifactType> {
+    let quoted = format!("\"{}\"", s);
+    serde_json::from_str(&quoted).ok()
+}
+
+/// 按 step_key + artifact_type 过滤，按创建时间降序
+fn artifacts_by_type<'a>(
+    run: &'a LifecycleRun,
+    node_key: &str,
+    type_str: &str,
+) -> Result<Vec<&'a WorkflowRecordArtifact>, MountError> {
+    let artifact_type = parse_artifact_type(type_str).ok_or_else(|| {
+        MountError::NotFound(format!("未知 artifact_type: {type_str}"))
+    })?;
+    let mut matched: Vec<&WorkflowRecordArtifact> = run
+        .record_artifacts
+        .iter()
+        .filter(|a| a.step_key == node_key && a.artifact_type == artifact_type)
+        .collect();
+    matched.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(matched)
+}
+
 #[async_trait]
 impl MountProvider for LifecycleMountProvider {
     fn provider_id(&self) -> &str {
@@ -225,6 +263,46 @@ impl MountProvider for LifecycleMountProvider {
                     .ok_or_else(|| MountError::NotFound(format!("run 不存在: {rid}")))?;
                 to_json_pretty(&run_overview(&run))?
             }
+            // ── nodes/ 路径族 ──────────────────────────────────
+            ["nodes", key, "state"] => {
+                let step = active
+                    .step_states
+                    .iter()
+                    .find(|s| s.step_key == *key)
+                    .ok_or_else(|| MountError::NotFound(format!("node 不存在: {key}")))?;
+                to_json_pretty(step)?
+            }
+            ["nodes", key, "artifacts"] => {
+                let arts = artifacts_for_node(&active, key);
+                to_json_pretty(&arts)?
+            }
+            ["nodes", key, "artifacts", "by-type", type_str] => {
+                let matched = artifacts_by_type(&active, key, type_str)?;
+                let latest = matched.first().ok_or_else(|| {
+                    MountError::NotFound(format!(
+                        "node `{key}` 无 `{type_str}` 类型 artifact"
+                    ))
+                })?;
+                latest.content.clone()
+            }
+            ["nodes", key, "artifacts", "by-type", type_str, "list"] => {
+                let matched = artifacts_by_type(&active, key, type_str)?;
+                to_json_pretty(&matched)?
+            }
+            ["nodes", key, "artifacts", id_str] => {
+                let aid = Uuid::parse_str(id_str)
+                    .map_err(|e| MountError::OperationFailed(format!("artifact id 无效: {e}")))?;
+                let art = active
+                    .record_artifacts
+                    .iter()
+                    .find(|a| a.id == aid && a.step_key == *key)
+                    .ok_or_else(|| {
+                        MountError::NotFound(format!(
+                            "node `{key}` 下 artifact 不存在: {aid}"
+                        ))
+                    })?;
+                art.content.clone()
+            }
             _ => {
                 return Err(MountError::NotFound(format!(
                     "lifecycle_vfs 不支持的路径: `{path_norm}`"
@@ -265,6 +343,12 @@ impl MountProvider for LifecycleMountProvider {
             [] => vec![
                 RuntimeFileEntry {
                     path: "active".to_string(),
+                    size: None,
+                    modified_at: None,
+                    is_dir: true,
+                },
+                RuntimeFileEntry {
+                    path: "nodes".to_string(),
                     size: None,
                     modified_at: None,
                     is_dir: true,
@@ -320,6 +404,48 @@ impl MountProvider for LifecycleMountProvider {
                     is_dir: false,
                 })
                 .collect(),
+            // ── nodes/ 路径族 ──────────────────────────────────
+            ["nodes"] => active
+                .step_states
+                .iter()
+                .map(|s| RuntimeFileEntry {
+                    path: format!("nodes/{}", s.step_key),
+                    size: None,
+                    modified_at: None,
+                    is_dir: true,
+                })
+                .collect(),
+            ["nodes", key] => {
+                if !active.step_states.iter().any(|s| s.step_key == *key) {
+                    Vec::new()
+                } else {
+                    vec![
+                        RuntimeFileEntry {
+                            path: format!("nodes/{key}/state"),
+                            size: None,
+                            modified_at: None,
+                            is_dir: false,
+                        },
+                        RuntimeFileEntry {
+                            path: format!("nodes/{key}/artifacts"),
+                            size: None,
+                            modified_at: None,
+                            is_dir: true,
+                        },
+                    ]
+                }
+            }
+            ["nodes", key, "artifacts"] => {
+                let arts = artifacts_for_node(&active, key);
+                arts.iter()
+                    .map(|a| RuntimeFileEntry {
+                        path: format!("nodes/{key}/artifacts/{}", a.id),
+                        size: Some(a.content.len() as u64),
+                        modified_at: None,
+                        is_dir: false,
+                    })
+                    .collect()
+            }
             ["runs"] => {
                 let (tk, tid) = resolve_binding_for_runs(mount, &active);
                 let runs = self

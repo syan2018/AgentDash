@@ -100,6 +100,8 @@ impl MountProviderRegistryBuilder {
         self.registry.register(Arc::new(
             super::provider_canvas::CanvasFsMountProvider::new(canvas_repo),
         ));
+        self.registry
+            .register(Arc::new(super::provider_context::ContextMountProvider));
         self
     }
 

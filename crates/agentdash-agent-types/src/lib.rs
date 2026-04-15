@@ -12,10 +12,10 @@ pub mod tool;
 pub use content::ContentPart;
 pub use context::AgentContext;
 pub use decisions::{
-    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeStopInput,
-    BeforeToolCallInput, CompactionParams, CompactionResult, CompactionTriggerStats,
-    EvaluateCompactionInput, StopDecision, ToolCallDecision, TransformContextInput,
-    TransformContextOutput, TurnControlDecision,
+    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeProviderRequestInput,
+    BeforeStopInput, BeforeToolCallInput, CompactionParams, CompactionResult,
+    CompactionTriggerStats, EvaluateCompactionInput, StopDecision, ToolCallDecision,
+    TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 pub use delegate::{AgentRuntimeDelegate, AgentRuntimeError, DynAgentRuntimeDelegate};
 pub use hooks_io::{

@@ -144,10 +144,13 @@ export interface WorkflowTemplateWorkflow {
   contract: WorkflowContract;
 }
 
+export type LifecycleNodeType = "agent_node" | "phase_node";
+
 export interface LifecycleStepDefinition {
   key: string;
   description: string;
   workflow_key?: string | null;
+  node_type?: LifecycleNodeType;
 }
 
 export interface WorkflowTemplate {
@@ -211,6 +214,7 @@ export interface WorkflowAssignment {
 export interface WorkflowStepState {
   step_key: string;
   status: WorkflowStepExecutionStatus;
+  session_id?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   summary?: string | null;

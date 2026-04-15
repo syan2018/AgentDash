@@ -520,7 +520,7 @@ impl StoryMcpServer {
                     "status": t.status,
                     "workspace_id": t.workspace_id.map(|w| w.to_string()),
                     "agent_type": t.agent_binding.agent_type,
-                    "session_id": t.session_id,
+                    "executor_session_id": t.executor_session_id,
                 })
             })
             .collect();

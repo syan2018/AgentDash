@@ -287,6 +287,7 @@ impl HookScriptEngine {
             HookTrigger::SubagentResult => "subagent_result",
             HookTrigger::BeforeCompact => "before_compact",
             HookTrigger::AfterCompact => "after_compact",
+            HookTrigger::BeforeProviderRequest => "before_provider_request",
         };
 
         let wf_source = active_workflow_source_from_snapshot(ctx.snapshot);

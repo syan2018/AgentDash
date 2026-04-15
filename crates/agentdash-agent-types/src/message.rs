@@ -227,6 +227,17 @@ impl AgentMessage {
             Self::CompactionSummary { summary, .. } => Some(summary.as_str()),
         }
     }
+
+    pub fn is_user(&self) -> bool {
+        matches!(self, Self::User { .. })
+    }
+
+    /// Replace all text content parts in a User message.
+    pub fn replace_user_text(&mut self, new_text: &str) {
+        if let Self::User { content, .. } = self {
+            *content = vec![ContentPart::text(new_text)];
+        }
+    }
 }
 
 // ─── AgentMessage 便利转换 ──────────────────────────────────

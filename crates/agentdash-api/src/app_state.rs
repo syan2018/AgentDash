@@ -265,6 +265,7 @@ impl AppState {
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 task_repo: task_repo_port.clone(),
+                session_binding_repo: session_binding_repo.clone(),
                 restart_tracker: restart_tracker.clone(),
                 session_state_reader: Arc::new(HubSessionStateReader {
                     hub: session_hub.clone(),
@@ -325,6 +326,7 @@ impl AppState {
             agentdash_application::reconcile::runtime::RuntimeReconciler::new(
                 session_hub.clone(),
                 task_repo_port.clone(),
+                repos.session_binding_repo.clone(),
             ),
         );
 

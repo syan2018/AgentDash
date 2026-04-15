@@ -1,7 +1,7 @@
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleStepDefinition, WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
-    build_effective_contract,
+    LifecycleStepDefinition, WorkflowBindingKind, WorkflowDefinition,
+    WorkflowDefinitionRepository, build_effective_contract,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -162,6 +162,81 @@ pub async fn resolve_active_workflow_projection(
             binding_kind,
             binding_id,
             binding_label,
+        },
+    }))
+}
+
+/// 通过 run_id 和 node_key 直接解析 workflow projection。
+///
+/// 与 `resolve_active_workflow_projection` 不同，此函数不依赖 binding 查询，
+/// 也不假设 `current_step_key` 是目标 node —— 而是直接指定要查看的 node_key。
+/// 用于 Lifecycle Orchestrator 在 DAG 中针对特定 node 构建 contract。
+pub async fn resolve_workflow_projection_by_run(
+    run_id: Uuid,
+    node_key: &str,
+    definition_repo: &dyn WorkflowDefinitionRepository,
+    lifecycle_repo: &dyn LifecycleDefinitionRepository,
+    run_repo: &dyn LifecycleRunRepository,
+) -> Result<Option<ActiveWorkflowProjection>, String> {
+    let run = run_repo
+        .get_by_id(run_id)
+        .await
+        .map_err(|e| format!("加载 lifecycle run 失败: {e}"))?;
+    let Some(run) = run else {
+        return Ok(None);
+    };
+
+    let lifecycle = lifecycle_repo
+        .get_by_id(run.lifecycle_id)
+        .await
+        .map_err(|e| format!("加载 lifecycle definition 失败: {e}"))?
+        .filter(|definition| definition.is_active());
+    let Some(lifecycle) = lifecycle else {
+        return Ok(None);
+    };
+
+    let Some(active_step) = lifecycle
+        .steps
+        .iter()
+        .find(|step| step.key == node_key)
+        .cloned()
+    else {
+        return Ok(None);
+    };
+
+    let primary_workflow = match active_step
+        .workflow_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(wk) => {
+            let Some(wf) = definition_repo
+                .get_by_key(wk)
+                .await
+                .map_err(|e| format!("加载 workflow 失败: {e}"))?
+                .filter(|definition| definition.is_active())
+            else {
+                return Ok(None);
+            };
+            Some(wf)
+        }
+        None => None,
+    };
+
+    let effective_contract =
+        build_effective_contract(&lifecycle.key, &active_step.key, primary_workflow.as_ref());
+
+    Ok(Some(ActiveWorkflowProjection {
+        run,
+        lifecycle,
+        active_step,
+        primary_workflow,
+        effective_contract,
+        binding: WorkflowBindingSummary {
+            binding_kind: WorkflowBindingKind::Task,
+            binding_id: Uuid::nil(),
+            binding_label: Some(format!("lifecycle_node:{node_key}")),
         },
     }))
 }

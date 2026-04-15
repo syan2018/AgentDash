@@ -774,6 +774,7 @@ impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
     ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::TransformContextOutput {
             messages: input.context.messages,
+            blocked: None,
         })
     }
 
@@ -839,6 +840,7 @@ impl agentdash_agent::AgentRuntimeDelegate for EmptyContinueDelegate {
     ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::TransformContextOutput {
             messages: input.context.messages,
+            blocked: None,
         })
     }
 

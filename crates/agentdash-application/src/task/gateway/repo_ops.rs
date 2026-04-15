@@ -118,7 +118,6 @@ pub async fn update_task_status(
             "reason": reason,
             "task_id": task.id,
             "story_id": task.story_id,
-            "session_id": task.session_id,
             "executor_session_id": task.executor_session_id,
             "from": previous_status,
             "to": next_status,
@@ -265,7 +264,9 @@ pub async fn bind_executor_session_id(
     Ok(())
 }
 
-/// 清理 Task 的 session 绑定 — OneShot 模式完成或失败后调用
+/// 清理 Task 的 session 绑定 — OneShot 模式完成或失败后调用。
+///
+/// 删除 SessionBinding(owner_type=task, label="execution") 并清理 executor_session_id。
 pub async fn clear_task_session_binding(
     repos: &RepositorySet,
     task_id: Uuid,
@@ -273,16 +274,34 @@ pub async fn clear_task_session_binding(
     reason: &str,
 ) {
     let result: Result<(), DomainError> = async {
+        use agentdash_domain::session_binding::SessionOwnerType;
+
         let mut task = match repos.task_repo.get_by_id(task_id).await? {
             Some(task) => task,
             None => return Ok(()),
         };
 
-        let cleared_session_id = task.session_id.take();
+        let execution_binding = repos
+            .session_binding_repo
+            .find_by_owner_and_label(SessionOwnerType::Task, task_id, "execution")
+            .await?;
+
+        let cleared_session_id = execution_binding.as_ref().map(|b| b.session_id.clone());
         let cleared_executor_session_id = task.executor_session_id.take();
 
         if cleared_session_id.is_none() && cleared_executor_session_id.is_none() {
             return Ok(());
+        }
+
+        if let Some(binding) = &execution_binding {
+            repos
+                .session_binding_repo
+                .delete_by_session_and_owner(
+                    &binding.session_id,
+                    SessionOwnerType::Task,
+                    task_id,
+                )
+                .await?;
         }
 
         repos.task_repo.update(&task).await?;

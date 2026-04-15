@@ -9,6 +9,7 @@ use crate::session::SessionHub;
 use crate::task::restart_tracker::RestartTracker;
 use crate::task::state_reconciler::{TaskSessionStateReader, reconcile_running_tasks_on_boot};
 use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StateChangeRepository;
 use agentdash_domain::task::TaskRepository;
 
@@ -18,6 +19,7 @@ pub struct BootReconcileDeps {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub task_repo: Arc<dyn TaskRepository>,
+    pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub restart_tracker: Arc<RestartTracker>,
     pub session_state_reader: Arc<dyn TaskSessionStateReader>,
 }
@@ -108,6 +110,7 @@ async fn run_task_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.project_repo,
         &deps.state_change_repo,
         &deps.task_repo,
+        &deps.session_binding_repo,
         deps.session_state_reader.as_ref(),
         Some(deps.restart_tracker.as_ref()),
     )

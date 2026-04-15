@@ -225,6 +225,7 @@ impl LifecycleRun {
                 } else {
                     LifecycleStepExecutionStatus::Pending
                 },
+                session_id: None,
                 started_at: None,
                 completed_at: None,
                 summary: None,
@@ -491,6 +492,7 @@ mod tests {
             key: key.to_string(),
             description: String::new(),
             workflow_key: Some(workflow_key.to_string()),
+            node_type: Default::default(),
         }
     }
 

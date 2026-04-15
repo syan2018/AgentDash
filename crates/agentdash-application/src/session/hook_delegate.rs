@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use agentdash_spi::lifecycle::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
-    AgentRuntimeError, BeforeStopInput, BeforeToolCallInput, CompactionParams, CompactionResult,
-    CompactionTriggerStats, DynAgentRuntimeDelegate, EvaluateCompactionInput, StopDecision,
-    StopReason, ToolCallDecision, TransformContextInput, TransformContextOutput,
-    TurnControlDecision,
+    AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput,
+    CompactionParams, CompactionResult, CompactionTriggerStats, DynAgentRuntimeDelegate,
+    EvaluateCompactionInput, StopDecision, StopReason, ToolCallDecision, TransformContextInput,
+    TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -297,6 +297,22 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             )
             .await?;
 
+        // 2a. block_reason — hook 要求阻止当前用户输入
+        if let Some(reason) = evaluated.resolution.block_reason.clone() {
+            self.record_trace(
+                HookTrigger::UserPromptSubmit,
+                "blocked",
+                None,
+                None,
+                None,
+                &evaluated,
+            );
+            return Ok(TransformContextOutput {
+                messages: vec![],
+                blocked: Some(reason),
+            });
+        }
+
         let pending_messages = collect_pending_hook_messages(
             self.hook_session.as_ref(),
             &evaluated.snapshot,
@@ -328,6 +344,14 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
 
         // 3. 构建消息列表
         let mut messages = input.context.messages;
+
+        // 3a. transformed_message — hook 改写了用户原始输入
+        if let Some(ref new_text) = evaluated.resolution.transformed_message {
+            if let Some(last_user) = messages.iter_mut().rev().find(|m| m.is_user()) {
+                last_user.replace_user_text(new_text);
+            }
+        }
+
         if let Some(message) = build_hook_injection_message(
             &evaluated.snapshot,
             &evaluated.resolution,
@@ -338,7 +362,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         messages.extend(pending_messages.steering);
         messages.extend(pending_messages.follow_up);
 
-        Ok(TransformContextOutput { messages })
+        Ok(TransformContextOutput {
+            messages,
+            blocked: None,
+        })
     }
 
     async fn before_tool_call(
@@ -618,6 +645,34 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         })
     }
 
+    async fn on_before_provider_request(
+        &self,
+        input: BeforeProviderRequestInput,
+        _cancel: CancellationToken,
+    ) -> Result<(), AgentRuntimeError> {
+        let evaluated = self
+            .evaluate(
+                HookTrigger::BeforeProviderRequest,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "system_prompt_len": input.system_prompt_len,
+                    "message_count": input.message_count,
+                    "tool_count": input.tool_count,
+                })),
+            )
+            .await?;
+        self.record_trace(
+            HookTrigger::BeforeProviderRequest,
+            "observed",
+            None,
+            None,
+            None,
+            &evaluated,
+        );
+        Ok(())
+    }
 }
 
 struct EvaluatedResolution {

@@ -3,10 +3,10 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::decisions::{
-    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeStopInput,
-    BeforeToolCallInput, CompactionParams, CompactionResult, EvaluateCompactionInput,
-    StopDecision, ToolCallDecision, TransformContextInput, TransformContextOutput,
-    TurnControlDecision,
+    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeProviderRequestInput,
+    BeforeStopInput, BeforeToolCallInput, CompactionParams, CompactionResult,
+    EvaluateCompactionInput, StopDecision, ToolCallDecision, TransformContextInput,
+    TransformContextOutput, TurnControlDecision,
 };
 
 // ─── AgentRuntimeDelegate ──────────────────────────────────
@@ -64,6 +64,16 @@ pub trait AgentRuntimeDelegate: Send + Sync {
         input: BeforeStopInput,
         cancel: CancellationToken,
     ) -> Result<StopDecision, AgentRuntimeError>;
+
+    /// LLM API 请求发出前的观测回调（仅通知，不改写 payload）。
+    /// 默认空实现，hook 层可用于日志记录、token 统计等。
+    async fn on_before_provider_request(
+        &self,
+        _input: BeforeProviderRequestInput,
+        _cancel: CancellationToken,
+    ) -> Result<(), AgentRuntimeError> {
+        Ok(())
+    }
 }
 
 pub type DynAgentRuntimeDelegate = std::sync::Arc<dyn AgentRuntimeDelegate>;

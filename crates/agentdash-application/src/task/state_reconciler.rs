@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository};
 use agentdash_domain::task::{Task, TaskExecutionMode, TaskRepository, TaskStatus};
 
@@ -52,6 +53,7 @@ struct StatusReconcilePlan {
 
 fn plan_for_running_task(
     task: &Task,
+    session_id: Option<&str>,
     execution_state: TaskSessionState,
     restart_tracker: Option<&RestartTracker>,
 ) -> Option<StatusReconcilePlan> {
@@ -61,14 +63,14 @@ fn plan_for_running_task(
             next_status: TaskStatus::AwaitingVerification,
             reason: "boot_reconcile_turn_completed",
             context: json!({
-                "session_id": task.session_id,
+                "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
             }),
         }),
         TaskSessionState::Failed { turn_id, message } => {
             let mut context = json!({
-                "session_id": task.session_id,
+                "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
                 "execution_mode": task.execution_mode,
@@ -98,7 +100,7 @@ fn plan_for_running_task(
         }
         TaskSessionState::Interrupted { turn_id, message } => {
             let mut context = json!({
-                "session_id": task.session_id,
+                "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
                 "turn_id": turn_id,
                 "execution_mode": task.execution_mode,
@@ -130,7 +132,7 @@ fn plan_for_running_task(
             next_status: TaskStatus::Failed,
             reason: "boot_reconcile_session_idle",
             context: json!({
-                "session_id": task.session_id,
+                "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
             }),
         }),
@@ -141,6 +143,7 @@ async fn apply_reconcile_update(
     state_change_repo: &Arc<dyn StateChangeRepository>,
     task_repo: &Arc<dyn TaskRepository>,
     task: &mut Task,
+    session_id: Option<&str>,
     plan: StatusReconcilePlan,
 ) -> Result<bool, TaskStateReconcileError> {
     if task.status == plan.next_status {
@@ -161,7 +164,7 @@ async fn apply_reconcile_update(
                 "project_id": task.project_id,
                 "task_id": task.id,
                 "story_id": task.story_id,
-                "session_id": task.session_id,
+                "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
                 "from": previous_status,
                 "to": plan.next_status,
@@ -187,6 +190,7 @@ pub async fn reconcile_running_tasks_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     task_repo: &Arc<dyn TaskRepository>,
+    session_binding_repo: &Arc<dyn SessionBindingRepository>,
     session_state_reader: &dyn TaskSessionStateReader,
     restart_tracker: Option<&RestartTracker>,
 ) -> Result<(), TaskStateReconcileError> {
@@ -202,25 +206,42 @@ pub async fn reconcile_running_tasks_on_boot(
                 continue;
             }
 
-            let execution_state = match task.session_id.as_deref() {
+            let session_id = super::find_task_execution_session_id(
+                session_binding_repo.as_ref(),
+                task.id,
+            )
+            .await
+            .unwrap_or(None);
+
+            let execution_state = match session_id.as_deref() {
                 None => TaskSessionState::Interrupted {
                     turn_id: None,
                     message: None,
                 },
-                Some(session_id) => session_state_reader
-                    .inspect_session_execution_state(session_id)
+                Some(sid) => session_state_reader
+                    .inspect_session_execution_state(sid)
                     .await
                     .map_err(TaskStateReconcileError::SessionState)?,
             };
 
-            let Some(plan) = plan_for_running_task(&task, execution_state, restart_tracker) else {
+            let Some(plan) =
+                plan_for_running_task(&task, session_id.as_deref(), execution_state, restart_tracker)
+            else {
                 continue;
             };
 
             let is_retry = plan.next_status == TaskStatus::AwaitingVerification
                 && plan.reason.contains("pending_retry");
 
-            if apply_reconcile_update(state_change_repo, task_repo, &mut task, plan).await? {
+            if apply_reconcile_update(
+                state_change_repo,
+                task_repo,
+                &mut task,
+                session_id.as_deref(),
+                plan,
+            )
+            .await?
+            {
                 touched += 1;
                 if is_retry {
                     pending_retry += 1;

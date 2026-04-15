@@ -29,7 +29,6 @@ impl PostgresTaskRepository {
                 title TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
-                session_id TEXT,
                 executor_session_id TEXT,
                 execution_mode TEXT NOT NULL DEFAULT 'standard',
                 agent_binding TEXT NOT NULL DEFAULT '{}',
@@ -40,7 +39,6 @@ impl PostgresTaskRepository {
 
             CREATE INDEX IF NOT EXISTS idx_tasks_story_id ON tasks(story_id);
             CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
-            CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
             CREATE INDEX IF NOT EXISTS idx_tasks_executor_session_id ON tasks(executor_session_id);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
             "#,
@@ -80,8 +78,8 @@ impl PostgresTaskRepository {
 impl TaskRepository for PostgresTaskRepository {
     async fn create(&self, task: &Task) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO tasks (id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            "INSERT INTO tasks (id, project_id, story_id, workspace_id, title, description, status, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(task.id.to_string())
         .bind(task.project_id.to_string())
@@ -90,7 +88,6 @@ impl TaskRepository for PostgresTaskRepository {
         .bind(&task.title)
         .bind(&task.description)
         .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
-        .bind(task.session_id.as_deref())
         .bind(task.executor_session_id.as_deref())
         .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
         .bind(serde_json::to_string(&task.agent_binding)?)
@@ -106,7 +103,7 @@ impl TaskRepository for PostgresTaskRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Task>, DomainError> {
         let row = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE id = $1",
         )
         .bind(id.to_string())
@@ -119,7 +116,7 @@ impl TaskRepository for PostgresTaskRepository {
 
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
         let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE project_id = $1 ORDER BY created_at ASC",
         )
         .bind(project_id.to_string())
@@ -132,7 +129,7 @@ impl TaskRepository for PostgresTaskRepository {
 
     async fn list_by_story(&self, story_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
         let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE story_id = $1 ORDER BY created_at ASC",
         )
         .bind(story_id.to_string())
@@ -145,7 +142,7 @@ impl TaskRepository for PostgresTaskRepository {
 
     async fn list_by_workspace(&self, workspace_id: uuid::Uuid) -> Result<Vec<Task>, DomainError> {
         let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE workspace_id = $1 ORDER BY created_at ASC",
         )
         .bind(workspace_id.to_string())
@@ -158,8 +155,8 @@ impl TaskRepository for PostgresTaskRepository {
 
     async fn update(&self, task: &Task) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "UPDATE tasks SET project_id = $1, story_id = $2, workspace_id = $3, title = $4, description = $5, status = $6, session_id = $7, executor_session_id = $8, execution_mode = $9, agent_binding = $10, artifacts = $11, updated_at = $12
-             WHERE id = $13",
+            "UPDATE tasks SET project_id = $1, story_id = $2, workspace_id = $3, title = $4, description = $5, status = $6, executor_session_id = $7, execution_mode = $8, agent_binding = $9, artifacts = $10, updated_at = $11
+             WHERE id = $12",
         )
         .bind(task.project_id.to_string())
         .bind(task.story_id.to_string())
@@ -167,7 +164,6 @@ impl TaskRepository for PostgresTaskRepository {
         .bind(&task.title)
         .bind(&task.description)
         .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
-        .bind(task.session_id.as_deref())
         .bind(task.executor_session_id.as_deref())
         .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
         .bind(serde_json::to_string(&task.agent_binding)?)
@@ -236,8 +232,8 @@ impl TaskAggregateCommandRepository for PostgresTaskRepository {
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO tasks (id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            "INSERT INTO tasks (id, project_id, story_id, workspace_id, title, description, status, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(task.id.to_string())
         .bind(task.project_id.to_string())
@@ -246,7 +242,6 @@ impl TaskAggregateCommandRepository for PostgresTaskRepository {
         .bind(&task.title)
         .bind(&task.description)
         .bind(serde_json::to_string(&task.status)?.trim_matches('"'))
-        .bind(task.session_id.as_deref())
         .bind(task.executor_session_id.as_deref())
         .bind(serde_json::to_string(&task.execution_mode)?.trim_matches('"'))
         .bind(serde_json::to_string(&task.agent_binding)?)
@@ -308,7 +303,7 @@ impl TaskAggregateCommandRepository for PostgresTaskRepository {
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         let row = sqlx::query_as::<_, TaskRow>(
-            "SELECT id, project_id, story_id, workspace_id, title, description, status, session_id, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
+            "SELECT id, project_id, story_id, workspace_id, title, description, status, executor_session_id, execution_mode, agent_binding, artifacts, created_at, updated_at
              FROM tasks WHERE id = $1",
         )
         .bind(task_id.to_string())
@@ -398,7 +393,6 @@ struct TaskRow {
     title: String,
     description: String,
     status: String,
-    session_id: Option<String>,
     executor_session_id: Option<String>,
     execution_mode: String,
     agent_binding: String,
@@ -459,7 +453,6 @@ impl TryFrom<TaskRow> for Task {
             title: row.title,
             description: row.description,
             status: parse_task_status(&row.status)?,
-            session_id: row.session_id,
             executor_session_id: row.executor_session_id,
             execution_mode: parse_task_execution_mode(&row.execution_mode)?,
             agent_binding,

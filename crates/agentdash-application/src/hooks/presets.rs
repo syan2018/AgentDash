@@ -170,5 +170,6 @@ pub fn domain_trigger_to_spi(trigger: WorkflowHookTrigger) -> HookTrigger {
         WorkflowHookTrigger::SubagentResult => HookTrigger::SubagentResult,
         WorkflowHookTrigger::BeforeCompact => HookTrigger::BeforeCompact,
         WorkflowHookTrigger::AfterCompact => HookTrigger::AfterCompact,
+        WorkflowHookTrigger::BeforeProviderRequest => HookTrigger::BeforeProviderRequest,
     }
 }

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryStatus;
 use agentdash_domain::task::{TaskRepository, TaskStatus};
 
@@ -16,13 +17,19 @@ use crate::session::SessionHub;
 pub struct RuntimeReconciler {
     session_hub: SessionHub,
     task_repo: Arc<dyn TaskRepository>,
+    session_binding_repo: Arc<dyn SessionBindingRepository>,
 }
 
 impl RuntimeReconciler {
-    pub fn new(session_hub: SessionHub, task_repo: Arc<dyn TaskRepository>) -> Self {
+    pub fn new(
+        session_hub: SessionHub,
+        task_repo: Arc<dyn TaskRepository>,
+        session_binding_repo: Arc<dyn SessionBindingRepository>,
+    ) -> Self {
         Self {
             session_hub,
             task_repo,
+            session_binding_repo,
         }
     }
 
@@ -32,16 +39,17 @@ impl RuntimeReconciler {
             return;
         }
 
-        let task = match self.task_repo.get_by_id(task_id).await {
-            Ok(Some(task)) => task,
+        let session_id = match crate::task::find_task_execution_session_id(
+            self.session_binding_repo.as_ref(),
+            task_id,
+        )
+        .await
+        {
+            Ok(Some(sid)) => sid,
             _ => return,
         };
 
-        let Some(session_id) = task.session_id.as_deref() else {
-            return;
-        };
-
-        if let Err(err) = self.session_hub.cancel(session_id).await {
+        if let Err(err) = self.session_hub.cancel(&session_id).await {
             tracing::warn!(
                 task_id = %task_id,
                 session_id = %session_id,
@@ -81,10 +89,16 @@ impl RuntimeReconciler {
             if task.status != TaskStatus::Running {
                 continue;
             }
-            let Some(session_id) = task.session_id.as_deref() else {
-                continue;
+            let session_id = match crate::task::find_task_execution_session_id(
+                self.session_binding_repo.as_ref(),
+                task.id,
+            )
+            .await
+            {
+                Ok(Some(sid)) => sid,
+                _ => continue,
             };
-            if let Err(err) = self.session_hub.cancel(session_id).await {
+            if let Err(err) = self.session_hub.cancel(&session_id).await {
                 tracing::warn!(
                     task_id = %task.id,
                     session_id = %session_id,

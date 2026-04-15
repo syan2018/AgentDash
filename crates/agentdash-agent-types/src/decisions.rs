@@ -14,6 +14,9 @@ pub struct TransformContextInput {
 #[derive(Debug, Clone)]
 pub struct TransformContextOutput {
     pub messages: Vec<AgentMessage>,
+    /// 当 hook 规则阻止当前用户输入时设置。
+    /// agent loop 检测到此字段后应终止当前轮次并向用户报告原因。
+    pub blocked: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +97,15 @@ pub enum StopDecision {
         reason: Option<String>,
         allow_empty: bool,
     },
+}
+
+// ─── BeforeProviderRequest ─────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct BeforeProviderRequestInput {
+    pub system_prompt_len: usize,
+    pub message_count: usize,
+    pub tool_count: usize,
 }
 
 // ─── Compaction 参数 ──────────────────────────────────────

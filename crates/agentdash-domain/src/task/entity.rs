@@ -8,6 +8,9 @@ use super::value_objects::{AgentBinding, Artifact, TaskExecutionMode, TaskStatus
 ///
 /// 面向用户展示的工作项容器，承载归属关系、独立业务状态机、Session 默认执行策略和结果摘要。
 /// 真实执行在 Session 中发生；Task 通过 workspace_id 外键关联逻辑工作空间。
+///
+/// Session 归属关系通过 `SessionBinding` 管理（owner_type=task, label="execution"），
+/// Task entity 不再持有 session_id。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: Uuid,
@@ -18,8 +21,6 @@ pub struct Task {
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
-    /// 绑定的执行会话 ID（首次 start 时创建）
-    pub session_id: Option<String>,
     /// 执行器原生会话 ID（用于 follow-up/resume）
     pub executor_session_id: Option<String>,
     /// 执行模式 — 控制失败后的自动处理策略
@@ -43,7 +44,6 @@ impl Task {
             title,
             description,
             status: TaskStatus::Pending,
-            session_id: None,
             executor_session_id: None,
             execution_mode: TaskExecutionMode::default(),
             agent_binding: AgentBinding::default(),

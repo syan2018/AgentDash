@@ -10,6 +10,7 @@ use agentdash_application::task_state_reconciler::{
     TaskSessionState, TaskSessionStateReader, reconcile_running_tasks_on_boot,
 };
 use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StateChangeRepository;
 use agentdash_domain::task::TaskRepository;
 
@@ -49,6 +50,7 @@ pub async fn reconcile_task_states_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     task_repo: &Arc<dyn TaskRepository>,
+    session_binding_repo: &Arc<dyn SessionBindingRepository>,
     session_hub: &SessionHub,
     restart_tracker: &RestartTracker,
 ) -> Result<()> {
@@ -60,6 +62,7 @@ pub async fn reconcile_task_states_on_boot(
         project_repo,
         state_change_repo,
         task_repo,
+        session_binding_repo,
         &session_state_reader,
         Some(restart_tracker),
     )

@@ -260,10 +260,11 @@ pub struct WorkflowContract {
     pub constraints: Vec<WorkflowConstraintSpec>,
     #[serde(default)]
     pub completion: WorkflowCompletionSpec,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub output_ports: Vec<OutputPortDefinition>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub input_ports: Vec<InputPortDefinition>,
+    /// 推荐 ports（模板用途）。运行时产出约束由 LifecycleStepDefinition 级 ports 定义。
+    #[serde(default, alias = "output_ports", skip_serializing_if = "Vec::is_empty")]
+    pub recommended_output_ports: Vec<OutputPortDefinition>,
+    #[serde(default, alias = "input_ports", skip_serializing_if = "Vec::is_empty")]
+    pub recommended_input_ports: Vec<InputPortDefinition>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -361,6 +362,12 @@ pub struct LifecycleStepDefinition {
     pub workflow_key: Option<String>,
     #[serde(default)]
     pub node_type: LifecycleNodeType,
+    /// Step 级产出约束：该节点必须交付的 artifacts
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_ports: Vec<OutputPortDefinition>,
+    /// Step 级消费声明：该节点从前驱接收的 artifacts
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_ports: Vec<InputPortDefinition>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -591,36 +598,36 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
     }
 
     let mut seen_output_port_keys = std::collections::BTreeSet::new();
-    for (index, port) in contract.output_ports.iter().enumerate() {
+    for (index, port) in contract.recommended_output_ports.iter().enumerate() {
         validate_identity(
-            &format!("{field_path}.output_ports[{index}].key"),
+            &format!("{field_path}.recommended_output_ports[{index}].key"),
             &port.key,
         )?;
         validate_non_empty(
-            &format!("{field_path}.output_ports[{index}].description"),
+            &format!("{field_path}.recommended_output_ports[{index}].description"),
             &port.description,
         )?;
         if !seen_output_port_keys.insert(port.key.clone()) {
             return Err(format!(
-                "{field_path}.output_ports[{index}].key 重复: {}",
+                "{field_path}.recommended_output_ports[{index}].key 重复: {}",
                 port.key
             ));
         }
     }
 
     let mut seen_input_port_keys = std::collections::BTreeSet::new();
-    for (index, port) in contract.input_ports.iter().enumerate() {
+    for (index, port) in contract.recommended_input_ports.iter().enumerate() {
         validate_identity(
-            &format!("{field_path}.input_ports[{index}].key"),
+            &format!("{field_path}.recommended_input_ports[{index}].key"),
             &port.key,
         )?;
         validate_non_empty(
-            &format!("{field_path}.input_ports[{index}].description"),
+            &format!("{field_path}.recommended_input_ports[{index}].description"),
             &port.description,
         )?;
         if !seen_input_port_keys.insert(port.key.clone()) {
             return Err(format!(
-                "{field_path}.input_ports[{index}].key 重复: {}",
+                "{field_path}.recommended_input_ports[{index}].key 重复: {}",
                 port.key
             ));
         }

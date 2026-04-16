@@ -378,10 +378,9 @@ impl LifecycleOrchestrator {
             format!("`{node_key}`（{}）", node_description.trim())
         };
 
-        // ── output port 交付要求 ──
-        let output_ports: Vec<_> = node_workflow
-            .map(|w| w.contract.output_ports.clone())
-            .unwrap_or_default();
+        // ── output port 交付要求（从 step 级 ports 读取） ──
+        let step_def = lifecycle.steps.iter().find(|s| s.key == node_key);
+        let output_ports = step_def.map(|s| &s.output_ports[..]).unwrap_or_default();
         let writable_port_keys: Vec<String> =
             output_ports.iter().map(|p| p.key.clone()).collect();
 
@@ -405,15 +404,13 @@ impl LifecycleOrchestrator {
             )
         };
 
-        // ── input port 上下文引用（基于 edge 推导前驱 port output） ──
-        let input_ports: Vec<_> = node_workflow
-            .map(|w| w.contract.input_ports.clone())
-            .unwrap_or_default();
+        // ── input port 上下文引用（从 step 级 ports + edges 推导前驱 port output） ──
+        let input_ports = step_def.map(|s| &s.input_ports[..]).unwrap_or_default();
         let input_section = if input_ports.is_empty() {
             String::new()
         } else {
             let mut items = Vec::new();
-            for ip in &input_ports {
+            for ip in input_ports {
                 // 从 edges 中找到连入当前 node + port 的边
                 let source_edges: Vec<_> = lifecycle
                     .edges

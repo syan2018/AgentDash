@@ -1,0 +1,6 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/tasks/04-16-step-level-ports/prd.md", "reason": "PRD"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "VFS mount 和 port 访问契约"}
+{"file": ".trellis/spec/backend/execution-hook-runtime.md", "reason": "Hook runtime 和 snapshot 构建"}

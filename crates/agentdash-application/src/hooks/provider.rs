@@ -356,17 +356,13 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         ),
                         checklist_evidence_titles: Some(checklist_evidence.titles.clone()),
                         output_port_keys: {
+                            // port 归属已迁移到 step 级别
                             let port_keys: Vec<String> = workflow
-                                .primary_workflow
-                                .as_ref()
-                                .map(|w| {
-                                    w.contract
-                                        .output_ports
-                                        .iter()
-                                        .map(|p| p.key.clone())
-                                        .collect()
-                                })
-                                .unwrap_or_default();
+                                .active_step
+                                .output_ports
+                                .iter()
+                                .map(|p| p.key.clone())
+                                .collect();
                             if port_keys.is_empty() {
                                 None
                             } else {

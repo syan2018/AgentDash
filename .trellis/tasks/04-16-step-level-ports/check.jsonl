@@ -1,0 +1,4 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/tasks/04-16-step-level-ports/prd.md", "reason": "PRD 验收"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量规范"}

@@ -36,9 +36,10 @@ export interface DagSidePanelProps {
   onClose: () => void;
   /** 设为入口节点 */
   onSetEntry: () => void;
-  /** port 变更回调 — 编辑器负责同步到 WorkflowDefinition draft */
   onOutputPortsChange: (ports: OutputPortDefinition[]) => void;
   onInputPortsChange: (ports: InputPortDefinition[]) => void;
+  /** 导入 Workflow 推荐的 ports 到当前 step */
+  onImportRecommendedPorts: () => void;
 }
 
 /**
@@ -57,6 +58,7 @@ export function DagSidePanel({
   onSetEntry,
   onOutputPortsChange,
   onInputPortsChange,
+  onImportRecommendedPorts,
 }: DagSidePanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("basic");
   const isAgentNode = (step.node_type ?? "agent_node") === "agent_node";
@@ -121,6 +123,7 @@ export function DagSidePanel({
             step={step}
             availableWorkflows={availableWorkflows}
             onChange={onChange}
+            onImportRecommendedPorts={onImportRecommendedPorts}
           />
         )}
         {activeTab === "output_ports" && isAgentNode && (
@@ -157,12 +160,20 @@ function BasicInfoTab({
   step,
   availableWorkflows,
   onChange,
+  onImportRecommendedPorts,
 }: {
   step: LifecycleStepDefinition;
   availableWorkflows: WorkflowDefinition[];
   onChange: (patch: Partial<LifecycleStepDefinition>) => void;
+  onImportRecommendedPorts: () => void;
 }) {
   const nodeType = step.node_type ?? "agent_node";
+  const boundWorkflow = step.workflow_key
+    ? availableWorkflows.find((w) => w.key === step.workflow_key)
+    : null;
+  const hasRecommendedPorts =
+    (boundWorkflow?.contract.recommended_output_ports?.length ?? 0) > 0 ||
+    (boundWorkflow?.contract.recommended_input_ports?.length ?? 0) > 0;
 
   return (
     <div className="space-y-4">
@@ -219,6 +230,15 @@ function BasicInfoTab({
         <p className="mt-1 text-[10px] text-muted-foreground">
           绑定已发布的 Workflow 定义以驱动该步。
         </p>
+        {hasRecommendedPorts && (
+          <button
+            type="button"
+            onClick={onImportRecommendedPorts}
+            className="mt-2 w-full rounded-[8px] border border-primary/30 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-primary/5"
+          >
+            导入 Workflow 推荐的 Ports
+          </button>
+        )}
       </div>
     </div>
   );

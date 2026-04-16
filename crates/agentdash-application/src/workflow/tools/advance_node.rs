@@ -137,24 +137,10 @@ impl AgentTool for AdvanceLifecycleNodeTool {
             .steps
             .iter()
             .find(|s| s.key == locator.step_key);
-        // 从 workflow definition 获取 output port keys
-        let required_output_keys: Vec<String> = if let Some(wk) = step_def
-            .and_then(|s| s.workflow_key.as_deref())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            match self.workflow_definition_repo.get_by_key(wk).await {
-                Ok(Some(wf)) => wf
-                    .contract
-                    .output_ports
-                    .iter()
-                    .map(|p| p.key.clone())
-                    .collect(),
-                _ => Vec::new(),
-            }
-        } else {
-            Vec::new()
-        };
+        // 从 step 级 output_ports 获取 required keys（port 归属已迁移到 step）
+        let required_output_keys: Vec<String> = step_def
+            .map(|s| s.output_ports.iter().map(|p| p.key.clone()).collect())
+            .unwrap_or_default();
 
         if !required_output_keys.is_empty() {
             let missing: Vec<&String> = required_output_keys

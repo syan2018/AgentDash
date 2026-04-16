@@ -1069,6 +1069,8 @@ async fn resolve_lifecycle_key_for_link(
                     description: String::new(),
                     workflow_key: Some(wk),
                     node_type: Default::default(),
+                    output_ports: vec![],
+                    input_ports: vec![],
                 }],
                 edges: vec![],
                 entry_step_key: "main".to_string(),

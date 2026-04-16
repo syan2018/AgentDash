@@ -555,8 +555,9 @@ export function TaskWorkflowPanel({
                 const nodeWorkflow = def?.workflow_key
                   ? findWorkflowByKey(definitions, def.workflow_key)
                   : null;
-                const outputPorts = nodeWorkflow?.contract.output_ports ?? [];
-                const inputPorts = nodeWorkflow?.contract.input_ports ?? [];
+                // port 归属已迁移到 step 级别
+                const outputPorts = def?.output_ports ?? [];
+                const inputPorts = def?.input_ports ?? [];
                 const portOutputs = activeRun.port_outputs ?? {};
 
                 return (

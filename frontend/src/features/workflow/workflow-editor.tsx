@@ -2,10 +2,20 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   HookRulePreset,
+  OutputPortDefinition,
+  InputPortDefinition,
+  WorkflowCheckKind,
+  WorkflowCheckSpec,
+  WorkflowCompletionSpec,
+  WorkflowConstraintKind,
+  WorkflowConstraintSpec,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
+  WorkflowRecordArtifactType,
   WorkflowTargetKind,
+  GateStrategy,
+  ContextStrategy,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import {
@@ -17,6 +27,7 @@ import { ValidationPanel } from "./ui/validation-panel";
 import { DetailSection } from "../../components/ui/detail-panel";
 
 const TRIGGER_LABEL: Record<WorkflowHookTrigger, string> = {
+  user_prompt_submit: "用户 Prompt 提交",
   before_tool: "工具调用前",
   after_tool: "工具调用后",
   after_turn: "Turn 结束后",
@@ -25,6 +36,9 @@ const TRIGGER_LABEL: Record<WorkflowHookTrigger, string> = {
   before_subagent_dispatch: "子 Agent 派发前",
   after_subagent_dispatch: "子 Agent 派发后",
   subagent_result: "子 Agent 结果回流",
+  before_compact: "上下文压缩前",
+  after_compact: "上下文压缩后",
+  before_provider_request: "LLM 请求前",
 };
 
 const GATE_TRIGGERS: ReadonlySet<WorkflowHookTrigger> = new Set([
@@ -602,10 +616,25 @@ export function WorkflowEditor() {
 
       {/* Session 注入 */}
       <DetailSection title="Session 注入" description="Session 启动或 Workflow 切换时，hook 向 Agent 上下文注入的内容。">
-        <InstructionListEditor
-          values={draft.contract.injection.instructions}
-          onChange={(instructions) => updateInjection({ instructions })}
-        />
+        <div className="space-y-3">
+          <div>
+            <label className="agentdash-form-label">目标（Goal）</label>
+            <textarea
+              value={draft.contract.injection.goal ?? ""}
+              onChange={(e) => updateInjection({ goal: e.target.value || null })}
+              rows={2}
+              className="agentdash-form-textarea"
+              placeholder="本 Workflow 的核心目标，注入 Agent 上下文作为顶层导向"
+            />
+          </div>
+          <div>
+            <label className="agentdash-form-label">指令（Instructions）</label>
+            <InstructionListEditor
+              values={draft.contract.injection.instructions}
+              onChange={(instructions) => updateInjection({ instructions })}
+            />
+          </div>
+        </div>
       </DetailSection>
 
       {/* Context Bindings */}
@@ -663,6 +692,306 @@ export function WorkflowEditor() {
           onRemove={removeDraftHookRule}
         />
       </DetailSection>
+
+      {/* 完成条件 */}
+      <DetailSection title="完成条件" description="定义 step 完成时的默认 artifact 设置和检查条件。">
+        <CompletionEditor
+          completion={draft.contract.completion}
+          onChange={(completion) => updateDraft({ contract: { ...draft.contract, completion } })}
+        />
+      </DetailSection>
+
+      {/* 运行约束 */}
+      <DetailSection
+        title={`运行约束 (${draft.contract.constraints.length})`}
+        description="运行时的阻断策略，如等待检查通过后才允许推进。"
+      >
+        <ConstraintListEditor
+          constraints={draft.contract.constraints}
+          onChange={(constraints) => updateDraft({ contract: { ...draft.contract, constraints } })}
+        />
+      </DetailSection>
+
+      {/* 推荐 Ports */}
+      <DetailSection
+        title="推荐 Ports"
+        description="定义此 Workflow 典型的输入输出 port 模板，lifecycle step 绑定时可一键导入。"
+      >
+        <RecommendedPortsEditor
+          outputPorts={draft.contract.recommended_output_ports ?? []}
+          inputPorts={draft.contract.recommended_input_ports ?? []}
+          onOutputChange={(recommended_output_ports) => updateDraft({ contract: { ...draft.contract, recommended_output_ports } })}
+          onInputChange={(recommended_input_ports) => updateDraft({ contract: { ...draft.contract, recommended_input_ports } })}
+        />
+      </DetailSection>
+    </div>
+  );
+}
+
+// ─── Completion Editor ──────────────────────────────────
+
+const ARTIFACT_TYPE_LABEL: Record<WorkflowRecordArtifactType, string> = {
+  session_summary: "会话摘要",
+  journal_update: "日志更新",
+  archive_suggestion: "归档建议",
+  phase_note: "阶段备注",
+  checklist_evidence: "Checklist 证据",
+  execution_trace: "执行轨迹",
+  decision_record: "决策记录",
+  context_snapshot: "上下文快照",
+};
+
+const CHECK_KIND_LABEL: Record<WorkflowCheckKind, string> = {
+  artifact_exists: "产物存在",
+  artifact_count_gte: "产物数量 ≥",
+  session_terminal_in: "Session 终态匹配",
+  checklist_evidence_present: "Checklist 证据存在",
+  explicit_action_received: "显式操作确认",
+  custom: "自定义",
+};
+
+function CompletionEditor({
+  completion,
+  onChange,
+}: {
+  completion: WorkflowCompletionSpec;
+  onChange: (c: WorkflowCompletionSpec) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="agentdash-form-label">默认产物类型</label>
+          <select
+            value={completion.default_artifact_type ?? ""}
+            onChange={(e) => onChange({ ...completion, default_artifact_type: (e.target.value || null) as WorkflowRecordArtifactType | null })}
+            className="agentdash-form-select"
+          >
+            <option value="">— 无 —</option>
+            {(Object.entries(ARTIFACT_TYPE_LABEL) as [WorkflowRecordArtifactType, string][]).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="agentdash-form-label">默认产物标题</label>
+          <input
+            value={completion.default_artifact_title ?? ""}
+            onChange={(e) => onChange({ ...completion, default_artifact_title: e.target.value || null })}
+            className="agentdash-form-input"
+            placeholder="Step 产物"
+          />
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between">
+          <label className="agentdash-form-label">完成检查 ({completion.checks.length})</label>
+          <button
+            type="button"
+            onClick={() => onChange({ ...completion, checks: [...completion.checks, { key: "", kind: "artifact_exists", description: "" }] })}
+            className="agentdash-button-secondary px-2 py-1 text-xs"
+          >
+            + 添加
+          </button>
+        </div>
+        <div className="mt-2 space-y-2">
+          {completion.checks.map((check, idx) => (
+            <div key={idx} className="flex items-start gap-2 rounded-[10px] border border-border bg-secondary/20 p-3">
+              <div className="flex-1 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    value={check.key}
+                    onChange={(e) => {
+                      const next = [...completion.checks];
+                      next[idx] = { ...check, key: e.target.value };
+                      onChange({ ...completion, checks: next });
+                    }}
+                    className="agentdash-form-input"
+                    placeholder="check key"
+                  />
+                  <select
+                    value={check.kind}
+                    onChange={(e) => {
+                      const next = [...completion.checks];
+                      next[idx] = { ...check, kind: e.target.value as WorkflowCheckKind };
+                      onChange({ ...completion, checks: next });
+                    }}
+                    className="agentdash-form-select"
+                  >
+                    {(Object.entries(CHECK_KIND_LABEL) as [WorkflowCheckKind, string][]).map(([k, v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
+                  </select>
+                </div>
+                <input
+                  value={check.description}
+                  onChange={(e) => {
+                    const next = [...completion.checks];
+                    next[idx] = { ...check, description: e.target.value };
+                    onChange({ ...completion, checks: next });
+                  }}
+                  className="agentdash-form-input"
+                  placeholder="检查描述"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => onChange({ ...completion, checks: completion.checks.filter((_, i) => i !== idx) })}
+                className="mt-1 shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+              </button>
+            </div>
+          ))}
+          {completion.checks.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">暂无完成检查</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Constraint List Editor ─────────────────────────────
+
+const CONSTRAINT_KIND_LABEL: Record<WorkflowConstraintKind, string> = {
+  block_stop_until_checks_pass: "等待检查通过后才允许停止",
+  custom: "自定义",
+};
+
+function ConstraintListEditor({
+  constraints,
+  onChange,
+}: {
+  constraints: WorkflowConstraintSpec[];
+  onChange: (c: WorkflowConstraintSpec[]) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => onChange([...constraints, { key: "", kind: "block_stop_until_checks_pass", description: "" }])}
+          className="agentdash-button-secondary px-2 py-1 text-xs"
+        >
+          + 添加
+        </button>
+      </div>
+      {constraints.map((c, idx) => (
+        <div key={idx} className="flex items-start gap-2 rounded-[10px] border border-border bg-secondary/20 p-3">
+          <div className="flex-1 space-y-2">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input
+                value={c.key}
+                onChange={(e) => {
+                  const next = [...constraints];
+                  next[idx] = { ...c, key: e.target.value };
+                  onChange(next);
+                }}
+                className="agentdash-form-input"
+                placeholder="constraint key"
+              />
+              <select
+                value={c.kind}
+                onChange={(e) => {
+                  const next = [...constraints];
+                  next[idx] = { ...c, kind: e.target.value as WorkflowConstraintKind };
+                  onChange(next);
+                }}
+                className="agentdash-form-select"
+              >
+                {(Object.entries(CONSTRAINT_KIND_LABEL) as [WorkflowConstraintKind, string][]).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+            <input
+              value={c.description}
+              onChange={(e) => {
+                const next = [...constraints];
+                next[idx] = { ...c, description: e.target.value };
+                onChange(next);
+              }}
+              className="agentdash-form-input"
+              placeholder="约束描述"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(constraints.filter((_, i) => i !== idx))}
+            className="mt-1 shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
+        </div>
+      ))}
+      {constraints.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">暂无运行约束</p>}
+    </div>
+  );
+}
+
+// ─── Recommended Ports Editor ───────────────────────────
+
+const GATE_LABEL: Record<GateStrategy, string> = { existence: "文件存在", schema: "Schema（预留）", llm_judge: "LLM（预留）" };
+const CTX_LABEL: Record<ContextStrategy, string> = { full: "完整", summary: "摘要（预留）", metadata_only: "元信息（预留）", custom: "自定义（预留）" };
+
+function RecommendedPortsEditor({
+  outputPorts,
+  inputPorts,
+  onOutputChange,
+  onInputChange,
+}: {
+  outputPorts: OutputPortDefinition[];
+  inputPorts: InputPortDefinition[];
+  onOutputChange: (ports: OutputPortDefinition[]) => void;
+  onInputChange: (ports: InputPortDefinition[]) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Output */}
+      <div>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">Output Ports ({outputPorts.length})</p>
+          <button type="button" onClick={() => onOutputChange([...outputPorts, { key: "", description: "", gate_strategy: "existence" }])} className="agentdash-button-secondary px-2 py-1 text-xs">+ 添加</button>
+        </div>
+        <div className="mt-2 space-y-2">
+          {outputPorts.map((p, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <input value={p.key} onChange={(e) => { const n = [...outputPorts]; n[idx] = { ...p, key: e.target.value }; onOutputChange(n); }} className="agentdash-form-input flex-1" placeholder="port key" />
+              <input value={p.description} onChange={(e) => { const n = [...outputPorts]; n[idx] = { ...p, description: e.target.value }; onOutputChange(n); }} className="agentdash-form-input flex-1" placeholder="描述" />
+              <select value={p.gate_strategy ?? "existence"} onChange={(e) => { const n = [...outputPorts]; n[idx] = { ...p, gate_strategy: e.target.value as GateStrategy }; onOutputChange(n); }} className="agentdash-form-select w-28">
+                {(Object.entries(GATE_LABEL) as [GateStrategy, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <button type="button" onClick={() => onOutputChange(outputPorts.filter((_, i) => i !== idx))} className="shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+              </button>
+            </div>
+          ))}
+          {outputPorts.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">暂无推荐 output port</p>}
+        </div>
+      </div>
+
+      {/* Input */}
+      <div>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">Input Ports ({inputPorts.length})</p>
+          <button type="button" onClick={() => onInputChange([...inputPorts, { key: "", description: "", context_strategy: "full" }])} className="agentdash-button-secondary px-2 py-1 text-xs">+ 添加</button>
+        </div>
+        <div className="mt-2 space-y-2">
+          {inputPorts.map((p, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <input value={p.key} onChange={(e) => { const n = [...inputPorts]; n[idx] = { ...p, key: e.target.value }; onInputChange(n); }} className="agentdash-form-input flex-1" placeholder="port key" />
+              <input value={p.description} onChange={(e) => { const n = [...inputPorts]; n[idx] = { ...p, description: e.target.value }; onInputChange(n); }} className="agentdash-form-input flex-1" placeholder="描述" />
+              <select value={p.context_strategy ?? "full"} onChange={(e) => { const n = [...inputPorts]; n[idx] = { ...p, context_strategy: e.target.value as ContextStrategy }; onInputChange(n); }} className="agentdash-form-select w-28">
+                {(Object.entries(CTX_LABEL) as [ContextStrategy, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <button type="button" onClick={() => onInputChange(inputPorts.filter((_, i) => i !== idx))} className="shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+              </button>
+            </div>
+          ))}
+          {inputPorts.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">暂无推荐 input port</p>}
+        </div>
+      </div>
     </div>
   );
 }

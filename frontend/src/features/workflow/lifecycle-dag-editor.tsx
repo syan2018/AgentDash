@@ -34,6 +34,7 @@ import {
 import { ValidationPanel } from "./ui/validation-panel";
 import { DagNode, type DagNodeData } from "./ui/dag-node";
 import { DagSidePanel } from "./ui/dag-side-panel";
+import { DagLifecyclePanel } from "./ui/dag-lifecycle-panel";
 import { applyDagreLayout, generateLinearEdges, wouldCreateCycle } from "./model/dag-layout";
 
 // ─── 常量 ───
@@ -68,24 +69,20 @@ function stepsToNodes(
   entryStepKey: string,
   workflowDefs: WorkflowDefinition[],
   positions: Record<string, { x: number; y: number }>,
-  portOverrides: Map<string, { inputPorts: InputPortDefinition[]; outputPorts: OutputPortDefinition[] }>,
 ): Node[] {
   const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
 
   return steps.map((step, idx) => {
     const wf = step.workflow_key ? wfMap.get(step.workflow_key) : null;
-    const overrides = portOverrides.get(step.key);
-    const outputPorts = overrides?.outputPorts ?? wf?.contract.output_ports ?? [];
-    const inputPorts = overrides?.inputPorts ?? wf?.contract.input_ports ?? [];
-
+    // port 归属在 step 级别，直接读取
     const data: DagNodeData = {
       stepKey: step.key,
       description: step.description,
       nodeType: step.node_type ?? "agent_node",
       workflowKey: step.workflow_key ?? null,
       workflowName: wf?.name ?? null,
-      inputPorts,
-      outputPorts,
+      inputPorts: step.input_ports,
+      outputPorts: step.output_ports,
       isEntryNode: step.key === entryStepKey,
     };
 
@@ -146,11 +143,6 @@ function LifecycleDagEditorInner() {
   // ── 选中节点 ──
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
 
-  // ── Port 覆盖层（本地编辑，保存时同步） ──
-  const [portOverrides, setPortOverrides] = useState<
-    Map<string, { inputPorts: InputPortDefinition[]; outputPorts: OutputPortDefinition[] }>
-  >(new Map());
-
   // ── 加载关联的 workflow definitions ──
   const targetKind = draft?.target_kind;
   useEffect(() => {
@@ -190,10 +182,10 @@ function LifecycleDagEditorInner() {
 
     if (stepsChanged || edgesChanged) {
       // steps 或 edges 引用变了 → 全量重建（含位置）
-      setNodes(stepsToNodes(draft.steps, draft.entry_step_key, workflowDefinitions, positions.current, portOverrides));
+      setNodes(stepsToNodes(draft.steps, draft.entry_step_key, workflowDefinitions, positions.current));
       setEdges(lifecycleEdgesToRfEdges(draft.edges));
     } else {
-      // 仅 portOverrides / workflowDefinitions / entry_step_key 变了 → 就地 patch node data
+      // 仅 workflowDefinitions / entry_step_key 变了 → 就地 patch node data
       const wfMap = new Map(workflowDefinitions.map((d) => [d.key, d]));
       const stepKeys = new Set(draft.steps.map((s) => s.key));
       setNodes((nds) =>
@@ -202,9 +194,6 @@ function LifecycleDagEditorInner() {
           .map((node) => {
             const step = draft.steps.find((s) => s.key === node.id)!;
             const wf = step.workflow_key ? wfMap.get(step.workflow_key) ?? null : null;
-            const overrides = portOverrides.get(step.key);
-            const outputPorts = overrides?.outputPorts ?? wf?.contract.output_ports ?? [];
-            const inputPorts = overrides?.inputPorts ?? wf?.contract.input_ports ?? [];
             return {
               ...node,
               data: {
@@ -214,15 +203,15 @@ function LifecycleDagEditorInner() {
                 nodeType: step.node_type ?? "agent_node",
                 workflowKey: step.workflow_key ?? null,
                 workflowName: wf?.name ?? null,
-                outputPorts,
-                inputPorts,
+                outputPorts: step.output_ports,
+                inputPorts: step.input_ports,
                 isEntryNode: step.key === draft.entry_step_key,
               },
             };
           }),
       );
     }
-  }, [draft, workflowDefinitions, portOverrides, setNodes, setEdges]);
+  }, [draft, workflowDefinitions, setNodes, setEdges]);
 
   // ── 节点变更 → 过滤掉 remove（删除统一走 onDelete → store） ──
   const handleNodesChangeWrapped = useCallback(
@@ -269,12 +258,6 @@ function LifecycleDagEditorInner() {
         if (selectedNodeKey != null && deletedNodeKeys.has(selectedNodeKey)) {
           setSelectedNodeKey(null);
         }
-        // [Fix E] 清理 portOverrides
-        setPortOverrides((prev) => {
-          const next = new Map(prev);
-          for (const k of deletedNodeKeys) next.delete(k);
-          return next;
-        });
       }
 
       if (deletedEdges.length > 0) {
@@ -305,14 +288,35 @@ function LifecycleDagEditorInner() {
       ) {
         return;
       }
-      // [Fix A] 只写 store，不直接 setEdges
+      const fromPort = connection.sourceHandle ?? "__default_out";
+      let toPort = connection.targetHandle ?? "__default_in";
+
+      // ── 拖拽到 __default_in（节点 body）→ 自动创建同名 input port ──
+      let newSteps = draft.steps;
+      if (toPort === "__default_in" && fromPort !== "__default_out") {
+        const targetStepIdx = draft.steps.findIndex((s) => s.key === connection.target);
+        if (targetStepIdx >= 0) {
+          const targetStep = draft.steps[targetStepIdx];
+          const alreadyHas = targetStep.input_ports.some((p) => p.key === fromPort);
+          if (!alreadyHas) {
+            // 以 source port key 为名自动创建 input port
+            newSteps = draft.steps.map((s, i) =>
+              i === targetStepIdx
+                ? { ...s, input_ports: [...s.input_ports, { key: fromPort, description: "", context_strategy: "full" as const }] }
+                : s,
+            );
+          }
+          toPort = fromPort; // 连接到新创建（或已存在）的同名 port
+        }
+      }
+
       const newEdge: LifecycleEdge = {
         from_node: connection.source,
-        from_port: connection.sourceHandle ?? "__default_out",
+        from_port: fromPort,
         to_node: connection.target,
-        to_port: connection.targetHandle ?? "__default_in",
+        to_port: toPort,
       };
-      updateLifecycleDraft({ edges: [...draft.edges, newEdge] });
+      updateLifecycleDraft({ steps: newSteps, edges: [...draft.edges, newEdge] });
     },
     [draft, updateLifecycleDraft],
   );
@@ -356,13 +360,6 @@ function LifecycleDagEditorInner() {
       );
       updateLifecycleDraft({ steps: newSteps, edges: newEdges });
       if (selectedNodeKey === nodeKey) setSelectedNodeKey(null);
-      // [Fix E] 清理 portOverrides
-      setPortOverrides((prev) => {
-        if (!prev.has(nodeKey)) return prev;
-        const next = new Map(prev);
-        next.delete(nodeKey);
-        return next;
-      });
     },
     [draft, updateLifecycleDraft, selectedNodeKey],
   );
@@ -396,20 +393,29 @@ function LifecycleDagEditorInner() {
           delete pos[nodeKey];
           savePositions(draft.key, pos);
         }
-        // [Fix D] 重命名 portOverrides 的 Map key
-        setPortOverrides((prev) => {
-          if (!prev.has(nodeKey)) return prev;
-          const next = new Map(prev);
-          next.set(patch.key!, next.get(nodeKey)!);
-          next.delete(nodeKey);
-          return next;
-        });
       }
 
       updateLifecycleDraft({ steps: newSteps, edges: newEdges, entry_step_key: newEntryKey });
     },
     [draft, updateLifecycleDraft],
   );
+
+  // ── 导入 Workflow 推荐 Ports ──
+  const handleImportRecommendedPorts = useCallback(() => {
+    if (!draft || selectedStepIndex < 0) return;
+    const step = draft.steps[selectedStepIndex];
+    if (!step.workflow_key) return;
+    const wf = workflowDefinitions.find((d) => d.key === step.workflow_key);
+    if (!wf) return;
+    const recOut = wf.contract.recommended_output_ports ?? [];
+    const recIn = wf.contract.recommended_input_ports ?? [];
+    // 合并：跳过已存在的同名 port
+    const existingOutKeys = new Set(step.output_ports.map((p) => p.key));
+    const existingInKeys = new Set(step.input_ports.map((p) => p.key));
+    const newOut = [...step.output_ports, ...recOut.filter((p) => !existingOutKeys.has(p.key))];
+    const newIn = [...step.input_ports, ...recIn.filter((p) => !existingInKeys.has(p.key))];
+    updateLifecycleStep(selectedStepIndex, { output_ports: newOut, input_ports: newIn });
+  }, [draft, selectedStepIndex, workflowDefinitions, updateLifecycleStep]);
 
   // ── 设为入口节点 ──
   const handleSetEntry = useCallback(
@@ -423,7 +429,7 @@ function LifecycleDagEditorInner() {
   // [Fix C] 从 draft 构建节点，不读 RF state，避免残留幽灵节点参与布局
   const handleAutoLayout = useCallback(() => {
     if (!draft) return;
-    const freshNodes = stepsToNodes(draft.steps, draft.entry_step_key, workflowDefinitions, positions.current, portOverrides);
+    const freshNodes = stepsToNodes(draft.steps, draft.entry_step_key, workflowDefinitions, positions.current);
     const freshEdges = lifecycleEdgesToRfEdges(draft.edges);
     const laid = applyDagreLayout(freshNodes, freshEdges);
     setNodes(laid);
@@ -432,7 +438,7 @@ function LifecycleDagEditorInner() {
     positions.current = pos;
     savePositions(draft.key ?? "__new", pos);
     requestAnimationFrame(() => reactFlowInstance.fitView({ padding: 0.2 }));
-  }, [draft, workflowDefinitions, portOverrides, setNodes, reactFlowInstance]);
+  }, [draft, workflowDefinitions, setNodes, reactFlowInstance]);
 
   // ── 自动线性连线 ──
   // [Fix B] 只写 store，不直接 setEdges
@@ -441,34 +447,23 @@ function LifecycleDagEditorInner() {
     const nodeIds = draft.steps.map((s) => s.key);
     const wfMap = new Map(workflowDefinitions.map((d) => [d.key, d]));
 
+    // port 归属在 step 级别，直接从 step.output_ports / input_ports 读取
     const getFirstOutputPort = (nodeId: string): string | null => {
       const step = draft.steps.find((s) => s.key === nodeId);
       if (!step) return null;
-      const overrides = portOverrides.get(nodeId)?.outputPorts;
-      if (overrides && overrides.length > 0 && overrides[0].key) return overrides[0].key;
-      if (step.workflow_key) {
-        const wf = wfMap.get(step.workflow_key);
-        const ports = wf?.contract.output_ports ?? [];
-        if (ports.length > 0) return ports[0].key;
-      }
+      if (step.output_ports.length > 0 && step.output_ports[0].key) return step.output_ports[0].key;
       return "__default_out";
     };
     const getFirstInputPort = (nodeId: string): string | null => {
       const step = draft.steps.find((s) => s.key === nodeId);
       if (!step) return null;
-      const overrides = portOverrides.get(nodeId)?.inputPorts;
-      if (overrides && overrides.length > 0 && overrides[0].key) return overrides[0].key;
-      if (step.workflow_key) {
-        const wf = wfMap.get(step.workflow_key);
-        const ports = wf?.contract.input_ports ?? [];
-        if (ports.length > 0) return ports[0].key;
-      }
+      if (step.input_ports.length > 0 && step.input_ports[0].key) return step.input_ports[0].key;
       return "__default_in";
     };
 
     const linearEdges = generateLinearEdges(nodeIds, getFirstOutputPort, getFirstInputPort);
     updateLifecycleDraft({ edges: rfEdgesToLifecycleEdges(linearEdges) });
-  }, [draft, workflowDefinitions, portOverrides, updateLifecycleDraft]);
+  }, [draft, updateLifecycleDraft]);
 
   // ── 保存 ──
   const handleSave = useCallback(async () => {
@@ -515,49 +510,28 @@ function LifecycleDagEditorInner() {
     [selectedNodeKey, draft?.steps],
   );
 
-  const selectedOutputPorts = useMemo(() => {
-    if (!selectedStep) return [];
-    const overrides = portOverrides.get(selectedStep.key);
-    if (overrides) return overrides.outputPorts;
-    if (!selectedStep.workflow_key) return [];
-    const wf = workflowDefinitions.find((d) => d.key === selectedStep.workflow_key);
-    return wf?.contract.output_ports ?? [];
-  }, [selectedStep, portOverrides, workflowDefinitions]);
+  // ── Port 编辑回调（直接写 step 级 ports，通过 updateLifecycleStep 走 store） ──
+  const updateLifecycleStep = useWorkflowStore((s) => s.updateLifecycleStep);
 
-  const selectedInputPorts = useMemo(() => {
-    if (!selectedStep) return [];
-    const overrides = portOverrides.get(selectedStep.key);
-    if (overrides) return overrides.inputPorts;
-    if (!selectedStep.workflow_key) return [];
-    const wf = workflowDefinitions.find((d) => d.key === selectedStep.workflow_key);
-    return wf?.contract.input_ports ?? [];
-  }, [selectedStep, portOverrides, workflowDefinitions]);
+  const selectedStepIndex = useMemo(
+    () => (selectedNodeKey != null ? draft?.steps.findIndex((s) => s.key === selectedNodeKey) ?? -1 : -1),
+    [selectedNodeKey, draft?.steps],
+  );
 
-  // ── Port 编辑回调 ──
   const handleOutputPortsChange = useCallback(
     (ports: OutputPortDefinition[]) => {
-      if (selectedNodeKey == null) return;
-      setPortOverrides((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(selectedNodeKey) ?? { inputPorts: selectedInputPorts, outputPorts: [] };
-        next.set(selectedNodeKey, { ...existing, outputPorts: ports });
-        return next;
-      });
+      if (selectedStepIndex < 0) return;
+      updateLifecycleStep(selectedStepIndex, { output_ports: ports });
     },
-    [selectedNodeKey, selectedInputPorts],
+    [selectedStepIndex, updateLifecycleStep],
   );
 
   const handleInputPortsChange = useCallback(
     (ports: InputPortDefinition[]) => {
-      if (selectedNodeKey == null) return;
-      setPortOverrides((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(selectedNodeKey) ?? { inputPorts: [], outputPorts: selectedOutputPorts };
-        next.set(selectedNodeKey, { ...existing, inputPorts: ports });
-        return next;
-      });
+      if (selectedStepIndex < 0) return;
+      updateLifecycleStep(selectedStepIndex, { input_ports: ports });
     },
-    [selectedNodeKey, selectedOutputPorts],
+    [selectedStepIndex, updateLifecycleStep],
   );
 
   if (!draft) return null;
@@ -692,24 +666,37 @@ function LifecycleDagEditorInner() {
         )}
       </div>
 
-      {/* 右侧：Side Panel */}
-      {selectedStep && (
-        <div className="w-80 shrink-0">
+      {/* 右侧面板：选中节点 → 节点配置 / 未选中 → Lifecycle 配置 */}
+      <div className="w-80 shrink-0">
+        {selectedStep ? (
           <DagSidePanel
             step={selectedStep}
             isEntry={selectedStep.key === draft.entry_step_key}
             availableWorkflows={availableWorkflows}
-            outputPorts={selectedOutputPorts}
-            inputPorts={selectedInputPorts}
+            outputPorts={selectedStep.output_ports}
+            inputPorts={selectedStep.input_ports}
             onChange={(patch) => handleUpdateStep(selectedStep.key, patch)}
             onRemove={() => handleRemoveNode(selectedStep.key)}
             onClose={() => setSelectedNodeKey(null)}
             onSetEntry={() => handleSetEntry(selectedStep.key)}
             onOutputPortsChange={handleOutputPortsChange}
             onInputPortsChange={handleInputPortsChange}
+            onImportRecommendedPorts={handleImportRecommendedPorts}
           />
-        </div>
-      )}
+        ) : (
+          <DagLifecyclePanel
+            lifecycleKey={draft.key}
+            name={draft.name}
+            description={draft.description}
+            targetKind={draft.target_kind}
+            entryStepKey={draft.entry_step_key}
+            recommendedRoles={draft.recommended_roles}
+            stepKeys={draft.steps.map((s) => s.key)}
+            isNew={isNew}
+            onChange={updateLifecycleDraft}
+          />
+        )}
+      </div>
     </div>
   );
 }

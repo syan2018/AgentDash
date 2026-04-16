@@ -77,6 +77,7 @@ export interface WorkflowCompletionSpec {
 }
 
 export type WorkflowHookTrigger =
+  | "user_prompt_submit"
   | "before_tool"
   | "after_tool"
   | "after_turn"
@@ -84,7 +85,10 @@ export type WorkflowHookTrigger =
   | "session_terminal"
   | "before_subagent_dispatch"
   | "after_subagent_dispatch"
-  | "subagent_result";
+  | "subagent_result"
+  | "before_compact"
+  | "after_compact"
+  | "before_provider_request";
 
 export interface WorkflowHookRuleSpec {
   key: string;
@@ -136,8 +140,9 @@ export interface WorkflowContract {
   hook_rules: WorkflowHookRuleSpec[];
   constraints: WorkflowConstraintSpec[];
   completion: WorkflowCompletionSpec;
-  output_ports?: OutputPortDefinition[];
-  input_ports?: InputPortDefinition[];
+  /** 推荐 ports（模板用途，运行时产出约束由 step 级 ports 定义） */
+  recommended_output_ports?: OutputPortDefinition[];
+  recommended_input_ports?: InputPortDefinition[];
 }
 
 export type WorkflowDefinitionSource =
@@ -178,6 +183,10 @@ export interface LifecycleStepDefinition {
   description: string;
   workflow_key?: string | null;
   node_type?: LifecycleNodeType;
+  /** Step 级产出约束 */
+  output_ports: OutputPortDefinition[];
+  /** Step 级消费声明 */
+  input_ports: InputPortDefinition[];
 }
 
 export interface WorkflowTemplate {
@@ -193,7 +202,7 @@ export interface WorkflowTemplate {
     description: string;
     entry_step_key: string;
     steps: LifecycleStepDefinition[];
-    edges?: LifecycleEdge[];
+    edges: LifecycleEdge[];
   };
 }
 
@@ -224,7 +233,7 @@ export interface LifecycleDefinition {
   version: number;
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
-  edges?: LifecycleEdge[];
+  edges: LifecycleEdge[];
   created_at: string;
   updated_at: string;
 }

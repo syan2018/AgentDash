@@ -167,12 +167,10 @@ where
             workflows_by_step.insert(step.key.clone(), workflow);
         }
 
+        // port 归属已迁移到 step 级别，直接从 step.output_ports 读取
         let mut output_owner_by_port: BTreeMap<String, String> = BTreeMap::new();
         for (step_index, step) in lifecycle.steps.iter().enumerate() {
-            let Some(workflow) = workflows_by_step.get(step.key.as_str()) else {
-                continue;
-            };
-            for output_port in &workflow.contract.output_ports {
+            for output_port in &step.output_ports {
                 if let Some(existing_owner) =
                     output_owner_by_port.insert(output_port.key.clone(), step.key.clone())
                 {
@@ -182,7 +180,7 @@ where
                             "output port `{}` 在 lifecycle 内必须全局唯一，当前同时出现在 `{}` 和 `{}`",
                             output_port.key, existing_owner, step.key
                         ),
-                        format!("steps[{step_index}].workflow_key"),
+                        format!("steps[{step_index}].output_ports"),
                     ));
                 }
             }
@@ -316,10 +314,11 @@ where
     }
 }
 
+/// edge→port 校验：port 归属已迁移到 step 级别，直接从 step.output_ports / step.input_ports 检查。
 fn validate_edge_port(
     issues: &mut Vec<ValidationIssue>,
     lifecycle: &LifecycleDefinition,
-    workflows_by_step: &BTreeMap<String, WorkflowDefinition>,
+    _workflows_by_step: &BTreeMap<String, WorkflowDefinition>,
     step_index: usize,
     edge_index: usize,
     node_key: &str,
@@ -328,39 +327,11 @@ fn validate_edge_port(
 ) {
     let edge_field = if is_output { "from_port" } else { "to_port" };
     let step = &lifecycle.steps[step_index];
-    let Some(workflow_key) = step
-        .workflow_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        issues.push(ValidationIssue::error(
-            if is_output {
-                "lifecycle_edge_source_node_missing_workflow"
-            } else {
-                "lifecycle_edge_target_node_missing_workflow"
-            },
-            format!(
-                "edge 引用的 node `{}` 未绑定 workflow，无法校验 {} port `{}`",
-                node_key,
-                if is_output { "output" } else { "input" },
-                port_key
-            ),
-            format!("edges[{edge_index}].{edge_field}"),
-        ));
-        return;
-    };
-
-    let Some(workflow) = workflows_by_step.get(node_key) else {
-        // workflow_key 不存在的错误已经在 step 级别记录过，这里不重复报错
-        let _ = workflow_key;
-        return;
-    };
 
     let exists = if is_output {
-        workflow.contract.output_ports.iter().any(|port| port.key == port_key)
+        step.output_ports.iter().any(|port| port.key == port_key)
     } else {
-        workflow.contract.input_ports.iter().any(|port| port.key == port_key)
+        step.input_ports.iter().any(|port| port.key == port_key)
     };
     if exists {
         return;
@@ -373,11 +344,10 @@ fn validate_edge_port(
             "lifecycle_edge_target_port_missing"
         },
         format!(
-            "edge 引用的 {} port `{}` 不存在于 node `{}` 绑定的 workflow `{}` 中",
+            "edge 引用的 {} port `{}` 不存在于 node `{}` 的 step 级 ports 定义中",
             if is_output { "output" } else { "input" },
             port_key,
             node_key,
-            workflow.key
         ),
         format!("edges[{edge_index}].{edge_field}"),
     ));

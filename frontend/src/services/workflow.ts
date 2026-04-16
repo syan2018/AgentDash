@@ -59,8 +59,10 @@ const WORKFLOW_ARTIFACT_TYPES = new Set<string>([
 const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "cloned"]);
 const WORKFLOW_DEF_STATUSES = new Set<string>(["draft", "active", "disabled"]);
 const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
+  "user_prompt_submit",
   "before_tool", "after_tool", "after_turn", "before_stop", "session_terminal",
   "before_subagent_dispatch", "after_subagent_dispatch", "subagent_result",
+  "before_compact", "after_compact", "before_provider_request",
 ]);
 const LIFECYCLE_NODE_TYPES = new Set<string>(["agent_node", "phase_node"]);
 const GATE_STRATEGIES = new Set<string>(["existence", "schema", "llm_judge"]);
@@ -207,8 +209,8 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
     hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
     constraints: asRecordArray(value.constraints).map(mapWorkflowConstraintSpec),
     completion: mapWorkflowCompletionSpec(value.completion),
-    output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
-    input_ports: asRecordArray(value.input_ports).map(mapInputPortDefinition),
+    recommended_output_ports: asRecordArray(value.recommended_output_ports ?? value.output_ports).map(mapOutputPortDefinition),
+    recommended_input_ports: asRecordArray(value.recommended_input_ports ?? value.input_ports).map(mapInputPortDefinition),
   };
 }
 
@@ -234,6 +236,8 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
     node_type: value.node_type != null
       ? normalizeEnum<LifecycleNodeType>(value.node_type, LIFECYCLE_NODE_TYPES, "lifecycle node type")
       : undefined,
+    output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
+    input_ports: asRecordArray(value.input_ports).map(mapInputPortDefinition),
   };
 }
 

@@ -130,7 +130,7 @@ export function createEmptyLifecycleDraft(): LifecycleEditorDraft {
     target_kind: "task",
     recommended_roles: ["task"],
     entry_step_key: "",
-    steps: [{ key: "", description: "", workflow_key: null }],
+    steps: [{ key: "", description: "", workflow_key: null, output_ports: [], input_ports: [] }],
     edges: [],
   };
 }
@@ -659,7 +659,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       return {
         lcEditor: {
           ...state.lcEditor,
-          draft: { ...draft, steps: [...draft.steps, { key: "", description: "", workflow_key: null }] },
+          draft: { ...draft, steps: [...draft.steps, { key: "", description: "", workflow_key: null, output_ports: [], input_ports: [] }] },
           dirty: true,
         },
       };

@@ -1,0 +1,5 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "验证组件规范"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量规范检查"}
+{"file": ".trellis/tasks/04-15-dag-lifecycle-editor/prd.md", "reason": "对照 PRD 验收"}

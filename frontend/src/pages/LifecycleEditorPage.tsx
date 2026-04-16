@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { LifecycleEditor } from "../features/workflow/lifecycle-editor";
+import { LifecycleDagEditor } from "../features/workflow/lifecycle-dag-editor";
 import { useWorkflowStore } from "../stores/workflowStore";
 
 export function LifecycleEditorPage() {
@@ -52,21 +52,26 @@ export function LifecycleEditorPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {/* 顶部导航栏 */}
       <div className="shrink-0 border-b border-border px-6 py-3">
-        <button
-          type="button"
-          onClick={() => navigate("/dashboard/workflow")}
-          className="inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-          返回工作流系统视图
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => navigate("/dashboard/workflow")}
+            className="inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            返回工作流系统视图
+          </button>
+          <p className="text-sm text-muted-foreground">
+            Lifecycle 编辑器 — {editorDraft.name || editorDraft.key || "新建"}
+          </p>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-6 py-6">
-          <LifecycleEditor />
-        </div>
+      {/* DAG 编辑器（全宽全高） */}
+      <div className="flex-1 overflow-hidden">
+        <LifecycleDagEditor />
       </div>
     </div>
   );

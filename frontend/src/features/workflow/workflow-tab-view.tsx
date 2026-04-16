@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { DetailPanel } from "../../components/ui/detail-panel";
 import { WorkflowEditor } from "./workflow-editor";
-import { LifecycleEditor } from "./lifecycle-editor";
 import type {
   LifecycleDefinition,
   WorkflowDefinition,
@@ -26,6 +26,7 @@ function StatusPill({ status, label }: { status: string; label: string }) {
 }
 
 export function WorkflowTabView() {
+  const navigate = useNavigate();
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const templates = useWorkflowStore((s) => s.templates);
   const definitions = useWorkflowStore((s) => s.definitions);
@@ -41,14 +42,10 @@ export function WorkflowTabView() {
   const disableLifecycle = useWorkflowStore((s) => s.disableLifecycle);
   const openNewDraft = useWorkflowStore((s) => s.openNewDraft);
   const openEditDraft = useWorkflowStore((s) => s.openEditDraft);
-  const openNewLifecycleDraft = useWorkflowStore((s) => s.openNewLifecycleDraft);
-  const openEditLifecycleDraft = useWorkflowStore((s) => s.openEditLifecycleDraft);
   const removeDefinition = useWorkflowStore((s) => s.removeDefinition);
   const removeLifecycle = useWorkflowStore((s) => s.removeLifecycle);
   const editorDraft = useWorkflowStore((s) => s.wfEditor.draft);
-  const lifecycleEditorDraft = useWorkflowStore((s) => s.lcEditor.draft);
   const closeDraft = useWorkflowStore((s) => s.closeDraft);
-  const closeLifecycleDraft = useWorkflowStore((s) => s.closeLifecycleDraft);
 
   const [tab, setTab] = useState<"lifecycle" | "workflow">("lifecycle");
   const [message, setMessage] = useState<string | null>(null);
@@ -131,7 +128,7 @@ export function WorkflowTabView() {
             )}
             <button
               type="button"
-              onClick={() => { openNewLifecycleDraft(); }}
+              onClick={() => navigate("/lifecycle-editor/new")}
               className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary"
             >
               + Lifecycle
@@ -184,7 +181,7 @@ export function WorkflowTabView() {
             {tab === "lifecycle" && (
               <LifecycleCardGrid
                 items={lifecycles}
-                onEdit={(lc) => void openEditLifecycleDraft(lc.id)}
+                onEdit={(lc) => navigate(`/lifecycle-editor/${lc.id}`)}
                 onEnable={(lc) => void enableLifecycle(lc.id)}
                 onDisable={(lc) => void disableLifecycle(lc.id)}
                 onDelete={(lc) => setConfirmDelete({ type: "lifecycle", id: lc.id, name: lc.name })}
@@ -211,15 +208,6 @@ export function WorkflowTabView() {
         widthClassName="max-w-3xl"
       >
         <WorkflowEditor />
-      </DetailPanel>
-
-      <DetailPanel
-        open={lifecycleEditorDraft != null}
-        title={lifecycleEditorDraft?.key ? `编辑 Lifecycle: ${lifecycleEditorDraft.name || lifecycleEditorDraft.key}` : "新建 Lifecycle"}
-        onClose={closeLifecycleDraft}
-        widthClassName="max-w-4xl"
-      >
-        <LifecycleEditor />
       </DetailPanel>
 
       {/* 删除确认对话框 */}

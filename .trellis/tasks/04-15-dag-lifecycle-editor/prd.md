@@ -179,6 +179,11 @@
 - **前置**：`04-15-agent-node-io-port-gating` — 提供 port/edge 数据模型和 VFS 写入能力
 - **关联**：`04-13-lifecycle-dag-orchestration` — 已完成 DAG 编排基础框架
 
+## 开工说明
+
+- 编辑器开工前的后端 / 前端真相层收口与能力边界说明，见 [`kickoff-notes.md`](./kickoff-notes.md)
+- 该说明明确了当前**可直接依赖的保存/校验契约**，以及**不能假设已完成**的运行时能力（如 `PhaseNode` 完整语义、`ContextStrategy` 高级模式）
+
 ## Related Tasks
 
 - `04-15-agent-node-io-port-gating` — 数据模型前置依赖

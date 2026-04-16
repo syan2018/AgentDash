@@ -1,0 +1,7 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件拆分和 Props 模式参考"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store 和状态管理模式"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全约定"}
+{"file": ".trellis/tasks/04-15-dag-lifecycle-editor/prd.md", "reason": "PRD 需求文档"}
+{"file": ".trellis/tasks/04-15-dag-lifecycle-editor/kickoff-notes.md", "reason": "开工前契约说明"}

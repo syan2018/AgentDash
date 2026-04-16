@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type {
   HookRulePreset,
   LifecycleDefinition,
+  LifecycleEdge,
   LifecycleStepDefinition,
   WorkflowAgentRole,
   WorkflowContextBinding,
@@ -88,6 +89,7 @@ export interface LifecycleEditorDraft {
   recommended_roles: WorkflowAgentRole[];
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
+  edges: LifecycleEdge[];
 }
 
 export function createEmptyDraft(): WorkflowEditorDraft {
@@ -129,6 +131,7 @@ export function createEmptyLifecycleDraft(): LifecycleEditorDraft {
     recommended_roles: ["task"],
     entry_step_key: "",
     steps: [{ key: "", description: "", workflow_key: null }],
+    edges: [],
   };
 }
 
@@ -142,6 +145,7 @@ export function lifecycleToDraft(definition: LifecycleDefinition): LifecycleEdit
     recommended_roles: [...definition.recommended_roles],
     entry_step_key: definition.entry_step_key,
     steps: structuredClone(definition.steps),
+    edges: structuredClone(definition.edges ?? []),
   };
 }
 
@@ -689,6 +693,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         recommended_roles: draft.recommended_roles,
         entry_step_key: draft.entry_step_key,
         steps: draft.steps,
+        edges: draft.edges,
       });
       set((s) => ({ lcEditor: { ...s.lcEditor, validation: result, isValidating: false } }));
       return result;
@@ -710,6 +715,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             recommended_roles: draft.recommended_roles,
             entry_step_key: draft.entry_step_key,
             steps: draft.steps,
+            edges: draft.edges,
           })
         : await createLifecycleDefinition({
             key: draft.key,
@@ -719,6 +725,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             recommended_roles: draft.recommended_roles,
             entry_step_key: draft.entry_step_key,
             steps: draft.steps,
+            edges: draft.edges,
           });
       set((state) => ({
         lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition),

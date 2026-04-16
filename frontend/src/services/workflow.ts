@@ -2,9 +2,13 @@ import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray, optString } from "../api/mappers";
 import type {
   HookRulePreset,
+  ContextStrategy,
+  GateStrategy,
   LifecycleDefinition,
+  LifecycleEdge,
   LifecycleExecutionEntry,
   LifecycleExecutionEventKind,
+  LifecycleNodeType,
   LifecycleStepDefinition,
   WorkflowAgentRole,
   WorkflowAssignment,
@@ -58,6 +62,9 @@ const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
   "before_tool", "after_tool", "after_turn", "before_stop", "session_terminal",
   "before_subagent_dispatch", "after_subagent_dispatch", "subagent_result",
 ]);
+const LIFECYCLE_NODE_TYPES = new Set<string>(["agent_node", "phase_node"]);
+const GATE_STRATEGIES = new Set<string>(["existence", "schema", "llm_judge"]);
+const CONTEXT_STRATEGIES = new Set<string>(["full", "summary", "metadata_only", "custom"]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
   "step_activated", "step_completed", "constraint_blocked",
   "completion_evaluated", "artifact_appended", "context_injected",
@@ -155,6 +162,41 @@ function mapWorkflowHookRuleSpec(raw: Record<string, unknown>): WorkflowHookRule
   };
 }
 
+function mapOutputPortDefinition(raw: Record<string, unknown>) {
+  return {
+    key: requireStringField(raw, "key"),
+    description: requireStringField(raw, "description"),
+    gate_strategy: raw.gate_strategy != null
+      ? normalizeEnum<GateStrategy>(raw.gate_strategy, GATE_STRATEGIES, "output port gate strategy")
+      : undefined,
+    gate_params: asRecord(raw.gate_params),
+  };
+}
+
+function mapInputPortDefinition(raw: Record<string, unknown>) {
+  return {
+    key: requireStringField(raw, "key"),
+    description: requireStringField(raw, "description"),
+    context_strategy: raw.context_strategy != null
+      ? normalizeEnum<ContextStrategy>(raw.context_strategy, CONTEXT_STRATEGIES, "input port context strategy")
+      : undefined,
+    context_template: optString(raw.context_template),
+  };
+}
+
+function mapLifecycleEdge(raw: unknown): LifecycleEdge {
+  const value = asRecord(raw);
+  if (!value) {
+    throw new Error("lifecycle edge 缺失或不是对象");
+  }
+  return {
+    from_node: requireStringField(value, "from_node"),
+    from_port: requireStringField(value, "from_port"),
+    to_node: requireStringField(value, "to_node"),
+    to_port: requireStringField(value, "to_port"),
+  };
+}
+
 function mapWorkflowContract(raw: unknown): WorkflowContract {
   const value = asRecord(raw);
   if (!value) {
@@ -165,6 +207,8 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
     hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
     constraints: asRecordArray(value.constraints).map(mapWorkflowConstraintSpec),
     completion: mapWorkflowCompletionSpec(value.completion),
+    output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
+    input_ports: asRecordArray(value.input_ports).map(mapInputPortDefinition),
   };
 }
 
@@ -187,7 +231,9 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
     key: requireStringField(value, "key"),
     description: requireStringField(value, "description"),
     workflow_key: typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
-    node_type: (value.node_type as LifecycleStepDefinition["node_type"]) ?? undefined,
+    node_type: value.node_type != null
+      ? normalizeEnum<LifecycleNodeType>(value.node_type, LIFECYCLE_NODE_TYPES, "lifecycle node type")
+      : undefined,
   };
 }
 
@@ -200,6 +246,10 @@ function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
     completed_at: optString(raw.completed_at),
     summary: optString(raw.summary),
     context_snapshot: asRecord(raw.context_snapshot),
+    gate_collision_count:
+      typeof raw.gate_collision_count === "number" && Number.isFinite(raw.gate_collision_count)
+        ? raw.gate_collision_count
+        : undefined,
   };
 }
 
@@ -258,6 +308,7 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     entry_step_key: requireStringField(raw, "entry_step_key"),
     steps: Array.isArray(raw.steps) ? raw.steps.map(mapLifecycleStepDefinition) : [],
+    edges: Array.isArray(raw.edges) ? raw.edges.map(mapLifecycleEdge) : [],
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
   };
@@ -284,6 +335,9 @@ export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTempl
       steps: Array.isArray(lifecycleRaw.steps)
         ? lifecycleRaw.steps.map(mapLifecycleStepDefinition)
         : [],
+      edges: Array.isArray(lifecycleRaw.edges)
+        ? lifecycleRaw.edges.map(mapLifecycleEdge)
+        : [],
     },
   };
 }
@@ -302,6 +356,14 @@ export function mapWorkflowAssignment(raw: Record<string, unknown>): WorkflowAss
 }
 
 export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
+  const portOutputsRaw = asRecord(raw.port_outputs);
+  const portOutputs = portOutputsRaw
+    ? Object.fromEntries(
+      Object.entries(portOutputsRaw).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    )
+    : undefined;
   return {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
@@ -313,6 +375,7 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
     record_artifacts: asRecordArray(raw.record_artifacts).map(mapWorkflowRecordArtifact),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
+    port_outputs: portOutputs,
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
     last_activity_at: requireStringField(raw, "last_activity_at"),
@@ -339,6 +402,7 @@ export async function createLifecycleDefinition(input: {
   recommended_roles?: WorkflowAgentRole[];
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
+  edges: LifecycleEdge[];
 }): Promise<LifecycleDefinition> {
   const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions", {
     key: input.key,
@@ -348,6 +412,7 @@ export async function createLifecycleDefinition(input: {
     recommended_binding_roles: input.recommended_roles,
     entry_step_key: input.entry_step_key,
     steps: input.steps,
+    edges: input.edges,
   });
   return mapLifecycleDefinition(raw);
 }
@@ -365,6 +430,7 @@ export async function updateLifecycleDefinition(
     recommended_roles?: WorkflowAgentRole[];
     entry_step_key?: string;
     steps?: LifecycleStepDefinition[];
+    edges?: LifecycleEdge[];
   },
 ): Promise<LifecycleDefinition> {
   const raw = await api.put<Record<string, unknown>>(`/lifecycle-definitions/${id}`, {
@@ -373,6 +439,7 @@ export async function updateLifecycleDefinition(
     recommended_binding_roles: input.recommended_roles,
     entry_step_key: input.entry_step_key,
     steps: input.steps,
+    edges: input.edges,
   });
   return mapLifecycleDefinition(raw);
 }
@@ -385,6 +452,7 @@ export async function validateLifecycleDefinition(input: {
   recommended_roles?: WorkflowAgentRole[];
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
+  edges: LifecycleEdge[];
 }): Promise<WorkflowValidationResult> {
   const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions/validate", {
     key: input.key,
@@ -394,6 +462,7 @@ export async function validateLifecycleDefinition(input: {
     recommended_binding_roles: input.recommended_roles,
     entry_step_key: input.entry_step_key,
     steps: input.steps,
+    edges: input.edges,
   });
   return {
     valid: Boolean(raw.valid),

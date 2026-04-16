@@ -124,6 +124,7 @@ pub struct UpdateLifecycleDefinitionRequest {
     pub recommended_binding_roles: Option<Vec<WorkflowBindingRole>>,
     pub entry_step_key: Option<String>,
     pub steps: Option<Vec<LifecycleStepDefinition>>,
+    pub edges: Option<Vec<LifecycleEdge>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -618,29 +619,16 @@ pub async fn update_lifecycle_definition(
     if let Some(steps) = req.steps {
         definition.steps = steps;
     }
-    let issues = definition.validate_full();
-    if issues
-        .iter()
-        .any(|item| item.severity == ValidationSeverity::Error)
-    {
-        return Err(ApiError::BadRequest(format!(
-            "校验失败: {}",
-            issues
-                .iter()
-                .filter(|item| item.severity == ValidationSeverity::Error)
-                .map(|item| format!("[{}] {}", item.field_path, item.message))
-                .collect::<Vec<_>>()
-                .join("; ")
-        )));
+    if let Some(edges) = req.edges {
+        definition.edges = edges;
     }
-    definition.version += 1;
-    definition.updated_at = chrono::Utc::now();
-    state
-        .repos
-        .lifecycle_definition_repo
-        .update(&definition)
-        .await?;
-    Ok(Json(definition.into()))
+    let service = WorkflowCatalogService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+        state.repos.workflow_assignment_repo.as_ref(),
+    );
+    let saved = service.upsert_lifecycle_definition(definition).await?;
+    Ok(Json(saved.into()))
 }
 
 pub async fn validate_workflow_definition(
@@ -676,6 +664,7 @@ pub async fn validate_workflow_definition(
 }
 
 pub async fn validate_lifecycle_definition(
+    State(state): State<Arc<AppState>>,
     Json(req): Json<ValidateLifecycleDefinitionRequest>,
 ) -> Result<Json<WorkflowValidationResponse>, ApiError> {
     match LifecycleDefinition::new(
@@ -690,7 +679,12 @@ pub async fn validate_lifecycle_definition(
     ) {
         Ok(mut definition) => {
             definition.recommended_binding_roles = req.recommended_binding_roles;
-            let issues = definition.validate_full();
+            let service = WorkflowCatalogService::new(
+                state.repos.workflow_definition_repo.as_ref(),
+                state.repos.lifecycle_definition_repo.as_ref(),
+                state.repos.workflow_assignment_repo.as_ref(),
+            );
+            let issues = service.validate_lifecycle_definition(&definition).await?;
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
                     .iter()

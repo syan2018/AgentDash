@@ -110,7 +110,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             .map(|(&agent, profile)| {
                 let id = agent.to_string();
                 let available = profile
-                    .get_default()
+                    .get_variant("DEFAULT")
                     .map(|a| a.get_availability_info().is_available())
                     .unwrap_or(false);
 
@@ -248,7 +248,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
                     match item {
                         Ok(bytes) => ms.push_stdout(String::from_utf8_lossy(&bytes).into_owned()),
                         Err(e) => {
-                            ms.push_stderr(format!("stdout 读取失败: {e}"));
+                            ms.push_stdout(format!("stdout 读取失败: {e}"));
                             break;
                         }
                     }
@@ -262,9 +262,9 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
                 let mut stream = ReaderStream::new(stderr);
                 while let Some(item) = stream.next().await {
                     match item {
-                        Ok(bytes) => ms.push_stderr(String::from_utf8_lossy(&bytes).into_owned()),
+                        Ok(bytes) => ms.push_stdout(String::from_utf8_lossy(&bytes).into_owned()),
                         Err(e) => {
-                            ms.push_stderr(format!("stderr 读取失败: {e}"));
+                            ms.push_stdout(format!("stderr 读取失败: {e}"));
                             break;
                         }
                     }

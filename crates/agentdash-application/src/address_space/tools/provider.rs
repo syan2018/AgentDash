@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::session::SessionHub;
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::canvas::CanvasRepository;
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
@@ -22,7 +23,7 @@ use crate::address_space::tools::fs::{
 };
 use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
-use crate::workflow::tools::advance_node::AdvanceLifecycleNodeTool;
+use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -35,6 +36,7 @@ pub struct RelayRuntimeToolProvider {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    inline_file_repo: Arc<dyn InlineFileRepository>,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
 }
@@ -49,6 +51,7 @@ impl RelayRuntimeToolProvider {
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        inline_file_repo: Arc<dyn InlineFileRepository>,
         session_hub_handle: SharedSessionHubHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
     ) -> Self {
@@ -61,6 +64,7 @@ impl RelayRuntimeToolProvider {
             workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
+            inline_file_repo,
             session_hub_handle,
             inline_persister,
         }
@@ -170,11 +174,12 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         // Workflow 簇：lifecycle node 推进
         if clusters.contains(&ToolCluster::Workflow) {
-            tools.push(Arc::new(AdvanceLifecycleNodeTool::new(
+            tools.push(Arc::new(CompleteLifecycleNodeTool::new(
                 self.session_binding_repo.clone(),
                 self.workflow_definition_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
                 self.lifecycle_run_repo.clone(),
+                self.inline_file_repo.clone(),
                 session_hub.clone(),
                 context,
             )));

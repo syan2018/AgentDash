@@ -1,6 +1,6 @@
 // port_output_gate — 检查 output port 交付状态，未满足时阻止推进
 //
-// 在 agent 调用 advance_lifecycle_node 之前运行（BeforeStop 触发器）。
+// 在 agent 调用 complete_lifecycle_node 之前运行（BeforeStop 触发器）。
 // 读取 snapshot 中的 output_port_keys（要求产出）与 fulfilled_port_keys（已产出），
 // 对缺失的 port 返回 gate 拒绝。
 

@@ -1,6 +1,6 @@
 pub mod advance_node;
 
-pub use advance_node::AdvanceLifecycleNodeTool;
+pub use advance_node::CompleteLifecycleNodeTool;
 
 use agentdash_spi::SessionHookSnapshot;
 use uuid::Uuid;

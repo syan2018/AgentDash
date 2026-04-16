@@ -25,25 +25,6 @@ pub struct HookRulePreset {
 static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
     vec![
         HookRulePreset {
-            key: "block_record_artifact",
-            trigger: WorkflowHookTrigger::BeforeTool,
-            label: "禁止上报特定产物",
-            description: "在当前 step 期间禁止 Agent 上报指定类型的 workflow artifact",
-            param_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "artifact_types": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "被禁止的 artifact type 列表（如 session_summary）"
-                    }
-                },
-                "required": ["artifact_types"]
-            })),
-            script: include_str!("../../scripts/hook-presets/block_record_artifact.rhai"),
-            source: PresetSource::Builtin,
-        },
-        HookRulePreset {
             key: "session_terminal_advance",
             trigger: WorkflowHookTrigger::BeforeStop,
             label: "Session 终态自动推进",
@@ -140,7 +121,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             key: "stop_gate_lifecycle_advance",
             trigger: WorkflowHookTrigger::BeforeStop,
             label: "Lifecycle Node 推进门禁",
-            description: "Agent Node 必须调用 advance_lifecycle_node 后才允许结束 session（D2/D8）",
+            description: "Agent Node 必须调用 complete_lifecycle_node 后才允许结束 session（D2/D8）",
             param_schema: None,
             script: include_str!("../../scripts/hook-presets/stop_gate_lifecycle_advance.rhai"),
             source: PresetSource::Builtin,

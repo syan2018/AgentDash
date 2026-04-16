@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use agentdash_domain::inline_file::{InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
@@ -48,6 +49,7 @@ pub struct LifecycleOrchestrator {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    inline_file_repo: Arc<dyn InlineFileRepository>,
 }
 
 impl LifecycleOrchestrator {
@@ -57,6 +59,7 @@ impl LifecycleOrchestrator {
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        inline_file_repo: Arc<dyn InlineFileRepository>,
     ) -> Self {
         Self {
             session_hub,
@@ -64,6 +67,7 @@ impl LifecycleOrchestrator {
             workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
+            inline_file_repo,
         }
     }
 
@@ -95,7 +99,7 @@ impl LifecycleOrchestrator {
             .await
     }
 
-    /// 在 advance_lifecycle_node tool / start_run 后调用。
+    /// 在 complete_lifecycle_node tool / start_run 后调用。
     pub async fn after_node_advanced(
         &self,
         run_id: Uuid,
@@ -399,7 +403,7 @@ impl LifecycleOrchestrator {
             format!(
                 "\n\n## 必须交付的产出\n\
                  请将以下产出通过 `write_file` 写入对应路径：\n{}\n\n\
-                 **所有 output port 写入完成后**再调用 `advance_lifecycle_node`。",
+                 **所有 output port 写入完成后**再调用 `complete_lifecycle_node`。",
                 items.join("\n")
             )
         };
@@ -409,6 +413,16 @@ impl LifecycleOrchestrator {
         let input_section = if input_ports.is_empty() {
             String::new()
         } else {
+            // Load port outputs from inline_fs
+            let port_output_files = self.inline_file_repo
+                .list_files(InlineFileOwnerKind::LifecycleRun, run.id, "port_outputs")
+                .await
+                .unwrap_or_default();
+            let port_output_map: std::collections::BTreeMap<String, String> = port_output_files
+                .into_iter()
+                .map(|f| (f.path, f.content))
+                .collect();
+
             let mut items = Vec::new();
             for ip in input_ports {
                 // 从 edges 中找到连入当前 node + port 的边
@@ -424,7 +438,7 @@ impl LifecycleOrchestrator {
                     ));
                 } else {
                     for edge in source_edges {
-                        let content = run.port_outputs.get(&edge.from_port);
+                        let content = port_output_map.get(&edge.from_port);
                         let status = if content.is_some_and(|c| !c.trim().is_empty()) {
                             "已就绪"
                         } else {
@@ -445,7 +459,7 @@ impl LifecycleOrchestrator {
 
         let kickoff_prompt = format!(
             "你正在执行 lifecycle `{lifecycle_key}` 的 node {node_title}。\n\
-             请先完成当前阶段工作，并在完成后调用 `advance_lifecycle_node` 工具提交总结与产物。\
+             请先完成当前阶段工作，并在完成后调用 `complete_lifecycle_node` 工具提交总结与产物。\
              {output_section}{input_section}"
         );
 

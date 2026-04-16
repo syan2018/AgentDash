@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::address_space::SessionMountTarget;
+use agentdash_application::address_space::{SessionMountTarget, append_agent_knowledge_mounts};
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::SessionExecutionState;
 use agentdash_application::session::bootstrap::{
@@ -133,6 +133,19 @@ pub(crate) async fn build_project_session_context_response(
     let use_address_space = connector_config
         .as_ref()
         .is_some_and(|c| c.is_cloud_native());
+    // 加载 ProjectAgentLink 用于注入知识容器 mounts
+    let agent_uuid = Uuid::parse_str(agent_key).ok();
+    let agent_link = if let Some(aid) = agent_uuid {
+        state
+            .repos
+            .agent_link_repo
+            .find_by_project_and_agent(project.id, aid)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else {
+        None
+    };
+
     let address_space = if use_address_space {
         let mut address_space = state
             .services
@@ -145,6 +158,13 @@ pub(crate) async fn build_project_session_context_response(
                 resolved_config.as_ref().map(|c| c.executor.as_str()),
             )
             .map_err(ApiError::BadRequest)?;
+
+        // 注入 Agent 知识容器 mounts
+        if let Some(link) = &agent_link {
+            append_agent_knowledge_mounts(&mut address_space, link)
+                .map_err(ApiError::Internal)?;
+        }
+
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,

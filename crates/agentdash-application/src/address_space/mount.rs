@@ -5,6 +5,7 @@ use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::{
+    agent::ProjectAgentLink,
     canvas::Canvas,
     project::Project,
     story::Story,
@@ -95,6 +96,38 @@ pub fn build_derived_address_space(
         source_project_id: Some(project.id.to_string()),
         source_story_id: story.map(|s| s.id.to_string()),
     })
+}
+
+/// 为 Agent 知识容器构建 mounts
+pub fn build_agent_knowledge_mounts(
+    link: &ProjectAgentLink,
+) -> Result<Vec<Mount>, String> {
+    let mut mounts = Vec::new();
+    for container in &link.knowledge_containers {
+        let mut mount = build_context_container_mount(container)?;
+        annotate_context_mount_owner(
+            &mut mount,
+            InlineFileOwnerKind::ProjectAgentLink.as_str(),
+            link.id,
+        );
+        mounts.push(mount);
+    }
+    Ok(mounts)
+}
+
+/// 将 Agent 知识 mounts 追加到已有 address space
+pub fn append_agent_knowledge_mounts(
+    address_space: &mut AddressSpace,
+    link: &ProjectAgentLink,
+) -> Result<(), String> {
+    let knowledge_mounts = build_agent_knowledge_mounts(link)?;
+    for mount in knowledge_mounts {
+        // 避免 mount_id 冲突：如果已存在同名 mount，跳过
+        if !address_space.mounts.iter().any(|m| m.id == mount.id) {
+            address_space.mounts.push(mount);
+        }
+    }
+    Ok(())
 }
 
 /// 为 Workspace 创建简易单 mount Address Space

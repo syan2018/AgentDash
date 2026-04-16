@@ -4,7 +4,7 @@
   "title": "Agent Knowledge Inline FS",
   "description": "",
   "status": "planning",
-  "dev_type": null,
+  "dev_type": "fullstack",
   "scope": null,
   "package": null,
   "priority": "P2",
@@ -15,7 +15,7 @@
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 0,
+  "current_phase": 3,
   "next_action": [
     {
       "phase": 1,

@@ -35,6 +35,7 @@ impl PostgresAgentRepository {
                 default_lifecycle_key TEXT,
                 is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
                 is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
+                knowledge_containers TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(project_id, agent_id)
@@ -43,6 +44,14 @@ impl PostgresAgentRepository {
             CREATE INDEX IF NOT EXISTS idx_pal_project ON project_agent_links(project_id);
             CREATE INDEX IF NOT EXISTS idx_pal_agent ON project_agent_links(agent_id);
             "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        // 为已有数据库补齐 knowledge_containers 列
+        sqlx::query(
+            "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS knowledge_containers TEXT NOT NULL DEFAULT '[]'"
         )
         .execute(&self.pool)
         .await
@@ -154,6 +163,7 @@ struct LinkRow {
     default_lifecycle_key: Option<String>,
     is_default_for_story: bool,
     is_default_for_task: bool,
+    knowledge_containers: String,
     created_at: String,
     updated_at: String,
 }
@@ -179,6 +189,10 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
             default_lifecycle_key: row.default_lifecycle_key,
             is_default_for_story: row.is_default_for_story,
             is_default_for_task: row.is_default_for_task,
+            knowledge_containers: parse_json_column(
+                &row.knowledge_containers,
+                "project_agent_links.knowledge_containers",
+            )?,
             created_at: super::parse_pg_timestamp_checked(
                 &row.created_at,
                 "project_agent_links.created_at",
@@ -191,7 +205,7 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
     }
 }
 
-const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, created_at, updated_at";
+const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_containers, created_at, updated_at";
 
 #[async_trait::async_trait]
 impl ProjectAgentLinkRepository for PostgresAgentRepository {
@@ -200,9 +214,13 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
             link.config_override.as_ref(),
             "project_agent_links.config_override",
         )?;
+        let knowledge_containers_json = serialize_json_column(
+            &link.knowledge_containers,
+            "project_agent_links.knowledge_containers",
+        )?;
         sqlx::query(
-            "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_containers, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(link.id.to_string())
         .bind(link.project_id.to_string())
@@ -211,6 +229,7 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
+        .bind(knowledge_containers_json)
         .bind(link.created_at.to_rfc3339())
         .bind(link.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -278,13 +297,18 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
             link.config_override.as_ref(),
             "project_agent_links.config_override",
         )?;
+        let knowledge_containers_json = serialize_json_column(
+            &link.knowledge_containers,
+            "project_agent_links.knowledge_containers",
+        )?;
         sqlx::query(
-            "UPDATE project_agent_links SET config_override = $1, default_lifecycle_key = $2, is_default_for_story = $3, is_default_for_task = $4, updated_at = $5 WHERE id = $6",
+            "UPDATE project_agent_links SET config_override = $1, default_lifecycle_key = $2, is_default_for_story = $3, is_default_for_task = $4, knowledge_containers = $5, updated_at = $6 WHERE id = $7",
         )
         .bind(config_override_json)
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
+        .bind(knowledge_containers_json)
         .bind(link.updated_at.to_rfc3339())
         .bind(link.id.to_string())
         .execute(&self.pool)

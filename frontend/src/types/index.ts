@@ -204,6 +204,7 @@ export interface ProjectAgentLink {
   default_lifecycle_key: string | null;
   is_default_for_story: boolean;
   is_default_for_task: boolean;
+  knowledge_containers: ContextContainerDefinition[];
   created_at: string;
   updated_at: string;
 }

@@ -19,7 +19,8 @@ pub use apply_patch::{
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
-    SessionMountTarget, append_canvas_mounts, build_canvas_mount, build_canvas_mount_id,
+    SessionMountTarget, append_agent_knowledge_mounts, append_canvas_mounts,
+    build_agent_knowledge_mounts, build_canvas_mount, build_canvas_mount_id,
     build_context_container_mount, build_derived_address_space, build_lifecycle_mount,
     build_lifecycle_mount_with_ports,
     build_workspace_address_space, container_visible_for_target, effective_context_containers,

@@ -46,6 +46,7 @@ interface ProjectState {
     default_workflow_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
+    knowledge_containers?: ContextContainerDefinition[];
   }) => Promise<ProjectAgentLink | null>;
   deleteProjectAgentLink: (projectId: string, agentId: string) => Promise<boolean>;
 

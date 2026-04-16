@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
+import type { ContextContainerDefinition } from "../../types/context";
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
+import { ContextContainersEditor } from "../../components/context-config-editor";
 
 export interface AgentPresetEditorProps {
   presets: AgentPreset[];
@@ -1008,6 +1010,48 @@ export function AgentPresetEditor({ presets, onSave, isSaving = false }: AgentPr
   );
 }
 
+// ─── Agent 知识库折叠区 ─────────────────────────────────────
+
+function KnowledgeSection({
+  containers,
+  onSave,
+  isSaving,
+}: {
+  containers: ContextContainerDefinition[];
+  onSave: (next: ContextContainerDefinition[]) => Promise<unknown>;
+  isSaving: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="mt-6 rounded-lg border border-border">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-foreground hover:bg-muted/50"
+      >
+        <span>知识库 ({containers.length} 个容器)</span>
+        <span className="text-xs text-muted-foreground">{isOpen ? "收起" : "展开"}</span>
+      </button>
+      {isOpen && (
+        <div className="border-t border-border px-4 py-3">
+          <p className="mb-3 text-xs text-muted-foreground">
+            Agent 在 session 中积累的通用知识，跨 session 持久化。
+          </p>
+          <ContextContainersEditor
+            value={containers}
+            domain="agent-knowledge"
+            isSaving={isSaving}
+            addLabel="添加知识容器"
+            emptyText="暂无知识容器"
+            onSave={onSave}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface SinglePresetDialogProps {
   open: boolean;
   initialPreset?: AgentPreset;
@@ -1016,6 +1060,10 @@ export interface SinglePresetDialogProps {
   onClose: () => void;
   isSaving?: boolean;
   siblingAgents?: Array<{ name: string; display_name: string }>;
+  /** Agent 知识容器（来自 ProjectAgentLink） */
+  knowledgeContainers?: ContextContainerDefinition[];
+  /** 保存知识容器变更 */
+  onSaveKnowledge?: (containers: ContextContainerDefinition[]) => Promise<unknown>;
 }
 
 export function SinglePresetDialog({
@@ -1026,6 +1074,8 @@ export function SinglePresetDialog({
   onClose,
   isSaving = false,
   siblingAgents,
+  knowledgeContainers,
+  onSaveKnowledge,
 }: SinglePresetDialogProps) {
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const [form, setForm] = useState<PresetFormState>(presetToForm(initialPreset));
@@ -1074,6 +1124,15 @@ export function SinglePresetDialog({
               isDiscoveryLoading={isDiscoveryLoading}
               siblingAgents={siblingAgents}
             />
+
+            {/* ── 知识库区域 ── */}
+            {knowledgeContainers && onSaveKnowledge && (
+              <KnowledgeSection
+                containers={knowledgeContainers}
+                onSave={onSaveKnowledge}
+                isSaving={isSaving}
+              />
+            )}
 
             {validationError && (
               <p className="mt-2 text-xs text-destructive">{validationError}</p>

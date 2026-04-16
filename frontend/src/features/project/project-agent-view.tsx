@@ -825,6 +825,20 @@ export function ProjectAgentView({
         onClose={() => setEditingAgent(null)}
         isSaving={isEditSaving}
         siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
+        knowledgeContainers={
+          editingAgent
+            ? agentLinks.find((l) => l.agent_id === editingAgent.agentId)?.knowledge_containers
+            : undefined
+        }
+        onSaveKnowledge={
+          editingAgent
+            ? async (containers) => {
+                await updateProjectAgentLink(project.id, editingAgent.agentId, {
+                  knowledge_containers: containers,
+                });
+              }
+            : undefined
+        }
       />
     </>
   );

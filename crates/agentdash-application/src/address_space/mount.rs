@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
 use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
+use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::{
     canvas::Canvas,
     project::Project,
@@ -18,6 +19,8 @@ pub const PROVIDER_CANVAS_FS: &str = "canvas_fs";
 pub(crate) const CONTEXT_OWNER_SCOPE_METADATA_KEY: &str = "agentdash_context_owner_scope";
 pub(crate) const CONTEXT_OWNER_SCOPE_PROJECT: &str = "project";
 pub(crate) const CONTEXT_OWNER_SCOPE_STORY: &str = "story";
+pub(crate) const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
+pub(crate) const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextContainerOwnerScope {
@@ -70,6 +73,12 @@ pub fn build_derived_address_space(
             continue;
         }
         let mut mount = build_context_container_mount(&container)?;
+        let (owner_kind_str, owner_id) = match owner_scope {
+            ContextContainerOwnerScope::Project => ("project", project.id),
+            ContextContainerOwnerScope::Story => ("story", story.expect("story scope 但 story 为 None").id),
+        };
+        annotate_context_mount_owner(&mut mount, owner_kind_str, owner_id);
+        // 兼容：同时写入旧的 owner_scope metadata
         annotate_context_mount_owner_scope(&mut mount, owner_scope);
         mounts.push(mount);
     }
@@ -232,10 +241,12 @@ pub fn build_context_container_mount(
     };
 
     let (provider, root_ref, metadata) = match &container.provider {
-        ContextContainerProvider::InlineFiles { files } => (
+        ContextContainerProvider::InlineFiles { .. } => (
             PROVIDER_INLINE_FS.to_string(),
             format!("context://inline/{}", container.id.trim()),
-            serde_json::json!({ "files": normalize_inline_files(files)? }),
+            serde_json::json!({
+                "container_id": container.id.trim(),
+            }),
         ),
         ContextContainerProvider::ExternalService {
             service_id,
@@ -277,6 +288,67 @@ fn annotate_context_mount_owner_scope(mount: &mut Mount, owner_scope: ContextCon
         serde_json::Value::String(owner_scope.as_metadata_value().to_string()),
     );
     mount.metadata = serde_json::Value::Object(metadata);
+}
+
+/// 为 context container mount 写入 owner_kind + owner_id metadata（新 API）
+pub(crate) fn annotate_context_mount_owner(mount: &mut Mount, owner_kind: &str, owner_id: Uuid) {
+    let mut metadata = match std::mem::take(&mut mount.metadata) {
+        serde_json::Value::Object(object) => object,
+        serde_json::Value::Null => serde_json::Map::new(),
+        other => {
+            let mut object = serde_json::Map::new();
+            object.insert("raw_metadata".to_string(), other);
+            object
+        }
+    };
+    metadata.insert(
+        CONTEXT_OWNER_KIND_METADATA_KEY.to_string(),
+        serde_json::Value::String(owner_kind.to_string()),
+    );
+    metadata.insert(
+        CONTEXT_OWNER_ID_METADATA_KEY.to_string(),
+        serde_json::Value::String(owner_id.to_string()),
+    );
+    mount.metadata = serde_json::Value::Object(metadata);
+}
+
+/// 从 mount metadata 提取 owner 坐标（owner_kind, owner_id, container_id）
+pub fn parse_inline_mount_owner(mount: &Mount) -> Result<(InlineFileOwnerKind, Uuid, String), String> {
+    let owner_kind_str = mount
+        .metadata
+        .get(CONTEXT_OWNER_KIND_METADATA_KEY)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!(
+                "mount {} 缺少 {}",
+                mount.id, CONTEXT_OWNER_KIND_METADATA_KEY
+            )
+        })?;
+    let owner_kind = InlineFileOwnerKind::from_str(owner_kind_str).ok_or_else(|| {
+        format!(
+            "mount {} 的 owner_kind 无效: {}",
+            mount.id, owner_kind_str
+        )
+    })?;
+    let owner_id_str = mount
+        .metadata
+        .get(CONTEXT_OWNER_ID_METADATA_KEY)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!(
+                "mount {} 缺少 {}",
+                mount.id, CONTEXT_OWNER_ID_METADATA_KEY
+            )
+        })?;
+    let owner_id = Uuid::parse_str(owner_id_str)
+        .map_err(|e| format!("mount {} 的 owner_id 无效: {}", mount.id, e))?;
+    let container_id = mount
+        .metadata
+        .get("container_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("mount {} 缺少 container_id", mount.id))?
+        .to_string();
+    Ok((owner_kind, owner_id, container_id))
 }
 
 fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, String> {
@@ -335,19 +407,30 @@ mod tests {
             .iter()
             .find(|mount| mount.id == "brief")
             .expect("brief mount should exist");
+        // 验证新的 owner_kind / owner_id metadata
+        assert_eq!(
+            mount.metadata.get(CONTEXT_OWNER_KIND_METADATA_KEY),
+            Some(&serde_json::Value::String("story".to_string()))
+        );
+        assert_eq!(
+            mount
+                .metadata
+                .get(CONTEXT_OWNER_ID_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some(story.id.to_string()).as_deref()
+        );
+        // 验证 container_id metadata
+        assert_eq!(
+            mount.metadata.get("container_id").and_then(|v| v.as_str()),
+            Some("brief")
+        );
+        // 兼容旧 owner_scope
         assert_eq!(
             mount.metadata.get(CONTEXT_OWNER_SCOPE_METADATA_KEY),
             Some(&serde_json::Value::String(
                 CONTEXT_OWNER_SCOPE_STORY.to_string()
             ))
         );
-        let files = mount
-            .metadata
-            .get("files")
-            .and_then(serde_json::Value::as_object)
-            .expect("inline files metadata should exist");
-        assert!(files.contains_key("story.md"));
-        assert!(!files.contains_key("project.md"));
     }
 
     #[test]
@@ -371,6 +454,19 @@ mod tests {
             .iter()
             .find(|mount| mount.id == "spec")
             .expect("spec mount should exist");
+        // 验证新的 owner_kind / owner_id metadata
+        assert_eq!(
+            mount.metadata.get(CONTEXT_OWNER_KIND_METADATA_KEY),
+            Some(&serde_json::Value::String("project".to_string()))
+        );
+        assert_eq!(
+            mount
+                .metadata
+                .get(CONTEXT_OWNER_ID_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some(project.id.to_string()).as_deref()
+        );
+        // 兼容旧 owner_scope
         assert_eq!(
             mount.metadata.get(CONTEXT_OWNER_SCOPE_METADATA_KEY),
             Some(&serde_json::Value::String(

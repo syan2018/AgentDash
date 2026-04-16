@@ -2,11 +2,17 @@
 
 ## Goal
 
-将 inline_fs 的文件内容从嵌套在 Project/Story 实体 JSON TEXT 列中的 `ContextContainerFile[]` 数组，下沉到独立的 `inline_fs_files` 表。解决当前每次单文件写入都要整行 read-modify-write 的写放大、并发竞态和扩展性问题，同时为后续 Agent Knowledge FS 等新 owner 类型铺路。
+将项目中所有「文件内容嵌套在父实体 JSON TEXT 列」的存储模式统一下沉到独立的 `inline_fs_files` 表。涉及两套系统：
+
+1. **Context Container inline_fs**：Project/Story 的 `ContextContainerDefinition.InlineFiles.files` 嵌套存储
+2. **Lifecycle VFS port_outputs**：`LifecycleRun.port_outputs` BTreeMap 嵌套存储
+
+解决写放大、并发竞态和扩展性问题，同时为后续 Agent Knowledge FS 等新 owner 类型铺路。
 
 **动机**：
-- 当前写入链路：`InlineContentOverlay.write()` → `DbInlineContentPersister.persist_write()` → 加载整个 Project/Story → 在嵌套 `context_containers[i].provider.files[j]` 里改一个文件 → 序列化整个实体写回 TEXT 列
-- 并发问题：两个 session 同时写同一 container 的不同文件，last-writer-wins 丢更新
+- **inline_fs 写入链路**：`InlineContentOverlay.write()` → `DbInlineContentPersister.persist_write()` → 加载整个 Project/Story → 在嵌套 `context_containers[i].provider.files[j]` 里改一个文件 → 序列化整个实体写回 TEXT 列
+- **lifecycle_vfs 写入链路**：`LifecycleMountProvider.write_text()` → 加载整个 `LifecycleRun` → 改 `port_outputs` BTreeMap 里一个 key → 序列化整个实体（含 step_states/record_artifacts/execution_log）写回
+- 并发问题：两个 session 同时写同一 container/run 的不同文件，last-writer-wins 丢更新
 - 扩展性：新增 owner 类型（如 `project_agent_link`）需要在 persister 里加 if-else 分支 + 注入对应 repository
 
 ## What I Already Know
@@ -24,7 +30,7 @@ stories.context (TEXT column, JSON serialized)
         └── (同上)
 ```
 
-### 当前读写链路
+### 当前读写链路 — Context Container inline_fs
 
 **写入**：
 ```
@@ -53,6 +59,39 @@ build_context_container_mount(container)
   → normalize_inline_files(files) → BTreeMap<String, String>
   → Mount { metadata: json!({"files": map}), provider: "inline_fs", ... }
 ```
+
+### 当前读写链路 — Lifecycle VFS port_outputs
+
+**写入** (`provider_lifecycle.rs:271-311`)：
+```
+Agent tool → RelayAddressSpaceService.write_text()
+  → 检测 mount.provider == "lifecycle_vfs"
+  → LifecycleMountProvider.write_text(mount, "artifacts/{port_key}", content)
+    → load_active_run(mount) → LifecycleRunRepo.get_by_id() → 整个 LifecycleRun
+    → run.port_outputs.insert(port_key, content)
+    → LifecycleRunRepo.update(&run)  ← 重写整行（含 step_states/record_artifacts/execution_log）
+```
+
+**读取** (`provider_lifecycle.rs:203-209`)：
+```
+Agent tool → LifecycleMountProvider.read_text(mount, "artifacts/{port_key}")
+  → load_active_run(mount) → 整个 LifecycleRun
+  → run.port_outputs.get(port_key)
+```
+
+**相关数据结构** (`crates/agentdash-domain/src/workflow/entity.rs:192-289`)：
+```rust
+pub struct LifecycleRun {
+    pub port_outputs: BTreeMap<String, String>,           // 要迁移
+    pub record_artifacts: Vec<WorkflowRecordArtifact>,   // 要迁移（append-only）
+    pub step_states: Vec<LifecycleStepState>,            // 保留在实体内
+    pub execution_log: Vec<LifecycleExecutionEntry>,     // 保留在实体内
+}
+```
+
+**DB schema** (`lifecycle_runs` 表)：
+- `port_outputs TEXT NOT NULL DEFAULT '{}'` — JSON 序列化的 BTreeMap
+- `record_artifacts TEXT NOT NULL` — JSON 序列化的 Vec<WorkflowRecordArtifact>
 
 ### 关键文件清单
 
@@ -234,12 +273,49 @@ pub enum ContextContainerProvider {
 - API 创建 container 时：如果 `files` 非空，批量写入 `inline_fs_files` 表，然后清空 `files` 再存入父实体
 - 运行时不再从父实体读文件内容
 
-### R9: 数据迁移
+### R9: Lifecycle VFS port_outputs 迁移
+
+将 `LifecycleRun.port_outputs` 的读写改为使用 `inline_fs_files` 表：
+
+- `owner_kind = "lifecycle_run"`，`owner_id = run.id`，`container_id = "port_outputs"`
+- `path` = port_key，`content` = port output content
+
+**LifecycleMountProvider 改造**：
+- `write_text("artifacts/{port_key}", content)`：不再加载整个 LifecycleRun，直接 `InlineFileRepository.upsert_file()`
+- `read_text("artifacts/{port_key}")`：直接 `InlineFileRepository.get_file()`
+- `list("artifacts/")`：`InlineFileRepository.list_files()` 获取所有 port outputs
+
+**LifecycleRun 实体瘦身**：
+- `port_outputs` 字段从 `BTreeMap<String, String>` 改为不再在实体中持有
+- 需要读取 port_outputs 的场景（如门禁检查、上下文注入）改为通过 `InlineFileRepository` 查询
+- `lifecycle_runs` 表的 `port_outputs` 列可保留为空 `{}` 做向后兼容
+
+**record_artifacts 迁移**（同步处理）：
+- `owner_kind = "lifecycle_run"`，`container_id = "record_artifacts"`
+- `path` = `"{artifact.node_key}/{artifact.artifact_type}"` 或 `artifact.id`
+- `WorkflowRecordArtifact.content` 下沉到 `inline_fs_files`
+- `record_artifacts` Vec 保留元信息（id, node_key, artifact_type, created_at），content 字段改为从 DB 按需读取
+
+### R10: Runtime 读取 port_outputs 的适配
+
+当前有多个位置从 `LifecycleRun.port_outputs` 读取，需要改为查 `InlineFileRepository`：
+
+| 用途 | 位置 | 当前读取源 |
+|------|------|-----------|
+| VFS read | `provider_lifecycle.rs:203-209` | `run.port_outputs` |
+| VFS write | `provider_lifecycle.rs:271-311` | `run.port_outputs` |
+| VFS list | `provider_lifecycle.rs:119-141` | `run.port_outputs` |
+| 门禁 port 值 | `advance_node.rs` | 间接通过 VFS |
+| 上下文注入 | `orchestrator.rs` | 间接通过 VFS |
+
+大部分消费者通过 VFS 间接读取，只需改 `LifecycleMountProvider` 即可覆盖。
+
+### R11: 数据迁移
 
 项目未上线，无需在线迁移。但需要处理开发环境已有数据：
 
-- 新增 migration：建表 + 从现有 `projects.config` / `stories.context` 中的 inline files 提取到新表
-- 原有 `files` 字段清空（或保留为空数组做兼容）
+- 新增 migration：建表
+- 现有 inline files 和 port_outputs 在开发环境中可接受丢失（重新创建即可）
 
 ## Acceptance Criteria
 
@@ -250,15 +326,18 @@ pub enum ContextContainerProvider {
 - [ ] Mount metadata 不再嵌入文件内容
 - [ ] Owner scope 通过 `owner_kind` + `owner_id` 泛化路由
 - [ ] 现有 Project/Story 级 inline_fs CRUD 功能不变
+- [ ] `LifecycleMountProvider` port_outputs 读写改用 `InlineFileRepository`
+- [ ] `LifecycleRun.port_outputs` 不再嵌套在实体中
+- [ ] record_artifacts content 下沉到 `inline_fs_files`
 - [ ] 前端 context-config-editor 功能不变
 - [ ] 编译通过、无 warning
 
 ## Definition of Done
 
 - `cargo build` 通过
-- `cargo clippy` 无 warning（inline_fs 相关）
+- `cargo clippy` 无 warning
 - 前端 `npm run build` 通过
-- 现有 inline_fs 读写功能正常
+- 现有 inline_fs 和 lifecycle_vfs 读写功能正常
 
 ## Out of Scope
 
@@ -266,6 +345,7 @@ pub enum ContextContainerProvider {
 - ExternalService provider 的改动
 - 前端 container 编辑器的 UI 重设计
 - 性能基准测试
+- `LifecycleRun.execution_log` / `step_states` 迁移（结构化元数据，非文件内容）
 
 ## Technical Notes
 
@@ -290,8 +370,14 @@ pub enum ContextContainerProvider {
 10. `crates/agentdash-api/src/routes/stories.rs` — 同上
 11. Provider registry — `InlineFsMountProvider` 构造注入 repo
 
+**Lifecycle 层：**
+12. `crates/agentdash-application/src/address_space/provider_lifecycle.rs` — port_outputs 读写改用 InlineFileRepository
+13. `crates/agentdash-domain/src/workflow/entity.rs` — LifecycleRun 移除 port_outputs 嵌套
+14. `crates/agentdash-domain/src/workflow/value_objects.rs` — WorkflowRecordArtifact content 分离
+15. `crates/agentdash-infrastructure/src/persistence/postgres/workflow_repository.rs` — 序列化适配
+
 **前端：**
-12. 基本无改动（API 契约不变，前端仍发 `context_containers` 含 `files`，后端负责拆分存储）
+16. 基本无改动（API 契约不变，前端仍发 `context_containers` 含 `files`，后端负责拆分存储）
 
 ### 兼容性
 
@@ -313,7 +399,7 @@ pub enum ContextContainerProvider {
 - Postgres 实现 + migration
 - 编译通过
 
-### Phase 2: Application 层重构
+### Phase 2: Context Container inline_fs 重构
 
 - `DbInlineContentPersister` 改用 `InlineFileRepository`
 - `InlineFsMountProvider` 改读 DB
@@ -321,14 +407,16 @@ pub enum ContextContainerProvider {
 - `InlineContentOverlay` scope 解析简化
 - 编译通过
 
-### Phase 3: API 层适配
+### Phase 3: Lifecycle VFS port_outputs + record_artifacts 迁移
+
+- `LifecycleMountProvider` port_outputs 读写改用 `InlineFileRepository`
+- `LifecycleRun` 实体移除 `port_outputs` 嵌套
+- `record_artifacts` content 下沉
+- 编译通过
+
+### Phase 4: API 层适配 + 清理
 
 - Container CRUD 时批量初始文件写入
 - Provider registry 注入
+- 移除废弃函数和旧依赖
 - 端到端功能验证
-
-### Phase 4: 清理
-
-- 移除旧 `inline_files_from_mount()` / `normalize_inline_files()` 等废弃函数
-- 移除 `DbInlineContentPersister` 对 `ProjectRepository` / `StoryRepository` 的依赖
-- 验证无 dead code

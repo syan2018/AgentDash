@@ -17,7 +17,7 @@ use crate::rpc::ApiError;
 use agentdash_application::address_space::selected_workspace_binding;
 use agentdash_application::address_space::{
     ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, SessionMountTarget,
-    inline_files_from_mount, normalize_mount_relative_path,
+    normalize_mount_relative_path,
 };
 
 const MAX_ENTRIES: usize = 200;
@@ -390,15 +390,14 @@ pub async fn write_mount_file(
     if mount.provider == PROVIDER_INLINE_FS {
         let persister =
             agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
-                state.repos.project_repo.clone(),
-                state.repos.story_repo.clone(),
+                state.repos.inline_file_repo.clone(),
             );
         let overlay =
             agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(
                 std::sync::Arc::new(persister),
             );
         overlay
-            .write(&address_space, mount, &normalized_path, &req.content)
+            .write(mount, &normalized_path, &req.content)
             .await
             .map_err(ApiError::Internal)?;
 
@@ -496,8 +495,7 @@ pub async fn apply_mount_patch(
     if mount.provider == PROVIDER_INLINE_FS {
         let persister =
             agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
-                state.repos.project_repo.clone(),
-                state.repos.story_repo.clone(),
+                state.repos.inline_file_repo.clone(),
             );
         let overlay =
             agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(
@@ -634,7 +632,19 @@ pub async fn preview_address_space(
         };
 
         let file_count = if mount.provider == PROVIDER_INLINE_FS {
-            inline_files_from_mount(mount).ok().map(|files| files.len())
+            if let Ok((owner_kind, owner_id, container_id)) =
+                agentdash_application::address_space::parse_inline_mount_owner(mount)
+            {
+                state
+                    .repos
+                    .inline_file_repo
+                    .count_files(owner_kind, owner_id, &container_id)
+                    .await
+                    .ok()
+                    .map(|c| c as usize)
+            } else {
+                None
+            }
         } else {
             None
         };

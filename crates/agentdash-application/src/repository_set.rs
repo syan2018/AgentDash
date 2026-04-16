@@ -5,6 +5,7 @@ use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::BackendRepository;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
@@ -45,4 +46,5 @@ pub struct RepositorySet {
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
+    pub inline_file_repo: Arc<dyn InlineFileRepository>,
 }

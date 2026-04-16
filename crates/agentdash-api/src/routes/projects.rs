@@ -92,6 +92,17 @@ pub async fn create_project(
     validate_project_config(&project.config)?;
     validate_project_contract(&project)?;
     state.repos.project_repo.create(&project).await?;
+
+    // 同步 inline files 初始文件到 inline_fs_files 表
+    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
+        state.repos.inline_file_repo.as_ref(),
+        agentdash_domain::inline_file::InlineFileOwnerKind::Project,
+        project.id,
+        &project.config.context_containers,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
     Ok(Json(
         project_response_for_user(state.as_ref(), &current_user, project).await?,
     ))
@@ -177,6 +188,17 @@ pub async fn update_project(
     validate_project_contract(&project)?;
 
     state.repos.project_repo.update(&project).await?;
+
+    // 同步 inline files 初始文件到 inline_fs_files 表
+    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
+        state.repos.inline_file_repo.as_ref(),
+        agentdash_domain::inline_file::InlineFileOwnerKind::Project,
+        project.id,
+        &project.config.context_containers,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
     Ok(Json(
         project_response_for_user(state.as_ref(), &current_user, project).await?,
     ))

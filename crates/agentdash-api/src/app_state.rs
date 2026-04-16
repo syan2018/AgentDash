@@ -40,8 +40,8 @@ use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
-    PostgresCanvasRepository, PostgresLlmProviderRepository, PostgresProjectRepository,
-    PostgresRoutineExecutionRepository, PostgresRoutineRepository,
+    PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
+    PostgresProjectRepository, PostgresRoutineExecutionRepository, PostgresRoutineRepository,
     PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
     PostgresStateChangeRepository, PostgresStoryRepository, PostgresTaskRepository,
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
@@ -171,12 +171,18 @@ impl AppState {
         let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
         let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
 
-        let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool));
+        let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool.clone()));
+
+        let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
 
         let backend_registry = BackendRegistry::new();
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
-            .with_builtins(workflow_repo.clone(), canvas_repo.clone())
+            .with_builtins(
+                workflow_repo.clone(),
+                canvas_repo.clone(),
+                inline_file_repo.clone(),
+            )
             .register(Arc::new(RelayFsMountProvider::new(
                 backend_registry.clone(),
             )));
@@ -197,8 +203,7 @@ impl AppState {
             dyn agentdash_application::address_space::inline_persistence::InlineContentPersister,
         > = Arc::new(
             agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
-                project_repo.clone(),
-                story_repo.clone(),
+                inline_file_repo.clone(),
             ),
         );
 
@@ -351,6 +356,7 @@ impl AppState {
             lifecycle_run_repo: workflow_repo,
             routine_repo: routine_repo.clone(),
             routine_execution_repo: routine_execution_repo.clone(),
+            inline_file_repo: inline_file_repo.clone(),
         };
 
         let runtime_reconciler = Arc::new(

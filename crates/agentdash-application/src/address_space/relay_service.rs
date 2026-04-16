@@ -116,9 +116,7 @@ impl RelayAddressSpaceService {
                     mount.id
                 )
             })?;
-            return ov
-                .write(&runtime_address_space, mount, &path, content)
-                .await;
+            return ov.write(mount, &path, content).await;
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
@@ -153,9 +151,9 @@ impl RelayAddressSpaceService {
                 )
             })?;
             let target = InlineOverlayPatchTarget {
-                address_space: &runtime_address_space,
                 mount,
                 overlay: ov,
+                provider_registry: &self.mount_provider_registry,
             };
             let result = crate::address_space::apply_patch_to_target(&target, patch)
                 .await
@@ -293,9 +291,9 @@ impl RelayAddressSpaceService {
                 )
             })?;
             let target = InlineOverlayPatchTarget {
-                address_space,
                 mount,
                 overlay: ov,
+                provider_registry: &self.mount_provider_registry,
             };
             return apply_entries_to_target(&target, entries)
                 .await
@@ -332,7 +330,39 @@ impl RelayAddressSpaceService {
         let path = normalize_mount_relative_path(&options.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
-            let mut files = inline_files_from_mount(mount)?;
+            // 从 provider（DB）加载文件列表，再合并 overlay
+            let provider = self.mount_provider_registry.get(&mount.provider).ok_or_else(|| {
+                "inline_fs provider 未注册".to_string()
+            })?;
+            let ctx = MountOperationContext::default();
+            if overlay.is_none() {
+                // 无 overlay 直接委托 provider
+                let opts = ListOptions {
+                    path,
+                    pattern: options.pattern,
+                    recursive: options.recursive,
+                };
+                return provider
+                    .list(mount, &opts, &ctx)
+                    .await
+                    .map_err(|e| e.to_string());
+            }
+            // 有 overlay：从 provider 读取完整文件映射，合并 overlay，再列出
+            let full_opts = ListOptions {
+                path: String::new(),
+                pattern: None,
+                recursive: true,
+            };
+            let full_result = provider
+                .list(mount, &full_opts, &ctx)
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut files = BTreeMap::new();
+            for entry in full_result.entries {
+                if !entry.is_dir {
+                    files.insert(entry.path, String::new());
+                }
+            }
             if let Some(ov) = overlay {
                 ov.apply_to_files(&mount.id, &mut files).await;
             }
@@ -476,7 +506,31 @@ impl RelayAddressSpaceService {
         base_path: &str,
         params: &TextSearchParams<'_>,
     ) -> Result<(Vec<String>, bool), String> {
-        let mut files = inline_files_from_mount(mount)?;
+        // 从 provider（DB）加载全部文件内容，再合并 overlay 后搜索
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| "inline_fs provider 未注册".to_string())?;
+        let ctx = MountOperationContext::default();
+        let full_opts = ListOptions {
+            path: String::new(),
+            pattern: None,
+            recursive: true,
+        };
+        let full_result = provider
+            .list(mount, &full_opts, &ctx)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut files = BTreeMap::new();
+        for entry in full_result.entries {
+            if !entry.is_dir {
+                let read_result = provider
+                    .read_text(mount, &entry.path, &ctx)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                files.insert(entry.path, read_result.content);
+            }
+        }
         if let Some(ov) = params.overlay {
             ov.apply_to_files(&mount.id, &mut files).await;
         }
@@ -625,9 +679,9 @@ fn build_add_file_patch(path: &str, content: &str) -> String {
 }
 
 struct InlineOverlayPatchTarget<'a> {
-    address_space: &'a AddressSpace,
     mount: &'a Mount,
     overlay: &'a InlineContentOverlay,
+    provider_registry: &'a MountProviderRegistry,
 }
 
 #[async_trait]
@@ -655,18 +709,26 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
                 ))),
             };
         }
-        let files = inline_files_from_mount(self.mount).map_err(ApplyPatchError::Apply)?;
-        files
-            .get(&normalized)
-            .cloned()
-            .ok_or_else(|| ApplyPatchError::Apply(format!("目标文件不存在: {normalized}")))
+        // 从 provider（DB）读取
+        let provider = self
+            .provider_registry
+            .get(&self.mount.provider)
+            .ok_or_else(|| {
+                ApplyPatchError::Apply("inline_fs provider 未注册".to_string())
+            })?;
+        let ctx = MountOperationContext::default();
+        provider
+            .read_text(self.mount, &normalized, &ctx)
+            .await
+            .map(|result| result.content)
+            .map_err(|e| ApplyPatchError::Apply(e.to_string()))
     }
 
     async fn write_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
         let normalized =
             normalize_mount_relative_path(path, false).map_err(ApplyPatchError::InvalidPath)?;
         self.overlay
-            .write(self.address_space, self.mount, &normalized, content)
+            .write(self.mount, &normalized, content)
             .await
             .map_err(ApplyPatchError::Apply)
     }
@@ -675,7 +737,7 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
         let normalized =
             normalize_mount_relative_path(path, false).map_err(ApplyPatchError::InvalidPath)?;
         self.overlay
-            .delete(self.address_space, self.mount, &normalized)
+            .delete(self.mount, &normalized)
             .await
             .map_err(ApplyPatchError::Apply)
     }

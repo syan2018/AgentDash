@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "VFS mount/provider 架构"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Repository trait 定义规范"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "DB schema + SQLx 规范"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Crate 布局规范"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理规范"}

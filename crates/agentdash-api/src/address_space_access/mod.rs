@@ -1,6 +1,7 @@
 /// Address Space 集成测试 — 需要 API 层组件（BackendRegistry、MountProvider 等）
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     use agentdash_application::address_space::inline_persistence::{
@@ -10,10 +11,12 @@ mod tests {
     use agentdash_spi::{AddressSpace, MountCapability};
 
     use agentdash_agent::AgentTool;
+    use agentdash_domain::common::error::DomainError;
+    use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
     use agentdash_relay::RelayMessage;
     use async_trait::async_trait;
     use chrono::Utc;
-    use tokio::sync::mpsc;
+    use tokio::sync::{Mutex, mpsc};
 
     use agentdash_application::address_space::tools::fs::{
         FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
@@ -86,10 +89,174 @@ mod tests {
         Arc::new(MountProviderRegistry::new())
     }
 
-    fn mount_registry_with_inline_fs() -> Arc<MountProviderRegistry> {
+    /// 内存中的 InlineFileRepository，用于测试
+    #[derive(Default, Clone)]
+    struct MemoryInlineFileRepo {
+        files: Arc<Mutex<Vec<InlineFile>>>,
+    }
+
+    impl MemoryInlineFileRepo {
+        fn new_with_files(files: Vec<InlineFile>) -> Self {
+            Self {
+                files: Arc::new(Mutex::new(files)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl InlineFileRepository for MemoryInlineFileRepo {
+        async fn get_file(
+            &self,
+            owner_kind: InlineFileOwnerKind,
+            owner_id: uuid::Uuid,
+            container_id: &str,
+            path: &str,
+        ) -> Result<Option<InlineFile>, DomainError> {
+            let files = self.files.lock().await;
+            Ok(files.iter().find(|f| {
+                f.owner_kind == owner_kind
+                    && f.owner_id == owner_id
+                    && f.container_id == container_id
+                    && f.path == path
+            }).cloned())
+        }
+
+        async fn list_files(
+            &self,
+            owner_kind: InlineFileOwnerKind,
+            owner_id: uuid::Uuid,
+            container_id: &str,
+        ) -> Result<Vec<InlineFile>, DomainError> {
+            let files = self.files.lock().await;
+            Ok(files.iter().filter(|f| {
+                f.owner_kind == owner_kind
+                    && f.owner_id == owner_id
+                    && f.container_id == container_id
+            }).cloned().collect())
+        }
+
+        async fn list_files_by_owner(
+            &self,
+            owner_kind: InlineFileOwnerKind,
+            owner_id: uuid::Uuid,
+        ) -> Result<Vec<InlineFile>, DomainError> {
+            let files = self.files.lock().await;
+            Ok(files.iter().filter(|f| {
+                f.owner_kind == owner_kind && f.owner_id == owner_id
+            }).cloned().collect())
+        }
+
+        async fn upsert_file(&self, file: &InlineFile) -> Result<(), DomainError> {
+            let mut files = self.files.lock().await;
+            if let Some(existing) = files.iter_mut().find(|f| {
+                f.owner_kind == file.owner_kind
+                    && f.owner_id == file.owner_id
+                    && f.container_id == file.container_id
+                    && f.path == file.path
+            }) {
+                existing.content = file.content.clone();
+                existing.updated_at = file.updated_at;
+            } else {
+                files.push(file.clone());
+            }
+            Ok(())
+        }
+
+        async fn upsert_files(&self, new_files: &[InlineFile]) -> Result<(), DomainError> {
+            for file in new_files {
+                self.upsert_file(file).await?;
+            }
+            Ok(())
+        }
+
+        async fn delete_file(
+            &self,
+            owner_kind: InlineFileOwnerKind,
+            owner_id: uuid::Uuid,
+            container_id: &str,
+            path: &str,
+        ) -> Result<(), DomainError> {
+            let mut files = self.files.lock().await;
+            files.retain(|f| {
+                !(f.owner_kind == owner_kind
+                    && f.owner_id == owner_id
+                    && f.container_id == container_id
+                    && f.path == path)
+            });
+            Ok(())
+        }
+
+        async fn delete_by_container(
+            &self,
+            owner_kind: InlineFileOwnerKind,
+            owner_id: uuid::Uuid,
+            container_id: &str,
+        ) -> Result<(), DomainError> {
+            let mut files = self.files.lock().await;
+            files.retain(|f| {
+                !(f.owner_kind == owner_kind
+                    && f.owner_id == owner_id
+                    && f.container_id == container_id)
+            });
+            Ok(())
+        }
+
+        async fn delete_by_owner(
+            &self,
+            owner_kind: InlineFileOwnerKind,
+            owner_id: uuid::Uuid,
+        ) -> Result<(), DomainError> {
+            let mut files = self.files.lock().await;
+            files.retain(|f| !(f.owner_kind == owner_kind && f.owner_id == owner_id));
+            Ok(())
+        }
+
+        async fn count_files(
+            &self,
+            owner_kind: InlineFileOwnerKind,
+            owner_id: uuid::Uuid,
+            container_id: &str,
+        ) -> Result<i64, DomainError> {
+            let files = self.files.lock().await;
+            Ok(files.iter().filter(|f| {
+                f.owner_kind == owner_kind
+                    && f.owner_id == owner_id
+                    && f.container_id == container_id
+            }).count() as i64)
+        }
+    }
+
+    fn mount_registry_with_inline_fs_repo(
+        repo: Arc<dyn InlineFileRepository>,
+    ) -> Arc<MountProviderRegistry> {
         let mut registry = MountProviderRegistry::new();
-        registry.register(Arc::new(InlineFsMountProvider));
+        registry.register(Arc::new(InlineFsMountProvider::new(repo)));
         Arc::new(registry)
+    }
+
+    /// 构建带 owner 坐标的 inline mount（模拟 build_derived_address_space 的输出）
+    fn make_inline_mount_with_owner(
+        mount_id: &str,
+        container_id: &str,
+        owner_kind: &str,
+        owner_id: uuid::Uuid,
+        capabilities: Vec<MountCapability>,
+        default_write: bool,
+    ) -> agentdash_spi::Mount {
+        agentdash_spi::Mount {
+            id: mount_id.to_string(),
+            provider: PROVIDER_INLINE_FS.to_string(),
+            backend_id: String::new(),
+            root_ref: format!("context://inline/{container_id}"),
+            capabilities,
+            default_write,
+            display_name: mount_id.to_string(),
+            metadata: serde_json::json!({
+                "container_id": container_id,
+                "agentdash_context_owner_kind": owner_kind,
+                "agentdash_context_owner_id": owner_id.to_string(),
+            }),
+        }
     }
 
     #[derive(Default)]
@@ -99,8 +266,8 @@ mod tests {
     impl InlineContentPersister for MemoryInlinePersister {
         async fn persist_write(
             &self,
-            _source_project_id: &str,
-            _source_story_id: Option<&str>,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: uuid::Uuid,
             _container_id: &str,
             _path: &str,
             _content: &str,
@@ -110,8 +277,8 @@ mod tests {
 
         async fn persist_delete(
             &self,
-            _source_project_id: &str,
-            _source_story_id: Option<&str>,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: uuid::Uuid,
             _container_id: &str,
             _path: &str,
         ) -> Result<(), String> {
@@ -208,48 +375,40 @@ mod tests {
         assert_eq!(address_space.mounts.len(), 1);
         let mount = &address_space.mounts[0];
         assert_eq!(mount.id, "shared");
-        let files = inline_files_from_mount(mount).expect("inline files");
+        // 验证 mount metadata 包含 container_id 和 owner 坐标
         assert_eq!(
-            files.get("spec.md").map(String::as_str),
-            Some("story override")
+            mount.metadata.get("container_id").and_then(|v| v.as_str()),
+            Some("story-spec")
         );
     }
 
     #[tokio::test]
     async fn inline_mount_supports_read_list_and_search() {
-        let service = RelayAddressSpaceService::new(mount_registry_with_inline_fs());
-        let runtime_address_space = AddressSpace {
-            mounts: vec![
-                build_context_container_mount(&ContextContainerDefinition {
-                    id: "story-brief".to_string(),
-                    mount_id: "brief".to_string(),
-                    display_name: "brief".to_string(),
-                    provider: ContextContainerProvider::InlineFiles {
-                        files: vec![
-                            ContextContainerFile {
-                                path: "brief.md".to_string(),
-                                content: "hello inline mount".to_string(),
-                            },
-                            ContextContainerFile {
-                                path: "notes/todo.md".to_string(),
-                                content: "todo: verify inline search".to_string(),
-                            },
-                        ],
-                    },
-                    capabilities: vec![
-                        MountCapability::Read,
-                        MountCapability::List,
-                        MountCapability::Search,
-                    ],
-                    default_write: false,
-                    exposure: ContextContainerExposure::default(),
-                })
-                .expect("mount should build"),
-            ],
+        let owner_id = uuid::Uuid::new_v4();
+        let container_id = "story-brief";
+        let repo = MemoryInlineFileRepo::new_with_files(vec![
+            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "brief.md", "hello inline mount"),
+            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "notes/todo.md", "todo: verify inline search"),
+        ]);
+        let service = RelayAddressSpaceService::new(
+            mount_registry_with_inline_fs_repo(Arc::new(repo)),
+        );
+        let address_space = AddressSpace {
+            mounts: vec![make_inline_mount_with_owner(
+                "brief",
+                container_id,
+                "project",
+                owner_id,
+                vec![
+                    MountCapability::Read,
+                    MountCapability::List,
+                    MountCapability::Search,
+                ],
+                false,
+            )],
             default_mount_id: Some("brief".to_string()),
             ..Default::default()
         };
-        let address_space = runtime_address_space;
 
         let read = service
             .read_text(
@@ -292,38 +451,31 @@ mod tests {
 
     #[tokio::test]
     async fn inline_mount_supports_apply_patch_via_overlay() {
-        let service = RelayAddressSpaceService::new(mount_registry_with_inline_fs());
+        let owner_id = uuid::Uuid::new_v4();
+        let container_id = "story-brief";
+        let repo = MemoryInlineFileRepo::new_with_files(vec![
+            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "brief.md", "hello inline mount\n"),
+            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "obsolete.md", "remove me\n"),
+        ]);
+        let service = RelayAddressSpaceService::new(
+            mount_registry_with_inline_fs_repo(Arc::new(repo)),
+        );
         let runtime_address_space = AddressSpace {
-            mounts: vec![
-                build_context_container_mount(&ContextContainerDefinition {
-                    id: "story-brief".to_string(),
-                    mount_id: "brief".to_string(),
-                    display_name: "brief".to_string(),
-                    provider: ContextContainerProvider::InlineFiles {
-                        files: vec![
-                            ContextContainerFile {
-                                path: "brief.md".to_string(),
-                                content: "hello inline mount\n".to_string(),
-                            },
-                            ContextContainerFile {
-                                path: "obsolete.md".to_string(),
-                                content: "remove me\n".to_string(),
-                            },
-                        ],
-                    },
-                    capabilities: vec![
-                        MountCapability::Read,
-                        MountCapability::Write,
-                        MountCapability::List,
-                        MountCapability::Search,
-                    ],
-                    default_write: true,
-                    exposure: ContextContainerExposure::default(),
-                })
-                .expect("mount should build"),
-            ],
+            mounts: vec![make_inline_mount_with_owner(
+                "brief",
+                container_id,
+                "project",
+                owner_id,
+                vec![
+                    MountCapability::Read,
+                    MountCapability::Write,
+                    MountCapability::List,
+                    MountCapability::Search,
+                ],
+                true,
+            )],
             default_mount_id: Some("brief".to_string()),
-            source_project_id: Some(uuid::Uuid::new_v4().to_string()),
+            source_project_id: Some(owner_id.to_string()),
             source_story_id: None,
         };
         let overlay = InlineContentOverlay::new(Arc::new(MemoryInlinePersister));
@@ -496,7 +648,11 @@ mod tests {
                 ],
                 default_write: false,
                 display_name: "brief".to_string(),
-                metadata: serde_json::json!({ "files": { "brief.md": "hello" } }),
+                metadata: serde_json::json!({
+                    "container_id": "brief",
+                    "agentdash_context_owner_kind": "project",
+                    "agentdash_context_owner_id": uuid::Uuid::new_v4().to_string(),
+                }),
             }],
             default_mount_id: Some("brief".to_string()),
             ..Default::default()

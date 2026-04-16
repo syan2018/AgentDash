@@ -152,6 +152,17 @@ pub async fn create_story(
     validate_story_context(&next_story, &project)?;
 
     state.repos.story_repo.create(&next_story).await?;
+
+    // 同步 inline files 初始文件到 inline_fs_files 表
+    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
+        state.repos.inline_file_repo.as_ref(),
+        agentdash_domain::inline_file::InlineFileOwnerKind::Story,
+        next_story.id,
+        &next_story.context.context_containers,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
     Ok(Json(StoryResponse::from(next_story)))
 }
 
@@ -239,6 +250,16 @@ pub async fn update_story(
     validate_story_context(&story, &project)?;
     let new_status = story.status.clone();
     state.repos.story_repo.update(&story).await?;
+
+    // 同步 inline files 初始文件到 inline_fs_files 表
+    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
+        state.repos.inline_file_repo.as_ref(),
+        agentdash_domain::inline_file::InlineFileOwnerKind::Story,
+        story.id,
+        &story.context.context_containers,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
 
     if status_changed {
         let reconciler = state.services.runtime_reconciler.clone();

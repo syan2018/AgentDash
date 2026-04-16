@@ -9,6 +9,7 @@ use super::provider::{
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
+use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     LifecycleRun, LifecycleRunRepository, LifecycleRunStatus, WorkflowRecordArtifact,
     WorkflowRecordArtifactType,
@@ -20,11 +21,18 @@ use uuid::Uuid;
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    inline_file_repo: Arc<dyn InlineFileRepository>,
 }
 
 impl LifecycleMountProvider {
-    pub fn new(lifecycle_run_repo: Arc<dyn LifecycleRunRepository>) -> Self {
-        Self { lifecycle_run_repo }
+    pub fn new(
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        inline_file_repo: Arc<dyn InlineFileRepository>,
+    ) -> Self {
+        Self {
+            lifecycle_run_repo,
+            inline_file_repo,
+        }
     }
 }
 
@@ -153,101 +161,140 @@ impl MountProvider for LifecycleMountProvider {
         let path_norm =
             normalize_mount_relative_path(path, true).map_err(MountError::OperationFailed)?;
         let segs = segments_from_path(&path_norm);
-        let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
 
+        // ── artifacts 路径族：直接查 inline_fs_files，不加载整个 LifecycleRun ──
         let content = match segs.as_slice() {
-            [] | ["active"] => to_json_pretty(&run_overview(&active))?,
-            ["active", "steps"] => to_json_pretty(&active.step_states)?,
-            ["active", "steps", key] => {
-                let step = active
-                    .step_states
-                    .iter()
-                    .find(|s| s.step_key == *key)
-                    .ok_or_else(|| MountError::NotFound(format!("step 不存在: {key}")))?;
-                to_json_pretty(step)?
-            }
-            ["active", "artifacts"] => to_json_pretty(&active.record_artifacts)?,
-            ["active", "artifacts", id_str] => {
-                let aid = Uuid::parse_str(id_str)
-                    .map_err(|e| MountError::OperationFailed(format!("artifact id 无效: {e}")))?;
-                let art = active
-                    .record_artifacts
-                    .iter()
-                    .find(|a| a.id == aid)
-                    .ok_or_else(|| MountError::NotFound(format!("artifact 不存在: {aid}")))?;
-                art.content.clone()
-            }
-            ["active", "log"] => to_json_pretty(&active.execution_log)?,
-            ["runs"] => {
-                let sid = resolve_session_id_for_runs(mount, &active);
-                let runs = self
-                    .lifecycle_run_repo
-                    .list_by_session(&sid)
+            ["artifacts"] => {
+                let run_id = parse_run_id_from_metadata(mount)?;
+                let files = self
+                    .inline_file_repo
+                    .list_files(InlineFileOwnerKind::LifecycleRun, run_id, "port_outputs")
                     .await
                     .map_err(map_domain_err)?;
-                let summaries: Vec<_> = runs.iter().map(run_overview).collect();
-                to_json_pretty(&summaries)?
+                let map: std::collections::BTreeMap<String, String> =
+                    files.into_iter().map(|f| (f.path, f.content)).collect();
+                to_json_pretty(&map)?
             }
-            ["runs", id_str] => {
-                let rid = Uuid::parse_str(id_str)
-                    .map_err(|e| MountError::OperationFailed(format!("run id 无效: {e}")))?;
-                let run = self
-                    .lifecycle_run_repo
-                    .get_by_id(rid)
+            ["artifacts", port_key] => {
+                let run_id = parse_run_id_from_metadata(mount)?;
+                self.inline_file_repo
+                    .get_file(
+                        InlineFileOwnerKind::LifecycleRun,
+                        run_id,
+                        "port_outputs",
+                        port_key,
+                    )
                     .await
                     .map_err(map_domain_err)?
-                    .ok_or_else(|| MountError::NotFound(format!("run 不存在: {rid}")))?;
-                to_json_pretty(&run_overview(&run))?
-            }
-            // ── artifacts/{port_key}: port output 内容（扁平，无 node_key）
-            ["artifacts"] => to_json_pretty(&active.port_outputs)?,
-            ["artifacts", port_key] => active
-                .port_outputs
-                .get(*port_key)
-                .cloned()
-                .ok_or_else(|| {
-                    MountError::NotFound(format!("port output 不存在: {port_key}"))
-                })?,
-            // ── nodes/ 路径族 ──────────────────────────────────
-            ["nodes", key, "state"] => {
-                let step = active
-                    .step_states
-                    .iter()
-                    .find(|s| s.step_key == *key)
-                    .ok_or_else(|| MountError::NotFound(format!("node 不存在: {key}")))?;
-                to_json_pretty(step)?
-            }
-            ["nodes", key, "artifacts"] => {
-                let arts = artifacts_for_node(&active, key);
-                to_json_pretty(&arts)?
-            }
-            ["nodes", key, "artifacts", "by-type", type_str] => {
-                let matched = artifacts_by_type(&active, key, type_str)?;
-                let latest = matched.first().ok_or_else(|| {
-                    MountError::NotFound(format!("node `{key}` 无 `{type_str}` 类型 artifact"))
-                })?;
-                latest.content.clone()
-            }
-            ["nodes", key, "artifacts", "by-type", type_str, "list"] => {
-                let matched = artifacts_by_type(&active, key, type_str)?;
-                to_json_pretty(&matched)?
-            }
-            ["nodes", key, "artifacts", id_str] => {
-                let aid = Uuid::parse_str(id_str)
-                    .map_err(|e| MountError::OperationFailed(format!("artifact id 无效: {e}")))?;
-                let art = active
-                    .record_artifacts
-                    .iter()
-                    .find(|a| a.id == aid && a.step_key == *key)
+                    .map(|f| f.content)
                     .ok_or_else(|| {
-                        MountError::NotFound(format!("node `{key}` 下 artifact 不存在: {aid}"))
-                    })?;
-                art.content.clone()
+                        MountError::NotFound(format!("port output 不存在: {port_key}"))
+                    })?
             }
+            // ── 其它路径需要加载完整的 LifecycleRun ──
             _ => {
-                return Err(MountError::NotFound(format!(
-                    "lifecycle_vfs 不支持的路径: `{path_norm}`"
-                )));
+                let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
+                match segs.as_slice() {
+                    [] | ["active"] => to_json_pretty(&run_overview(&active))?,
+                    ["active", "steps"] => to_json_pretty(&active.step_states)?,
+                    ["active", "steps", key] => {
+                        let step = active
+                            .step_states
+                            .iter()
+                            .find(|s| s.step_key == *key)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("step 不存在: {key}"))
+                            })?;
+                        to_json_pretty(step)?
+                    }
+                    ["active", "artifacts"] => to_json_pretty(&active.record_artifacts)?,
+                    ["active", "artifacts", id_str] => {
+                        let aid = Uuid::parse_str(id_str).map_err(|e| {
+                            MountError::OperationFailed(format!("artifact id 无效: {e}"))
+                        })?;
+                        let art = active
+                            .record_artifacts
+                            .iter()
+                            .find(|a| a.id == aid)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("artifact 不存在: {aid}"))
+                            })?;
+                        art.content.clone()
+                    }
+                    ["active", "log"] => to_json_pretty(&active.execution_log)?,
+                    ["runs"] => {
+                        let sid = resolve_session_id_for_runs(mount, &active);
+                        let runs = self
+                            .lifecycle_run_repo
+                            .list_by_session(&sid)
+                            .await
+                            .map_err(map_domain_err)?;
+                        let summaries: Vec<_> = runs.iter().map(run_overview).collect();
+                        to_json_pretty(&summaries)?
+                    }
+                    ["runs", id_str] => {
+                        let rid = Uuid::parse_str(id_str).map_err(|e| {
+                            MountError::OperationFailed(format!("run id 无效: {e}"))
+                        })?;
+                        let run = self
+                            .lifecycle_run_repo
+                            .get_by_id(rid)
+                            .await
+                            .map_err(map_domain_err)?
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("run 不存在: {rid}"))
+                            })?;
+                        to_json_pretty(&run_overview(&run))?
+                    }
+                    // ── nodes/ 路径族 ──────────────────────────────────
+                    ["nodes", key, "state"] => {
+                        let step = active
+                            .step_states
+                            .iter()
+                            .find(|s| s.step_key == *key)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("node 不存在: {key}"))
+                            })?;
+                        to_json_pretty(step)?
+                    }
+                    ["nodes", key, "artifacts"] => {
+                        let arts = artifacts_for_node(&active, key);
+                        to_json_pretty(&arts)?
+                    }
+                    ["nodes", key, "artifacts", "by-type", type_str] => {
+                        let matched = artifacts_by_type(&active, key, type_str)?;
+                        let latest = matched.first().ok_or_else(|| {
+                            MountError::NotFound(format!(
+                                "node `{key}` 无 `{type_str}` 类型 artifact"
+                            ))
+                        })?;
+                        latest.content.clone()
+                    }
+                    ["nodes", key, "artifacts", "by-type", type_str, "list"] => {
+                        let matched = artifacts_by_type(&active, key, type_str)?;
+                        to_json_pretty(&matched)?
+                    }
+                    ["nodes", key, "artifacts", id_str] => {
+                        let aid = Uuid::parse_str(id_str).map_err(|e| {
+                            MountError::OperationFailed(format!("artifact id 无效: {e}"))
+                        })?;
+                        let art = active
+                            .record_artifacts
+                            .iter()
+                            .find(|a| a.id == aid && a.step_key == *key)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!(
+                                    "node `{key}` 下 artifact 不存在: {aid}"
+                                ))
+                            })?;
+                        art.content.clone()
+                    }
+                    _ => {
+                        return Err(MountError::NotFound(format!(
+                            "lifecycle_vfs 不支持的路径: `{path_norm}`"
+                        )));
+                    }
+                }
             }
         };
 
@@ -288,20 +335,25 @@ impl MountProvider for LifecycleMountProvider {
                     )));
                 }
 
-                let mut run = load_active_run(&self.lifecycle_run_repo, mount).await?;
-                run.port_outputs
-                    .insert(port_key.to_string(), content.to_string());
-                run.last_activity_at = chrono::Utc::now();
-                self.lifecycle_run_repo
-                    .update(&run)
+                // 直接写入 inline_fs_files，不再加载整个 LifecycleRun 实体
+                let run_id = parse_run_id_from_metadata(mount)?;
+                let file = InlineFile::new(
+                    InlineFileOwnerKind::LifecycleRun,
+                    run_id,
+                    "port_outputs",
+                    port_key.to_string(),
+                    content.to_string(),
+                );
+                self.inline_file_repo
+                    .upsert_file(&file)
                     .await
                     .map_err(map_domain_err)?;
 
                 info!(
-                    run_id = %run.id,
+                    run_id = %run_id,
                     port_key = %port_key,
                     content_len = content.len(),
-                    "lifecycle VFS: wrote port output"
+                    "lifecycle VFS: wrote port output to inline_fs_files"
                 );
                 Ok(())
             }
@@ -393,17 +445,24 @@ impl MountProvider for LifecycleMountProvider {
                     is_dir: false,
                 })
                 .collect(),
-            // ── artifacts/: port output 文件列表 ──────────────────
-            ["artifacts"] => active
-                .port_outputs
-                .iter()
-                .map(|(key, content)| RuntimeFileEntry {
-                    path: format!("artifacts/{key}"),
-                    size: Some(content.len() as u64),
-                    modified_at: None,
-                    is_dir: false,
-                })
-                .collect(),
+            // ── artifacts/: port output 文件列表（从 inline_fs_files 查询）──
+            ["artifacts"] => {
+                let run_id = parse_run_id_from_metadata(mount)?;
+                let files = self
+                    .inline_file_repo
+                    .list_files(InlineFileOwnerKind::LifecycleRun, run_id, "port_outputs")
+                    .await
+                    .map_err(map_domain_err)?;
+                files
+                    .iter()
+                    .map(|f| RuntimeFileEntry {
+                        path: format!("artifacts/{}", f.path),
+                        size: Some(f.content.len() as u64),
+                        modified_at: None,
+                        is_dir: false,
+                    })
+                    .collect()
+            }
             // ── nodes/ 路径族 ──────────────────────────────────
             ["nodes"] => active
                 .step_states

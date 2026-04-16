@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
+use agentdash_domain::inline_file::{InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
@@ -20,7 +21,6 @@ use agentdash_spi::{ExecutionHookProvider, HookStepAdvanceRequest};
 
 use crate::workflow::WorkflowCompletionSignalSet;
 
-use super::completion::active_workflow_checklist_evidence_summary;
 use super::owner_resolver::SessionOwnerResolver;
 use super::presets::builtin_preset_scripts;
 use super::rules::*;
@@ -39,6 +39,7 @@ pub struct AppExecutionHookProvider {
     pub(super) session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub(super) agent_repo: Arc<dyn AgentRepository>,
     pub(super) agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
+    pub(super) inline_file_repo: Arc<dyn InlineFileRepository>,
     pub(super) owner_resolver: SessionOwnerResolver,
     pub(super) workflow_builder: WorkflowSnapshotBuilder,
     pub(super) script_engine: HookScriptEngine,
@@ -72,20 +73,18 @@ impl AppExecutionHookProvider {
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        inline_file_repo: Arc<dyn InlineFileRepository>,
     ) -> Self {
         let preset_scripts = builtin_preset_scripts();
-        let workflow_binding_repo = session_binding_repo.clone();
+        let wf_binding = session_binding_repo.clone();
+        let wf_inline = inline_file_repo.clone();
         Self {
             session_binding_repo,
             agent_repo,
             agent_link_repo,
+            inline_file_repo,
             owner_resolver: SessionOwnerResolver::new(project_repo, story_repo, task_repo),
-            workflow_builder: WorkflowSnapshotBuilder::new(
-                workflow_binding_repo,
-                workflow_definition_repo,
-                lifecycle_definition_repo,
-                lifecycle_run_repo,
-            ),
+            workflow_builder: WorkflowSnapshotBuilder::new(wf_binding, workflow_definition_repo, lifecycle_definition_repo, lifecycle_run_repo, wf_inline),
             script_engine: HookScriptEngine::new(&preset_scripts),
         }
     }
@@ -286,7 +285,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 .await?
             {
                 let wf_source = workflow_source(&workflow);
-                let checklist_evidence = active_workflow_checklist_evidence_summary(&workflow);
 
                 snapshot.diagnostics.push(HookDiagnosticEntry {
                     code: "active_workflow_resolved".to_string(),
@@ -338,23 +336,8 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             .primary_workflow
                             .as_ref()
                             .map(|w| w.name.clone()),
-                        default_artifact_type: workflow
-                            .effective_contract
-                            .completion
-                            .default_artifact_type,
-                        default_artifact_title: workflow
-                            .effective_contract
-                            .completion
-                            .default_artifact_title
-                            .clone(),
                         effective_contract: Some(workflow.effective_contract.clone()),
-                        checklist_evidence_artifact_type: Some(checklist_evidence.artifact_type),
-                        checklist_evidence_present: Some(checklist_evidence.count > 0),
-                        checklist_evidence_count: Some(checklist_evidence.count as u32),
-                        checklist_evidence_artifact_ids: Some(
-                            checklist_evidence.artifact_ids.clone(),
-                        ),
-                        checklist_evidence_titles: Some(checklist_evidence.titles.clone()),
+                        checklist_evidence_present: None,
                         output_port_keys: {
                             // port 归属已迁移到 step 级别
                             let port_keys: Vec<String> = workflow
@@ -370,12 +353,18 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             }
                         },
                         fulfilled_port_keys: {
-                            let fulfilled: Vec<String> = workflow
-                                .run
-                                .port_outputs
-                                .iter()
-                                .filter(|(_, v)| !v.trim().is_empty())
-                                .map(|(k, _)| k.clone())
+                            let fulfilled: Vec<String> = self
+                                .inline_file_repo
+                                .list_files(
+                                    InlineFileOwnerKind::LifecycleRun,
+                                    workflow.run.id,
+                                    "port_outputs",
+                                )
+                                .await
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|f| !f.content.trim().is_empty())
+                                .map(|f| f.path)
                                 .collect();
                             if fulfilled.is_empty() {
                                 None

@@ -182,6 +182,7 @@ impl AppState {
                 workflow_repo.clone(),
                 canvas_repo.clone(),
                 inline_file_repo.clone(),
+                session_repo.clone(),
             )
             .register(Arc::new(RelayFsMountProvider::new(
                 backend_registry.clone(),
@@ -221,6 +222,7 @@ impl AppState {
             workflow_definition_repo: workflow_repo.clone(),
             lifecycle_definition_repo: workflow_repo.clone(),
             lifecycle_run_repo: workflow_repo.clone(),
+            inline_file_repo: inline_file_repo.clone(),
             session_hub_handle: session_hub_handle.clone(),
             inline_persister: Some(inline_persister),
             mcp_relay_provider: backend_registry.clone(),
@@ -255,6 +257,7 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
             workflow_repo.clone(),
+            inline_file_repo.clone(),
         ));
         let mut session_hub = SessionHub::new_with_hooks_and_persistence(
             None,
@@ -278,6 +281,7 @@ impl AppState {
                     workflow_repo.clone(),
                     workflow_repo.clone(),
                     workflow_repo.clone(),
+                    inline_file_repo.clone(),
                 ));
             session_hub.set_terminal_callback(orchestrator).await;
         }
@@ -490,6 +494,7 @@ struct PiAgentConnectorDeps {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<
         Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister>,
@@ -516,6 +521,7 @@ async fn build_pi_agent_connector(
         deps.workflow_definition_repo,
         deps.lifecycle_definition_repo,
         deps.lifecycle_run_repo,
+        deps.inline_file_repo,
         deps.session_hub_handle,
         deps.inline_persister,
     )));

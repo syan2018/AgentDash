@@ -24,7 +24,7 @@ pub use mount::{
     build_context_container_mount, build_derived_address_space, build_lifecycle_mount,
     build_lifecycle_mount_with_ports,
     build_workspace_address_space, container_visible_for_target, effective_context_containers,
-    inline_files_from_mount, list_inline_entries, normalize_inline_files,
+    list_inline_entries, normalize_inline_files,
     parse_inline_mount_owner, selected_workspace_binding, workspace_mount,
 };
 pub use path::{

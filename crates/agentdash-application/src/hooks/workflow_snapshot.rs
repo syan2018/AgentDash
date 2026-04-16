@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-    WorkflowRecordArtifactType,
 };
 use agentdash_spi::{HookError, HookStepAdvanceRequest, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::workflow::execution_log as workflow_recording;
 use crate::workflow::{
     ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
-    WorkflowRecordArtifactDraft, resolve_active_workflow_projection_for_session,
+    resolve_active_workflow_projection_for_session,
 };
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
@@ -24,6 +24,7 @@ pub struct WorkflowSnapshotBuilder {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    inline_file_repo: Arc<dyn InlineFileRepository>,
 }
 
 impl WorkflowSnapshotBuilder {
@@ -32,12 +33,14 @@ impl WorkflowSnapshotBuilder {
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        inline_file_repo: Arc<dyn InlineFileRepository>,
     ) -> Self {
         Self {
             session_binding_repo,
             workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
+            inline_file_repo,
         }
     }
 
@@ -74,22 +77,8 @@ impl WorkflowSnapshotBuilder {
         let run_id = Uuid::parse_str(&request.run_id)
             .map_err(|e| HookError::Runtime(format!("advance: invalid run_id: {e}")))?;
 
-        let record_artifacts: Vec<WorkflowRecordArtifactDraft> = request
-            .record_artifacts
-            .into_iter()
-            .filter_map(|value| {
-                let title = value.get("title")?.as_str()?.to_string();
-                let content = value.get("content")?.as_str()?.to_string();
-                let artifact_type_str = value.get("artifact_type")?.as_str()?;
-                let artifact_type: WorkflowRecordArtifactType =
-                    serde_json::from_value(serde_json::json!(artifact_type_str)).ok()?;
-                Some(WorkflowRecordArtifactDraft {
-                    artifact_type,
-                    title,
-                    content,
-                })
-            })
-            .collect();
+        let step_key = request.step_key.clone();
+        let summary = request.summary.clone();
 
         let service = LifecycleRunService::new(
             self.workflow_definition_repo.as_ref(),
@@ -101,10 +90,21 @@ impl WorkflowSnapshotBuilder {
                 run_id,
                 step_key: request.step_key,
                 summary: request.summary,
-                record_artifacts,
             })
             .await
             .map_err(|e| HookError::Runtime(format!("advance_workflow_step: {e}")))?;
+
+        // 物化 session summary 到 inline_fs
+        if let Some(summary_text) = &summary {
+            let file = InlineFile::new(
+                InlineFileOwnerKind::LifecycleRun,
+                run_id,
+                "session_records",
+                format!("{}/summary", step_key),
+                summary_text.clone(),
+            );
+            let _ = self.inline_file_repo.upsert_file(&file).await;
+        }
 
         Ok(())
     }

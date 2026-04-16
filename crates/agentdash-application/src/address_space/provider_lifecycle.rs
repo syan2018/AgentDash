@@ -5,14 +5,14 @@ use std::sync::Arc;
 use super::mount::PROVIDER_LIFECYCLE_VFS;
 use super::path::normalize_mount_relative_path;
 use super::provider::{
-    MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
+    MountError, MountOperationContext, MountProvider, SearchQuery, SearchResult,
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
+use crate::session::{PersistedSessionEvent, SessionPersistence};
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
-    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus, WorkflowRecordArtifact,
-    WorkflowRecordArtifactType,
+    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -22,16 +22,19 @@ use uuid::Uuid;
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
+    session_persistence: Arc<dyn SessionPersistence>,
 }
 
 impl LifecycleMountProvider {
     pub fn new(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        session_persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
         Self {
             lifecycle_run_repo,
             inline_file_repo,
+            session_persistence,
         }
     }
 }
@@ -45,7 +48,6 @@ struct LifecycleRunOverview<'a> {
     status: &'a LifecycleRunStatus,
     current_step_key: Option<&'a str>,
     step_count: usize,
-    artifact_count: usize,
     log_count: usize,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -61,7 +63,6 @@ fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
         status: &run.status,
         current_step_key: run.current_step_key.as_deref(),
         step_count: run.step_states.len(),
-        artifact_count: run.record_artifacts.len(),
         log_count: run.execution_log.len(),
         created_at: run.created_at,
         updated_at: run.updated_at,
@@ -110,40 +111,6 @@ fn segments_from_path(path: &str) -> Vec<&str> {
     } else {
         path.split('/').collect()
     }
-}
-
-/// 按 step_key 过滤 artifact
-fn artifacts_for_node<'a>(
-    run: &'a LifecycleRun,
-    node_key: &str,
-) -> Vec<&'a WorkflowRecordArtifact> {
-    run.record_artifacts
-        .iter()
-        .filter(|a| a.step_key == node_key)
-        .collect()
-}
-
-/// 解析 artifact_type snake_case 字符串
-fn parse_artifact_type(s: &str) -> Option<WorkflowRecordArtifactType> {
-    let quoted = format!("\"{}\"", s);
-    serde_json::from_str(&quoted).ok()
-}
-
-/// 按 step_key + artifact_type 过滤，按创建时间降序
-fn artifacts_by_type<'a>(
-    run: &'a LifecycleRun,
-    node_key: &str,
-    type_str: &str,
-) -> Result<Vec<&'a WorkflowRecordArtifact>, MountError> {
-    let artifact_type = parse_artifact_type(type_str)
-        .ok_or_else(|| MountError::NotFound(format!("未知 artifact_type: {type_str}")))?;
-    let mut matched: Vec<&WorkflowRecordArtifact> = run
-        .record_artifacts
-        .iter()
-        .filter(|a| a.step_key == node_key && a.artifact_type == artifact_type)
-        .collect();
-    matched.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    Ok(matched)
 }
 
 #[async_trait]
@@ -207,20 +174,6 @@ impl MountProvider for LifecycleMountProvider {
                             })?;
                         to_json_pretty(step)?
                     }
-                    ["active", "artifacts"] => to_json_pretty(&active.record_artifacts)?,
-                    ["active", "artifacts", id_str] => {
-                        let aid = Uuid::parse_str(id_str).map_err(|e| {
-                            MountError::OperationFailed(format!("artifact id 无效: {e}"))
-                        })?;
-                        let art = active
-                            .record_artifacts
-                            .iter()
-                            .find(|a| a.id == aid)
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("artifact 不存在: {aid}"))
-                            })?;
-                        art.content.clone()
-                    }
                     ["active", "log"] => to_json_pretty(&active.execution_log)?,
                     ["runs"] => {
                         let sid = resolve_session_id_for_runs(mount, &active);
@@ -257,37 +210,146 @@ impl MountProvider for LifecycleMountProvider {
                             })?;
                         to_json_pretty(step)?
                     }
-                    ["nodes", key, "artifacts"] => {
-                        let arts = artifacts_for_node(&active, key);
-                        to_json_pretty(&arts)?
-                    }
-                    ["nodes", key, "artifacts", "by-type", type_str] => {
-                        let matched = artifacts_by_type(&active, key, type_str)?;
-                        let latest = matched.first().ok_or_else(|| {
-                            MountError::NotFound(format!(
-                                "node `{key}` 无 `{type_str}` 类型 artifact"
-                            ))
-                        })?;
-                        latest.content.clone()
-                    }
-                    ["nodes", key, "artifacts", "by-type", type_str, "list"] => {
-                        let matched = artifacts_by_type(&active, key, type_str)?;
-                        to_json_pretty(&matched)?
-                    }
-                    ["nodes", key, "artifacts", id_str] => {
-                        let aid = Uuid::parse_str(id_str).map_err(|e| {
-                            MountError::OperationFailed(format!("artifact id 无效: {e}"))
-                        })?;
-                        let art = active
-                            .record_artifacts
+                    // ── nodes/{key}/session/* 路径族：session 虚拟投影 ──
+                    ["nodes", key, "session", "meta"] => {
+                        let step = active
+                            .step_states
                             .iter()
-                            .find(|a| a.id == aid && a.step_key == *key)
+                            .find(|s| s.step_key == *key)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("node 不存在: {key}"))
+                            })?;
+                        let session_id = step.session_id.as_deref().ok_or_else(|| {
+                            MountError::NotFound(format!("node `{key}` 没有关联 session"))
+                        })?;
+                        let meta = self
+                            .session_persistence
+                            .get_session_meta(session_id)
+                            .await
+                            .map_err(|e| {
+                                MountError::OperationFailed(format!("读取 session meta 失败: {e}"))
+                            })?
                             .ok_or_else(|| {
                                 MountError::NotFound(format!(
-                                    "node `{key}` 下 artifact 不存在: {aid}"
+                                    "session 不存在: {session_id}"
                                 ))
                             })?;
-                        art.content.clone()
+                        let meta_json = serde_json::json!({
+                            "session_id": session_id,
+                            "title": meta.title,
+                            "status": meta.last_execution_status,
+                            "last_event_seq": meta.last_event_seq,
+                            "created_at": meta.created_at,
+                            "updated_at": meta.updated_at,
+                        });
+                        to_json_pretty(&meta_json)?
+                    }
+                    ["nodes", key, "session", "turns"] => {
+                        let step = active
+                            .step_states
+                            .iter()
+                            .find(|s| s.step_key == *key)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("node 不存在: {key}"))
+                            })?;
+                        let session_id = step.session_id.as_deref().ok_or_else(|| {
+                            MountError::NotFound(format!("node `{key}` 没有关联 session"))
+                        })?;
+                        let events = self
+                            .session_persistence
+                            .list_all_events(session_id)
+                            .await
+                            .map_err(|e| {
+                                MountError::OperationFailed(format!(
+                                    "读取 session events 失败: {e}"
+                                ))
+                            })?;
+                        let summaries = group_events_into_turn_summaries(&events);
+                        to_json_pretty(&summaries)?
+                    }
+                    ["nodes", key, "session", "turns", turn_id] => {
+                        let step = active
+                            .step_states
+                            .iter()
+                            .find(|s| s.step_key == *key)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("node 不存在: {key}"))
+                            })?;
+                        let session_id = step.session_id.as_deref().ok_or_else(|| {
+                            MountError::NotFound(format!("node `{key}` 没有关联 session"))
+                        })?;
+                        let events = self
+                            .session_persistence
+                            .list_all_events(session_id)
+                            .await
+                            .map_err(|e| {
+                                MountError::OperationFailed(format!(
+                                    "读取 session events 失败: {e}"
+                                ))
+                            })?;
+                        let turn_events: Vec<&PersistedSessionEvent> = events
+                            .iter()
+                            .filter(|e| e.turn_id.as_deref() == Some(*turn_id))
+                            .collect();
+                        if turn_events.is_empty() {
+                            return Err(MountError::NotFound(format!(
+                                "turn 不存在: {turn_id}"
+                            )));
+                        }
+                        to_json_pretty(&turn_events)?
+                    }
+                    ["nodes", key, "session", "summary"] => {
+                        let step = active
+                            .step_states
+                            .iter()
+                            .find(|s| s.step_key == *key)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!("node 不存在: {key}"))
+                            })?;
+                        // 混合读取：先查 inline_fs 物化副本，再 fallback
+                        let run_id = parse_run_id_from_metadata(mount)?;
+                        if let Ok(Some(file)) = self
+                            .inline_file_repo
+                            .get_file(
+                                InlineFileOwnerKind::LifecycleRun,
+                                run_id,
+                                "session_records",
+                                &format!("{key}/summary"),
+                            )
+                            .await
+                        {
+                            file.content
+                        } else {
+                            // Fallback: step_state.summary
+                            step.summary.clone().ok_or_else(|| {
+                                MountError::NotFound(format!(
+                                    "node `{key}` 没有 summary"
+                                ))
+                            })?
+                        }
+                    }
+                    ["nodes", key, "session", "conclusions"] => {
+                        let run_id = parse_run_id_from_metadata(mount)?;
+                        if !active.step_states.iter().any(|s| s.step_key == *key) {
+                            return Err(MountError::NotFound(format!(
+                                "node 不存在: {key}"
+                            )));
+                        }
+                        self.inline_file_repo
+                            .get_file(
+                                InlineFileOwnerKind::LifecycleRun,
+                                run_id,
+                                "session_records",
+                                &format!("{key}/conclusions"),
+                            )
+                            .await
+                            .map_err(map_domain_err)?
+                            .map(|f| f.content)
+                            .ok_or_else(|| {
+                                MountError::NotFound(format!(
+                                    "node `{key}` 没有 conclusions"
+                                ))
+                            })?
                     }
                     _ => {
                         return Err(MountError::NotFound(format!(
@@ -409,12 +471,6 @@ impl MountProvider for LifecycleMountProvider {
                     is_dir: true,
                 },
                 RuntimeFileEntry {
-                    path: "active/artifacts".to_string(),
-                    size: None,
-                    modified_at: None,
-                    is_dir: true,
-                },
-                RuntimeFileEntry {
                     path: "active/log".to_string(),
                     size: Some(
                         serde_json::to_string(&active.execution_log)
@@ -431,16 +487,6 @@ impl MountProvider for LifecycleMountProvider {
                 .map(|s| RuntimeFileEntry {
                     path: format!("active/steps/{}", s.step_key),
                     size: None,
-                    modified_at: None,
-                    is_dir: false,
-                })
-                .collect(),
-            ["active", "artifacts"] => active
-                .record_artifacts
-                .iter()
-                .map(|a| RuntimeFileEntry {
-                    path: format!("active/artifacts/{}", a.id),
-                    size: Some(a.content.len() as u64),
                     modified_at: None,
                     is_dir: false,
                 })
@@ -475,35 +521,60 @@ impl MountProvider for LifecycleMountProvider {
                 })
                 .collect(),
             ["nodes", key] => {
-                if !active.step_states.iter().any(|s| s.step_key == *key) {
+                let step = active.step_states.iter().find(|s| s.step_key == *key);
+                if step.is_none() {
+                    Vec::new()
+                } else {
+                    let step = step.unwrap();
+                    let mut entries = vec![RuntimeFileEntry {
+                        path: format!("nodes/{key}/state"),
+                        size: None,
+                        modified_at: None,
+                        is_dir: false,
+                    }];
+                    if step.session_id.is_some() {
+                        entries.push(RuntimeFileEntry {
+                            path: format!("nodes/{key}/session"),
+                            size: None,
+                            modified_at: None,
+                            is_dir: true,
+                        });
+                    }
+                    entries
+                }
+            }
+            ["nodes", key, "session"] => {
+                let step = active.step_states.iter().find(|s| s.step_key == *key);
+                if step.and_then(|s| s.session_id.as_ref()).is_none() {
                     Vec::new()
                 } else {
                     vec![
                         RuntimeFileEntry {
-                            path: format!("nodes/{key}/state"),
+                            path: format!("nodes/{key}/session/meta"),
                             size: None,
                             modified_at: None,
                             is_dir: false,
                         },
                         RuntimeFileEntry {
-                            path: format!("nodes/{key}/artifacts"),
+                            path: format!("nodes/{key}/session/summary"),
+                            size: None,
+                            modified_at: None,
+                            is_dir: false,
+                        },
+                        RuntimeFileEntry {
+                            path: format!("nodes/{key}/session/conclusions"),
+                            size: None,
+                            modified_at: None,
+                            is_dir: false,
+                        },
+                        RuntimeFileEntry {
+                            path: format!("nodes/{key}/session/turns"),
                             size: None,
                             modified_at: None,
                             is_dir: true,
                         },
                     ]
                 }
-            }
-            ["nodes", key, "artifacts"] => {
-                let arts = artifacts_for_node(&active, key);
-                arts.iter()
-                    .map(|a| RuntimeFileEntry {
-                        path: format!("nodes/{key}/artifacts/{}", a.id),
-                        size: Some(a.content.len() as u64),
-                        modified_at: None,
-                        is_dir: false,
-                    })
-                    .collect()
             }
             ["runs"] => {
                 let sid = resolve_session_id_for_runs(mount, &active);
@@ -529,53 +600,11 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn search_text(
         &self,
-        mount: &Mount,
-        query: &SearchQuery,
+        _mount: &Mount,
+        _query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
-        let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
-        let base = query
-            .path
-            .as_deref()
-            .map(|p| normalize_mount_relative_path(p, true))
-            .transpose()
-            .map_err(MountError::OperationFailed)?
-            .unwrap_or_default();
-
-        let pattern = &query.pattern;
-        if pattern.is_empty() {
-            return Ok(SearchResult { matches: vec![] });
-        }
-
-        let mut matches = Vec::new();
-        let max = query.max_results.unwrap_or(50);
-
-        for art in &active.record_artifacts {
-            if matches.len() >= max {
-                break;
-            }
-            let rel_path = format!("active/artifacts/{}", art.id);
-            if !base.is_empty() && !rel_path.starts_with(&base) && base != "active/artifacts" {
-                continue;
-            }
-            let haystack = &art.content;
-            let found = if query.case_sensitive {
-                haystack.contains(pattern.as_str())
-            } else {
-                let lower_h = haystack.to_lowercase();
-                let lower_p = pattern.to_lowercase();
-                lower_h.contains(&lower_p)
-            };
-            if found {
-                matches.push(SearchMatch {
-                    path: rel_path,
-                    line: None,
-                    content: art.content.chars().take(500).collect(),
-                });
-            }
-        }
-
-        Ok(SearchResult { matches })
+        Ok(SearchResult { matches: vec![] })
     }
 
     async fn exec(
@@ -588,4 +617,42 @@ impl MountProvider for LifecycleMountProvider {
             "lifecycle_vfs 不支持 exec".to_string(),
         ))
     }
+}
+
+// ── Session 投影 helper ──────────────────────────────────
+
+#[derive(Serialize)]
+struct TurnSummary {
+    turn_id: String,
+    event_count: usize,
+    first_event_type: String,
+    first_occurred_at_ms: i64,
+    last_occurred_at_ms: i64,
+}
+
+fn group_events_into_turn_summaries(events: &[PersistedSessionEvent]) -> Vec<TurnSummary> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<&PersistedSessionEvent>> = BTreeMap::new();
+    for event in events {
+        if let Some(turn_id) = event.turn_id.as_deref() {
+            groups
+                .entry(turn_id.to_string())
+                .or_default()
+                .push(event);
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(turn_id, turn_events)| {
+            let first = turn_events.first().unwrap();
+            let last = turn_events.last().unwrap();
+            TurnSummary {
+                turn_id,
+                event_count: turn_events.len(),
+                first_event_type: first.session_update_type.clone(),
+                first_occurred_at_ms: first.occurred_at_ms,
+                last_occurred_at_ms: last.occurred_at_ms,
+            }
+        })
+        .collect()
 }

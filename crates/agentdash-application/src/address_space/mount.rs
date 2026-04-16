@@ -553,15 +553,18 @@ pub fn build_lifecycle_mount_with_ports(
             "lifecycle_key": lifecycle_key,
             "writable_port_keys": writable_port_keys,
             "directory_hint": {
-                "description": "Lifecycle 执行记录，包含当前 run 的步骤状态、port 产出和产物",
+                "description": "Lifecycle 执行记录，包含当前 run 的步骤状态、port 产出和 session 记录",
                 "index": [
                     { "path": "active", "description": "当前活跃 run 的概览（JSON）" },
                     { "path": "active/steps", "description": "各步骤执行状态，子路径为 step_key" },
                     { "path": "active/steps/{step_key}", "description": "单步骤详情（JSON）" },
                     { "path": "artifacts", "description": "Port output 产出，子路径为 port_key" },
                     { "path": "artifacts/{port_key}", "description": "指定 port 的产出内容（纯文本）" },
-                    { "path": "active/artifacts", "description": "Legacy 产物列表，子路径为 artifact UUID" },
-                    { "path": "active/artifacts/{id}", "description": "Legacy 产物内容（纯文本）" },
+                    { "path": "nodes/{step_key}/state", "description": "Node 步骤状态（JSON）" },
+                    { "path": "nodes/{step_key}/session/meta", "description": "Node 关联 session 元信息" },
+                    { "path": "nodes/{step_key}/session/summary", "description": "Node session 摘要" },
+                    { "path": "nodes/{step_key}/session/turns", "description": "Node session turn 列表" },
+                    { "path": "nodes/{step_key}/session/turns/{turn_id}", "description": "单 turn 完整消息流" },
                     { "path": "active/log", "description": "执行日志（JSON 数组）" },
                     { "path": "runs", "description": "历史 run 列表" }
                 ]
@@ -609,16 +612,6 @@ pub fn append_canvas_mounts(address_space: &mut AddressSpace, canvases: &[Canvas
             .retain(|existing| existing.id != mount.id);
         address_space.mounts.push(mount);
     }
-}
-
-pub fn inline_files_from_mount(mount: &Mount) -> Result<BTreeMap<String, String>, String> {
-    let raw_files = mount
-        .metadata
-        .get("files")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
-    serde_json::from_value::<BTreeMap<String, String>>(raw_files)
-        .map_err(|error| format!("mount `{}` 的 inline metadata 无效: {error}", mount.id))
 }
 
 pub fn list_inline_entries(

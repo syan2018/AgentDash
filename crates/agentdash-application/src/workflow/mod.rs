@@ -14,7 +14,6 @@ pub use catalog::{AssignLifecycleCommand, WorkflowCatalogService};
 pub use completion::{
     WorkflowCompletionDecision, WorkflowCompletionEvidence, WorkflowCompletionSignalSet,
     evaluate_step_completion, session_terminal_state_tag, session_terminal_summary,
-    workflow_artifact_type_tag,
 };
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,
@@ -29,8 +28,7 @@ pub use projection::{
     resolve_active_workflow_projection_for_session, resolve_workflow_projection_by_run,
 };
 pub use run::{
-    ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand,
-    CompleteLifecycleStepCommand, LifecycleRunService, StartLifecycleRunCommand,
-    WorkflowRecordArtifactDraft, build_step_completion_artifact_drafts, select_active_run,
+    ActivateLifecycleStepCommand, CompleteLifecycleStepCommand, LifecycleRunService,
+    StartLifecycleRunCommand, select_active_run,
 };
 pub use session_association::LIFECYCLE_NODE_LABEL_PREFIX;

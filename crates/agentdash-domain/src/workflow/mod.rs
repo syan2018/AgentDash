@@ -18,7 +18,6 @@ pub use value_objects::{
     WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
     WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContract,
     WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookRuleSpec, WorkflowHookTrigger,
-    WorkflowInjectionSpec, WorkflowRecordArtifact, WorkflowRecordArtifactType,
-    WorkflowSessionTerminalState, node_deps_from_edges, validate_lifecycle_definition,
-    validate_workflow_definition,
+    WorkflowInjectionSpec, WorkflowSessionTerminalState, node_deps_from_edges,
+    validate_lifecycle_definition, validate_workflow_definition,
 };

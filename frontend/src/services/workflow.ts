@@ -25,8 +25,6 @@ import type {
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
-  WorkflowRecordArtifact,
-  WorkflowRecordArtifactType,
   WorkflowRun,
   WorkflowRunStatus,
   WorkflowStepExecutionStatus,
@@ -51,10 +49,6 @@ const WORKFLOW_RUN_STATUSES = new Set<string>([
 ]);
 const WORKFLOW_STEP_STATUSES = new Set<string>([
   "pending", "ready", "running", "completed", "failed", "skipped",
-]);
-const WORKFLOW_ARTIFACT_TYPES = new Set<string>([
-  "session_summary", "journal_update", "archive_suggestion", "phase_note",
-  "checklist_evidence", "execution_trace", "decision_record", "context_snapshot",
 ]);
 const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "cloned"]);
 const WORKFLOW_DEF_STATUSES = new Set<string>(["draft", "active", "disabled"]);
@@ -145,10 +139,6 @@ function mapWorkflowCompletionSpec(raw: unknown): WorkflowCompletionSpec {
   }
   return {
     checks: asRecordArray(value.checks).map(mapWorkflowCheckSpec),
-    default_artifact_type: value.default_artifact_type != null
-      ? normalizeEnum<WorkflowRecordArtifactType>(value.default_artifact_type, WORKFLOW_ARTIFACT_TYPES, "workflow default artifact type")
-      : null,
-    default_artifact_title: optString(value.default_artifact_title),
   };
 }
 
@@ -257,17 +247,6 @@ function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
   };
 }
 
-function mapWorkflowRecordArtifact(raw: Record<string, unknown>): WorkflowRecordArtifact {
-  return {
-    id: requireStringField(raw, "id"),
-    step_key: requireStringField(raw, "step_key"),
-    artifact_type: normalizeEnum<WorkflowRecordArtifactType>(raw.artifact_type, WORKFLOW_ARTIFACT_TYPES, "workflow artifact type"),
-    title: requireStringField(raw, "title"),
-    content: requireStringField(raw, "content"),
-    created_at: requireStringField(raw, "created_at"),
-  };
-}
-
 function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExecutionEntry {
   return {
     timestamp: requireStringField(raw, "timestamp"),
@@ -360,14 +339,6 @@ export function mapWorkflowAssignment(raw: Record<string, unknown>): WorkflowAss
 }
 
 export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
-  const portOutputsRaw = asRecord(raw.port_outputs);
-  const portOutputs = portOutputsRaw
-    ? Object.fromEntries(
-      Object.entries(portOutputsRaw).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
-    )
-    : undefined;
   return {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
@@ -377,9 +348,7 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     current_step_key: optString(raw.current_step_key),
     active_node_keys: asStringArray(raw.active_node_keys),
     step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
-    record_artifacts: asRecordArray(raw.record_artifacts).map(mapWorkflowRecordArtifact),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
-    port_outputs: portOutputs,
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
     last_activity_at: requireStringField(raw, "last_activity_at"),
@@ -571,17 +540,11 @@ export async function completeWorkflowStep(input: {
   run_id: string;
   step_key: string;
   summary?: string;
-  record_artifacts?: Array<{
-    artifact_type: WorkflowRecordArtifactType;
-    title: string;
-    content: string;
-  }>;
 }): Promise<WorkflowRun> {
   const raw = await api.post<Record<string, unknown>>(
     `/lifecycle-runs/${input.run_id}/steps/${encodeURIComponent(input.step_key)}/complete`,
     {
       summary: input.summary,
-      record_artifacts: input.record_artifacts ?? [],
     },
   );
   return mapWorkflowRun(raw);

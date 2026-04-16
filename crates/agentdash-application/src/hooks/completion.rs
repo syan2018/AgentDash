@@ -6,7 +6,7 @@ use agentdash_spi::{
 };
 
 use crate::workflow::{
-    ActiveWorkflowProjection, WorkflowCompletionDecision, build_step_completion_artifact_drafts,
+    WorkflowCompletionDecision,
     execution_log as workflow_recording,
 };
 
@@ -15,13 +15,6 @@ use super::snapshot_helpers::*;
 pub(super) struct ActiveWorkflowLocator {
     pub(super) run_id: Uuid,
     pub(super) step_key: String,
-}
-
-pub(super) struct ActiveWorkflowChecklistEvidenceSummary {
-    pub(super) artifact_type: agentdash_domain::workflow::WorkflowRecordArtifactType,
-    pub(super) count: usize,
-    pub(super) artifact_ids: Vec<Uuid>,
-    pub(super) titles: Vec<String>,
 }
 
 impl super::provider::AppExecutionHookProvider {
@@ -100,7 +93,6 @@ impl super::provider::AppExecutionHookProvider {
             return Ok(());
         }
 
-        let record_artifacts = build_completion_record_artifacts_from_snapshot(snapshot, &decision);
         let completion_summary = decision.summary.clone();
 
         resolution.completion = Some(HookCompletionStatus {
@@ -119,16 +111,7 @@ impl super::provider::AppExecutionHookProvider {
             step_key: step_key_str.clone(),
             completion_mode: decision.transition_policy,
             summary: completion_summary.clone(),
-            record_artifacts: record_artifacts
-                .into_iter()
-                .map(|a| {
-                    serde_json::json!({
-                        "title": a.title,
-                        "artifact_type": a.artifact_type,
-                        "content": a.content,
-                    })
-                })
-                .collect(),
+            record_artifacts: vec![],
         });
 
         resolution
@@ -163,46 +146,3 @@ impl super::provider::AppExecutionHookProvider {
     }
 }
 
-pub(super) fn active_workflow_checklist_evidence_summary(
-    workflow: &ActiveWorkflowProjection,
-) -> ActiveWorkflowChecklistEvidenceSummary {
-    let artifact_type = workflow
-        .effective_contract
-        .completion
-        .default_artifact_type
-        .unwrap_or(agentdash_domain::workflow::WorkflowRecordArtifactType::PhaseNote);
-    let matching = workflow
-        .run
-        .record_artifacts
-        .iter()
-        .filter(|artifact| {
-            artifact.step_key == workflow.active_step.key
-                && artifact.artifact_type == artifact_type
-                && !artifact.content.trim().is_empty()
-        })
-        .collect::<Vec<_>>();
-
-    ActiveWorkflowChecklistEvidenceSummary {
-        artifact_type,
-        count: matching.len(),
-        artifact_ids: matching.iter().map(|artifact| artifact.id).collect(),
-        titles: matching
-            .iter()
-            .map(|artifact| artifact.title.trim())
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .collect(),
-    }
-}
-
-fn build_completion_record_artifacts_from_snapshot(
-    snapshot: &SessionHookSnapshot,
-    decision: &WorkflowCompletionDecision,
-) -> Vec<crate::workflow::WorkflowRecordArtifactDraft> {
-    build_step_completion_artifact_drafts(
-        workflow_step_key(snapshot).unwrap_or("workflow_step"),
-        active_workflow_default_artifact_type(snapshot),
-        active_workflow_default_artifact_title(snapshot),
-        decision,
-    )
-}

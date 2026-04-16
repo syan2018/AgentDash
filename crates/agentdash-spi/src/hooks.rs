@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleRunStatus, WorkflowRecordArtifactType,
+    EffectiveSessionContract, LifecycleRunStatus,
 };
 
 /// Well-known `action_type` string values for [`HookPendingAction`].
@@ -136,10 +136,6 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_workflow_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_artifact_type: Option<WorkflowRecordArtifactType>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_artifact_title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_contract: Option<EffectiveSessionContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_status: Option<String>,
@@ -147,14 +143,6 @@ pub struct ActiveWorkflowMeta {
     pub node_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checklist_evidence_present: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checklist_evidence_artifact_type: Option<WorkflowRecordArtifactType>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checklist_evidence_count: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checklist_evidence_artifact_ids: Option<Vec<Uuid>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checklist_evidence_titles: Option<Vec<String>>,
 
     /// 当前 node 的 output port key 列表（来自 WorkflowContract）
     #[serde(default, skip_serializing_if = "Option::is_none")]

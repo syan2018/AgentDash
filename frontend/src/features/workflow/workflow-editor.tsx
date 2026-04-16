@@ -12,7 +12,6 @@ import type {
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
-  WorkflowRecordArtifactType,
   WorkflowTargetKind,
   GateStrategy,
   ContextStrategy,
@@ -730,17 +729,6 @@ export function WorkflowEditor() {
 
 // ─── Completion Editor ──────────────────────────────────
 
-const ARTIFACT_TYPE_LABEL: Record<WorkflowRecordArtifactType, string> = {
-  session_summary: "会话摘要",
-  journal_update: "日志更新",
-  archive_suggestion: "归档建议",
-  phase_note: "阶段备注",
-  checklist_evidence: "Checklist 证据",
-  execution_trace: "执行轨迹",
-  decision_record: "决策记录",
-  context_snapshot: "上下文快照",
-};
-
 const CHECK_KIND_LABEL: Record<WorkflowCheckKind, string> = {
   artifact_exists: "产物存在",
   artifact_count_gte: "产物数量 ≥",
@@ -759,31 +747,6 @@ function CompletionEditor({
 }) {
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="agentdash-form-label">默认产物类型</label>
-          <select
-            value={completion.default_artifact_type ?? ""}
-            onChange={(e) => onChange({ ...completion, default_artifact_type: (e.target.value || null) as WorkflowRecordArtifactType | null })}
-            className="agentdash-form-select"
-          >
-            <option value="">— 无 —</option>
-            {(Object.entries(ARTIFACT_TYPE_LABEL) as [WorkflowRecordArtifactType, string][]).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="agentdash-form-label">默认产物标题</label>
-          <input
-            value={completion.default_artifact_title ?? ""}
-            onChange={(e) => onChange({ ...completion, default_artifact_title: e.target.value || null })}
-            className="agentdash-form-input"
-            placeholder="Step 产物"
-          />
-        </div>
-      </div>
-
       <div>
         <div className="flex items-center justify-between">
           <label className="agentdash-form-label">完成检查 ({completion.checks.length})</label>

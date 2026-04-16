@@ -2,11 +2,10 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowDefinition,
-    WorkflowDefinitionRepository, WorkflowRecordArtifact, WorkflowRecordArtifactType,
+    LifecycleRunStatus, LifecycleStepDefinition, WorkflowDefinition,
+    WorkflowDefinitionRepository,
 };
 
-use super::completion::WorkflowCompletionDecision;
 use super::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
@@ -29,80 +28,6 @@ pub struct CompleteLifecycleStepCommand {
     pub run_id: Uuid,
     pub step_key: String,
     pub summary: Option<String>,
-    pub record_artifacts: Vec<WorkflowRecordArtifactDraft>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AppendLifecycleStepArtifactsCommand {
-    pub run_id: Uuid,
-    pub step_key: String,
-    pub artifacts: Vec<WorkflowRecordArtifactDraft>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WorkflowRecordArtifactDraft {
-    pub artifact_type: WorkflowRecordArtifactType,
-    pub title: String,
-    pub content: String,
-}
-
-impl WorkflowRecordArtifactDraft {
-    fn into_artifact(self, step_key: &str) -> WorkflowRecordArtifact {
-        WorkflowRecordArtifact::new(step_key, self.artifact_type, self.title, self.content)
-    }
-}
-
-pub fn build_step_completion_artifact_drafts(
-    step_key: &str,
-    default_artifact_type: Option<WorkflowRecordArtifactType>,
-    default_artifact_title: Option<&str>,
-    decision: &WorkflowCompletionDecision,
-) -> Vec<WorkflowRecordArtifactDraft> {
-    let title = default_artifact_title
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("{step_key} 阶段记录"));
-    let artifact_type = default_artifact_type.unwrap_or(WorkflowRecordArtifactType::PhaseNote);
-
-    let mut sections = Vec::new();
-    if let Some(summary) = decision
-        .summary
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        sections.push(format!("## 阶段总结\n{summary}"));
-    }
-    if !decision.evidence.is_empty() {
-        sections.push(format!(
-            "## 完成证据\n{}",
-            decision
-                .evidence
-                .iter()
-                .map(|entry| {
-                    let detail = entry
-                        .detail
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(|detail| format!(" ({detail})"))
-                        .unwrap_or_default();
-                    format!("- {}: {}{}", entry.code, entry.summary, detail)
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-    if sections.is_empty() {
-        return Vec::new();
-    }
-
-    vec![WorkflowRecordArtifactDraft {
-        artifact_type,
-        title,
-        content: sections.join("\n\n"),
-    }]
 }
 
 pub fn select_active_run(runs: Vec<LifecycleRun>) -> Option<LifecycleRun> {
@@ -244,56 +169,6 @@ where
 
         run.complete_step(&cmd.step_key, cmd.summary, &lifecycle.edges)
             .map_err(WorkflowApplicationError::Conflict)?;
-        for artifact in cmd.record_artifacts {
-            run.append_record_artifact(artifact.into_artifact(&cmd.step_key));
-        }
-        self.run_repo.update(&run).await?;
-        Ok(run)
-    }
-
-    pub async fn append_step_artifacts(
-        &self,
-        cmd: AppendLifecycleStepArtifactsCommand,
-    ) -> Result<LifecycleRun, WorkflowApplicationError> {
-        let mut run = self.load_run(cmd.run_id).await?;
-        let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
-        let _step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
-        let step_state = run
-            .step_states
-            .iter()
-            .find(|step| step.step_key == cmd.step_key)
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle run step 不存在: {}",
-                    cmd.step_key
-                ))
-            })?;
-
-        let is_active = if !run.active_node_keys.is_empty() {
-            run.active_node_keys.contains(&cmd.step_key)
-        } else {
-            run.current_step_key.as_deref() == Some(cmd.step_key.as_str())
-        };
-        if !is_active {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "当前活跃 step 不是 `{}`，不能向其追加记录产物",
-                cmd.step_key
-            )));
-        }
-        if !matches!(
-            step_state.status,
-            LifecycleStepExecutionStatus::Ready | LifecycleStepExecutionStatus::Running
-        ) {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "step `{}` 当前状态为 {:?}，不能追加记录产物",
-                cmd.step_key, step_state.status
-            )));
-        }
-
-        for artifact in cmd.artifacts {
-            run.append_record_artifact(artifact.into_artifact(&cmd.step_key));
-        }
-
         self.run_repo.update(&run).await?;
         Ok(run)
     }

@@ -2,7 +2,6 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::session_binding::SessionOwnerType;
 
@@ -194,27 +193,10 @@ pub struct WorkflowCheckSpec {
     pub payload: Option<Value>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowRecordArtifactType {
-    SessionSummary,
-    JournalUpdate,
-    ArchiveSuggestion,
-    PhaseNote,
-    ChecklistEvidence,
-    ExecutionTrace,
-    DecisionRecord,
-    ContextSnapshot,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub struct WorkflowCompletionSpec {
     #[serde(default)]
     pub checks: Vec<WorkflowCheckSpec>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_artifact_type: Option<WorkflowRecordArtifactType>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_artifact_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -409,35 +391,6 @@ pub struct LifecycleStepState {
     pub context_snapshot: Option<Value>,
     #[serde(default)]
     pub gate_collision_count: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkflowRecordArtifact {
-    pub id: Uuid,
-    #[serde(default)]
-    pub step_key: String,
-    pub artifact_type: WorkflowRecordArtifactType,
-    pub title: String,
-    pub content: String,
-    pub created_at: DateTime<Utc>,
-}
-
-impl WorkflowRecordArtifact {
-    pub fn new(
-        step_key: impl Into<String>,
-        artifact_type: WorkflowRecordArtifactType,
-        title: impl Into<String>,
-        content: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            step_key: step_key.into(),
-            artifact_type,
-            title: title.into(),
-            content: content.into(),
-            created_at: Utc::now(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

@@ -2,7 +2,7 @@ use crate::workflow::{
     WorkflowCompletionDecision, WorkflowCompletionSignalSet, evaluate_step_completion,
 };
 use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleRunStatus, WorkflowConstraintKind, WorkflowHookRuleSpec,
+    EffectiveSessionContract, LifecycleRunStatus, WorkflowHookRuleSpec,
     WorkflowHookTrigger, WorkflowSessionTerminalState,
 };
 use agentdash_spi::{
@@ -47,18 +47,6 @@ pub(crate) fn active_workflow_checklist_evidence(snapshot: &SessionHookSnapshot)
     active_workflow(snapshot)
         .and_then(|aw| aw.checklist_evidence_present)
         .unwrap_or(false)
-}
-
-pub(crate) fn active_workflow_default_artifact_type(
-    snapshot: &SessionHookSnapshot,
-) -> Option<agentdash_domain::workflow::WorkflowRecordArtifactType> {
-    active_workflow(snapshot)?.default_artifact_type
-}
-
-pub(crate) fn active_workflow_default_artifact_title(
-    snapshot: &SessionHookSnapshot,
-) -> Option<&str> {
-    active_workflow(snapshot)?.default_artifact_title.as_deref()
 }
 
 pub(crate) fn session_permission_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
@@ -106,41 +94,6 @@ pub(crate) fn completion_decision_for_active_workflow_snapshot(
         workflow_auto_completion_snapshot(snapshot).then_some(&contract.completion),
         signals,
     ))
-}
-
-pub(crate) fn active_workflow_constraints(
-    snapshot: &SessionHookSnapshot,
-) -> Vec<agentdash_domain::workflow::WorkflowConstraintSpec> {
-    active_workflow_contract(snapshot)
-        .map(|contract| contract.constraints)
-        .unwrap_or_default()
-}
-
-pub(crate) fn active_workflow_denied_record_artifact_types(
-    snapshot: &SessionHookSnapshot,
-) -> Vec<String> {
-    active_workflow_constraints(snapshot)
-        .into_iter()
-        .filter(|constraint| constraint.kind == WorkflowConstraintKind::Custom)
-        .flat_map(|constraint| {
-            let payload = constraint.payload.as_ref();
-            let is_record_gate = payload
-                .and_then(|value| value.get("policy"))
-                .and_then(serde_json::Value::as_str)
-                == Some("deny_record_artifact_types");
-            if !is_record_gate {
-                return Vec::new();
-            }
-            payload
-                .and_then(|value| value.get("artifact_types"))
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|value| value.as_str().map(ToString::to_string))
-                .collect::<Vec<_>>()
-        })
-        .collect()
 }
 
 pub(crate) fn checklist_evidence_present(snapshot: &SessionHookSnapshot) -> bool {

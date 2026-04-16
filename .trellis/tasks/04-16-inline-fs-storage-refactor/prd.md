@@ -83,7 +83,7 @@ Agent tool → LifecycleMountProvider.read_text(mount, "artifacts/{port_key}")
 ```rust
 pub struct LifecycleRun {
     pub port_outputs: BTreeMap<String, String>,           // 要迁移
-    pub record_artifacts: Vec<WorkflowRecordArtifact>,   // 要迁移（append-only）
+    // record_artifacts 已在 04-16-cleanup-record-artifacts 中移除
     pub step_states: Vec<LifecycleStepState>,            // 保留在实体内
     pub execution_log: Vec<LifecycleExecutionEntry>,     // 保留在实体内
 }
@@ -290,11 +290,9 @@ pub enum ContextContainerProvider {
 - 需要读取 port_outputs 的场景（如门禁检查、上下文注入）改为通过 `InlineFileRepository` 查询
 - `lifecycle_runs` 表的 `port_outputs` 列可保留为空 `{}` 做向后兼容
 
-**record_artifacts 迁移**（同步处理）：
-- `owner_kind = "lifecycle_run"`，`container_id = "record_artifacts"`
-- `path` = `"{artifact.node_key}/{artifact.artifact_type}"` 或 `artifact.id`
-- `WorkflowRecordArtifact.content` 下沉到 `inline_fs_files`
-- `record_artifacts` Vec 保留元信息（id, node_key, artifact_type, created_at），content 字段改为从 DB 按需读取
+**record_artifacts 已删除**：
+- `record_artifacts` 旧体系已在 `04-16-cleanup-record-artifacts` task 中整体移除，不需要迁移
+- `lifecycle_runs` 表的 `record_artifacts` 列保留为 `'[]'` 做向后兼容，后续可 DROP
 
 ### R10: Runtime 读取 port_outputs 的适配
 
@@ -328,7 +326,7 @@ pub enum ContextContainerProvider {
 - [ ] 现有 Project/Story 级 inline_fs CRUD 功能不变
 - [ ] `LifecycleMountProvider` port_outputs 读写改用 `InlineFileRepository`
 - [ ] `LifecycleRun.port_outputs` 不再嵌套在实体中
-- [ ] record_artifacts content 下沉到 `inline_fs_files`
+- [x] record_artifacts 已在前置 task 中整体移除（无需迁移）
 - [ ] 前端 context-config-editor 功能不变
 - [ ] 编译通过、无 warning
 
@@ -407,11 +405,11 @@ pub enum ContextContainerProvider {
 - `InlineContentOverlay` scope 解析简化
 - 编译通过
 
-### Phase 3: Lifecycle VFS port_outputs + record_artifacts 迁移
+### Phase 3: Lifecycle VFS port_outputs 迁移
 
 - `LifecycleMountProvider` port_outputs 读写改用 `InlineFileRepository`
 - `LifecycleRun` 实体移除 `port_outputs` 嵌套
-- `record_artifacts` content 下沉
+- （record_artifacts 已在前置 task 中移除，无需处理）
 - 编译通过
 
 ### Phase 4: API 层适配 + 清理

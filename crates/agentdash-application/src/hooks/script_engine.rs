@@ -269,10 +269,7 @@ impl HookScriptEngine {
             false
         };
 
-        let tool_name = ctx.query.tool_name.as_deref().unwrap_or("");
         let tool_failed = super::helpers::tool_call_failed(ctx.query.payload.as_ref());
-        let is_artifact_tool = super::helpers::is_report_workflow_artifact_tool(tool_name);
-        let denied_types = active_workflow_denied_record_artifact_types(ctx.snapshot);
 
         let trigger_str = match ctx.query.trigger {
             HookTrigger::SessionStart => "session_start",
@@ -353,8 +350,8 @@ impl HookScriptEngine {
                 "has_block_stop_constraint": has_block_stop,
                 "checklist_evidence_present": evidence_present,
                 "tool_call_failed": tool_failed,
-                "is_artifact_report_tool": is_artifact_tool,
-                "denied_artifact_types": denied_types,
+                "is_artifact_report_tool": false,
+                "denied_artifact_types": serde_json::Value::Array(vec![]),
             },
         })
     }

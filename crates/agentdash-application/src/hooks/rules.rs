@@ -7,7 +7,7 @@ use agentdash_spi::{
 use super::presets::domain_trigger_to_spi;
 use super::script_engine::HookScriptEngine;
 use super::snapshot_helpers::*;
-use super::{is_report_workflow_artifact_tool, shell_exec_rewritten_args, tool_call_failed};
+use super::shell_exec_rewritten_args;
 
 pub(crate) struct HookEvaluationContext<'a> {
     pub(crate) snapshot: &'a SessionHookSnapshot,
@@ -142,12 +142,6 @@ fn global_hook_rule_registry() -> &'static [NormalizedHookRule] {
             matches: rule_matches_supervised_tool_approval,
             apply: rule_apply_supervised_tool_approval,
         },
-        NormalizedHookRule {
-            key: "workflow_runtime:after_tool_refresh",
-            trigger: HookTrigger::AfterTool,
-            matches: rule_matches_after_tool_refresh,
-            apply: rule_apply_after_tool_refresh,
-        },
     ]
 }
 
@@ -211,25 +205,6 @@ pub(crate) fn rule_apply_supervised_tool_approval(
     });
 }
 
-pub(crate) fn rule_matches_after_tool_refresh(ctx: &HookEvaluationContext<'_>) -> bool {
-    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
-        return false;
-    };
-    !tool_call_failed(ctx.query.payload.as_ref()) && is_report_workflow_artifact_tool(tool_name)
-}
-
-pub(crate) fn rule_apply_after_tool_refresh(
-    ctx: &HookEvaluationContext<'_>,
-    resolution: &mut HookResolution,
-) {
-    let tool_name = ctx.query.tool_name.as_deref().unwrap_or("unknown_tool");
-    resolution.refresh_snapshot = true;
-    resolution.diagnostics.push(HookDiagnosticEntry {
-        code: "after_tool_runtime_refresh".to_string(),
-        message: format!("工具 `{tool_name}` 可能改变 workflow/hook 观察面，已请求刷新 snapshot"),
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,82 +218,6 @@ mod tests {
     fn test_script_engine() -> HookScriptEngine {
         let scripts = builtin_preset_scripts();
         HookScriptEngine::new(&scripts)
-    }
-
-    #[test]
-    fn before_tool_blocks_record_artifact_during_implement_phase() {
-        use agentdash_domain::workflow::{
-            EffectiveSessionContract, WorkflowConstraintKind, WorkflowConstraintSpec,
-            WorkflowHookRuleSpec, WorkflowHookTrigger,
-        };
-        let snapshot = {
-            let mut s = snapshot_with_workflow("implement", "session_ended");
-            if let Some(meta) = s.metadata.as_mut() {
-                if let Some(aw) = meta.active_workflow.as_mut() {
-                    aw.effective_contract = Some(EffectiveSessionContract {
-                        hook_rules: vec![WorkflowHookRuleSpec {
-                            key: "block_artifact".to_string(),
-                            trigger: WorkflowHookTrigger::BeforeTool,
-                            description: "block session_summary".to_string(),
-                            preset: Some("block_record_artifact".to_string()),
-                            params: Some(serde_json::json!({
-                                "artifact_types": ["session_summary"]
-                            })),
-                            script: None,
-                            enabled: true,
-                        }],
-                        constraints: vec![WorkflowConstraintSpec {
-                            key: "deny_artifact".to_string(),
-                            kind: WorkflowConstraintKind::Custom,
-                            description: "block session_summary during implement".to_string(),
-                            payload: Some(serde_json::json!({
-                                "policy": "deny_record_artifact_types",
-                                "artifact_types": ["session_summary"]
-                            })),
-                        }],
-                        ..Default::default()
-                    });
-                }
-            }
-            s
-        };
-
-        let mut resolution = HookResolution::default();
-        let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
-            trigger: HookTrigger::BeforeTool,
-            turn_id: None,
-            tool_name: Some("mcp_agentdash_workflow_tools_report_workflow_artifact".to_string()),
-            tool_call_id: Some("call-1".to_string()),
-            subagent_type: None,
-            snapshot: None,
-            payload: Some(serde_json::json!({
-                "args": {
-                    "artifact_type": "session_summary"
-                }
-            })),
-            token_stats: None,
-        };
-
-        let engine = test_script_engine();
-        apply_hook_rules(
-            HookEvaluationContext {
-                snapshot: &snapshot,
-                query: &query,
-            },
-            &mut resolution,
-            &engine,
-        );
-
-        assert!(
-            resolution
-                .matched_rule_keys
-                .iter()
-                .any(|k| k.contains("block_record_artifact")),
-            "expected matched_rule_keys to contain block_record_artifact, got: {:?}",
-            resolution.matched_rule_keys
-        );
-        assert!(resolution.block_reason.is_some());
     }
 
     #[test]

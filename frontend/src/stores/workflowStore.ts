@@ -10,7 +10,6 @@ import type {
   WorkflowContract,
   WorkflowDefinition,
   WorkflowHookRuleSpec,
-  WorkflowRecordArtifactType,
   WorkflowRun,
   WorkflowTargetKind,
   WorkflowTemplate,
@@ -104,7 +103,7 @@ export function createEmptyDraft(): WorkflowEditorDraft {
       injection: { goal: null, instructions: [], context_bindings: [] },
       hook_rules: [],
       constraints: [],
-      completion: { checks: [], default_artifact_type: null, default_artifact_title: null },
+      completion: { checks: [] },
     },
   };
 }
@@ -205,11 +204,6 @@ interface WorkflowState {
     run_id: string;
     step_key: string;
     summary?: string;
-    record_artifacts?: Array<{
-      artifact_type: WorkflowRecordArtifactType;
-      title: string;
-      content: string;
-    }>;
   }) => Promise<WorkflowRun | null>;
 
   openNewDraft: () => void;

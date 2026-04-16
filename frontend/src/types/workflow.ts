@@ -33,16 +33,6 @@ export type WorkflowCheckKind =
   | "explicit_action_received"
   | "custom";
 
-export type WorkflowRecordArtifactType =
-  | "session_summary"
-  | "journal_update"
-  | "archive_suggestion"
-  | "phase_note"
-  | "checklist_evidence"
-  | "execution_trace"
-  | "decision_record"
-  | "context_snapshot";
-
 export interface WorkflowContextBinding {
   locator: string;
   reason: string;
@@ -72,8 +62,6 @@ export interface WorkflowInjectionSpec {
 
 export interface WorkflowCompletionSpec {
   checks: WorkflowCheckSpec[];
-  default_artifact_type?: WorkflowRecordArtifactType | null;
-  default_artifact_title?: string | null;
 }
 
 export type WorkflowHookTrigger =
@@ -260,15 +248,6 @@ export interface WorkflowStepState {
   gate_collision_count?: number;
 }
 
-export interface WorkflowRecordArtifact {
-  id: string;
-  step_key: string;
-  artifact_type: WorkflowRecordArtifactType;
-  title: string;
-  content: string;
-  created_at: string;
-}
-
 export type LifecycleExecutionEventKind =
   | "step_activated"
   | "step_completed"
@@ -297,9 +276,7 @@ export interface WorkflowRun {
   /** DAG 模式下所有当前可执行的 node key 集合 */
   active_node_keys?: string[];
   step_states: WorkflowStepState[];
-  record_artifacts: WorkflowRecordArtifact[];
   execution_log: LifecycleExecutionEntry[];
-  port_outputs?: Record<string, string>;
   created_at: string;
   updated_at: string;
   last_activity_at: string;

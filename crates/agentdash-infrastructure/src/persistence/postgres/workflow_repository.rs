@@ -283,75 +283,52 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
             .bind(run.id.to_string()).bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
             .bind(&run.session_id).bind(serde_json::to_string(&run.status)?)
             .bind(&run.current_step_key).bind(serde_json::to_string(&run.step_states)?)
-            .bind(serde_json::to_string(&run.record_artifacts)?).bind(serde_json::to_string(&run.execution_log)?)
-            .bind(serde_json::to_string(&run.port_outputs)?)
+            .bind("[]").bind(serde_json::to_string(&run.execution_log)?)
+            .bind("{}")
             .bind(run.created_at.to_rfc3339()).bind(run.updated_at.to_rfc3339()).bind(run.last_activity_at.to_rfc3339())
             .execute(&self.pool).await.map_err(db_err)?;
-        // 同步初始 port_outputs 到 inline_fs_files
-        sync_port_outputs_to_inline_fs(&self.pool, run).await?;
         Ok(())
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-        let maybe_run: Option<LifecycleRun> = sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE id = $1")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE id = $1")
             .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()?;
-        if let Some(mut run) = maybe_run {
-            hydrate_port_outputs(&self.pool, &mut run).await?;
-            Ok(Some(run))
-        } else {
-            Ok(None)
-        }
+            .map(TryInto::try_into).transpose()
     }
 
     async fn list_by_project(
         &self,
         project_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        let mut runs: Vec<LifecycleRun> = sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE project_id = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE project_id = $1 ORDER BY created_at DESC")
             .bind(project_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect::<Result<_, _>>()?;
-        for run in &mut runs {
-            hydrate_port_outputs(&self.pool, run).await?;
-        }
-        Ok(runs)
+            .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn list_by_lifecycle(
         &self,
         lifecycle_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        let mut runs: Vec<LifecycleRun> = sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE lifecycle_id = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE lifecycle_id = $1 ORDER BY created_at DESC")
             .bind(lifecycle_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect::<Result<_, _>>()?;
-        for run in &mut runs {
-            hydrate_port_outputs(&self.pool, run).await?;
-        }
-        Ok(runs)
+            .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError> {
-        let mut runs: Vec<LifecycleRun> = sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE session_id = $1 ORDER BY created_at DESC")
+        sqlx::query_as::<_, LifecycleRunRow>("SELECT id,project_id,lifecycle_id,session_id,status,current_step_key,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at FROM lifecycle_runs WHERE session_id = $1 ORDER BY created_at DESC")
             .bind(session_id).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect::<Result<_, _>>()?;
-        for run in &mut runs {
-            hydrate_port_outputs(&self.pool, run).await?;
-        }
-        Ok(runs)
+            .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,current_step_key=$5,step_states=$6,record_artifacts=$7,execution_log=$8,port_outputs=$9,updated_at=$10,last_activity_at=$11 WHERE id=$12")
             .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(&run.session_id)
             .bind(serde_json::to_string(&run.status)?).bind(&run.current_step_key)
-            .bind(serde_json::to_string(&run.step_states)?).bind(serde_json::to_string(&run.record_artifacts)?)
-            .bind(serde_json::to_string(&run.execution_log)?).bind(serde_json::to_string(&run.port_outputs)?)
+            .bind(serde_json::to_string(&run.step_states)?).bind("[]")
+            .bind(serde_json::to_string(&run.execution_log)?).bind("{}")
             .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
-        ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)?;
-        // 同步 port_outputs 到 inline_fs_files（双写，保证向后兼容）
-        sync_port_outputs_to_inline_fs(&self.pool, run).await?;
-        Ok(())
+        ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
@@ -364,57 +341,6 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 }
 
-/// 从 inline_fs_files 表读取 port_outputs 并合并到 LifecycleRun 实体中。
-///
-/// 策略：inline_fs_files 是 port_outputs 的权威来源。
-/// 如果表中有数据，覆盖实体中从 lifecycle_runs.port_outputs 列反序列化的旧值；
-/// 如果表中无数据，保留实体中已有的值（向后兼容尚未迁移的旧行）。
-async fn hydrate_port_outputs(
-    pool: &PgPool,
-    run: &mut LifecycleRun,
-) -> Result<(), DomainError> {
-    let rows: Vec<InlinePortOutputRow> = sqlx::query_as(
-        "SELECT path, content FROM inline_fs_files WHERE owner_kind = 'lifecycle_run' AND owner_id = $1 AND container_id = 'port_outputs' ORDER BY path",
-    )
-    .bind(run.id.to_string())
-    .fetch_all(pool)
-    .await
-    .map_err(db_err)?;
-
-    if !rows.is_empty() {
-        run.port_outputs = rows.into_iter().map(|r| (r.path, r.content)).collect();
-    }
-    Ok(())
-}
-
-/// 将 LifecycleRun.port_outputs 同步写入 inline_fs_files 表。
-/// create/update 时调用，确保双写一致。
-async fn sync_port_outputs_to_inline_fs(
-    pool: &PgPool,
-    run: &LifecycleRun,
-) -> Result<(), DomainError> {
-    let now = chrono::Utc::now().to_rfc3339();
-    for (key, content) in &run.port_outputs {
-        sqlx::query(
-            "INSERT INTO inline_fs_files (id, owner_kind, owner_id, container_id, path, content, updated_at) VALUES ($1, 'lifecycle_run', $2, 'port_outputs', $3, $4, $5) ON CONFLICT (owner_kind, owner_id, container_id, path) DO UPDATE SET content = EXCLUDED.content, updated_at = EXCLUDED.updated_at",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(run.id.to_string())
-        .bind(key)
-        .bind(content)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .map_err(db_err)?;
-    }
-    Ok(())
-}
-
-#[derive(sqlx::FromRow)]
-struct InlinePortOutputRow {
-    path: String,
-    content: String,
-}
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
@@ -554,8 +480,10 @@ struct LifecycleRunRow {
     status: String,
     current_step_key: Option<String>,
     step_states: String,
+    #[allow(dead_code)]
     record_artifacts: String,
     execution_log: String,
+    #[allow(dead_code)]
     port_outputs: String,
     created_at: String,
     updated_at: String,
@@ -587,9 +515,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             current_step_key: row.current_step_key,
             active_node_keys,
             step_states,
-            record_artifacts: serde_json::from_str(&row.record_artifacts)?,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
-            port_outputs: parse_json_column(&row.port_outputs, "lifecycle_runs.port_outputs")?,
             created_at: parse_time(&row.created_at)?,
             updated_at: parse_time(&row.updated_at)?,
             last_activity_at: parse_time(&row.last_activity_at)?,

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
-    WorkflowCheckKind, WorkflowCompletionSpec, WorkflowRecordArtifactType,
+    WorkflowCheckKind, WorkflowCompletionSpec,
     WorkflowSessionTerminalState,
 };
 
@@ -290,19 +290,6 @@ fn evaluate_check(
     }
 }
 
-pub fn workflow_artifact_type_tag(artifact_type: WorkflowRecordArtifactType) -> &'static str {
-    match artifact_type {
-        WorkflowRecordArtifactType::SessionSummary => "session_summary",
-        WorkflowRecordArtifactType::JournalUpdate => "journal_update",
-        WorkflowRecordArtifactType::ArchiveSuggestion => "archive_suggestion",
-        WorkflowRecordArtifactType::PhaseNote => "phase_note",
-        WorkflowRecordArtifactType::ChecklistEvidence => "checklist_evidence",
-        WorkflowRecordArtifactType::ExecutionTrace => "execution_trace",
-        WorkflowRecordArtifactType::DecisionRecord => "decision_record",
-        WorkflowRecordArtifactType::ContextSnapshot => "context_snapshot",
-    }
-}
-
 fn read_string(payload: Option<&serde_json::Value>, key: &str) -> Option<String> {
     payload
         .and_then(|payload| payload.get(key))
@@ -377,8 +364,6 @@ mod tests {
                 description: "evidence".to_string(),
                 payload: None,
             }],
-            default_artifact_type: Some(WorkflowRecordArtifactType::ChecklistEvidence),
-            default_artifact_title: Some("summary".to_string()),
         }
     }
 
@@ -448,14 +433,6 @@ mod tests {
             evaluate_step_completion(Some(&spec), &WorkflowCompletionSignalSet::default());
 
         assert!(!decision.satisfied);
-    }
-
-    #[test]
-    fn workflow_artifact_type_tag_is_stable() {
-        assert_eq!(
-            workflow_artifact_type_tag(WorkflowRecordArtifactType::ChecklistEvidence),
-            "checklist_evidence"
-        );
     }
 
     #[test]

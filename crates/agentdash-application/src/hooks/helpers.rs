@@ -60,7 +60,3 @@ pub(super) fn tool_call_failed(payload: Option<&serde_json::Value>) -> bool {
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
 }
-
-pub(super) fn is_report_workflow_artifact_tool(tool_name: &str) -> bool {
-    tool_name.ends_with("report_workflow_artifact")
-}

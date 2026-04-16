@@ -9,16 +9,15 @@ use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
-    ActivateLifecycleStepCommand, AppendLifecycleStepArtifactsCommand, AssignLifecycleCommand,
+    ActivateLifecycleStepCommand, AssignLifecycleCommand,
     BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand, LifecycleOrchestrator,
     LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
-    WorkflowRecordArtifactDraft, build_builtin_workflow_bundle, list_builtin_workflow_templates,
+    build_builtin_workflow_bundle, list_builtin_workflow_templates,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
     WorkflowAssignment, WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
     WorkflowDefinition, WorkflowDefinitionSource, WorkflowDefinitionStatus,
-    WorkflowRecordArtifactType,
 };
 
 use crate::app_state::AppState;
@@ -55,19 +54,6 @@ pub struct StartWorkflowRunRequest {
 #[derive(Debug, Deserialize, Default)]
 pub struct CompleteWorkflowStepRequest {
     pub summary: Option<String>,
-    pub record_artifacts: Option<Vec<WorkflowRecordArtifactDraftRequest>>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct AppendWorkflowStepArtifactsRequest {
-    pub record_artifacts: Option<Vec<WorkflowRecordArtifactDraftRequest>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowRecordArtifactDraftRequest {
-    pub artifact_type: WorkflowRecordArtifactType,
-    pub title: String,
-    pub content: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,6 +311,7 @@ pub async fn start_lifecycle_run(
         state.repos.workflow_definition_repo.clone(),
         state.repos.lifecycle_definition_repo.clone(),
         state.repos.lifecycle_run_repo.clone(),
+        state.repos.inline_file_repo.clone(),
     );
     if let Err(error) = orchestrator
         .after_node_advanced(run.id, run.project_id)
@@ -440,53 +427,6 @@ pub async fn complete_workflow_step(
             run_id,
             step_key,
             summary: req.summary.and_then(normalize_string),
-            record_artifacts: req
-                .record_artifacts
-                .unwrap_or_default()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-        })
-        .await?;
-    Ok(Json(run.into()))
-}
-
-pub async fn append_workflow_step_artifacts(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, step_key)): Path<(String, String)>,
-    Json(req): Json<AppendWorkflowStepArtifactsRequest>,
-) -> Result<Json<LifecycleRun>, ApiError> {
-    let run_id = parse_uuid(&run_id, "run_id")?;
-    let existing_run = load_lifecycle_run(&state, run_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        existing_run.project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let artifacts = req
-        .record_artifacts
-        .ok_or_else(|| ApiError::BadRequest("record_artifacts 不能为空".to_string()))?
-        .into_iter()
-        .map(Into::into)
-        .collect::<Vec<_>>();
-    if artifacts.is_empty() {
-        return Err(ApiError::BadRequest(
-            "record_artifacts 不能为空".to_string(),
-        ));
-    }
-    let service = LifecycleRunService::new(
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    );
-    let run = service
-        .append_step_artifacts(AppendLifecycleStepArtifactsCommand {
-            run_id,
-            step_key,
-            artifacts,
         })
         .await?;
     Ok(Json(run.into()))
@@ -833,16 +773,6 @@ pub async fn delete_lifecycle_definition(
     let id = parse_uuid(&id, "lifecycle_id")?;
     state.repos.lifecycle_definition_repo.delete(id).await?;
     Ok(Json(serde_json::json!({ "deleted": true })))
-}
-
-impl From<WorkflowRecordArtifactDraftRequest> for WorkflowRecordArtifactDraft {
-    fn from(value: WorkflowRecordArtifactDraftRequest) -> Self {
-        Self {
-            artifact_type: value.artifact_type,
-            title: value.title,
-            content: value.content,
-        }
-    }
 }
 
 async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {

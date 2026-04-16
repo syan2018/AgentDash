@@ -21,7 +21,7 @@ pub use workflow_snapshot::WorkflowSnapshotBuilder;
 // Re-exports consumed by child modules (rules.rs, snapshot_helpers.rs, etc.)
 // so that `super::xxx` references from those children remain valid.
 use completion::ActiveWorkflowLocator;
-use helpers::*;
+use helpers::shell_exec_rewritten_args;
 
 fn workflow_scope_key(workflow: &ActiveWorkflowProjection) -> String {
     workflow

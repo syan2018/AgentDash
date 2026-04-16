@@ -7,8 +7,6 @@ import type {
   SessionBindingOwner,
   Task,
   WorkflowDefinition,
-  WorkflowRecordArtifact,
-  WorkflowRecordArtifactType,
   WorkflowRun,
   WorkflowStepState,
 } from "../../types";
@@ -16,7 +14,6 @@ import { useWorkflowStore } from "../../stores/workflowStore";
 import { useStoryStore } from "../../stores/storyStore";
 import { fetchSessionBindings } from "../../services/session";
 import {
-  ARTIFACT_TYPE_LABEL,
   EXECUTION_EVENT_KIND_LABEL,
   RUN_STATUS_LABEL,
   STEP_STATUS_LABEL,
@@ -65,30 +62,6 @@ function stepBadgeClass(status: WorkflowStepState["status"]) {
   }
 }
 
-function buildCompletionArtifacts(
-  workflow: WorkflowDefinition | null,
-  stepKey: string,
-  summary: string,
-): Array<{
-  artifact_type: WorkflowRecordArtifactType;
-  title: string;
-  content: string;
-}> {
-  const trimmed = summary.trim();
-  if (!trimmed) return [];
-  const artifactType = workflow?.contract.completion.default_artifact_type ?? "phase_note";
-  const artifactTitle =
-    workflow?.contract.completion.default_artifact_title?.trim() || `${stepKey} 阶段记录`;
-
-  return [
-    {
-      artifact_type: artifactType,
-      title: artifactTitle,
-      content: trimmed,
-    },
-  ];
-}
-
 function selectPreferredRun(runs: WorkflowRun[]): WorkflowRun | null {
   return runs.find((run) => run.status === "running")
     ?? runs.find((run) => run.status === "ready")
@@ -124,30 +97,6 @@ function AgentInstructionsCollapsible({
       )}
     </div>
   );
-}
-
-type ArtifactCategory = {
-  label: string;
-  types: WorkflowRecordArtifactType[];
-};
-
-const ARTIFACT_CATEGORIES: ArtifactCategory[] = [
-  { label: "执行轨迹", types: ["execution_trace", "decision_record"] },
-  { label: "上下文快照", types: ["context_snapshot"] },
-  { label: "阶段总结", types: ["phase_note", "session_summary", "journal_update"] },
-  { label: "检查证据", types: ["checklist_evidence"] },
-  { label: "其他", types: ["archive_suggestion"] },
-];
-
-function categorizeArtifacts(artifacts: WorkflowRecordArtifact[]) {
-  const result: Array<{ category: ArtifactCategory; artifacts: WorkflowRecordArtifact[] }> = [];
-  for (const category of ARTIFACT_CATEGORIES) {
-    const matched = artifacts.filter((a) => category.types.includes(a.artifact_type));
-    if (matched.length > 0) {
-      result.push({ category, artifacts: matched });
-    }
-  }
-  return result;
 }
 
 function eventKindBadgeClass(kind: string) {
@@ -257,46 +206,6 @@ function ExecutionLogTimeline({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function CategorizedArtifacts({ artifacts }: { artifacts: WorkflowRecordArtifact[] }) {
-  const groups = useMemo(() => categorizeArtifacts(artifacts), [artifacts]);
-
-  if (artifacts.length === 0) return null;
-
-  return (
-    <div className="rounded-[12px] border border-border bg-background p-4">
-      <p className="text-sm font-medium text-foreground">结构化记录产物</p>
-      <div className="mt-3 space-y-4">
-        {groups.map(({ category, artifacts: items }) => (
-          <div key={category.label}>
-            <p className="mb-2 text-xs font-medium text-muted-foreground">{category.label}</p>
-            <div className="space-y-2">
-              {items.map((artifact) => (
-                <div
-                  key={artifact.id}
-                  className="rounded-[10px] border border-border bg-secondary/15 px-3 py-3"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
-                      {artifact.step_key || "unknown_step"}
-                    </span>
-                    <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
-                      {ARTIFACT_TYPE_LABEL[artifact.artifact_type] ?? artifact.artifact_type}
-                    </span>
-                    <span className="text-sm font-medium text-foreground">{artifact.title}</span>
-                  </div>
-                  <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
-                    {artifact.content}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -462,11 +371,6 @@ export function TaskWorkflowPanel({
       run_id: activeRun.id,
       step_key: activeRun.current_step_key,
       summary,
-      record_artifacts: buildCompletionArtifacts(
-        currentWorkflowDefinition,
-        activeRun.current_step_key,
-        summary,
-      ),
     });
     if (run) {
       setStepSummary("");
@@ -552,13 +456,9 @@ export function TaskWorkflowPanel({
             <div className="mt-4 grid gap-2">
               {activeRun.step_states.map((runStep) => {
                 const def = stepDefinition(activeLifecycle, runStep.step_key);
-                const nodeWorkflow = def?.workflow_key
-                  ? findWorkflowByKey(definitions, def.workflow_key)
-                  : null;
                 // port 归属已迁移到 step 级别
                 const outputPorts = def?.output_ports ?? [];
                 const inputPorts = def?.input_ports ?? [];
-                const portOutputs = activeRun.port_outputs ?? {};
 
                 return (
                   <div
@@ -598,22 +498,15 @@ export function TaskWorkflowPanel({
                       <div className="mt-2 space-y-1">
                         <p className="text-[11px] font-medium text-muted-foreground/70">Output Ports</p>
                         <div className="flex flex-wrap gap-1.5">
-                          {outputPorts.map((port) => {
-                            const fulfilled = !!(portOutputs[port.key]?.trim());
-                            return (
+                          {outputPorts.map((port) => (
                               <span
                                 key={port.key}
                                 title={port.description}
-                                className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                                  fulfilled
-                                    ? "border-emerald-300/40 bg-emerald-500/10 text-emerald-700"
-                                    : "border-border bg-secondary/30 text-muted-foreground"
-                                }`}
+                                className="rounded-full border border-border bg-secondary/30 px-2 py-0.5 text-[11px] text-muted-foreground"
                               >
-                                {fulfilled ? "✓" : "○"} {port.key}
+                                {port.key}
                               </span>
-                            );
-                          })}
+                          ))}
                         </div>
                       </div>
                     )}
@@ -718,8 +611,6 @@ export function TaskWorkflowPanel({
               </div>
             </div>
           )}
-
-          <CategorizedArtifacts artifacts={activeRun.record_artifacts} />
 
           <ExecutionLogTimeline
             entries={activeRun.execution_log ?? []}

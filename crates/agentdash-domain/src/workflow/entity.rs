@@ -2,14 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use std::collections::BTreeMap;
-
 use super::value_objects::{
     EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
     LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowCheckKind, WorkflowConstraintKind,
+    WorkflowBindingKind, WorkflowBindingRole, WorkflowCheckKind,
     WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookRuleSpec,
-    WorkflowHookTrigger, WorkflowRecordArtifact, node_deps_from_edges,
+    WorkflowHookTrigger, node_deps_from_edges,
     validate_lifecycle_definition, validate_workflow_definition,
 };
 
@@ -207,13 +205,7 @@ pub struct LifecycleRun {
     #[serde(default)]
     pub step_states: Vec<LifecycleStepState>,
     #[serde(default)]
-    pub record_artifacts: Vec<WorkflowRecordArtifact>,
-    #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
-    /// Port output 内容：port_key → content。
-    /// 由 LifecycleMountProvider 写入，门禁 Hook 读取验证。
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub port_outputs: BTreeMap<String, String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
@@ -279,9 +271,7 @@ impl LifecycleRun {
             current_step_key,
             active_node_keys,
             step_states,
-            record_artifacts: Vec::new(),
             execution_log: Vec::new(),
-            port_outputs: BTreeMap::new(),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
@@ -467,12 +457,6 @@ impl LifecycleRun {
         }
     }
 
-    pub fn append_record_artifact(&mut self, artifact: WorkflowRecordArtifact) {
-        self.record_artifacts.push(artifact);
-        self.updated_at = Utc::now();
-        self.last_activity_at = self.updated_at;
-    }
-
     pub fn append_execution_log(&mut self, entries: Vec<LifecycleExecutionEntry>) {
         if entries.is_empty() {
             return;
@@ -514,7 +498,6 @@ pub fn build_effective_contract(
 
 /// Preset key constants referencing implementations in agentdash-application/src/hooks/presets.rs.
 /// If a preset is renamed in the application layer, update these constants accordingly.
-const PRESET_BLOCK_RECORD_ARTIFACT: &str = "block_record_artifact";
 const PRESET_SESSION_TERMINAL_ADVANCE: &str = "session_terminal_advance";
 
 /// When a WorkflowContract has no `hook_rules` but uses legacy `constraints`/`checks`,
@@ -523,35 +506,7 @@ const PRESET_SESSION_TERMINAL_ADVANCE: &str = "session_terminal_advance";
 /// NOTE: `stop_gate_checks_pending` 不再自动迁移。该 hook 必须由 workflow
 /// 定义方在 `hook_rules` 中显式声明，而不是从 constraint/check 隐式派生。
 fn migrate_legacy_to_hook_rules(contract: &WorkflowContract) -> Vec<WorkflowHookRuleSpec> {
-    let mut rules = Vec::new();
-
-    for constraint in &contract.constraints {
-        if let WorkflowConstraintKind::Custom = constraint.kind {
-            let is_deny_artifact = constraint
-                .payload
-                .as_ref()
-                .and_then(|p| p.get("policy"))
-                .and_then(serde_json::Value::as_str)
-                == Some("deny_record_artifact_types");
-            if is_deny_artifact {
-                let artifact_types = constraint
-                    .payload
-                    .as_ref()
-                    .and_then(|p| p.get("artifact_types"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Array(vec![]));
-                rules.push(WorkflowHookRuleSpec {
-                    key: format!("migrated:{}", constraint.key),
-                    trigger: WorkflowHookTrigger::BeforeTool,
-                    description: constraint.description.clone(),
-                    preset: Some(PRESET_BLOCK_RECORD_ARTIFACT.to_string()),
-                    params: Some(serde_json::json!({ "artifact_types": artifact_types })),
-                    script: None,
-                    enabled: true,
-                });
-            }
-        }
-    }
+    let mut rules: Vec<WorkflowHookRuleSpec> = Vec::new();
 
     for check in &contract.completion.checks {
         let (preset_key, trigger) = match check.kind {
@@ -605,11 +560,7 @@ mod tests {
                 description: "constraint".to_string(),
                 payload: None,
             }],
-            completion: WorkflowCompletionSpec {
-                default_artifact_type: Some(crate::workflow::WorkflowRecordArtifactType::PhaseNote),
-                default_artifact_title: Some("artifact".to_string()),
-                ..WorkflowCompletionSpec::default()
-            },
+            completion: WorkflowCompletionSpec::default(),
             ..WorkflowContract::default()
         }
     }

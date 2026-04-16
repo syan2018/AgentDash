@@ -2,7 +2,6 @@ import type {
   LifecycleExecutionEventKind,
   WorkflowDefinitionSource,
   WorkflowDefinitionStatus,
-  WorkflowRecordArtifactType,
   WorkflowRunStatus,
   WorkflowStepExecutionStatus,
   WorkflowTargetKind,
@@ -43,17 +42,6 @@ export const DEFINITION_STATUS_LABEL: Record<WorkflowDefinitionStatus, string> =
   draft: "Draft",
   active: "Active",
   disabled: "Disabled",
-};
-
-export const ARTIFACT_TYPE_LABEL: Record<WorkflowRecordArtifactType, string> = {
-  session_summary: "Session Summary",
-  journal_update: "Journal Update",
-  archive_suggestion: "Archive Suggestion",
-  phase_note: "Phase Note",
-  checklist_evidence: "Checklist Evidence",
-  execution_trace: "Execution Trace",
-  decision_record: "Decision Record",
-  context_snapshot: "Context Snapshot",
 };
 
 export const EXECUTION_EVENT_KIND_LABEL: Record<LifecycleExecutionEventKind, string> = {

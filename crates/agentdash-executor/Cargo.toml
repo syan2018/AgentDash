@@ -23,7 +23,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 agent-client-protocol = { workspace = true }
 agentdash-acp-meta = { workspace = true }
 executors = { workspace = true }
-workspace_utils = { path = "../../third_party/vibe-kanban/crates/utils", package = "utils" }
+workspace_utils = { git = "https://github.com/BloopAI/vibe-kanban.git", package = "utils" }
 json-patch = "2.0"
 serde_yaml = "0.9"
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }

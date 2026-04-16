@@ -16,7 +16,7 @@ members = [
     "crates/agentdash-relay",
     "crates/agentdash-local",
 ]
-exclude = ["third_party"]
+
 
 [workspace.package]
 version = "0.1.0"
@@ -80,13 +80,11 @@ rig-core = "0.34.0"
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.10.2", features = ["unstable"] }
 
-# vibe-kanban executors
-executors = { path = "third_party/vibe-kanban/crates/executors" }
+# vibe-kanban (git dep, tracks default branch)
+executors = { git = "https://github.com/BloopAI/vibe-kanban.git", package = "executors" }
 
 [patch.crates-io]
-# 说明：
-# - vibe-kanban 的 `executors` 会通过 `codex-core` 依赖 `tokio-tungstenite/proxy` feature。
-# - crates.io 的 `tokio-tungstenite` 不提供该 feature，因此会导致依赖解析失败。
-# - 这里将其替换为 OpenAI 的维护分支（包含 `proxy` feature），无需修改 vibe-kanban 子模块源码。
+# vibe-kanban 的 executors → codex-core 依赖 tokio-tungstenite/proxy feature，
+# crates.io 版本不提供该 feature，需用 OpenAI 的维护分支替换。
 tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

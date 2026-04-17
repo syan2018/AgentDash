@@ -33,7 +33,7 @@ pub struct CompleteLifecycleStepCommand {
 pub fn select_active_run(runs: Vec<LifecycleRun>) -> Option<LifecycleRun> {
     runs.into_iter()
         .filter(|run| {
-            run.current_step_key.is_some()
+            run.current_step_key().is_some()
                 && matches!(
                     run.status,
                     LifecycleRunStatus::Ready

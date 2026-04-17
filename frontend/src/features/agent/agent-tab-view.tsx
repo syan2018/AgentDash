@@ -225,7 +225,7 @@ export function AgentTabView() {
               {activeRun && (
                 <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
                   {activeLifecycleName}
-                  {activeRun.current_step_key ? ` · ${activeRun.current_step_key}` : ""}
+                  {activeRun.active_node_keys?.[0] ? ` · ${activeRun.active_node_keys?.[0]}` : ""}
                   {activeRun.status === "running" ? " ▶" : activeRun.status === "blocked" ? " ⏸" : ""}
                 </span>
               )}

@@ -61,7 +61,7 @@ fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
         lifecycle_id: run.lifecycle_id,
         session_id: &run.session_id,
         status: &run.status,
-        current_step_key: run.current_step_key.as_deref(),
+        current_step_key: run.current_step_key(),
         step_count: run.step_states.len(),
         log_count: run.execution_log.len(),
         created_at: run.created_at,

@@ -307,15 +307,15 @@ export function TaskWorkflowPanel({
   );
   const currentStepState = useMemo(
     () =>
-      activeRun?.current_step_key
-        ? activeRun.step_states.find((item) => item.step_key === activeRun.current_step_key) ?? null
+      activeRun?.active_node_keys?.[0]
+        ? activeRun.step_states.find((item) => item.step_key === activeRun.active_node_keys?.[0]) ?? null
         : null,
     [activeRun],
   );
   const currentStepDefinition = useMemo(
     () =>
-      activeLifecycle?.steps.find((item) => item.key === activeRun?.current_step_key) ?? null,
-    [activeLifecycle, activeRun?.current_step_key],
+      activeLifecycle?.steps.find((item) => item.key === activeRun?.active_node_keys?.[0]) ?? null,
+    [activeLifecycle, activeRun?.active_node_keys?.[0]],
   );
   const currentWorkflowDefinition = useMemo(
     () =>
@@ -351,25 +351,25 @@ export function TaskWorkflowPanel({
   };
 
   const handleActivateStep = async () => {
-    if (!activeRun?.current_step_key) return;
+    if (!activeRun?.active_node_keys?.[0]) return;
 
     setMessage(null);
     const run = await activateStep({
       run_id: activeRun.id,
-      step_key: activeRun.current_step_key,
+      step_key: activeRun.active_node_keys?.[0],
     });
     if (run) {
-      setMessage(`已激活 ${stepHeading(activeLifecycle, activeRun.current_step_key)}`);
+      setMessage(`已激活 ${stepHeading(activeLifecycle, activeRun.active_node_keys?.[0])}`);
     }
   };
 
   const handleCompleteStep = async () => {
-    if (!activeRun?.current_step_key) return;
-    const summary = stepSummary.trim() || `完成 ${stepHeading(activeLifecycle, activeRun.current_step_key)}`;
+    if (!activeRun?.active_node_keys?.[0]) return;
+    const summary = stepSummary.trim() || `完成 ${stepHeading(activeLifecycle, activeRun.active_node_keys?.[0])}`;
     setMessage(null);
     const run = await completeStep({
       run_id: activeRun.id,
-      step_key: activeRun.current_step_key,
+      step_key: activeRun.active_node_keys?.[0],
       summary,
     });
     if (run) {
@@ -446,9 +446,9 @@ export function TaskWorkflowPanel({
               <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
                 {RUN_STATUS_LABEL[activeRun.status] ?? activeRun.status}
               </span>
-              {activeRun.current_step_key && (
+              {activeRun.active_node_keys?.[0] && (
                 <span className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700">
-                  当前步骤: {stepHeading(activeLifecycle, activeRun.current_step_key)}
+                  当前步骤: {stepHeading(activeLifecycle, activeRun.active_node_keys?.[0])}
                 </span>
               )}
             </div>
@@ -549,10 +549,10 @@ export function TaskWorkflowPanel({
             </div>
           </div>
 
-          {currentStepState && activeRun.current_step_key && (
+          {currentStepState && activeRun.active_node_keys?.[0] && (
             <div className="rounded-[12px] border border-border bg-background p-4">
               <p className="text-sm font-medium text-foreground">
-                推进当前步骤: {stepHeading(activeLifecycle, activeRun.current_step_key)}
+                推进当前步骤: {stepHeading(activeLifecycle, activeRun.active_node_keys?.[0])}
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {currentStepDefinition?.description ?? "当前步骤暂无说明"}
@@ -576,7 +576,7 @@ export function TaskWorkflowPanel({
               )}
               {currentWorkflowDefinition?.contract.injection.instructions.length ? (
                 <AgentInstructionsCollapsible
-                  stepKey={currentStepDefinition?.key ?? activeRun.current_step_key}
+                  stepKey={currentStepDefinition?.key ?? activeRun.active_node_keys?.[0]}
                   instructions={currentWorkflowDefinition.contract.injection.instructions}
                 />
               ) : null}
@@ -614,7 +614,7 @@ export function TaskWorkflowPanel({
 
           <ExecutionLogTimeline
             entries={activeRun.execution_log ?? []}
-            filterStepKey={activeRun.current_step_key}
+            filterStepKey={activeRun.active_node_keys?.[0]}
           />
         </>
       )}

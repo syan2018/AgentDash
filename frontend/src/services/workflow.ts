@@ -218,7 +218,7 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
   if (!value) {
     throw new Error("lifecycle step 缺失或不是对象");
   }
-  const workflowKeyRaw = value.workflow_key ?? value.primary_workflow_key;
+  const workflowKeyRaw = value.workflow_key;
   return {
     key: requireStringField(value, "key"),
     description: requireStringField(value, "description"),
@@ -345,7 +345,6 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     lifecycle_id: requireStringField(raw, "lifecycle_id"),
     session_id: requireStringField(raw, "session_id"),
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
-    current_step_key: optString(raw.current_step_key),
     active_node_keys: asStringArray(raw.active_node_keys),
     step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),

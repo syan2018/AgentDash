@@ -80,14 +80,14 @@ impl super::provider::AppExecutionHookProvider {
             return Ok(());
         };
 
-        if run.current_step_key.as_deref() != Some(locator.step_key.as_str()) {
+        if run.current_step_key() != Some(locator.step_key.as_str()) {
             resolution.completion = Some(HookCompletionStatus {
                 mode: decision.transition_policy,
                 satisfied: true,
                 advanced: false,
                 reason: format!(
                     "workflow 已离开当前 step（当前为 {:?}），无需重复推进",
-                    run.current_step_key
+                    run.current_step_key()
                 ),
             });
             return Ok(());

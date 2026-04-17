@@ -271,9 +271,7 @@ export interface WorkflowRun {
   /** 父 session ID — lifecycle run 跟着 session 走 */
   session_id: string;
   status: WorkflowRunStatus;
-  /** 兼容字段：线性模式下的当前活跃 step key */
-  current_step_key?: string | null;
-  /** DAG 模式下所有当前可执行的 node key 集合 */
+  /** 当前所有可执行（Ready/Running）的 node key 集合 */
   active_node_keys?: string[];
   step_states: WorkflowStepState[];
   execution_log: LifecycleExecutionEntry[];

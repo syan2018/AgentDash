@@ -31,7 +31,7 @@ pub async fn resolve_active_workflow_projection(
     let Some(run) = super::run::select_active_run(runs) else {
         return Ok(None);
     };
-    let Some(current_step_key) = run.current_step_key.as_deref() else {
+    let Some(current_step_key) = run.current_step_key() else {
         return Ok(None);
     };
 
@@ -133,15 +133,7 @@ pub async fn resolve_active_workflow_projections_for_run(
         return Ok(Vec::new());
     };
 
-    let node_keys: Vec<String> = if !run.active_node_keys.is_empty() {
-        run.active_node_keys.clone()
-    } else {
-        // 线性兼容：使用 current_step_key
-        run.current_step_key
-            .as_deref()
-            .map(|k| vec![k.to_string()])
-            .unwrap_or_default()
-    };
+    let node_keys: Vec<String> = run.active_node_keys.clone();
 
     if node_keys.is_empty() {
         return Ok(Vec::new());

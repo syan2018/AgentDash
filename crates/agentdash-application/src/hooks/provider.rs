@@ -328,10 +328,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         workflow_key: workflow.active_step.workflow_key.clone(),
                         transition_policy: Some(transition_policy.to_string()),
                         primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),
-                        primary_workflow_key: workflow
-                            .primary_workflow
-                            .as_ref()
-                            .map(|w| w.key.clone()),
                         primary_workflow_name: workflow
                             .primary_workflow
                             .as_ref()

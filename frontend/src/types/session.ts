@@ -129,8 +129,6 @@ export interface ActiveWorkflowHookMetadata {
   primary_workflow_id: string;
   /** Bound workflow key when step is workflow-driven; omit or null for manual steps. */
   workflow_key?: string | null;
-  /** @deprecated Prefer workflow_key; may still appear from older API payloads. */
-  primary_workflow_key?: string | null;
   primary_workflow_name: string;
 }
 

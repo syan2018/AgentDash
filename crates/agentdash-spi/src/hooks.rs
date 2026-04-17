@@ -132,8 +132,6 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_workflow_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_workflow_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_workflow_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_contract: Option<EffectiveSessionContract>,

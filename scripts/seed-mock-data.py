@@ -244,11 +244,9 @@ STORIES = [
         "description": "实现 JWT 认证、登录注册、权限管理",
         "status": "executing",
         "context": {
-            "prd_doc": "docs/auth-spec.md",
-            "spec_refs": ["docs/api-design.md", "docs/auth-spec.md"],
-            "resource_list": [
-                {"name": "认证规范文档", "uri": "docs/auth-spec.md", "resource_type": "spec"},
-                {"name": "API 设计文档", "uri": "docs/api-design.md", "resource_type": "content"},
+            "source_refs": [
+                {"kind": "file", "locator": "docs/auth-spec.md", "label": "认证规范文档", "slot": "references", "priority": 1000, "required": False, "max_chars": None, "delivery": "resource"},
+                {"kind": "file", "locator": "docs/api-design.md", "label": "API 设计文档", "slot": "references", "priority": 999, "required": False, "max_chars": None, "delivery": "resource"},
             ],
         },
         "tasks": [
@@ -280,10 +278,8 @@ STORIES = [
         "description": "支持拖拽排序、状态筛选、搜索功能",
         "status": "executing",
         "context": {
-            "prd_doc": None,
-            "spec_refs": ["docs/kanban-ux.md"],
-            "resource_list": [
-                {"name": "看板 UX 设计稿", "uri": "docs/kanban-ux.md", "resource_type": "content"},
+            "source_refs": [
+                {"kind": "file", "locator": "docs/kanban-ux.md", "label": "看板 UX 设计稿", "slot": "references", "priority": 1000, "required": False, "max_chars": None, "delivery": "resource"},
             ],
         },
         "tasks": [
@@ -307,7 +303,7 @@ STORIES = [
         "title": "实时事件推送系统",
         "description": "基于 SSE 的状态变更实时推送，支持断线重连",
         "status": "failed",
-        "context": {"prd_doc": None, "spec_refs": [], "resource_list": []},
+        "context": {"source_refs": []},
         "tasks": [
             {
                 "title": "SSE 推送服务端实现",
@@ -329,7 +325,7 @@ STORIES = [
         "title": "Agent 执行引擎集成",
         "description": "对接 Claude Code / Codex，管理 Agent 生命周期",
         "status": "created",
-        "context": {"prd_doc": None, "spec_refs": [], "resource_list": []},
+        "context": {"source_refs": []},
         "tasks": [
             {
                 "title": "Claude Code 适配器",
@@ -351,7 +347,7 @@ STORIES = [
         "title": "多后端连接管理",
         "description": "支持同时连接多个远程后端，统一视图展示",
         "status": "created",
-        "context": {"prd_doc": None, "spec_refs": [], "resource_list": []},
+        "context": {"source_refs": []},
         "tasks": [
             {
                 "title": "后端连接池管理",

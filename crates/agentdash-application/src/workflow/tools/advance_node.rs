@@ -145,9 +145,6 @@ impl AgentTool for CompleteLifecycleNodeTool {
             // Remove from active nodes
             run.active_node_keys
                 .retain(|k| k != &locator.step_key);
-            if run.current_step_key.as_deref() == Some(&locator.step_key) {
-                run.current_step_key = run.active_node_keys.first().cloned();
-            }
             // Check if all nodes are terminal -> mark run as Failed
             let all_terminal = run.step_states.iter().all(|s| {
                 matches!(

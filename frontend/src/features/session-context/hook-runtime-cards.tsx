@@ -123,7 +123,7 @@ function HookRuntimeWorkflowMetaCard({
           run_id: {metadata.run_id}
         </span>
         <span className="rounded-full border border-border bg-background px-2 py-1">
-          workflow: {metadata.workflow_key ?? metadata.primary_workflow_key ?? "—"}
+          workflow: {metadata.workflow_key ?? "—"}
         </span>
       </div>
     </div>

@@ -194,12 +194,8 @@ pub struct LifecycleRun {
     /// 父 session ID — lifecycle run 跟着 session 走，不绑定 Task/Story。
     pub session_id: String,
     pub status: LifecycleRunStatus,
-    /// 兼容字段：线性推进时指向当前唯一活跃 step。
-    /// DAG 模式下此字段仅保留第一个 active node key（向后兼容读取方），
-    /// 完整的活跃 node 集合请使用 `active_node_keys`。
-    pub current_step_key: Option<String>,
-    /// DAG 模式下当前所有可执行（Ready/Running）的 node key 集合。
-    /// 线性 lifecycle 中此集合始终只有 0 或 1 个元素，与 `current_step_key` 一致。
+    /// 当前所有可执行（Ready/Running）的 node key 集合。
+    /// 线性 lifecycle 中此集合只有 0 或 1 个元素。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_node_keys: Vec<String>,
     #[serde(default)]
@@ -212,6 +208,11 @@ pub struct LifecycleRun {
 }
 
 impl LifecycleRun {
+    /// 返回「当前活跃」的首个 step key。线性推进时即唯一活跃 step；
+    /// DAG 下返回 `active_node_keys.first()`。
+    pub fn current_step_key(&self) -> Option<&str> {
+        self.active_node_keys.first().map(String::as_str)
+    }
     pub fn new(
         project_id: Uuid,
         lifecycle_id: Uuid,
@@ -260,15 +261,12 @@ impl LifecycleRun {
             .map(|s| s.step_key.clone())
             .collect();
 
-        let current_step_key = active_node_keys.first().cloned();
-
         Ok(Self {
             id: Uuid::new_v4(),
             project_id,
             lifecycle_id,
             session_id: session_id.into(),
             status: LifecycleRunStatus::Ready,
-            current_step_key,
             active_node_keys,
             step_states,
             execution_log: Vec::new(),
@@ -287,13 +285,11 @@ impl LifecycleRun {
             return Err(format!("lifecycle run 不存在 step: {step_key}"));
         };
 
-        // DAG 模式：检查 step 是否在 active_node_keys 中；线性兼容：检查 current_step_key
-        if !self.active_node_keys.is_empty() {
-            if !self.active_node_keys.contains(&step_key.to_string()) {
-                return Err(format!("step 不在当前可激活集合中: {step_key}"));
-            }
-        } else if self.current_step_key.as_deref() != Some(step_key) {
-            return Err(format!("当前可激活的 step 不是 {step_key}"));
+        if self.active_node_keys.is_empty() {
+            return Err(format!("没有可激活的 step: {step_key}"));
+        }
+        if !self.active_node_keys.contains(&step_key.to_string()) {
+            return Err(format!("step 不在当前可激活集合中: {step_key}"));
         }
 
         match self.step_states[index].status {
@@ -341,12 +337,11 @@ impl LifecycleRun {
             return Err(format!("lifecycle run 不存在 step: {step_key}"));
         };
 
-        if !self.active_node_keys.is_empty() {
-            if !self.active_node_keys.contains(&step_key.to_string()) {
-                return Err(format!("step 不在当前可完成集合中: {step_key}"));
-            }
-        } else if self.current_step_key.as_deref() != Some(step_key) {
-            return Err(format!("当前可完成的 step 不是 {step_key}"));
+        if self.active_node_keys.is_empty() {
+            return Err(format!("没有可完成的 step: {step_key}"));
+        }
+        if !self.active_node_keys.contains(&step_key.to_string()) {
+            return Err(format!("step 不在当前可完成集合中: {step_key}"));
         }
 
         match self.step_states[current_idx].status {
@@ -377,19 +372,15 @@ impl LifecycleRun {
 
         if has_edges {
             self.advance_dag_successors(step_key, edges);
+        } else if current_idx + 1 < self.step_states.len() {
+            let next_idx = current_idx + 1;
+            let next_key = self.step_states[next_idx].step_key.clone();
+            self.step_states[next_idx].status = LifecycleStepExecutionStatus::Ready;
+            self.active_node_keys = vec![next_key];
+            self.status = LifecycleRunStatus::Ready;
         } else {
-            if current_idx + 1 < self.step_states.len() {
-                let next_idx = current_idx + 1;
-                let next_key = self.step_states[next_idx].step_key.clone();
-                self.step_states[next_idx].status = LifecycleStepExecutionStatus::Ready;
-                self.active_node_keys = vec![next_key.clone()];
-                self.current_step_key = Some(next_key);
-                self.status = LifecycleRunStatus::Ready;
-            } else {
-                self.active_node_keys.clear();
-                self.current_step_key = None;
-                self.status = LifecycleRunStatus::Completed;
-            }
+            self.active_node_keys.clear();
+            self.status = LifecycleRunStatus::Completed;
         }
 
         if has_edges {
@@ -401,15 +392,12 @@ impl LifecycleRun {
                             | LifecycleStepExecutionStatus::Skipped
                     )
                 });
-                if all_done {
-                    self.current_step_key = None;
-                    self.status = LifecycleRunStatus::Completed;
+                self.status = if all_done {
+                    LifecycleRunStatus::Completed
                 } else {
-                    self.current_step_key = None;
-                    self.status = LifecycleRunStatus::Blocked;
-                }
+                    LifecycleRunStatus::Blocked
+                };
             } else {
-                self.current_step_key = self.active_node_keys.first().cloned();
                 self.status = LifecycleRunStatus::Ready;
             }
         }
@@ -556,7 +544,7 @@ mod tests {
         run.complete_step("start", Some("done".to_string()), &[])
             .expect("complete");
 
-        assert_eq!(run.current_step_key.as_deref(), Some("check"));
+        assert_eq!(run.current_step_key(), Some("check"));
         assert_eq!(run.status, LifecycleRunStatus::Ready);
     }
 
@@ -611,7 +599,7 @@ mod tests {
             .expect("complete check");
         assert!(run.active_node_keys.is_empty());
         assert_eq!(run.status, LifecycleRunStatus::Completed);
-        assert!(run.current_step_key.is_none());
+        assert!(run.current_step_key().is_none());
     }
 
     #[test]

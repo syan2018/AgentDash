@@ -1158,7 +1158,7 @@ async fn auto_start_lifecycle_run(
         .map_err(|e| format!("start_run 失败: {e}"))?;
 
     // 自动激活首步
-    if let Some(step_key) = run.current_step_key.as_deref() {
+    if let Some(step_key) = run.current_step_key() {
         use agentdash_application::workflow::ActivateLifecycleStepCommand;
         let activate_cmd = ActivateLifecycleStepCommand {
             run_id: run.id,

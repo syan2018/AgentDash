@@ -8,5 +8,5 @@ pub use agentdash_spi::connector::{
     ExecutionContext, ExecutionStream, FlowCapabilities, PromptPayload, RuntimeToolProvider,
     content_block_to_text,
 };
-pub use agentdash_spi::tool::DynAgentTool;
+pub use agentdash_spi::DynAgentTool;
 pub use agentdash_spi::{Vfs, AgentConfig, Mount, MountCapability, ThinkingLevel};

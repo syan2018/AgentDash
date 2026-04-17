@@ -528,7 +528,7 @@ fn update_restored_tool_result(
 
     if let Some(raw_output) = raw_output {
         if let Ok(decoded) =
-            serde_json::from_value::<agentdash_spi::tool::AgentToolResult>(raw_output.clone())
+            serde_json::from_value::<agentdash_spi::AgentToolResult>(raw_output.clone())
         {
             state.content = decoded.content;
             state.details = decoded.details;

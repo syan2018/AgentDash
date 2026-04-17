@@ -30,10 +30,7 @@ pub trait PostTurnHandler: Send + Sync + 'static {
 
     /// 返回本 handler 能处理的 effect kind 列表。
     /// 用于运行时校验：不在列表中的 effect 会被 pipeline warn 日志记录。
-    /// 默认返回空切片（向后兼容，不要求已有实现填写）。
-    fn supported_effect_kinds(&self) -> &[&str] {
-        &[]
-    }
+    fn supported_effect_kinds(&self) -> &[&str];
 }
 
 pub type DynPostTurnHandler = Arc<dyn PostTurnHandler>;

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_spi::lifecycle::{
+use agentdash_spi::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
     AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput,
     CompactionParams, CompactionResult, CompactionTriggerStats, DynAgentRuntimeDelegate,
@@ -919,7 +919,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
 
-    use agentdash_spi::lifecycle::{
+    use agentdash_spi::{
         AgentContext, AgentMessage, CompactionResult, StopDecision, StopReason, TokenUsage,
     };
     use async_trait::async_trait;
@@ -1179,7 +1179,7 @@ mod tests {
 
         let first = delegate
             .before_stop(
-                agentdash_spi::lifecycle::BeforeStopInput {
+                agentdash_spi::BeforeStopInput {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
@@ -1217,7 +1217,7 @@ mod tests {
 
         let second = delegate
             .before_stop(
-                agentdash_spi::lifecycle::BeforeStopInput {
+                agentdash_spi::BeforeStopInput {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
@@ -1246,7 +1246,7 @@ mod tests {
 
         let result = delegate
             .before_stop(
-                agentdash_spi::lifecycle::BeforeStopInput {
+                agentdash_spi::BeforeStopInput {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
@@ -1411,7 +1411,7 @@ mod tests {
         ));
         let delegate = HookRuntimeDelegate::new(hook_session.clone());
 
-        let input = agentdash_spi::lifecycle::TransformContextInput {
+        let input = agentdash_spi::TransformContextInput {
             context: AgentContext {
                 system_prompt: "test".to_string(),
                 messages: vec![AgentMessage::user("hello")],
@@ -1482,7 +1482,7 @@ mod tests {
         let message = super::build_pending_action_message(&snapshot, &action, &runtime)
             .expect("应该生成 pending action 消息");
         let text = match message {
-            agentdash_spi::lifecycle::AgentMessage::User { content, .. } => content
+            agentdash_spi::AgentMessage::User { content, .. } => content
                 .iter()
                 .filter_map(|part| part.extract_text())
                 .collect::<Vec<_>>()

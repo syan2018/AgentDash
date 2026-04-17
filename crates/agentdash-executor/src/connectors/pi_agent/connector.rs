@@ -42,7 +42,7 @@ fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
 pub struct PiAgentConnector {
-    /// 默认 bridge（向后兼容，无 provider 注册时使用）
+    /// 默认 bridge：供 title 生成复用、以及 bootstrap 尚无 provider 配置时的占位。
     bridge: Arc<dyn LlmBridge>,
     /// 已注册的 provider 列表（按注册顺序，首个命中的 provider 优先）
     providers: Vec<ProviderEntry>,
@@ -578,7 +578,7 @@ impl AgentConnector for PiAgentConnector {
             }
         }
 
-        // 若没有注册任何 provider，退化为单模型显示（向后兼容）
+        // Bootstrap 占位模式：尚未注册任何 provider 时，给 UI 一个可显示的单模型条目
         if all_providers.is_empty()
             && let Some(model_id) = provider_state
                 .default_model

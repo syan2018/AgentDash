@@ -3,14 +3,12 @@ pub mod connector;
 pub mod context_injection;
 pub mod hook_trace_notification;
 pub mod hooks;
-pub mod lifecycle;
 pub mod mcp_relay;
 pub mod mount;
 pub mod routine;
 pub mod schema;
 pub mod session_capabilities;
 pub mod skill;
-pub mod tool;
 
 pub use agentdash_domain::common::{
     Vfs, AgentConfig, Mount, MountCapability, MountLink, SystemPromptMode, ThinkingLevel,
@@ -35,7 +33,7 @@ pub use hooks::{
     HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
 };
-pub use lifecycle::{
+pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
     BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
@@ -50,7 +48,7 @@ pub use mount::MountEditCapabilities;
 pub use routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use session_capabilities::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
 pub use skill::SkillRef;
-pub use tool::{
+pub use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
     ToolUpdateCallback,
 };

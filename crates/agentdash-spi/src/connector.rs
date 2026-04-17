@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
-use crate::lifecycle::DynAgentRuntimeDelegate;
+use agentdash_agent_types::DynAgentRuntimeDelegate;
 use crate::session_capabilities::SessionBaselineCapabilities;
 
 /// 连接器类型
@@ -295,7 +295,7 @@ pub trait RuntimeToolProvider: Send + Sync {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<crate::tool::DynAgentTool>, ConnectorError>;
+    ) -> Result<Vec<agentdash_agent_types::DynAgentTool>, ConnectorError>;
 }
 
 #[derive(Debug, Error)]

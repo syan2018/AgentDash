@@ -1,12 +1,12 @@
 //! File Picker API — 前端 @ 文件引用选择器的后端入口。
 //!
-//! 通过 Address Space 统一访问层实现文件列表/读取，
+//! 通过 VFS 统一访问层实现文件列表/读取，
 //! 为前端 @ 引用选择器提供 workspace 级别的文件浏览能力。
 
 use std::path::{Component, Path};
 use std::sync::Arc;
 
-use agentdash_application::address_space::selected_workspace_binding;
+use agentdash_application::vfs::selected_workspace_binding;
 use axum::Json;
 use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_workspace_and_project_with_permission};
 use crate::rpc::ApiError;
-use agentdash_application::address_space::{ListOptions, ResourceRef};
+use agentdash_application::vfs::{ListOptions, ResourceRef};
 
 pub(crate) const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
 pub(crate) const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB
@@ -272,7 +272,7 @@ async fn require_online_backend<'a>(
     Ok(trimmed)
 }
 
-// ─── Address Space 访问辅助函数 ──────────────────────────────
+// ─── VFS 访问辅助函数 ──────────────────────────────
 
 async fn relay_list_files(
     state: &Arc<AppState>,
@@ -282,12 +282,12 @@ async fn relay_list_files(
 ) -> Result<Json<ListFilesResponse>, ApiError> {
     let session = state
         .services
-        .address_space_service
+        .vfs_service
         .session_for_workspace(workspace)
         .map_err(ApiError::BadRequest)?;
     let listed = state
         .services
-        .address_space_service
+        .vfs_service
         .list(
             &session,
             "main",
@@ -332,12 +332,12 @@ async fn relay_read_file(
 ) -> Result<Json<ReadFileResponse>, ApiError> {
     let session = state
         .services
-        .address_space_service
+        .vfs_service
         .session_for_workspace(workspace)
         .map_err(ApiError::BadRequest)?;
     let read = state
         .services
-        .address_space_service
+        .vfs_service
         .read_text(
             &session,
             &ResourceRef {
@@ -368,7 +368,7 @@ async fn relay_batch_read_files(
 ) -> Result<Json<BatchReadFilesResponse>, ApiError> {
     let session = state
         .services
-        .address_space_service
+        .vfs_service
         .session_for_workspace(workspace)
         .map_err(ApiError::BadRequest)?;
     let mut results = Vec::new();
@@ -390,7 +390,7 @@ async fn relay_batch_read_files(
 
         let read = match state
             .services
-            .address_space_service
+            .vfs_service
             .read_text(
                 &session,
                 &ResourceRef {

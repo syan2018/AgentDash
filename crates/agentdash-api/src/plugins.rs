@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
-use agentdash_spi::AddressSpaceDiscoveryProvider;
+use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::mount::MountProvider;
 use thiserror::Error;
@@ -17,7 +17,7 @@ pub fn builtin_plugins() -> Vec<Box<dyn AgentDashPlugin>> {
 ///
 /// 宿主先汇总所有插件注册，再基于此统一构建运行时，避免“先构建、后塞插件”的假扩展点。
 pub(crate) struct PluginHostRegistration {
-    pub address_space_providers: Vec<Box<dyn AddressSpaceDiscoveryProvider>>,
+    pub vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
     pub connectors: Vec<Arc<dyn AgentConnector>>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
@@ -51,7 +51,7 @@ pub(crate) enum PluginRegistrationError {
 pub(crate) fn collect_plugin_registration(
     plugins: Vec<Box<dyn AgentDashPlugin>>,
 ) -> Result<PluginHostRegistration, PluginRegistrationError> {
-    let mut address_space_providers = Vec::new();
+    let mut vfs_providers = Vec::new();
     let mut connectors = Vec::new();
     let mut auth_provider: Option<Arc<dyn AuthProvider>> = None;
     let mut auth_provider_plugin: Option<String> = None;
@@ -70,7 +70,7 @@ pub(crate) fn collect_plugin_registration(
                 message: err.to_string(),
             })?;
 
-        address_space_providers.extend(plugin.address_space_providers());
+        vfs_providers.extend(plugin.vfs_providers());
 
         let mp = plugin.mount_providers();
         if !mp.is_empty() {
@@ -120,7 +120,7 @@ pub(crate) fn collect_plugin_registration(
     }
 
     Ok(PluginHostRegistration {
-        address_space_providers,
+        vfs_providers,
         connectors,
         auth_provider,
         mount_providers,

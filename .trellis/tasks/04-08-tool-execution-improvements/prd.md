@@ -79,7 +79,7 @@ pub struct ShellExecContext {
 
 ```rust
 // agentdash-domain
-pub struct AddressSpaceToolProfile {
+pub struct VfsToolProfile {
     pub shell_exec_mcp: Option<McpServerRef>,    // 覆盖默认 shell tool
     pub file_read_mcp: Option<McpServerRef>,     // 覆盖默认 read tool
     pub file_write_mcp: Option<McpServerRef>,    // 覆盖默认 write tool

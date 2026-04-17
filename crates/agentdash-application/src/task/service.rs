@@ -11,7 +11,7 @@ use agentdash_domain::{
     task::{Task, TaskStatus},
 };
 
-use crate::address_space::RelayAddressSpaceService;
+use crate::vfs::RelayVfsService;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
@@ -53,7 +53,7 @@ pub trait TurnDispatcher: Send + Sync {
 pub struct TaskLifecycleService {
     pub repos: RepositorySet,
     pub hub: SessionHub,
-    pub address_space_service: Arc<RelayAddressSpaceService>,
+    pub vfs_service: Arc<RelayVfsService>,
     pub contributor_registry: Arc<ContextContributorRegistry>,
     pub mcp_base_url: Option<String>,
     pub backend_availability: Arc<dyn BackendAvailability>,
@@ -402,7 +402,7 @@ impl TaskLifecycleService {
         let svc = TaskTurnServices {
             repos: &self.repos,
             availability: self.backend_availability.as_ref(),
-            address_space_service: &self.address_space_service,
+            vfs_service: &self.vfs_service,
             contributor_registry: &self.contributor_registry,
             mcp_base_url: self.mcp_base_url.as_deref(),
         };
@@ -415,13 +415,13 @@ impl TaskLifecycleService {
             executor_config,
         )
         .await?;
-        if let Some(address_space) = ctx.address_space.as_mut()
+        if let Some(vfs) = ctx.vfs.as_mut()
             && let Ok(Some(meta)) = self.hub.get_session_meta(session_id).await
         {
             append_visible_canvas_mounts(
                 self.repos.canvas_repo.as_ref(),
                 task.project_id,
-                address_space,
+                vfs,
                 &meta.visible_canvas_mount_ids,
             )
             .await

@@ -320,7 +320,7 @@ After implementation:
 - [ ] 确认不会绕过 StateManager 进行状态修改
 - [ ] 确认视图操作不会影响 Story/Task 核心状态
 - [ ] 若功能涉及云端/本机文件访问、上下文注入或多 workspace，先定义统一的 mount / provider / capability 边界，再决定协议与工具面
-  参考：`backend/address-space-access.md`
+  参考：`backend/vfs-access.md`
 - [ ] 若功能涉及 runtime hook / workflow phase / tool gate / stop gate，先确认“信息获取在 loop 外、控制决策在 loop 边界同步发生”的分层是否成立
   参考：`backend/execution-hook-runtime.md`
 

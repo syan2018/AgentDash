@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import type { AddressEntry } from "../../../services/addressSpaces";
+import type { VfsEntry } from "../../../services/vfs";
 
-function getEntryIcon(entry: AddressEntry): string {
+function getEntryIcon(entry: VfsEntry): string {
   if (entry.entry_type === "directory") return "📁";
   const ext = entry.address.split(".").pop()?.toLowerCase() ?? "";
   const icons: Record<string, string> = {
@@ -13,17 +13,17 @@ function getEntryIcon(entry: AddressEntry): string {
   return icons[ext] ?? "📄";
 }
 
-export interface AddressEntryPickerProps {
+export interface VfsEntryPickerProps {
   open: boolean;
   query: string;
-  entries: AddressEntry[];
+  entries: VfsEntry[];
   loading: boolean;
   error: string | null;
   selectedIndex: number;
   placeholder?: string;
   emptyText?: string;
   onQueryChange: (q: string) => void;
-  onSelect: (entry: AddressEntry) => void;
+  onSelect: (entry: VfsEntry) => void;
   onClose: () => void;
   onMoveSelection: (delta: number) => void;
   onConfirmSelection: () => void;
@@ -33,7 +33,7 @@ export interface AddressEntryPickerProps {
  * 内联模式的寻址条目选择器。
  * 渲染为正常文档流元素（非浮层），适合嵌入 overflow 容器中。
  */
-export function AddressEntryPickerInline({
+export function VfsEntryPickerInline({
   open,
   query,
   entries,
@@ -47,7 +47,7 @@ export function AddressEntryPickerInline({
   onClose,
   onMoveSelection,
   onConfirmSelection,
-}: AddressEntryPickerProps) {
+}: VfsEntryPickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -153,7 +153,7 @@ export function AddressEntryPickerInline({
 /**
  * 浮层模式的寻址条目选择器（保留作为 absolute popup 用途）。
  */
-export function AddressEntryPickerPopup(props: AddressEntryPickerProps) {
+export function VfsEntryPickerPopup(props: VfsEntryPickerProps) {
   const { open, onClose } = props;
 
   useEffect(() => {
@@ -175,7 +175,7 @@ export function AddressEntryPickerPopup(props: AddressEntryPickerProps) {
       data-entry-picker
       className="absolute bottom-full left-0 z-50 mb-1 w-full max-w-lg rounded-lg border border-border bg-popover shadow-lg"
     >
-      <AddressEntryPickerInline {...props} />
+      <VfsEntryPickerInline {...props} />
     </div>
   );
 }

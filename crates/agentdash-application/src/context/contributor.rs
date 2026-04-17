@@ -2,7 +2,7 @@ use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Wo
 use agentdash_spi::ContextFragment;
 use serde_json::Value;
 
-use crate::runtime::{AddressSpace, RuntimeMcpServer};
+use crate::runtime::{Vfs, RuntimeMcpServer};
 
 /// Contributor 的结构化产出 — 同时包含上下文片段和 ACP MCP Server 声明
 pub struct Contribution {
@@ -96,7 +96,7 @@ pub struct TaskAgentBuildInput<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub address_space: Option<&'a AddressSpace>,
+    pub vfs: Option<&'a Vfs>,
     pub effective_agent_type: Option<&'a str>,
     pub phase: TaskExecutionPhase,
     pub override_prompt: Option<&'a str>,

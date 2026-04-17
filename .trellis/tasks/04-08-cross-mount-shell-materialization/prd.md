@@ -27,7 +27,7 @@ cp skills://code-review/check.sh main://tmp/check.sh
 
 ```rust
 pub struct MountUriResolver {
-    address_space: AddressSpace,
+    vfs: Vfs,
     cache: SessionMountCache,
 }
 
@@ -42,7 +42,7 @@ impl MountUriResolver {
 
 ```
 mount_id://relative/path
-  → 查找 address_space.mounts 中 id == mount_id 的 mount
+  → 查找 vfs.mounts 中 id == mount_id 的 mount
   → 本地 mount（has Exec capability，backend 是当前机器）：
        root_ref + "/" + relative/path → 归一化为平台路径
   → 云端 mount（无 Exec 或 backend 不在本机）：
@@ -107,8 +107,8 @@ before_tool_call
 
 ## 实施要点
 
-- 新文件：`crates/agentdash-application/src/address_space/mount_uri_resolver.rs`
-- mount_id 白名单从当前 session 的 `AddressSpace.mounts` 动态构建，避免误匹配普通 `word://` 字符串
+- 新文件：`crates/agentdash-application/src/vfs/mount_uri_resolver.rs`
+- mount_id 白名单从当前 session 的 `Vfs.mounts` 动态构建，避免误匹配普通 `word://` 字符串
 - 本地 mount 判定：检查 mount capabilities 含 `Exec`，且 `backend_id` 对应当前进程所在机器
 - 所有路径操作使用 `std::path::PathBuf`，禁止手动字符串拼接路径
 

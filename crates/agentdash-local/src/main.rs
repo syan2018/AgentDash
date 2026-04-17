@@ -116,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
         let session_repo = Arc::new(SqliteSessionRepository::new(pool));
         session_repo.initialize().await?;
         let hub = SessionHub::new_with_hooks_and_persistence(
-            Some(agentdash_application::session::local_workspace_address_space(&workspace_root)),
+            Some(agentdash_application::session::local_workspace_vfs(&workspace_root)),
             connector.clone(),
             None,
             session_repo,

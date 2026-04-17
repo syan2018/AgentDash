@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listAddressEntries,
-  listAddressSpaces,
-  type AddressEntry,
-  type AddressSpaceDescriptor,
-} from "../../../services/addressSpaces";
+  listVfss,
+  type VfsEntry,
+  type VfsDescriptor,
+} from "../../../services/vfs";
 
-export interface UseAddressSpacePickerOptions {
+export interface UseVfsPickerOptions {
   spaceId: string;
   workspaceId: string | null | undefined;
   /** 额外的触发依赖（如 storyId 变化时重新发现） */
   resetKey?: string;
 }
 
-export interface UseAddressSpacePickerResult {
-  space: AddressSpaceDescriptor | null;
+export interface UseVfsPickerResult {
+  space: VfsDescriptor | null;
   spaceError: string | null;
   isAvailable: boolean;
 
   pickerOpen: boolean;
   pickerQuery: string;
-  pickerEntries: AddressEntry[];
+  pickerEntries: VfsEntry[];
   pickerLoading: boolean;
   pickerError: string | null;
   selectedIndex: number;
@@ -29,22 +29,22 @@ export interface UseAddressSpacePickerResult {
   closePicker: () => void;
   updatePickerQuery: (query: string) => void;
   moveSelection: (delta: number) => void;
-  confirmSelection: () => AddressEntry | null;
+  confirmSelection: () => VfsEntry | null;
 }
 
 const DEBOUNCE_MS = 200;
 
-export function useAddressSpacePicker(
-  options: UseAddressSpacePickerOptions,
-): UseAddressSpacePickerResult {
+export function useVfsPicker(
+  options: UseVfsPickerOptions,
+): UseVfsPickerResult {
   const { spaceId, workspaceId, resetKey } = options;
 
-  const [space, setSpace] = useState<AddressSpaceDescriptor | null>(null);
+  const [space, setSpace] = useState<VfsDescriptor | null>(null);
   const [spaceError, setSpaceError] = useState<string | null>(null);
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
-  const [pickerEntries, setPickerEntries] = useState<AddressEntry[]>([]);
+  const [pickerEntries, setPickerEntries] = useState<VfsEntry[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -63,7 +63,7 @@ export function useAddressSpacePicker(
 
       try {
         setSpaceError(null);
-        const result = await listAddressSpaces({ workspaceId });
+        const result = await listVfss({ workspaceId });
         if (cancelled) return;
         const found = result.spaces.find((s) => s.id === spaceId) ?? null;
         setSpace(found);
@@ -156,7 +156,7 @@ export function useAddressSpacePicker(
     [pickerEntries.length],
   );
 
-  const confirmSelection = useCallback((): AddressEntry | null => {
+  const confirmSelection = useCallback((): VfsEntry | null => {
     if (pickerEntries.length > 0 && selectedIndex < pickerEntries.length) {
       return pickerEntries[selectedIndex];
     }

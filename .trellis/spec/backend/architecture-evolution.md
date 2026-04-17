@@ -62,7 +62,7 @@
 |------|------|---------------|
 | Task 1 | AgentTool SPI 下沉到 agentdash-spi + ThinkingLevel 统一 | - |
 | Task 2 | execution_hooks 迁移到 application::hooks | ~2800 → 1 |
-| Task 3 | Mount/AddressSpace 统一到 domain + service/tool 迁移 | ~1500 → ~6 |
+| Task 3 | Mount/Vfs 统一到 domain + service/tool 迁移 | ~1500 → ~6 |
 | Task 4 | RepositorySet/runtime_bridge/workspace_resolution/gateway 核心下沉 | gateway 1493 → 360 |
 
 架构改进：

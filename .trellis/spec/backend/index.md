@@ -127,7 +127,7 @@ Workspace (1) → (*) WorkspaceBinding
 | [错误处理](./error-handling.md) | 分层错误体系、错误边界规则 | ✅ 已更新 |
 | [流式协议](./streaming-protocol.md) | SSE/NDJSON 流式推送跨层契约 | ✅ 已拆分 |
 | [ACP Meta Warp](./acp-meta-warp.md) | ACP `_meta.agentdash` 跨层契约 | ✅ 已更新 |
-| [Address Space Access](./address-space-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
+| [VFS Access](./vfs-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
 | [LLM Model Config](./llm-model-config.md) | ThinkingLevel / ModelInfo / Provider Registry 架构 | ✅ 已创建 |
 | [Execution Hook Runtime](./execution-hook-runtime.md) | Hook Runtime / Workflow Policy / Session Surface 跨层契约 | ✅ 已更新 |
 | [Hook Script Engine](./hook-script-engine.md) | Rhai 脚本引擎、preset 编写指南、沙箱契约 | ✅ 已创建 |

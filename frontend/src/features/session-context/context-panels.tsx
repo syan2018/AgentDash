@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { AddressSpaceBrowser } from "../address-space";
+import { VfsBrowser } from "../vfs";
 import type {
   ContextContainerDefinition,
-  ExecutionAddressSpace,
+  ExecutionVfs,
   HookSessionRuntimeInfo,
-  ResolvedAddressSpaceSurface,
+  ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionComposition,
   SessionContextSnapshot,
@@ -97,11 +97,11 @@ function resolveEffectiveStoryContextFolders(
 }
 
 function resolveProjectContextFolders(
-  addressSpace?: ExecutionAddressSpace | null,
+  vfs?: ExecutionVfs | null,
 ): ContextFolderItem[] {
-  if (!addressSpace) return [];
+  if (!vfs) return [];
 
-  return addressSpace.mounts
+  return vfs.mounts
     .filter((mount) => (
       mount.provider !== "relay_fs"
       && mount.provider !== "lifecycle_vfs"
@@ -247,13 +247,13 @@ function SharedFoldersSurfaceCard({
   emptyText,
   helperText,
   surface,
-  addressSpace,
+  vfs,
 }: {
   folders: ContextFolderItem[];
   emptyText: string;
   helperText: string;
-  surface?: ResolvedAddressSpaceSurface | null;
-  addressSpace?: ExecutionAddressSpace | null;
+  surface?: ResolvedVfsSurface | null;
+  vfs?: ExecutionVfs | null;
 }) {
   const [browserOpen, setBrowserOpen] = useState(false);
 
@@ -278,7 +278,7 @@ function SharedFoldersSurfaceCard({
         <p className="text-xs text-muted-foreground">{emptyText}</p>
       )}
 
-      {((surface && surface.mounts.length > 0) || (addressSpace && addressSpace.mounts.length > 0)) && (
+      {((surface && surface.mounts.length > 0) || (vfs && vfs.mounts.length > 0)) && (
         <div className="mt-2">
           <button
             type="button"
@@ -289,9 +289,9 @@ function SharedFoldersSurfaceCard({
           </button>
           {browserOpen && (
             <div className="mt-2">
-              <AddressSpaceBrowser
+              <VfsBrowser
                 surface={surface}
-                addressSpace={addressSpace}
+                vfs={vfs}
               />
             </div>
           )}
@@ -382,19 +382,19 @@ function StorySourceSummaryCard({
 function TechnicalOverviewCard({
   runtimePolicy,
   toolVisibility,
-  addressSpace,
+  vfs,
   extraBadges = [],
 }: {
   runtimePolicy: SessionContextSnapshot["effective"]["runtime_policy"];
   toolVisibility: SessionContextSnapshot["effective"]["tool_visibility"];
-  addressSpace?: ExecutionAddressSpace | null;
+  vfs?: ExecutionVfs | null;
   extraBadges?: string[];
 }) {
   const badges = [
     toolVisibility.resolved ? "工具面已解析" : "工具面未解析",
     runtimePolicy.workspace_attached ? "已附着 workspace" : "未附着 workspace",
     runtimePolicy.mcp_enabled ? "MCP 已启用" : "MCP 未启用",
-    addressSpace?.mounts.length ? `${addressSpace.mounts.length} 个运行时 mount` : "无运行时 mount",
+    vfs?.mounts.length ? `${vfs.mounts.length} 个运行时 mount` : "无运行时 mount",
     ...extraBadges,
   ];
 
@@ -500,7 +500,7 @@ export function StorySessionContextPanel({
   contextSnapshot,
   executorSummary,
   runtimeSurface,
-  addressSpace,
+  vfs,
   hookRuntime,
   sessionCapabilities,
   isOpen,
@@ -509,8 +509,8 @@ export function StorySessionContextPanel({
   story: Story;
   contextSnapshot?: SessionContextSnapshot | null;
   executorSummary?: TaskSessionExecutorSummary | null;
-  runtimeSurface?: ResolvedAddressSpaceSurface | null;
-  addressSpace?: ExecutionAddressSpace | null;
+  runtimeSurface?: ResolvedVfsSurface | null;
+  vfs?: ExecutionVfs | null;
   hookRuntime?: HookSessionRuntimeInfo | null;
   sessionCapabilities?: SessionBaselineCapabilities | null;
   isOpen: boolean;
@@ -547,7 +547,7 @@ export function StorySessionContextPanel({
           emptyText="当前 Story 还没有整理出额外共享资料目录。"
           helperText="这些目录才是对用户真正可见的上下文表面，底层 provider / mount 细节默认不直接暴露。"
           surface={runtimeSurface}
-          addressSpace={addressSpace}
+          vfs={vfs}
         />
         <SessionBehaviorSurfaceCard
           composition={effectiveComposition}
@@ -570,7 +570,7 @@ export function StorySessionContextPanel({
             <TechnicalOverviewCard
               runtimePolicy={contextSnapshot.effective.runtime_policy}
               toolVisibility={contextSnapshot.effective.tool_visibility}
-              addressSpace={addressSpace}
+              vfs={vfs}
               extraBadges={[
                 `${contextSnapshot.project_defaults.context_containers.length} 个 Project 容器`,
                 `${getOwnerStoryOverrides(contextSnapshot)?.context_containers.length ?? 0} 个 Story 追加容器`,
@@ -594,7 +594,7 @@ export function StorySessionContextPanel({
               <SessionCompositionCard title="当前生效会话编排" composition={contextSnapshot.effective.session_composition} />
               <ToolVisibilityCard summary={contextSnapshot.effective.tool_visibility} />
               <RuntimePolicyCard summary={contextSnapshot.effective.runtime_policy} />
-              <AddressSpaceCard addressSpace={addressSpace} />
+              <VfsCard vfs={vfs} />
               {hookRuntime && <HookRuntimeDiagnosticsCard hookRuntime={hookRuntime} />}
             </RawDiagnosticsSection>
           ) : (
@@ -608,7 +608,7 @@ export function StorySessionContextPanel({
               {story.context.session_composition && (
                 <SessionCompositionCard title="Story 会话编排" composition={story.context.session_composition} />
               )}
-              <AddressSpaceCard addressSpace={addressSpace} />
+              <VfsCard vfs={vfs} />
               {hookRuntime && <HookRuntimeDiagnosticsCard hookRuntime={hookRuntime} />}
             </RawDiagnosticsSection>
           )}
@@ -624,7 +624,7 @@ export function ProjectSessionContextPanel({
   projectName,
   contextSnapshot,
   runtimeSurface,
-  addressSpace,
+  vfs,
   hookRuntime,
   sessionCapabilities,
   isOpen,
@@ -632,8 +632,8 @@ export function ProjectSessionContextPanel({
 }: {
   projectName: string;
   contextSnapshot: SessionContextSnapshot;
-  runtimeSurface?: ResolvedAddressSpaceSurface | null;
-  addressSpace?: ExecutionAddressSpace | null;
+  runtimeSurface?: ResolvedVfsSurface | null;
+  vfs?: ExecutionVfs | null;
   hookRuntime?: HookSessionRuntimeInfo | null;
   sessionCapabilities?: SessionBaselineCapabilities | null;
   isOpen: boolean;
@@ -641,7 +641,7 @@ export function ProjectSessionContextPanel({
 }) {
   const snapshot = contextSnapshot;
   const projectOwner = snapshot.owner_context.owner_level === "project" ? snapshot.owner_context : null;
-  const folders = resolveProjectContextFolders(addressSpace);
+  const folders = resolveProjectContextFolders(vfs);
   const badges = [
     projectOwner?.agent_display_name ? `Agent · ${projectOwner.agent_display_name}` : "",
     `${folders.length} 个共享目录`,
@@ -666,7 +666,7 @@ export function ProjectSessionContextPanel({
           emptyText="当前 Project Session 还没有对用户暴露可用共享目录。"
           helperText="共享上下文默认表达成近似文件系统的目录，而不是 provider、mount policy 或权限矩阵。"
           surface={runtimeSurface}
-          addressSpace={addressSpace}
+          vfs={vfs}
         />
       </div>
 
@@ -690,7 +690,7 @@ export function ProjectSessionContextPanel({
             <TechnicalOverviewCard
               runtimePolicy={snapshot.effective.runtime_policy}
               toolVisibility={snapshot.effective.tool_visibility}
-              addressSpace={addressSpace}
+              vfs={vfs}
               extraBadges={[
                 `${snapshot.project_defaults.context_containers.length} 个 Project 容器`,
               ]}
@@ -706,7 +706,7 @@ export function ProjectSessionContextPanel({
               />
               <ToolVisibilityCard summary={snapshot.effective.tool_visibility} />
               <RuntimePolicyCard summary={snapshot.effective.runtime_policy} />
-              <AddressSpaceCard addressSpace={addressSpace} />
+              <VfsCard vfs={vfs} />
               {hookRuntime && <HookRuntimeDiagnosticsCard hookRuntime={hookRuntime} />}
             </RawDiagnosticsSection>
           )}
@@ -936,8 +936,8 @@ function RuntimePolicyCard({ summary }: { summary: SessionContextSnapshot["effec
           <span className={summary.workspace_attached ? "text-emerald-600" : "text-muted-foreground"}>
             {summary.workspace_attached ? "✓" : "✗"} workspace
           </span>
-          <span className={summary.address_space_attached ? "text-emerald-600" : "text-muted-foreground"}>
-            {summary.address_space_attached ? "✓" : "✗"} address_space
+          <span className={summary.vfs_attached ? "text-emerald-600" : "text-muted-foreground"}>
+            {summary.vfs_attached ? "✓" : "✗"} vfs
           </span>
           <span className={summary.mcp_enabled ? "text-emerald-600" : "text-muted-foreground"}>
             {summary.mcp_enabled ? "✓" : "✗"} MCP
@@ -970,17 +970,17 @@ function RuntimeListRow({ label, items }: { label: string; items: string[] }) {
   );
 }
 
-function AddressSpaceCard({ addressSpace }: { addressSpace?: ExecutionAddressSpace | null }) {
-  if (!addressSpace || addressSpace.mounts.length === 0) return null;
+function VfsCard({ vfs }: { vfs?: ExecutionVfs | null }) {
+  if (!vfs || vfs.mounts.length === 0) return null;
 
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">运行时 Address Space</p>
-      {addressSpace.default_mount_id && (
-        <p className="mb-1 text-[10px] text-muted-foreground">默认 mount: <span className="font-mono text-foreground/80">{addressSpace.default_mount_id}</span></p>
+      <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">运行时 VFS</p>
+      {vfs.default_mount_id && (
+        <p className="mb-1 text-[10px] text-muted-foreground">默认 mount: <span className="font-mono text-foreground/80">{vfs.default_mount_id}</span></p>
       )}
       <div className="space-y-1.5">
-        {addressSpace.mounts.map((mount) => (
+        {vfs.mounts.map((mount) => (
           <div key={mount.id} className="rounded-[8px] border border-border bg-background/60 px-2.5 py-2">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-foreground">{mount.display_name}</span>
@@ -988,7 +988,7 @@ function AddressSpaceCard({ addressSpace }: { addressSpace?: ExecutionAddressSpa
               {mount.default_write && (
                 <span className="rounded-[4px] bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600">默认写</span>
               )}
-              {addressSpace.default_mount_id === mount.id && (
+              {vfs.default_mount_id === mount.id && (
                 <span className="rounded-[4px] bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">默认</span>
               )}
             </div>

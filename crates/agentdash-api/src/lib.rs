@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod address_space_access;
+mod vfs_access;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;

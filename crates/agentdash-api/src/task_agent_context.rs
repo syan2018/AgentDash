@@ -18,7 +18,7 @@ pub async fn resolve_workspace_declared_sources(
 ) -> Result<ResolveSourcesOutput, String> {
     agentdash_application::context::resolve_workspace_declared_sources(
         state.services.backend_registry.as_ref(),
-        &state.services.address_space_service,
+        &state.services.vfs_service,
         sources,
         workspace,
         base_order,

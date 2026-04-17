@@ -1,4 +1,4 @@
-pub mod address_space;
+pub mod vfs;
 pub mod auth;
 pub mod backend_transport;
 pub mod canvas;

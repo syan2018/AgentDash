@@ -1,6 +1,6 @@
 pub mod acp_sessions;
-pub mod address_spaces;
-pub mod address_space_surfaces;
+pub mod vfs;
+pub mod vfs_surfaces;
 pub mod agents;
 pub mod auth_routes;
 pub mod backends;
@@ -387,39 +387,39 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Mount Provider 发现（返回可由用户配置的外部服务 provider 列表）
         .route(
             "/mount-providers",
-            get(address_spaces::list_configurable_mount_providers),
+            get(vfs::list_configurable_mount_providers),
         )
         .route(
-            "/address-space-surfaces/resolve",
-            post(address_space_surfaces::resolve_surface),
+            "/vfs-surfaces/resolve",
+            post(vfs_surfaces::resolve_surface),
         )
         .route(
-            "/address-space-surfaces/{surface_ref}",
-            get(address_space_surfaces::get_surface),
+            "/vfs-surfaces/{surface_ref}",
+            get(vfs_surfaces::get_surface),
         )
         .route(
-            "/address-space-surfaces/{surface_ref}/mounts/{mount_id}/entries",
-            get(address_space_surfaces::list_surface_mount_entries),
+            "/vfs-surfaces/{surface_ref}/mounts/{mount_id}/entries",
+            get(vfs_surfaces::list_surface_mount_entries),
         )
         .route(
-            "/address-space-surfaces/read-file",
-            post(address_space_surfaces::read_surface_file),
+            "/vfs-surfaces/read-file",
+            post(vfs_surfaces::read_surface_file),
         )
         .route(
-            "/address-space-surfaces/write-file",
-            post(address_space_surfaces::write_surface_file),
+            "/vfs-surfaces/write-file",
+            post(vfs_surfaces::write_surface_file),
         )
         .route(
-            "/address-space-surfaces/apply-patch",
-            post(address_space_surfaces::apply_surface_patch),
+            "/vfs-surfaces/apply-patch",
+            post(vfs_surfaces::apply_surface_patch),
         )
-        // Address Spaces（统一寻址空间能力发现与条目检索）
-        .route("/address-spaces", get(address_spaces::list_address_spaces))
+        // VFSs（统一寻址空间能力发现与条目检索）
+        .route("/vfs", get(vfs::list_vfs))
         .route(
-            "/address-spaces/{space_id}/entries",
-            get(address_spaces::list_address_entries),
+            "/vfs/{space_id}/entries",
+            get(vfs::list_address_entries),
         )
-        // File Picker（@ 文件引用选择器 API，走 Address Space 统一访问层）
+        // File Picker（@ 文件引用选择器 API，走 VFS 统一访问层）
         .route("/file-picker", get(file_picker::list_files))
         .route("/file-picker/read", post(file_picker::read_file))
         .route(

@@ -4,7 +4,7 @@ use agentdash_spi::MergeStrategy;
 use crate::context::{
     ContextComposer, build_owner_prompt_blocks, trim_or_dash, workspace_context_fragment,
 };
-use crate::runtime::{AddressSpace, RuntimeMcpServer};
+use crate::runtime::{Vfs, RuntimeMcpServer};
 use crate::session::plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
 };
@@ -12,7 +12,7 @@ use crate::session::plan::{
 pub struct ProjectContextBuildInput<'a> {
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub address_space: Option<&'a AddressSpace>,
+    pub vfs: Option<&'a Vfs>,
     pub mcp_servers: &'a [RuntimeMcpServer],
     pub effective_agent_type: Option<&'a str>,
     pub preset_name: Option<&'a str>,
@@ -64,7 +64,7 @@ pub fn build_project_context_markdown(
     let session_plan = build_session_plan_fragments(SessionPlanInput {
         owner_type: SessionOwnerType::Project,
         phase: SessionPlanPhase::ProjectAgent,
-        address_space: input.address_space,
+        vfs: input.vfs,
         mcp_servers: input.mcp_servers,
         session_composition: None,
         agent_type: input.effective_agent_type,

@@ -151,7 +151,7 @@ function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo
     session_id: String(raw.session_id ?? ''),
     session_title: raw.session_title != null ? String(raw.session_title) : null,
     last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-    address_space: (raw.address_space as ProjectSessionInfo['address_space']) ?? null,
+    vfs: (raw.vfs as ProjectSessionInfo['vfs']) ?? null,
     runtime_surface: (raw.runtime_surface as ProjectSessionInfo['runtime_surface']) ?? null,
     context_snapshot: contextSnapshot,
   };

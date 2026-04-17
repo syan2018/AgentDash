@@ -43,7 +43,7 @@ impl TurnDispatcher for AppStateTurnDispatcher {
             },
             mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers),
             relay_mcp_server_names: Default::default(),
-            address_space: ctx.address_space.clone(),
+            vfs: ctx.vfs.clone(),
             flow_capabilities: Some(agentdash_spi::FlowCapabilities::from_clusters([
                 agentdash_spi::ToolCluster::Read,
                 agentdash_spi::ToolCluster::Write,

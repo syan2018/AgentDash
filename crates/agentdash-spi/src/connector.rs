@@ -4,7 +4,7 @@ use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
 };
 use agentdash_agent_types::AgentMessage;
-use agentdash_domain::common::{AddressSpace, AgentConfig};
+use agentdash_domain::common::{Vfs, AgentConfig};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
@@ -55,7 +55,7 @@ pub struct ExecutionContext {
     /// connector 根据此集合决定走 relay 路径还是直连路径。
     #[allow(dead_code)]
     pub relay_mcp_server_names: std::collections::HashSet<String>,
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
     #[allow(clippy::type_complexity)]
     pub flow_capabilities: FlowCapabilities,
@@ -94,13 +94,13 @@ impl std::fmt::Debug for ExecutionContext {
     }
 }
 
-/// 从 `ExecutionContext.address_space` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
+/// 从 `ExecutionContext.vfs` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
 pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf, ConnectorError> {
-    let space = context.address_space.as_ref().ok_or_else(|| {
-        ConnectorError::InvalidConfig("ExecutionContext 缺少 address_space".to_string())
+    let space = context.vfs.as_ref().ok_or_else(|| {
+        ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
     })?;
     let mount = space.default_mount().ok_or_else(|| {
-        ConnectorError::InvalidConfig("address_space 缺少 default_mount".to_string())
+        ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string())
     })?;
     let path = PathBuf::from(mount.root_ref.trim());
     if path.as_os_str().is_empty() {

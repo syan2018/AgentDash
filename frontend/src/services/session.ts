@@ -4,10 +4,10 @@ import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type {
   AgentBinding,
   ContextSourceRef,
-  ExecutionAddressSpace,
+  ExecutionVfs,
   HookSessionRuntimeInfo,
   ProjectSessionEntry,
-  ResolvedAddressSpaceSurface,
+  ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionBindingOwner,
   SessionContextSnapshot,
@@ -177,8 +177,8 @@ function mapSessionContextAgentBinding(raw: unknown): AgentBinding | null {
 export interface SessionContextPayload {
   workspace_id: string | null;
   agent_binding: AgentBinding | null;
-  address_space: ExecutionAddressSpace | null;
-  runtime_surface: ResolvedAddressSpaceSurface | null;
+  vfs: ExecutionVfs | null;
+  runtime_surface: ResolvedVfsSurface | null;
   context_snapshot: SessionContextSnapshot | null;
   session_capabilities: SessionBaselineCapabilities | null;
 }
@@ -195,8 +195,8 @@ export async function fetchSessionContext(sessionId: string): Promise<SessionCon
   return {
     workspace_id: raw.workspace_id != null ? String(raw.workspace_id) : null,
     agent_binding: mapSessionContextAgentBinding(raw.agent_binding),
-    address_space: (raw.address_space as ExecutionAddressSpace | undefined) ?? null,
-    runtime_surface: (raw.runtime_surface as ResolvedAddressSpaceSurface | undefined) ?? null,
+    vfs: (raw.vfs as ExecutionVfs | undefined) ?? null,
+    runtime_surface: (raw.runtime_surface as ResolvedVfsSurface | undefined) ?? null,
     context_snapshot: (raw.context_snapshot as SessionContextSnapshot | undefined) ?? null,
     session_capabilities: (raw.session_capabilities as SessionBaselineCapabilities | undefined) ?? null,
   };

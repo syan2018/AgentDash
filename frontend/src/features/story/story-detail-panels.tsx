@@ -12,7 +12,7 @@ import type {
   Task,
   Workspace,
 } from "../../types";
-import type { AddressEntry } from "../../services/addressSpaces";
+import type { VfsEntry } from "../../services/vfs";
 import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../../components/ui/status-badge";
 import { DetailSection } from "../../components/ui/detail-panel";
 import {
@@ -23,9 +23,9 @@ import {
 import {
   createDefaultSessionComposition,
 } from "../../components/context-config-defaults";
-import { AddressSpaceBrowser } from "../address-space";
+import { VfsBrowser } from "../vfs";
 import { resolveDefaultWorkspaceId } from "../task/agent-binding";
-import { useAddressSpacePicker, AddressEntryPickerInline } from "../context-source";
+import { useVfsPicker, VfsEntryPickerInline } from "../context-source";
 import { useStoryStore } from "../../stores/storyStore";
 import { sourceKindMeta } from "./context-source-utils";
 
@@ -151,7 +151,7 @@ export function ContextPanel({
   const [newTextContent, setNewTextContent] = useState("");
   const inheritedProjectContainers = projectConfig?.context_containers ?? [];
 
-  const filePicker = useAddressSpacePicker({
+  const filePicker = useVfsPicker({
     spaceId: "workspace_file",
     workspaceId: defaultWorkspaceId,
     resetKey: story.id,
@@ -196,7 +196,7 @@ export function ContextPanel({
     await persistSourceRefs(next, "已删除");
   }, [sourceRefs, persistSourceRefs]);
 
-  const handleQuickAddFile = useCallback(async (entry: AddressEntry) => {
+  const handleQuickAddFile = useCallback(async (entry: VfsEntry) => {
     const label = entry.address.split("/").pop() ?? entry.address;
     const newRef = buildFileContextSource(entry.address, label, sourceRefs.length);
     const next = [...sourceRefs, newRef];
@@ -346,7 +346,7 @@ export function ContextPanel({
         />
       </div>
 
-      {/* Address Space 预览 */}
+      {/* VFS 预览 */}
       <div className="space-y-2 rounded-[12px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
@@ -356,7 +356,7 @@ export function ContextPanel({
             以下是当前 Story 配置下 Agent 将看到的挂载视图。
           </p>
         </div>
-        <AddressSpaceBrowser
+        <VfsBrowser
           source={{ source_type: "story_preview", project_id: story.project_id, story_id: story.id }}
         />
       </div>
@@ -374,7 +374,7 @@ export function ContextPanel({
 
       {/* 内联添加区（文件选择器 / 文本表单，互斥） */}
       {filePicker.pickerOpen && (
-        <AddressEntryPickerInline
+        <VfsEntryPickerInline
           open={filePicker.pickerOpen}
           query={filePicker.pickerQuery}
           entries={filePicker.pickerEntries}

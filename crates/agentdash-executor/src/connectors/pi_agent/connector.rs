@@ -276,28 +276,28 @@ impl PiAgentConnector {
         }
 
         // ── 3. Workspace: 地址空间 / 工作目录 ──
-        if let Some(address_space) = &context.address_space {
-            let mount_lines = address_space
+        if let Some(vfs) = &context.vfs {
+            let mount_lines = vfs
                 .mounts
                 .iter()
                 .map(describe_mount)
                 .collect::<Vec<_>>()
                 .join("\n");
-            let default_mount = address_space
+            let default_mount = vfs
                 .default_mount()
                 .map(|mount| mount.id.as_str())
                 .unwrap_or("main");
             sections.push(format!(
-                "## Workspace\n\n当前会话可访问的 Address Space 挂载如下：\n\n{mount_lines}\n\n默认 mount：`{default_mount}`"
+                "## Workspace\n\n当前会话可访问的 VFS 挂载如下：\n\n{mount_lines}\n\n默认 mount：`{default_mount}`"
             ));
         } else {
-            sections.push("## Workspace\n\n（当前会话未配置 Address Space。）".to_string());
+            sections.push("## Workspace\n\n（当前会话未配置 VFS。）".to_string());
         }
 
         // ── 4. Tools: 可用工具及使用规范 ──
         if !tool_names.is_empty() {
             let mut tool_section = String::from("## Tools\n\n");
-            if context.address_space.is_some() {
+            if context.vfs.is_some() {
                 tool_section.push_str(&format!(
                     "Available address-space tools: {}. Prefer mounts_list / fs_read / fs_glob / fs_grep / fs_apply_patch / shell_exec to inspect and edit files.\n\n",
                     tool_names.join(", ")
@@ -997,8 +997,8 @@ mod tests {
         AgentDashSourceV1::new("pi-agent", "local_executor")
     }
 
-    fn test_address_space(root_ref: &str) -> agentdash_spi::AddressSpace {
-        agentdash_spi::AddressSpace {
+    fn test_vfs(root_ref: &str) -> agentdash_spi::Vfs {
+        agentdash_spi::Vfs {
             mounts: vec![Mount {
                 id: "workspace".to_string(),
                 provider: "local_fs".to_string(),
@@ -1934,7 +1934,7 @@ mod tests {
             executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
             relay_mcp_server_names: Default::default(),
-            address_space: Some(test_address_space("/tmp/test-workspace")),
+            vfs: Some(test_vfs("/tmp/test-workspace")),
             hook_session: None,
             flow_capabilities: Default::default(),
             system_context: None,
@@ -1967,7 +1967,7 @@ mod tests {
             executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![],
             relay_mcp_server_names: Default::default(),
-            address_space: Some(test_address_space("/tmp/ws")),
+            vfs: Some(test_vfs("/tmp/ws")),
             hook_session: None,
             flow_capabilities: Default::default(),
             system_context: None,
@@ -2124,7 +2124,7 @@ mod tests {
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
                     relay_mcp_server_names: Default::default(),
-                    address_space: Some(test_address_space("/tmp/test-workspace")),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),
                     system_context: None,
@@ -2163,7 +2163,7 @@ mod tests {
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
                     relay_mcp_server_names: Default::default(),
-                    address_space: Some(test_address_space("/tmp/test-workspace")),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),
                     system_context: Some("## Owner Context\nproject".to_string()),

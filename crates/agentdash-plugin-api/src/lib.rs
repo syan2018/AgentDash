@@ -13,7 +13,7 @@
 //!
 //! | 扩展点 | Trait | 说明 |
 //! |--------|-------|------|
-//! | 寻址空间 | `AddressSpaceProvider` | 新增可寻址资源类型 |
+//! | 寻址空间 | `VfsProvider` | 新增可寻址资源类型 |
 //! | 来源解析器 | `SourceResolver` | 新增 ContextSourceKind 解析逻辑 |
 //! | Agent 连接器 | `AgentConnector` | 接入自定义 Agent 运行时 |
 //! | 认证/授权 | `AuthProvider` | 企业 SSO/LDAP 等 |
@@ -26,7 +26,7 @@ pub mod plugin;
 // 复用已有 trait，不重新定义
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_spi::AgentConnector;
-pub use agentdash_spi::{AddressSpaceDiscoveryProvider, RoutineTriggerProvider, SourceResolver};
+pub use agentdash_spi::{VfsDiscoveryProvider, RoutineTriggerProvider, SourceResolver};
 
 pub use auth::{
     AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest, LoginCredentials,

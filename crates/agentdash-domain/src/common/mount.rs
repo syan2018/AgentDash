@@ -24,7 +24,7 @@ impl Mount {
 
 /// 统一地址空间定义，被 connector-contract 和 application 直接使用。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AddressSpace {
+pub struct Vfs {
     #[serde(default)]
     pub mounts: Vec<Mount>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -35,7 +35,7 @@ pub struct AddressSpace {
     pub source_story_id: Option<String>,
 }
 
-impl AddressSpace {
+impl Vfs {
     pub fn default_mount(&self) -> Option<&Mount> {
         let default_id = self.default_mount_id.as_deref()?;
         self.mounts.iter().find(|mount| mount.id == default_id)

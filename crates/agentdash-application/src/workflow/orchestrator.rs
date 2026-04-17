@@ -25,8 +25,8 @@ use uuid::Uuid;
 use super::session_association::{
     LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_node_session_association,
 };
-use crate::address_space::build_lifecycle_mount_with_ports;
-use crate::runtime::AddressSpace;
+use crate::vfs::build_lifecycle_mount_with_ports;
+use crate::runtime::Vfs;
 use crate::session::SessionTerminalCallback;
 use crate::session::{PromptSessionRequest, SessionHub, UserPromptInput};
 use crate::workflow::{ActivateLifecycleStepCommand, LifecycleRunService};
@@ -466,7 +466,7 @@ impl LifecycleOrchestrator {
         // ── 构建带 port 写入权限的 lifecycle mount ──
         let lifecycle_mount =
             build_lifecycle_mount_with_ports(run.id, lifecycle_key, &writable_port_keys);
-        let address_space = AddressSpace {
+        let vfs = Vfs {
             mounts: vec![lifecycle_mount],
             default_mount_id: None,
             source_project_id: None,
@@ -476,7 +476,7 @@ impl LifecycleOrchestrator {
         let mut req =
             PromptSessionRequest::from_user_input(UserPromptInput::from_text(kickoff_prompt));
         req.user_input.executor_config = executor_config;
-        req.address_space = Some(address_space);
+        req.vfs = Some(vfs);
 
         self.session_hub
             .start_prompt(session_id, req)

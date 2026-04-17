@@ -8,8 +8,8 @@ import type {
   SessionBinding,
   ContextSourceRef,
   ContextContainerDefinition,
-  ExecutionAddressSpace,
-  ResolvedAddressSpaceSurface,
+  ExecutionVfs,
+  ResolvedVfsSurface,
   SessionComposition,
   StorySessionInfo,
   SessionContextSnapshot,
@@ -33,8 +33,8 @@ export interface TaskSessionInfo {
   agent_binding: AgentBinding;
   session_title: string | null;
   last_activity: number | null;
-  address_space: ExecutionAddressSpace | null;
-  runtime_surface: ResolvedAddressSpaceSurface | null;
+  vfs: ExecutionVfs | null;
+  runtime_surface: ResolvedVfsSurface | null;
   context_snapshot: SessionContextSnapshot | null;
 }
 
@@ -760,8 +760,8 @@ export const useStoryStore = create<StoryState>((set) => ({
         agent_binding: mapAgentBinding(raw.agent_binding),
         session_title: readNullableStringField(raw, 'session_title'),
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-        address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
-        runtime_surface: (raw.runtime_surface as ResolvedAddressSpaceSurface | undefined) ?? null,
+        vfs: (raw.vfs as ExecutionVfs) ?? null,
+        runtime_surface: (raw.runtime_surface as ResolvedVfsSurface | undefined) ?? null,
         context_snapshot: (raw.context_snapshot as SessionContextSnapshot) ?? null,
       };
     } catch (e) {
@@ -778,7 +778,7 @@ export const useStoryStore = create<StoryState>((set) => ({
         session_id: requireStorySessionField(raw, 'session_id'),
         session_title: readNullableStringField(raw, 'session_title'),
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-        address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
+        vfs: (raw.vfs as ExecutionVfs) ?? null,
         runtime_surface: (raw.runtime_surface as StorySessionInfo['runtime_surface']) ?? null,
         context_snapshot: (raw.context_snapshot as StorySessionInfo['context_snapshot']) ?? null,
       };

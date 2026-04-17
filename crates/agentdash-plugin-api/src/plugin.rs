@@ -5,7 +5,7 @@ use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::RoutineTriggerProvider;
 use agentdash_spi::mount::MountProvider;
-use agentdash_spi::{AddressSpaceDiscoveryProvider, SourceResolver};
+use agentdash_spi::{VfsDiscoveryProvider, SourceResolver};
 
 use crate::auth::AuthProvider;
 use crate::external::ExternalServiceClient;
@@ -38,7 +38,7 @@ pub enum PluginError {
 ///         Some(Box::new(CorpSsoAuthProvider::new()))
 ///     }
 ///
-///     fn address_space_providers(&self) -> Vec<Box<dyn AddressSpaceProvider>> {
+///     fn vfs_providers(&self) -> Vec<Box<dyn VfsProvider>> {
 ///         vec![Box::new(CorpKmProvider::new())]
 ///     }
 /// }
@@ -49,9 +49,9 @@ pub trait AgentDashPlugin: Send + Sync {
 
     /// 注册额外的寻址空间能力提供者。
     ///
-    /// 注意：`AddressSpaceDiscoveryProvider` 仅负责 descriptor / discovery 层抽象，
+    /// 注意：`VfsDiscoveryProvider` 仅负责 descriptor / discovery 层抽象，
     /// 不是统一 runtime I/O provider（后者为 `MountProvider`）。
-    fn address_space_providers(&self) -> Vec<Box<dyn AddressSpaceDiscoveryProvider>> {
+    fn vfs_providers(&self) -> Vec<Box<dyn VfsDiscoveryProvider>> {
         vec![]
     }
 
@@ -104,9 +104,9 @@ pub trait AgentDashPlugin: Send + Sync {
 
     /// 注册额外的 Skill 扫描目录（绝对路径）。
     ///
-    /// 宿主会扫描这些目录下的 SKILL.md 文件，发现规则与 address space mount 一致
+    /// 宿主会扫描这些目录下的 SKILL.md 文件，发现规则与 VFS mount 一致
     /// （一级子目录 + SKILL.md frontmatter 解析）。
-    /// 插件提供的 skill 优先级低于 address space mount 内发现的同名 skill。
+    /// 插件提供的 skill 优先级低于 VFS mount 内发现的同名 skill。
     fn extra_skill_dirs(&self) -> Vec<PathBuf> {
         vec![]
     }

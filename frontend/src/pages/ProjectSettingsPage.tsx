@@ -14,11 +14,11 @@ import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
-import { AddressSpaceBrowser } from "../features/address-space";
+import { VfsBrowser } from "../features/vfs";
 import {
   ContextContainersEditor,
 } from "../components/context-config-editor";
-import { resolveAddressSpaceSurface } from "../services/addressSpaces";
+import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
 import {
   DangerConfirmDialog,
@@ -173,7 +173,7 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
     setError(null);
     void (async () => {
       try {
-        const result = await resolveAddressSpaceSurface({
+        const result = await resolveVfsSurface({
           source_type: "project_preview",
           project_id: projectId,
         });
@@ -828,9 +828,9 @@ export function ProjectSettingsPage() {
 
                   <SectionCard
                     title="Runtime Preview"
-                    description="Address Space 预览明确作为派生结果展示，用来解释当前默认配置会解析出什么挂载。"
+                    description="VFS 预览明确作为派生结果展示，用来解释当前默认配置会解析出什么挂载。"
                   >
-                    <AddressSpaceBrowser source={{ source_type: "project_preview", project_id: project.id }} />
+                    <VfsBrowser source={{ source_type: "project_preview", project_id: project.id }} />
                   </SectionCard>
                 </>
               )}

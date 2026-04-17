@@ -7,8 +7,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::address_space::{ListOptions, selected_workspace_binding};
-use agentdash_spi::{AddressSpaceContext, AddressSpaceDescriptor};
+use agentdash_application::vfs::{ListOptions, selected_workspace_binding};
+use agentdash_spi::{VfsContext, VfsDescriptor};
 
 use crate::{
     app_state::AppState,
@@ -23,21 +23,21 @@ const MAX_ENTRIES: usize = 200;
 // ─── 能力发现 ──────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct AddressSpacesQuery {
+pub struct VfssQuery {
     pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct AddressSpacesResponse {
-    pub spaces: Vec<AddressSpaceDescriptor>,
+pub struct VfssResponse {
+    pub spaces: Vec<VfsDescriptor>,
 }
 
-/// `GET /api/address-spaces` — 能力发现端点
-pub async fn list_address_spaces(
+/// `GET /api/vfs` — 能力发现端点
+pub async fn list_vfs(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Query(query): Query<AddressSpacesQuery>,
-) -> Result<Json<AddressSpacesResponse>, ApiError> {
+    Query(query): Query<VfssQuery>,
+) -> Result<Json<VfssResponse>, ApiError> {
     let workspace_available = if let Some(ws_id_str) = &query.workspace_id {
         let ws_id = Uuid::parse_str(ws_id_str)
             .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
@@ -55,13 +55,13 @@ pub async fn list_address_spaces(
     };
 
     let has_mcp = state.config.mcp_base_url.is_some();
-    let ctx = AddressSpaceContext {
+    let ctx = VfsContext {
         workspace_available,
         has_mcp,
     };
 
-    let spaces = state.services.address_space_registry.available_spaces(&ctx);
-    Ok(Json(AddressSpacesResponse { spaces }))
+    let spaces = state.services.vfs_registry.available_spaces(&ctx);
+    Ok(Json(VfssResponse { spaces }))
 }
 
 // ─── 条目检索 ──────────────────────────────────────────────
@@ -78,7 +78,7 @@ pub struct ListEntriesQuery {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AddressEntry {
+pub struct VfsEntry {
     pub address: String,
     pub label: String,
     pub entry_type: String,
@@ -90,10 +90,10 @@ pub struct AddressEntry {
 
 #[derive(Debug, Serialize)]
 pub struct ListEntriesResponse {
-    pub entries: Vec<AddressEntry>,
+    pub entries: Vec<VfsEntry>,
 }
 
-/// `GET /api/address-spaces/{space_id}/entries` — 条目搜索端点
+/// `GET /api/vfs/{space_id}/entries` — 条目搜索端点
 pub async fn list_address_entries(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -113,7 +113,7 @@ pub async fn list_address_entries(
 
             let session = state
                 .services
-                .address_space_service
+                .vfs_service
                 .session_for_workspace(&workspace)
                 .map_err(ApiError::BadRequest)?;
 
@@ -122,7 +122,7 @@ pub async fn list_address_entries(
 
             let listed = state
                 .services
-                .address_space_service
+                .vfs_service
                 .list(
                     &session,
                     "main",
@@ -141,7 +141,7 @@ pub async fn list_address_entries(
                 .entries
                 .into_iter()
                 .take(MAX_ENTRIES)
-                .map(|entry| AddressEntry {
+                .map(|entry| VfsEntry {
                     address: entry.path.clone(),
                     label: entry.path,
                     entry_type: if entry.is_dir {
@@ -210,7 +210,7 @@ async fn require_backend_online(
 /// 数据直接来自 MountProviderRegistry 中各 provider 自身声明的元信息。
 pub async fn list_configurable_mount_providers(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<agentdash_application::address_space::ConfigurableProviderInfo>> {
+) -> Json<Vec<agentdash_application::vfs::ConfigurableProviderInfo>> {
     Json(
         state
             .services

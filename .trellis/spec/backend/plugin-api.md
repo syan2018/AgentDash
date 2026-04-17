@@ -85,7 +85,7 @@ run_server(plugins).await
 
 当前属于 experimental / incubating 的范围：
 
-- 当前 `agentdash_injection::AddressSpaceProvider`
+- 当前 `agentdash_injection::VfsProvider`
 - `SourceResolver`
 - `ExternalServiceClient`
 
@@ -117,8 +117,8 @@ run_server(plugins).await
 
 ### 4.2 不要把过渡态 Address Space 抽象直接冻结给企业仓
 
-根据 [address-space-access.md](./address-space-access.md)，当前
-`agentdash_injection::AddressSpaceProvider` 只是 descriptor / discovery provider，
+根据 [vfs-access.md](./vfs-access.md)，当前
+`agentdash_injection::VfsProvider` 只是 descriptor / discovery provider，
 并不是统一的 runtime `read / write / list / search / exec` provider。
 
 因此：
@@ -206,7 +206,7 @@ contract crate 的职责是：
 - `name()`：稳定
 - `auth_provider()`：可作为稳定能力推进
 - `agent_connectors()`：只有在宿主完成真实闭环、且依赖收敛后，才能视为 stable
-- `source_resolvers()` / `external_service_clients()` / 当前 `address_space_providers()`：先视为 experimental
+- `source_resolvers()` / `external_service_clients()` / 当前 `vfs_providers()`：先视为 experimental
 
 换句话说：
 
@@ -272,7 +272,7 @@ contract crate 的职责是：
 
 插件体系必须服从统一 Address Space 的长期方向，而不是绕开它。
 
-根据 [address-space-access.md](./address-space-access.md)：
+根据 [vfs-access.md](./vfs-access.md)：
 
 - 长期目标是统一到 `mount + relative path`
 - context injection、runtime tool、frontend browse 应共享同一 provider 底座
@@ -338,7 +338,7 @@ contract crate 的职责是：
 ## 14. 相关文件
 
 - [plugin-api PRD](../../tasks/03-24-plugin-api-architecture/prd.md)
-- [Address Space Access](./address-space-access.md)
+- [VFS Access](./vfs-access.md)
 - [agentdash-spi](../../../crates/agentdash-spi/src/lib.rs)
 - [agentdash-first-party-plugins](../../../crates/agentdash-first-party-plugins/src/lib.rs)
 - [app_state.rs](../../../crates/agentdash-api/src/app_state.rs)

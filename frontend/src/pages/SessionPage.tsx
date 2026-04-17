@@ -14,10 +14,10 @@ import { useWorkflowStore } from "../stores/workflowStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type {
   AgentBinding,
-  ExecutionAddressSpace,
+  ExecutionVfs,
   HookSessionRuntimeInfo,
   ProjectSessionAgentContext,
-  ResolvedAddressSpaceSurface,
+  ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionBindingOwner,
   SessionContextSnapshot,
@@ -57,8 +57,8 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     source_key: string;
     workspace_id: string | null;
     task_agent_binding: AgentBinding | null;
-    address_space: ExecutionAddressSpace | null;
-    runtime_surface: ResolvedAddressSpaceSurface | null;
+    vfs: ExecutionVfs | null;
+    runtime_surface: ResolvedVfsSurface | null;
     context_snapshot: SessionContextSnapshot | null;
     session_capabilities: SessionBaselineCapabilities | null;
   } | null>(null);
@@ -234,7 +234,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         source_key: sessionContextSourceKey,
         workspace_id: ctx?.workspace_id ?? null,
         task_agent_binding: ctx?.agent_binding ?? null,
-        address_space: ctx?.address_space ?? null,
+        vfs: ctx?.vfs ?? null,
         runtime_surface: ctx?.runtime_surface ?? null,
         context_snapshot: ctx?.context_snapshot ?? null,
         session_capabilities: ctx?.session_capabilities ?? null,
@@ -252,7 +252,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     ?? activeSessionContext?.task_agent_binding
     ?? null;
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
-  const sessionAddressSpace = activeSessionContext?.address_space ?? null;
+  const sessionVfs = activeSessionContext?.vfs ?? null;
   const sessionRuntimeSurface = activeSessionContext?.runtime_surface ?? null;
   const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
   const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
@@ -582,7 +582,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           projectName={ownerProjectName}
           contextSnapshot={sessionContextSnapshot}
           runtimeSurface={sessionRuntimeSurface}
-          addressSpace={sessionAddressSpace}
+          vfs={sessionVfs}
           hookRuntime={activeHookRuntime}
           sessionCapabilities={sessionCapabilities}
           isOpen={isContextPanelOpen}
@@ -593,14 +593,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       {sessionContextSnapshot?.owner_context.owner_level !== "project" && ownerStory && (
         hasStoryContextInfo(ownerStory)
         || sessionContextSnapshot != null
-        || (sessionAddressSpace && sessionAddressSpace.mounts.length > 0)
+        || (sessionVfs && sessionVfs.mounts.length > 0)
       ) && (
         <StorySessionContextPanel
           story={ownerStory}
           contextSnapshot={sessionContextSnapshot}
           executorSummary={taskExecutorSummary}
           runtimeSurface={sessionRuntimeSurface}
-          addressSpace={sessionAddressSpace}
+          vfs={sessionVfs}
           hookRuntime={activeHookRuntime}
           sessionCapabilities={sessionCapabilities}
           isOpen={isContextPanelOpen}

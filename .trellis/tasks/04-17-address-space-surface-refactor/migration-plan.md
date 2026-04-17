@@ -3,7 +3,7 @@
 ## Target Model
 
 ### Single Source of Truth
-- 系统中只允许存在一种“可浏览/可编辑的挂载面”真相：`ResolvedAddressSpaceSurface`
+- 系统中只允许存在一种“可浏览/可编辑的挂载面”真相：`ResolvedVfsSurface`
 - 所有 mount 列表、默认 mount、能力、owner 归属、purpose、在线状态、文件数等信息只能从 resolved surface 获取
 - 任何模块不得再自行根据 `project/stor/agent/session` 配置二次推导并生成平行摘要
 
@@ -43,27 +43,27 @@
 ## Full Refactor Tasks
 
 ### Backend Application
-- 新增统一 `ResolvedAddressSpaceSurfaceService`
+- 新增统一 `ResolvedVfsSurfaceService`
 - 抽离 surface source 到显式枚举与 DTO
 - 将 `mount.rs` 中“基础 mount 构建”和“agent/runtime 修饰”拆分
 - 为 `ProjectAgentKnowledge` 提供独立 surface 构建逻辑
 - 为 surface 构建结果统一派生 mount 摘要
 
 ### Backend API
-- 替换当前 `/address-spaces/preview` 坐标式 preview 接口
+- 替换当前 `/vfs/preview` 坐标式 preview 接口
 - 新增 surface resolve / query / mount-operation 接口
 - 删除 route 内部手工拼装 `shared_context_mounts` 的逻辑
 - 删除 `build_project_agent_visible_mounts()` 摘要旁路
 - 让 ProjectAgentSummary / Session snapshot / runtime browse 全部消费统一 resolved surface
 
 ### Frontend Services & Types
-- 引入 `ResolvedAddressSpaceSurface`、`ResolvedMountSummary`、`surface_ref` 等新 DTO
+- 引入 `ResolvedVfsSurface`、`ResolvedMountSummary`、`surface_ref` 等新 DTO
 - 删除旧 preview DTO 与基于业务坐标的文件操作参数模型
-- 更新 `addressSpaces.ts` 为 surfaceRef 模型
+- 更新 `vfs.ts` 为 surfaceRef 模型
 - 更新 `types/index.ts` / `types/context.ts`
 
 ### Frontend UI
-- 将 `AddressSpaceBrowser` 改写为纯 surface 浏览器
+- 将 `VfsBrowser` 改写为纯 surface 浏览器
 - 新增面向业务的 surface 容器层，而不是把业务解析塞进通用浏览器
 - Agent 页改为 `AgentKnowledgeBrowser`
 - Session / Project / Story 面板统一消费 resolved surface
@@ -81,7 +81,7 @@
 - 覆盖 mount list/read/write 不再依赖业务坐标重解
 
 ## Deletions Required
-- 删除 `AddressSpaceBrowser.preview` 业务坐标模式
+- 删除 `VfsBrowser.preview` 业务坐标模式
 - 删除 `build_project_agent_visible_mounts()`
 - 删除 `SharedContextMount`
 - 删除 `project_sessions.rs` 中对 `shared_mounts` 的二次拼装

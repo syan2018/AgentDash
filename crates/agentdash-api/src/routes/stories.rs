@@ -154,7 +154,7 @@ pub async fn create_story(
     state.repos.story_repo.create(&next_story).await?;
 
     // 同步 inline files 初始文件到 inline_fs_files 表
-    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
+    agentdash_application::vfs::inline_persistence::sync_container_inline_files(
         state.repos.inline_file_repo.as_ref(),
         agentdash_domain::inline_file::InlineFileOwnerKind::Story,
         next_story.id,
@@ -252,7 +252,7 @@ pub async fn update_story(
     state.repos.story_repo.update(&story).await?;
 
     // 同步 inline files 初始文件到 inline_fs_files 表
-    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
+    agentdash_application::vfs::inline_persistence::sync_container_inline_files(
         state.repos.inline_file_repo.as_ref(),
         agentdash_domain::inline_file::InlineFileOwnerKind::Story,
         story.id,

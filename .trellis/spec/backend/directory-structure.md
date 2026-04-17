@@ -40,7 +40,7 @@ crates/
 │       ├── task_agent_context.rs # re-export → application
 │       ├── runtime_bridge.rs    # re-export → application
 │       ├── workspace_resolution.rs # 薄适配器（BackendAvailability → AppState）
-│       ├── address_space_access/ # 集成测试 only（re-export 已清除，API 层消费者直接导入 application::address_space）
+│       ├── vfs_access/ # 集成测试 only（re-export 已清除，API 层消费者直接导入 application::vfs）
 │       ├── execution_hooks/     # re-export → application::hooks
 │       ├── bootstrap/
 │       │   ├── task_execution_gateway.rs  # 薄适配器（~360行，含 relay dispatch）
@@ -58,7 +58,7 @@ crates/
 │           ├── story_sessions.rs
 │           ├── task_execution.rs
 │           ├── settings.rs
-│           ├── address_spaces.rs
+│           ├── vfs.rs
 │           ├── workspace_files.rs
 │           ├── discovery.rs
 │           └── discovered_options.rs
@@ -100,13 +100,13 @@ crates/
 │       │   │   ├── turn_context.rs # turn 上下文准备
 │       │   │   └── turn_monitor.rs # turn 监听与事件处理
 │       │   └── tools/           # Task 相关 tool 实现（companion/hook）
-│       ├── address_space/       # 寻址空间组装（mount/path/types）
+│       ├── vfs/       # 寻址空间组装（mount/path/types）
 │       │   ├── mod.rs
 │       │   ├── mount.rs         # Mount 派生与 Address Space 组装
 │       │   ├── path.rs          # Mount 解析与路径归一化
 │       │   ├── types.rs         # ResourceRef, ListOptions, ExecRequest 等值类型
 │       │   ├── inline_persistence.rs # 内联内容持久化
-│       │   ├── relay_service.rs # RelayAddressSpaceService
+│       │   ├── relay_service.rs # RelayVfsService
 │       │   └── tools/           # FS/Shell/MountsList 等 tool 实现
 │       ├── workflow/            # Workflow & Lifecycle
 │       │   └── tools/           # WorkflowArtifactReportTool
@@ -325,7 +325,7 @@ impl StoryRepository for PostgresStoryRepository {
 // agentdash-api/src/app_state.rs
 pub struct AppState {
     pub repos: RepositorySet,         // 8 个 Repository trait 对象
-    pub services: ServiceSet,         // executor_hub, connector, address_space, backend_registry 等
+    pub services: ServiceSet,         // executor_hub, connector, vfs, backend_registry 等
     pub task_runtime: TaskRuntime,    // lock_map, restart_tracker
     pub config: AppConfig,            // mcp_base_url 等配置
     pub remote_sessions: Arc<RwLock<HashMap<String, String>>>,

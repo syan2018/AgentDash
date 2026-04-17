@@ -3,7 +3,7 @@ import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPrompt
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
-import { AddressSpaceBrowser } from "../address-space";
+import { VfsBrowser } from "../vfs";
 
 export interface AgentPresetEditorProps {
   presets: AgentPreset[];
@@ -1057,10 +1057,10 @@ function KnowledgeSection({
         )}
       </div>
 
-      {/* ── Address Space 浏览器 ── */}
+      {/* ── VFS 浏览器 ── */}
       {enabled && isOpen && projectId && agentId && linkId && (
         <div className="border-t border-border px-2 py-3">
-          <AddressSpaceBrowser
+          <VfsBrowser
             source={{
               source_type: "project_agent_knowledge",
               project_id: projectId,

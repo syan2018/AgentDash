@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::address_space::{
+use agentdash_application::vfs::{
     ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, PROVIDER_RELAY_FS,
     ReadResult, SearchMatch, SearchQuery, SearchResult, join_root_ref,

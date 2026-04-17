@@ -16,7 +16,7 @@ use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::address_space::SessionMountTarget;
+use agentdash_application::vfs::SessionMountTarget;
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
@@ -49,7 +49,7 @@ use crate::auth::{
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
 use crate::routes::{project_sessions, story_sessions, task_execution};
-use crate::routes::address_space_surfaces::build_surface_summary;
+use crate::routes::vfs_surfaces::build_surface_summary;
 use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::task_agent_context::resolve_workspace_declared_sources;
 use agentdash_application::session::context::apply_workspace_defaults;
@@ -543,9 +543,9 @@ pub struct SessionContextResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_binding: Option<agentdash_domain::task::AgentBinding>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_space: Option<agentdash_spi::AddressSpace>,
+    pub vfs: Option<agentdash_spi::Vfs>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_surface: Option<agentdash_application::address_space::ResolvedAddressSpaceSurface>,
+    pub runtime_surface: Option<agentdash_application::vfs::ResolvedVfsSurface>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -555,7 +555,7 @@ pub struct SessionContextResponse {
 async fn try_build_session_capabilities(
     state: &AppState,
     session_id: &str,
-    address_space: Option<&agentdash_spi::AddressSpace>,
+    vfs: Option<&agentdash_spi::Vfs>,
 ) -> Option<agentdash_spi::SessionBaselineCapabilities> {
     let hook_runtime = state
         .services
@@ -565,9 +565,9 @@ async fn try_build_session_capabilities(
         .ok()
         .flatten();
 
-    let skills = if let Some(space) = address_space {
-        let result = agentdash_application::skill::load_skills_from_address_space(
-            &state.services.address_space_service,
+    let skills = if let Some(space) = vfs {
+        let result = agentdash_application::skill::load_skills_from_vfs(
+            &state.services.vfs_service,
             space,
         )
         .await;
@@ -587,7 +587,7 @@ async fn try_build_session_capabilities(
     if caps.is_empty() { None } else { Some(caps) }
 }
 
-/// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / address_space / snapshot
+/// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / vfs / snapshot
 pub async fn get_session_context(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -605,7 +605,7 @@ pub async fn get_session_context(
         return Ok(Json(SessionContextResponse {
             workspace_id: None,
             agent_binding: None,
-            address_space: None,
+            vfs: None,
             runtime_surface: None,
             context_snapshot: None,
             session_capabilities: None,
@@ -641,26 +641,26 @@ pub async fn get_session_context(
             let built_context =
                 agentdash_application::task::context_builder::build_task_session_context(
                     &state.repos,
-                    &state.services.address_space_service,
+                    &state.services.vfs_service,
                     state.config.mcp_base_url.as_deref(),
                     task_id,
                     session_meta.as_ref(),
                 )
                 .await;
-            let resolved_address_space = built_context
+            let resolved_vfs = built_context
                 .as_ref()
-                .and_then(|context| context.address_space.clone());
+                .and_then(|context| context.vfs.clone());
             let capabilities = try_build_session_capabilities(
                 &state,
                 &session_id,
-                resolved_address_space.as_ref(),
+                resolved_vfs.as_ref(),
             )
             .await;
-            let runtime_surface = if let Some(space) = resolved_address_space.as_ref() {
+            let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
                 Some(
                     build_surface_summary(
                         &state,
-                        &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
                             session_id: session_id.clone(),
                         },
                         space,
@@ -673,7 +673,7 @@ pub async fn get_session_context(
             Ok(Json(SessionContextResponse {
                 workspace_id: task.workspace_id.map(|id| id.to_string()),
                 agent_binding: Some(result.agent_binding),
-                address_space: resolved_address_space,
+                vfs: resolved_vfs,
                 runtime_surface,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
                 session_capabilities: capabilities,
@@ -691,20 +691,20 @@ pub async fn get_session_context(
             let built_context =
                 story_sessions::build_story_session_context_response(&state, &story, &session_id)
                     .await?;
-            let resolved_address_space = built_context
+            let resolved_vfs = built_context
                 .as_ref()
-                .and_then(|context| context.address_space.clone());
+                .and_then(|context| context.vfs.clone());
             let capabilities = try_build_session_capabilities(
                 &state,
                 &session_id,
-                resolved_address_space.as_ref(),
+                resolved_vfs.as_ref(),
             )
             .await;
-            let runtime_surface = if let Some(space) = resolved_address_space.as_ref() {
+            let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
                 Some(
                     build_surface_summary(
                         &state,
-                        &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
                             session_id: session_id.clone(),
                         },
                         space,
@@ -717,7 +717,7 @@ pub async fn get_session_context(
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
-                address_space: resolved_address_space,
+                vfs: resolved_vfs,
                 runtime_surface,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
                 session_capabilities: capabilities,
@@ -742,14 +742,14 @@ pub async fn get_session_context(
             let capabilities = try_build_session_capabilities(
                 &state,
                 &session_id,
-                built_context.address_space.as_ref(),
+                built_context.vfs.as_ref(),
             )
             .await;
-            let runtime_surface = if let Some(space) = built_context.address_space.as_ref() {
+            let runtime_surface = if let Some(space) = built_context.vfs.as_ref() {
                 Some(
                     build_surface_summary(
                         &state,
-                        &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
                             session_id: session_id.clone(),
                         },
                         space,
@@ -762,7 +762,7 @@ pub async fn get_session_context(
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
-                address_space: built_context.address_space.clone(),
+                vfs: built_context.vfs.clone(),
                 runtime_surface,
                 context_snapshot: built_context.context_snapshot,
                 session_capabilities: capabilities,
@@ -1107,7 +1107,7 @@ fn finalize_augmented_request(
     system_context: Option<String>,
     prompt_blocks: Vec<serde_json::Value>,
     workspace: Option<&Workspace>,
-    address_space: Option<agentdash_spi::AddressSpace>,
+    vfs: Option<agentdash_spi::Vfs>,
     effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
     flow_capabilities: agentdash_spi::FlowCapabilities,
     bootstrap_action: SessionBootstrapAction,
@@ -1118,11 +1118,11 @@ fn finalize_augmented_request(
 
     apply_workspace_defaults(
         &mut req.user_input.working_dir,
-        &mut req.address_space,
+        &mut req.vfs,
         workspace,
     );
-    if req.address_space.is_none() {
-        req.address_space = address_space;
+    if req.vfs.is_none() {
+        req.vfs = vfs;
     }
     req.mcp_servers = effective_mcp_servers;
     req.flow_capabilities = Some(flow_capabilities);
@@ -1174,13 +1174,13 @@ async fn build_story_owner_prompt_request(
                     .to_string(),
             )
         })?;
-    let mut address_space = match req.address_space.clone() {
-        Some(address_space) => Some(address_space),
+    let mut vfs = match req.vfs.clone() {
+        Some(vfs) => Some(vfs),
         None => Some(
             state
                 .services
-                .address_space_service
-                .build_address_space(
+                .vfs_service
+                .build_vfs(
                     project,
                     Some(story),
                     workspace,
@@ -1190,7 +1190,7 @@ async fn build_story_owner_prompt_request(
                 .map_err(ApiError::BadRequest)?,
         ),
     };
-    if let Some(space) = address_space.as_mut() {
+    if let Some(space) = vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,
@@ -1205,7 +1205,7 @@ async fn build_story_owner_prompt_request(
     let base_url = required_mcp_base_url(state.as_ref())?;
     effective_mcp_servers
         .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
-    let runtime_address_space = address_space.clone();
+    let runtime_vfs = vfs.clone();
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let resolved_workspace_sources =
@@ -1217,7 +1217,7 @@ async fn build_story_owner_prompt_request(
         story,
         project,
         workspace,
-        address_space: runtime_address_space.as_ref(),
+        vfs: runtime_vfs.as_ref(),
         mcp_servers: &runtime_mcp_servers,
         effective_agent_type,
         workspace_source_fragments: resolved_workspace_sources.fragments,
@@ -1262,7 +1262,7 @@ async fn build_story_owner_prompt_request(
         system_context,
         prompt_blocks,
         workspace,
-        address_space,
+        vfs,
         effective_mcp_servers,
         agentdash_spi::FlowCapabilities::all(),
         bootstrap_action,
@@ -1316,13 +1316,13 @@ async fn build_project_owner_prompt_request(
         None => project_agent.executor_config.clone(),
     };
     let effective_agent_type = Some(effective_executor_config.executor.as_str());
-    let mut address_space = match req.address_space.clone() {
-        Some(address_space) => Some(address_space),
+    let mut vfs = match req.vfs.clone() {
+        Some(vfs) => Some(vfs),
         None => Some(
             state
                 .services
-                .address_space_service
-                .build_address_space(
+                .vfs_service
+                .build_vfs(
                     project,
                     None,
                     workspace.as_ref(),
@@ -1332,7 +1332,7 @@ async fn build_project_owner_prompt_request(
                 .map_err(ApiError::BadRequest)?,
         ),
     };
-    if let Some(space) = address_space.as_mut() {
+    if let Some(space) = vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,
@@ -1349,13 +1349,13 @@ async fn build_project_owner_prompt_request(
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
     req.relay_mcp_server_names
         .extend(project_agent.relay_mcp_server_names.iter().cloned());
-    let runtime_address_space = address_space.clone();
+    let runtime_vfs = vfs.clone();
     let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
 
     let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {
         project,
         workspace: workspace.as_ref(),
-        address_space: runtime_address_space.as_ref(),
+        vfs: runtime_vfs.as_ref(),
         mcp_servers: &runtime_mcp_servers,
         effective_agent_type,
         preset_name: project_agent.preset_name.as_deref(),
@@ -1405,7 +1405,7 @@ async fn build_project_owner_prompt_request(
         system_context,
         prompt_blocks,
         workspace.as_ref(),
-        address_space,
+        vfs,
         effective_mcp_servers,
         agentdash_spi::FlowCapabilities::from_clusters([
             agentdash_spi::ToolCluster::Read,
@@ -1445,7 +1445,7 @@ async fn build_task_owner_prompt_request(
     let services = TaskTurnServices {
         repos: &state.repos,
         availability: state.services.backend_registry.as_ref(),
-        address_space_service: state.services.address_space_service.as_ref(),
+        vfs_service: state.services.vfs_service.as_ref(),
         contributor_registry: state.services.contributor_registry.as_ref(),
         mcp_base_url: state.config.mcp_base_url.as_deref(),
     };
@@ -1460,8 +1460,8 @@ async fn build_task_owner_prompt_request(
     .await
     .map_err(task_execution::map_task_execution_error)?;
 
-    let mut address_space = prepared.address_space.clone();
-    if let Some(space) = address_space.as_mut() {
+    let mut vfs = prepared.vfs.clone();
+    if let Some(space) = vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             task.project_id,
@@ -1523,7 +1523,7 @@ async fn build_task_owner_prompt_request(
         system_context,
         prompt_blocks,
         prepared.workspace.as_ref(),
-        address_space,
+        vfs,
         runtime_mcp_servers_to_acp(&prepared.built.mcp_servers),
         agentdash_spi::FlowCapabilities::from_clusters([
             agentdash_spi::ToolCluster::Read,

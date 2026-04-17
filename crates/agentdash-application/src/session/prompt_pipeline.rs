@@ -49,22 +49,22 @@ impl SessionHub {
             runtime.tx.clone()
         };
 
-        let effective_address_space = req
-            .address_space
+        let effective_vfs = req
+            .vfs
             .clone()
-            .or_else(|| self.default_address_space.clone())
+            .or_else(|| self.default_vfs.clone())
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(
-                    "prompt 缺少 address_space，且 SessionHub 未配置默认 address_space".to_string(),
+                    "prompt 缺少 vfs，且 SessionHub 未配置默认 vfs".to_string(),
                 )
             })?;
-        let default_mount_root = effective_address_space
+        let default_mount_root = effective_vfs
             .default_mount()
             .map(|m| PathBuf::from(m.root_ref.trim()))
             .filter(|p| !p.as_os_str().is_empty())
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(
-                    "address_space 缺少 default_mount 或 root_ref 无效".to_string(),
+                    "vfs 缺少 default_mount 或 root_ref 无效".to_string(),
                 )
             })?;
         let working_directory =
@@ -190,10 +190,10 @@ impl SessionHub {
             _ => None,
         };
 
-        // 通过 address space service 扫描所有 mount 的 skill
-        let mut discovered_skills = if let Some(service) = &self.address_space_service {
+        // 通过 VFS service 扫描所有 mount 的 skill
+        let mut discovered_skills = if let Some(service) = &self.vfs_service {
             let skill_result =
-                crate::skill::load_skills_from_address_space(service, &effective_address_space)
+                crate::skill::load_skills_from_vfs(service, &effective_vfs)
                     .await;
             for diag in &skill_result.diagnostics {
                 tracing::warn!(
@@ -237,7 +237,7 @@ impl SessionHub {
             executor_config,
             mcp_servers: req.mcp_servers,
             relay_mcp_server_names: req.relay_mcp_server_names,
-            address_space: Some(effective_address_space),
+            vfs: Some(effective_vfs),
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
             system_context: req.system_context,

@@ -98,7 +98,7 @@ impl AgentConnector for RelayAgentConnector {
         let mount_root_ref = default_mount.root_ref.trim();
         if mount_root_ref.is_empty() {
             return Err(ConnectorError::InvalidConfig(
-                "address_space.default_mount.root_ref 为空".to_string(),
+                "vfs.default_mount.root_ref 为空".to_string(),
             ));
         }
         let preferred_backend_id = preferred_backend_id_from_context(&context);
@@ -276,24 +276,24 @@ fn dedup_executors(executors: Vec<crate::backend_transport::RemoteExecutorInfo>)
 fn default_mount_from_context(
     context: &ExecutionContext,
 ) -> Result<&agentdash_spi::Mount, ConnectorError> {
-    let address_space = context.address_space.as_ref().ok_or_else(|| {
-        ConnectorError::InvalidConfig("ExecutionContext 缺少 address_space".to_string())
+    let vfs = context.vfs.as_ref().ok_or_else(|| {
+        ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
     })?;
-    address_space.default_mount().ok_or_else(|| {
-        ConnectorError::InvalidConfig("address_space 缺少 default_mount".to_string())
+    vfs.default_mount().ok_or_else(|| {
+        ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string())
     })
 }
 
 fn preferred_backend_id_from_context(context: &ExecutionContext) -> Option<String> {
-    let address_space = context.address_space.as_ref()?;
-    if let Some(default_mount) = address_space.default_mount() {
+    let vfs = context.vfs.as_ref()?;
+    if let Some(default_mount) = vfs.default_mount() {
         let backend_id = default_mount.backend_id.trim();
         if !backend_id.is_empty() {
             return Some(backend_id.to_string());
         }
     }
 
-    let unique_backend_ids = address_space
+    let unique_backend_ids = vfs
         .mounts
         .iter()
         .filter_map(|mount| {

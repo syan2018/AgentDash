@@ -31,7 +31,7 @@ struct ResourceRef {
 
 ```rust
 #[async_trait]
-trait AddressSpaceProvider {
+trait VfsProvider {
     async fn read(&self, target: &ResourceRef, opts: ReadOpts) -> Result<ReadResult, AccessError>;
     async fn write(&self, target: &ResourceRef, content: WriteContent) -> Result<WriteResult, AccessError>;
     async fn list(&self, target: &ResourceRef, opts: ListOpts) -> Result<ListResult, AccessError>;
@@ -43,7 +43,7 @@ trait AddressSpaceProvider {
 
 #### 2.2.1 命名注意（当前代码现状）
 
-- 当前代码里的 `agentdash-injection::AddressSpaceProvider` 仅用于暴露 address space descriptor，服务 `/api/address-spaces` 能力发现。
+- 当前代码里的 `agentdash-injection::VfsProvider` 仅用于暴露 address space descriptor，服务 `/api/vfs` 能力发现。
 - 它还不是本规范这里的统一读写 provider，不承担 `read / write / list / search / exec`。
 - 后续落地时必须显式决定是：
   - 扩展现有 descriptor provider
@@ -115,11 +115,11 @@ trait AddressSpaceProvider {
 补充说明：
 
 - 当前已落地的 provider 至少包括：
-  - `relay_fs`：通过 relay 访问本机物理工作空间（实现位于 `application::address_space::relay_service`）
-  - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器（实现位于 `application::address_space::inline_persistence`）
+  - `relay_fs`：通过 relay 访问本机物理工作空间（实现位于 `application::vfs::relay_service`）
+  - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器（实现位于 `application::vfs::inline_persistence`）
 - `inline_fs` 的首轮目标是让内置数据结构也能走统一 mount 模型，而不是继续散落在 prompt 拼接逻辑中。
-- 运行时工具实现（`fs.read/write/apply_patch/list/search`、`shell.exec`、`mounts.list`）位于 `application::address_space::tools`，API 层通过 re-export 引用。
-- `RuntimeToolProvider`（为 relay session 提供 tool 注册）位于 `application::address_space::tools::provider`。
+- 运行时工具实现（`fs.read/write/apply_patch/list/search`、`shell.exec`、`mounts.list`）位于 `application::vfs::tools`，API 层通过 re-export 引用。
+- `RuntimeToolProvider`（为 relay session 提供 tool 注册）位于 `application::vfs::tools::provider`。
 - 针对编辑类操作，provider 还可以额外声明 `MountEditCapabilities`：
   - `create`
   - `delete`
@@ -212,7 +212,7 @@ trait AddressSpaceProvider {
 
 ```json
 { "tool": "fs.read", "mount": "main", "path": "Cargo.toml" }
-{ "tool": "fs.read", "mount": "spec", "path": "backend/address-space-access.md" }
+{ "tool": "fs.read", "mount": "spec", "path": "backend/vfs-access.md" }
 { "tool": "fs.read", "mount": "brief", "path": "brief.md" }
 ```
 
@@ -336,7 +336,7 @@ relay_fs / local_fs / km / snapshot
 
 - 先修复本机 prompt 执行真正 honor `workspace_root`
 - 先补强本机路径边界
-- 再抽 `AddressSpaceProvider`
+- 再抽 `VfsProvider`
 - 再让 declared source 优先接入 provider
 - 最后推动 PiAgent runtime tool 迁移
 

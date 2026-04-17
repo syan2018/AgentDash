@@ -129,7 +129,7 @@ pub struct SearchHit {
 
 /// 外部服务客户端 — 对齐 03-19 PRD 的 provider service 契约
 ///
-/// 企业通过实现此 trait 将 KM、文档中心、知识网关等接入统一 Address Space。
+/// 企业通过实现此 trait 将 KM、文档中心、知识网关等接入统一 VFS。
 /// Agent 侧只看到 `mount + relative path`，不直接接触此接口。
 ///
 /// # 首轮只读约束

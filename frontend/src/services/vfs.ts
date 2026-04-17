@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import type { ResolvedAddressSpaceSurface, ResolvedAddressSpaceSurfaceSource } from "../types/context";
+import type { ResolvedVfsSurface, ResolvedVfsSurfaceSource } from "../types/context";
 
 // ─── Descriptor（能力发现） ─────────────────────────────
 
@@ -9,7 +9,7 @@ export interface SelectorHint {
   result_item_type: string;
 }
 
-export interface AddressSpaceDescriptor {
+export interface VfsDescriptor {
   id: string;
   label: string;
   kind: string;
@@ -20,13 +20,13 @@ export interface AddressSpaceDescriptor {
   selector?: SelectorHint | null;
 }
 
-export interface ListAddressSpacesResponse {
-  spaces: AddressSpaceDescriptor[];
+export interface ListVfssResponse {
+  spaces: VfsDescriptor[];
 }
 
 // ─── Entry（条目搜索） ──────────────────────────────────
 
-export interface AddressEntry {
+export interface VfsEntry {
   address: string;
   label: string;
   entry_type: string;
@@ -35,7 +35,7 @@ export interface AddressEntry {
 }
 
 export interface ListEntriesResponse {
-  entries: AddressEntry[];
+  entries: VfsEntry[];
 }
 
 // ─── Surface Mount Entry ───────────────────────────────
@@ -77,17 +77,17 @@ export interface ApplySurfacePatchResponse {
   deleted: string[];
 }
 
-export interface AddressSpaceQueryParams {
+export interface VfsQueryParams {
   workspaceId?: string | null;
 }
 
-export interface ListEntriesParams extends AddressSpaceQueryParams {
+export interface ListEntriesParams extends VfsQueryParams {
   query?: string;
   path?: string;
   recursive?: boolean;
 }
 
-function applyQueryParams(searchParams: URLSearchParams, params?: AddressSpaceQueryParams) {
+function applyQueryParams(searchParams: URLSearchParams, params?: VfsQueryParams) {
   if (!params) return;
   if (params.workspaceId) searchParams.set("workspace_id", params.workspaceId);
 }
@@ -97,12 +97,12 @@ function buildQs(searchParams: URLSearchParams): string {
   return qs ? `?${qs}` : "";
 }
 
-export async function listAddressSpaces(
-  params?: AddressSpaceQueryParams,
-): Promise<ListAddressSpacesResponse> {
+export async function listVfss(
+  params?: VfsQueryParams,
+): Promise<ListVfssResponse> {
   const sp = new URLSearchParams();
   applyQueryParams(sp, params);
-  return api.get<ListAddressSpacesResponse>(`/address-spaces${buildQs(sp)}`);
+  return api.get<ListVfssResponse>(`/vfs${buildQs(sp)}`);
 }
 
 export async function listAddressEntries(
@@ -116,18 +116,18 @@ export async function listAddressEntries(
   if (params?.recursive !== undefined) sp.set("recursive", String(params.recursive));
 
   return api.get<ListEntriesResponse>(
-    `/address-spaces/${encodeURIComponent(spaceId)}/entries${buildQs(sp)}`,
+    `/vfs/${encodeURIComponent(spaceId)}/entries${buildQs(sp)}`,
   );
 }
 
-export async function resolveAddressSpaceSurface(
-  source: ResolvedAddressSpaceSurfaceSource,
-): Promise<ResolvedAddressSpaceSurface> {
-  return api.post<ResolvedAddressSpaceSurface>("/address-space-surfaces/resolve", { source });
+export async function resolveVfsSurface(
+  source: ResolvedVfsSurfaceSource,
+): Promise<ResolvedVfsSurface> {
+  return api.post<ResolvedVfsSurface>("/vfs-surfaces/resolve", { source });
 }
 
-export async function getAddressSpaceSurface(surfaceRef: string): Promise<ResolvedAddressSpaceSurface> {
-  return api.get<ResolvedAddressSpaceSurface>(`/address-space-surfaces/${encodeURIComponent(surfaceRef)}`);
+export async function getVfsSurface(surfaceRef: string): Promise<ResolvedVfsSurface> {
+  return api.get<ResolvedVfsSurface>(`/vfs-surfaces/${encodeURIComponent(surfaceRef)}`);
 }
 
 export async function listSurfaceMountEntries(params: {
@@ -143,7 +143,7 @@ export async function listSurfaceMountEntries(params: {
   if (params.recursive !== undefined) sp.set("recursive", String(params.recursive));
 
   return api.get<ListSurfaceMountEntriesResponse>(
-    `/address-space-surfaces/${encodeURIComponent(params.surfaceRef)}/mounts/${encodeURIComponent(params.mountId)}/entries${buildQs(sp)}`,
+    `/vfs-surfaces/${encodeURIComponent(params.surfaceRef)}/mounts/${encodeURIComponent(params.mountId)}/entries${buildQs(sp)}`,
   );
 }
 
@@ -152,7 +152,7 @@ export async function readSurfaceFile(params: {
   mountId: string;
   path: string;
 }): Promise<ReadSurfaceFileResponse> {
-  return api.post<ReadSurfaceFileResponse>("/address-space-surfaces/read-file", {
+  return api.post<ReadSurfaceFileResponse>("/vfs-surfaces/read-file", {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -165,7 +165,7 @@ export async function writeSurfaceFile(params: {
   path: string;
   content: string;
 }): Promise<WriteSurfaceFileResponse> {
-  return api.post<WriteSurfaceFileResponse>("/address-space-surfaces/write-file", {
+  return api.post<WriteSurfaceFileResponse>("/vfs-surfaces/write-file", {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -178,7 +178,7 @@ export async function applySurfacePatch(params: {
   mountId: string;
   patch: string;
 }): Promise<ApplySurfacePatchResponse> {
-  return api.post<ApplySurfacePatchResponse>("/address-space-surfaces/apply-patch", {
+  return api.post<ApplySurfacePatchResponse>("/vfs-surfaces/apply-patch", {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     patch: params.patch,

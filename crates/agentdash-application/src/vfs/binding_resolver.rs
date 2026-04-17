@@ -6,8 +6,8 @@
 use agentdash_domain::workflow::WorkflowContextBinding;
 
 use super::path::parse_mount_uri;
-use super::relay_service::RelayAddressSpaceService;
-use crate::runtime::AddressSpace;
+use super::relay_service::RelayVfsService;
+use crate::runtime::Vfs;
 
 /// 单个 binding 的解析结果
 #[derive(Debug, Clone)]
@@ -29,14 +29,14 @@ pub struct ResolveBindingsOutput {
 ///
 /// 对每个 binding：
 /// - 解析 locator 为 mount_id + path
-/// - 调用 address_space_service.read_text
+/// - 调用 vfs_service.read_text
 /// - 成功 → 加入 resolved
 /// - 失败 + required → 返回 Err
 /// - 失败 + !required → 记录 warning 跳过
 pub async fn resolve_context_bindings(
     bindings: &[WorkflowContextBinding],
-    address_space: &AddressSpace,
-    service: &RelayAddressSpaceService,
+    vfs: &Vfs,
+    service: &RelayVfsService,
 ) -> Result<ResolveBindingsOutput, String> {
     if bindings.is_empty() {
         return Ok(ResolveBindingsOutput::default());
@@ -50,7 +50,7 @@ pub async fn resolve_context_bindings(
             continue;
         }
 
-        let resource_ref = match parse_mount_uri(locator, address_space) {
+        let resource_ref = match parse_mount_uri(locator, vfs) {
             Ok(r) => r,
             Err(err) => {
                 if binding.required {
@@ -69,7 +69,7 @@ pub async fn resolve_context_bindings(
 
         let read_result = service
             .read_text(
-                address_space,
+                vfs,
                 &resource_ref,
                 None, // overlay
                 None, // identity

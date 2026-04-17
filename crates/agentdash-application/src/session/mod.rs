@@ -14,7 +14,7 @@ mod memory_persistence;
 pub mod persistence;
 pub mod plan;
 pub mod post_turn_handler;
-mod prompt_address_space;
+mod prompt_vfs;
 mod prompt_pipeline;
 pub mod stall_detector;
 pub mod title_generator;
@@ -31,7 +31,7 @@ pub use persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
 pub use post_turn_handler::{DynSessionTerminalCallback, PostTurnHandler, SessionTerminalCallback};
-pub use prompt_address_space::local_workspace_address_space;
+pub use prompt_vfs::local_workspace_vfs;
 pub use title_generator::SessionTitleGenerator;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{

@@ -3,12 +3,12 @@ use agentdash_domain::{
     workspace::Workspace,
 };
 
-use crate::address_space::{
-    RelayAddressSpaceService, ResolveBindingsOutput, SessionMountTarget,
+use crate::vfs::{
+    RelayVfsService, ResolveBindingsOutput, SessionMountTarget,
     build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::repository_set::RepositorySet;
-use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
+use crate::runtime::{Vfs, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
 use crate::task::config::resolve_task_executor_config;
 use crate::task::execution::TaskExecutionError;
 use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
@@ -18,7 +18,7 @@ pub struct TaskSessionRuntimeInputs {
     pub resolved_config: Option<AgentConfig>,
     pub executor_source: String,
     pub executor_resolution_error: Option<String>,
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub workflow: Option<ActiveWorkflowProjection>,
     /// context_bindings 预解析结果（session 创建时通过 VFS read 解析）
     pub resolved_bindings: Option<ResolveBindingsOutput>,
@@ -27,7 +27,7 @@ pub struct TaskSessionRuntimeInputs {
 
 pub async fn build_task_session_runtime_inputs(
     repos: &RepositorySet,
-    address_space_service: &RelayAddressSpaceService,
+    vfs_service: &RelayVfsService,
     mcp_base_url: Option<&str>,
     task: &Task,
     story: &Story,
@@ -56,15 +56,15 @@ pub async fn build_task_session_runtime_inputs(
         })
         .unwrap_or_default();
 
-    let use_address_space = resolved_config
+    let use_vfs = resolved_config
         .as_ref()
         .is_some_and(|config| config.is_cloud_native());
     let effective_agent_type = resolved_config
         .as_ref()
         .map(|config| config.executor.as_str());
-    let address_space = if use_address_space {
-        let mut space = address_space_service
-            .build_address_space(
+    let vfs = if use_vfs {
+        let mut space = vfs_service
+            .build_vfs(
                 project,
                 Some(story),
                 workspace,
@@ -92,15 +92,15 @@ pub async fn build_task_session_runtime_inputs(
         None
     };
 
-    // 解析 workflow context_bindings（如果有 address_space 和 workflow）
-    let resolved_bindings = match (&address_space, &workflow) {
+    // 解析 workflow context_bindings（如果有 vfs 和 workflow）
+    let resolved_bindings = match (&vfs, &workflow) {
         (Some(space), Some(wf)) => {
             let bindings = &wf.effective_contract.injection.context_bindings;
             if bindings.is_empty() {
                 None
             } else {
                 Some(
-                    resolve_context_bindings(bindings, space, address_space_service)
+                    resolve_context_bindings(bindings, space, vfs_service)
                         .await
                         .map_err(TaskExecutionError::UnprocessableEntity)?,
                 )
@@ -113,7 +113,7 @@ pub async fn build_task_session_runtime_inputs(
         resolved_config,
         executor_source,
         executor_resolution_error,
-        address_space,
+        vfs,
         workflow,
         resolved_bindings,
         mcp_servers,

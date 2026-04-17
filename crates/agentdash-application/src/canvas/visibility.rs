@@ -4,17 +4,17 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::CanvasRepository;
-use agentdash_spi::AddressSpace;
+use agentdash_spi::Vfs;
 
-use crate::address_space::append_canvas_mounts;
+use crate::vfs::append_canvas_mounts;
 
-/// 根据会话显式声明的 canvas mount_id 列表，向 address space 追加可见 canvas。
+/// 根据会话显式声明的 canvas mount_id 列表，向 VFS 追加可见 canvas。
 ///
 /// 注意：默认不注入任何 canvas。只有会话里记录过的 mount_id 才会被追加。
 pub async fn append_visible_canvas_mounts(
     canvas_repo: &dyn CanvasRepository,
     project_id: Uuid,
-    address_space: &mut AddressSpace,
+    vfs: &mut Vfs,
     visible_mount_ids: &[String],
 ) -> Result<(), DomainError> {
     let selected = visible_mount_ids
@@ -32,6 +32,6 @@ pub async fn append_visible_canvas_mounts(
         .into_iter()
         .filter(|canvas| selected.contains(canvas.mount_id.as_str()))
         .collect::<Vec<_>>();
-    append_canvas_mounts(address_space, &visible);
+    append_canvas_mounts(vfs, &visible);
     Ok(())
 }

@@ -69,7 +69,7 @@ frontend/src/
 │   │   ├── agent-tab-view.tsx      # Agent 标签页视图
 │   │   └── active-session-list.tsx # 活跃会话列表
 │   ├── address-space/              # 寻址空间浏览
-│   │   ├── address-space-browser.tsx
+│   │   ├── vfs-browser.tsx
 │   │   └── index.ts
 │   ├── file-reference/             # 文件引用（prompt 附件选择）
 │   │   ├── FilePickerPopup.tsx
@@ -97,7 +97,7 @@ frontend/src/
 │   ├── executor.ts                 # ExecutorConfig + promptSession API
 │   ├── session.ts                  # Session 管理 API
 │   ├── workflow.ts                 # Workflow 管理 API
-│   ├── addressSpaces.ts            # Address Space API
+│   ├── vfs.ts            # Address Space API
 │   ├── browseDirectory.ts          # 目录浏览 API
 │   ├── directory.ts                # 目录服务
 │   ├── filePicker.ts               # 文件选择器 API

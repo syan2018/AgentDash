@@ -1,4 +1,4 @@
-use crate::address_space::ResolveBindingsOutput;
+use crate::vfs::ResolveBindingsOutput;
 use crate::workflow::ActiveWorkflowProjection;
 use agentdash_spi::{ContextFragment, MergeStrategy};
 
@@ -113,7 +113,7 @@ fn enum_tag<T: serde::Serialize>(value: &T) -> String {
 mod tests {
     use super::super::contributor::TaskExecutionPhase;
     use super::*;
-    use crate::address_space::{ResolveBindingsOutput, ResolvedBinding};
+    use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
     use agentdash_domain::workflow::{
         EffectiveSessionContract, LifecycleDefinition, LifecycleRun, LifecycleStepDefinition,
         WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionSource,

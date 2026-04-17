@@ -57,7 +57,7 @@ pub fn build_task_agent_context(
             TaskExecutionPhase::Start => SessionPlanPhase::TaskStart,
             TaskExecutionPhase::Continue => SessionPlanPhase::TaskContinue,
         },
-        address_space: input.address_space,
+        vfs: input.vfs,
         mcp_servers: &mcp_servers,
         session_composition: effective_session_composition.as_ref(),
         agent_type: input.effective_agent_type,

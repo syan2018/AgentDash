@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::path::normalize_mount_relative_path;
-use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
-use crate::address_space::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
+use crate::runtime::{Vfs, Mount, MountCapability, RuntimeFileEntry};
+use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::context_container::{
     ContextContainerDefinition, ContextContainerExposure, ContextContainerProvider,
 };
@@ -59,14 +59,14 @@ impl From<agentdash_domain::session_binding::SessionOwnerType> for SessionMountT
     }
 }
 
-/// 从 Project / Story / Workspace 策略构建最终 Address Space
-pub fn build_derived_address_space(
+/// 从 Project / Story / Workspace 策略构建最终 VFS
+pub fn build_derived_vfs(
     project: &Project,
     story: Option<&Story>,
     workspace: Option<&Workspace>,
     agent_type: Option<&str>,
     target: SessionMountTarget,
-) -> Result<AddressSpace, String> {
+) -> Result<Vfs, String> {
     let mut mounts = Vec::new();
 
     if let Some(workspace) = workspace {
@@ -94,7 +94,7 @@ pub fn build_derived_address_space(
         mounts.first().map(|mount| mount.id.clone())
     };
 
-    Ok(AddressSpace {
+    Ok(Vfs {
         mounts,
         default_mount_id,
         source_project_id: Some(project.id.to_string()),
@@ -130,49 +130,49 @@ fn build_agent_knowledge_mount(link: &ProjectAgentLink) -> Result<Mount, String>
     Ok(mount)
 }
 
-/// 将 Agent 知识 mount 追加到已有 address space（仅当 knowledge_enabled=true）
+/// 将 Agent 知识 mount 追加到已有 VFS（仅当 knowledge_enabled=true）
 pub fn append_agent_knowledge_mounts(
-    address_space: &mut AddressSpace,
+    vfs: &mut Vfs,
     link: &ProjectAgentLink,
 ) -> Result<(), String> {
     if !link.knowledge_enabled {
         return Ok(());
     }
     let mount = build_agent_knowledge_mount(link)?;
-    if !address_space.mounts.iter().any(|m| m.id == mount.id) {
-        address_space.mounts.push(mount);
+    if !vfs.mounts.iter().any(|m| m.id == mount.id) {
+        vfs.mounts.push(mount);
     }
     Ok(())
 }
 
-/// 构建仅包含 Agent 私有知识库的 Address Space。
+/// 构建仅包含 Agent 私有知识库的 VFS。
 ///
 /// 该 surface 只用于 Agent 页知识库浏览，不混入 project/workspace/lifecycle/canvas mounts。
-pub fn build_project_agent_knowledge_address_space(
+pub fn build_project_agent_knowledge_vfs(
     link: &ProjectAgentLink,
-) -> Result<AddressSpace, String> {
-    let mut address_space = AddressSpace {
+) -> Result<Vfs, String> {
+    let mut vfs = Vfs {
         mounts: Vec::new(),
         default_mount_id: None,
         source_project_id: Some(link.project_id.to_string()),
         source_story_id: None,
     };
-    append_agent_knowledge_mounts(&mut address_space, link)?;
-    address_space.default_mount_id = address_space.mounts.first().map(|mount| mount.id.clone());
-    Ok(address_space)
+    append_agent_knowledge_mounts(&mut vfs, link)?;
+    vfs.default_mount_id = vfs.mounts.first().map(|mount| mount.id.clone());
+    Ok(vfs)
 }
 
-/// 按白名单过滤 address space 中的项目级容器
+/// 按白名单过滤 VFS 中的项目级容器
 ///
 /// 仅保留 `link.project_container_ids` 中列出的项目容器 mount。
 /// 非项目级容器（workspace / canvas / lifecycle 等）不受影响。
 pub fn filter_project_containers_by_whitelist(
-    address_space: &mut AddressSpace,
+    vfs: &mut Vfs,
     link: &ProjectAgentLink,
 ) {
     if link.project_container_ids.is_empty() {
         // 空白名单 = 移除所有项目级容器
-        address_space.mounts.retain(|mount| {
+        vfs.mounts.retain(|mount| {
             mount
                 .metadata
                 .get("agentdash_context_owner_kind")
@@ -184,7 +184,7 @@ pub fn filter_project_containers_by_whitelist(
             .iter()
             .map(|s| s.as_str())
             .collect();
-        address_space.mounts.retain(|mount| {
+        vfs.mounts.retain(|mount| {
             let is_project_container = mount
                 .metadata
                 .get("agentdash_context_owner_kind")
@@ -202,9 +202,9 @@ pub fn filter_project_containers_by_whitelist(
     }
 }
 
-/// 为 Workspace 创建简易单 mount Address Space
-pub fn build_workspace_address_space(workspace: &Workspace) -> Result<AddressSpace, String> {
-    Ok(AddressSpace {
+/// 为 Workspace 创建简易单 mount VFS
+pub fn build_workspace_vfs(workspace: &Workspace) -> Result<Vfs, String> {
+    Ok(Vfs {
         mounts: vec![workspace_mount(workspace)?],
         default_mount_id: Some("main".to_string()),
         source_project_id: None,
@@ -563,16 +563,16 @@ mod tests {
         let mut story = Story::new(project.id, "story".to_string(), "desc".to_string());
         story.context.context_containers = vec![inline_container("brief", "brief", "story.md")];
 
-        let address_space = build_derived_address_space(
+        let vfs = build_derived_vfs(
             &project,
             Some(&story),
             None,
             None,
             SessionMountTarget::Story,
         )
-        .expect("address space should build");
+        .expect("VFS should build");
 
-        let mount = address_space
+        let mount = vfs
             .mounts
             .iter()
             .find(|mount| mount.id == "brief")
@@ -610,16 +610,16 @@ mod tests {
 
         let story = Story::new(project.id, "story".to_string(), "desc".to_string());
 
-        let address_space = build_derived_address_space(
+        let vfs = build_derived_vfs(
             &project,
             Some(&story),
             None,
             None,
             SessionMountTarget::Story,
         )
-        .expect("address space should build");
+        .expect("VFS should build");
 
-        let mount = address_space
+        let mount = vfs
             .mounts
             .iter()
             .find(|mount| mount.id == "spec")
@@ -741,13 +741,13 @@ pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
     }
 }
 
-pub fn append_canvas_mounts(address_space: &mut AddressSpace, canvases: &[Canvas]) {
+pub fn append_canvas_mounts(vfs: &mut Vfs, canvases: &[Canvas]) {
     for canvas in canvases {
         let mount = build_canvas_mount(canvas);
-        address_space
+        vfs
             .mounts
             .retain(|existing| existing.id != mount.id);
-        address_space.mounts.push(mount);
+        vfs.mounts.push(mount);
     }
 }
 

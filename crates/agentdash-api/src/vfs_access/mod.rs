@@ -1,14 +1,14 @@
-/// Address Space 集成测试 — 需要 API 层组件（BackendRegistry、MountProvider 等）
+/// VFS 集成测试 — 需要 API 层组件（BackendRegistry、MountProvider 等）
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use agentdash_application::address_space::inline_persistence::{
+    use agentdash_application::vfs::inline_persistence::{
         InlineContentOverlay, InlineContentPersister,
     };
-    use agentdash_application::address_space::*;
-    use agentdash_spi::{AddressSpace, MountCapability};
+    use agentdash_application::vfs::*;
+    use agentdash_spi::{Vfs, MountCapability};
 
     use agentdash_agent::AgentTool;
     use agentdash_domain::common::error::DomainError;
@@ -18,9 +18,9 @@ mod tests {
     use chrono::Utc;
     use tokio::sync::{Mutex, mpsc};
 
-    use agentdash_application::address_space::tools::fs::{
+    use agentdash_application::vfs::tools::fs::{
         FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
-        SharedRuntimeAddressSpace, ShellExecTool,
+        SharedRuntimeVfs, ShellExecTool,
     };
 
     // `MountCapability` 统一使用 agentdash_spi 版本，避免重复导入
@@ -234,7 +234,7 @@ mod tests {
         Arc::new(registry)
     }
 
-    /// 构建带 owner 坐标的 inline mount（模拟 build_derived_address_space 的输出）
+    /// 构建带 owner 坐标的 inline mount（模拟 build_derived_vfs 的输出）
     fn make_inline_mount_with_owner(
         mount_id: &str,
         container_id: &str,
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn session_for_workspace_creates_main_mount() {
-        let service = RelayAddressSpaceService::new(empty_mount_registry());
+        let service = RelayVfsService::new(empty_mount_registry());
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session should build");
@@ -298,8 +298,8 @@ mod tests {
     }
 
     #[test]
-    fn build_task_address_space_merges_project_story_and_workspace_policy() {
-        let service = RelayAddressSpaceService::new(empty_mount_registry());
+    fn build_task_vfs_merges_project_story_and_workspace_policy() {
+        let service = RelayVfsService::new(empty_mount_registry());
         let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![inline_container(
             "project-spec",
@@ -320,32 +320,32 @@ mod tests {
         let mut ws = sample_workspace();
         ws.mount_capabilities = vec![MountCapability::Read, MountCapability::List];
 
-        let address_space = service
-            .build_address_space(
+        let vfs = service
+            .build_vfs(
                 &project,
                 Some(&story),
                 Some(&ws),
                 SessionMountTarget::Task,
                 Some("PI_AGENT"),
             )
-            .expect("address space should build");
+            .expect("VFS should build");
 
-        assert_eq!(address_space.default_mount_id.as_deref(), Some("main"));
-        assert_eq!(address_space.mounts.len(), 3);
-        let main = address_space
+        assert_eq!(vfs.default_mount_id.as_deref(), Some("main"));
+        assert_eq!(vfs.mounts.len(), 3);
+        let main = vfs
             .mounts
             .iter()
             .find(|m| m.id == "main")
             .expect("main mount");
         assert!(!main.supports(MountCapability::Exec));
         assert!(main.supports(MountCapability::Read));
-        assert!(address_space.mounts.iter().any(|m| m.id == "spec"));
-        assert!(address_space.mounts.iter().any(|m| m.id == "brief"));
+        assert!(vfs.mounts.iter().any(|m| m.id == "spec"));
+        assert!(vfs.mounts.iter().any(|m| m.id == "brief"));
     }
 
     #[test]
     fn story_containers_can_disable_and_override_project_defaults() {
-        let service = RelayAddressSpaceService::new(empty_mount_registry());
+        let service = RelayVfsService::new(empty_mount_registry());
         let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![
             inline_container("project-spec", "shared", "spec.md", "project spec"),
@@ -362,18 +362,18 @@ mod tests {
             "story override",
         )];
 
-        let address_space = service
-            .build_address_space(
+        let vfs = service
+            .build_vfs(
                 &project,
                 Some(&story),
                 None,
                 SessionMountTarget::Task,
                 Some("PI_AGENT"),
             )
-            .expect("address space should build");
+            .expect("VFS should build");
 
-        assert_eq!(address_space.mounts.len(), 1);
-        let mount = &address_space.mounts[0];
+        assert_eq!(vfs.mounts.len(), 1);
+        let mount = &vfs.mounts[0];
         assert_eq!(mount.id, "shared");
         // 验证 mount metadata 包含 container_id 和 owner 坐标
         assert_eq!(
@@ -390,10 +390,10 @@ mod tests {
             InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "brief.md", "hello inline mount"),
             InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "notes/todo.md", "todo: verify inline search"),
         ]);
-        let service = RelayAddressSpaceService::new(
+        let service = RelayVfsService::new(
             mount_registry_with_inline_fs_repo(Arc::new(repo)),
         );
-        let address_space = AddressSpace {
+        let vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
                 container_id,
@@ -412,7 +412,7 @@ mod tests {
 
         let read = service
             .read_text(
-                &address_space,
+                &vfs,
                 &ResourceRef {
                     mount_id: "brief".to_string(),
                     path: "brief.md".to_string(),
@@ -426,7 +426,7 @@ mod tests {
 
         let listed = service
             .list(
-                &address_space,
+                &vfs,
                 "brief",
                 ListOptions {
                     path: ".".to_string(),
@@ -442,7 +442,7 @@ mod tests {
         assert!(listed.entries.iter().any(|e| e.path == "notes/todo.md"));
 
         let hits = service
-            .search_text(&address_space, "brief", ".", "verify", 10, None)
+            .search_text(&vfs, "brief", ".", "verify", 10, None)
             .await
             .expect("inline search");
         assert_eq!(hits.len(), 1);
@@ -457,10 +457,10 @@ mod tests {
             InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "brief.md", "hello inline mount\n"),
             InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "obsolete.md", "remove me\n"),
         ]);
-        let service = RelayAddressSpaceService::new(
+        let service = RelayVfsService::new(
             mount_registry_with_inline_fs_repo(Arc::new(repo)),
         );
-        let runtime_address_space = AddressSpace {
+        let runtime_vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
                 container_id,
@@ -492,7 +492,7 @@ mod tests {
 *** End Patch"#;
 
         let result = service
-            .apply_patch(&runtime_address_space, "brief", patch, Some(&overlay), None)
+            .apply_patch(&runtime_vfs, "brief", patch, Some(&overlay), None)
             .await
             .expect("inline patch");
         assert_eq!(result.modified, vec!["docs/brief.md".to_string()]);
@@ -501,7 +501,7 @@ mod tests {
 
         let moved = service
             .read_text(
-                &runtime_address_space,
+                &runtime_vfs,
                 &ResourceRef {
                     mount_id: "brief".to_string(),
                     path: "docs/brief.md".to_string(),
@@ -515,7 +515,7 @@ mod tests {
 
         let listed = service
             .list(
-                &runtime_address_space,
+                &runtime_vfs,
                 "brief",
                 ListOptions {
                     path: ".".to_string(),
@@ -543,7 +543,7 @@ mod tests {
 
         let hits = service
             .search_text(
-                &runtime_address_space,
+                &runtime_vfs,
                 "brief",
                 ".",
                 "patched inline",
@@ -582,7 +582,7 @@ mod tests {
         mount_registry.register(Arc::new(crate::mount_providers::RelayFsMountProvider::new(
             registry.clone(),
         )));
-        let service = RelayAddressSpaceService::new(Arc::new(mount_registry));
+        let service = RelayVfsService::new(Arc::new(mount_registry));
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session");
@@ -634,8 +634,8 @@ mod tests {
 
     #[test]
     fn runtime_tool_schemas_are_openai_compatible() {
-        let service = Arc::new(RelayAddressSpaceService::new(empty_mount_registry()));
-        let address_space = AddressSpace {
+        let service = Arc::new(RelayVfsService::new(empty_mount_registry()));
+        let vfs = Vfs {
             mounts: vec![agentdash_spi::Mount {
                 id: "brief".to_string(),
                 provider: PROVIDER_INLINE_FS.to_string(),
@@ -658,19 +658,19 @@ mod tests {
             ..Default::default()
         };
 
-        let shared_address_space = SharedRuntimeAddressSpace::new(address_space);
+        let shared_vfs = SharedRuntimeVfs::new(vfs);
 
         let schemas = vec![
-            MountsListTool::new(service.clone(), shared_address_space.clone()).parameters_schema(),
-            FsReadTool::new(service.clone(), shared_address_space.clone(), None, None)
+            MountsListTool::new(service.clone(), shared_vfs.clone()).parameters_schema(),
+            FsReadTool::new(service.clone(), shared_vfs.clone(), None, None)
                 .parameters_schema(),
-            FsApplyPatchTool::new(service.clone(), shared_address_space.clone(), None, None)
+            FsApplyPatchTool::new(service.clone(), shared_vfs.clone(), None, None)
                 .parameters_schema(),
-            FsGlobTool::new(service.clone(), shared_address_space.clone(), None, None)
+            FsGlobTool::new(service.clone(), shared_vfs.clone(), None, None)
                 .parameters_schema(),
-            FsGrepTool::new(service.clone(), shared_address_space.clone(), None, None)
+            FsGrepTool::new(service.clone(), shared_vfs.clone(), None, None)
                 .parameters_schema(),
-            ShellExecTool::new(service, shared_address_space).parameters_schema(),
+            ShellExecTool::new(service, shared_vfs).parameters_schema(),
         ];
 
         for schema in schemas {

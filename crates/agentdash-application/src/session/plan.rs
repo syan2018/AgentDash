@@ -3,7 +3,7 @@ use agentdash_domain::story::Story;
 use agentdash_spi::{ContextFragment, MergeStrategy};
 use serde::Serialize;
 
-use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeMcpServer};
+use crate::runtime::{Vfs, Mount, MountCapability, RuntimeMcpServer};
 
 pub use agentdash_domain::session_binding::SessionOwnerType;
 
@@ -30,7 +30,7 @@ impl SessionOwnerTypeExt for SessionOwnerType {
     }
 }
 
-pub struct SessionAddressSpaceSummary {
+pub struct SessionVfsSummary {
     pub markdown: String,
     pub default_mount_id: Option<String>,
     pub mount_ids: Vec<String>,
@@ -56,7 +56,7 @@ pub struct SessionToolVisibilitySummary {
 pub struct SessionRuntimePolicySummary {
     pub markdown: String,
     pub workspace_attached: bool,
-    pub address_space_attached: bool,
+    pub vfs_attached: bool,
     pub mcp_enabled: bool,
     pub visible_mounts: Vec<String>,
     pub visible_tools: Vec<String>,
@@ -68,7 +68,7 @@ pub struct SessionRuntimePolicySummary {
 pub struct SessionPlanInput<'a> {
     pub owner_type: SessionOwnerType,
     pub phase: SessionPlanPhase,
-    pub address_space: Option<&'a AddressSpace>,
+    pub vfs: Option<&'a Vfs>,
     pub mcp_servers: &'a [RuntimeMcpServer],
     pub session_composition: Option<&'a SessionComposition>,
     pub agent_type: Option<&'a str>,
@@ -89,11 +89,11 @@ pub fn resolve_story_session_composition(story: Option<&Story>) -> Option<Sessio
 pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanFragments {
     let mut fragments = Vec::new();
 
-    if let Some(address_space) = input.address_space {
-        let summary = summarize_address_space(address_space);
+    if let Some(vfs) = input.vfs {
+        let summary = summarize_vfs(vfs);
         fragments.push(ContextFragment {
-            slot: "address_space",
-            label: "address_space_summary",
+            slot: "vfs",
+            label: "vfs_summary",
             order: 35,
             strategy: MergeStrategy::Append,
             content: summary.markdown,
@@ -101,7 +101,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     }
 
     let tool_visibility = summarize_tool_visibility_with_context(
-        input.address_space,
+        input.vfs,
         input.mcp_servers,
         Some(input.owner_type),
     );
@@ -148,7 +148,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
 
     let runtime_policy = summarize_runtime_policy(
         input.workspace_attached,
-        input.address_space,
+        input.vfs,
         input.mcp_servers,
         &tool_names,
     );
@@ -163,19 +163,19 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     SessionPlanFragments { fragments }
 }
 
-pub fn summarize_address_space(address_space: &AddressSpace) -> SessionAddressSpaceSummary {
-    let default_mount_id = address_space.default_mount_id.clone();
-    let mount_ids = address_space
+pub fn summarize_vfs(vfs: &Vfs) -> SessionVfsSummary {
+    let default_mount_id = vfs.default_mount_id.clone();
+    let mount_ids = vfs
         .mounts
         .iter()
         .map(|mount| mount.id.clone())
         .collect::<Vec<_>>();
 
-    let markdown = if address_space.mounts.is_empty() {
-        "## Address Space\n- 当前会话未挂载可访问的 mount".to_string()
+    let markdown = if vfs.mounts.is_empty() {
+        "## VFS\n- 当前会话未挂载可访问的 mount".to_string()
     } else {
         let default_mount = default_mount_id.as_deref().unwrap_or("-");
-        let mount_lines = address_space
+        let mount_lines = vfs
             .mounts
             .iter()
             .map(render_mount_summary)
@@ -183,13 +183,13 @@ pub fn summarize_address_space(address_space: &AddressSpace) -> SessionAddressSp
             .join("\n");
 
         format!(
-            "## Address Space\n- default_mount: `{default_mount}`\n- mount_count: {}\n- usage: 访问文件时优先使用 `mount + 相对路径`；如无特殊说明，默认 mount 为 `{default_mount}`。\n\n### Mounts\n{}",
-            address_space.mounts.len(),
+            "## VFS\n- default_mount: `{default_mount}`\n- mount_count: {}\n- usage: 访问文件时优先使用 `mount + 相对路径`；如无特殊说明，默认 mount 为 `{default_mount}`。\n\n### Mounts\n{}",
+            vfs.mounts.len(),
             mount_lines
         )
     };
 
-    SessionAddressSpaceSummary {
+    SessionVfsSummary {
         markdown,
         default_mount_id,
         mount_ids,
@@ -197,20 +197,20 @@ pub fn summarize_address_space(address_space: &AddressSpace) -> SessionAddressSp
 }
 
 pub fn summarize_tool_visibility(
-    address_space: Option<&AddressSpace>,
+    vfs: Option<&Vfs>,
     mcp_servers: &[RuntimeMcpServer],
 ) -> SessionToolVisibilitySummary {
-    summarize_tool_visibility_with_context(address_space, mcp_servers, None)
+    summarize_tool_visibility_with_context(vfs, mcp_servers, None)
 }
 
 pub fn summarize_tool_visibility_with_context(
-    address_space: Option<&AddressSpace>,
+    vfs: Option<&Vfs>,
     mcp_servers: &[RuntimeMcpServer],
     owner_type: Option<SessionOwnerType>,
 ) -> SessionToolVisibilitySummary {
-    let resolved = address_space.is_some();
-    let mut tool_names = address_space
-        .map(runtime_address_space_tools)
+    let resolved = vfs.is_some();
+    let mut tool_names = vfs
+        .map(runtime_vfs_tools)
         .unwrap_or_default();
 
     // 流程工具：按 session owner 类型条件注入
@@ -220,7 +220,7 @@ pub fn summarize_tool_visibility_with_context(
     }
 
     let toolset_label = if resolved {
-        "address_space_runtime".to_string()
+        "vfs_runtime".to_string()
     } else {
         "runtime_unresolved".to_string()
     };
@@ -428,11 +428,11 @@ fn build_required_context_block_markdown(block: &SessionRequiredContextBlock) ->
 
 pub fn summarize_runtime_policy(
     workspace_attached: bool,
-    address_space: Option<&AddressSpace>,
+    vfs: Option<&Vfs>,
     mcp_servers: &[RuntimeMcpServer],
     tool_names: &[String],
 ) -> SessionRuntimePolicySummary {
-    let mount_ids = address_space
+    let mount_ids = vfs
         .map(|item| {
             item.mounts
                 .iter()
@@ -440,9 +440,9 @@ pub fn summarize_runtime_policy(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let writable_mounts = address_space
-        .map(|address_space| {
-            address_space
+    let writable_mounts = vfs
+        .map(|vfs| {
+            vfs
                 .mounts
                 .iter()
                 .filter(|mount| mount.supports(MountCapability::Write))
@@ -450,9 +450,9 @@ pub fn summarize_runtime_policy(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let exec_mounts = address_space
-        .map(|address_space| {
-            address_space
+    let exec_mounts = vfs
+        .map(|vfs| {
+            vfs
                 .mounts
                 .iter()
                 .filter(|mount| mount.supports(MountCapability::Exec))
@@ -460,7 +460,7 @@ pub fn summarize_runtime_policy(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let path_policy = if address_space.is_some() {
+    let path_policy = if vfs.is_some() {
         "使用 `mount + 相对路径` 访问资源".to_string()
     } else if workspace_attached {
         "使用相对工作空间路径访问资源".to_string()
@@ -469,9 +469,9 @@ pub fn summarize_runtime_policy(
     };
 
     let markdown = format!(
-        "## Runtime Policy\n- workspace_attached: {}\n- address_space_attached: {}\n- mcp_enabled: {}\n- visible_mounts: {}\n- visible_tools: {}\n- writable_mounts: {}\n- exec_mounts: {}\n- path_policy: {}",
+        "## Runtime Policy\n- workspace_attached: {}\n- vfs_attached: {}\n- mcp_enabled: {}\n- visible_mounts: {}\n- visible_tools: {}\n- writable_mounts: {}\n- exec_mounts: {}\n- path_policy: {}",
         yes_no(workspace_attached),
-        yes_no(address_space.is_some()),
+        yes_no(vfs.is_some()),
         yes_no(!mcp_servers.is_empty()),
         display_list(&mount_ids),
         display_list(tool_names),
@@ -483,7 +483,7 @@ pub fn summarize_runtime_policy(
     SessionRuntimePolicySummary {
         markdown,
         workspace_attached,
-        address_space_attached: address_space.is_some(),
+        vfs_attached: vfs.is_some(),
         mcp_enabled: !mcp_servers.is_empty(),
         visible_mounts: mount_ids,
         visible_tools: tool_names.to_vec(),
@@ -549,7 +549,7 @@ fn render_capability(capability: &MountCapability) -> &'static str {
     }
 }
 
-fn runtime_address_space_tools(_address_space: &AddressSpace) -> Vec<String> {
+fn runtime_vfs_tools(_vfs: &Vfs) -> Vec<String> {
     vec![
         "mounts_list".to_string(),
         "fs_read".to_string(),
@@ -603,8 +603,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn summarize_address_space_includes_mount_details() {
-        let address_space = AddressSpace {
+    fn summarize_vfs_includes_mount_details() {
+        let vfs = Vfs {
             mounts: vec![
                 Mount {
                     id: "main".to_string(),
@@ -635,7 +635,7 @@ mod tests {
             ..Default::default()
         };
 
-        let summary = summarize_address_space(&address_space);
+        let summary = summarize_vfs(&vfs);
 
         assert_eq!(summary.default_mount_id.as_deref(), Some("main"));
         assert_eq!(
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn summarize_tool_visibility_includes_runtime_and_mcp_tools() {
-        let address_space = AddressSpace {
+        let vfs = Vfs {
             mounts: vec![Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
@@ -674,7 +674,7 @@ mod tests {
             url: "http://127.0.0.1:3001/mcp/story/123".to_string(),
         }];
 
-        let summary = summarize_tool_visibility(Some(&address_space), &mcp_servers);
+        let summary = summarize_tool_visibility(Some(&vfs), &mcp_servers);
 
         assert!(summary.resolved);
         assert!(summary.tool_names.contains(&"mounts_list".to_string()));
@@ -691,7 +691,7 @@ mod tests {
 
     #[test]
     fn build_session_plan_fragments_includes_persona_workflow_and_runtime_policy() {
-        let address_space = AddressSpace {
+        let vfs = Vfs {
             mounts: vec![Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
@@ -713,7 +713,7 @@ mod tests {
         let built = build_session_plan_fragments(SessionPlanInput {
             owner_type: SessionOwnerType::Task,
             phase: SessionPlanPhase::TaskStart,
-            address_space: Some(&address_space),
+            vfs: Some(&vfs),
             mcp_servers: &[],
             session_composition: Some(&SessionComposition {
                 persona_label: Some("实现代理".to_string()),

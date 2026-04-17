@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::address_space::{
+use agentdash_application::vfs::{
     SessionMountTarget, append_agent_knowledge_mounts, filter_project_containers_by_whitelist,
 };
 use agentdash_application::canvas::append_visible_canvas_mounts;
@@ -22,7 +22,7 @@ use agentdash_application::session::context::SessionContextSnapshot;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    routes::address_space_surfaces::build_surface_summary,
+    routes::vfs_surfaces::build_surface_summary,
     routes::project_agents::{
         parse_project_agent_session_label, resolve_project_agent_bridge_async,
         resolve_project_workspace,
@@ -40,16 +40,16 @@ pub struct ProjectSessionDetailResponse {
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_space: Option<agentdash_spi::AddressSpace>,
+    pub vfs: Option<agentdash_spi::Vfs>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_surface: Option<agentdash_application::address_space::ResolvedAddressSpaceSurface>,
+    pub runtime_surface: Option<agentdash_application::vfs::ResolvedVfsSurface>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
 #[derive(Debug)]
 pub(crate) struct BuiltProjectSessionContextResponse {
-    pub(crate) address_space: Option<agentdash_spi::AddressSpace>,
+    pub(crate) vfs: Option<agentdash_spi::Vfs>,
     pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 
@@ -105,12 +105,12 @@ pub async fn get_project_session(
         label: binding.label,
         session_title: meta.as_ref().map(|item| item.title.clone()),
         last_activity: meta.as_ref().map(|item| item.updated_at),
-        address_space: built_context.address_space.clone(),
-        runtime_surface: if let Some(space) = built_context.address_space.as_ref() {
+        vfs: built_context.vfs.clone(),
+        runtime_surface: if let Some(space) = built_context.vfs.as_ref() {
             Some(
                 build_surface_summary(
                     &state,
-                    &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                    &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
                         session_id: response_session_id,
                     },
                     space,
@@ -150,7 +150,7 @@ pub(crate) async fn build_project_session_context_response(
         .clone()
         .or_else(|| Some(project_agent.executor_config.clone()));
     let resolved_config = connector_config.clone();
-    let use_address_space = connector_config
+    let use_vfs = connector_config
         .as_ref()
         .is_some_and(|c| c.is_cloud_native());
     // 加载 ProjectAgentLink 用于注入知识容器 mounts
@@ -166,11 +166,11 @@ pub(crate) async fn build_project_session_context_response(
         None
     };
 
-    let address_space = if use_address_space {
-        let mut address_space = state
+    let vfs = if use_vfs {
+        let mut vfs = state
             .services
-            .address_space_service
-            .build_address_space(
+            .vfs_service
+            .build_vfs(
                 project,
                 None,
                 workspace.as_ref(),
@@ -181,20 +181,20 @@ pub(crate) async fn build_project_session_context_response(
 
         // Agent 级容器管控：白名单过滤 + 知识库注入
         if let Some(link) = &agent_link {
-            filter_project_containers_by_whitelist(&mut address_space, link);
-            append_agent_knowledge_mounts(&mut address_space, link)
+            filter_project_containers_by_whitelist(&mut vfs, link);
+            append_agent_knowledge_mounts(&mut vfs, link)
                 .map_err(ApiError::Internal)?;
         }
 
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,
-            &mut address_space,
+            &mut vfs,
             &session_meta.visible_canvas_mount_ids,
         )
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-        Some(address_space)
+        Some(vfs)
     } else {
         None
     };
@@ -214,14 +214,14 @@ pub(crate) async fn build_project_session_context_response(
         project_agent.source.clone()
     };
 
-    let runtime_address_space = address_space.clone();
+    let runtime_vfs = vfs.clone();
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project: project.clone(),
         story: None,
         workspace,
         resolved_config,
-        address_space: runtime_address_space,
+        vfs: runtime_vfs,
         mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         executor_preset_name: project_agent.preset_name,
@@ -237,7 +237,7 @@ pub(crate) async fn build_project_session_context_response(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Ok(BuiltProjectSessionContextResponse {
-        address_space: plan.address_space.clone(),
+        vfs: plan.vfs.clone(),
         context_snapshot: Some(snapshot),
     })
 }

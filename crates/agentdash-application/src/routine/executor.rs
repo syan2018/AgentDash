@@ -14,7 +14,7 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::{AgentConfig, AgentConnector, FlowCapabilities, ToolCluster};
 
-use crate::address_space::{RelayAddressSpaceService, SessionMountTarget};
+use crate::vfs::{RelayVfsService, SessionMountTarget};
 use crate::canvas::append_visible_canvas_mounts;
 use crate::project::context_builder::{
     ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
@@ -42,7 +42,7 @@ use super::template::render_prompt_template;
 pub struct RoutineExecutor {
     repos: RepositorySet,
     session_hub: SessionHub,
-    address_space_service: Arc<RelayAddressSpaceService>,
+    vfs_service: Arc<RelayVfsService>,
     connector: Arc<dyn AgentConnector>,
     mcp_base_url: Option<String>,
 }
@@ -61,14 +61,14 @@ impl RoutineExecutor {
     pub fn new(
         repos: RepositorySet,
         session_hub: SessionHub,
-        address_space_service: Arc<RelayAddressSpaceService>,
+        vfs_service: Arc<RelayVfsService>,
         connector: Arc<dyn AgentConnector>,
         mcp_base_url: Option<String>,
     ) -> Self {
         Self {
             repos,
             session_hub,
-            address_space_service,
+            vfs_service,
             connector,
             mcp_base_url,
         }
@@ -428,18 +428,18 @@ impl RoutineExecutor {
         req.relay_mcp_server_names
             .extend(agent_context.relay_mcp_server_names.iter().cloned());
 
-        let mut address_space = Some(
-            self.address_space_service
-                .build_address_space(
+        let mut vfs = Some(
+            self.vfs_service
+                .build_vfs(
                     &agent_context.project,
                     None,
                     agent_context.workspace.as_ref(),
                     SessionMountTarget::Project,
                     Some(agent_context.executor_config.executor.as_str()),
                 )
-                .map_err(|e| format!("构建 address space 失败: {e}"))?,
+                .map_err(|e| format!("构建 VFS 失败: {e}"))?,
         );
-        if let Some(space) = address_space.as_mut() {
+        if let Some(space) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 self.repos.canvas_repo.as_ref(),
                 agent_context.project.id,
@@ -459,12 +459,12 @@ impl RoutineExecutor {
         }
         effective_mcp_servers.extend(agent_context.preset_mcp_servers.iter().cloned());
 
-        let runtime_address_space = address_space.clone();
+        let runtime_vfs = vfs.clone();
         let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
         let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {
             project: &agent_context.project,
             workspace: agent_context.workspace.as_ref(),
-            address_space: runtime_address_space.as_ref(),
+            vfs: runtime_vfs.as_ref(),
             mcp_servers: &runtime_mcp_servers,
             effective_agent_type: Some(agent_context.executor_config.executor.as_str()),
             preset_name: agent_context.preset_name.as_deref(),
@@ -515,11 +515,11 @@ impl RoutineExecutor {
 
         apply_workspace_defaults(
             &mut req.user_input.working_dir,
-            &mut req.address_space,
+            &mut req.vfs,
             agent_context.workspace.as_ref(),
         );
-        if req.address_space.is_none() {
-            req.address_space = address_space;
+        if req.vfs.is_none() {
+            req.vfs = vfs;
         }
         req.mcp_servers = effective_mcp_servers;
         req.flow_capabilities = Some(FlowCapabilities::from_clusters([

@@ -1,5 +1,5 @@
 use super::types::ResourceRef;
-use crate::runtime::{AddressSpace, Mount, MountCapability};
+use crate::runtime::{Vfs, Mount, MountCapability};
 
 const URI_SEPARATOR: &str = "://";
 
@@ -7,8 +7,8 @@ const URI_SEPARATOR: &str = "://";
 ///
 /// 支持两种格式：
 /// - `mount_id://relative/path` — 显式指定 mount
-/// - `relative/path` — 使用 address space 的默认 mount
-pub fn parse_mount_uri(input: &str, address_space: &AddressSpace) -> Result<ResourceRef, String> {
+/// - `relative/path` — 使用 VFS 的默认 mount
+pub fn parse_mount_uri(input: &str, vfs: &Vfs) -> Result<ResourceRef, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err("路径不能为空".to_string());
@@ -27,7 +27,7 @@ pub fn parse_mount_uri(input: &str, address_space: &AddressSpace) -> Result<Reso
         });
     }
 
-    let mount_id = resolve_mount_id(address_space, None)?;
+    let mount_id = resolve_mount_id(vfs, None)?;
     Ok(ResourceRef {
         mount_id,
         path: trimmed.to_string(),
@@ -44,11 +44,11 @@ pub fn format_mount_uri(mount_id: &str, path: &str) -> String {
 }
 
 pub fn resolve_mount<'a>(
-    address_space: &'a AddressSpace,
+    vfs: &'a Vfs,
     mount_id: &str,
     capability: MountCapability,
 ) -> Result<&'a Mount, String> {
-    let mount = address_space
+    let mount = vfs
         .mounts
         .iter()
         .find(|mount| mount.id == mount_id)
@@ -60,29 +60,29 @@ pub fn resolve_mount<'a>(
 }
 
 pub fn resolve_mount_id(
-    address_space: &AddressSpace,
+    vfs: &Vfs,
     mount: Option<&str>,
 ) -> Result<String, String> {
     if let Some(mount_id) = mount.map(str::trim).filter(|value| !value.is_empty()) {
         return Ok(mount_id.to_string());
     }
-    address_space
+    vfs
         .default_mount_id
         .clone()
         .or_else(|| {
-            if address_space.mounts.len() == 1 {
-                address_space.mounts.first().map(|mount| mount.id.clone())
+            if vfs.mounts.len() == 1 {
+                vfs.mounts.first().map(|mount| mount.id.clone())
             } else {
                 None
             }
         })
         .ok_or_else(|| {
-            if address_space.mounts.is_empty() {
+            if vfs.mounts.is_empty() {
                 "当前会话没有可用 mount".to_string()
             } else {
                 format!(
-                    "address space 存在 {} 个 mount 但未设置 default_mount_id，需显式指定",
-                    address_space.mounts.len()
+                    "VFS 存在 {} 个 mount 但未设置 default_mount_id，需显式指定",
+                    vfs.mounts.len()
                 )
             }
         })

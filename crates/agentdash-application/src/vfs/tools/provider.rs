@@ -15,11 +15,11 @@ use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use crate::address_space::inline_persistence::{InlineContentOverlay, InlineContentPersister};
-use crate::address_space::relay_service::RelayAddressSpaceService;
-use crate::address_space::tools::fs::{
+use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
+use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::tools::fs::{
     FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
-    SharedRuntimeAddressSpace, ShellExecTool,
+    SharedRuntimeVfs, ShellExecTool,
 };
 use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct RelayRuntimeToolProvider {
-    service: Arc<RelayAddressSpaceService>,
+    service: Arc<RelayVfsService>,
     canvas_repo: Arc<dyn CanvasRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     agent_repo: Arc<dyn AgentRepository>,
@@ -43,7 +43,7 @@ pub struct RelayRuntimeToolProvider {
 
 impl RelayRuntimeToolProvider {
     pub fn new(
-        service: Arc<RelayAddressSpaceService>,
+        service: Arc<RelayVfsService>,
         canvas_repo: Arc<dyn CanvasRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         agent_repo: Arc<dyn AgentRepository>,
@@ -93,10 +93,10 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         &self,
         context: &ExecutionContext,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-        let address_space = context.address_space.clone().ok_or_else(|| {
-            ConnectorError::InvalidConfig("缺少 address_space，无法构建统一访问工具".to_string())
+        let vfs = context.vfs.clone().ok_or_else(|| {
+            ConnectorError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
         })?;
-        let shared_address_space = SharedRuntimeAddressSpace::new(address_space);
+        let shared_vfs = SharedRuntimeVfs::new(vfs);
 
         let overlay: Option<Arc<InlineContentOverlay>> = self
             .inline_persister
@@ -132,23 +132,23 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if clusters.contains(&ToolCluster::Read) {
             tools.push(Arc::new(MountsListTool::new(
                 self.service.clone(),
-                shared_address_space.clone(),
+                shared_vfs.clone(),
             )));
             tools.push(Arc::new(FsReadTool::new(
                 self.service.clone(),
-                shared_address_space.clone(),
+                shared_vfs.clone(),
                 overlay.clone(),
                 identity.clone(),
             )));
             tools.push(Arc::new(FsGlobTool::new(
                 self.service.clone(),
-                shared_address_space.clone(),
+                shared_vfs.clone(),
                 overlay.clone(),
                 identity.clone(),
             )));
             tools.push(Arc::new(FsGrepTool::new(
                 self.service.clone(),
-                shared_address_space.clone(),
+                shared_vfs.clone(),
                 overlay.clone(),
                 identity.clone(),
             )));
@@ -158,7 +158,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if clusters.contains(&ToolCluster::Write) {
             tools.push(Arc::new(FsApplyPatchTool::new(
                 self.service.clone(),
-                shared_address_space.clone(),
+                shared_vfs.clone(),
                 overlay.clone(),
                 identity,
             )));
@@ -168,7 +168,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if clusters.contains(&ToolCluster::Execute) {
             tools.push(Arc::new(ShellExecTool::new(
                 self.service.clone(),
-                shared_address_space.clone(),
+                shared_vfs.clone(),
             )));
         }
 
@@ -210,7 +210,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 tools.push(Arc::new(StartCanvasTool::new(
                     self.canvas_repo.clone(),
                     project_id,
-                    shared_address_space.clone(),
+                    shared_vfs.clone(),
                     self.session_hub_handle.clone(),
                     context
                         .hook_session
@@ -265,7 +265,7 @@ fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
     }
 
     context
-        .address_space
+        .vfs
         .as_ref()
         .and_then(|space| space.source_project_id.as_deref())
         .and_then(|project_id| Uuid::parse_str(project_id).ok())

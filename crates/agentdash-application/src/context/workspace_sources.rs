@@ -5,8 +5,8 @@ use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSo
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
-use crate::address_space::{
-    ListOptions, RelayAddressSpaceService, ResourceRef, selected_workspace_binding,
+use crate::vfs::{
+    ListOptions, RelayVfsService, ResourceRef, selected_workspace_binding,
 };
 use crate::runtime::RuntimeFileEntry;
 use crate::workspace::BackendAvailability;
@@ -17,7 +17,7 @@ use crate::workspace::BackendAvailability;
 /// 非 required 来源会生成 warning 而非报错。
 pub async fn resolve_workspace_declared_sources(
     availability: &dyn BackendAvailability,
-    address_space_service: &RelayAddressSpaceService,
+    vfs_service: &RelayVfsService,
     sources: &[ContextSourceRef],
     workspace: Option<&Workspace>,
     base_order: i32,
@@ -64,10 +64,10 @@ pub async fn resolve_workspace_declared_sources(
         let order = base_order + position as i32;
         let resolved = match source.kind {
             ContextSourceKind::File => {
-                resolve_workspace_file_source(address_space_service, workspace, source, order).await
+                resolve_workspace_file_source(vfs_service, workspace, source, order).await
             }
             ContextSourceKind::ProjectSnapshot => {
-                resolve_workspace_snapshot_source(address_space_service, workspace, source, order)
+                resolve_workspace_snapshot_source(vfs_service, workspace, source, order)
                     .await
             }
             _ => continue,
@@ -136,16 +136,16 @@ fn normalize_workspace_backend_id(workspace: &Workspace) -> Result<&str, String>
 }
 
 async fn resolve_workspace_file_source(
-    address_space_service: &RelayAddressSpaceService,
+    vfs_service: &RelayVfsService,
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,
 ) -> Result<ContextFragment, String> {
     let path = normalize_source_locator_path(&source.locator)?;
-    let address_space = address_space_service.session_for_workspace(workspace)?;
-    let read = address_space_service
+    let vfs = vfs_service.session_for_workspace(workspace)?;
+    let read = vfs_service
         .read_text(
-            &address_space,
+            &vfs,
             &ResourceRef {
                 mount_id: "main".to_string(),
                 path: path.clone(),
@@ -172,16 +172,16 @@ async fn resolve_workspace_file_source(
 }
 
 async fn resolve_workspace_snapshot_source(
-    address_space_service: &RelayAddressSpaceService,
+    vfs_service: &RelayVfsService,
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,
 ) -> Result<ContextFragment, String> {
     let sub_path = normalize_snapshot_locator(&source.locator)?;
-    let address_space = address_space_service.session_for_workspace(workspace)?;
-    let listed = address_space_service
+    let vfs = vfs_service.session_for_workspace(workspace)?;
+    let listed = vfs_service
         .list(
-            &address_space,
+            &vfs,
             "main",
             ListOptions {
                 path: sub_path.clone().unwrap_or_else(|| ".".to_string()),

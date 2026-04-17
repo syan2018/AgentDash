@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::address_space::mount::parse_inline_mount_owner;
+use crate::vfs::mount::parse_inline_mount_owner;
 use crate::runtime::Mount;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use async_trait::async_trait;
@@ -208,7 +208,7 @@ pub async fn sync_container_inline_files(
     for container in containers {
         if let ContextContainerProvider::InlineFiles { files } = &container.provider {
             for file in files {
-                let path = crate::address_space::normalize_mount_relative_path(&file.path, false)
+                let path = crate::vfs::normalize_mount_relative_path(&file.path, false)
                     .map_err(|e| format!("容器 {} 文件路径无效: {e}", container.id))?;
                 let inline_file =
                     InlineFile::new(owner_kind, owner_id, &container.id, path, &file.content);

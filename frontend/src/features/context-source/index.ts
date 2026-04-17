@@ -1,6 +1,6 @@
-export { useAddressSpacePicker } from "./model/useAddressSpacePicker";
+export { useVfsPicker } from "./model/useVfsPicker";
 export type {
-  UseAddressSpacePickerOptions,
-  UseAddressSpacePickerResult,
-} from "./model/useAddressSpacePicker";
-export { AddressEntryPickerPopup, AddressEntryPickerInline } from "./ui/AddressEntryPickerPopup";
+  UseVfsPickerOptions,
+  UseVfsPickerResult,
+} from "./model/useVfsPicker";
+export { VfsEntryPickerPopup, VfsEntryPickerInline } from "./ui/VfsEntryPickerPopup";

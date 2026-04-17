@@ -120,23 +120,23 @@ pub fn extract_story_overrides(story: &Story) -> SessionStoryOverrides {
 
 use agentdash_domain::workspace::Workspace;
 
-use agentdash_spi::AddressSpace;
+use agentdash_spi::Vfs;
 
-use crate::address_space::build_workspace_address_space;
+use crate::vfs::build_workspace_vfs;
 
 /// 将 workspace 相关的默认值注入到 `PromptSessionRequest` 的可变字段中。
 /// 仅在字段为 None 时填充，不覆盖已有值。
 pub fn apply_workspace_defaults(
     working_dir: &mut Option<String>,
-    address_space: &mut Option<AddressSpace>,
+    vfs: &mut Option<Vfs>,
     workspace: Option<&Workspace>,
 ) {
     if working_dir.is_none() && workspace.is_some() {
         *working_dir = Some(".".to_string());
     }
-    if address_space.is_none() {
-        if let Some(space) = workspace.and_then(|item| build_workspace_address_space(item).ok()) {
-            *address_space = Some(space);
+    if vfs.is_none() {
+        if let Some(space) = workspace.and_then(|item| build_workspace_vfs(item).ok()) {
+            *vfs = Some(space);
         }
     }
 }

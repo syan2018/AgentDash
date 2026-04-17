@@ -42,7 +42,7 @@ export interface SessionComposition {
   required_context_blocks: SessionRequiredContextBlock[];
 }
 
-// ─── 执行时 Mount / Address Space ───────────────────
+// ─── 执行时 Mount / VFS ─────────────────────────────
 
 export type ExecutionMountCapability = "read" | "write" | "list" | "search" | "exec";
 
@@ -57,7 +57,7 @@ export interface ExecutionMount {
   metadata?: Record<string, unknown>;
 }
 
-export interface ExecutionAddressSpace {
+export interface ExecutionVfs {
   mounts: ExecutionMount[];
   default_mount_id?: string | null;
 }
@@ -81,7 +81,7 @@ export type ResolvedMountOwnerKind =
   | "workspace"
   | "external";
 
-export type ResolvedAddressSpaceSurfaceSource =
+export type ResolvedVfsSurfaceSource =
   | { source_type: "project_preview"; project_id: string }
   | { source_type: "story_preview"; project_id: string; story_id: string }
   | { source_type: "task_preview"; project_id: string; task_id: string }
@@ -104,9 +104,9 @@ export interface ResolvedMountSummary {
   file_count?: number | null;
 }
 
-export interface ResolvedAddressSpaceSurface {
+export interface ResolvedVfsSurface {
   surface_ref: string;
-  source: ResolvedAddressSpaceSurfaceSource;
+  source: ResolvedVfsSurfaceSource;
   mounts: ResolvedMountSummary[];
   default_mount_id?: string | null;
 }
@@ -128,7 +128,7 @@ export interface TaskSessionToolVisibilitySummary {
 export interface TaskSessionRuntimePolicySummary {
   markdown: string;
   workspace_attached: boolean;
-  address_space_attached: boolean;
+  vfs_attached: boolean;
   mcp_enabled: boolean;
   visible_mounts: string[];
   visible_tools: string[];
@@ -204,8 +204,8 @@ export interface StorySessionInfo {
   session_id: string;
   session_title: string | null;
   last_activity: number | null;
-  address_space: ExecutionAddressSpace | null;
-  runtime_surface: ResolvedAddressSpaceSurface | null;
+  vfs: ExecutionVfs | null;
+  runtime_surface: ResolvedVfsSurface | null;
   context_snapshot: SessionContextSnapshot | null;
 }
 
@@ -214,7 +214,7 @@ export interface ProjectSessionInfo {
   session_id: string;
   session_title: string | null;
   last_activity: number | null;
-  address_space: ExecutionAddressSpace | null;
-  runtime_surface: ResolvedAddressSpaceSurface | null;
+  vfs: ExecutionVfs | null;
+  runtime_surface: ResolvedVfsSurface | null;
   context_snapshot: SessionContextSnapshot | null;
 }

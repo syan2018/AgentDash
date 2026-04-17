@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::canvas::{Canvas, CanvasImportMap};
-use agentdash_spi::AddressSpace;
+use agentdash_spi::Vfs;
 
-use crate::address_space::{RelayAddressSpaceService, parse_mount_uri};
+use crate::vfs::{RelayVfsService, parse_mount_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanvasRuntimeSnapshot {
@@ -90,20 +90,20 @@ pub fn build_runtime_snapshot(
 pub async fn build_runtime_snapshot_with_bindings(
     canvas: &Canvas,
     session_id: Option<String>,
-    address_space: Option<&AddressSpace>,
-    address_space_service: &RelayAddressSpaceService,
+    vfs: Option<&Vfs>,
+    vfs_service: &RelayVfsService,
 ) -> CanvasRuntimeSnapshot {
     let mut snapshot = build_runtime_snapshot(canvas, session_id);
-    let Some(address_space) = address_space else {
+    let Some(vfs) = vfs else {
         return snapshot;
     };
 
     for binding in &mut snapshot.bindings {
-        let Ok(resource_ref) = parse_mount_uri(&binding.source_uri, address_space) else {
+        let Ok(resource_ref) = parse_mount_uri(&binding.source_uri, vfs) else {
             continue;
         };
-        let Ok(result) = address_space_service
-            .read_text(address_space, &resource_ref, None, None)
+        let Ok(result) = vfs_service
+            .read_text(vfs, &resource_ref, None, None)
             .await
         else {
             continue;

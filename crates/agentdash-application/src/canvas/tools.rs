@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::address_space::build_canvas_mount_id;
-use crate::address_space::tools::fs::SharedRuntimeAddressSpace;
-use crate::address_space::tools::provider::SharedSessionHubHandle;
+use crate::vfs::build_canvas_mount_id;
+use crate::vfs::tools::fs::SharedRuntimeVfs;
+use crate::vfs::tools::provider::SharedSessionHubHandle;
 use crate::canvas::{build_canvas, upsert_canvas_binding};
 
 #[derive(Clone)]
@@ -37,7 +37,7 @@ impl ListCanvasesTool {
 pub struct StartCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
-    address_space: SharedRuntimeAddressSpace,
+    vfs: SharedRuntimeVfs,
     session_hub_handle: SharedSessionHubHandle,
     current_session_id: Option<String>,
 }
@@ -46,14 +46,14 @@ impl StartCanvasTool {
     pub fn new(
         canvas_repo: Arc<dyn CanvasRepository>,
         project_id: Uuid,
-        address_space: SharedRuntimeAddressSpace,
+        vfs: SharedRuntimeVfs,
         session_hub_handle: SharedSessionHubHandle,
         current_session_id: Option<String>,
     ) -> Self {
         Self {
             canvas_repo,
             project_id,
-            address_space,
+            vfs,
             session_hub_handle,
             current_session_id,
         }
@@ -332,7 +332,7 @@ impl AgentTool for StartCanvasTool {
         };
 
         expose_canvas_to_session(
-            &self.address_space,
+            &self.vfs,
             &self.session_hub_handle,
             self.current_session_id.as_deref(),
             &canvas,
@@ -524,12 +524,12 @@ fn ensure_canvas_project(
 }
 
 async fn expose_canvas_to_session(
-    address_space: &SharedRuntimeAddressSpace,
+    vfs: &SharedRuntimeVfs,
     session_hub_handle: &SharedSessionHubHandle,
     current_session_id: Option<&str>,
     canvas: &Canvas,
 ) -> Result<(), AgentToolError> {
-    address_space.append_canvas_mount(canvas).await;
+    vfs.append_canvas_mount(canvas).await;
     if let Some(session_hub) = session_hub_handle.get().await
         && let Some(session_id) = current_session_id
     {
@@ -587,13 +587,13 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_domain::DomainError;
-    use agentdash_spi::AddressSpace;
+    use agentdash_spi::Vfs;
     use async_trait::async_trait;
     use tokio::sync::RwLock;
 
-    use crate::address_space::tools::fs::FsApplyPatchTool;
-    use crate::address_space::{
-        CanvasFsMountProvider, MountProviderRegistry, RelayAddressSpaceService,
+    use crate::vfs::tools::fs::FsApplyPatchTool;
+    use crate::vfs::{
+        CanvasFsMountProvider, MountProviderRegistry, RelayVfsService,
     };
 
     use super::*;
@@ -675,17 +675,17 @@ mod tests {
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
-        let service = Arc::new(RelayAddressSpaceService::new(Arc::new(registry)));
-        let shared_address_space = SharedRuntimeAddressSpace::new(AddressSpace::default());
+        let service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
 
         let start_tool = StartCanvasTool::new(
             canvas_repo.clone(),
             project_id,
-            shared_address_space.clone(),
+            shared_vfs.clone(),
             SharedSessionHubHandle::default(),
             Some("sess-test".to_string()),
         );
-        let patch_tool = FsApplyPatchTool::new(service, shared_address_space.clone(), None, None);
+        let patch_tool = FsApplyPatchTool::new(service, shared_vfs.clone(), None, None);
 
         let create_result = start_tool
             .execute(
@@ -708,14 +708,14 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .expect("canvas_id should exist");
 
-        let address_space = shared_address_space.snapshot().await;
+        let vfs = shared_vfs.snapshot().await;
         let expected_mount_id = format!("cvs-{canvas_id}");
         assert!(
-            address_space
+            vfs
                 .mounts
                 .iter()
                 .any(|mount| mount.id == expected_mount_id),
-            "shared address space should contain the new canvas mount after canvas_start"
+            "shared VFS should contain the new canvas mount after canvas_start"
         );
 
         let patch_content = format!(
@@ -763,11 +763,11 @@ mod tests {
             .await
             .expect("应能写入仓储");
 
-        let shared_address_space = SharedRuntimeAddressSpace::new(AddressSpace::default());
+        let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
         let start_tool = StartCanvasTool::new(
             canvas_repo,
             project_id,
-            shared_address_space.clone(),
+            shared_vfs.clone(),
             SharedSessionHubHandle::default(),
             Some("sess-test".to_string()),
         );
@@ -799,13 +799,13 @@ mod tests {
         };
         assert!(text.contains("mount=cvs-existing-kpi://"));
 
-        let address_space = shared_address_space.snapshot().await;
+        let vfs = shared_vfs.snapshot().await;
         assert!(
-            address_space
+            vfs
                 .mounts
                 .iter()
                 .any(|mount| mount.id == "cvs-existing-kpi"),
-            "shared address space should contain the attached canvas mount"
+            "shared VFS should contain the attached canvas mount"
         );
     }
 
@@ -868,11 +868,11 @@ mod tests {
     async fn canvas_start_creates_new_canvas_with_requested_canvas_id() {
         let project_id = Uuid::new_v4();
         let canvas_repo = Arc::new(MemoryCanvasRepository::default());
-        let shared_address_space = SharedRuntimeAddressSpace::new(AddressSpace::default());
+        let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
         let start_tool = StartCanvasTool::new(
             canvas_repo.clone(),
             project_id,
-            shared_address_space,
+            shared_vfs,
             SharedSessionHubHandle::default(),
             Some("sess-test".to_string()),
         );

@@ -13,7 +13,7 @@ pub mod skill;
 pub mod tool;
 
 pub use agentdash_domain::common::{
-    AddressSpace, AgentConfig, Mount, MountCapability, SystemPromptMode, ThinkingLevel,
+    Vfs, AgentConfig, Mount, MountCapability, SystemPromptMode, ThinkingLevel,
 };
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
@@ -21,7 +21,7 @@ pub use connector::{
     ToolCluster, content_block_to_text, workspace_path_from_context,
 };
 pub use context_injection::{
-    AddressSpaceContext, AddressSpaceDescriptor, AddressSpaceDiscoveryProvider, ContextFragment,
+    VfsContext, VfsDescriptor, VfsDiscoveryProvider, ContextFragment,
     InjectionError, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint,
     SourceResolver,
 };

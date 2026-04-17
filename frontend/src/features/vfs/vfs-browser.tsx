@@ -1,31 +1,31 @@
 /**
- * 统一 Address Space 浏览器
+ * 统一 VFS 浏览器
  *
  * 浏览器本身只消费已解析好的 surface，或在必要时根据 source 先向后端解析 surface。
- * 它不再接收 project/story/owner/agent 等业务坐标来二次推导 address space。
+ * 它不再接收 project/story/owner/agent 等业务坐标来二次推导 VFS。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  ExecutionAddressSpace,
-  ResolvedAddressSpaceSurface,
-  ResolvedAddressSpaceSurfaceSource,
+  ExecutionVfs,
+  ResolvedVfsSurface,
+  ResolvedVfsSurfaceSource,
 } from "../../types";
 import {
   listSurfaceMountEntries,
   readSurfaceFile,
-  resolveAddressSpaceSurface,
+  resolveVfsSurface,
   writeSurfaceFile,
   type SurfaceMountEntry,
-} from "../../services/addressSpaces";
+} from "../../services/vfs";
 
-export interface AddressSpaceBrowserProps {
+export interface VfsBrowserProps {
   /** 已解析好的 runtime / preview surface（优先使用） */
-  surface?: ResolvedAddressSpaceSurface | null;
+  surface?: ResolvedVfsSurface | null;
   /** 在组件内部先 resolve surface（Project/Story/Agent Knowledge 预览入口） */
-  source?: ResolvedAddressSpaceSurfaceSource;
+  source?: ResolvedVfsSurfaceSource;
   /** 仅展示 mount 摘要；若未提供 surface/source，则无法进行文件浏览 */
-  addressSpace?: ExecutionAddressSpace | null;
+  vfs?: ExecutionVfs | null;
   /** 限制当前入口可见的 mount，适用于 Agent 知识库等专用入口 */
   visibleMountIds?: string[];
   /** 初始选中的 mount id */
@@ -60,14 +60,14 @@ const CAPABILITY_ICONS: Record<string, string> = {
   exec: "执行",
 };
 
-export function AddressSpaceBrowser({
+export function VfsBrowser({
   surface,
   source,
-  addressSpace,
+  vfs,
   visibleMountIds,
   initialMountId,
-}: AddressSpaceBrowserProps) {
-  const [resolvedSurface, setResolvedSurface] = useState<ResolvedAddressSpaceSurface | null>(surface ?? null);
+}: VfsBrowserProps) {
+  const [resolvedSurface, setResolvedSurface] = useState<ResolvedVfsSurface | null>(surface ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
@@ -83,7 +83,7 @@ export function AddressSpaceBrowser({
     setError(null);
     void (async () => {
       try {
-        const nextSurface = await resolveAddressSpaceSurface(source);
+        const nextSurface = await resolveVfsSurface(source);
         if (!cancelled) setResolvedSurface(nextSurface);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -113,8 +113,8 @@ export function AddressSpaceBrowser({
         }));
     }
 
-    if (addressSpace) {
-      return addressSpace.mounts
+    if (vfs) {
+      return vfs.mounts
         .filter((mount) => !visible || visible.has(mount.id))
         .map((mount) => ({
           id: mount.id,
@@ -130,13 +130,13 @@ export function AddressSpaceBrowser({
     }
 
     return [];
-  }, [resolvedSurface, addressSpace, visibleMountIds]);
+  }, [resolvedSurface, vfs, visibleMountIds]);
 
   const defaultMountId = useMemo(() => {
-    const rawDefault = resolvedSurface?.default_mount_id ?? addressSpace?.default_mount_id ?? null;
+    const rawDefault = resolvedSurface?.default_mount_id ?? vfs?.default_mount_id ?? null;
     if (!rawDefault) return null;
     return mounts.some((mount) => mount.id === rawDefault) ? rawDefault : mounts[0]?.id ?? null;
-  }, [resolvedSurface, addressSpace, mounts]);
+  }, [resolvedSurface, vfs, mounts]);
 
   useEffect(() => {
     setSelectedMountId((current) => {
@@ -154,7 +154,7 @@ export function AddressSpaceBrowser({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
-        正在加载 Address Space…
+        正在加载 VFS…
       </div>
     );
   }

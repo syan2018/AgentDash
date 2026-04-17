@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use agent_client_protocol::{ContentBlock, McpServer};
 use serde::{Deserialize, Serialize};
 
-use agentdash_spi::{AddressSpace, PromptPayload};
+use agentdash_spi::{Vfs, PromptPayload};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -28,7 +28,7 @@ pub struct PromptSessionRequest {
     pub mcp_servers: Vec<McpServer>,
     /// 配置中显式标记为 relay 的 MCP server name 集合
     pub relay_mcp_server_names: std::collections::HashSet<String>,
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
     pub system_context: Option<String>,
     /// Session 模型判定出的 bootstrap 动作。
@@ -50,7 +50,7 @@ impl PromptSessionRequest {
             user_input: input,
             mcp_servers: Vec::new(),
             relay_mcp_server_names: Default::default(),
-            address_space: None,
+            vfs: None,
             flow_capabilities: None,
             system_context: None,
             bootstrap_action: SessionBootstrapAction::None,

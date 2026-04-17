@@ -167,7 +167,7 @@ pub async fn get_canvas_runtime_snapshot(
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
 
-    let address_space = resolve_canvas_runtime_address_space(
+    let vfs = resolve_canvas_runtime_vfs(
         &state,
         query.session_id.as_deref(),
         canvas.project_id,
@@ -176,8 +176,8 @@ pub async fn get_canvas_runtime_snapshot(
     let snapshot = build_runtime_snapshot_with_bindings(
         &canvas,
         query.session_id,
-        address_space.as_ref(),
-        state.services.address_space_service.as_ref(),
+        vfs.as_ref(),
+        state.services.vfs_service.as_ref(),
     )
     .await;
 
@@ -207,11 +207,11 @@ fn parse_project_id(raw_project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw_project_id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
 }
 
-async fn resolve_canvas_runtime_address_space(
+async fn resolve_canvas_runtime_vfs(
     state: &Arc<AppState>,
     session_id: Option<&str>,
     expected_project_id: Uuid,
-) -> Result<Option<agentdash_spi::AddressSpace>, ApiError> {
+) -> Result<Option<agentdash_spi::Vfs>, ApiError> {
     let Some(session_id) = session_id else {
         return Ok(None);
     };
@@ -248,13 +248,13 @@ async fn resolve_canvas_runtime_address_space(
             let built_context =
                 agentdash_application::task::context_builder::build_task_session_context(
                     &state.repos,
-                    &state.services.address_space_service,
+                    &state.services.vfs_service,
                     state.config.mcp_base_url.as_deref(),
                     binding.owner_id,
                     session_meta.as_ref(),
                 )
                 .await;
-            Ok(built_context.and_then(|context| context.address_space))
+            Ok(built_context.and_then(|context| context.vfs))
         }
         SessionOwnerType::Story => {
             let story = state
@@ -266,7 +266,7 @@ async fn resolve_canvas_runtime_address_space(
             let built_context =
                 story_sessions::build_story_session_context_response(state, &story, session_id)
                     .await?;
-            Ok(built_context.and_then(|context| context.address_space))
+            Ok(built_context.and_then(|context| context.vfs))
         }
         SessionOwnerType::Project => {
             let project = state
@@ -284,7 +284,7 @@ async fn resolve_canvas_runtime_address_space(
                 &binding.label,
             )
             .await?;
-            Ok(built_context.address_space)
+            Ok(built_context.vfs)
         }
     }
 }

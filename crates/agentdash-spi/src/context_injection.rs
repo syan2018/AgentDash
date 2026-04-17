@@ -37,7 +37,7 @@ pub struct ContextFragment {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AddressSpaceDescriptor {
+pub struct VfsDescriptor {
     pub id: String,
     pub label: String,
     pub kind: agentdash_domain::context_source::ContextSourceKind,
@@ -53,15 +53,15 @@ pub struct SelectorHint {
     pub result_item_type: String,
 }
 
-pub struct AddressSpaceContext {
+pub struct VfsContext {
     /// 是否存在可用 Workspace（仅用于能力发现的开关）。
     /// 业务编排层不应依赖或传播任何本机路径。
     pub workspace_available: bool,
     pub has_mcp: bool,
 }
 
-pub trait AddressSpaceDiscoveryProvider: Send + Sync {
-    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor>;
+pub trait VfsDiscoveryProvider: Send + Sync {
+    fn descriptor(&self, ctx: &VfsContext) -> Option<VfsDescriptor>;
 }
 
 pub struct ResolveSourcesRequest<'a> {

@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agentdash_application::address_space::ApplyPatchAffectedPaths;
+use agentdash_application::vfs::ApplyPatchAffectedPaths;
 use agentdash_relay::{FileEntryRelay, SearchHit};
 
 pub(crate) struct SearchParams<'a> {
@@ -156,7 +156,7 @@ impl ToolExecutor {
         let patch_owned = patch.to_string();
 
         tokio::task::spawn_blocking(move || {
-            agentdash_application::address_space::apply_patch_to_fs(&ws, &patch_owned)
+            agentdash_application::vfs::apply_patch_to_fs(&ws, &patch_owned)
         })
         .await
         .map_err(|e| ToolError::PatchApply(format!("patch 任务失败: {e}")))?

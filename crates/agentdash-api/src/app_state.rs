@@ -9,15 +9,15 @@ use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
 };
 use crate::relay::registry::BackendRegistry;
-use agentdash_application::address_space::RelayAddressSpaceService;
-use agentdash_application::address_space::tools::provider::{
+use agentdash_application::vfs::RelayVfsService;
+use agentdash_application::vfs::tools::provider::{
     RelayRuntimeToolProvider, SharedSessionHubHandle,
 };
-use agentdash_application::address_space::{MountProviderRegistry, MountProviderRegistryBuilder};
+use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::ContextContributorRegistry;
 use agentdash_application::context::{
-    AddressSpaceDiscoveryRegistry, builtin_address_space_registry,
+    VfsDiscoveryRegistry, builtin_vfs_registry,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
 pub use agentdash_application::repository_set::RepositorySet;
@@ -54,14 +54,14 @@ pub struct ServiceSet {
     pub session_hub: SessionHub,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
-    /// 统一 Address Space 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
-    pub address_space_service: Arc<RelayAddressSpaceService>,
+    /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
+    pub vfs_service: Arc<RelayVfsService>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
     /// 上下文贡献者注册表 — 持有常驻贡献者（Core/Binding/DeclaredSources/Instruction 等）
     pub contributor_registry: Arc<ContextContributorRegistry>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
-    pub address_space_registry: AddressSpaceDiscoveryRegistry,
+    pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
     pub mount_provider_registry: Arc<MountProviderRegistry>,
     /// Task 生命周期服务 — Application 层直接编排 task start/continue/cancel
@@ -199,15 +199,15 @@ impl AppState {
 
         let mount_provider_registry = Arc::new(mount_registry_builder.build());
 
-        let address_space_service = Arc::new(RelayAddressSpaceService::new(
+        let vfs_service = Arc::new(RelayVfsService::new(
             mount_provider_registry.clone(),
         ));
         let session_hub_handle = SharedSessionHubHandle::default();
 
         let inline_persister: Arc<
-            dyn agentdash_application::address_space::inline_persistence::InlineContentPersister,
+            dyn agentdash_application::vfs::inline_persistence::InlineContentPersister,
         > = Arc::new(
-            agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
+            agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
                 inline_file_repo.clone(),
             ),
         );
@@ -218,7 +218,7 @@ impl AppState {
         if let Some(pi_connector) = build_pi_agent_connector(PiAgentConnectorDeps {
             settings_repo: settings_repo.clone(),
             llm_provider_repo: llm_provider_repo.clone(),
-            address_space_service: address_space_service.clone(),
+            vfs_service: vfs_service.clone(),
             canvas_repo: canvas_repo.clone(),
             session_binding_repo: session_binding_repo.clone(),
             agent_repo: agent_repo.clone(),
@@ -269,7 +269,7 @@ impl AppState {
             Some(hook_provider.clone()),
             session_repo,
         )
-        .with_address_space_service(address_space_service.clone())
+        .with_vfs_service(vfs_service.clone())
         .with_extra_skill_dirs(plugin_registration.extra_skill_dirs);
         if let Some(bridge) = title_bridge {
             session_hub = session_hub.with_title_generator(Arc::new(
@@ -335,9 +335,9 @@ impl AppState {
 
         tracing::info!(auth_mode = %auth_mode, "认证模式已加载");
 
-        let mut address_space_registry = builtin_address_space_registry();
-        for provider in plugin_registration.address_space_providers {
-            address_space_registry.register(provider);
+        let mut vfs_registry = builtin_vfs_registry();
+        for provider in plugin_registration.vfs_providers {
+            vfs_registry.register(provider);
         }
 
         let contributor_registry = Arc::new(ContextContributorRegistry::with_builtins());
@@ -383,7 +383,7 @@ impl AppState {
         let task_lifecycle_service = Arc::new(TaskLifecycleService {
             repos: repos.clone(),
             hub: session_hub.clone(),
-            address_space_service: address_space_service.clone(),
+            vfs_service: vfs_service.clone(),
             contributor_registry: contributor_registry.clone(),
             mcp_base_url: mcp_base_url.clone(),
             backend_availability: backend_registry.clone(),
@@ -397,10 +397,10 @@ impl AppState {
             services: ServiceSet {
                 session_hub,
                 connector,
-                address_space_service,
+                vfs_service,
                 backend_registry,
                 contributor_registry: contributor_registry.clone(),
-                address_space_registry,
+                vfs_registry,
                 mount_provider_registry,
                 task_lifecycle_service,
                 hook_provider,
@@ -432,7 +432,7 @@ impl AppState {
             let routine_executor = Arc::new(RoutineExecutor::new(
                 state.repos.clone(),
                 state.services.session_hub.clone(),
-                state.services.address_space_service.clone(),
+                state.services.vfs_service.clone(),
                 state.services.connector.clone(),
                 state.config.mcp_base_url.clone(),
             ));
@@ -490,7 +490,7 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
 struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     llm_provider_repo: Arc<dyn LlmProviderRepository>,
-    address_space_service: Arc<RelayAddressSpaceService>,
+    vfs_service: Arc<RelayVfsService>,
     canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     agent_repo: Arc<dyn agentdash_domain::agent::AgentRepository>,
@@ -501,7 +501,7 @@ struct PiAgentConnectorDeps {
     inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<
-        Arc<dyn agentdash_application::address_space::inline_persistence::InlineContentPersister>,
+        Arc<dyn agentdash_application::vfs::inline_persistence::InlineContentPersister>,
     >,
     mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
 }
@@ -517,7 +517,7 @@ async fn build_pi_agent_connector(
     connector.set_settings_repository(deps.settings_repo);
     connector.set_llm_provider_repository(deps.llm_provider_repo);
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
-        deps.address_space_service,
+        deps.vfs_service,
         deps.canvas_repo,
         deps.session_binding_repo,
         deps.agent_repo,

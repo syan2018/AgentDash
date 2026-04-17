@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// 已解析后的 Address Space 展示面。
+/// 已解析后的 VFS 展示面。
 ///
 /// 这是前端浏览/摘要展示/运行时诊断应共享的唯一 mount 真相源。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ResolvedAddressSpaceSurface {
+pub struct ResolvedVfsSurface {
     pub surface_ref: String,
-    pub source: ResolvedAddressSpaceSurfaceSource,
+    pub source: ResolvedVfsSurfaceSource,
     pub mounts: Vec<ResolvedMountSummary>,
     pub default_mount_id: Option<String>,
 }
@@ -17,7 +17,7 @@ pub struct ResolvedAddressSpaceSurface {
 /// 不同 source 可以有不同的 mount 派生规则，但最终都必须收敛到同一份 surface DTO。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "source_type", rename_all = "snake_case")]
-pub enum ResolvedAddressSpaceSurfaceSource {
+pub enum ResolvedVfsSurfaceSource {
     ProjectPreview {
         project_id: Uuid,
     },
@@ -39,7 +39,7 @@ pub enum ResolvedAddressSpaceSurfaceSource {
     },
 }
 
-impl ResolvedAddressSpaceSurfaceSource {
+impl ResolvedVfsSurfaceSource {
     /// 生成稳定的 surface_ref，供前后端后续基于该 surface 做 mount 读写操作。
     pub fn surface_ref(&self) -> String {
         match self {
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn project_agent_knowledge_surface_ref_is_stable() {
-        let source = ResolvedAddressSpaceSurfaceSource::ProjectAgentKnowledge {
+        let source = ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
             project_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111")
                 .expect("project uuid"),
             agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222")
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn session_runtime_surface_ref_trims_session_id() {
-        let source = ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+        let source = ResolvedVfsSurfaceSource::SessionRuntime {
             session_id: "  sess-1  ".to_string(),
         };
 
@@ -220,14 +220,14 @@ mod tests {
 
     #[test]
     fn parse_story_preview_surface_ref() {
-        let parsed = ResolvedAddressSpaceSurfaceSource::parse_surface_ref(
+        let parsed = ResolvedVfsSurfaceSource::parse_surface_ref(
             "story-preview:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222",
         )
         .expect("parse story preview");
 
         assert_eq!(
             parsed,
-            ResolvedAddressSpaceSurfaceSource::StoryPreview {
+            ResolvedVfsSurfaceSource::StoryPreview {
                 project_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111")
                     .expect("project uuid"),
                 story_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222")

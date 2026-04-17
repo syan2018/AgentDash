@@ -10,7 +10,7 @@ use super::context::{
 use super::plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
 };
-use crate::runtime::{AddressSpace, AgentConfig, RuntimeMcpServer};
+use crate::runtime::{Vfs, AgentConfig, RuntimeMcpServer};
 use crate::workflow::ActiveWorkflowProjection;
 
 /// 统一的 session bootstrap 计划。
@@ -24,7 +24,7 @@ pub struct SessionBootstrapPlan {
     pub owner: BootstrapOwnerSummary,
     pub executor: SessionExecutorSummary,
     pub resolved_config: Option<AgentConfig>,
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
     pub tool_visibility: SessionToolVisibilitySummary,
@@ -63,7 +63,7 @@ pub struct BootstrapPlanInput {
     pub story: Option<Story>,
     pub workspace: Option<Workspace>,
     pub resolved_config: Option<AgentConfig>,
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
     pub executor_preset_name: Option<String>,
@@ -94,13 +94,13 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
         }
     };
     let tool_visibility = super::plan::summarize_tool_visibility_with_context(
-        input.address_space.as_ref(),
+        input.vfs.as_ref(),
         &input.mcp_servers,
         Some(owner_type),
     );
     let runtime_policy = summarize_runtime_policy(
         workspace_attached,
-        input.address_space.as_ref(),
+        input.vfs.as_ref(),
         &input.mcp_servers,
         &tool_visibility.tool_names,
     );
@@ -121,7 +121,7 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
         },
         executor,
         resolved_config: input.resolved_config,
-        address_space: input.address_space,
+        vfs: input.vfs,
         mcp_servers: input.mcp_servers,
         working_dir,
         tool_visibility,
@@ -210,7 +210,7 @@ mod tests {
             story: None,
             workspace: Some(workspace),
             resolved_config: None,
-            address_space: None,
+            vfs: None,
             mcp_servers: vec![],
             working_dir: None,
             executor_preset_name: None,
@@ -236,7 +236,7 @@ mod tests {
             story: None,
             workspace: None,
             resolved_config: None,
-            address_space: None,
+            vfs: None,
             mcp_servers: vec![],
             working_dir: None,
             executor_preset_name: None,
@@ -252,6 +252,6 @@ mod tests {
         let snapshot = derive_session_context_snapshot(&plan);
         assert_eq!(snapshot.executor.source, "test");
         assert!(!snapshot.effective.runtime_policy.workspace_attached);
-        assert!(!snapshot.effective.runtime_policy.address_space_attached);
+        assert!(!snapshot.effective.runtime_policy.vfs_attached);
     }
 }

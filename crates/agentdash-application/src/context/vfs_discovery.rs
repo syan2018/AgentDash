@@ -1,25 +1,25 @@
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::{
-    AddressSpaceContext, AddressSpaceDescriptor, AddressSpaceDiscoveryProvider, SelectorHint,
+    VfsContext, VfsDescriptor, VfsDiscoveryProvider, SelectorHint,
 };
 
 /// 寻址空间发现注册表 — 持有所有已注册的能力发现提供者
-pub struct AddressSpaceDiscoveryRegistry {
-    providers: Vec<Box<dyn AddressSpaceDiscoveryProvider>>,
+pub struct VfsDiscoveryRegistry {
+    providers: Vec<Box<dyn VfsDiscoveryProvider>>,
 }
 
-impl AddressSpaceDiscoveryRegistry {
+impl VfsDiscoveryRegistry {
     pub fn new() -> Self {
         Self {
             providers: Vec::new(),
         }
     }
 
-    pub fn register(&mut self, provider: Box<dyn AddressSpaceDiscoveryProvider>) {
+    pub fn register(&mut self, provider: Box<dyn VfsDiscoveryProvider>) {
         self.providers.push(provider);
     }
 
-    pub fn available_spaces(&self, ctx: &AddressSpaceContext) -> Vec<AddressSpaceDescriptor> {
+    pub fn available_spaces(&self, ctx: &VfsContext) -> Vec<VfsDescriptor> {
         self.providers
             .iter()
             .filter_map(|p| p.descriptor(ctx))
@@ -27,7 +27,7 @@ impl AddressSpaceDiscoveryRegistry {
     }
 }
 
-impl Default for AddressSpaceDiscoveryRegistry {
+impl Default for VfsDiscoveryRegistry {
     fn default() -> Self {
         Self::new()
     }
@@ -38,12 +38,12 @@ impl Default for AddressSpaceDiscoveryRegistry {
 /// 工作空间文件 Provider — 当有工作空间时可用
 pub struct WorkspaceFileProvider;
 
-impl AddressSpaceDiscoveryProvider for WorkspaceFileProvider {
-    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
+impl VfsDiscoveryProvider for WorkspaceFileProvider {
+    fn descriptor(&self, ctx: &VfsContext) -> Option<VfsDescriptor> {
         if !ctx.workspace_available {
             return None;
         }
-        Some(AddressSpaceDescriptor {
+        Some(VfsDescriptor {
             id: "workspace_file".to_string(),
             label: "工作空间文件".to_string(),
             kind: ContextSourceKind::File,
@@ -65,12 +65,12 @@ impl AddressSpaceDiscoveryProvider for WorkspaceFileProvider {
 /// 项目快照 Provider — 当有工作空间时可用
 pub struct WorkspaceSnapshotProvider;
 
-impl AddressSpaceDiscoveryProvider for WorkspaceSnapshotProvider {
-    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
+impl VfsDiscoveryProvider for WorkspaceSnapshotProvider {
+    fn descriptor(&self, ctx: &VfsContext) -> Option<VfsDescriptor> {
         if !ctx.workspace_available {
             return None;
         }
-        Some(AddressSpaceDescriptor {
+        Some(VfsDescriptor {
             id: "workspace_snapshot".to_string(),
             label: "项目结构快照".to_string(),
             kind: ContextSourceKind::ProjectSnapshot,
@@ -84,12 +84,12 @@ impl AddressSpaceDiscoveryProvider for WorkspaceSnapshotProvider {
 /// MCP 资源 Provider — 当有 MCP 服务时可用
 pub struct McpResourceProvider;
 
-impl AddressSpaceDiscoveryProvider for McpResourceProvider {
-    fn descriptor(&self, ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
+impl VfsDiscoveryProvider for McpResourceProvider {
+    fn descriptor(&self, ctx: &VfsContext) -> Option<VfsDescriptor> {
         if !ctx.has_mcp {
             return None;
         }
-        Some(AddressSpaceDescriptor {
+        Some(VfsDescriptor {
             id: "mcp_resource".to_string(),
             label: "MCP 资源".to_string(),
             kind: ContextSourceKind::McpResource,
@@ -106,11 +106,11 @@ impl AddressSpaceDiscoveryProvider for McpResourceProvider {
 
 /// 创建包含所有内置 Provider 的注册表
 /// Lifecycle 执行记录虚拟挂载 — 由会话在存在活跃 run 时挂载，`lifecycle_vfs` 提供读写浏览能力描述
-pub struct LifecycleAddressSpaceProvider;
+pub struct LifecycleVfsProvider;
 
-impl AddressSpaceDiscoveryProvider for LifecycleAddressSpaceProvider {
-    fn descriptor(&self, _ctx: &AddressSpaceContext) -> Option<AddressSpaceDescriptor> {
-        Some(AddressSpaceDescriptor {
+impl VfsDiscoveryProvider for LifecycleVfsProvider {
+    fn descriptor(&self, _ctx: &VfsContext) -> Option<VfsDescriptor> {
+        Some(VfsDescriptor {
             id: "lifecycle".to_string(),
             label: "Lifecycle 执行记录".to_string(),
             kind: ContextSourceKind::EntityRef,
@@ -121,25 +121,25 @@ impl AddressSpaceDiscoveryProvider for LifecycleAddressSpaceProvider {
     }
 }
 
-pub fn builtin_address_space_registry() -> AddressSpaceDiscoveryRegistry {
-    let mut registry = AddressSpaceDiscoveryRegistry::new();
+pub fn builtin_vfs_registry() -> VfsDiscoveryRegistry {
+    let mut registry = VfsDiscoveryRegistry::new();
     registry.register(Box::new(WorkspaceFileProvider));
     registry.register(Box::new(WorkspaceSnapshotProvider));
     registry.register(Box::new(McpResourceProvider));
-    registry.register(Box::new(LifecycleAddressSpaceProvider));
+    registry.register(Box::new(LifecycleVfsProvider));
     registry
 }
 
 #[cfg(test)]
 mod tests {
-    use agentdash_spi::AddressSpaceContext;
+    use agentdash_spi::VfsContext;
 
     use super::*;
 
     #[test]
     fn workspace_file_available_with_workspace() {
-        let registry = builtin_address_space_registry();
-        let ctx = AddressSpaceContext {
+        let registry = builtin_vfs_registry();
+        let ctx = VfsContext {
             workspace_available: true,
             has_mcp: false,
         };
@@ -151,8 +151,8 @@ mod tests {
 
     #[test]
     fn mcp_resource_available_with_mcp() {
-        let registry = builtin_address_space_registry();
-        let ctx = AddressSpaceContext {
+        let registry = builtin_vfs_registry();
+        let ctx = VfsContext {
             workspace_available: false,
             has_mcp: true,
         };
@@ -163,8 +163,8 @@ mod tests {
 
     #[test]
     fn lifecycle_space_always_advertised() {
-        let registry = builtin_address_space_registry();
-        let ctx = AddressSpaceContext {
+        let registry = builtin_vfs_registry();
+        let ctx = VfsContext {
             workspace_available: false,
             has_mcp: false,
         };

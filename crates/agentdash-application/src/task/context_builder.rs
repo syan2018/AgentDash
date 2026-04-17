@@ -1,7 +1,7 @@
 use agent_client_protocol::McpServer;
 use uuid::Uuid;
 
-use crate::address_space::RelayAddressSpaceService;
+use crate::vfs::RelayVfsService;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::repository_set::RepositorySet;
 use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
@@ -13,19 +13,19 @@ use crate::session::context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
 use crate::task::session_runtime_inputs::build_task_session_runtime_inputs;
-use agentdash_domain::common::AddressSpace;
+use agentdash_domain::common::Vfs;
 
 #[derive(Debug)]
 pub struct BuiltTaskSessionContext {
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
-/// 为 task session 按需构建结构化上下文快照（address space + context snapshot）。
+/// 为 task session 按需构建结构化上下文快照（VFS + context snapshot）。
 /// 非关键路径：任何 repo 查询失败都静默降级为 None。
 pub async fn build_task_session_context(
     repos: &RepositorySet,
-    address_space_service: &RelayAddressSpaceService,
+    vfs_service: &RelayVfsService,
     mcp_base_url: Option<&str>,
     task_id: Uuid,
     session_meta: Option<&crate::session::SessionMeta>,
@@ -41,7 +41,7 @@ pub async fn build_task_session_context(
 
     let session_runtime_inputs = build_task_session_runtime_inputs(
         repos,
-        address_space_service,
+        vfs_service,
         mcp_base_url,
         &task,
         &story,
@@ -58,8 +58,8 @@ pub async fn build_task_session_context(
         runtime_mcp_servers_to_acp(&session_runtime_inputs.mcp_servers);
 
     let story_overrides = extract_story_overrides(&story);
-    let mut runtime_address_space = session_runtime_inputs.address_space.clone();
-    if let Some(space) = runtime_address_space.as_mut() {
+    let mut runtime_vfs = session_runtime_inputs.vfs.clone();
+    if let Some(space) = runtime_vfs.as_mut() {
         let visible_canvas_mount_ids = session_meta
             .map(|meta| meta.visible_canvas_mount_ids.as_slice())
             .unwrap_or(&[]);
@@ -81,7 +81,7 @@ pub async fn build_task_session_context(
         story: Some(story),
         workspace,
         resolved_config: session_runtime_inputs.resolved_config,
-        address_space: runtime_address_space,
+        vfs: runtime_vfs,
         mcp_servers: acp_mcp_servers_to_runtime(&mcp_servers),
         working_dir: None,
         executor_preset_name: preset_name,
@@ -94,7 +94,7 @@ pub async fn build_task_session_context(
     let snapshot = derive_session_context_snapshot(&plan);
 
     Some(BuiltTaskSessionContext {
-        address_space: plan.address_space.clone(),
+        vfs: plan.vfs.clone(),
         context_snapshot: Some(snapshot),
     })
 }

@@ -6,7 +6,7 @@ use crate::context::{
     ContextComposer, build_owner_prompt_blocks, clean_text, resolve_declared_sources, trim_or_dash,
     workspace_context_fragment,
 };
-use crate::runtime::{AddressSpace, RuntimeMcpServer};
+use crate::runtime::{Vfs, RuntimeMcpServer};
 use crate::session::plan::{
     SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
@@ -17,7 +17,7 @@ pub struct StoryContextBuildInput<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub address_space: Option<&'a AddressSpace>,
+    pub vfs: Option<&'a Vfs>,
     pub mcp_servers: &'a [RuntimeMcpServer],
     pub effective_agent_type: Option<&'a str>,
     /// 由调用方预解析的工作空间来源片段（File/ProjectSnapshot 类型）
@@ -64,7 +64,7 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
     let session_plan = build_session_plan_fragments(SessionPlanInput {
         owner_type: SessionOwnerType::Story,
         phase: SessionPlanPhase::StoryOwner,
-        address_space: input.address_space,
+        vfs: input.vfs,
         mcp_servers: input.mcp_servers,
         session_composition: effective_session_composition.as_ref(),
         agent_type: input.effective_agent_type,

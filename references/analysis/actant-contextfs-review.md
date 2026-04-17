@@ -185,9 +185,9 @@ type VfsFilesystemType = "hostfs" | "runtimefs" | (string & Record<never, never>
 
 **Actant 做法：** VFS Kernel 是唯一的路径解析 + 操作分发中心。`mount namespace → mount table → middleware → node → backend` 是一条完整的请求链路。所有操作（read/write/list/stat/watch/stream）都经过同一个 `dispatch()` 入口。
 
-**AgentDashboard 现状：** `RuntimeAddressSpace` 和 `RuntimeMount` 已经有了 mount 的概念，但它们只是**数据结构**（DTO），不是执行内核。实际的 read/write/list/exec 操作分散在 `execution_hooks.rs`、`address_space_access.rs`、`runtime_bridge.rs` 等多个地方，没有统一的分发入口。`AddressSpaceProvider` 只负责 descriptor/discovery，不负责实际 I/O。
+**AgentDashboard 现状：** `RuntimeVfs` 和 `RuntimeMount` 已经有了 mount 的概念，但它们只是**数据结构**（DTO），不是执行内核。实际的 read/write/list/exec 操作分散在 `execution_hooks.rs`、`vfs_access.rs`、`runtime_bridge.rs` 等多个地方，没有统一的分发入口。`VfsProvider` 只负责 descriptor/discovery，不负责实际 I/O。
 
-**建议：** 考虑引入一个 `AddressSpaceKernel`（或 `MountDispatcher`），把 `RuntimeMount` 从纯数据结构升级为可执行的挂载实例，统一 read/write/list/search/exec 的分发路径。这样 `relay_fs` 和 `inline_fs` 就变成了两种 "filesystem type"，而不是散落在各处的 if-else 分支。
+**建议：** 考虑引入一个 `VfsKernel`（或 `MountDispatcher`），把 `RuntimeMount` 从纯数据结构升级为可执行的挂载实例，统一 read/write/list/search/exec 的分发路径。这样 `relay_fs` 和 `inline_fs` 就变成了两种 "filesystem type"，而不是散落在各处的 if-else 分支。
 
 ### 借鉴 2：引入 Middleware Chain 做横切关注点
 

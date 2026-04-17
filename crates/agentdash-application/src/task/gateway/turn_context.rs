@@ -1,7 +1,7 @@
-use agentdash_domain::common::AddressSpace;
+use agentdash_domain::common::Vfs;
 use agentdash_domain::task::Task;
 
-use crate::address_space::RelayAddressSpaceService;
+use crate::vfs::RelayVfsService;
 use crate::context::{
     BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
     StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
@@ -20,7 +20,7 @@ use agentdash_domain::common::AgentConfig;
 pub struct TaskTurnServices<'a> {
     pub repos: &'a RepositorySet,
     pub availability: &'a dyn BackendAvailability,
-    pub address_space_service: &'a RelayAddressSpaceService,
+    pub vfs_service: &'a RelayVfsService,
     pub contributor_registry: &'a ContextContributorRegistry,
     pub mcp_base_url: Option<&'a str>,
 }
@@ -28,7 +28,7 @@ pub struct TaskTurnServices<'a> {
 /// 准备好的 turn 上下文 — 包含 dispatch 所需的所有数据
 pub struct PreparedTurnContext {
     pub built: BuiltTaskAgentContext,
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub resolved_config: Option<AgentConfig>,
     pub use_cloud_native_agent: bool,
     pub workspace: Option<agentdash_domain::workspace::Workspace>,
@@ -61,7 +61,7 @@ pub async fn prepare_task_turn_context(
     declared_sources.extend(task.agent_binding.context_sources.clone());
     let resolved_workspace_sources = resolve_workspace_declared_sources(
         svc.availability,
-        svc.address_space_service,
+        svc.vfs_service,
         &declared_sources,
         workspace.as_ref(),
         86,
@@ -97,7 +97,7 @@ pub async fn prepare_task_turn_context(
 
     let session_runtime_inputs = build_task_session_runtime_inputs(
         svc.repos,
-        svc.address_space_service,
+        svc.vfs_service,
         svc.mcp_base_url,
         task,
         &story,
@@ -120,7 +120,7 @@ pub async fn prepare_task_turn_context(
     let use_cloud_native_agent = resolved_config
         .as_ref()
         .is_some_and(|config| config.is_cloud_native());
-    let address_space = session_runtime_inputs.address_space.clone();
+    let vfs = session_runtime_inputs.vfs.clone();
 
     // build full agent context
     let built = build_task_agent_context(
@@ -129,7 +129,7 @@ pub async fn prepare_task_turn_context(
             story: &story,
             project: &project,
             workspace: workspace.as_ref(),
-            address_space: address_space.as_ref(),
+            vfs: vfs.as_ref(),
             effective_agent_type: resolved_config
                 .as_ref()
                 .map(|config| config.executor.as_str()),
@@ -147,7 +147,7 @@ pub async fn prepare_task_turn_context(
 
     Ok(PreparedTurnContext {
         built,
-        address_space,
+        vfs,
         resolved_config,
         use_cloud_native_agent,
         workspace,

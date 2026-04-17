@@ -37,9 +37,9 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [
-    "crates/agentdash-application/src/address_space/relay_service.rs",
-    "crates/agentdash-application/src/address_space/tools/fs.rs",
-    "crates/agentdash-application/src/address_space/path.rs",
+    "crates/agentdash-application/src/vfs/relay_service.rs",
+    "crates/agentdash-application/src/vfs/tools/fs.rs",
+    "crates/agentdash-application/src/vfs/path.rs",
     "crates/agentdash-api/src/mount_providers/relay_fs.rs",
     "crates/agentdash-injection/src/"
   ],

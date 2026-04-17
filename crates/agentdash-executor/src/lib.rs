@@ -9,4 +9,4 @@ pub use agentdash_spi::connector::{
     content_block_to_text,
 };
 pub use agentdash_spi::tool::DynAgentTool;
-pub use agentdash_spi::{AddressSpace, AgentConfig, Mount, MountCapability, ThinkingLevel};
+pub use agentdash_spi::{Vfs, AgentConfig, Mount, MountCapability, ThinkingLevel};

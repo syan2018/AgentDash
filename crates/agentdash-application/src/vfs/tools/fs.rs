@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_spi::AddressSpace;
+use agentdash_spi::Vfs;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -9,10 +9,10 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use crate::address_space::build_canvas_mount;
-use crate::address_space::inline_persistence::InlineContentOverlay;
-use crate::address_space::relay_service::RelayAddressSpaceService;
-use crate::address_space::{
+use crate::vfs::build_canvas_mount;
+use crate::vfs::inline_persistence::InlineContentOverlay;
+use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::{
     ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri,
 };
 
@@ -20,20 +20,20 @@ use crate::address_space::{
 ///
 /// Rules:
 /// 1. Contains `://` -> split into mount_id and relative path by URI syntax
-/// 2. No `://` and the address space has exactly one mount -> use that mount implicitly
+/// 2. No `://` and the VFS has exactly one mount -> use that mount implicitly
 /// 3. Otherwise -> error, require explicit mount prefix
-pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<ResourceRef, String> {
+pub fn resolve_uri_path(vfs: &Vfs, path: &str) -> Result<ResourceRef, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err("path must not be empty".to_string());
     }
 
     if trimmed.contains("://") {
-        return parse_mount_uri(trimmed, address_space);
+        return parse_mount_uri(trimmed, vfs);
     }
 
-    if address_space.mounts.len() == 1 {
-        let mount_id = address_space.mounts[0].id.clone();
+    if vfs.mounts.len() == 1 {
+        let mount_id = vfs.mounts[0].id.clone();
         return Ok(ResourceRef {
             mount_id,
             path: trimmed.to_string(),
@@ -44,23 +44,23 @@ pub fn resolve_uri_path(address_space: &AddressSpace, path: &str) -> Result<Reso
         "path `{trimmed}` is missing a mount prefix (format: mount_id://path). \
         The current session has {} mount(s); call mounts_list to see available mounts, \
         then use a fully qualified URI.",
-        address_space.mounts.len(),
+        vfs.mounts.len(),
     ))
 }
 
 #[derive(Clone)]
-pub struct SharedRuntimeAddressSpace {
-    inner: Arc<RwLock<AddressSpace>>,
+pub struct SharedRuntimeVfs {
+    inner: Arc<RwLock<Vfs>>,
 }
 
-impl SharedRuntimeAddressSpace {
-    pub fn new(address_space: AddressSpace) -> Self {
+impl SharedRuntimeVfs {
+    pub fn new(vfs: Vfs) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(address_space)),
+            inner: Arc::new(RwLock::new(vfs)),
         }
     }
 
-    pub async fn snapshot(&self) -> AddressSpace {
+    pub async fn snapshot(&self) -> Vfs {
         self.inner.read().await.clone()
     }
 
@@ -135,18 +135,18 @@ Important:\n\
 
 #[derive(Clone)]
 pub struct MountsListTool {
-    service: Arc<RelayAddressSpaceService>,
-    address_space: SharedRuntimeAddressSpace,
+    service: Arc<RelayVfsService>,
+    vfs: SharedRuntimeVfs,
 }
 
 impl MountsListTool {
     pub fn new(
-        service: Arc<RelayAddressSpaceService>,
-        address_space: SharedRuntimeAddressSpace,
+        service: Arc<RelayVfsService>,
+        vfs: SharedRuntimeVfs,
     ) -> Self {
         Self {
             service,
-            address_space,
+            vfs,
         }
     }
 }
@@ -175,8 +175,8 @@ impl AgentTool for MountsListTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let address_space = self.address_space.snapshot().await;
-        let mounts = self.service.list_mounts(&address_space);
+        let vfs = self.vfs.snapshot().await;
+        let mounts = self.service.list_mounts(&vfs);
         let body = mounts
             .iter()
             .map(|mount| {
@@ -210,21 +210,21 @@ impl AgentTool for MountsListTool {
 
 #[derive(Clone)]
 pub struct FsReadTool {
-    service: Arc<RelayAddressSpaceService>,
-    address_space: SharedRuntimeAddressSpace,
+    service: Arc<RelayVfsService>,
+    vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsReadTool {
     pub fn new(
-        service: Arc<RelayAddressSpaceService>,
-        address_space: SharedRuntimeAddressSpace,
+        service: Arc<RelayVfsService>,
+        vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
-            address_space,
+            vfs,
             overlay,
             identity,
         }
@@ -268,13 +268,13 @@ impl AgentTool for FsReadTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsReadParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let address_space = self.address_space.snapshot().await;
-        let target = resolve_uri_path(&address_space, &params.path)
+        let vfs = self.vfs.snapshot().await;
+        let target = resolve_uri_path(&vfs, &params.path)
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .read_text(
-                &address_space,
+                &vfs,
                 &target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
@@ -311,21 +311,21 @@ impl AgentTool for FsReadTool {
 
 #[derive(Clone)]
 pub struct FsApplyPatchTool {
-    service: Arc<RelayAddressSpaceService>,
-    address_space: SharedRuntimeAddressSpace,
+    service: Arc<RelayVfsService>,
+    vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsApplyPatchTool {
     pub fn new(
-        service: Arc<RelayAddressSpaceService>,
-        address_space: SharedRuntimeAddressSpace,
+        service: Arc<RelayVfsService>,
+        vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
-            address_space,
+            vfs,
             overlay,
             identity,
         }
@@ -360,11 +360,11 @@ impl AgentTool for FsApplyPatchTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsApplyPatchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let address_space = self.address_space.snapshot().await;
+        let vfs = self.vfs.snapshot().await;
         let result = self
             .service
             .apply_patch_multi(
-                &address_space,
+                &vfs,
                 params.mount.as_deref(),
                 &params.patch,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
@@ -410,21 +410,21 @@ impl AgentTool for FsApplyPatchTool {
 
 #[derive(Clone)]
 pub struct FsGlobTool {
-    service: Arc<RelayAddressSpaceService>,
-    address_space: SharedRuntimeAddressSpace,
+    service: Arc<RelayVfsService>,
+    vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::auth::AuthIdentity>,
 }
 impl FsGlobTool {
     pub fn new(
-        service: Arc<RelayAddressSpaceService>,
-        address_space: SharedRuntimeAddressSpace,
+        service: Arc<RelayVfsService>,
+        vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
-            address_space,
+            vfs,
             overlay,
             identity,
         }
@@ -469,13 +469,13 @@ impl AgentTool for FsGlobTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsGlobParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let address_space = self.address_space.snapshot().await;
-        let target = resolve_uri_path(&address_space, params.path.as_deref().unwrap_or("."))
+        let vfs = self.vfs.snapshot().await;
+        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .list(
-                &address_space,
+                &vfs,
                 &target.mount_id,
                 ListOptions {
                     path: if target.path.is_empty() {
@@ -514,20 +514,20 @@ impl AgentTool for FsGlobTool {
 
 #[derive(Clone)]
 pub struct FsGrepTool {
-    service: Arc<RelayAddressSpaceService>,
-    address_space: SharedRuntimeAddressSpace,
+    service: Arc<RelayVfsService>,
+    vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsGrepTool {
     pub fn new(
-        service: Arc<RelayAddressSpaceService>,
-        address_space: SharedRuntimeAddressSpace,
+        service: Arc<RelayVfsService>,
+        vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         _identity: Option<agentdash_spi::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
-            address_space,
+            vfs,
             overlay,
         }
     }
@@ -578,8 +578,8 @@ impl AgentTool for FsGrepTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsGrepParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let address_space = self.address_space.snapshot().await;
-        let target = resolve_uri_path(&address_space, params.path.as_deref().unwrap_or("."))
+        let vfs = self.vfs.snapshot().await;
+        let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let search_path = if target.path.is_empty() {
             ".".to_string()
@@ -589,8 +589,8 @@ impl AgentTool for FsGrepTool {
         let (hits, truncated) = self
             .service
             .search_text_extended(
-                &address_space,
-                &crate::address_space::TextSearchParams {
+                &vfs,
+                &crate::vfs::TextSearchParams {
                     mount_id: &target.mount_id,
                     path: &search_path,
                     query: &params.query,
@@ -621,17 +621,17 @@ impl AgentTool for FsGrepTool {
 
 #[derive(Clone)]
 pub struct ShellExecTool {
-    service: Arc<RelayAddressSpaceService>,
-    address_space: SharedRuntimeAddressSpace,
+    service: Arc<RelayVfsService>,
+    vfs: SharedRuntimeVfs,
 }
 impl ShellExecTool {
     pub fn new(
-        service: Arc<RelayAddressSpaceService>,
-        address_space: SharedRuntimeAddressSpace,
+        service: Arc<RelayVfsService>,
+        vfs: SharedRuntimeVfs,
     ) -> Self {
         Self {
             service,
-            address_space,
+            vfs,
         }
     }
 }
@@ -674,8 +674,8 @@ impl AgentTool for ShellExecTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let address_space = self.address_space.snapshot().await;
-        let target = resolve_uri_path(&address_space, params.cwd.as_deref().unwrap_or("."))
+        let vfs = self.vfs.snapshot().await;
+        let target = resolve_uri_path(&vfs, params.cwd.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let cwd = if target.path.is_empty() {
             ".".to_string()
@@ -685,7 +685,7 @@ impl AgentTool for ShellExecTool {
         let result = self
             .service
             .exec(
-                &address_space,
+                &vfs,
                 &ExecRequest {
                     mount_id: target.mount_id.clone(),
                     cwd: cwd.clone(),

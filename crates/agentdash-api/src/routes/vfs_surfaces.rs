@@ -6,13 +6,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use agentdash_application::address_space::{
-    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, ResolvedAddressSpaceSurface,
-    ResolvedAddressSpaceSurfaceSource, ResolvedMountSummary, SessionMountTarget,
-    build_project_agent_knowledge_address_space, mount_container_id, mount_owner_id,
+use agentdash_application::vfs::{
+    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, ResolvedVfsSurface,
+    ResolvedVfsSurfaceSource, ResolvedMountSummary, SessionMountTarget,
+    build_project_agent_knowledge_vfs, mount_container_id, mount_owner_id,
     mount_owner_kind, mount_purpose,
 };
-use agentdash_spi::AddressSpace;
+use agentdash_spi::Vfs;
 use agentdash_domain::session_binding::SessionOwnerType;
 
 use crate::{
@@ -34,7 +34,7 @@ const MAX_ENTRIES: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct ResolveSurfaceRequest {
-    pub source: ResolvedAddressSpaceSurfaceSource,
+    pub source: ResolvedVfsSurfaceSource,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,7 +116,7 @@ pub async fn resolve_surface(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<ResolveSurfaceRequest>,
-) -> Result<Json<ResolvedAddressSpaceSurface>, ApiError> {
+) -> Result<Json<ResolvedVfsSurface>, ApiError> {
     let surface = resolve_surface_from_source(&state, &current_user, &req.source).await?;
     Ok(Json(surface))
 }
@@ -125,8 +125,8 @@ pub async fn get_surface(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(surface_ref): Path<String>,
-) -> Result<Json<ResolvedAddressSpaceSurface>, ApiError> {
-    let source = ResolvedAddressSpaceSurfaceSource::parse_surface_ref(&surface_ref)
+) -> Result<Json<ResolvedVfsSurface>, ApiError> {
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
         .map_err(ApiError::BadRequest)?;
     let surface = resolve_surface_from_source(&state, &current_user, &source).await?;
     Ok(Json(surface))
@@ -138,18 +138,18 @@ pub async fn list_surface_mount_entries(
     Path((surface_ref, mount_id)): Path<(String, String)>,
     Query(query): Query<SurfaceEntriesQuery>,
 ) -> Result<Json<SurfaceEntriesResponse>, ApiError> {
-    let source = ResolvedAddressSpaceSurfaceSource::parse_surface_ref(&surface_ref)
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
         .map_err(ApiError::BadRequest)?;
-    let (_surface, address_space) =
+    let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
 
-    check_mount_available(&state, &address_space, &mount_id).await?;
+    check_mount_available(&state, &vfs, &mount_id).await?;
 
     let listed = state
         .services
-        .address_space_service
+        .vfs_service
         .list(
-            &address_space,
+            &vfs,
             &mount_id,
             ListOptions {
                 path: query.path.unwrap_or_else(|| ".".to_string()),
@@ -188,18 +188,18 @@ pub async fn read_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceReadFileRequest>,
 ) -> Result<Json<SurfaceReadFileResponse>, ApiError> {
-    let source = ResolvedAddressSpaceSurfaceSource::parse_surface_ref(&req.surface_ref)
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
         .map_err(ApiError::BadRequest)?;
-    let (_surface, address_space) =
+    let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
 
-    check_mount_available(&state, &address_space, &req.mount_id).await?;
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
 
     let result: ReadResult = state
         .services
-        .address_space_service
+        .vfs_service
         .read_text(
-            &address_space,
+            &vfs,
             &ResourceRef {
                 mount_id: req.mount_id.clone(),
                 path: req.path.clone(),
@@ -224,12 +224,12 @@ pub async fn write_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceWriteFileRequest>,
 ) -> Result<Json<SurfaceWriteFileResponse>, ApiError> {
-    let source = ResolvedAddressSpaceSurfaceSource::parse_surface_ref(&req.surface_ref)
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
         .map_err(ApiError::BadRequest)?;
-    let (_surface, address_space) =
+    let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
 
-    let mount = address_space
+    let mount = vfs
         .mounts
         .iter()
         .find(|mount| mount.id == req.mount_id)
@@ -242,7 +242,7 @@ pub async fn write_surface_file(
         )));
     }
 
-    let normalized_path = agentdash_application::address_space::normalize_mount_relative_path(
+    let normalized_path = agentdash_application::vfs::normalize_mount_relative_path(
         &req.path,
         false,
     )
@@ -250,11 +250,11 @@ pub async fn write_surface_file(
 
     if mount.provider == PROVIDER_INLINE_FS {
         let persister =
-            agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
+            agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
                 state.repos.inline_file_repo.clone(),
             );
         let overlay =
-            agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(
+            agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(
                 Arc::new(persister),
             );
         overlay
@@ -271,13 +271,13 @@ pub async fn write_surface_file(
         }));
     }
 
-    check_mount_available(&state, &address_space, &req.mount_id).await?;
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
 
     state
         .services
-        .address_space_service
+        .vfs_service
         .write_text(
-            &address_space,
+            &vfs,
             &ResourceRef {
                 mount_id: req.mount_id.clone(),
                 path: req.path.clone(),
@@ -303,12 +303,12 @@ pub async fn apply_surface_patch(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceApplyPatchRequest>,
 ) -> Result<Json<SurfaceApplyPatchResponse>, ApiError> {
-    let source = ResolvedAddressSpaceSurfaceSource::parse_surface_ref(&req.surface_ref)
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
         .map_err(ApiError::BadRequest)?;
-    let (_surface, address_space) =
+    let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
 
-    let mount = address_space
+    let mount = vfs
         .mounts
         .iter()
         .find(|mount| mount.id == req.mount_id)
@@ -323,18 +323,18 @@ pub async fn apply_surface_patch(
 
     if mount.provider == PROVIDER_INLINE_FS {
         let persister =
-            agentdash_application::address_space::inline_persistence::DbInlineContentPersister::new(
+            agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
                 state.repos.inline_file_repo.clone(),
             );
         let overlay =
-            agentdash_application::address_space::inline_persistence::InlineContentOverlay::new(
+            agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(
                 Arc::new(persister),
             );
         let result = state
             .services
-            .address_space_service
+            .vfs_service
             .apply_patch(
-                &address_space,
+                &vfs,
                 &req.mount_id,
                 &req.patch,
                 Some(&overlay),
@@ -352,12 +352,12 @@ pub async fn apply_surface_patch(
         }));
     }
 
-    check_mount_available(&state, &address_space, &req.mount_id).await?;
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
 
     let result = state
         .services
-        .address_space_service
-        .apply_patch(&address_space, &req.mount_id, &req.patch, None, None)
+        .vfs_service
+        .apply_patch(&vfs, &req.mount_id, &req.patch, None, None)
         .await
         .map_err(ApiError::Internal)?;
 
@@ -373,9 +373,9 @@ pub async fn apply_surface_patch(
 pub(crate) async fn resolve_surface_from_source(
     state: &Arc<AppState>,
     current_user: &agentdash_plugin_api::AuthIdentity,
-    source: &ResolvedAddressSpaceSurfaceSource,
-) -> Result<ResolvedAddressSpaceSurface, ApiError> {
-    let (surface, _address_space) =
+    source: &ResolvedVfsSurfaceSource,
+) -> Result<ResolvedVfsSurface, ApiError> {
+    let (surface, _vfs) =
         resolve_surface_bundle(state, current_user, source, ProjectPermission::View).await?;
     Ok(surface)
 }
@@ -383,22 +383,22 @@ pub(crate) async fn resolve_surface_from_source(
 pub(crate) async fn resolve_surface_bundle(
     state: &Arc<AppState>,
     current_user: &agentdash_plugin_api::AuthIdentity,
-    source: &ResolvedAddressSpaceSurfaceSource,
+    source: &ResolvedVfsSurfaceSource,
     permission: ProjectPermission,
-) -> Result<(ResolvedAddressSpaceSurface, AddressSpace), ApiError> {
-    let address_space = match source {
-        ResolvedAddressSpaceSurfaceSource::ProjectPreview { project_id } => {
+) -> Result<(ResolvedVfsSurface, Vfs), ApiError> {
+    let vfs = match source {
+        ResolvedVfsSurfaceSource::ProjectPreview { project_id } => {
             let project =
                 load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
                     .await?;
             let workspace = resolve_project_workspace(state, &project).await?;
             state
                 .services
-                .address_space_service
-                .build_address_space(&project, None, workspace.as_ref(), SessionMountTarget::Project, None)
-                .map_err(|error| ApiError::Internal(format!("构建 address space 失败: {error}")))?
+                .vfs_service
+                .build_vfs(&project, None, workspace.as_ref(), SessionMountTarget::Project, None)
+                .map_err(|error| ApiError::Internal(format!("构建 VFS 失败: {error}")))?
         }
-        ResolvedAddressSpaceSurfaceSource::StoryPreview {
+        ResolvedVfsSurfaceSource::StoryPreview {
             project_id,
             story_id,
         } => {
@@ -415,17 +415,17 @@ pub(crate) async fn resolve_surface_bundle(
             let workspace = resolve_project_workspace(state, &project).await?;
             state
                 .services
-                .address_space_service
-                .build_address_space(
+                .vfs_service
+                .build_vfs(
                     &project,
                     Some(&story),
                     workspace.as_ref(),
                     SessionMountTarget::Story,
                     None,
                 )
-                .map_err(|error| ApiError::Internal(format!("构建 address space 失败: {error}")))?
+                .map_err(|error| ApiError::Internal(format!("构建 VFS 失败: {error}")))?
         }
-        ResolvedAddressSpaceSurfaceSource::TaskPreview {
+        ResolvedVfsSurfaceSource::TaskPreview {
             project_id,
             task_id,
         } => {
@@ -451,17 +451,17 @@ pub(crate) async fn resolve_surface_bundle(
             };
             state
                 .services
-                .address_space_service
-                .build_address_space(
+                .vfs_service
+                .build_vfs(
                     &project,
                     Some(&story),
                     workspace.as_ref(),
                     SessionMountTarget::Task,
                     None,
                 )
-                .map_err(|error| ApiError::Internal(format!("构建 address space 失败: {error}")))?
+                .map_err(|error| ApiError::Internal(format!("构建 VFS 失败: {error}")))?
         }
-        ResolvedAddressSpaceSurfaceSource::ProjectAgentKnowledge {
+        ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
             project_id,
             agent_id,
             link_id,
@@ -478,14 +478,14 @@ pub(crate) async fn resolve_surface_bundle(
             if link.id != *link_id {
                 return Err(ApiError::Conflict("surface_ref 中的 link_id 与当前 ProjectAgentLink 不匹配".into()));
             }
-            build_project_agent_knowledge_address_space(&link)
-                .map_err(|error| ApiError::Internal(format!("构建 Agent 知识库 address space 失败: {error}")))?
+            build_project_agent_knowledge_vfs(&link)
+                .map_err(|error| ApiError::Internal(format!("构建 Agent 知识库 VFS 失败: {error}")))?
         }
-        ResolvedAddressSpaceSurfaceSource::SessionRuntime { session_id } => {
+        ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
             let bindings =
                 ensure_session_permission(state.as_ref(), current_user, session_id, permission).await?;
             let Some(primary) = pick_primary_session_binding(&bindings) else {
-                let empty = AddressSpace::default();
+                let empty = Vfs::default();
                 let surface = build_surface_summary(state, source, &empty).await?;
                 return Ok((surface, empty));
             };
@@ -500,7 +500,7 @@ pub(crate) async fn resolve_surface_bundle(
                     .await?;
                     build_project_session_context_response(state, &project, session_id, &primary.label)
                         .await?
-                        .address_space
+                        .vfs
                         .unwrap_or_default()
                 }
                 SessionOwnerType::Story => {
@@ -513,7 +513,7 @@ pub(crate) async fn resolve_surface_bundle(
                     .await?;
                     build_story_session_context_response(state, &story, session_id)
                         .await?
-                        .and_then(|context| context.address_space)
+                        .and_then(|context| context.vfs)
                         .unwrap_or_default()
                 }
                 SessionOwnerType::Task => {
@@ -534,32 +534,32 @@ pub(crate) async fn resolve_surface_bundle(
                     let built_context =
                         agentdash_application::task::context_builder::build_task_session_context(
                             &state.repos,
-                            &state.services.address_space_service,
+                            &state.services.vfs_service,
                             state.config.mcp_base_url.as_deref(),
                             task.id,
                             session_meta.as_ref(),
                         )
                         .await;
                     built_context
-                        .and_then(|context| context.address_space)
+                        .and_then(|context| context.vfs)
                         .unwrap_or_default()
                 }
             }
         }
     };
 
-    let surface = build_surface_summary(state, source, &address_space).await?;
-    Ok((surface, address_space))
+    let surface = build_surface_summary(state, source, &vfs).await?;
+    Ok((surface, vfs))
 }
 
 pub(crate) async fn build_surface_summary(
     state: &Arc<AppState>,
-    source: &ResolvedAddressSpaceSurfaceSource,
-    address_space: &AddressSpace,
-) -> Result<ResolvedAddressSpaceSurface, ApiError> {
-    let mut mounts = Vec::with_capacity(address_space.mounts.len());
+    source: &ResolvedVfsSurfaceSource,
+    vfs: &Vfs,
+) -> Result<ResolvedVfsSurface, ApiError> {
+    let mut mounts = Vec::with_capacity(vfs.mounts.len());
 
-    for mount in &address_space.mounts {
+    for mount in &vfs.mounts {
         let backend_online = if !mount.backend_id.is_empty() {
             Some(
                 state
@@ -574,7 +574,7 @@ pub(crate) async fn build_surface_summary(
 
         let file_count = if mount.provider == PROVIDER_INLINE_FS {
             if let Ok((owner_kind, owner_id, container_id)) =
-                agentdash_application::address_space::parse_inline_mount_owner(mount)
+                agentdash_application::vfs::parse_inline_mount_owner(mount)
             {
                 state
                     .repos
@@ -611,20 +611,20 @@ pub(crate) async fn build_surface_summary(
         });
     }
 
-    Ok(ResolvedAddressSpaceSurface {
+    Ok(ResolvedVfsSurface {
         surface_ref: source.surface_ref(),
         source: source.clone(),
         mounts,
-        default_mount_id: address_space.default_mount_id.clone(),
+        default_mount_id: vfs.default_mount_id.clone(),
     })
 }
 
 async fn check_mount_available(
     state: &Arc<AppState>,
-    address_space: &AddressSpace,
+    vfs: &Vfs,
     mount_id: &str,
 ) -> Result<(), ApiError> {
-    if let Some(mount) = address_space.mounts.iter().find(|mount| mount.id == mount_id)
+    if let Some(mount) = vfs.mounts.iter().find(|mount| mount.id == mount_id)
         && let Some(provider) = state.services.mount_provider_registry.get(&mount.provider)
         && !provider.is_available(mount).await
     {

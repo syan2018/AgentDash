@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::address_space::selected_workspace_binding;
+use crate::vfs::selected_workspace_binding;
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 

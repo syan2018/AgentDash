@@ -194,8 +194,8 @@ impl CommandHandler {
             }
         };
 
-        let address_space =
-            agentdash_application::session::local_workspace_address_space(&workspace_root);
+        let vfs =
+            agentdash_application::session::local_workspace_vfs(&workspace_root);
 
         let req = PromptSessionRequest {
             user_input: UserPromptInput {
@@ -212,7 +212,7 @@ impl CommandHandler {
             },
             mcp_servers: parse_relay_mcp_servers(&payload.mcp_servers),
             relay_mcp_server_names: Default::default(),
-            address_space: Some(address_space),
+            vfs: Some(vfs),
             flow_capabilities: None,
             system_context: None,
             bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,

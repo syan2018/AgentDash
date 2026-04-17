@@ -1,14 +1,14 @@
 /// Skill 目录扫描与加载
 ///
-/// 通过 address space 的 relay service 扫描所有 mount 的约定 skill 目录，
+/// 通过 VFS 的 relay service 扫描所有 mount 的约定 skill 目录，
 /// 使用 `list()` 遍历子目录，`read_text()` 读取 SKILL.md。
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_spi::{AddressSpace, MountCapability, SkillRef};
+use agentdash_spi::{Vfs, MountCapability, SkillRef};
 
-use crate::address_space::types::ResourceRef;
-use crate::address_space::{ListOptions, RelayAddressSpaceService};
+use crate::vfs::types::ResourceRef;
+use crate::vfs::{ListOptions, RelayVfsService};
 
 use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
 
@@ -24,7 +24,7 @@ pub struct LoadSkillsResult {
 /// 扫描插件提供的本地文件系统目录中的 skill
 ///
 /// 对每个目录，遍历一级子目录并查找 SKILL.md，解析规则与 mount 扫描一致。
-/// 不经过 address space mount 系统，直接使用 `std::fs`。
+/// 不经过 VFS mount 系统，直接使用 `std::fs`。
 pub fn load_skills_from_local_dirs(
     dirs: &[PathBuf],
     existing_names: &HashMap<String, String>,
@@ -99,17 +99,17 @@ pub fn load_skills_from_local_dirs(
     result
 }
 
-/// 通过 address space service 从所有 mount 扫描 skill（主入口）
+/// 通过 VFS service 从所有 mount 扫描 skill（主入口）
 ///
 /// 对每个有 Read + List 能力的 mount，扫描 `.agents/skills/` 和 `skills/` 目录。
-pub async fn load_skills_from_address_space(
-    service: &RelayAddressSpaceService,
-    address_space: &AddressSpace,
+pub async fn load_skills_from_vfs(
+    service: &RelayVfsService,
+    vfs: &Vfs,
 ) -> LoadSkillsResult {
     let mut result = LoadSkillsResult::default();
     let mut name_map: HashMap<String, String> = HashMap::new(); // name → "mount_id://path"
 
-    for mount in &address_space.mounts {
+    for mount in &vfs.mounts {
         let has_read = mount.capabilities.contains(&MountCapability::Read);
         let has_list = mount.capabilities.contains(&MountCapability::List);
         if !has_read || !has_list {
@@ -117,7 +117,7 @@ pub async fn load_skills_from_address_space(
         }
 
         for skill_dir in [".agents/skills", "skills"] {
-            let skills = scan_mount_skill_dir(service, address_space, &mount.id, skill_dir).await;
+            let skills = scan_mount_skill_dir(service, vfs, &mount.id, skill_dir).await;
 
             for (skill, diags) in skills {
                 result.diagnostics.extend(diags);
@@ -148,8 +148,8 @@ pub async fn load_skills_from_address_space(
 ///
 /// 列出一级子目录，对每个含 SKILL.md 的子目录解析 frontmatter。
 async fn scan_mount_skill_dir(
-    service: &RelayAddressSpaceService,
-    address_space: &AddressSpace,
+    service: &RelayVfsService,
+    vfs: &Vfs,
     mount_id: &str,
     skill_dir: &str,
 ) -> Vec<(Option<SkillRef>, Vec<SkillDiagnostic>)> {
@@ -158,7 +158,7 @@ async fn scan_mount_skill_dir(
     // 列出 skill 目录下的一级子目录
     let list_result = service
         .list(
-            address_space,
+            vfs,
             mount_id,
             ListOptions {
                 path: skill_dir.to_string(),
@@ -186,7 +186,7 @@ async fn scan_mount_skill_dir(
             mount_id: mount_id.to_string(),
             path: skill_md_path.clone(),
         };
-        let content = match service.read_text(address_space, &target, None, None).await {
+        let content = match service.read_text(vfs, &target, None, None).await {
             Ok(r) => r.content,
             Err(_) => continue, // 无 SKILL.md，跳过
         };

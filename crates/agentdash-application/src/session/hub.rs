@@ -18,17 +18,17 @@ pub use super::types::*;
 use agentdash_spi::hooks::{
     ExecutionHookProvider, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{AddressSpace, AgentConnector, ConnectorError};
+use agentdash_spi::{Vfs, AgentConnector, ConnectorError};
 
 #[derive(Clone)]
 pub struct SessionHub {
-    /// 当 `PromptSessionRequest.address_space` 为 None 时回退使用（如云宿主 cwd、本机首个 accessible root）。
-    pub(super) default_address_space: Option<AddressSpace>,
+    /// 当 `PromptSessionRequest.vfs` 为 None 时回退使用（如云宿主 cwd、本机首个 accessible root）。
+    pub(super) default_vfs: Option<Vfs>,
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
     pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
     pub(super) persistence: Arc<dyn SessionPersistence>,
-    pub(crate) address_space_service: Option<Arc<crate::address_space::RelayAddressSpaceService>>,
+    pub(crate) vfs_service: Option<Arc<crate::vfs::RelayVfsService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub companion_wait_registry: CompanionWaitRegistry,
     pub(super) title_generator: Option<Arc<dyn super::title_generator::SessionTitleGenerator>>,
@@ -38,18 +38,18 @@ pub struct SessionHub {
 
 impl SessionHub {
     pub fn new_with_hooks_and_persistence(
-        default_address_space: Option<AddressSpace>,
+        default_vfs: Option<Vfs>,
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
         persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
         Self {
-            default_address_space,
+            default_vfs,
             connector,
             hook_provider,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             persistence,
-            address_space_service: None,
+            vfs_service: None,
             extra_skill_dirs: Vec::new(),
             companion_wait_registry: CompanionWaitRegistry::default(),
             title_generator: None,
@@ -57,12 +57,12 @@ impl SessionHub {
         }
     }
 
-    /// 注入 Address Space 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
-    pub fn with_address_space_service(
+    /// 注入 VFS 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
+    pub fn with_vfs_service(
         mut self,
-        service: Arc<crate::address_space::RelayAddressSpaceService>,
+        service: Arc<crate::vfs::RelayVfsService>,
     ) -> Self {
-        self.address_space_service = Some(service);
+        self.vfs_service = Some(service);
         self
     }
 
@@ -644,7 +644,7 @@ impl SessionHub {
 mod tests {
     use super::*;
     use crate::session::MemorySessionPersistence;
-    use crate::session::local_workspace_address_space;
+    use crate::session::local_workspace_vfs;
     use agent_client_protocol::{
         ContentBlock, ContentChunk, SessionId, SessionInfoUpdate, SessionNotification,
         SessionUpdate, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
@@ -671,7 +671,7 @@ mod tests {
         hook_provider: Option<Arc<dyn agentdash_spi::hooks::ExecutionHookProvider>>,
     ) -> SessionHub {
         SessionHub::new_with_hooks_and_persistence(
-            Some(local_workspace_address_space(&mount_root)),
+            Some(local_workspace_vfs(&mount_root)),
             connector,
             hook_provider,
             Arc::new(MemorySessionPersistence::default()),
@@ -686,7 +686,7 @@ mod tests {
             },
             mcp_servers: vec![],
             relay_mcp_server_names: Default::default(),
-            address_space: None,
+            vfs: None,
             flow_capabilities: None,
             system_context: None,
             bootstrap_action: SessionBootstrapAction::None,
@@ -1204,7 +1204,7 @@ mod tests {
         let persistence = Arc::new(MemorySessionPersistence::default());
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionHub::new_with_hooks_and_persistence(
-            Some(local_workspace_address_space(&base.path().to_path_buf())),
+            Some(local_workspace_vfs(&base.path().to_path_buf())),
             Arc::new(SessionStartAwareConnector::default()),
             None,
             persistence,
@@ -1275,7 +1275,7 @@ mod tests {
         let persistence = Arc::new(MemorySessionPersistence::default());
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionHub::new_with_hooks_and_persistence(
-            Some(local_workspace_address_space(&base.path().to_path_buf())),
+            Some(local_workspace_vfs(&base.path().to_path_buf())),
             Arc::new(SessionStartAwareConnector::default()),
             None,
             persistence,
@@ -1410,7 +1410,7 @@ mod tests {
         let persistence = Arc::new(MemorySessionPersistence::default());
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionHub::new_with_hooks_and_persistence(
-            Some(local_workspace_address_space(&base.path().to_path_buf())),
+            Some(local_workspace_vfs(&base.path().to_path_buf())),
             Arc::new(SessionStartAwareConnector::default()),
             None,
             persistence,
@@ -1487,7 +1487,7 @@ mod tests {
         let persistence = Arc::new(MemorySessionPersistence::default());
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionHub::new_with_hooks_and_persistence(
-            Some(local_workspace_address_space(&base.path().to_path_buf())),
+            Some(local_workspace_vfs(&base.path().to_path_buf())),
             Arc::new(SessionStartAwareConnector::default()),
             None,
             persistence,
@@ -1606,7 +1606,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_prompt_uses_request_address_space_override() {
+    async fn start_prompt_uses_request_vfs_override() {
         #[derive(Default)]
         struct RecordingConnector {
             contexts: Arc<TokioMutex<Vec<agentdash_spi::ExecutionContext>>>,
@@ -1684,7 +1684,7 @@ mod tests {
                 },
                 mcp_servers: vec![],
                 relay_mcp_server_names: Default::default(),
-                address_space: Some(local_workspace_address_space(workspace.path())),
+                vfs: Some(local_workspace_vfs(workspace.path())),
                 flow_capabilities: None,
                 system_context: None,
                 bootstrap_action: SessionBootstrapAction::None,

@@ -17,7 +17,7 @@ use agentdash_domain::session_binding::{
 use agentdash_spi::action_type as at;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
-    AddressSpace, AgentConfig, ExecutionContext, FlowCapabilities, HookEvaluationQuery,
+    Vfs, AgentConfig, ExecutionContext, FlowCapabilities, HookEvaluationQuery,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry,
     HookTrigger, MountCapability, SessionHookRefreshQuery, ToolCluster,
 };
@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::address_space::tools::provider::SharedSessionHubHandle;
+use crate::vfs::tools::provider::SharedSessionHubHandle;
 
 // ─── 公共枚举（保留不变，内部逻辑使用） ────────────────────────────────
 
@@ -82,7 +82,7 @@ pub struct CompanionRequestTool {
     current_turn_id: String,
     current_executor_config: AgentConfig,
     working_dir: String,
-    address_space: Option<AddressSpace>,
+    vfs: Option<Vfs>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
     system_context: Option<String>,
@@ -108,7 +108,7 @@ impl CompanionRequestTool {
             current_turn_id: context.turn_id.clone(),
             current_executor_config: context.executor_config.clone(),
             working_dir: relative_working_dir(context),
-            address_space: context.address_space.clone(),
+            vfs: context.vfs.clone(),
             mcp_servers: context.mcp_servers.clone(),
             hook_session: context.hook_session.clone(),
             system_context: context.system_context.clone(),
@@ -351,7 +351,7 @@ impl CompanionRequestTool {
 
         let final_prompt = build_companion_dispatch_prompt(&dispatch_plan, prompt);
         let execution_slice = build_companion_execution_slice(
-            self.address_space.as_ref(),
+            self.vfs.as_ref(),
             &self.mcp_servers,
             slice_mode,
         );
@@ -371,7 +371,7 @@ impl CompanionRequestTool {
                     },
                     mcp_servers: execution_slice.mcp_servers.clone(),
                     relay_mcp_server_names: Default::default(),
-                    address_space: execution_slice.address_space.clone(),
+                    vfs: execution_slice.vfs.clone(),
                     flow_capabilities: Some(build_companion_flow_capabilities(slice_mode)),
                     system_context: self.system_context.clone(),
                     bootstrap_action: crate::session::SessionBootstrapAction::OwnerContext,
@@ -397,7 +397,7 @@ impl CompanionRequestTool {
                 "adoption_mode": adoption_mode,
                 "inherited_fragment_labels": dispatch_plan.slice.inherited_fragment_labels,
                 "inherited_constraint_keys": dispatch_plan.slice.inherited_constraint_keys,
-                "inherited_mount_ids": execution_slice.address_space.as_ref().map(|space| {
+                "inherited_mount_ids": execution_slice.vfs.as_ref().map(|space| {
                     space.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()
                 }).unwrap_or_default(),
                 "mcp_server_count": execution_slice.mcp_servers.len(),
@@ -520,7 +520,7 @@ impl CompanionRequestTool {
                 "adoption_mode": adoption_mode,
                 "inherited_fragment_labels": dispatch_plan.slice.inherited_fragment_labels,
                 "inherited_constraint_keys": dispatch_plan.slice.inherited_constraint_keys,
-                "inherited_mount_ids": execution_slice.address_space.as_ref().map(|space| {
+                "inherited_mount_ids": execution_slice.vfs.as_ref().map(|space| {
                     space.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()
                 }).unwrap_or_default(),
                 "mcp_server_count": execution_slice.mcp_servers.len(),
@@ -919,7 +919,7 @@ pub struct CompanionRespondTool {
     current_session_id: Option<String>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
-    address_space: Option<AddressSpace>,
+    vfs: Option<Vfs>,
     mcp_servers: Vec<McpServer>,
 }
 
@@ -933,7 +933,7 @@ impl CompanionRespondTool {
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
-            address_space: context.address_space.clone(),
+            vfs: context.vfs.clone(),
             mcp_servers: context.mcp_servers.clone(),
         }
     }
@@ -1301,7 +1301,7 @@ impl CompanionRespondTool {
 
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
-                let resume_address_space = self.address_space.clone();
+                let resume_vfs = self.vfs.clone();
                 let resume_mcp_servers = self.mcp_servers.clone();
                 tokio::spawn(async move {
                     let _ = hub_clone
@@ -1319,7 +1319,7 @@ impl CompanionRespondTool {
                                 },
                                 mcp_servers: resume_mcp_servers,
                                 relay_mcp_server_names: Default::default(),
-                                address_space: resume_address_space,
+                                vfs: resume_vfs,
                                 flow_capabilities: None,
                                 system_context: None,
                                 bootstrap_action: crate::session::SessionBootstrapAction::None,
@@ -1423,7 +1423,7 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
 // ─── 以下为原有内部逻辑函数，保持不变 ──────────────────────────────
 
 pub fn relative_working_dir(context: &ExecutionContext) -> String {
-    let Some(space) = context.address_space.as_ref() else {
+    let Some(space) = context.vfs.as_ref() else {
         return ".".to_string();
     };
     let Some(mount) = space.default_mount() else {
@@ -1631,7 +1631,7 @@ pub struct CompanionDispatchPlan {
 
 #[derive(Debug, Clone)]
 pub struct CompanionExecutionSlice {
-    pub address_space: Option<AddressSpace>,
+    pub vfs: Option<Vfs>,
     pub mcp_servers: Vec<McpServer>,
 }
 
@@ -1833,18 +1833,18 @@ pub fn build_companion_dispatch_slice(
 }
 
 pub fn build_companion_execution_slice(
-    address_space: Option<&AddressSpace>,
+    vfs: Option<&Vfs>,
     mcp_servers: &[McpServer],
     mode: CompanionSliceMode,
 ) -> CompanionExecutionSlice {
     match mode {
         CompanionSliceMode::Full => CompanionExecutionSlice {
-            address_space: address_space.cloned(),
+            vfs: vfs.cloned(),
             mcp_servers: mcp_servers.to_vec(),
         },
         CompanionSliceMode::Compact => CompanionExecutionSlice {
-            address_space: Some(filter_address_space_capabilities(
-                address_space,
+            vfs: Some(filter_vfs_capabilities(
+                vfs,
                 &[
                     MountCapability::Read,
                     MountCapability::List,
@@ -1856,7 +1856,7 @@ pub fn build_companion_execution_slice(
         },
         CompanionSliceMode::WorkflowOnly | CompanionSliceMode::ConstraintsOnly => {
             CompanionExecutionSlice {
-                address_space: Some(AddressSpace::default()),
+                vfs: Some(Vfs::default()),
                 mcp_servers: Vec::new(),
             }
         }
@@ -1921,15 +1921,15 @@ fn build_companion_flow_capabilities(mode: CompanionSliceMode) -> FlowCapabiliti
     }
 }
 
-fn filter_address_space_capabilities(
-    address_space: Option<&AddressSpace>,
+fn filter_vfs_capabilities(
+    vfs: Option<&Vfs>,
     allowed: &[MountCapability],
-) -> AddressSpace {
-    let Some(address_space) = address_space else {
-        return AddressSpace::default();
+) -> Vfs {
+    let Some(vfs) = vfs else {
+        return Vfs::default();
     };
 
-    let mounts = address_space
+    let mounts = vfs
         .mounts
         .iter()
         .filter_map(|mount| {
@@ -1950,7 +1950,7 @@ fn filter_address_space_capabilities(
         })
         .collect::<Vec<_>>();
 
-    let default_mount_id = address_space
+    let default_mount_id = vfs
         .default_mount_id
         .as_ref()
         .and_then(|default_id| {
@@ -1960,11 +1960,11 @@ fn filter_address_space_capabilities(
                 .then(|| default_id.clone())
         });
 
-    AddressSpace {
+    Vfs {
         mounts,
         default_mount_id,
-        source_project_id: address_space.source_project_id.clone(),
-        source_story_id: address_space.source_story_id.clone(),
+        source_project_id: vfs.source_project_id.clone(),
+        source_story_id: vfs.source_story_id.clone(),
     }
 }
 
@@ -2128,7 +2128,7 @@ mod companion_tests {
     };
     use agent_client_protocol::McpServer;
     use agentdash_domain::session_binding::SessionOwnerType;
-    use agentdash_spi::{AddressSpace, MountCapability};
+    use agentdash_spi::{Vfs, MountCapability};
     use uuid::Uuid;
 
     #[test]
@@ -2227,7 +2227,7 @@ mod companion_tests {
 
     #[test]
     fn compact_execution_slice_drops_write_and_mcp_servers() {
-        let address_space = AddressSpace {
+        let vfs = Vfs {
             mounts: vec![agentdash_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
@@ -2249,7 +2249,7 @@ mod companion_tests {
         };
 
         let slice = build_companion_execution_slice(
-            Some(&address_space),
+            Some(&vfs),
             &[McpServer::Stdio(
                 agent_client_protocol::McpServerStdio::new("test-mcp", "cmd"),
             )],
@@ -2257,8 +2257,8 @@ mod companion_tests {
         );
 
         let sliced_space = slice
-            .address_space
-            .expect("compact should keep sliced address_space");
+            .vfs
+            .expect("compact should keep sliced vfs");
         assert_eq!(slice.mcp_servers.len(), 0);
         assert_eq!(sliced_space.mounts.len(), 1);
         assert!(
@@ -2275,8 +2275,8 @@ mod companion_tests {
     }
 
     #[test]
-    fn workflow_only_execution_slice_uses_empty_address_space() {
-        let address_space = AddressSpace {
+    fn workflow_only_execution_slice_uses_empty_vfs() {
+        let vfs = Vfs {
             mounts: vec![agentdash_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
@@ -2292,7 +2292,7 @@ mod companion_tests {
         };
 
         let slice = build_companion_execution_slice(
-            Some(&address_space),
+            Some(&vfs),
             &[McpServer::Stdio(
                 agent_client_protocol::McpServerStdio::new("test-mcp", "cmd"),
             )],
@@ -2300,8 +2300,8 @@ mod companion_tests {
         );
 
         let sliced_space = slice
-            .address_space
-            .expect("workflow_only should force empty address_space");
+            .vfs
+            .expect("workflow_only should force empty vfs");
         assert!(sliced_space.mounts.is_empty());
         assert!(sliced_space.default_mount_id.is_none());
         assert!(slice.mcp_servers.is_empty());

@@ -519,9 +519,7 @@ export function TaskWorkflowPanel({
                             const sourceEdge = activeLifecycle?.edges?.find(
                               (e) => e.to_node === runStep.step_key && e.to_port === port.key,
                             );
-                            const sourceReady = sourceEdge
-                              ? !!(portOutputs[sourceEdge.from_port]?.trim())
-                              : false;
+                            const sourceReady = !!sourceEdge;
                             return (
                               <span
                                 key={port.key}

@@ -10,7 +10,7 @@ const NODE_SEP = 50;
  * 使用 dagre 算法对 DAG 节点进行自动布局（从左到右）。
  * 返回带有新 position 的节点数组（不修改原数组）。
  */
-export function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
+export function applyDagreLayout<N extends Node = Node>(nodes: N[], edges: Edge[]): N[] {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", ranksep: RANK_SEP, nodesep: NODE_SEP });

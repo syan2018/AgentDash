@@ -5,7 +5,6 @@ import type {
   OutputPortDefinition,
   InputPortDefinition,
   WorkflowCheckKind,
-  WorkflowCheckSpec,
   WorkflowCompletionSpec,
   WorkflowConstraintKind,
   WorkflowConstraintSpec,

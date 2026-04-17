@@ -69,7 +69,7 @@ function stepsToNodes(
   entryStepKey: string,
   workflowDefs: WorkflowDefinition[],
   positions: Record<string, { x: number; y: number }>,
-): Node[] {
+): Node<DagNodeData>[] {
   const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
 
   return steps.map((step, idx) => {
@@ -166,8 +166,8 @@ function LifecycleDagEditorInner() {
 
   // ── ReactFlow nodes & edges state ──
   const positions = useRef(loadPositions(draft?.key ?? "__new"));
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<DagNodeData>>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   // ── 从 draft 同步到 RF state（单一 effect，消除双 effect batching 竞态） ──
   const draftStepsRef = useRef<LifecycleStepDefinition[] | undefined>(undefined);
@@ -346,6 +346,8 @@ function LifecycleDagEditorInner() {
       description: "",
       workflow_key: null,
       node_type: "agent_node",
+      output_ports: [],
+      input_ports: [],
     };
     updateLifecycleDraft({ steps: [...draft.steps, newStep] });
   }, [draft, updateLifecycleDraft]);
@@ -400,6 +402,13 @@ function LifecycleDagEditorInner() {
     [draft, updateLifecycleDraft],
   );
 
+  // ── 选中 step 元数据（供编辑回调复用） ──
+  const updateLifecycleStep = useWorkflowStore((s) => s.updateLifecycleStep);
+  const selectedStepIndex = useMemo(
+    () => (selectedNodeKey != null ? draft?.steps.findIndex((s) => s.key === selectedNodeKey) ?? -1 : -1),
+    [selectedNodeKey, draft?.steps],
+  );
+
   // ── 导入 Workflow 推荐 Ports ──
   const handleImportRecommendedPorts = useCallback(() => {
     if (!draft || selectedStepIndex < 0) return;
@@ -445,7 +454,6 @@ function LifecycleDagEditorInner() {
   const handleAutoWire = useCallback(() => {
     if (!draft) return;
     const nodeIds = draft.steps.map((s) => s.key);
-    const wfMap = new Map(workflowDefinitions.map((d) => [d.key, d]));
 
     // port 归属在 step 级别，直接从 step.output_ports / input_ports 读取
     const getFirstOutputPort = (nodeId: string): string | null => {
@@ -511,13 +519,6 @@ function LifecycleDagEditorInner() {
   );
 
   // ── Port 编辑回调（直接写 step 级 ports，通过 updateLifecycleStep 走 store） ──
-  const updateLifecycleStep = useWorkflowStore((s) => s.updateLifecycleStep);
-
-  const selectedStepIndex = useMemo(
-    () => (selectedNodeKey != null ? draft?.steps.findIndex((s) => s.key === selectedNodeKey) ?? -1 : -1),
-    [selectedNodeKey, draft?.steps],
-  );
-
   const handleOutputPortsChange = useCallback(
     (ports: OutputPortDefinition[]) => {
       if (selectedStepIndex < 0) return;
